@@ -35,6 +35,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 }));
 
 const {
+  JOB_EVENT_TYPES,
   cleanupJobEvents,
   listJobEventTimeline,
   recordJobEvent,
@@ -338,6 +339,10 @@ describe('jobEventRepository.listJobEventTimeline', () => {
       '2026-05-07T13:00:00.000Z',
       1_000
     ]);
+  });
+
+  it('registers cancelled jobs as a supported lifecycle event', () => {
+    expect(JOB_EVENT_TYPES).toContain('job.cancelled');
   });
 
   it('excludes local-agent events when trusted tenant context is unavailable', async () => {

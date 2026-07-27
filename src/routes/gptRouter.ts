@@ -2332,35 +2332,43 @@ router.post("/:gptId", async (req, res, next) => {
             let priorityDirectSlot: PriorityGptDirectExecutionSlot | null = priorityQueueActive
               ? tryAcquirePriorityGptDirectExecutionSlot()
               : null;
-            const plannedJobBase = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
-            const plannedJob = priorityQueueActive
-              ? {
-                  ...plannedJobBase,
-                  status: priorityDirectSlot ? 'running' : plannedJobBase.status,
-                  startedAt: priorityDirectSlot ? new Date() : plannedJobBase.startedAt,
-                  lastHeartbeatAt: priorityDirectSlot ? new Date() : plannedJobBase.lastHeartbeatAt,
-                  leaseExpiresAt: priorityDirectSlot
-                    ? new Date(
-                        Date.now() +
-                        Math.max(resolveGptWaitTimeoutMs(), asyncWaitForResultMs) +
-                        DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
-                      )
-                    : plannedJobBase.leaseExpiresAt,
-                  priority: PRIORITY_GPT_JOB_PRIORITY,
-                  lastWorkerId: priorityDirectSlot ? priorityDirectWorkerId : plannedJobBase.lastWorkerId,
-                  autonomyState: {
-                    ...(plannedJobBase.autonomyState ?? {}),
-                    priorityQueue: {
-                      enabled: true,
-                      gptId: incomingGptId,
-                      directExecution: priorityDirectSlot ? 'reserved' : 'queued',
-                      requestedAt: new Date().toISOString()
-                    }
-                  }
-                }
-              : plannedJobBase;
+            const releasePriorityDirectSlot = (): void => {
+              const reservedSlot = priorityDirectSlot;
+              priorityDirectSlot = null;
+              reservedSlot?.release();
+            };
+            let plannedJob!: Awaited<ReturnType<typeof planAutonomousWorkerJob>>;
             let createResult;
             try {
+              const plannedJobBase = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
+              plannedJob = priorityQueueActive
+                ? {
+                    ...plannedJobBase,
+                    status: priorityDirectSlot ? 'running' : plannedJobBase.status,
+                    startedAt: priorityDirectSlot ? new Date() : plannedJobBase.startedAt,
+                    lastHeartbeatAt: priorityDirectSlot ? new Date() : plannedJobBase.lastHeartbeatAt,
+                    leaseExpiresAt: priorityDirectSlot
+                      ? new Date(
+                          Date.now() +
+                          Math.max(resolveGptWaitTimeoutMs(), asyncWaitForResultMs) +
+                          DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+                        )
+                      : plannedJobBase.leaseExpiresAt,
+                    priority: PRIORITY_GPT_JOB_PRIORITY,
+                    lastWorkerId: priorityDirectSlot
+                      ? priorityDirectWorkerId
+                      : plannedJobBase.lastWorkerId,
+                    autonomyState: {
+                      ...(plannedJobBase.autonomyState ?? {}),
+                      priorityQueue: {
+                        enabled: true,
+                        gptId: incomingGptId,
+                        directExecution: priorityDirectSlot ? 'reserved' : 'queued',
+                        requestedAt: new Date().toISOString()
+                      }
+                    }
+                  }
+                : plannedJobBase;
               createResult = await findOrCreateGptJob({
                 workerId: process.env.WORKER_ID || 'api',
                 input: queuedGptJobInput,
@@ -2376,8 +2384,7 @@ router.post("/:gptId", async (req, res, next) => {
                 }
               });
             } catch (error: unknown) {
-              priorityDirectSlot?.release();
-              priorityDirectSlot = null;
+              releasePriorityDirectSlot();
               if (error instanceof IdempotencyKeyConflictError) {
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
@@ -2441,13 +2448,21 @@ router.post("/:gptId", async (req, res, next) => {
               queuedJobId = job.id;
               if (priorityDirectSlot) {
                 if (createResult.created) {
-                  startReservedPriorityGptDirectExecution({
-                    jobId: job.id,
-                    rawInput: queuedGptJobInput,
-                    workerId: priorityDirectWorkerId,
-                    slot: priorityDirectSlot,
-                    requestLogger
-                  });
+                  const reservedSlot = priorityDirectSlot;
+                  priorityDirectSlot = null;
+                  try {
+                    startReservedPriorityGptDirectExecution({
+                      jobId: job.id,
+                      claimGeneration: job.claim_generation,
+                      rawInput: queuedGptJobInput,
+                      workerId: priorityDirectWorkerId,
+                      slot: reservedSlot,
+                      requestLogger
+                    });
+                  } catch (error) {
+                    reservedSlot.release();
+                    throw error;
+                  }
                   requestLogger?.info?.('gpt.priority_direct.reserved', {
                     endpoint: req.originalUrl,
                     gptId: incomingGptId,
@@ -2456,9 +2471,8 @@ router.post("/:gptId", async (req, res, next) => {
                     waitForResultMs: asyncWaitForResultMs
                   });
                 } else {
-                  priorityDirectSlot.release();
+                  releasePriorityDirectSlot();
                 }
-                priorityDirectSlot = null;
               }
               queuedPendingResponse = buildQueuedGptPendingResponse({
                 action: asyncBridgeAction,

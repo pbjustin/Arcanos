@@ -37,10 +37,16 @@ jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
+  createClaimedJobFence: jest.fn((workerId: string, claimGeneration: string) => ({
+    workerId,
+    claimGeneration
+  })),
   findOrCreateGptJob: findOrCreateGptJobMock,
   getJobById: getJobByIdMock,
+  normalizeJobClaimGeneration: jest.fn((claimGeneration: string) => claimGeneration),
   createJob: jest.fn(),
   claimNextPendingJob: jest.fn(),
+  failPendingJobIfUnclaimed: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   scheduleJobRetry: jest.fn(),
   deferJobForProviderRecovery: jest.fn(),
@@ -60,6 +66,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   getJobQueueSummary: jest.fn(),
   getJobExecutionStatsSince: jest.fn(),
   requestJobCancellation: jest.fn(),
+  updateClaimedJobTerminal: jest.fn(),
   cleanupExpiredGptJobs: jest.fn(async () => ({
     expiredPending: 0,
     expiredTerminal: 0,
@@ -865,6 +872,58 @@ describe('async /gpt idempotency', () => {
     });
     expect((findOrCreateGptJobMock.mock.calls[0]?.[0] as { input?: { body?: Record<string, unknown> } }).input?.body?.action).toBe('query');
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('hands the persisted generation to reserved priority direct execution', async () => {
+    process.env.PRIORITY_QUEUE_ENABLED = 'true';
+    const slot = { release: jest.fn() };
+    tryAcquirePriorityGptDirectExecutionSlotMock.mockReturnValueOnce(slot);
+    findOrCreateGptJobMock.mockResolvedValueOnce({
+      job: {
+        id: 'job-priority-direct',
+        status: 'running',
+        claim_generation: '1'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Run this priority request.'
+      });
+
+    expect(response.status).toBe(202);
+    expect(startReservedPriorityGptDirectExecutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-priority-direct',
+        claimGeneration: '1',
+        workerId: expect.stringContaining(':priority-gpt-direct'),
+        slot
+      })
+    );
+  });
+
+  it('releases a reserved priority slot when autonomous job planning rejects', async () => {
+    process.env.PRIORITY_QUEUE_ENABLED = 'true';
+    const slot = { release: jest.fn() };
+    tryAcquirePriorityGptDirectExecutionSlotMock.mockReturnValueOnce(slot);
+    planAutonomousWorkerJobMock.mockRejectedValueOnce(new Error('planner unavailable'));
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Do not leak the reserved slot.'
+      });
+
+    expect(response.status).toBe(500);
+    expect(slot.release).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(startReservedPriorityGptDirectExecutionMock).not.toHaveBeenCalled();
   });
 
   it('keeps the exact prompt on async query jobs when callers provide transport hints inside payload', async () => {

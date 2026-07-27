@@ -19,6 +19,7 @@ export const JOB_EVENT_TYPES = [
   'job.retry.scheduled',
   'job.completed',
   'job.failed',
+  'job.cancelled',
   'job.expired',
   'worker.heartbeat',
   'worker.stale_detected',

@@ -2,15 +2,21 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { JobData } from '../src/core/db/schema.js';
 
 const createJobMock = jest.fn();
+const failPendingJobIfUnclaimedMock = jest.fn();
 const getJobByIdMock = jest.fn();
-const updateJobMock = jest.fn();
+const updateClaimedJobTerminalMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const sleepMock = jest.fn(async () => undefined);
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
+  createClaimedJobFence: (workerId: string, claimGeneration: string) => ({
+    workerId,
+    claimGeneration
+  }),
   createJob: createJobMock,
+  failPendingJobIfUnclaimed: failPendingJobIfUnclaimedMock,
   getJobById: getJobByIdMock,
-  updateJob: updateJobMock
+  updateClaimedJobTerminal: updateClaimedJobTerminalMock
 }));
 
 jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
@@ -31,6 +37,7 @@ function buildJobRow(overrides: Partial<JobData> = {}): JobData {
     worker_id: overrides.worker_id ?? 'dag-orchestrator',
     job_type: overrides.job_type ?? 'dag-node',
     status: overrides.status ?? 'running',
+    claim_generation: overrides.claim_generation ?? '1',
     input:
       overrides.input ??
       {
@@ -58,7 +65,9 @@ function buildJobRow(overrides: Partial<JobData> = {}): JobData {
     last_heartbeat_at: overrides.last_heartbeat_at,
     lease_expires_at: overrides.lease_expires_at,
     priority: overrides.priority ?? 100,
-    last_worker_id: overrides.last_worker_id ?? 'async-queue-slot-1',
+    last_worker_id: Object.prototype.hasOwnProperty.call(overrides, 'last_worker_id')
+      ? overrides.last_worker_id
+      : 'async-queue-slot-1',
     autonomy_state: overrides.autonomy_state ?? {},
     created_at: overrides.created_at ?? new Date('2026-03-07T16:00:00.000Z'),
     updated_at: overrides.updated_at ?? new Date('2026-03-07T16:00:00.000Z'),
@@ -203,6 +212,7 @@ describe('DatabaseBackedDagJobQueue', () => {
     );
     const failedJob = buildJobRow({
       status: 'failed',
+      claim_generation: '0',
       created_at: createdAt,
       updated_at: new Date(),
       error_message:
@@ -212,6 +222,8 @@ describe('DatabaseBackedDagJobQueue', () => {
     getJobByIdMock.mockResolvedValue(
       buildJobRow({
         status: 'pending',
+        claim_generation: '0',
+        last_worker_id: null,
         created_at: createdAt,
         updated_at: createdAt,
         started_at: undefined,
@@ -234,17 +246,155 @@ describe('DatabaseBackedDagJobQueue', () => {
         }
       })
     );
-    updateJobMock.mockResolvedValue(failedJob);
+    failPendingJobIfUnclaimedMock.mockResolvedValue(failedJob);
 
     const record = await queue.waitForDagJobCompletion('job-1');
 
-    expect(updateJobMock).toHaveBeenCalledWith(
+    expect(failPendingJobIfUnclaimedMock).toHaveBeenCalledWith(
       'job-1',
-      'failed',
-      null,
-      expect.stringContaining('queue grace 120000ms')
+      {
+        claimGeneration: '0',
+        output: null,
+        errorMessage: expect.stringContaining('queue grace 120000ms')
+      }
     );
     expect(record.status).toBe('failed');
+  });
+
+  it('does not fail a job claimed concurrently with a pending-timeout CAS', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const createdAt = new Date(Date.now() - 126_000);
+    getJobByIdMock
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'pending',
+        claim_generation: '0',
+        last_worker_id: null,
+        created_at: createdAt,
+        updated_at: createdAt
+      }))
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'running',
+        claim_generation: '1',
+        last_worker_id: 'worker-new',
+        created_at: createdAt,
+        started_at: new Date(),
+        updated_at: new Date()
+      }))
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'completed',
+        claim_generation: '1',
+        last_worker_id: 'worker-new',
+        created_at: createdAt,
+        completed_at: new Date(),
+        updated_at: new Date()
+      }));
+    failPendingJobIfUnclaimedMock.mockResolvedValueOnce(null);
+
+    const record = await queue.waitForDagJobCompletion('job-1', {
+      pollIntervalMs: 1,
+      timeoutMs: 5_000
+    });
+
+    expect(failPendingJobIfUnclaimedMock).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ claimGeneration: '0' })
+    );
+    expect(updateClaimedJobTerminalMock).not.toHaveBeenCalled();
+    expect(record.status).toBe('completed');
+  });
+
+  it('times out a running job only through its exact observed claim fence', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const startedAt = new Date(Date.now() - 6_000);
+    const runningJob = buildJobRow({
+      status: 'running',
+      claim_generation: '3',
+      last_worker_id: 'worker-a',
+      started_at: startedAt,
+      last_heartbeat_at: startedAt,
+      lease_expires_at: new Date(Date.now() + 30_000),
+      updated_at: startedAt
+    });
+    const failedJob = buildJobRow({
+      ...runningJob,
+      status: 'failed',
+      error_message: 'timed out',
+      completed_at: new Date(),
+      lease_expires_at: undefined
+    });
+    getJobByIdMock.mockResolvedValueOnce(runningJob);
+    updateClaimedJobTerminalMock.mockResolvedValueOnce(failedJob);
+
+    const record = await queue.waitForDagJobCompletion('job-1', {
+      timeoutMs: 5_000
+    });
+
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-1',
+      'failed',
+      expect.objectContaining({
+        fence: {
+          workerId: 'worker-a',
+          claimGeneration: '3'
+        },
+        output: null,
+        errorMessage: expect.stringContaining('DAG node execution')
+      })
+    );
+    expect(record.status).toBe('failed');
+  });
+
+  it('does not fail a newer owner after a running-timeout fence miss', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const createdAt = new Date(Date.now() - 30_000);
+    const oldStartedAt = new Date(Date.now() - 6_000);
+    getJobByIdMock
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'running',
+        claim_generation: '3',
+        last_worker_id: 'worker-a',
+        created_at: createdAt,
+        started_at: oldStartedAt,
+        last_heartbeat_at: oldStartedAt,
+        lease_expires_at: new Date(Date.now() + 30_000),
+        updated_at: oldStartedAt
+      }))
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'running',
+        claim_generation: '4',
+        last_worker_id: 'worker-b',
+        created_at: createdAt,
+        started_at: new Date(),
+        last_heartbeat_at: new Date(),
+        lease_expires_at: new Date(Date.now() + 30_000),
+        updated_at: new Date()
+      }))
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'completed',
+        claim_generation: '4',
+        last_worker_id: 'worker-b',
+        created_at: createdAt,
+        completed_at: new Date(),
+        updated_at: new Date()
+      }));
+    updateClaimedJobTerminalMock.mockResolvedValueOnce(null);
+
+    const record = await queue.waitForDagJobCompletion('job-1', {
+      pollIntervalMs: 1,
+      timeoutMs: 5_000
+    });
+
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-1',
+      'failed',
+      expect.objectContaining({
+        fence: {
+          workerId: 'worker-a',
+          claimGeneration: '3'
+        }
+      })
+    );
+    expect(record.status).toBe('completed');
   });
 
   it('measures running-job timeout from startedAt instead of queuedAt', async () => {
@@ -317,7 +467,7 @@ describe('DatabaseBackedDagJobQueue', () => {
       timeoutMs: 5_000
     });
 
-    expect(updateJobMock).not.toHaveBeenCalled();
+    expect(updateClaimedJobTerminalMock).not.toHaveBeenCalled();
     expect(record.status).toBe('completed');
     expect(sleepMock).toHaveBeenCalled();
   });

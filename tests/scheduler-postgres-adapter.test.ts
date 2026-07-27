@@ -13,6 +13,7 @@ function buildJob(overrides: Partial<JobData> = {}): JobData {
     worker_id: 'worker-origin',
     job_type: 'gpt',
     status: 'running',
+    claim_generation: '1',
     input: {
       gptId: 'arcanos-build'
     },
@@ -70,12 +71,29 @@ describe('PostgresQueueSchedulerAdapter', () => {
     });
 
     await expect(adapter.claimNext({
+      workerId: 'worker-1',
       priorityQueueEnabled: true,
       priorityLaneMaxPriority: 3
     })).resolves.toMatchObject({
       lane: 'standard',
       job
     });
+  });
+
+  it('rejects missing or blank worker ids before delegating a claim', async () => {
+    const claimNextPendingJob = jest.fn(async () => null);
+    const adapter = createPostgresQueueSchedulerAdapter({
+      claimNextPendingJob,
+      getJobQueueSummary: jest.fn(async () => null)
+    });
+
+    await expect(adapter.claimNext()).rejects.toThrow(
+      'require a non-empty workerId'
+    );
+    await expect(adapter.claimNext({ workerId: '  ' })).rejects.toThrow(
+      'require a non-empty workerId'
+    );
+    expect(claimNextPendingJob).not.toHaveBeenCalled();
   });
 
   it('maps JobData into the formal scheduler contract', () => {

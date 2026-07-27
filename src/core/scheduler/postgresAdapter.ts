@@ -2,6 +2,7 @@ import type { JobData } from '@core/db/schema.js';
 import {
   claimNextPendingJob,
   getJobQueueSummary,
+  type ClaimNextPendingJobOptions,
   type JobQueueSummary
 } from '@core/db/repositories/jobRepository.js';
 import { PRIORITY_QUEUE_LANE_MAX_PRIORITY } from '@shared/gpt/priorityGpt.js';
@@ -16,7 +17,7 @@ import type {
 } from './types.js';
 
 export interface PostgresSchedulerRepository {
-  claimNextPendingJob(options?: SchedulerClaimOptions): Promise<JobData | null>;
+  claimNextPendingJob(options: ClaimNextPendingJobOptions): Promise<JobData | null>;
   getJobQueueSummary(): Promise<JobQueueSummary | null>;
 }
 
@@ -96,13 +97,22 @@ export class PostgresQueueSchedulerAdapter implements QueueSchedulerAdapter<JobD
   async claimNext(
     options: SchedulerClaimOptions = {}
   ): Promise<SchedulerClaimResult<JobData>> {
-    const job = await this.repository.claimNextPendingJob(options);
+    const workerId = options.workerId?.trim();
+    if (!workerId) {
+      throw new TypeError('Postgres queue claims require a non-empty workerId.');
+    }
+
+    const claimOptions: ClaimNextPendingJobOptions = {
+      ...options,
+      workerId
+    };
+    const job = await this.repository.claimNextPendingJob(claimOptions);
 
     return {
       adapter: this.adapter,
       job,
       lane: job ? toJobSchedulingMetadata(job, {
-        priorityLaneMaxPriority: options.priorityLaneMaxPriority
+        priorityLaneMaxPriority: claimOptions.priorityLaneMaxPriority
       }).lane : null
     };
   }

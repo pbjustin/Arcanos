@@ -158,6 +158,7 @@ describe('jobRepository lifecycle recovery', () => {
     });
     expect(getJobUpdateSql()).toContain("status = 'pending'");
     expect(getJobUpdateSql()).toContain('retry_count = retry_count + 1');
+    expect(getJobUpdateSql()).not.toMatch(/claim_generation\s*=/u);
   });
 
   it('uses the global maxRetries fallback only when persisted max_retries is null', async () => {

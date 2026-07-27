@@ -78,10 +78,15 @@ export {
 
 export {
   createJob,
+  createClaimedJobFence,
   claimNextPendingJob,
+  deferJobForProviderRecovery,
+  failPendingJobIfUnclaimed,
+  normalizeJobClaimGeneration,
   recordJobHeartbeat,
   scheduleJobRetry,
   recoverStaleJobs,
+  updateClaimedJobTerminal,
   updateJob,
   getJobById,
   getLatestJob,
@@ -91,7 +96,13 @@ export {
   type JobExecutionStats,
   type CreateJobOptions,
   type ClaimNextPendingJobOptions,
+  type ClaimedJobFence,
+  type ClaimedJobTerminalStatus,
+  type DeferJobForProviderRecoveryOptions,
+  type FailPendingJobIfUnclaimedOptions,
+  type RecordJobHeartbeatOptions,
   type ScheduleJobRetryOptions,
+  type UpdateClaimedJobTerminalOptions,
   type RecoverStaleJobsOptions,
   type RecoverStaleJobsResult
 } from './repositories/jobRepository.js';

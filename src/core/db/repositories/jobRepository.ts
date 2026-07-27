@@ -33,6 +33,7 @@ interface JobEventSource {
   id: string;
   worker_id: string;
   last_worker_id?: string | null;
+  claim_generation?: string;
   correlation_id?: string | null;
   job_type: string;
   status: string;
@@ -123,18 +124,48 @@ export interface UpdateJobMetadata {
   cancelReason?: string | null;
 }
 
-export interface ClaimNextPendingJobOptions extends SchedulerClaimOptions {}
+export interface ClaimNextPendingJobOptions
+  extends Omit<SchedulerClaimOptions, 'workerId'> {
+  workerId: string;
+}
+
+export interface ClaimedJobFence {
+  workerId: string;
+  claimGeneration: string;
+}
+
+export interface RecordJobHeartbeatOptions {
+  fence: ClaimedJobFence;
+  leaseMs?: number;
+}
 
 export interface ScheduleJobRetryOptions {
-  workerId?: string;
+  fence: ClaimedJobFence;
   delayMs: number;
   errorMessage: string;
   autonomyState?: Record<string, unknown>;
 }
 
 export interface DeferJobForProviderRecoveryOptions {
-  workerId?: string;
+  fence: ClaimedJobFence;
   delayMs: number;
+  errorMessage: string;
+  autonomyState?: Record<string, unknown>;
+}
+
+export type ClaimedJobTerminalStatus = 'completed' | 'failed' | 'cancelled';
+
+export interface UpdateClaimedJobTerminalOptions {
+  fence: ClaimedJobFence;
+  output?: unknown;
+  errorMessage?: string | null;
+  autonomyState?: Record<string, unknown>;
+  metadata?: UpdateJobMetadata;
+}
+
+export interface FailPendingJobIfUnclaimedOptions {
+  claimGeneration: string;
+  output?: unknown;
   errorMessage: string;
   autonomyState?: Record<string, unknown>;
 }
@@ -320,6 +351,91 @@ function normalizeNullableString(value: string | null | undefined): string | nul
   return trimmedValue.length > 0 ? trimmedValue : null;
 }
 
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+const CLAIM_GENERATION_PATTERN = /^(0|[1-9]\d*)$/u;
+
+/**
+ * Validate a PostgreSQL BIGINT claim generation without converting it to a
+ * JavaScript number.
+ */
+export function normalizeJobClaimGeneration(
+  value: unknown,
+  context = 'job claim generation'
+): string {
+  if (typeof value !== 'string' || !CLAIM_GENERATION_PATTERN.test(value)) {
+    throw new TypeError(`${context} must be a non-negative decimal string.`);
+  }
+
+  if (value.length > 19) {
+    throw new RangeError(`${context} exceeds the PostgreSQL BIGINT range.`);
+  }
+
+  const generation = BigInt(value);
+  if (generation > POSTGRES_BIGINT_MAX) {
+    throw new RangeError(`${context} exceeds the PostgreSQL BIGINT range.`);
+  }
+
+  return value;
+}
+
+export function createClaimedJobFence(
+  workerId: string,
+  claimGeneration: unknown
+): ClaimedJobFence {
+  const normalizedWorkerId = normalizeNullableString(workerId);
+  if (!normalizedWorkerId) {
+    throw new TypeError('Claimed job fence workerId must be a non-empty string.');
+  }
+
+  return {
+    workerId: normalizedWorkerId,
+    claimGeneration: normalizeJobClaimGeneration(
+      claimGeneration,
+      'Claimed job fence claimGeneration'
+    )
+  };
+}
+
+function normalizeClaimedJob(
+  value: JobData | null | undefined,
+  context: string
+): JobData | null {
+  if (!value) {
+    return null;
+  }
+
+  normalizeJobClaimGeneration(value.claim_generation, context);
+  return value;
+}
+
+function resolveInitialClaimGeneration(status: string | undefined): string {
+  return status === 'running' ? '1' : '0';
+}
+
+function normalizeClaimedTerminalStatus(
+  status: unknown
+): ClaimedJobTerminalStatus {
+  if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+    throw new TypeError(
+      'Claimed job terminal status must be completed, failed, or cancelled.'
+    );
+  }
+
+  return status;
+}
+
+function readEventClaimGeneration(job: JobEventSource): string | null {
+  if (job.claim_generation === undefined) {
+    return null;
+  }
+
+  try {
+    return normalizeJobClaimGeneration(job.claim_generation, 'Job event claim generation');
+  } catch {
+    return null;
+  }
+}
+
 function logJobRepositoryError(operation: string, error: unknown): void {
   dbLogger.error(
     'job_repository.operation_failed',
@@ -387,6 +503,7 @@ function emitJobEvent(
     return;
   }
 
+  const claimGeneration = readEventClaimGeneration(job);
   void recordJobEvent({
     jobId: job.id,
     eventType,
@@ -395,7 +512,8 @@ function emitJobEvent(
     metadata: {
       jobType: job.job_type,
       status: job.status,
-      ...metadata
+      ...metadata,
+      ...(claimGeneration === null ? {} : { claimGeneration })
     }
   });
 }
@@ -629,7 +747,8 @@ export async function createJob(
        retention_until,
        expires_at,
        cancel_requested_at,
-       cancel_reason
+       cancel_reason,
+       claim_generation
      )
      VALUES (
        $1,
@@ -654,7 +773,8 @@ export async function createJob(
        $20::timestamptz,
        $21::timestamptz,
        $22::timestamptz,
-       $23
+       $23,
+       $24::bigint
      )
      RETURNING *`,
     [
@@ -683,11 +803,18 @@ export async function createJob(
       lifecycleDefaults.retentionUntil,
       normalizeNullableDate(options.expiresAt),
       normalizeNullableDate(options.cancelRequestedAt),
-      normalizeNullableString(options.cancelReason ?? null)
+      normalizeNullableString(options.cancelReason ?? null),
+      resolveInitialClaimGeneration(options.status)
     ]
   );
 
-  const createdJob = result.rows[0] as JobData;
+  const createdJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Created job claim_generation'
+  );
+  if (!createdJob) {
+    throw new Error('Job insert did not return a row.');
+  }
   emitJobEvent(createdJob, 'job.created');
   if (createdJob.status === 'pending') {
     emitJobEvent(createdJob, 'job.queued');
@@ -763,18 +890,25 @@ export async function updateJob(
      WHERE id = $12
        AND (
          NOT $4::boolean
+         OR status <> 'running'
+       )
+       AND (
+         NOT $4::boolean
          OR status NOT IN ('completed', 'failed', 'cancelled', 'expired')
          OR status = $1::varchar(50)
        )
      RETURNING *
      )
      SELECT *
-     FROM updated_job
-     UNION ALL
-     SELECT *
-     FROM current_job
-     WHERE NOT EXISTS (SELECT 1 FROM updated_job)
-     LIMIT 1`,
+     FROM (
+       SELECT updated_job.*, TRUE AS __arcanos_updated
+       FROM updated_job
+       UNION ALL
+       SELECT current_job.*, FALSE AS __arcanos_updated
+       FROM current_job
+       WHERE NOT EXISTS (SELECT 1 FROM updated_job)
+       LIMIT 1
+     ) AS job_result`,
     [
       status,
       normalizeJsonbInput(output, 'jobRepository.updateJob.output'),
@@ -794,15 +928,167 @@ export async function updateJob(
     ]
   );
 
-  const updatedJob = result.rows[0] as JobData;
-  if (status === 'completed') {
+  const resultRow = result.rows[0] as
+    | (JobData & { __arcanos_updated?: boolean })
+    | undefined;
+  if (!resultRow) {
+    return resultRow as unknown as JobData;
+  }
+
+  const {
+    __arcanos_updated: wasUpdated = true,
+    ...jobFields
+  } = resultRow;
+  const updatedJob = jobFields as JobData;
+  if (wasUpdated && status === 'completed') {
     emitJobEvent(updatedJob, 'job.completed');
-  } else if (status === 'failed') {
+  } else if (wasUpdated && status === 'failed') {
     emitJobEvent(updatedJob, 'job.failed', {
       hasError: normalizeNullableString(errorMessage) !== null
     });
+  } else if (wasUpdated && status === 'cancelled') {
+    emitJobEvent(updatedJob, 'job.cancelled');
   }
   return updatedJob;
+}
+
+/**
+ * Persist a claimed worker's terminal outcome behind its exact live lease
+ * fence. A stale worker receives `null` and cannot overwrite a newer claim.
+ */
+export async function updateClaimedJobTerminal(
+  jobId: string,
+  status: ClaimedJobTerminalStatus,
+  options: UpdateClaimedJobTerminalOptions
+): Promise<JobData | null> {
+  const terminalStatus = normalizeClaimedTerminalStatus(status);
+  assertDatabaseReady();
+
+  const fence = createClaimedJobFence(
+    options.fence.workerId,
+    options.fence.claimGeneration
+  );
+  const metadata = options.metadata ?? {};
+  const result = await query(
+    `UPDATE job_data
+     SET
+       status = $1::varchar(50),
+       output = $2::jsonb,
+       error_message = $3,
+       updated_at = NOW(),
+       completed_at = COALESCE(completed_at, NOW()),
+       last_heartbeat_at = NULL,
+       lease_expires_at = NULL,
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb,
+       idempotency_until = COALESCE($5::timestamptz, idempotency_until),
+       retention_until = COALESCE($6::timestamptz, retention_until),
+       expires_at = COALESCE($7::timestamptz, expires_at),
+       cancel_requested_at = CASE
+         WHEN $8::timestamptz IS NOT NULL THEN $8::timestamptz
+         WHEN $1::varchar(50) = 'cancelled'::varchar(50) THEN COALESCE(cancel_requested_at, NOW())
+         ELSE cancel_requested_at
+       END,
+       cancel_reason = COALESCE($9, cancel_reason)
+     WHERE id = $10
+       AND status = 'running'
+       AND last_worker_id = $11::text
+       AND claim_generation = $12::bigint
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at >= NOW()
+     RETURNING *`,
+    [
+      terminalStatus,
+      normalizeJsonbInput(
+        options.output ?? null,
+        'jobRepository.updateClaimedJobTerminal.output'
+      ),
+      options.errorMessage ?? null,
+      normalizeJsonbInput(
+        normalizeAutonomyState(options.autonomyState),
+        'jobRepository.updateClaimedJobTerminal.autonomyState'
+      ),
+      normalizeNullableDate(metadata.idempotencyUntil),
+      normalizeNullableDate(metadata.retentionUntil),
+      normalizeNullableDate(metadata.expiresAt),
+      normalizeNullableDate(metadata.cancelRequestedAt),
+      normalizeNullableString(metadata.cancelReason ?? null),
+      jobId,
+      fence.workerId,
+      fence.claimGeneration
+    ]
+  );
+
+  const terminalJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Terminal job claim_generation'
+  );
+  if (terminalStatus === 'completed') {
+    emitJobEvent(terminalJob, 'job.completed');
+  } else if (terminalStatus === 'failed') {
+    emitJobEvent(terminalJob, 'job.failed', {
+      hasError: normalizeNullableString(options.errorMessage ?? null) !== null
+    });
+  } else {
+    emitJobEvent(terminalJob, 'job.cancelled');
+  }
+  return terminalJob;
+}
+
+/**
+ * Fail a pending job only while the exact observed generation remains
+ * unclaimed. A concurrent claim changes status/lease/generation and makes the
+ * compare-and-set return `null`.
+ */
+export async function failPendingJobIfUnclaimed(
+  jobId: string,
+  options: FailPendingJobIfUnclaimedOptions
+): Promise<JobData | null> {
+  assertDatabaseReady();
+
+  const claimGeneration = normalizeJobClaimGeneration(
+    options.claimGeneration,
+    'Pending job claim generation'
+  );
+  const result = await query(
+    `UPDATE job_data
+     SET
+       status = 'failed',
+       output = $1::jsonb,
+       error_message = $2,
+       updated_at = NOW(),
+       completed_at = COALESCE(completed_at, NOW()),
+       last_heartbeat_at = NULL,
+       lease_expires_at = NULL,
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
+     WHERE id = $4
+       AND status = 'pending'
+       AND claim_generation = $5::bigint
+       AND lease_expires_at IS NULL
+     RETURNING *`,
+    [
+      normalizeJsonbInput(
+        options.output ?? null,
+        'jobRepository.failPendingJobIfUnclaimed.output'
+      ),
+      options.errorMessage,
+      normalizeJsonbInput(
+        normalizeAutonomyState(options.autonomyState),
+        'jobRepository.failPendingJobIfUnclaimed.autonomyState'
+      ),
+      jobId,
+      claimGeneration
+    ]
+  );
+
+  const failedJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Failed pending job claim_generation'
+  );
+  emitJobEvent(failedJob, 'job.failed', {
+    hasError: normalizeNullableString(options.errorMessage) !== null,
+    timeoutBeforeClaim: true
+  });
+  return failedJob;
 }
 
 /**
@@ -817,7 +1103,10 @@ export async function getJobById(jobId: string): Promise<JobData | null> {
   assertDatabaseReady();
 
   const result = await query('SELECT * FROM job_data WHERE id = $1 LIMIT 1', [jobId]);
-  return (result.rows[0] as JobData | undefined) ?? null;
+  return normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Fetched job claim_generation'
+  );
 }
 
 async function findReusableGptJobByIdempotencyKey(
@@ -852,7 +1141,10 @@ async function findReusableGptJobByIdempotencyKey(
     [options.idempotencyScopeHash, options.idempotencyKeyHash]
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  return normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Reusable GPT job claim_generation'
+  );
 }
 
 async function findReusableGptJobByFingerprint(
@@ -890,7 +1182,10 @@ async function findReusableGptJobByFingerprint(
     [options.idempotencyScopeHash, options.requestFingerprintHash, reusableStatuses]
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  return normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Reusable GPT job claim_generation'
+  );
 }
 
 function classifyGptJobReuse(job: JobData): FindOrCreateGptJobResult['dedupeReason'] {
@@ -1022,7 +1317,8 @@ export async function findOrCreateGptJob(
          retention_until,
          expires_at,
          cancel_requested_at,
-         cancel_reason
+         cancel_reason,
+         claim_generation
        )
        VALUES (
          $1,
@@ -1047,7 +1343,8 @@ export async function findOrCreateGptJob(
          $19::timestamptz,
          $20::timestamptz,
          $21::timestamptz,
-         $22
+         $22,
+         $23::bigint
        )
        RETURNING *`,
       [
@@ -1075,11 +1372,18 @@ export async function findOrCreateGptJob(
         lifecycleDefaults.retentionUntil,
         normalizeNullableDate(createOptions.expiresAt),
         normalizeNullableDate(createOptions.cancelRequestedAt),
-        normalizeNullableString(createOptions.cancelReason ?? null)
+        normalizeNullableString(createOptions.cancelReason ?? null),
+        resolveInitialClaimGeneration(createOptions.status)
       ]
     );
 
-    const createdJob = result.rows[0] as JobData;
+    const createdJob = normalizeClaimedJob(
+      result.rows[0] as JobData | undefined,
+      'Created GPT job claim_generation'
+    );
+    if (!createdJob) {
+      throw new Error('GPT job insert did not return a row.');
+    }
     await client.query('COMMIT');
     emitJobEvent(createdJob, 'job.created');
     if (createdJob.status === 'pending') {
@@ -1310,12 +1614,12 @@ async function claimPendingJobWithLane(
   client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> },
   params: {
     leaseMs: number;
-    workerId?: string | null;
+    workerId: string;
     lane: PriorityQueueClaimLane;
     priorityLaneMaxPriority: number;
   }
 ): Promise<JobData | null> {
-  const queryParams: unknown[] = [params.leaseMs, params.workerId ?? null];
+  const queryParams: unknown[] = [params.leaseMs, params.workerId];
   const normalLaneFilter = params.lane === 'normal'
     ? `AND NOT (job_type = 'gpt' AND priority <= $3)`
     : '';
@@ -1331,7 +1635,8 @@ async function claimPendingJobWithLane(
        started_at = COALESCE(started_at, NOW()),
        last_heartbeat_at = NOW(),
        lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
-       last_worker_id = COALESCE($2, last_worker_id)
+       last_worker_id = $2,
+       claim_generation = claim_generation + 1
      WHERE id = (
        SELECT id
        FROM job_data
@@ -1347,7 +1652,10 @@ async function claimPendingJobWithLane(
     queryParams
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  return normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Claimed job claim_generation'
+  );
 }
 
 function updatePriorityQueueFairnessAfterClaim(
@@ -1371,8 +1679,13 @@ function updatePriorityQueueFairnessAfterClaim(
  * Edge case behavior: ignores pending jobs scheduled for the future and returns `null` when none are due.
  */
 export async function claimNextPendingJob(
-  options: ClaimNextPendingJobOptions = {}
+  options: ClaimNextPendingJobOptions
 ): Promise<JobData | null> {
+  const workerId = normalizeNullableString(options?.workerId);
+  if (!workerId) {
+    throw new TypeError('claimNextPendingJob requires a non-empty workerId.');
+  }
+
   assertDatabaseReady();
 
   const pool = getPool();
@@ -1399,7 +1712,7 @@ export async function claimNextPendingJob(
       });
       claimedJob = await claimPendingJobWithLane(client, {
         leaseMs,
-        workerId: options.workerId ?? null,
+        workerId,
         lane: firstLane,
         priorityLaneMaxPriority
       });
@@ -1407,7 +1720,7 @@ export async function claimNextPendingJob(
       if (!claimedJob && firstLane === 'normal') {
         claimedJob = await claimPendingJobWithLane(client, {
           leaseMs,
-          workerId: options.workerId ?? null,
+          workerId,
           lane: 'priority',
           priorityLaneMaxPriority
         });
@@ -1445,33 +1758,35 @@ export async function claimNextPendingJob(
  */
 export async function recordJobHeartbeat(
   jobId: string,
-  options: ClaimNextPendingJobOptions = {}
+  options: RecordJobHeartbeatOptions
 ): Promise<JobData | null> {
   assertDatabaseReady();
 
+  const fence = createClaimedJobFence(
+    options.fence.workerId,
+    options.fence.claimGeneration
+  );
   const leaseMs = Math.max(1_000, options.leaseMs ?? 30_000);
   const result = await query(
     `UPDATE job_data
      SET
        updated_at = NOW(),
        last_heartbeat_at = NOW(),
-       lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
-       last_worker_id = COALESCE($2, last_worker_id)
-     WHERE id = $3
+       lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond')
+     WHERE id = $4
        AND status = 'running'
-       AND (
-         $2::text IS NULL
-         OR last_worker_id = $2::text
-       )
-       AND (
-         $2::text IS NULL
-         OR lease_expires_at >= NOW()
-       )
+       AND last_worker_id = $2::text
+       AND claim_generation = $3::bigint
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at >= NOW()
      RETURNING *`,
-    [leaseMs, options.workerId ?? null, jobId]
+    [leaseMs, fence.workerId, fence.claimGeneration, jobId]
   );
 
-  const heartbeatJob = (result.rows[0] as JobData | undefined) ?? null;
+  const heartbeatJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Heartbeat job claim_generation'
+  );
   if (shouldRecordHeartbeatJobEvents()) {
     emitJobEvent(heartbeatJob, 'worker.heartbeat', {
       leaseMs
@@ -1492,6 +1807,10 @@ export async function scheduleJobRetry(
 ): Promise<JobData | null> {
   assertDatabaseReady();
 
+  const fence = createClaimedJobFence(
+    options.fence.workerId,
+    options.fence.claimGeneration
+  );
   const result = await query(
     `UPDATE job_data
      SET
@@ -1509,32 +1828,31 @@ export async function scheduleJobRetry(
        expires_at = NULL,
        cancel_requested_at = NULL,
        cancel_reason = NULL,
-       last_worker_id = COALESCE($3, last_worker_id),
-       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
-     WHERE id = $5
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
+     WHERE id = $4
        AND status = 'running'
-       AND (
-         $3::text IS NULL
-         OR last_worker_id = $3::text
-       )
-       AND (
-         $3::text IS NULL
-         OR lease_expires_at >= NOW()
-       )
+       AND last_worker_id = $5::text
+       AND claim_generation = $6::bigint
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at >= NOW()
      RETURNING *`,
     [
       options.errorMessage,
       Math.max(0, options.delayMs),
-      options.workerId ?? null,
       normalizeJsonbInput(
         normalizeAutonomyState(options.autonomyState),
         'jobRepository.scheduleJobRetry.autonomyState'
       ),
-      jobId
+      jobId,
+      fence.workerId,
+      fence.claimGeneration
     ]
   );
 
-  const retriedJob = (result.rows[0] as JobData | undefined) ?? null;
+  const retriedJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Retried job claim_generation'
+  );
   emitJobEvent(retriedJob, 'job.retry.scheduled', {
     delayMs: Math.max(0, options.delayMs),
     hasError: normalizeNullableString(options.errorMessage) !== null
@@ -1554,6 +1872,10 @@ export async function deferJobForProviderRecovery(
 ): Promise<JobData | null> {
   assertDatabaseReady();
 
+  const fence = createClaimedJobFence(
+    options.fence.workerId,
+    options.fence.claimGeneration
+  );
   const result = await query(
     `UPDATE job_data
      SET
@@ -1564,24 +1886,38 @@ export async function deferJobForProviderRecovery(
        completed_at = NULL,
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
-       last_worker_id = COALESCE($3, last_worker_id),
-       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
-     WHERE id = $5
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
+     WHERE id = $4
        AND status = 'running'
+       AND last_worker_id = $5::text
+       AND claim_generation = $6::bigint
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at >= NOW()
      RETURNING *`,
     [
       options.errorMessage,
       Math.max(0, options.delayMs),
-      options.workerId ?? null,
       normalizeJsonbInput(
         normalizeAutonomyState(options.autonomyState),
         'jobRepository.deferJobForProviderRecovery.autonomyState'
       ),
-      jobId
+      jobId,
+      fence.workerId,
+      fence.claimGeneration
     ]
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  const deferredJob = normalizeClaimedJob(
+    result.rows[0] as JobData | undefined,
+    'Deferred job claim_generation'
+  );
+  emitJobEvent(deferredJob, 'job.retry.scheduled', {
+    delayMs: Math.max(0, options.delayMs),
+    hasError: normalizeNullableString(options.errorMessage) !== null,
+    providerDeferral: true,
+    retryBudgetConsumed: false
+  });
+  return deferredJob;
 }
 
 /**
@@ -1606,7 +1942,7 @@ export async function recoverStaleJobs(
     await client.query('BEGIN');
 
     const staleResult = await client.query(
-      `SELECT id, worker_id, last_worker_id, correlation_id, job_type, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
+      `SELECT id, worker_id, last_worker_id, claim_generation, correlation_id, job_type, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
        FROM job_data
        WHERE status = 'running'
          AND job_type <> 'local-agent'
@@ -1628,6 +1964,7 @@ export async function recoverStaleJobs(
       id: string;
       worker_id: string;
       last_worker_id: string | null;
+      claim_generation: string;
       correlation_id: string | null;
       job_type: string;
       status: string;
@@ -1828,7 +2165,8 @@ export async function recoverStalledJobsForWorkers(
          cancel_requested_at,
          cancel_reason,
          correlation_id,
-         last_worker_id
+         last_worker_id,
+         claim_generation
        FROM job_data
        WHERE status = 'running'
          AND job_type <> 'local-agent'
@@ -1861,6 +2199,7 @@ export async function recoverStalledJobsForWorkers(
       cancel_reason: string | null;
       correlation_id: string | null;
       last_worker_id: string | null;
+      claim_generation: string;
     }>) {
       stalledJobIds.push(row.id);
       if (row.last_worker_id) {

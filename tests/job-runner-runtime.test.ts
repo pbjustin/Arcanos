@@ -432,6 +432,18 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry')");
   });
 
+  it('uses live claim-generation fences for worker heartbeats and terminal outcomes', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+
+    expect(source).toContain('createClaimedJobFence(');
+    expect(source).toContain('job.claim_generation');
+    expect(source).toContain('updateClaimedJobTerminal(');
+    expect(source).not.toContain('await updateJob(');
+    expect(source).toContain("failureResult.action === 'lease_lost'");
+    expect(source).not.toContain("outcome: 'lease_lost'");
+    expect(source).toContain('claimGeneration: job.claim_generation');
+  });
+
   it('preloads the module registry before declaring the worker ready or claiming jobs', () => {
     const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
     const enabledGuardIndex = source.indexOf('if (!entrypointRuntimeMode.enabled)');

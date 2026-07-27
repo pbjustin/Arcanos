@@ -6,6 +6,7 @@ const queryMock = jest.fn();
 const clientQueryMock = jest.fn();
 const clientReleaseMock = jest.fn();
 const poolConnectMock = jest.fn();
+const recordJobEventMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: getPoolMock,
@@ -14,6 +15,10 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
 
 jest.unstable_mockModule('@core/db/query.js', () => ({
   query: queryMock
+}));
+
+jest.unstable_mockModule('../src/core/db/repositories/jobEventRepository.js', () => ({
+  recordJobEvent: recordJobEventMock
 }));
 
 const {
@@ -50,7 +55,29 @@ describe('jobRepository.claimNextPendingJob', () => {
     expect(updateCall).toBeDefined();
     expect(updateCall?.[0]).not.toContain('$3');
     expect(updateCall?.[0]).toContain("job_type <> 'local-agent'");
+    expect(updateCall?.[0]).toContain('claim_generation = claim_generation + 1');
+    expect(updateCall?.[0]).toContain('last_worker_id = $2');
     expect(updateCall?.[1]).toEqual([12_000, 'worker-1']);
+  });
+
+  it.each([undefined, '', '   '])(
+    'rejects an unusable worker id before touching the database: %p',
+    async (workerId) => {
+      await expect(claimNextPendingJob({
+        workerId: workerId as string,
+        leaseMs: 12_000
+      })).rejects.toThrow('requires a non-empty workerId');
+
+      expect(getPoolMock).not.toHaveBeenCalled();
+      expect(clientQueryMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects a missing claim options object before touching the database', async () => {
+    await expect(claimNextPendingJob(undefined as never)).rejects.toThrow(
+      'requires a non-empty workerId'
+    );
+    expect(getPoolMock).not.toHaveBeenCalled();
   });
 
   it('does not run a redundant normal-lane fallback after an empty priority-lane claim', async () => {
@@ -75,7 +102,7 @@ describe('jobRepository.claimNextPendingJob', () => {
       if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
         updateQueryCount += 1;
         return updateQueryCount === 1
-          ? { rows: [{ id: 'priority-job', job_type: 'gpt', priority: 0 }] }
+          ? { rows: [{ id: 'priority-job', job_type: 'gpt', priority: 0, claim_generation: '1' }] }
           : { rows: [] };
       }
 
@@ -109,6 +136,12 @@ describe('jobRepository.claimNextPendingJob', () => {
     expect(updateCalls[0]?.[1]).toEqual([12_000, 'worker-1', 3]);
     expect(updateCalls[1]?.[0]).not.toContain('$3');
     expect(updateCalls[1]?.[1]).toEqual([12_000, 'worker-1']);
+    expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'job.claimed',
+      metadata: expect.objectContaining({
+        claimGeneration: '1'
+      })
+    }));
   });
 
   it('claims five priority jobs before one normal job when both lanes have backlog', async () => {
@@ -121,7 +154,8 @@ describe('jobRepository.claimNextPendingJob', () => {
           rows: [{
             id: `${lane}-job-${laneClaims.length}`,
             job_type: lane === 'priority' ? 'gpt' : 'task',
-            priority: lane === 'priority' ? 0 : 85
+            priority: lane === 'priority' ? 0 : 85,
+            claim_generation: String(laneClaims.length)
           }]
         };
       }
@@ -175,11 +209,15 @@ describe('jobRepository.claimNextPendingJob', () => {
         if (updateQueryCount === 1) {
           resolveFirstUpdateStarted();
           await firstUpdateAllowed;
-          return { rows: [{ id: 'priority-job', job_type: 'gpt', priority: 0 }] };
+          return {
+            rows: [{ id: 'priority-job', job_type: 'gpt', priority: 0, claim_generation: '1' }]
+          };
         }
 
         if (updateQueryCount === 2) {
-          return { rows: [{ id: 'normal-job', job_type: 'task', priority: 85 }] };
+          return {
+            rows: [{ id: 'normal-job', job_type: 'task', priority: 85, claim_generation: '1' }]
+          };
         }
 
         return { rows: [] };

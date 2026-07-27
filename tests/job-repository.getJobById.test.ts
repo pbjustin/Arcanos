@@ -53,7 +53,8 @@ describe('jobRepository.getJobById', () => {
     const job = {
       id: 'job-found',
       job_type: 'gpt',
-      status: 'running'
+      status: 'running',
+      claim_generation: '1'
     };
     queryMock.mockResolvedValue({ rows: [job] });
 

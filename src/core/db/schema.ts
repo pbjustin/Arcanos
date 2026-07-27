@@ -9,6 +9,25 @@ import { z } from 'zod';
 import { getPool } from './client.js';
 
 // Zod Schemas for Database Entities
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+export const PostgreSQLBigintDecimalSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/u)
+  .refine(
+    value => {
+      if (value.length > 19) {
+        return false;
+      }
+
+      try {
+        return BigInt(value) <= POSTGRES_BIGINT_MAX;
+      } catch {
+        return false;
+      }
+    },
+    'Value exceeds the PostgreSQL BIGINT range.'
+  );
+
 export const MemoryEntrySchema = z.object({
   id: z.number(),
   key: z.string(),
@@ -32,6 +51,7 @@ export const JobDataSchema = z.object({
   worker_id: z.string(),
   job_type: z.string(),
   status: z.string(),
+  claim_generation: PostgreSQLBigintDecimalSchema,
   input: z.unknown(),
   output: z.unknown().optional(),
   error_message: z.string().optional(),
@@ -277,6 +297,7 @@ export const TABLE_DEFINITIONS = [
     worker_id VARCHAR(255) NOT NULL,
     job_type VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    claim_generation BIGINT NOT NULL DEFAULT 0,
     input JSONB NOT NULL,
     output JSONB,
     error_message TEXT,
@@ -303,6 +324,61 @@ export const TABLE_DEFINITIONS = [
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ
   )`,
+  `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS claim_generation BIGINT`,
+  `DO $$
+   DECLARE
+     claim_generation_type OID;
+   BEGIN
+     SELECT atttypid
+     INTO claim_generation_type
+     FROM pg_attribute
+     WHERE attrelid = 'job_data'::regclass
+       AND attname = 'claim_generation'
+       AND NOT attisdropped;
+
+     IF claim_generation_type IS DISTINCT FROM 'bigint'::regtype THEN
+       RAISE EXCEPTION
+         'job_data.claim_generation must have PostgreSQL BIGINT type'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `UPDATE job_data SET claim_generation = 0 WHERE claim_generation IS NULL`,
+  `ALTER TABLE job_data ALTER COLUMN claim_generation SET DEFAULT 0`,
+  `ALTER TABLE job_data ALTER COLUMN claim_generation SET NOT NULL`,
+  `DO $$
+   DECLARE
+     constraint_type "char";
+     constraint_definition TEXT;
+   BEGIN
+     SELECT contype, pg_get_constraintdef(oid, false)
+     INTO constraint_type, constraint_definition
+       FROM pg_constraint
+       WHERE conrelid = 'job_data'::regclass
+         AND conname = 'job_data_claim_generation_nonnegative';
+
+     IF constraint_definition IS NULL THEN
+       ALTER TABLE job_data
+         ADD CONSTRAINT job_data_claim_generation_nonnegative
+         CHECK (claim_generation >= 0) NOT VALID;
+     ELSIF constraint_type <> 'c'
+       OR regexp_replace(
+         constraint_definition,
+         '[[:space:]]+',
+         '',
+         'g'
+       ) NOT IN (
+         'CHECK((claim_generation>=0))',
+         'CHECK((claim_generation>=0))NOTVALID'
+       ) THEN
+       RAISE EXCEPTION
+         'job_data_claim_generation_nonnegative has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `ALTER TABLE job_data
+     VALIDATE CONSTRAINT job_data_claim_generation_nonnegative`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 2`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,

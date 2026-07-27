@@ -1,7 +1,9 @@
 import {
+  createClaimedJobFence,
   createJob,
+  failPendingJobIfUnclaimed,
   getJobById,
-  updateJob
+  updateClaimedJobTerminal
 } from '../core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '../services/workerAutonomyService.js';
 import type { DAGNode, DAGResult } from '../dag/dagNode.js';
@@ -163,6 +165,24 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
     );
     const queueClaimGraceMs = getWorkerExecutionLimits().dagQueueClaimGraceMs;
     let previousStatus: DagQueueJobRecord['status'] | undefined;
+    const rereadAfterTimeoutCasMiss = async (): Promise<DagQueueJobRecord | null> => {
+      const currentJob = await getJobById(jobId);
+      if (!currentJob) {
+        throw new Error(`DAG queue job "${jobId}" no longer exists.`);
+      }
+
+      const currentRecord = buildDagQueueJobRecord(currentJob);
+      if (currentRecord.status !== previousStatus) {
+        previousStatus = currentRecord.status;
+        options.onStatusChange?.(currentRecord);
+      }
+      if (currentRecord.status === 'completed' || currentRecord.status === 'failed') {
+        return currentRecord;
+      }
+
+      await sleep(pollIntervalMs);
+      return null;
+    };
 
     //audit Assumption: polling is acceptable for the first DAG scaffold on top of `job_data`; failure risk: excessive DB churn; expected invariant: poll interval remains bounded and terminal states stop the loop; handling strategy: use short configurable polling with an explicit timeout.
     while (true) {
@@ -198,13 +218,24 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
         normalizedRecord.status !== 'running' &&
         queueElapsedMs > effectiveExecutionTimeoutMs + queueClaimGraceMs
       ) {
-        const timedOutJob = await updateJob(
-          jobId,
-          'failed',
-          null,
-          `Timed out waiting ${queueElapsedMs}ms for DAG node claim (execution limit ${effectiveExecutionTimeoutMs}ms, queue grace ${queueClaimGraceMs}ms).`
-        );
-        return buildDagQueueJobRecord(timedOutJob);
+        const errorMessage =
+          `Timed out waiting ${queueElapsedMs}ms for DAG node claim (execution limit ${effectiveExecutionTimeoutMs}ms, queue grace ${queueClaimGraceMs}ms).`;
+        const timedOutJob = job.status === 'pending'
+          ? await failPendingJobIfUnclaimed(jobId, {
+              claimGeneration: job.claim_generation,
+              output: null,
+              errorMessage
+            })
+          : null;
+        if (timedOutJob) {
+          return buildDagQueueJobRecord(timedOutJob);
+        }
+
+        const currentRecord = await rereadAfterTimeoutCasMiss();
+        if (currentRecord) {
+          return currentRecord;
+        }
+        continue;
       }
 
       //audit Assumption: once a node is running, the execution limit should measure active runtime rather than queue age; failure risk: long-running AI stages outlive their guardrails indefinitely; expected invariant: running nodes become terminal once they exceed the configured execution timeout; handling strategy: fail closed with an execution-specific timeout message.
@@ -212,13 +243,31 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
         normalizedRecord.status === 'running' &&
         executionElapsedMs > effectiveExecutionTimeoutMs
       ) {
-        const timedOutJob = await updateJob(
-          jobId,
-          'failed',
-          null,
-          `Timed out after ${executionElapsedMs}ms of DAG node execution (limit ${effectiveExecutionTimeoutMs}ms).`
-        );
-        return buildDagQueueJobRecord(timedOutJob);
+        const lastWorkerId = job.last_worker_id?.trim();
+        const timedOutJob = lastWorkerId
+          ? await updateClaimedJobTerminal(
+              jobId,
+              'failed',
+              {
+                fence: createClaimedJobFence(
+                  lastWorkerId,
+                  job.claim_generation
+                ),
+                output: null,
+                errorMessage:
+                  `Timed out after ${executionElapsedMs}ms of DAG node execution (limit ${effectiveExecutionTimeoutMs}ms).`
+              }
+            )
+          : null;
+        if (timedOutJob) {
+          return buildDagQueueJobRecord(timedOutJob);
+        }
+
+        const currentRecord = await rereadAfterTimeoutCasMiss();
+        if (currentRecord) {
+          return currentRecord;
+        }
+        continue;
       }
 
       await sleep(pollIntervalMs);

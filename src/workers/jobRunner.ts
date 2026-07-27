@@ -9,10 +9,12 @@
  */
 
 import {
+  createClaimedJobFence,
   getJobById,
   JobRepositoryUnavailableError,
-  updateJob
+  updateClaimedJobTerminal
 } from '@core/db/repositories/jobRepository.js';
+import type { JobData } from '@core/db/schema.js';
 import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
@@ -785,16 +787,30 @@ async function executeQueuedGptRequest(params: {
   };
 }
 
+interface JobHeartbeatLoopHandle {
+  stop: () => void;
+}
+
 function startHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
-  jobId: string,
+  job: Pick<JobData, 'id' | 'claim_generation'>,
   workerId: string,
   onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void
-): NodeJS.Timeout {
+): JobHeartbeatLoopHandle {
+  let stopped = false;
   const runHeartbeat = createNonOverlappingTaskRunner(
     async () => {
-      const job = await autonomyService.recordHeartbeat(jobId, { source: 'job-heartbeat' });
-      onHeartbeat?.(job);
+      if (stopped) {
+        return;
+      }
+
+      const heartbeatJob = await autonomyService.recordHeartbeat(job, {
+        source: 'job-heartbeat',
+        shouldApplyResult: () => !stopped
+      });
+      if (!stopped) {
+        onHeartbeat?.(heartbeatJob);
+      }
     },
     {
       taskName: 'job-heartbeat',
@@ -803,10 +819,14 @@ function startHeartbeatLoop(
   );
 
   const intervalHandle = setInterval(() => {
+    if (stopped) {
+      return;
+    }
+
     void runHeartbeat().catch((error: unknown) => {
       logger.warn(
         'worker.job_heartbeat.failed',
-        { module: 'job-runner', workerId, jobId },
+        { module: 'job-runner', workerId, jobId: job.id },
         { errorMessage: resolveErrorMessage(error) },
         error instanceof Error ? error : undefined
       );
@@ -819,7 +839,16 @@ function startHeartbeatLoop(
     intervalHandle.unref();
   }
 
-  return intervalHandle;
+  return {
+    stop: () => {
+      if (stopped) {
+        return;
+      }
+
+      stopped = true;
+      clearInterval(intervalHandle);
+    }
+  };
 }
 
 function startWorkerHeartbeatLoop(
@@ -1083,6 +1112,10 @@ async function runWorkerConsumerSlot(
         continue;
       }
 
+      const claimFence = createClaimedJobFence(
+        slotDefinition.workerId,
+        job.claim_generation
+      );
       consecutiveIdleClaims = 0;
       autonomyService.recordClaimResult('claimed_job');
       logger.info('[worker-runtime] claimed job', {
@@ -1101,6 +1134,7 @@ async function runWorkerConsumerSlot(
         workerId: slotDefinition.workerId,
         metadata: {
           jobType: job.job_type,
+          claimGeneration: job.claim_generation,
           retryCount: job.retry_count ?? 0,
           maxRetries: job.max_retries ?? null
         }
@@ -1156,7 +1190,7 @@ async function runWorkerConsumerSlot(
           );
         }
       };
-      let heartbeatHandle: NodeJS.Timeout | null = null;
+      let heartbeatHandle: JobHeartbeatLoopHandle | null = null;
       const jobStartedAtMs = Date.now();
       let jobLeaseLost = false;
 
@@ -1174,7 +1208,7 @@ async function runWorkerConsumerSlot(
         }
         heartbeatHandle = startHeartbeatLoop(
           autonomyService,
-          job.id,
+          job,
           slotDefinition.workerId,
           (updatedJob) => {
             if (!updatedJob) {
@@ -1260,6 +1294,8 @@ async function runWorkerConsumerSlot(
           }, { aiUsage: aiUsageSummary });
         }
 
+        heartbeatHandle?.stop();
+        heartbeatHandle = null;
         if (jobLeaseLost) {
           logger.warn('worker.job_lease_lost.local_stop', {
             module: 'job-runner',
@@ -1272,11 +1308,6 @@ async function runWorkerConsumerSlot(
             job.id,
             'Job lease lost or job completed elsewhere.'
           );
-          recordWorkerJobDuration({
-            jobType: job.job_type,
-            outcome: 'lease_lost',
-            durationMs: Date.now() - jobStartedAtMs,
-          });
           continue;
         }
         
@@ -1286,14 +1317,23 @@ async function runWorkerConsumerSlot(
           job.job_type === 'gpt'
             ? computeGptJobLifecycleDeadlines('completed')
             : { idempotencyUntil: null, retentionUntil: null };
-        await updateJob(
+        const terminalJob = await updateClaimedJobTerminal(
           job.id,
           'completed',
-          outcome.output,
-          null,
-          undefined,
-          lifecycleDeadlines
+          {
+            fence: claimFence,
+            output: outcome.output,
+            errorMessage: null,
+            metadata: lifecycleDeadlines
+          }
         );
+        if (!terminalJob) {
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Completion fence was lost before the job could be finalized.'
+          );
+          continue;
+        }
         await autonomyService.markJobCompleted(job.id);
         recordWorkerJobDuration({
           jobType: job.job_type,
@@ -1333,18 +1373,27 @@ async function runWorkerConsumerSlot(
           job.job_type === 'gpt'
             ? computeGptJobLifecycleDeadlines('cancelled')
             : { idempotencyUntil: null, retentionUntil: null };
-        await updateJob(
+        const terminalJob = await updateClaimedJobTerminal(
           job.id,
           'cancelled',
-          outcome.output,
-          outcome.errorMessage ?? 'GPT job was cancelled.',
-          undefined,
           {
-            ...lifecycleDeadlines,
-            cancelRequestedAt: new Date().toISOString(),
-            cancelReason: outcome.errorMessage ?? 'GPT job was cancelled.'
+            fence: claimFence,
+            output: outcome.output,
+            errorMessage: outcome.errorMessage ?? 'GPT job was cancelled.',
+            metadata: {
+              ...lifecycleDeadlines,
+              cancelRequestedAt: new Date().toISOString(),
+              cancelReason: outcome.errorMessage ?? 'GPT job was cancelled.'
+            }
           }
         );
+        if (!terminalJob) {
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Cancellation fence was lost before the job could be finalized.'
+          );
+          continue;
+        }
         await autonomyService.markJobCancelled(job.id);
         recordWorkerJobDuration({
           jobType: job.job_type,
@@ -1381,6 +1430,15 @@ async function runWorkerConsumerSlot(
           });
         }
       } else {
+        const failureResult = await autonomyService.handleJobFailure(
+          job,
+          outcome.errorMessage ?? 'Job execution failed.',
+          outcome.retryable ?? false,
+          outcome.output
+        );
+        if (failureResult.action === 'lease_lost') {
+          continue;
+        }
         if (job.job_type === 'gpt') {
           logger.warn(outcome.retryable ? 'gpt.job.retryable_failure' : 'gpt.job.non_retryable_failure', {
             jobId: job.id,
@@ -1393,12 +1451,6 @@ async function runWorkerConsumerSlot(
             retryable: outcome.retryable ?? false
           });
         }
-        const failureResult = await autonomyService.handleJobFailure(
-          job,
-          outcome.errorMessage ?? 'Job execution failed.',
-          outcome.retryable ?? false,
-          outcome.output
-        );
         recordWorkerJobDuration({
           jobType: job.job_type,
           outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
@@ -1421,9 +1473,26 @@ async function runWorkerConsumerSlot(
             durationMs: timings.endToEndMs
           });
         }
-      }
-    } catch (error: unknown) {
-      const classifiedError = classifyWorkerExecutionError(error);
+        }
+      } catch (error: unknown) {
+        heartbeatHandle?.stop();
+        heartbeatHandle = null;
+        if (jobLeaseLost) {
+          logger.warn('worker.job_lease_lost.local_stop', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            jobId: job.id,
+            jobType: job.job_type,
+            durationMs: Date.now() - jobStartedAtMs
+          });
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Job lease lost or job completed elsewhere.'
+          );
+          continue;
+        }
+
+        const classifiedError = classifyWorkerExecutionError(error);
 
       if (isProviderRuntimeError(classifiedError.message)) {
         const recoveredClientState = await ensureOpenAIClientForSlot({
@@ -1436,24 +1505,27 @@ async function runWorkerConsumerSlot(
         providerConfigVersion = recoveredClientState.configVersion;
       }
 
-        if (job.job_type === 'gpt') {
-          logger.warn(classifiedError.retryable ? 'gpt.job.retryable_failure' : 'gpt.job.non_retryable_failure', {
-            jobId: job.id,
-            errorMessage: classifiedError.message,
-            retryable: classifiedError.retryable
-          });
-          recordGptJobEvent({
-            event: classifiedError.retryable ? 'retryable_failure' : 'non_retryable_failure',
-            status: 'failed',
-            retryable: classifiedError.retryable
-        });
-      }
       const failureResult = await autonomyService.handleJobFailure(
         job,
         classifiedError.message,
         classifiedError.retryable,
         null
       );
+      if (failureResult.action === 'lease_lost') {
+        continue;
+      }
+      if (job.job_type === 'gpt') {
+        logger.warn(classifiedError.retryable ? 'gpt.job.retryable_failure' : 'gpt.job.non_retryable_failure', {
+          jobId: job.id,
+          errorMessage: classifiedError.message,
+          retryable: classifiedError.retryable
+        });
+        recordGptJobEvent({
+          event: classifiedError.retryable ? 'retryable_failure' : 'non_retryable_failure',
+          status: 'failed',
+          retryable: classifiedError.retryable
+        });
+      }
       recordWorkerJobDuration({
         jobType: job.job_type,
         outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
@@ -1481,9 +1553,7 @@ async function runWorkerConsumerSlot(
           'abort',
           abortGptOnProcessShutdown
         );
-        if (heartbeatHandle) {
-          clearInterval(heartbeatHandle);
-        }
+        heartbeatHandle?.stop();
       }
 
       await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);

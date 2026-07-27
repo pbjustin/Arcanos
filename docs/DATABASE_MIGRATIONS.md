@@ -107,6 +107,28 @@ The required flag prevents a missing CI database variable from turning the
 database suite into a silent skip. Never point this test command at production
 or a retained preview database.
 
+### Generic queue claim-generation fencing migration
+
+`migrations/20260727_job_claim_generation_v1.sql` adds the non-negative
+`BIGINT NOT NULL DEFAULT 0` `job_data.claim_generation` token used by generic
+workers. Runtime initialization in `src/core/db/schema.ts` enforces the same
+column and validated check-constraint contract. Both paths fail closed when an
+existing column or named constraint has an incompatible definition.
+
+Each non-local-agent claim atomically increments the generation. Heartbeat,
+retry, provider-deferral, and terminal writes then require the exact worker,
+generation, running status, and unexpired lease. PostgreSQL `BIGINT` values
+remain validated decimal strings in TypeScript to avoid JavaScript number
+precision loss. Local-agent jobs retain their separate assignment protocol.
+
+`migrations/20260727_job_claim_generation_v1.rollback.sql` refuses rollback
+while any running job is not provably `local-agent`, verifies the exact column
+and named constraint before destructive DDL, then removes only that fencing
+contract. Validate this migration only against an explicitly created disposable
+PostgreSQL 18 database by setting
+`JOB_CLAIM_FENCING_TEST_DATABASE_URL`; the guarded test never reads an
+inherited `DATABASE_URL`.
+
 ### Productivity core migration
 
 `migrations/20260724_productivity_core.sql` is an additive, idempotent,

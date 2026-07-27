@@ -25,6 +25,10 @@ const loggerWarnMock = jest.fn();
 const resolveJobWorkerStaleAfterMsMock = jest.fn(() => 45_000);
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
+  createClaimedJobFence: (workerId: string, claimGeneration: string) => ({
+    workerId,
+    claimGeneration
+  }),
   getJobQueueSummary: getJobQueueSummaryMock,
   getJobExecutionStatsSince: getJobExecutionStatsSinceMock,
   recordJobHeartbeat: recordJobHeartbeatMock,
@@ -33,7 +37,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   resolveJobWorkerStaleAfterMs: resolveJobWorkerStaleAfterMsMock,
   scheduleJobRetry: scheduleJobRetryMock,
   deferJobForProviderRecovery: deferJobForProviderRecoveryMock,
-  updateJob: updateJobMock,
+  updateClaimedJobTerminal: updateJobMock,
   cleanupExpiredGptJobs: cleanupExpiredGptJobsMock
 }));
 
@@ -384,6 +388,7 @@ describe('workerAutonomyService', () => {
       job_type: 'ask',
       worker_id: 'async-queue',
       status: 'running',
+      claim_generation: '3',
       input: { prompt: 'test' },
       retry_count: 0,
       max_retries: 0,
@@ -413,16 +418,21 @@ describe('workerAutonomyService', () => {
       expect(updateJobMock).toHaveBeenCalledWith(
         testCase.id,
         'failed',
-        null,
-        testCase.message,
         expect.objectContaining({
-          lastFailure: expect.objectContaining({
-            category: testCase.category,
-            retryable: false,
-            retryExhausted: false
+          fence: {
+            workerId: 'async-queue',
+            claimGeneration: '3'
+          },
+          output: null,
+          errorMessage: testCase.message,
+          autonomyState: expect.objectContaining({
+            lastFailure: expect.objectContaining({
+              category: testCase.category,
+              retryable: false,
+              retryExhausted: false
+            })
           })
-        }),
-        expect.anything()
+        })
       );
     }
   });
@@ -657,6 +667,7 @@ describe('workerAutonomyService', () => {
         job_type: 'ask',
         worker_id: 'async-queue',
         status: 'running',
+        claim_generation: '3',
         input: { prompt: 'test' },
         retry_count: 0,
         max_retries: 2,
@@ -675,7 +686,10 @@ describe('workerAutonomyService', () => {
       'job-1',
       expect.objectContaining({
         delayMs: 2000,
-        workerId: 'async-queue'
+        fence: {
+          workerId: 'async-queue',
+          claimGeneration: '3'
+        }
       })
     );
     expect(loggerInfoMock).toHaveBeenCalledWith(
@@ -731,6 +745,7 @@ describe('workerAutonomyService', () => {
         job_type: 'ask',
         worker_id: 'async-queue',
         status: 'running',
+        claim_generation: '3',
         input: { prompt: 'test' },
         retry_count: 0,
         max_retries: 2,
@@ -741,7 +756,7 @@ describe('workerAutonomyService', () => {
       true
     );
 
-    expect(result).toEqual({ action: 'failed' });
+    expect(result).toEqual({ action: 'lease_lost' });
     expect(loggerWarnMock).toHaveBeenCalledWith(
       'worker.job.retry_schedule.skipped',
       expect.objectContaining({
@@ -756,10 +771,10 @@ describe('workerAutonomyService', () => {
           scheduledRetries: 0,
           recoveryActions: 0,
           lastRecoveryEvent: null,
-          alerts: ['Retry scheduling skipped for job job-lost-lease; live lease was no longer owned by this worker.']
+          alerts: ['Retry scheduling fence was lost before the job could be requeued.']
         })
       }),
-      { source: 'job-retry-skipped' }
+      { source: 'job-lease-lost' }
     );
   });
 
@@ -790,6 +805,7 @@ describe('workerAutonomyService', () => {
         job_type: 'ask',
         worker_id: 'async-queue',
         status: 'running',
+        claim_generation: '3',
         input: { prompt: 'test' },
         retry_count: 2,
         max_retries: 2,
@@ -812,7 +828,10 @@ describe('workerAutonomyService', () => {
       'job-provider',
       expect.objectContaining({
         delayMs: 60_000,
-        workerId: 'async-queue',
+        fence: {
+          workerId: 'async-queue',
+          claimGeneration: '3'
+        },
         autonomyState: expect.objectContaining({
           providerDeferral: expect.objectContaining({
             retryBudgetConsumed: false,
@@ -872,6 +891,7 @@ describe('workerAutonomyService', () => {
         job_type: 'ask',
         worker_id: 'async-queue',
         status: 'completed',
+        claim_generation: '3',
         input: { prompt: 'test' },
         retry_count: 2,
         max_retries: 2,
@@ -886,7 +906,7 @@ describe('workerAutonomyService', () => {
     );
 
     expect(result).toEqual({
-      action: 'skipped',
+      action: 'lease_lost',
       delayMs: 60_000
     });
     expect(scheduleJobRetryMock).not.toHaveBeenCalled();
@@ -896,10 +916,10 @@ describe('workerAutonomyService', () => {
         workerId: 'async-queue',
         healthStatus: 'degraded',
         snapshot: expect.objectContaining({
-          alerts: ['Provider deferral skipped for job job-provider; job was no longer running.']
+          alerts: ['Provider deferral fence was lost before the job could be requeued.']
         })
       }),
-      { source: 'provider-deferred-skipped' }
+      { source: 'job-lease-lost' }
     );
   });
 
@@ -1058,6 +1078,7 @@ describe('workerAutonomyService', () => {
         job_type: 'ask',
         worker_id: 'async-queue',
         status: 'running',
+        claim_generation: '3',
         input: { prompt: 'test' },
         retry_count: 2,
         max_retries: 2,
@@ -1073,16 +1094,77 @@ describe('workerAutonomyService', () => {
     expect(updateJobMock).toHaveBeenCalledWith(
       'job-dead-letter',
       'failed',
-      null,
-      'OpenAI upstream timeout',
       expect.objectContaining({
-        lastFailure: expect.objectContaining({
-          retryable: true,
-          retryExhausted: true,
-          deadLetter: true
+        fence: {
+          workerId: 'async-queue',
+          claimGeneration: '3'
+        },
+        output: null,
+        errorMessage: 'OpenAI upstream timeout',
+        autonomyState: expect.objectContaining({
+          lastFailure: expect.objectContaining({
+            retryable: true,
+            retryExhausted: true,
+            deadLetter: true
+          })
+        })
+      })
+    );
+  });
+
+  it('does not increment terminal counters or send failure metrics after a terminal fence miss', async () => {
+    updateJobMock.mockResolvedValueOnce(null);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: 'https://example.test/webhook',
+      failureWebhookThreshold: 1,
+      failureWebhookCooldownMs: 1
+    });
+
+    const result = await service.handleJobFailure(
+      {
+        id: 'job-terminal-fence-lost',
+        job_type: 'ask',
+        worker_id: 'async-queue',
+        status: 'running',
+        claim_generation: '3',
+        input: { prompt: 'test' },
+        retry_count: 0,
+        max_retries: 2,
+        created_at: new Date(),
+        updated_at: new Date()
+      } as any,
+      'Permanent execution failure',
+      false
+    );
+
+    expect(result).toEqual({ action: 'lease_lost' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          terminalFailures: 0,
+          deadLetterJobs: 0,
+          processedJobs: 0,
+          alerts: [
+            'Terminal failure fence was lost before the job could be finalized.'
+          ]
         })
       }),
-      expect.anything()
+      { source: 'job-lease-lost' }
     );
   });
 
@@ -1506,8 +1588,12 @@ describe('workerAutonomyService', () => {
         failureWebhookCooldownMs: 300_000
       });
 
-      await service.recordHeartbeat('job-1');
-      await service.recordHeartbeat('job-1');
+      const claimedJob = {
+        id: 'job-1',
+        claim_generation: '3'
+      };
+      await service.recordHeartbeat(claimedJob);
+      await service.recordHeartbeat(claimedJob);
       await service.markIdle();
 
       expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
@@ -1531,6 +1617,94 @@ describe('workerAutonomyService', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('marks the worker degraded when a claimed-job heartbeat loses its fence', async () => {
+    recordJobHeartbeatMock.mockResolvedValueOnce(null);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const result = await service.recordHeartbeat({
+      id: 'job-fence-lost',
+      claim_generation: '3'
+    });
+
+    expect(result).toBeNull();
+    expect(recordJobHeartbeatMock).toHaveBeenCalledWith('job-fence-lost', {
+      fence: {
+        workerId: 'async-queue',
+        claimGeneration: '3'
+      },
+      leaseMs: 30_000
+    });
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workerId: 'async-queue',
+        healthStatus: 'degraded',
+        currentJobId: null,
+        snapshot: expect.objectContaining({
+          alerts: ['Heartbeat fence was lost before the job lease could be renewed.']
+        })
+      }),
+      { source: 'job-lease-lost' }
+    );
+  });
+
+  it('does not persist a late heartbeat result after its loop has stopped', async () => {
+    const heartbeatJob = {
+      id: 'job-heartbeat-stopped',
+      status: 'running',
+      claim_generation: '3'
+    };
+    recordJobHeartbeatMock.mockResolvedValueOnce(heartbeatJob);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await expect(service.recordHeartbeat(
+      {
+        id: 'job-heartbeat-stopped',
+        claim_generation: '3'
+      },
+      {
+        shouldApplyResult: () => false
+      }
+    )).resolves.toBe(heartbeatJob);
+
+    expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
   });
 
   it('requeues stalled jobs assigned to stale workers during the watchdog cycle', async () => {

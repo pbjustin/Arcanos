@@ -218,6 +218,7 @@ export async function createOrMockJobRecord(
       worker_id: workerId,
       job_type: jobType,
       status: 'pending',
+      claim_generation: '0',
       input: JSON.stringify(jobData),
       created_at: new Date().toISOString(),
     };
