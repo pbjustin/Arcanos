@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const queryMock = jest.fn();
+const initializeDatabaseMock = jest.fn(async () => true);
+const initializeTablesMock = jest.fn(async () => true);
+const isDatabaseConnectedMock = jest.fn(() => true);
+const isDatabaseSchemaReadyMock = jest.fn(() => true);
 const pool = {};
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: () => pool,
-  initializeDatabase: jest.fn(async () => true),
-  isDatabaseConnected: () => true
+  initializeDatabase: initializeDatabaseMock,
+  isDatabaseConnected: isDatabaseConnectedMock
 }));
 
 jest.unstable_mockModule('@core/db/schema.js', () => ({
-  initializeTables: jest.fn(async () => true),
-  isDatabaseSchemaReady: () => true
+  initializeTables: initializeTablesMock,
+  isDatabaseSchemaReady: isDatabaseSchemaReadyMock
 }));
 
 jest.unstable_mockModule('@core/db/query.js', () => ({
@@ -21,6 +25,7 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 const {
   getDagRunSnapshotById,
   getLatestDagRunSnapshot,
+  lookupDagRunSnapshotForControl,
   normalizeDagSnapshotGeneration,
   upsertDagRunSnapshot
 } = await import(
@@ -58,6 +63,8 @@ function persistedRow(snapshotGeneration: unknown = '7') {
     updated_at: '2026-07-27T12:00:01.000Z',
     snapshot: {
       runId: 'dag-run-1',
+      sessionId: 'session-1',
+      template: 'trinity-core',
       status: 'running'
     }
   };
@@ -66,6 +73,10 @@ function persistedRow(snapshotGeneration: unknown = '7') {
 describe('DAG snapshot generation repository fencing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    initializeDatabaseMock.mockResolvedValue(true);
+    initializeTablesMock.mockResolvedValue(true);
+    isDatabaseConnectedMock.mockReturnValue(true);
+    isDatabaseSchemaReadyMock.mockReturnValue(true);
   });
 
   it('accepts only canonical PostgreSQL BIGINT decimal strings', () => {
@@ -152,5 +163,91 @@ describe('DAG snapshot generation repository fencing', () => {
     });
 
     await expect(getDagRunSnapshotById('dag-run-1')).resolves.toBeNull();
+  });
+
+  it('returns a validated control record only when row and snapshot identity agree', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [persistedRow('7')],
+      rowCount: 1
+    });
+
+    await expect(
+      lookupDagRunSnapshotForControl('dag-run-1')
+    ).resolves.toEqual({
+      outcome: 'found',
+      record: expect.objectContaining({
+        runId: 'dag-run-1',
+        sessionId: 'session-1',
+        template: 'trinity-core',
+        status: 'running',
+        snapshotGeneration: '7'
+      })
+    });
+  });
+
+  it('distinguishes a confirmed control-record miss from persistence failure', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await expect(
+      lookupDagRunSnapshotForControl('dag-run-absent')
+    ).resolves.toEqual({ outcome: 'not_found' });
+
+    queryMock.mockRejectedValueOnce(new Error('database read failed'));
+    await expect(
+      lookupDagRunSnapshotForControl('dag-run-1')
+    ).resolves.toEqual({ outcome: 'unavailable' });
+  });
+
+  it.each([
+    ['noncanonical generation', { snapshot_generation: 7 }],
+    ['non-object snapshot', { snapshot: null }]
+  ])('rejects a control record with %s', async (_label, override) => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ...persistedRow('7'), ...override }],
+      rowCount: 1
+    });
+
+    await expect(
+      lookupDagRunSnapshotForControl('dag-run-1')
+    ).resolves.toEqual({ outcome: 'invalid' });
+  });
+
+  it.each([
+    ['requested id', { run_id: 'dag-run-other' }, {}],
+    ['snapshot id', {}, { runId: 'dag-run-other' }],
+    ['session', {}, { sessionId: 'session-other' }],
+    ['template', {}, { template: 'other-template' }],
+    ['status', {}, { status: 'complete' }],
+    ['known status', { status: 'mystery' }, { status: 'mystery' }]
+  ])(
+    'rejects a control record with mismatched %s',
+    async (_label, rowOverride, snapshotOverride) => {
+      const row = persistedRow('7');
+      queryMock.mockResolvedValueOnce({
+        rows: [{
+          ...row,
+          ...rowOverride,
+          snapshot: {
+            ...row.snapshot,
+            ...snapshotOverride
+          }
+        }],
+        rowCount: 1
+      });
+
+      await expect(
+        lookupDagRunSnapshotForControl('dag-run-1')
+      ).resolves.toEqual({ outcome: 'invalid' });
+    }
+  );
+
+  it('reports control persistence as unavailable when bootstrap readiness fails', async () => {
+    isDatabaseSchemaReadyMock.mockReturnValue(false);
+    initializeTablesMock.mockResolvedValue(false);
+
+    await expect(
+      lookupDagRunSnapshotForControl('dag-run-1')
+    ).resolves.toEqual({ outcome: 'unavailable' });
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

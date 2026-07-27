@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { dagAgentManager } from '../src/agents/agentManager.js';
 import type { DagNodeJobInput } from '../src/jobs/jobSchema.js';
-import { runDagNodeJob } from '../src/workers/taskRunners.js';
+import {
+  runDagNodeJob,
+  type DagTaskRunnerDependencies
+} from '../src/workers/taskRunners.js';
 
 const TEST_AUDIT_EXECUTION_KEY = 'audit-regression-test';
 const TEST_PLANNER_EXECUTION_KEY = 'planner-regression-test';
@@ -53,6 +56,35 @@ function buildPlannerDagNodeJobInput(): DagNodeJobInput {
     attempt: 0,
     maxRetries: 2,
     waitingTimeoutMs: 60_000
+  };
+}
+
+function buildTaskRunnerDependencies(
+  overrides: Partial<DagTaskRunnerDependencies> = {}
+): DagTaskRunnerDependencies {
+  return {
+    runPrompt: jest.fn(async () => undefined),
+    logger: {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    },
+    metrics: {
+      incrementCounter: jest.fn(),
+      recordGauge: jest.fn(),
+      recordDuration: jest.fn(),
+      snapshot: jest.fn(() => ({
+        counters: {},
+        gauges: {},
+        durationsMs: {}
+      }))
+    },
+    artifactStore: {
+      writeArtifact: jest.fn().mockResolvedValue('unused-abort-artifact'),
+      readArtifact: jest.fn()
+    },
+    ...overrides
   };
 }
 
@@ -234,5 +266,41 @@ describe('runDagNodeJob', () => {
         errorMessage: 'No DAG agent handler registered for executionKey="missing-handler-regression-test".'
       })
     }));
+  });
+
+  it('rethrows an AbortError from the DAG agent instead of normalizing it as a retryable failure', async () => {
+    const abortError = new Error('Agent execution was aborted.');
+    abortError.name = 'AbortError';
+    dagAgentManager.registerAgent(TEST_AUDIT_EXECUTION_KEY, async () => {
+      throw abortError;
+    });
+    const dependencies = buildTaskRunnerDependencies();
+
+    await expect(
+      runDagNodeJob(buildDagNodeJobInput(), dependencies)
+    ).rejects.toBe(abortError);
+    expect(dependencies.artifactStore?.writeArtifact).not.toHaveBeenCalled();
+    expect(dependencies.metrics?.incrementCounter).not.toHaveBeenCalledWith('node_failure');
+  });
+
+  it('rethrows the controller abort reason when cancellation arrives during agent execution', async () => {
+    const abortController = new AbortController();
+    const abortError = new Error('Controller cancelled the active DAG node.');
+    abortError.name = 'AbortError';
+    dagAgentManager.registerAgent(TEST_AUDIT_EXECUTION_KEY, async () => {
+      abortController.abort(abortError);
+      return {
+        result: 'This result must not be persisted after cancellation.'
+      };
+    });
+    const dependencies = buildTaskRunnerDependencies({
+      abortSignal: abortController.signal
+    });
+
+    await expect(
+      runDagNodeJob(buildDagNodeJobInput(), dependencies)
+    ).rejects.toBe(abortError);
+    expect(dependencies.artifactStore?.writeArtifact).not.toHaveBeenCalled();
+    expect(dependencies.metrics?.incrementCounter).not.toHaveBeenCalledWith('node_success');
   });
 });

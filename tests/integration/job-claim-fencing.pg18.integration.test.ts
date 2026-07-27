@@ -183,7 +183,9 @@ describeWithDatabase('generic job claim fencing on PostgreSQL 18', () => {
          status TEXT NOT NULL DEFAULT 'pending',
          input JSONB NOT NULL DEFAULT '{}'::jsonb,
          last_worker_id TEXT,
-         lease_expires_at TIMESTAMPTZ
+         lease_expires_at TIMESTAMPTZ,
+         cancel_requested_at TIMESTAMPTZ,
+         cancel_reason TEXT
        )`
     );
     await client.query(forwardMigration);
@@ -320,6 +322,106 @@ describeWithDatabase('generic job claim fencing on PostgreSQL 18', () => {
       [jobId]
     );
     expect(currentTerminal.rowCount).toBe(1);
+  });
+
+  test('lets cancellation win exact-fence terminal, retry, and provider-deferral races', async () => {
+    const jobId = `job-cancel-race-${randomUUID()}`;
+    await client.query(
+      `INSERT INTO job_data (
+         id,
+         worker_id,
+         job_type,
+         status,
+         last_worker_id,
+         lease_expires_at,
+         claim_generation,
+         cancel_requested_at,
+         cancel_reason
+       )
+       VALUES (
+         $1,
+         'queue',
+         'gpt',
+         'running',
+         'worker-current',
+         NOW() + INTERVAL '1 minute',
+         4,
+         NOW(),
+         'stop requested'
+       )`,
+      [jobId]
+    );
+
+    for (const terminalStatus of ['completed', 'failed']) {
+      const nonCancellationTerminal = await client.query(
+        `UPDATE job_data
+         SET status = $2
+         WHERE id = $1
+           AND status = 'running'
+           AND last_worker_id = 'worker-current'
+           AND claim_generation = 4
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at >= NOW()
+           AND (
+             $2 = 'cancelled'
+             OR cancel_requested_at IS NULL
+           )
+         RETURNING id`,
+        [jobId, terminalStatus]
+      );
+      expect(nonCancellationTerminal.rowCount).toBe(0);
+    }
+
+    const attemptRequeue = () =>
+      client.query(
+        `UPDATE job_data
+         SET status = 'pending'
+         WHERE id = $1
+           AND status = 'running'
+           AND last_worker_id = 'worker-current'
+           AND claim_generation = 4
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at >= NOW()
+           AND cancel_requested_at IS NULL
+         RETURNING id`,
+        [jobId]
+      );
+    const retry = await attemptRequeue();
+    expect(retry.rowCount).toBe(0);
+    const providerDeferral = await attemptRequeue();
+    expect(providerDeferral.rowCount).toBe(0);
+
+    const staleCancellation = await client.query(
+      `UPDATE job_data
+       SET status = 'cancelled', lease_expires_at = NULL
+       WHERE id = $1
+         AND status = 'running'
+         AND last_worker_id = 'worker-stale'
+         AND claim_generation = 3
+         AND lease_expires_at IS NOT NULL
+         AND lease_expires_at >= NOW()
+       RETURNING id`,
+      [jobId]
+    );
+    expect(staleCancellation.rowCount).toBe(0);
+
+    const exactCancellation = await client.query(
+      `UPDATE job_data
+       SET status = 'cancelled', lease_expires_at = NULL
+       WHERE id = $1
+         AND status = 'running'
+         AND last_worker_id = 'worker-current'
+         AND claim_generation = 4
+         AND lease_expires_at IS NOT NULL
+         AND lease_expires_at >= NOW()
+         AND (
+           'cancelled' = 'cancelled'
+           OR cancel_requested_at IS NULL
+         )
+       RETURNING id`,
+      [jobId]
+    );
+    expect(exactCancellation.rowCount).toBe(1);
   });
 
   test('fails closed on a wrong pre-existing column type', async () => {

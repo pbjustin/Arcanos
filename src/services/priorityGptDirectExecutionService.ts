@@ -1,5 +1,6 @@
 import {
   createClaimedJobFence,
+  getJobById,
   recordJobHeartbeat,
   updateClaimedJobTerminal,
   type ClaimedJobTerminalStatus,
@@ -145,6 +146,7 @@ async function executeReservedPriorityGptDirectExecution(params: {
   let heartbeatTimeout: NodeJS.Timeout | null = null;
   let heartbeatStopped = false;
   let leaseLost = false;
+  let cancellationRecorded = false;
   const stopHeartbeat = (): void => {
     heartbeatStopped = true;
     if (heartbeatTimeout) {
@@ -156,19 +158,83 @@ async function executeReservedPriorityGptDirectExecution(params: {
     status: ClaimedJobTerminalStatus,
     options: Omit<UpdateClaimedJobTerminalOptions, 'fence'>
   ) => {
-    const updatedJob = await updateClaimedJobTerminal(params.jobId, status, {
+    return updateClaimedJobTerminal(params.jobId, status, {
       ...options,
       fence
     });
-    if (!updatedJob) {
-      leaseLost = true;
-    }
-    return updatedJob;
   };
   const abortExecution = (message: string): void => {
     if (!cancellationController.signal.aborted) {
       cancellationController.abort(createAbortError(message));
     }
+  };
+  const recordCancellation = (errorMessage: string): void => {
+    if (cancellationRecorded) {
+      return;
+    }
+
+    cancellationRecorded = true;
+    recordGptJobEvent({
+      event: 'cancelled',
+      status: 'cancelled',
+      retryable: false
+    });
+    recordGptJobTiming({
+      phase: 'execution',
+      outcome: 'cancelled',
+      durationMs: Date.now() - startedAtMs
+    });
+    params.requestLogger?.info?.('gpt.priority_direct.cancelled', {
+      jobId: params.jobId,
+      workerId: params.workerId,
+      durationMs: Date.now() - startedAtMs,
+      error: errorMessage
+    });
+  };
+  const finalizeCancellationAfterTerminalCasMiss = async (): Promise<boolean> => {
+    const currentJob = await getJobById(params.jobId);
+    const leaseExpiresAtMs = currentJob?.lease_expires_at
+      ? new Date(currentJob.lease_expires_at).getTime()
+      : Number.NaN;
+    if (
+      !currentJob ||
+      currentJob.status !== 'running' ||
+      currentJob.last_worker_id !== fence.workerId ||
+      currentJob.claim_generation !== fence.claimGeneration ||
+      !Number.isFinite(leaseExpiresAtMs) ||
+      leaseExpiresAtMs < Date.now() ||
+      !currentJob.cancel_requested_at
+    ) {
+      leaseLost = true;
+      return false;
+    }
+
+    const cancellationReason =
+      currentJob.cancel_reason ??
+      'Priority GPT cancellation won the terminal persistence race.';
+    const terminalJob = await persistTerminal('cancelled', {
+      output: null,
+      errorMessage: cancellationReason,
+      autonomyState: {
+        priorityDirectExecution: {
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAtMs,
+          cancellationWonTerminalRace: true
+        }
+      },
+      metadata: {
+        ...computeGptJobLifecycleDeadlines('cancelled'),
+        cancelRequestedAt: new Date().toISOString(),
+        cancelReason: cancellationReason
+      }
+    });
+    if (!terminalJob) {
+      leaseLost = true;
+      return false;
+    }
+
+    recordCancellation(cancellationReason);
+    return true;
   };
   const scheduleNextHeartbeat = (): void => {
     if (heartbeatStopped || cancellationController.signal.aborted) {
@@ -237,6 +303,9 @@ async function executeReservedPriorityGptDirectExecution(params: {
         }
       );
       if (!terminalJob) {
+        if (await finalizeCancellationAfterTerminalCasMiss()) {
+          return;
+        }
         params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
           jobId: params.jobId,
           workerId: params.workerId,
@@ -284,11 +353,17 @@ async function executeReservedPriorityGptDirectExecution(params: {
         }
       );
       if (!terminalJob) {
+        leaseLost = true;
         params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
           jobId: params.jobId,
           workerId: params.workerId,
           durationMs: Date.now() - startedAtMs
         });
+      } else {
+        recordCancellation(
+          preflightJob.cancel_reason ??
+          'Job cancellation requested before priority GPT execution started.'
+        );
       }
       return;
     }
@@ -366,6 +441,9 @@ async function executeReservedPriorityGptDirectExecution(params: {
         }
       );
       if (!terminalJob) {
+        if (await finalizeCancellationAfterTerminalCasMiss()) {
+          return;
+        }
         params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
           jobId: params.jobId,
           workerId: params.workerId,
@@ -401,6 +479,9 @@ async function executeReservedPriorityGptDirectExecution(params: {
       }
     );
     if (!terminalJob) {
+      if (await finalizeCancellationAfterTerminalCasMiss()) {
+        return;
+      }
       params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
         jobId: params.jobId,
         workerId: params.workerId,
@@ -474,12 +555,20 @@ async function executeReservedPriorityGptDirectExecution(params: {
       }
     );
     if (!terminalJob) {
+      if (!aborted && await finalizeCancellationAfterTerminalCasMiss()) {
+        return;
+      }
+      leaseLost = true;
       params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
         jobId: params.jobId,
         workerId: params.workerId,
         durationMs: Date.now() - startedAtMs,
         error: errorMessage
       });
+      return;
+    }
+    if (aborted) {
+      recordCancellation(errorMessage);
       return;
     }
     params.requestLogger?.warn?.('gpt.priority_direct.failed', {

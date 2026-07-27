@@ -216,8 +216,34 @@ export function registerDagMcpTools(server: AnyMcpServer, ctx: McpRequestContext
         return gate.error;
       }
 
-      const run = await arcanosDagRunService.createRun(normalizeDagCreateRequest(args, ctx));
-      return mcpText({ run });
+      try {
+        const run = await arcanosDagRunService.createRun(normalizeDagCreateRequest(args, ctx));
+        return mcpText({ run });
+      } catch (error: unknown) {
+        const candidate = error as {
+          code?: unknown;
+          message?: unknown;
+          retryAfterSeconds?: unknown;
+        };
+        if (candidate?.code === 'DAG_RUN_CAPACITY_EXCEEDED') {
+          return mcpError({
+            code: 'ERR_UNAVAILABLE',
+            message:
+              typeof candidate.message === 'string'
+                ? candidate.message
+                : 'DAG run capacity is temporarily unavailable.',
+            details: {
+              reasonCode: 'DAG_RUN_CAPACITY_EXCEEDED',
+              retryAfterSeconds:
+                typeof candidate.retryAfterSeconds === 'number'
+                  ? candidate.retryAfterSeconds
+                  : 5
+            },
+            requestId: ctx.requestId
+          });
+        }
+        throw error;
+      }
     })
   );
 
@@ -494,12 +520,45 @@ export function registerDagMcpTools(server: AnyMcpServer, ctx: McpRequestContext
         return gate.error;
       }
 
-      const cancelled = arcanosDagRunService.cancelRun(args.runId);
-      if (!cancelled) {
+      const cancellation = await arcanosDagRunService.cancelRun(args.runId);
+      if (cancellation.outcome === 'not_found') {
         return createDagNotFoundError(ctx, 'DAG run', { runId: args.runId });
       }
+      if (cancellation.outcome === 'not_cancellable') {
+        return mcpError({
+          code: 'ERR_CONFLICT',
+          message: 'DAG run is not cancellable from its terminal state.',
+          details: {
+            runId: args.runId,
+            reasonCode: 'RUN_NOT_CANCELLABLE',
+            status: cancellation.runStatus
+          },
+          requestId: ctx.requestId
+        });
+      }
+      if (
+        cancellation.outcome === 'owned_elsewhere' ||
+        cancellation.outcome === 'unavailable'
+      ) {
+        return mcpError({
+          code: 'ERR_UNAVAILABLE',
+          message:
+            cancellation.outcome === 'owned_elsewhere'
+              ? 'DAG run is active on another instance.'
+              : 'DAG run cancellation state is unavailable.',
+          details: {
+            runId: args.runId,
+            reasonCode:
+              cancellation.outcome === 'owned_elsewhere'
+                ? 'DAG_RUN_OWNED_ELSEWHERE'
+                : 'DAG_RUN_CANCELLATION_UNAVAILABLE',
+            retryAfterSeconds: cancellation.retryAfterSeconds
+          },
+          requestId: ctx.requestId
+        });
+      }
 
-      return mcpText(cancelled);
+      return mcpText(cancellation.data);
     })
   );
 }

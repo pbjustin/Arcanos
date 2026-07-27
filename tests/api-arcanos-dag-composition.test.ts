@@ -30,6 +30,16 @@ const memoryConsistencyGateMock = jest.fn(
 );
 const mockCreateRun = jest.fn();
 
+class MockDagRunCapacityExceededError extends Error {
+  readonly code = 'DAG_RUN_CAPACITY_EXCEEDED';
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 5) {
+    super('DAG run capacity is temporarily unavailable.');
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 jest.unstable_mockModule(
   '@transport/http/middleware/memoryConsistencyGate.js',
   () => ({
@@ -42,6 +52,7 @@ jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
+  DagRunCapacityExceededError: MockDagRunCapacityExceededError,
   arcanosDagRunService: {
     createRun: mockCreateRun,
     getLatestRun: jest.fn(),

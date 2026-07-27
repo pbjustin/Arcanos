@@ -31,11 +31,22 @@ const mockGetRunVerification = jest.fn();
 const mockGetFeatureFlags = jest.fn();
 const mockGetExecutionLimits = jest.fn();
 
+class MockDagRunCapacityExceededError extends Error {
+  readonly code = 'DAG_RUN_CAPACITY_EXCEEDED';
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 5) {
+    super('DAG run capacity is temporarily unavailable.');
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
   getWorkerControlStatus: mockGetWorkerControlStatus
 }));
 
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
+  DagRunCapacityExceededError: MockDagRunCapacityExceededError,
   arcanosDagRunService: {
     createRun: mockCreateRun,
     getLatestRun: mockGetLatestRun,
@@ -412,10 +423,14 @@ describe('api-arcanos-verification routes', () => {
         observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
       }
     });
-    mockCancelRun.mockReturnValue({
-      runId: 'run-1',
-      status: 'cancelled',
-      cancelledNodes: ['writer']
+    mockCancelRun.mockResolvedValue({
+      outcome: 'already_cancelled',
+      statusCode: 200,
+      data: {
+        runId: 'run-1',
+        status: 'cancelled',
+        cancelledNodes: ['writer']
+      }
     });
 
     const createResponse = await authorizeDagRequest(
@@ -503,6 +518,121 @@ describe('api-arcanos-verification routes', () => {
     expect(cancelResponse.status).toBe(200);
     expect(cancelResponse.headers['x-response-bytes']).toBeTruthy();
     expect(cancelResponse.body.data.status).toBe('cancelled');
+  });
+
+  it('returns a stable overload response when DAG run capacity is exhausted', async () => {
+    mockCreateRun.mockRejectedValueOnce(new MockDagRunCapacityExceededError(7));
+
+    const response = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
+      sessionId: 'capacity-session',
+      template: 'verification-default',
+      input: { goal: 'wait for available DAG capacity' }
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers['retry-after']).toBe('7');
+    expect(response.body).toEqual({
+      error: 'DAG_RUN_CAPACITY_EXCEEDED',
+      message: 'DAG run capacity is temporarily unavailable.'
+    });
+  });
+
+  it('maps DAG cancellation lifecycle outcomes to stable HTTP responses', async () => {
+    mockCancelRun
+      .mockResolvedValueOnce({
+        outcome: 'cancellation_requested',
+        statusCode: 202,
+        data: {
+          runId: 'run-cancel-requested',
+          status: 'cancellation_requested',
+          cancelledNodes: ['writer']
+        }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'already_cancelled',
+        statusCode: 200,
+        data: {
+          runId: 'run-already-cancelled',
+          status: 'cancelled',
+          cancelledNodes: ['writer']
+        }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'not_found',
+        statusCode: 404
+      })
+      .mockResolvedValueOnce({
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: 'complete'
+      })
+      .mockResolvedValueOnce({
+        outcome: 'owned_elsewhere',
+        statusCode: 503,
+        retryAfterSeconds: 11
+      })
+      .mockResolvedValueOnce({
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: 13
+      });
+
+    const cancellationRequested = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-cancel-requested/cancel')
+    );
+    const alreadyCancelled = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-already-cancelled/cancel')
+    );
+    const notFound = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-missing/cancel')
+    );
+    const notCancellable = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-complete/cancel')
+    );
+    const ownedElsewhere = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-owned-elsewhere/cancel')
+    );
+    const unavailable = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-state-unavailable/cancel')
+    );
+
+    expect(cancellationRequested.status).toBe(202);
+    expect(cancellationRequested.body.data).toEqual({
+      runId: 'run-cancel-requested',
+      status: 'cancellation_requested',
+      cancelledNodes: ['writer']
+    });
+
+    expect(alreadyCancelled.status).toBe(200);
+    expect(alreadyCancelled.body.data).toEqual({
+      runId: 'run-already-cancelled',
+      status: 'cancelled',
+      cancelledNodes: ['writer']
+    });
+
+    expect(notFound.status).toBe(404);
+    expect(notFound.body).toEqual({ error: 'RUN_NOT_FOUND' });
+
+    expect(notCancellable.status).toBe(409);
+    expect(notCancellable.body).toEqual({
+      error: 'RUN_NOT_CANCELLABLE',
+      status: 'complete'
+    });
+
+    expect(ownedElsewhere.status).toBe(503);
+    expect(ownedElsewhere.headers['retry-after']).toBe('11');
+    expect(ownedElsewhere.body).toEqual({
+      error: 'DAG_RUN_OWNED_ELSEWHERE'
+    });
+
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.headers['retry-after']).toBe('13');
+    expect(unavailable.body).toEqual({
+      error: 'DAG_RUN_CANCELLATION_UNAVAILABLE'
+    });
+    expect(mockCancelRun).toHaveBeenCalledTimes(6);
   });
 
   it('supports long-poll run status queries with explicit wait cursors', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import {
   createDagFailureResult,
   createDagSuccessResult,
@@ -10,6 +10,7 @@ import {
 import { DAGOrchestrator } from '../../src/dag/orchestrator.js';
 import type { DAGGraph } from '../../src/dag/dagGraph.js';
 import type {
+  DagJobCancellationResult,
   DagJobQueue,
   EnqueueDagNodeJobRequest,
   WaitForDagJobCompletionOptions
@@ -18,6 +19,62 @@ import type { DagQueueJobRecord } from '../../src/jobs/jobSchema.js';
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (error: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+
+  return {
+    promise,
+    resolve: resolvePromise,
+    reject: rejectPromise
+  };
+}
+
+function buildQueueRecord(
+  nodeId: string,
+  status: DagQueueJobRecord['status'],
+  overrides: Partial<DagQueueJobRecord> = {}
+): DagQueueJobRecord {
+  const queuedAt = '2026-07-27T12:00:00.000Z';
+  return {
+    jobId: `job-${nodeId}`,
+    dagId: 'dag-cancellation-test',
+    nodeId,
+    status,
+    workerId: status === 'running' ? 'dag-worker-1' : null,
+    retries: 0,
+    maxRetries: 2,
+    waitingTimeoutMs: 5_000,
+    payload: {},
+    node: {
+      id: nodeId,
+      type: 'agent',
+      dependencies: [],
+      executionKey: `${nodeId}.agent`
+    },
+    dependencyResults: {},
+    sharedState: {},
+    depth: 0,
+    output: null,
+    errorMessage: null,
+    timestamps: {
+      queuedAt,
+      updatedAt: queuedAt
+    },
+    ...overrides
+  };
 }
 
 class InMemoryDagJobQueue implements DagJobQueue {
@@ -37,6 +94,7 @@ class InMemoryDagJobQueue implements DagJobQueue {
       dagId: request.dagId,
       nodeId: request.node.id,
       status: 'queued',
+      workerId: null,
       retries: request.attempt ?? 0,
       maxRetries: request.maxRetries ?? 2,
       waitingTimeoutMs: request.waitingTimeoutMs ?? 60000,
@@ -51,6 +109,16 @@ class InMemoryDagJobQueue implements DagJobQueue {
         queuedAt,
         updatedAt: queuedAt
       }
+    };
+  }
+
+  async requestDagJobCancellation(
+    _jobId: string,
+    _reason?: string
+  ): Promise<DagJobCancellationResult> {
+    return {
+      outcome: 'not_found',
+      record: null
     };
   }
 
@@ -96,6 +164,7 @@ class InMemoryDagJobQueue implements DagJobQueue {
         dagId: request.dagId,
         nodeId: request.node.id,
         status: output.status === 'failed' ? 'failed' : 'completed',
+        workerId: null,
         retries: request.attempt ?? 0,
         maxRetries: request.maxRetries ?? 2,
         waitingTimeoutMs: request.waitingTimeoutMs ?? 60000,
@@ -121,6 +190,7 @@ class InMemoryDagJobQueue implements DagJobQueue {
         dagId: request.dagId,
         nodeId: request.node.id,
         status: 'failed',
+        workerId: null,
         retries: request.attempt ?? 0,
         maxRetries: request.maxRetries ?? 2,
         waitingTimeoutMs: request.waitingTimeoutMs ?? 60000,
@@ -536,5 +606,409 @@ describe('DAGOrchestrator', () => {
     };
 
     await expect(orchestrator.runGraph(graph)).rejects.toThrow('maxDepth=2');
+  });
+
+  it('treats a cancelled queue row as terminal and never retries the node', async () => {
+    const enqueueRequests: EnqueueDagNodeJobRequest[] = [];
+    const cancellationRequests: Array<{ jobId: string; reason?: string }> = [];
+    const onNodeCancelled = jest.fn();
+    const onNodeRetried = jest.fn();
+    const queue: DagJobQueue = {
+      async enqueueDagNodeJob(request) {
+        enqueueRequests.push(request);
+        return buildQueueRecord(request.node.id, 'queued', {
+          dagId: request.dagId,
+          maxRetries: request.maxRetries ?? 2
+        });
+      },
+      async requestDagJobCancellation(jobId, reason) {
+        cancellationRequests.push({ jobId, reason });
+        return {
+          outcome: 'already_terminal',
+          record: buildQueueRecord('planner', 'cancelled', {
+            jobId,
+            errorMessage: 'Cancelled by the queue worker.'
+          })
+        };
+      },
+      async waitForDagJobCompletion(jobId) {
+        return buildQueueRecord('planner', 'cancelled', {
+          jobId,
+          errorMessage: 'Cancelled by the queue worker.',
+          timestamps: {
+            queuedAt: '2026-07-27T12:00:00.000Z',
+            updatedAt: '2026-07-27T12:00:01.000Z',
+            completedAt: '2026-07-27T12:00:01.000Z'
+          }
+        });
+      }
+    };
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 2,
+        maxChildrenPerNode: 2,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5_000,
+        pollIntervalMs: 1
+      }
+    });
+    const graph: DAGGraph = {
+      id: 'dag-cancelled-terminal',
+      nodes: {
+        planner: createExecutableNode('planner', [], async () =>
+          createDagSuccessResult('planner', { unused: true })
+        )
+      },
+      edges: [],
+      entrypoints: ['planner']
+    };
+
+    const summary = await orchestrator.runGraph(graph, {
+      observer: {
+        onNodeCancelled,
+        onNodeRetried
+      }
+    });
+
+    expect(summary.status).toBe('cancelled');
+    expect(summary.cancelledNodeIds).toEqual(['planner']);
+    expect(summary.failedNodeIds).toEqual([]);
+    expect(summary.totalRetries).toBe(0);
+    expect(enqueueRequests).toHaveLength(1);
+    expect(cancellationRequests).toEqual([]);
+    expect(onNodeRetried).not.toHaveBeenCalled();
+    expect(onNodeCancelled).toHaveBeenCalledTimes(1);
+    expect(onNodeCancelled).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: 'planner',
+      reason: 'Cancelled by the queue worker.'
+    }));
+  });
+
+  it('stops scheduling after abort during the first enqueue and waits for its terminal cancellation row', async () => {
+    const enqueueDeferred = createDeferred<DagQueueJobRecord>();
+    const waiterStarted = createDeferred<void>();
+    const terminalDeferred = createDeferred<DagQueueJobRecord>();
+    const enqueueRequests: EnqueueDagNodeJobRequest[] = [];
+    const cancellationRequests: Array<{ jobId: string; reason?: string }> = [];
+    const cancellationEvents: string[] = [];
+    const queue: DagJobQueue = {
+      async enqueueDagNodeJob(request) {
+        enqueueRequests.push(request);
+        return enqueueDeferred.promise;
+      },
+      async requestDagJobCancellation(jobId, reason) {
+        cancellationRequests.push({ jobId, reason });
+        return {
+          outcome: 'cancellation_requested',
+          record: buildQueueRecord('first', 'running', { jobId })
+        };
+      },
+      async waitForDagJobCompletion() {
+        waiterStarted.resolve(undefined);
+        return terminalDeferred.promise;
+      }
+    };
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 3,
+        maxDepth: 2,
+        maxChildrenPerNode: 2,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5_000,
+        pollIntervalMs: 1
+      }
+    });
+    const graph: DAGGraph = {
+      id: 'dag-abort-during-enqueue',
+      nodes: {
+        first: createExecutableNode('first', [], async () =>
+          createDagSuccessResult('first', { unused: true })
+        ),
+        second: createExecutableNode('second', [], async () =>
+          createDagSuccessResult('second', { unused: true })
+        )
+      },
+      edges: [],
+      entrypoints: ['first', 'second']
+    };
+    const abortController = new AbortController();
+    let runSettled = false;
+    const runPromise = orchestrator.runGraph(graph, {
+      abortSignal: abortController.signal,
+      observer: {
+        onNodeCancelled: event => {
+          cancellationEvents.push(event.nodeId);
+        }
+      }
+    });
+    void runPromise.then(
+      () => {
+        runSettled = true;
+      },
+      () => {
+        runSettled = true;
+      }
+    );
+
+    expect(enqueueRequests.map(request => request.node.id)).toEqual(['first']);
+    abortController.abort(new Error('Stop the DAG while enqueue is pending.'));
+    enqueueDeferred.resolve(buildQueueRecord('first', 'queued'));
+    await waiterStarted.promise;
+
+    expect(enqueueRequests.map(request => request.node.id)).toEqual(['first']);
+    expect(cancellationRequests).toEqual([{
+      jobId: 'job-first',
+      reason: 'Stop the DAG while enqueue is pending.'
+    }]);
+    expect(runSettled).toBe(false);
+
+    terminalDeferred.resolve(buildQueueRecord('first', 'cancelled', {
+      errorMessage: 'Stop the DAG while enqueue is pending.',
+      timestamps: {
+        queuedAt: '2026-07-27T12:00:00.000Z',
+        updatedAt: '2026-07-27T12:00:01.000Z',
+        completedAt: '2026-07-27T12:00:01.000Z'
+      }
+    }));
+    const summary = await runPromise;
+
+    expect(summary.status).toBe('cancelled');
+    expect(summary.cancelledNodeIds).toEqual(['first', 'second']);
+    expect(cancellationEvents.filter(nodeId => nodeId === 'first')).toHaveLength(1);
+    expect(cancellationEvents.filter(nodeId => nodeId === 'second')).toHaveLength(1);
+  });
+
+  it('reports each unscheduled node cancelled once when abort races with an enqueue rejection', async () => {
+    const enqueueDeferred = createDeferred<DagQueueJobRecord>();
+    const cancellationEvents: string[] = [];
+    const cancellationRequests: string[] = [];
+    const queue: DagJobQueue = {
+      async enqueueDagNodeJob() {
+        return enqueueDeferred.promise;
+      },
+      async requestDagJobCancellation(jobId) {
+        cancellationRequests.push(jobId);
+        return {
+          outcome: 'not_found',
+          record: null
+        };
+      },
+      async waitForDagJobCompletion() {
+        throw new Error('No job should be returned from the rejected enqueue.');
+      }
+    };
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 3,
+        maxDepth: 2,
+        maxChildrenPerNode: 2,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5_000,
+        pollIntervalMs: 1
+      }
+    });
+    const graph: DAGGraph = {
+      id: 'dag-abort-enqueue-rejection',
+      nodes: {
+        first: createExecutableNode('first', [], async () =>
+          createDagSuccessResult('first', { unused: true })
+        ),
+        second: createExecutableNode('second', [], async () =>
+          createDagSuccessResult('second', { unused: true })
+        )
+      },
+      edges: [],
+      entrypoints: ['first', 'second']
+    };
+    const abortController = new AbortController();
+    const runPromise = orchestrator.runGraph(graph, {
+      abortSignal: abortController.signal,
+      observer: {
+        onNodeCancelled: event => {
+          cancellationEvents.push(event.nodeId);
+        }
+      }
+    });
+
+    abortController.abort(new Error('Abort before enqueue persistence completes.'));
+    enqueueDeferred.reject(new Error('Queue persistence rejected.'));
+
+    await expect(runPromise).rejects.toThrow('Queue persistence rejected.');
+    expect(cancellationEvents.filter(nodeId => nodeId === 'first')).toHaveLength(1);
+    expect(cancellationEvents.filter(nodeId => nodeId === 'second')).toHaveLength(1);
+    expect(cancellationRequests).toEqual([]);
+  });
+
+  it('cancels all registered jobs and consumes remaining waiter rejections when one waiter fails', async () => {
+    const firstWaiter = createDeferred<DagQueueJobRecord>();
+    const secondWaiter = createDeferred<DagQueueJobRecord>();
+    const bothWaitersRegistered = createDeferred<void>();
+    const cancellationRequests: string[] = [];
+    const waiterJobIds: string[] = [];
+    let secondWaiterSettled = false;
+    const queue: DagJobQueue = {
+      async enqueueDagNodeJob(request) {
+        return buildQueueRecord(request.node.id, 'queued', {
+          dagId: request.dagId
+        });
+      },
+      async requestDagJobCancellation(jobId) {
+        cancellationRequests.push(jobId);
+        if (jobId === 'job-second') {
+          secondWaiter.reject(new Error('Second waiter also rejected.'));
+        }
+        return {
+          outcome: 'cancellation_requested',
+          record: buildQueueRecord(
+            jobId === 'job-first' ? 'first' : 'second',
+            'running',
+            { jobId }
+          )
+        };
+      },
+      async waitForDagJobCompletion(jobId) {
+        waiterJobIds.push(jobId);
+        if (waiterJobIds.length === 2) {
+          bothWaitersRegistered.resolve(undefined);
+        }
+        if (jobId === 'job-first') {
+          return firstWaiter.promise;
+        }
+        return secondWaiter.promise.finally(() => {
+          secondWaiterSettled = true;
+        });
+      }
+    };
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 2,
+        maxChildrenPerNode: 2,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5_000,
+        pollIntervalMs: 1
+      }
+    });
+    const graph: DAGGraph = {
+      id: 'dag-waiter-rejection',
+      nodes: {
+        first: createExecutableNode('first', [], async () =>
+          createDagSuccessResult('first', { unused: true })
+        ),
+        second: createExecutableNode('second', [], async () =>
+          createDagSuccessResult('second', { unused: true })
+        )
+      },
+      edges: [],
+      entrypoints: ['first', 'second']
+    };
+    const runPromise = orchestrator.runGraph(graph);
+
+    await bothWaitersRegistered.promise;
+    firstWaiter.reject(new Error('First waiter rejected.'));
+
+    await expect(runPromise).rejects.toThrow('First waiter rejected.');
+    expect(waiterJobIds).toEqual(['job-first', 'job-second']);
+    expect(cancellationRequests).toEqual(['job-first', 'job-second']);
+    expect(secondWaiterSettled).toBe(true);
+  });
+
+  it('captures an early waiter rejection while a later enqueue is pending and rethrows it after cleanup', async () => {
+    const secondEnqueueStarted = createDeferred<void>();
+    const secondEnqueue = createDeferred<DagQueueJobRecord>();
+    const firstWaiter = createDeferred<DagQueueJobRecord>();
+    const secondWaiter = createDeferred<DagQueueJobRecord>();
+    const waiterError = new Error('First waiter rejected during the second enqueue.');
+    const cancellationRequests: string[] = [];
+    const unhandledReasons: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledReasons.push(reason);
+    };
+    const queue: DagJobQueue = {
+      async enqueueDagNodeJob(request) {
+        if (request.node.id === 'first') {
+          return buildQueueRecord('first', 'queued', {
+            dagId: request.dagId
+          });
+        }
+        secondEnqueueStarted.resolve(undefined);
+        return secondEnqueue.promise;
+      },
+      async requestDagJobCancellation(jobId) {
+        cancellationRequests.push(jobId);
+        if (jobId === 'job-second') {
+          secondWaiter.resolve(buildQueueRecord('second', 'cancelled', {
+            jobId,
+            errorMessage: 'Cancelled during waiter cleanup.'
+          }));
+        }
+        return {
+          outcome: 'cancellation_requested',
+          record: buildQueueRecord(
+            jobId === 'job-first' ? 'first' : 'second',
+            'running',
+            { jobId }
+          )
+        };
+      },
+      async waitForDagJobCompletion(jobId) {
+        return jobId === 'job-first'
+          ? firstWaiter.promise
+          : secondWaiter.promise;
+      }
+    };
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 2,
+        maxChildrenPerNode: 2,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5_000,
+        pollIntervalMs: 1
+      }
+    });
+    const graph: DAGGraph = {
+      id: 'dag-waiter-rejects-during-enqueue',
+      nodes: {
+        first: createExecutableNode('first', [], async () =>
+          createDagSuccessResult('first', { unused: true })
+        ),
+        second: createExecutableNode('second', [], async () =>
+          createDagSuccessResult('second', { unused: true })
+        )
+      },
+      edges: [],
+      entrypoints: ['first', 'second']
+    };
+
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      const runPromise = orchestrator.runGraph(graph);
+      await secondEnqueueStarted.promise;
+
+      firstWaiter.reject(waiterError);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(unhandledReasons).toEqual([]);
+
+      secondEnqueue.resolve(buildQueueRecord('second', 'queued'));
+
+      await expect(runPromise).rejects.toBe(waiterError);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(cancellationRequests).toEqual(['job-first', 'job-second']);
+      expect(unhandledReasons).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });

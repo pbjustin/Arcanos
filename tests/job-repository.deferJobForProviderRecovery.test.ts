@@ -61,6 +61,7 @@ describe('jobRepository.deferJobForProviderRecovery', () => {
     expect(sql).toContain('AND claim_generation = $6::bigint');
     expect(sql).toContain('AND lease_expires_at IS NOT NULL');
     expect(sql).toContain('AND lease_expires_at >= NOW()');
+    expect(sql).toContain('AND cancel_requested_at IS NULL');
     expect(sql).toContain('next_run_at = NOW()');
     expect(sql).not.toContain('retry_count = retry_count + 1');
     expect(params).toEqual([

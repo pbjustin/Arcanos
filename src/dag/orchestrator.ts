@@ -34,10 +34,16 @@ type OrchestratorNodeRuntimeStatus =
 interface RunningDagNodeJob {
   jobId: string;
   nodeId: string;
-  completionPromise: Promise<{
-    jobId: string;
-    record: DagQueueJobRecord;
-  }>;
+  completionPromise: Promise<
+    | {
+        jobId: string;
+        record: DagQueueJobRecord;
+      }
+    | {
+        jobId: string;
+        error: unknown;
+      }
+  >;
 }
 
 export interface DAGRunContext {
@@ -158,6 +164,12 @@ function createInitialReadyNodeIds(graph: DAGGraph): string[] {
 }
 
 function normalizeTerminalDagResult(jobRecord: DagQueueJobRecord): DAGResult {
+  if (jobRecord.status === 'cancelled') {
+    throw new Error(
+      `Cancelled DAG queue job "${jobRecord.jobId}" must be handled before result normalization.`
+    );
+  }
+
   if (jobRecord.output) {
     return jobRecord.output;
   }
@@ -269,18 +281,17 @@ export class DAGOrchestrator {
       Object.keys(graph.nodes).map(nodeId => [nodeId, 'pending'])
     );
     const runningJobsByJobId = new Map<string, RunningDagNodeJob>();
+    const enqueuingNodeIds = new Set<string>();
     const resultsByNodeId: Record<string, DAGResult> = {};
     const attemptsByNodeId = new Map<string, number>();
     const cancelledNodeIds = new Set<string>();
+    const cancellationRequests = new Set<Promise<void>>();
+    const cancellationRequestedJobIds = new Set<string>();
+    const cancellationRequestAttemptsByJobId = new Map<string, number>();
     let tokenBudgetUsed = 0;
     let totalRetries = 0;
     let totalAiCalls = 0;
     let maxParallelNodesObserved = 0;
-
-    context.observer?.onRunStarted?.({
-      dagId,
-      startedAt
-    });
 
     const emitGuardViolation = (
       type: DAGGuardViolationType,
@@ -311,10 +322,13 @@ export class DAGOrchestrator {
       readyNodeIds.push(nodeId);
     };
 
-    const cancelPendingNodes = (reason: string): void => {
+    const cancelUnscheduledNodes = (reason: string): void => {
       for (const [nodeId, nodeStatus] of runtimeStatusByNodeId.entries()) {
-        //audit Assumption: cancellation should only affect nodes that have not reached a terminal state; failure risk: completed or failed nodes are overwritten as cancelled and lose diagnostic history; expected invariant: only pending or queued nodes become cancelled; handling strategy: skip terminal and actively running nodes.
-        if (nodeStatus !== 'pending' && nodeStatus !== 'queued') {
+        //audit Assumption: only nodes without a persisted queue job can be cancelled synchronously; failure risk: an enqueued job is reported cancelled before its shared row reaches terminal; expected invariant: queued/running jobs settle through the DB cancellation lifecycle; handling strategy: rewrite pending nodes only.
+        if (nodeStatus !== 'pending') {
+          continue;
+        }
+        if (enqueuingNodeIds.has(nodeId)) {
           continue;
         }
 
@@ -331,6 +345,61 @@ export class DAGOrchestrator {
           reason
         });
       }
+    };
+
+    const resolveCancellationReason = (): string => {
+      const reason = context.abortSignal?.reason;
+      if (reason instanceof Error && reason.message.trim().length > 0) {
+        return reason.message;
+      }
+      if (typeof reason === 'string' && reason.trim().length > 0) {
+        return reason.trim();
+      }
+      return 'DAG run cancellation requested.';
+    };
+
+    const requestCancellationForJob = (jobId: string, reason: string): void => {
+      if (cancellationRequestedJobIds.has(jobId)) {
+        return;
+      }
+      cancellationRequestedJobIds.add(jobId);
+      const requestAttempt =
+        (cancellationRequestAttemptsByJobId.get(jobId) ?? 0) + 1;
+      cancellationRequestAttemptsByJobId.set(jobId, requestAttempt);
+
+      let cancellationRequest: Promise<void>;
+      cancellationRequest = this.jobQueue
+        .requestDagJobCancellation(jobId, reason)
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          cancellationRequestedJobIds.delete(jobId);
+          this.logger.warn('Failed to request DAG node cancellation', {
+            dagId,
+            jobId,
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+          if (requestAttempt < 2) {
+            requestCancellationForJob(jobId, reason);
+          }
+        })
+        .finally(() => {
+          cancellationRequests.delete(cancellationRequest);
+        });
+      cancellationRequests.add(cancellationRequest);
+    };
+
+    const requestCancellationForRunningJobs = (reason: string): void => {
+      for (const runningJob of runningJobsByJobId.values()) {
+        requestCancellationForJob(runningJob.jobId, reason);
+      }
+    };
+
+    let cancellationObserved = context.abortSignal?.aborted === true;
+    const onRunAbort = (): void => {
+      cancellationObserved = true;
+      const reason = resolveCancellationReason();
+      cancelUnscheduledNodes(reason);
+      requestCancellationForRunningJobs(reason);
     };
 
     const cascadeBlockedDependents = (nodeId: string, reason: string): void => {
@@ -398,8 +467,8 @@ export class DAGOrchestrator {
     };
 
     const scheduleReadyNodes = async (): Promise<void> => {
-      if (context.abortSignal?.aborted) {
-        cancelPendingNodes('Run cancellation requested.');
+      if (context.abortSignal?.aborted || cancellationObserved) {
+        cancelUnscheduledNodes(resolveCancellationReason());
         return;
       }
 
@@ -407,6 +476,11 @@ export class DAGOrchestrator {
         readyNodeIds.length > 0 &&
         runningJobsByJobId.size < this.settings.maxConcurrentNodes
       ) {
+        if (context.abortSignal?.aborted || cancellationObserved) {
+          cancelUnscheduledNodes(resolveCancellationReason());
+          break;
+        }
+
         const nextNodeId = readyNodeIds.shift();
         if (!nextNodeId) {
           continue;
@@ -461,17 +535,23 @@ export class DAGOrchestrator {
             .filter(([, result]) => Boolean(result))
         ) as Record<string, DAGResult>;
         const attempt = attemptsByNodeId.get(nextNodeId) ?? 0;
-        const queuedJob = await this.jobQueue.enqueueDagNodeJob({
-          dagId,
-          node,
-          payload: context.payloadByNodeId?.[nextNodeId] ?? {},
-          dependencyResults,
-          sharedState: context.sharedState ?? {},
-          depth: validation.depthByNodeId[nextNodeId] ?? 0,
-          attempt,
-          maxRetries: this.settings.maxRetries,
-          waitingTimeoutMs: this.settings.nodeTimeoutMs
-        });
+        enqueuingNodeIds.add(nextNodeId);
+        let queuedJob: DagQueueJobRecord;
+        try {
+          queuedJob = await this.jobQueue.enqueueDagNodeJob({
+            dagId,
+            node,
+            payload: context.payloadByNodeId?.[nextNodeId] ?? {},
+            dependencyResults,
+            sharedState: context.sharedState ?? {},
+            depth: validation.depthByNodeId[nextNodeId] ?? 0,
+            attempt,
+            maxRetries: this.settings.maxRetries,
+            waitingTimeoutMs: this.settings.nodeTimeoutMs
+          });
+        } finally {
+          enqueuingNodeIds.delete(nextNodeId);
+        }
 
         runtimeStatusByNodeId.set(nextNodeId, 'queued');
         totalAiCalls += 1;
@@ -515,35 +595,89 @@ export class DAGOrchestrator {
                 });
               }
             })
-            .then(record => ({ jobId: queuedJob.jobId, record }))
+            // Attach both settlement handlers immediately. A prior waiter can reject
+            // while a later enqueue is still awaiting, before the scheduler reaches
+            // Promise.race; converting it here prevents a transient unhandled rejection.
+            .then(
+              record => ({ jobId: queuedJob.jobId, record }),
+              (error: unknown) => ({ jobId: queuedJob.jobId, error })
+            )
         });
+        //audit Assumption: abort may arrive while enqueue is awaiting shared persistence; failure risk: the new job escapes the abort listener's earlier job-id snapshot; expected invariant: every job returned after cancellation is immediately sent through queue cancellation; handling strategy: recheck after registration.
+        if (context.abortSignal?.aborted || cancellationObserved) {
+          requestCancellationForJob(
+            queuedJob.jobId,
+            resolveCancellationReason()
+          );
+        }
         maxParallelNodesObserved = Math.max(maxParallelNodesObserved, runningJobsByJobId.size);
       }
     };
 
-    await scheduleReadyNodes();
+    if (context.abortSignal) {
+      context.abortSignal.addEventListener('abort', onRunAbort, { once: true });
+      if (context.abortSignal.aborted) {
+        onRunAbort();
+      }
+    }
 
-    while (runningJobsByJobId.size > 0 || readyNodeIds.length > 0) {
+    try {
+      context.observer?.onRunStarted?.({
+        dagId,
+        startedAt
+      });
+
       await scheduleReadyNodes();
 
-      if (context.abortSignal?.aborted && runningJobsByJobId.size === 0) {
-        break;
-      }
+      while (runningJobsByJobId.size > 0 || readyNodeIds.length > 0) {
+        await scheduleReadyNodes();
 
-      if (runningJobsByJobId.size === 0) {
-        break;
-      }
+        if (
+          (context.abortSignal?.aborted || cancellationObserved) &&
+          runningJobsByJobId.size === 0
+        ) {
+          break;
+        }
 
-      const completedRunningJob = await Promise.race(
-        Array.from(runningJobsByJobId.values()).map(runningJob => runningJob.completionPromise)
-      );
-      runningJobsByJobId.delete(completedRunningJob.jobId);
-      this.metrics.recordGauge('running_nodes', runningJobsByJobId.size);
+        if (runningJobsByJobId.size === 0) {
+          break;
+        }
 
-      const terminalResult = normalizeTerminalDagResult(completedRunningJob.record);
-      const nodeId = completedRunningJob.record.nodeId;
+        const completedRunningJob = await Promise.race(
+          Array.from(runningJobsByJobId.values()).map(runningJob => runningJob.completionPromise)
+        );
+        if ('error' in completedRunningJob) {
+          throw completedRunningJob.error;
+        }
+        runningJobsByJobId.delete(completedRunningJob.jobId);
+        this.metrics.recordGauge('running_nodes', runningJobsByJobId.size);
 
-      if (terminalResult.status === 'failed') {
+        const nodeId = completedRunningJob.record.nodeId;
+        if (completedRunningJob.record.status === 'cancelled') {
+          const cancelledAt =
+            completedRunningJob.record.timestamps.completedAt ??
+            new Date().toISOString();
+          runtimeStatusByNodeId.set(nodeId, 'cancelled');
+          cancelledNodeIds.add(nodeId);
+          cancellationObserved = true;
+          context.observer?.onNodeCancelled?.({
+            dagId,
+            nodeId,
+            at: cancelledAt,
+            reason:
+              completedRunningJob.record.errorMessage ??
+              'DAG node cancellation reached terminal queue state.'
+          });
+          cancelUnscheduledNodes('DAG run cancellation reached a queue worker.');
+          requestCancellationForRunningJobs(
+            'DAG run cancellation reached another queue worker.'
+          );
+          continue;
+        }
+
+        const terminalResult = normalizeTerminalDagResult(completedRunningJob.record);
+
+        if (terminalResult.status === 'failed') {
         const nextAttempt = (attemptsByNodeId.get(nodeId) ?? 0) + 1;
         attemptsByNodeId.set(nodeId, nextAttempt);
         const resultAllowsRetry = terminalResult.retryable !== false;
@@ -602,122 +736,141 @@ export class DAGOrchestrator {
           nodeId,
           terminalResult.errorMessage ?? `Node "${nodeId}" failed.`
         );
-        continue;
-      }
+          continue;
+        }
 
-      if (terminalResult.status === 'skipped') {
-        runtimeStatusByNodeId.set(nodeId, 'skipped');
-        resultsByNodeId[nodeId] = terminalResult;
-        cascadeBlockedDependents(
-          nodeId,
-          terminalResult.errorMessage ?? `Node "${nodeId}" was skipped.`
-        );
-        continue;
-      }
-
-      runtimeStatusByNodeId.set(nodeId, 'completed');
-      resultsByNodeId[nodeId] = terminalResult;
-      tokenBudgetUsed += extractDagResultTokenUsage(terminalResult);
-      this.metrics.incrementCounter('node_completed');
-      this.metrics.recordGauge('token_budget_used', tokenBudgetUsed);
-      context.observer?.onNodeCompleted?.({
-        dagId,
-        nodeId,
-        jobId: completedRunningJob.record.jobId,
-        result: terminalResult,
-        completedAt: completedRunningJob.record.timestamps.completedAt ?? new Date().toISOString()
-      });
-
-      for (const dependentNodeId of getDependentDagNodeIds(graph, nodeId)) {
-        const dependentNode = graph.nodes[dependentNodeId];
-        const blockedDependency = dependentNode.dependencies.some(dependencyNodeId => {
-          const dependencyStatus = runtimeStatusByNodeId.get(dependencyNodeId);
-          return dependencyStatus === 'failed' || dependencyStatus === 'skipped';
-        });
-
-        if (blockedDependency) {
-          skipNodeAndDependents(
-            dependentNodeId,
-            `Dependency for node "${dependentNodeId}" did not complete successfully.`
+        if (terminalResult.status === 'skipped') {
+          runtimeStatusByNodeId.set(nodeId, 'skipped');
+          resultsByNodeId[nodeId] = terminalResult;
+          cascadeBlockedDependents(
+            nodeId,
+            terminalResult.errorMessage ?? `Node "${nodeId}" was skipped.`
           );
           continue;
         }
 
-        const allDependenciesCompleted = dependentNode.dependencies.every(dependencyNodeId => {
-          const dependencyStatus = runtimeStatusByNodeId.get(dependencyNodeId);
-          return dependencyStatus === 'completed';
+        runtimeStatusByNodeId.set(nodeId, 'completed');
+        resultsByNodeId[nodeId] = terminalResult;
+        tokenBudgetUsed += extractDagResultTokenUsage(terminalResult);
+        this.metrics.incrementCounter('node_completed');
+        this.metrics.recordGauge('token_budget_used', tokenBudgetUsed);
+        context.observer?.onNodeCompleted?.({
+          dagId,
+          nodeId,
+          jobId: completedRunningJob.record.jobId,
+          result: terminalResult,
+          completedAt: completedRunningJob.record.timestamps.completedAt ?? new Date().toISOString()
         });
 
-        if (allDependenciesCompleted) {
-          enqueueReadyNode(dependentNodeId);
+        for (const dependentNodeId of getDependentDagNodeIds(graph, nodeId)) {
+          const dependentNode = graph.nodes[dependentNodeId];
+          const blockedDependency = dependentNode.dependencies.some(dependencyNodeId => {
+            const dependencyStatus = runtimeStatusByNodeId.get(dependencyNodeId);
+            return dependencyStatus === 'failed' || dependencyStatus === 'skipped';
+          });
+
+          if (blockedDependency) {
+            skipNodeAndDependents(
+              dependentNodeId,
+              `Dependency for node "${dependentNodeId}" did not complete successfully.`
+            );
+            continue;
+          }
+
+          const allDependenciesCompleted = dependentNode.dependencies.every(dependencyNodeId => {
+            const dependencyStatus = runtimeStatusByNodeId.get(dependencyNodeId);
+            return dependencyStatus === 'completed';
+          });
+
+          if (allDependenciesCompleted) {
+            enqueueReadyNode(dependentNodeId);
+          }
         }
       }
-    }
 
-    const unresolvedNodeIds = Object.keys(graph.nodes).filter(nodeId => {
-      const status = runtimeStatusByNodeId.get(nodeId);
-      return status === 'pending' || status === 'queued' || status === 'running';
-    });
+      const unresolvedNodeIds = Object.keys(graph.nodes).filter(nodeId => {
+        const status = runtimeStatusByNodeId.get(nodeId);
+        return status === 'pending' || status === 'queued' || status === 'running';
+      });
 
-    for (const unresolvedNodeId of unresolvedNodeIds) {
-      if (context.abortSignal?.aborted) {
-        runtimeStatusByNodeId.set(unresolvedNodeId, 'cancelled');
-        cancelledNodeIds.add(unresolvedNodeId);
-        context.observer?.onNodeCancelled?.({
-          dagId,
-          nodeId: unresolvedNodeId,
-          at: new Date().toISOString(),
-          reason: 'Run cancellation requested.'
-        });
-      } else {
-        runtimeStatusByNodeId.set(unresolvedNodeId, 'failed');
-        resultsByNodeId[unresolvedNodeId] = createDagFailureResult(
-          unresolvedNodeId,
-          `Node "${unresolvedNodeId}" was left unresolved by the DAG orchestrator.`
-        );
-        this.metrics.incrementCounter('node_unresolved');
-        emitGuardViolation(
-          'deadline_exceeded',
-          `Node "${unresolvedNodeId}" was left unresolved by the DAG orchestrator.`,
-          unresolvedNodeId
+      for (const unresolvedNodeId of unresolvedNodeIds) {
+        if (context.abortSignal?.aborted || cancellationObserved) {
+          runtimeStatusByNodeId.set(unresolvedNodeId, 'cancelled');
+          cancelledNodeIds.add(unresolvedNodeId);
+          context.observer?.onNodeCancelled?.({
+            dagId,
+            nodeId: unresolvedNodeId,
+            at: new Date().toISOString(),
+            reason: 'Run cancellation requested.'
+          });
+        } else {
+          runtimeStatusByNodeId.set(unresolvedNodeId, 'failed');
+          resultsByNodeId[unresolvedNodeId] = createDagFailureResult(
+            unresolvedNodeId,
+            `Node "${unresolvedNodeId}" was left unresolved by the DAG orchestrator.`
+          );
+          this.metrics.incrementCounter('node_unresolved');
+          emitGuardViolation(
+            'deadline_exceeded',
+            `Node "${unresolvedNodeId}" was left unresolved by the DAG orchestrator.`,
+            unresolvedNodeId
+          );
+        }
+      }
+
+      const failedNodeIds = Object.entries(resultsByNodeId)
+        .filter(([, result]) => result.status === 'failed')
+        .map(([nodeId]) => nodeId)
+        .sort();
+      const skippedNodeIds = Object.entries(resultsByNodeId)
+        .filter(([, result]) => result.status === 'skipped')
+        .map(([nodeId]) => nodeId)
+        .sort();
+      const orderedCancelledNodeIds = Array.from(cancelledNodeIds.values()).sort();
+
+      const completedAt = new Date().toISOString();
+      const status = context.abortSignal?.aborted || cancellationObserved
+        ? 'cancelled'
+        : failedNodeIds.length === 0 && skippedNodeIds.length === 0
+        ? 'success'
+        : 'failed';
+
+      const summary: DAGRunSummary = {
+        dagId,
+        status,
+        resultsByNodeId,
+        failedNodeIds,
+        skippedNodeIds,
+        cancelledNodeIds: orderedCancelledNodeIds,
+        tokenBudgetUsed,
+        totalAiCalls,
+        totalRetries,
+        maxParallelNodesObserved,
+        metrics: this.metrics.snapshot(),
+        startedAt,
+        completedAt
+      };
+
+      context.observer?.onRunCompleted?.(summary);
+      return summary;
+    } finally {
+      context.abortSignal?.removeEventListener('abort', onRunAbort);
+      if (context.abortSignal?.aborted || cancellationObserved) {
+        cancelUnscheduledNodes(resolveCancellationReason());
+      }
+      if (runningJobsByJobId.size > 0) {
+        requestCancellationForRunningJobs(
+          'DAG orchestrator stopped before all queue jobs reached terminal state.'
         );
       }
+      while (cancellationRequests.size > 0) {
+        await Promise.allSettled(Array.from(cancellationRequests));
+      }
+      await Promise.allSettled(
+        Array.from(runningJobsByJobId.values()).map(
+          runningJob => runningJob.completionPromise
+        )
+      );
     }
-
-    const failedNodeIds = Object.entries(resultsByNodeId)
-      .filter(([, result]) => result.status === 'failed')
-      .map(([nodeId]) => nodeId)
-      .sort();
-    const skippedNodeIds = Object.entries(resultsByNodeId)
-      .filter(([, result]) => result.status === 'skipped')
-      .map(([nodeId]) => nodeId)
-      .sort();
-    const orderedCancelledNodeIds = Array.from(cancelledNodeIds.values()).sort();
-
-    const completedAt = new Date().toISOString();
-    const status = context.abortSignal?.aborted
-      ? 'cancelled'
-      : failedNodeIds.length === 0 && skippedNodeIds.length === 0
-      ? 'success'
-      : 'failed';
-
-    const summary: DAGRunSummary = {
-      dagId,
-      status,
-      resultsByNodeId,
-      failedNodeIds,
-      skippedNodeIds,
-      cancelledNodeIds: orderedCancelledNodeIds,
-      tokenBudgetUsed,
-      totalAiCalls,
-      totalRetries,
-      maxParallelNodesObserved,
-      metrics: this.metrics.snapshot(),
-      startedAt,
-      completedAt
-    };
-
-    context.observer?.onRunCompleted?.(summary);
-    return summary;
   }
 }

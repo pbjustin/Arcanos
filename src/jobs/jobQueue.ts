@@ -3,6 +3,7 @@ import {
   createJob,
   failPendingJobIfUnclaimed,
   getJobById,
+  requestJobCancellation,
   updateClaimedJobTerminal
 } from '../core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '../services/workerAutonomyService.js';
@@ -42,8 +43,17 @@ export interface WaitForDagJobCompletionOptions {
   onStatusChange?: (record: DagQueueJobRecord) => void;
 }
 
+export interface DagJobCancellationResult {
+  outcome: 'cancelled' | 'cancellation_requested' | 'already_terminal' | 'not_found';
+  record: DagQueueJobRecord | null;
+}
+
 export interface DagJobQueue {
   enqueueDagNodeJob(request: EnqueueDagNodeJobRequest): Promise<DagQueueJobRecord>;
+  requestDagJobCancellation(
+    jobId: string,
+    reason?: string
+  ): Promise<DagJobCancellationResult>;
   waitForDagJobCompletion(
     jobId: string,
     options?: WaitForDagJobCompletionOptions
@@ -142,6 +152,20 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
   }
 
   /**
+   * Request cancellation for one DAG node job through the shared queue lifecycle.
+   */
+  async requestDagJobCancellation(
+    jobId: string,
+    reason = 'DAG run cancellation requested.'
+  ): Promise<DagJobCancellationResult> {
+    const result = await requestJobCancellation(jobId, reason);
+    return {
+      outcome: result.outcome,
+      record: result.job ? buildDagQueueJobRecord(result.job) : null
+    };
+  }
+
+  /**
    * Poll the shared queue until one DAG node job completes or fails.
    *
    * Purpose:
@@ -176,7 +200,11 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
         previousStatus = currentRecord.status;
         options.onStatusChange?.(currentRecord);
       }
-      if (currentRecord.status === 'completed' || currentRecord.status === 'failed') {
+      if (
+        currentRecord.status === 'completed' ||
+        currentRecord.status === 'failed' ||
+        currentRecord.status === 'cancelled'
+      ) {
         return currentRecord;
       }
 
@@ -201,7 +229,11 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
         options.onStatusChange?.(normalizedRecord);
       }
 
-      if (normalizedRecord.status === 'completed' || normalizedRecord.status === 'failed') {
+      if (
+        normalizedRecord.status === 'completed' ||
+        normalizedRecord.status === 'failed' ||
+        normalizedRecord.status === 'cancelled'
+      ) {
         return normalizedRecord;
       }
 

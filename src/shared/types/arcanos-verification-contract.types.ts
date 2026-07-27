@@ -80,6 +80,7 @@ export type GuardViolationType =
 export type DagEventType =
   | 'run.created'
   | 'run.started'
+  | 'run.cancellation_requested'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -206,6 +207,8 @@ export interface DagRunSummary extends TrinityRuntimeMetadata {
   durationMs?: number;
   createdAt: ISODateString;
   updatedAt: ISODateString;
+  cancellationRequestedAt?: ISODateString;
+  cancellationReason?: string;
   artifacts?: string[];
   resumable?: boolean;
   finalOutput?: FinalOutput;
@@ -376,11 +379,17 @@ export interface DagLineageData {
 
 export type DagLineageResponse = ApiEnvelope<DagLineageData>;
 
-export interface CancelDagRunResponseData {
-  runId: string;
-  status: 'cancelled';
-  cancelledNodes: string[];
-}
+export type CancelDagRunResponseData =
+  | {
+      runId: string;
+      status: 'cancellation_requested';
+      cancelledNodes: string[];
+    }
+  | {
+      runId: string;
+      status: 'cancelled';
+      cancelledNodes: string[];
+    };
 
 export type CancelDagRunResponse = ApiEnvelope<CancelDagRunResponseData>;
 

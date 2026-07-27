@@ -141,6 +141,7 @@ describe('jobRepository.updateJob', () => {
     const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
 
     expect(sql).toContain('started_at = NULL');
+    expect(sql).toContain('AND cancel_requested_at IS NULL');
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.retry.scheduled',
       metadata: expect.objectContaining({
@@ -300,6 +301,8 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('AND claim_generation = $12::bigint');
     expect(sql).toContain('AND lease_expires_at IS NOT NULL');
     expect(sql).toContain('AND lease_expires_at >= NOW()');
+    expect(sql).toContain("$1::varchar(50) = 'cancelled'::varchar(50)");
+    expect(sql).toContain('OR cancel_requested_at IS NULL');
     expect(sql).not.toContain('current_job');
     expect(sql).not.toContain('UNION ALL');
     expect(params.slice(-3)).toEqual(['job-1', 'worker-1', '7']);

@@ -54,6 +54,50 @@ export interface JobRunnerIdleBackoffDelayOptions {
   maxIdleBackoffMs?: number;
 }
 
+export type ClaimedJobAbortCause =
+  | 'durable_cancellation'
+  | 'lease_lost'
+  | 'process_shutdown';
+
+export interface ClaimedJobAbortState {
+  cause: ClaimedJobAbortCause | null;
+  durableCancellationReason: string | null;
+}
+
+export function selectClaimedJobAbortCause(
+  currentCause: ClaimedJobAbortCause | null,
+  nextCause: ClaimedJobAbortCause
+): ClaimedJobAbortCause {
+  if (
+    currentCause === 'durable_cancellation' ||
+    nextCause === 'durable_cancellation'
+  ) {
+    return 'durable_cancellation';
+  }
+
+  return currentCause ?? nextCause;
+}
+
+export function advanceClaimedJobAbortState(
+  currentState: ClaimedJobAbortState,
+  nextCause: ClaimedJobAbortCause,
+  message: string
+): ClaimedJobAbortState {
+  return {
+    cause: selectClaimedJobAbortCause(currentState.cause, nextCause),
+    durableCancellationReason:
+      nextCause === 'durable_cancellation'
+        ? message
+        : currentState.durableCancellationReason
+  };
+}
+
+export function shouldPersistClaimedJobCancellation(
+  cause: ClaimedJobAbortCause | null
+): boolean {
+  return cause === 'durable_cancellation';
+}
+
 const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'timeout exceeded when trying to connect',
   'connect timeout',

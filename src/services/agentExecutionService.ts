@@ -82,6 +82,13 @@ interface AgentWaitForDagJobCompletionOptions {
 
 interface AgentDagJobQueue {
   enqueueDagNodeJob(request: AgentEnqueueDagNodeJobRequest): Promise<AgentDagQueueJobRecord>;
+  requestDagJobCancellation(
+    jobId: string,
+    reason?: string
+  ): Promise<{
+    outcome: 'already_terminal' | 'not_found';
+    record: AgentDagQueueJobRecord | null;
+  }>;
   waitForDagJobCompletion(
     jobId: string,
     options?: AgentWaitForDagJobCompletionOptions
@@ -175,6 +182,27 @@ class InProcessCapabilityDagJobQueue implements AgentDagJobQueue {
     }
 
     return completionPromise;
+  }
+
+  async requestDagJobCancellation(
+    jobId: string,
+    _reason = 'In-process DAG cancellation requested.'
+  ): Promise<{
+    outcome: 'already_terminal' | 'not_found';
+    record: AgentDagQueueJobRecord | null;
+  }> {
+    const completionPromise = this.jobsById.get(jobId);
+    if (!completionPromise) {
+      return {
+        outcome: 'not_found',
+        record: null
+      };
+    }
+
+    return {
+      outcome: 'already_terminal',
+      record: await completionPromise
+    };
   }
 
   private async executeQueuedNode(

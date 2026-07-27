@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetDagRunSnapshotById = jest.fn();
 const mockGetLatestDagRunSnapshot = jest.fn();
+const mockLookupDagRunSnapshotForControl = jest.fn();
 const mockUpsertDagRunSnapshot = jest.fn();
 
 jest.unstable_mockModule('../src/core/db/repositories/dagRunRepository.js', () => ({
   getLatestDagRunSnapshot: mockGetLatestDagRunSnapshot,
   getDagRunSnapshotById: mockGetDagRunSnapshotById,
+  lookupDagRunSnapshotForControl: mockLookupDagRunSnapshotForControl,
   upsertDagRunSnapshot: mockUpsertDagRunSnapshot
 }));
 
@@ -126,6 +128,9 @@ describe('ArcanosDagRunService persistence fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetLatestDagRunSnapshot.mockResolvedValue(null);
+    mockLookupDagRunSnapshotForControl.mockResolvedValue({
+      outcome: 'not_found'
+    });
     mockUpsertDagRunSnapshot.mockResolvedValue(true);
   });
 

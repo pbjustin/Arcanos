@@ -219,6 +219,18 @@ by method and canonical path. Both the boundary and the existing per-route
 limits use the authenticated control-plane principal, so rotating caller-owned
 session IDs does not create fresh DAG execution buckets.
 
+DAG run creation also has a per-web-process active-run limit. When that
+capacity is full, `POST /api/arcanos/dag/runs` returns `429` with
+`DAG_RUN_CAPACITY_EXCEEDED` and a `Retry-After` header. An accepted cancellation
+first persists cooperative cancellation intent, then returns `202` with
+`status: "cancellation_requested"`; a repeated request or an already-cancelled
+run returns `200`. A confirmed absent run returns `404 RUN_NOT_FOUND`, a
+complete or failed run returns `409 RUN_NOT_CANCELLABLE`, and an active run
+owned by another replica or unavailable/corrupt control persistence returns
+`503` with `DAG_RUN_OWNED_ELSEWHERE` or `DAG_RUN_CANCELLATION_UNAVAILABLE` plus
+`Retry-After`. Cancellation does not release the admitting replica's capacity
+reservation until the background execution promise settles.
+
 ### State and Custom GPT bridge
 - `GET /system-state` (control-plane operator and `arcanos:read` required)
 - `POST /system-state` (control-plane operator, `mcp:invoke`, and an issued

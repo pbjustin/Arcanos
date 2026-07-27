@@ -163,10 +163,14 @@ describe('ARCANOS build and tracker modules', () => {
       updated: true,
       waited: true
     });
-    mockCancelRun.mockReturnValue({
-      runId: 'run-track-2',
-      status: 'cancelled',
-      cancelledNodes: ['writer']
+    mockCancelRun.mockResolvedValue({
+      outcome: 'already_cancelled',
+      statusCode: 200,
+      data: {
+        runId: 'run-track-2',
+        status: 'cancelled',
+        cancelledNodes: ['writer']
+      }
     });
 
     const waitResult = await trackerModule.actions.waitForRunUpdate({

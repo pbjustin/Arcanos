@@ -429,6 +429,10 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `PLANNER_TIMEOUT_MS` | No | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | Planner DAG node timeout. |
 | `PLANNER_MAX_RETRIES` | No | `2` | Planner retry count after the first attempt. |
 | `PLANNER_RETRY_BACKOFF_MS` | No | `1000` | Planner retry backoff base. |
+| `DAG_MAX_ACTIVE_RUNS` | No | `4` | Maximum admitted DAG runs whose execution has not settled in one web process. Reservations are acquired before the first asynchronous admission write and remain held through cancellation requests until execution settles. |
+| `DAG_TERMINAL_RETENTION_MS` | No | `900000` | Age threshold for expiry-based lazy eviction of settled terminal DAG snapshots; the retained-run cap can evict the oldest eligible record earlier. |
+| `DAG_MAX_RETAINED_RUNS` | No | `100` | Maximum locally retained DAG run records per web process; the oldest safely settled terminal records are evicted first. |
+| `DAG_OVERLOAD_RETRY_AFTER_SECONDS` | No | `5` | Stable `Retry-After` value returned for DAG capacity and temporarily unavailable cancellation decisions. |
 | `ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS` | No | background profile default | Handler timeout for background `ARCANOS:CORE` execution. |
 | `ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS` | No | `120000` | Primary Trinity timeout for background `ARCANOS:CORE` execution, clamped by code. |
 | `ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS` | No | background profile default | Time reserved for degraded fallback after a background pipeline timeout. |
@@ -443,6 +447,8 @@ Protected async Trinity flow:
 5. The worker stores terminal output and protected clients poll `POST /gpt-access/jobs/result`.
 
 Queued Trinity DAG nodes use `src/services/trinity/adapter.ts` to create and poll Arcanos core GPT jobs through the same GPT Access job path. The adapter accepts injected config/dependencies for tests and non-Railway runtimes; production code reads the role toggle from `TRINITY_DAG_GPT_ACCESS_ENABLED` and otherwise only auto-enables when worker slots exceed `DAG_MAX_CONCURRENT_NODES`, preserving at least one slot for child GPT jobs.
+
+DAG admission and retention are process-local safeguards, so `DAG_MAX_ACTIVE_RUNS` and `DAG_MAX_RETAINED_RUNS` apply independently to each web replica rather than forming a deployment-wide quota. Terminal eviction is lazy and removes only locally settled records after their execution, cancellation-control write, and queued snapshot persistence have all finished; durable PostgreSQL snapshots are not deleted by this cleanup.
 
 Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-gateway.md` for curl examples.
 

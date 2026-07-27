@@ -4,6 +4,7 @@ import type { JobData } from '../src/core/db/schema.js';
 const createJobMock = jest.fn();
 const failPendingJobIfUnclaimedMock = jest.fn();
 const getJobByIdMock = jest.fn();
+const requestJobCancellationMock = jest.fn();
 const updateClaimedJobTerminalMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const sleepMock = jest.fn(async () => undefined);
@@ -16,6 +17,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   createJob: createJobMock,
   failPendingJobIfUnclaimed: failPendingJobIfUnclaimedMock,
   getJobById: getJobByIdMock,
+  requestJobCancellation: requestJobCancellationMock,
   updateClaimedJobTerminal: updateClaimedJobTerminalMock
 }));
 
@@ -64,6 +66,8 @@ function buildJobRow(overrides: Partial<JobData> = {}): JobData {
     started_at: overrides.started_at,
     last_heartbeat_at: overrides.last_heartbeat_at,
     lease_expires_at: overrides.lease_expires_at,
+    cancel_requested_at: overrides.cancel_requested_at,
+    cancel_reason: overrides.cancel_reason,
     priority: overrides.priority ?? 100,
     last_worker_id: Object.prototype.hasOwnProperty.call(overrides, 'last_worker_id')
       ? overrides.last_worker_id
@@ -470,5 +474,131 @@ describe('DatabaseBackedDagJobQueue', () => {
     expect(updateClaimedJobTerminalMock).not.toHaveBeenCalled();
     expect(record.status).toBe('completed');
     expect(sleepMock).toHaveBeenCalled();
+  });
+
+  it('treats cancelled jobs as first-class terminal queue records without timeout mutation', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const cancelledAt = new Date('2026-07-27T12:00:01.000Z');
+    getJobByIdMock.mockResolvedValueOnce(buildJobRow({
+      status: 'cancelled',
+      error_message: 'DAG run cancellation requested.',
+      cancel_requested_at: cancelledAt,
+      cancel_reason: 'DAG run cancellation requested.',
+      completed_at: cancelledAt,
+      updated_at: cancelledAt
+    }));
+
+    const record = await queue.waitForDagJobCompletion('job-1');
+
+    expect(record.status).toBe('cancelled');
+    expect(record.errorMessage).toBe('DAG run cancellation requested.');
+    expect(record.timestamps.completedAt).toBe(cancelledAt.toISOString());
+    expect(getJobByIdMock).toHaveBeenCalledTimes(1);
+    expect(failPendingJobIfUnclaimedMock).not.toHaveBeenCalled();
+    expect(updateClaimedJobTerminalMock).not.toHaveBeenCalled();
+    expect(sleepMock).not.toHaveBeenCalled();
+  });
+
+  it('normalizes immediate pending-job cancellation through requestDagJobCancellation', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const cancelledAt = new Date('2026-07-27T12:00:01.000Z');
+    requestJobCancellationMock.mockResolvedValueOnce({
+      outcome: 'cancelled',
+      job: buildJobRow({
+        status: 'cancelled',
+        last_worker_id: null,
+        error_message: 'Cancelled before claim.',
+        cancel_requested_at: cancelledAt,
+        cancel_reason: 'Cancelled before claim.',
+        completed_at: cancelledAt,
+        updated_at: cancelledAt
+      })
+    });
+
+    const result = await queue.requestDagJobCancellation(
+      'job-1',
+      'Cancelled before claim.'
+    );
+
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      'job-1',
+      'Cancelled before claim.'
+    );
+    expect(result.outcome).toBe('cancelled');
+    expect(result.record).toMatchObject({
+      jobId: 'job-1',
+      status: 'cancelled',
+      errorMessage: 'Cancelled before claim.'
+    });
+  });
+
+  it('preserves running state when requestDagJobCancellation only records a cancellation request', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const requestedAt = new Date('2026-07-27T12:00:01.000Z');
+    requestJobCancellationMock.mockResolvedValueOnce({
+      outcome: 'cancellation_requested',
+      job: buildJobRow({
+        status: 'running',
+        cancel_requested_at: requestedAt,
+        cancel_reason: 'Cancel the active node.',
+        updated_at: requestedAt
+      })
+    });
+
+    const result = await queue.requestDagJobCancellation(
+      'job-1',
+      'Cancel the active node.'
+    );
+
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      'job-1',
+      'Cancel the active node.'
+    );
+    expect(result.outcome).toBe('cancellation_requested');
+    expect(result.record).toMatchObject({
+      jobId: 'job-1',
+      status: 'running'
+    });
+  });
+
+  it('keeps polling a cancellation-requested running row until the database reports cancelled', async () => {
+    const queue = new DatabaseBackedDagJobQueue();
+    const requestedAt = new Date();
+    const cancelledAt = new Date(requestedAt.getTime() + 1_000);
+    const observedStatuses: string[] = [];
+    getJobByIdMock
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'running',
+        started_at: requestedAt,
+        last_heartbeat_at: requestedAt,
+        lease_expires_at: new Date(requestedAt.getTime() + 30_000),
+        cancel_requested_at: requestedAt,
+        cancel_reason: 'Cancel the active node.',
+        updated_at: requestedAt
+      }))
+      .mockResolvedValueOnce(buildJobRow({
+        status: 'cancelled',
+        started_at: requestedAt,
+        cancel_requested_at: requestedAt,
+        cancel_reason: 'Cancel the active node.',
+        error_message: 'Cancel the active node.',
+        completed_at: cancelledAt,
+        updated_at: cancelledAt
+      }));
+
+    const record = await queue.waitForDagJobCompletion('job-1', {
+      pollIntervalMs: 1,
+      timeoutMs: 5_000,
+      onStatusChange: statusRecord => {
+        observedStatuses.push(statusRecord.status);
+      }
+    });
+
+    expect(record.status).toBe('cancelled');
+    expect(observedStatuses).toEqual(['running', 'cancelled']);
+    expect(getJobByIdMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledTimes(1);
+    expect(failPendingJobIfUnclaimedMock).not.toHaveBeenCalled();
+    expect(updateClaimedJobTerminalMock).not.toHaveBeenCalled();
   });
 });

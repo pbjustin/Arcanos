@@ -12,7 +12,8 @@ import {
   createClaimedJobFence,
   getJobById,
   JobRepositoryUnavailableError,
-  updateClaimedJobTerminal
+  updateClaimedJobTerminal,
+  type ClaimedJobFence
 } from '@core/db/repositories/jobRepository.js';
 import type { JobData } from '@core/db/schema.js';
 import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
@@ -41,6 +42,7 @@ import {
 } from '@services/workerAutonomyService.js';
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
+  advanceClaimedJobAbortState,
   buildJobRunnerSlotDefinitions,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
@@ -52,6 +54,9 @@ import {
   resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent,
+  shouldPersistClaimedJobCancellation,
+  type ClaimedJobAbortCause,
+  type ClaimedJobAbortState,
   type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
   type JobRunnerSlotDefinition
@@ -70,7 +75,11 @@ import {
   runWithAiExecutionContext,
   summarizeAiExecutionContext
 } from '@services/openai/aiExecutionContext.js';
-import { createAbortError, isAbortError } from '@arcanos/runtime';
+import {
+  createAbortError,
+  isAbortError,
+  runWithRequestAbortContext
+} from '@arcanos/runtime';
 import { computeGptJobLifecycleDeadlines, summarizeGptJobTimings } from '@shared/gpt/gptJobLifecycle.js';
 import {
   getOpenAIProviderRuntimeStatus,
@@ -588,15 +597,44 @@ async function executeQueuedDagNode(
     };
   }
 
-  const dagResult = await runDagNodeJob(parsedDagJobInput.value, {
-    runPrompt: createDagNodeRunPromptBridge(openai, {
-      runWorkerPrompt: runWorkerTrinityPrompt,
-      useGptAccess: isTrinityDagGptAccessEnabled(),
-      gptAccessConfig: {
-        abortSignal: cancellationSignal
-      }
-    })
-  });
+  let dagResult: Awaited<ReturnType<typeof runDagNodeJob>>;
+  try {
+    dagResult = await runDagNodeJob(parsedDagJobInput.value, {
+      abortSignal: cancellationSignal,
+      runPrompt: createDagNodeRunPromptBridge(openai, {
+        runWorkerPrompt: runWorkerTrinityPrompt,
+        useGptAccess: isTrinityDagGptAccessEnabled(),
+        gptAccessConfig: {
+          abortSignal: cancellationSignal
+        }
+      })
+    });
+  } catch (error: unknown) {
+    if (cancellationSignal?.aborted) {
+      return {
+        status: 'cancelled',
+        output: null,
+        errorMessage:
+          cancellationSignal.reason instanceof Error
+            ? cancellationSignal.reason.message
+            : 'DAG node cancellation requested.',
+        retryable: false
+      };
+    }
+    throw error;
+  }
+
+  if (cancellationSignal?.aborted) {
+    return {
+      status: 'cancelled',
+      output: null,
+      errorMessage:
+        cancellationSignal.reason instanceof Error
+          ? cancellationSignal.reason.message
+          : 'DAG node cancellation requested.',
+      retryable: false
+    };
+  }
 
   //audit Assumption: failed DAG node results may be transient or terminal depending on the message; failure risk: blanket non-retry classification wastes available retry budget; expected invariant: central retry logic receives a normalized hint; handling strategy: classify the node error before returning the failed outcome.
   if (dagResult.status === 'failed') {
@@ -849,6 +887,125 @@ function startHeartbeatLoop(
       clearInterval(intervalHandle);
     }
   };
+}
+
+function hasLiveClaimFence(
+  job: JobData,
+  fence: ClaimedJobFence,
+  nowMs = Date.now()
+): boolean {
+  const leaseExpiresAtMs = job.lease_expires_at
+    ? new Date(job.lease_expires_at).getTime()
+    : Number.NaN;
+  return (
+    job.status === 'running' &&
+    job.last_worker_id === fence.workerId &&
+    job.claim_generation === fence.claimGeneration &&
+    Number.isFinite(leaseExpiresAtMs) &&
+    leaseExpiresAtMs >= nowMs
+  );
+}
+
+async function finalizeCancellationAfterTerminalCasMiss(params: {
+  job: JobData;
+  fence: ClaimedJobFence;
+  autonomyService: WorkerAutonomyService;
+  jobStartedAtMs: number;
+}): Promise<boolean> {
+  const currentJob = await getJobById(params.job.id);
+  if (
+    !currentJob ||
+    !currentJob.cancel_requested_at ||
+    !hasLiveClaimFence(currentJob, params.fence)
+  ) {
+    return false;
+  }
+
+  const cancellationReason =
+    currentJob.cancel_reason ??
+    'Queue job cancellation won the terminal persistence race.';
+  return persistClaimedJobCancellation({
+    ...params,
+    cancellationReason,
+    output: null
+  });
+}
+
+async function recordCancelledJobCompletion(params: {
+  job: JobData;
+  autonomyService: WorkerAutonomyService;
+  jobStartedAtMs: number;
+  cancellationReason: string;
+}): Promise<void> {
+  await params.autonomyService.markJobCancelled(params.job.id);
+  recordWorkerJobDuration({
+    jobType: params.job.job_type,
+    outcome: 'cancelled',
+    durationMs: Date.now() - params.jobStartedAtMs
+  });
+  if (params.job.job_type !== 'gpt') {
+    return;
+  }
+
+  const timings = summarizeGptJobTimings({
+    created_at: params.job.created_at,
+    started_at: new Date(params.jobStartedAtMs),
+    completed_at: new Date()
+  });
+  recordGptJobEvent({
+    event: 'cancelled',
+    status: 'cancelled',
+    retryable: false
+  });
+  recordGptJobTiming({
+    phase: 'execution',
+    outcome: 'cancelled',
+    durationMs: timings.executionMs
+  });
+  recordGptJobTiming({
+    phase: 'end_to_end',
+    outcome: 'cancelled',
+    durationMs: timings.endToEndMs
+  });
+  logger.info('gpt.job.cancelled', {
+    jobId: params.job.id,
+    errorMessage: params.cancellationReason,
+    queueWaitMs: timings.queueWaitMs,
+    executionMs: timings.executionMs,
+    endToEndMs: timings.endToEndMs
+  });
+}
+
+async function persistClaimedJobCancellation(params: {
+  job: JobData;
+  fence: ClaimedJobFence;
+  autonomyService: WorkerAutonomyService;
+  jobStartedAtMs: number;
+  cancellationReason: string;
+  output: unknown;
+}): Promise<boolean> {
+  const terminalJob = await updateClaimedJobTerminal(
+    params.job.id,
+    'cancelled',
+    {
+      fence: params.fence,
+      output: params.output,
+      errorMessage: params.cancellationReason,
+      metadata: {
+        ...(params.job.job_type === 'gpt'
+          ? computeGptJobLifecycleDeadlines('cancelled')
+          : { idempotencyUntil: null, retentionUntil: null }),
+        cancelRequestedAt: new Date().toISOString(),
+        cancelReason: params.cancellationReason
+      }
+    }
+  );
+  if (!terminalJob) {
+    return false;
+  }
+
+  await recordCancelledJobCompletion(params);
+  return true;
 }
 
 function startWorkerHeartbeatLoop(
@@ -1139,72 +1296,49 @@ async function runWorkerConsumerSlot(
           maxRetries: job.max_retries ?? null
         }
       });
-      const ensuredClientState = await ensureOpenAIClientForSlot({
-        workerId: slotDefinition.workerId,
-        currentClient: openai,
-        currentConfigVersion: providerConfigVersion
-      });
-      openai = ensuredClientState.client;
-      providerConfigVersion = ensuredClientState.configVersion;
-      if (ensuredClientState.providerRecovered) {
-        await autonomyService.recordProviderCircuitBreakerReset({
-          providerFailureCategory: ensuredClientState.providerRecoveryCategory,
-          providerNextRetryAt: ensuredClientState.providerRecoveryNextRetryAt,
-          source: 'job-runner'
-        });
-      }
-
-      if (!openai) {
-        const delayMs = resolveProviderPauseMs(
-          ensuredClientState.pausedUntil,
-          runtimeSettings.idleBackoffMs
+      const jobCancellationController = new AbortController();
+      let jobAbortState: ClaimedJobAbortState = {
+        cause: null,
+        durableCancellationReason: null
+      };
+      const abortClaimedJob = (
+        cause: ClaimedJobAbortCause,
+        message: string
+      ): void => {
+        jobAbortState = advanceClaimedJobAbortState(
+          jobAbortState,
+          cause,
+          message
         );
-        const nowMs = Date.now();
-        if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-          logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
-            module: 'job-runner',
-            workerId: slotDefinition.workerId,
-            jobId: job.id,
-            jobType: job.job_type,
-            nextRetryAt: ensuredClientState.pausedUntil ?? null,
-            providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
-            delayMs,
-            pollingContinues: true
-          });
-          lastProviderPauseLogAtMs = nowMs;
+        if (!jobCancellationController.signal.aborted) {
+          jobCancellationController.abort(createAbortError(message));
         }
-        await autonomyService.deferJobForProviderRecovery(job, {
-          delayMs,
-          errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
-          providerNextRetryAt: ensuredClientState.pausedUntil,
-          providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
-        });
-        await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
-        continue;
-      }
-      const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
-      const abortGptOnProcessShutdown = () => {
-        if (gptCancellationController && !gptCancellationController.signal.aborted) {
-          gptCancellationController.abort(
-            createAbortError('Worker process shutdown requested while GPT job was running.')
-          );
-        }
+      };
+      const abortJobOnProcessShutdown = () => {
+        abortClaimedJob(
+          'process_shutdown',
+          'Worker process shutdown requested while a queue job was running.'
+        );
       };
       let heartbeatHandle: JobHeartbeatLoopHandle | null = null;
       const jobStartedAtMs = Date.now();
       let jobLeaseLost = false;
 
       try {
-        if (gptCancellationController) {
-          if (workerProcessShutdownController.signal.aborted) {
-            abortGptOnProcessShutdown();
-          } else {
-            workerProcessShutdownController.signal.addEventListener(
-              'abort',
-              abortGptOnProcessShutdown,
-              { once: true }
-            );
-          }
+        if (workerProcessShutdownController.signal.aborted) {
+          abortJobOnProcessShutdown();
+        } else {
+          workerProcessShutdownController.signal.addEventListener(
+            'abort',
+            abortJobOnProcessShutdown,
+            { once: true }
+          );
+        }
+        if (job.cancel_requested_at) {
+          abortClaimedJob(
+            'durable_cancellation',
+            job.cancel_reason ?? 'Queue job cancellation requested before execution.'
+          );
         }
         heartbeatHandle = startHeartbeatLoop(
           autonomyService,
@@ -1213,25 +1347,144 @@ async function runWorkerConsumerSlot(
           (updatedJob) => {
             if (!updatedJob) {
               jobLeaseLost = true;
-              if (gptCancellationController && !gptCancellationController.signal.aborted) {
-                gptCancellationController.abort(
-                  createAbortError('GPT job lease lost or job completed elsewhere.')
-                );
-              }
+              abortClaimedJob(
+                'lease_lost',
+                'Queue job lease lost or job completed elsewhere.'
+              );
               return;
             }
 
-            if (
-              gptCancellationController &&
-              updatedJob.cancel_requested_at &&
-              !gptCancellationController.signal.aborted
-            ) {
-              gptCancellationController.abort(
-                createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+            if (updatedJob.cancel_requested_at) {
+              abortClaimedJob(
+                'durable_cancellation',
+                updatedJob.cancel_reason ?? 'Queue job cancellation requested.'
               );
             }
           }
         );
+        if (jobLeaseLost) {
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Job lease lost during provider initialization.'
+          );
+          continue;
+        }
+        if (jobCancellationController.signal.aborted) {
+          if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Worker stopped local execution before provider initialization; the live claim was left for lease recovery.'
+            );
+            continue;
+          }
+          const cancellationReason =
+            jobAbortState.durableCancellationReason ??
+            (jobCancellationController.signal.reason instanceof Error
+              ? jobCancellationController.signal.reason.message
+              : 'Queue job cancellation requested before provider initialization.');
+          if (!await persistClaimedJobCancellation({
+            job,
+            fence: claimFence,
+            autonomyService,
+            jobStartedAtMs,
+            cancellationReason,
+            output: null
+          })) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Cancellation fence was lost before provider initialization.'
+            );
+          }
+          continue;
+        }
+
+        const ensuredClientState = await ensureOpenAIClientForSlot({
+          workerId: slotDefinition.workerId,
+          currentClient: openai,
+          currentConfigVersion: providerConfigVersion
+        });
+        openai = ensuredClientState.client;
+        providerConfigVersion = ensuredClientState.configVersion;
+        if (ensuredClientState.providerRecovered) {
+          await autonomyService.recordProviderCircuitBreakerReset({
+            providerFailureCategory: ensuredClientState.providerRecoveryCategory,
+            providerNextRetryAt: ensuredClientState.providerRecoveryNextRetryAt,
+            source: 'job-runner'
+          });
+        }
+
+        if (jobLeaseLost) {
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Job lease lost during provider initialization.'
+          );
+          continue;
+        }
+        if (jobCancellationController.signal.aborted) {
+          if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Worker stopped local execution during provider initialization; the live claim was left for lease recovery.'
+            );
+            continue;
+          }
+          const cancellationReason =
+            jobAbortState.durableCancellationReason ??
+            (jobCancellationController.signal.reason instanceof Error
+              ? jobCancellationController.signal.reason.message
+              : 'Queue job cancellation requested during provider initialization.');
+          if (!await persistClaimedJobCancellation({
+            job,
+            fence: claimFence,
+            autonomyService,
+            jobStartedAtMs,
+            cancellationReason,
+            output: null
+          })) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Cancellation fence was lost during provider initialization.'
+            );
+          }
+          continue;
+        }
+
+        if (!openai) {
+          const delayMs = resolveProviderPauseMs(
+            ensuredClientState.pausedUntil,
+            runtimeSettings.idleBackoffMs
+          );
+          const nowMs = Date.now();
+          if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+            logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+              module: 'job-runner',
+              workerId: slotDefinition.workerId,
+              jobId: job.id,
+              jobType: job.job_type,
+              nextRetryAt: ensuredClientState.pausedUntil ?? null,
+              providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
+              delayMs,
+              pollingContinues: true
+            });
+            lastProviderPauseLogAtMs = nowMs;
+          }
+          const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
+            delayMs,
+            errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+            providerNextRetryAt: ensuredClientState.pausedUntil,
+            providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
+          });
+          if (deferralResult.action === 'lease_lost') {
+            await finalizeCancellationAfterTerminalCasMiss({
+              job,
+              fence: claimFence,
+              autonomyService,
+              jobStartedAtMs
+            });
+          }
+          await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+          continue;
+        }
         const queueWaitMs = Math.max(
           0,
           jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
@@ -1254,36 +1507,51 @@ async function runWorkerConsumerSlot(
             maxCalls: 24
           }
         });
-        const outcome = await runWithAiExecutionContext(aiExecutionContext, async () => {
-          //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
-          if (!openai) {
-            return {
-              status: 'failed',
-              output: null,
-              errorMessage: 'OpenAI provider unavailable; job execution deferred until provider recovery.',
-              retryable: true
-            } satisfies JobExecutionOutcome;
-          }
-          if (job.job_type === 'ask') {
-            return executeQueuedPrompt(openai, job.input ?? {});
-          }
-          if (job.job_type === 'dag-node') {
-            return executeQueuedDagNode(openai, job.input ?? {}, workerProcessShutdownController.signal);
-          }
-          if (job.job_type === 'gpt') {
-            return executeQueuedGptRequest({
-              jobId: job.id,
-              rawInput: job.input ?? {},
-              cancellationSignal: gptCancellationController?.signal
-            });
-          }
-          return {
-            status: 'failed',
-            output: null,
-            errorMessage: `Unsupported job_type: ${job.job_type}`,
-            retryable: false
-          } satisfies JobExecutionOutcome;
-        });
+        let outcome = await runWithAiExecutionContext(aiExecutionContext, async () =>
+          runWithRequestAbortContext(
+            {
+              requestId: job.correlation_id ?? job.id,
+              controller: jobCancellationController,
+              signal: jobCancellationController.signal,
+              deadlineAt: Number.MAX_SAFE_INTEGER,
+              timeoutMs: Number.MAX_SAFE_INTEGER
+            },
+            async () => {
+              //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+              if (!openai) {
+                return {
+                  status: 'failed',
+                  output: null,
+                  errorMessage: 'OpenAI provider unavailable; job execution deferred until provider recovery.',
+                  retryable: true
+                } satisfies JobExecutionOutcome;
+              }
+              if (job.job_type === 'ask') {
+                return executeQueuedPrompt(openai, job.input ?? {});
+              }
+              if (job.job_type === 'dag-node') {
+                return executeQueuedDagNode(
+                  openai,
+                  job.input ?? {},
+                  jobCancellationController.signal
+                );
+              }
+              if (job.job_type === 'gpt') {
+                return executeQueuedGptRequest({
+                  jobId: job.id,
+                  rawInput: job.input ?? {},
+                  cancellationSignal: jobCancellationController.signal
+                });
+              }
+              return {
+                status: 'failed',
+                output: null,
+                errorMessage: `Unsupported job_type: ${job.job_type}`,
+                retryable: false
+              } satisfies JobExecutionOutcome;
+            }
+          )
+        );
         const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
         if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
           logger.info('worker.ai.summary', {
@@ -1310,7 +1578,51 @@ async function runWorkerConsumerSlot(
           );
           continue;
         }
-        
+
+        const latestJobBeforeTerminal = await getJobById(job.id);
+        if (
+          !latestJobBeforeTerminal ||
+          latestJobBeforeTerminal.status !== 'running' ||
+          latestJobBeforeTerminal.last_worker_id !== claimFence.workerId ||
+          latestJobBeforeTerminal.claim_generation !== claimFence.claimGeneration
+        ) {
+          jobLeaseLost = true;
+          abortClaimedJob(
+            'lease_lost',
+            'Queue job lease lost before terminal persistence.'
+          );
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Queue job lease lost before terminal persistence.'
+          );
+          continue;
+        }
+        if (latestJobBeforeTerminal.cancel_requested_at) {
+          abortClaimedJob(
+            'durable_cancellation',
+            latestJobBeforeTerminal.cancel_reason ??
+              'Queue job cancellation requested before terminal persistence.'
+          );
+        }
+        if (jobCancellationController.signal.aborted) {
+          if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Worker stopped local execution before terminal persistence; the live claim was left for lease recovery.'
+            );
+            continue;
+          }
+          outcome = {
+            status: 'cancelled',
+            output: null,
+            errorMessage:
+              jobAbortState.durableCancellationReason ??
+              (jobCancellationController.signal.reason instanceof Error
+                ? jobCancellationController.signal.reason.message
+                : 'Queue job cancellation requested.'),
+            retryable: false
+          };
+        }
 
       if (outcome.status === 'completed') {
         const lifecycleDeadlines =
@@ -1328,12 +1640,21 @@ async function runWorkerConsumerSlot(
           }
         );
         if (!terminalJob) {
+          if (await finalizeCancellationAfterTerminalCasMiss({
+            job,
+            fence: claimFence,
+            autonomyService,
+            jobStartedAtMs
+          })) {
+            continue;
+          }
           await autonomyService.markJobLeaseLost(
             job.id,
             'Completion fence was lost before the job could be finalized.'
           );
           continue;
         }
+
         await autonomyService.markJobCompleted(job.id);
         recordWorkerJobDuration({
           jobType: job.job_type,
@@ -1369,65 +1690,28 @@ async function runWorkerConsumerSlot(
           });
         }
       } else if (outcome.status === 'cancelled') {
-        const lifecycleDeadlines =
-          job.job_type === 'gpt'
-            ? computeGptJobLifecycleDeadlines('cancelled')
-            : { idempotencyUntil: null, retentionUntil: null };
-        const terminalJob = await updateClaimedJobTerminal(
-          job.id,
-          'cancelled',
-          {
-            fence: claimFence,
-            output: outcome.output,
-            errorMessage: outcome.errorMessage ?? 'GPT job was cancelled.',
-            metadata: {
-              ...lifecycleDeadlines,
-              cancelRequestedAt: new Date().toISOString(),
-              cancelReason: outcome.errorMessage ?? 'GPT job was cancelled.'
-            }
-          }
-        );
-        if (!terminalJob) {
+        if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Cancellation outcome lacked a durable database request; the live claim was left for lease recovery.'
+          );
+          continue;
+        }
+        const cancellationReason =
+          outcome.errorMessage ?? 'Queue job was cancelled.';
+        if (!await persistClaimedJobCancellation({
+          job,
+          fence: claimFence,
+          autonomyService,
+          jobStartedAtMs,
+          cancellationReason,
+          output: outcome.output
+        })) {
           await autonomyService.markJobLeaseLost(
             job.id,
             'Cancellation fence was lost before the job could be finalized.'
           );
           continue;
-        }
-        await autonomyService.markJobCancelled(job.id);
-        recordWorkerJobDuration({
-          jobType: job.job_type,
-          outcome: 'cancelled',
-          durationMs: Date.now() - jobStartedAtMs,
-        });
-        if (job.job_type === 'gpt') {
-          const timings = summarizeGptJobTimings({
-            created_at: job.created_at,
-            started_at: new Date(jobStartedAtMs),
-            completed_at: new Date()
-          });
-          recordGptJobEvent({
-            event: 'cancelled',
-            status: 'cancelled',
-            retryable: false
-          });
-          recordGptJobTiming({
-            phase: 'execution',
-            outcome: 'cancelled',
-            durationMs: timings.executionMs
-          });
-          recordGptJobTiming({
-            phase: 'end_to_end',
-            outcome: 'cancelled',
-            durationMs: timings.endToEndMs
-          });
-          logger.info('gpt.job.cancelled', {
-            jobId: job.id,
-            errorMessage: outcome.errorMessage ?? 'GPT job was cancelled.',
-            queueWaitMs: timings.queueWaitMs,
-            executionMs: timings.executionMs,
-            endToEndMs: timings.endToEndMs
-          });
         }
       } else {
         const failureResult = await autonomyService.handleJobFailure(
@@ -1437,6 +1721,12 @@ async function runWorkerConsumerSlot(
           outcome.output
         );
         if (failureResult.action === 'lease_lost') {
+          await finalizeCancellationAfterTerminalCasMiss({
+            job,
+            fence: claimFence,
+            autonomyService,
+            jobStartedAtMs
+          });
           continue;
         }
         if (job.job_type === 'gpt') {
@@ -1492,6 +1782,44 @@ async function runWorkerConsumerSlot(
           continue;
         }
 
+        if (jobCancellationController.signal.aborted) {
+          if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
+            logger.info('worker.job_execution.stopped_for_recovery', {
+              module: 'job-runner',
+              workerId: slotDefinition.workerId,
+              jobId: job.id,
+              jobType: job.job_type,
+              abortCause: jobAbortState.cause ?? 'unknown',
+              durationMs: Date.now() - jobStartedAtMs
+            });
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Worker stopped local execution; the live claim was left for lease recovery.'
+            );
+            continue;
+          }
+          const cancellationReason =
+            jobAbortState.durableCancellationReason ??
+            (jobCancellationController.signal.reason instanceof Error
+              ? jobCancellationController.signal.reason.message
+              : 'Queue job cancellation requested.');
+          if (!await persistClaimedJobCancellation({
+            job,
+            fence: claimFence,
+            autonomyService,
+            jobStartedAtMs,
+            cancellationReason,
+            output: null
+          })) {
+            await autonomyService.markJobLeaseLost(
+              job.id,
+              'Cancellation fence was lost before the aborted job could be finalized.'
+            );
+            continue;
+          }
+          continue;
+        }
+
         const classifiedError = classifyWorkerExecutionError(error);
 
       if (isProviderRuntimeError(classifiedError.message)) {
@@ -1512,6 +1840,12 @@ async function runWorkerConsumerSlot(
         null
       );
       if (failureResult.action === 'lease_lost') {
+        await finalizeCancellationAfterTerminalCasMiss({
+          job,
+          fence: claimFence,
+          autonomyService,
+          jobStartedAtMs
+        });
         continue;
       }
       if (job.job_type === 'gpt') {
@@ -1551,7 +1885,7 @@ async function runWorkerConsumerSlot(
       } finally {
         workerProcessShutdownController.signal.removeEventListener(
           'abort',
-          abortGptOnProcessShutdown
+          abortJobOnProcessShutdown
         );
         heartbeatHandle?.stop();
       }

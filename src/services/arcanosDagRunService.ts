@@ -2,6 +2,7 @@ import { generateRequestId } from '../shared/idGenerator.js';
 import {
   getLatestDagRunSnapshot,
   getDagRunSnapshotById,
+  lookupDagRunSnapshotForControl,
   upsertDagRunSnapshot,
   type DagRunSnapshotRecord
 } from '../core/db/repositories/dagRunRepository.js';
@@ -50,6 +51,7 @@ import {
   recordDagRunRequest,
   recordDagRunStatus,
 } from '@platform/observability/appMetrics.js';
+import { createAbortError } from '@arcanos/runtime';
 
 type DagRunExecutionState = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
 
@@ -77,11 +79,18 @@ interface StoredDagRunRecord {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  cancellationRequestedAt?: string;
+  cancellationReason?: string;
   snapshotGeneration: bigint;
   orchestratorState: TrinityRunRecord;
   templateDefinition: DagTemplateDefinition;
   abortController: AbortController;
   executionPromise?: Promise<void>;
+  executionSettled: boolean;
+  admissionPending: boolean;
+  cancellationRequestPromise?: Promise<CancelDagRunResult>;
+  cancellationPersistenceInProgress: boolean;
+  persistenceDeferredDuringCancellation: boolean;
 }
 
 interface PersistedDagRunSnapshot {
@@ -103,6 +112,8 @@ interface PersistedDagRunSnapshot {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  cancellationRequestedAt?: string;
+  cancellationReason?: string;
   orchestratorState: TrinityRunRecord;
 }
 
@@ -112,6 +123,136 @@ const DEFAULT_DAG_TRACE_MAX_EVENTS = 200;
 const MAX_DAG_TRACE_MAX_EVENTS = 1000;
 const DAG_SLOW_NODE_THRESHOLD_MS = 5_000;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+export const DEFAULT_DAG_MAX_ACTIVE_RUNS = 4;
+export const DEFAULT_DAG_TERMINAL_RETENTION_MS = 15 * 60 * 1_000;
+export const DEFAULT_DAG_MAX_RETAINED_RUNS = 100;
+export const DEFAULT_DAG_OVERLOAD_RETRY_AFTER_SECONDS = 5;
+
+export interface DagRunLifecycleSettings {
+  maxActiveRuns: number;
+  terminalRetentionMs: number;
+  maxRetainedRuns: number;
+  retryAfterSeconds: number;
+}
+
+export interface ArcanosDagRunServiceOptions {
+  lifecycle?: Partial<DagRunLifecycleSettings>;
+}
+
+export type CancelDagRunResult =
+  | {
+      outcome: 'cancellation_requested';
+      statusCode: 202;
+      data: {
+        runId: string;
+        status: 'cancellation_requested';
+        cancelledNodes: string[];
+      };
+    }
+  | {
+      outcome: 'already_requested';
+      statusCode: 200;
+      data: {
+        runId: string;
+        status: 'cancellation_requested';
+        cancelledNodes: string[];
+      };
+    }
+  | {
+      outcome: 'already_cancelled';
+      statusCode: 200;
+      data: {
+        runId: string;
+        status: 'cancelled';
+        cancelledNodes: string[];
+      };
+    }
+  | {
+      outcome: 'owned_elsewhere';
+      statusCode: 503;
+      retryAfterSeconds: number;
+    }
+  | {
+      outcome: 'unavailable';
+      statusCode: 503;
+      retryAfterSeconds: number;
+    }
+  | {
+      outcome: 'not_found';
+      statusCode: 404;
+    }
+  | {
+      outcome: 'not_cancellable';
+      statusCode: 409;
+      runStatus: 'complete' | 'failed';
+    };
+
+type DagSnapshotPersistenceOutcome =
+  | 'applied'
+  | 'capture_failed'
+  | 'conflict'
+  | 'deferred'
+  | 'unavailable';
+
+function readPositiveInteger(
+  value: unknown,
+  fallback: number
+): number {
+  if (
+    typeof value !== 'string' ||
+    !/^[1-9]\d*$/u.test(value.trim())
+  ) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function getDagRunLifecycleSettings(
+  overrides: Partial<DagRunLifecycleSettings> = {},
+  env: NodeJS.ProcessEnv = process.env
+): DagRunLifecycleSettings {
+  const normalizeOverride = (value: number | undefined, fallback: number): number =>
+    Number.isSafeInteger(value) && (value ?? 0) > 0
+      ? Math.trunc(value as number)
+      : fallback;
+
+  return {
+    maxActiveRuns: normalizeOverride(
+      overrides.maxActiveRuns,
+      readPositiveInteger(env.DAG_MAX_ACTIVE_RUNS, DEFAULT_DAG_MAX_ACTIVE_RUNS)
+    ),
+    terminalRetentionMs: normalizeOverride(
+      overrides.terminalRetentionMs,
+      readPositiveInteger(
+        env.DAG_TERMINAL_RETENTION_MS,
+        DEFAULT_DAG_TERMINAL_RETENTION_MS
+      )
+    ),
+    maxRetainedRuns: normalizeOverride(
+      overrides.maxRetainedRuns,
+      readPositiveInteger(env.DAG_MAX_RETAINED_RUNS, DEFAULT_DAG_MAX_RETAINED_RUNS)
+    ),
+    retryAfterSeconds: normalizeOverride(
+      overrides.retryAfterSeconds,
+      readPositiveInteger(
+        env.DAG_OVERLOAD_RETRY_AFTER_SECONDS,
+        DEFAULT_DAG_OVERLOAD_RETRY_AFTER_SECONDS
+      )
+    )
+  };
+}
+
+export class DagRunCapacityExceededError extends Error {
+  readonly code = 'DAG_RUN_CAPACITY_EXCEEDED';
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super('DAG run capacity is temporarily unavailable.');
+    this.name = 'DagRunCapacityExceededError';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
 
 export class DagRunSnapshotOwnershipConflictError extends Error {
   readonly runId: string;
@@ -584,6 +725,12 @@ function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDag
     limits: cloneSerializable(record.limits),
     features: cloneSerializable(record.features),
     loopDetected: record.loopDetected,
+    ...(record.cancellationRequestedAt
+      ? { cancellationRequestedAt: record.cancellationRequestedAt }
+      : {}),
+    ...(record.cancellationReason
+      ? { cancellationReason: record.cancellationReason }
+      : {}),
     orchestratorState: cloneTrinityRunRecord(orchestratorState)
   };
 }
@@ -591,24 +738,93 @@ function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDag
 function normalizePersistedDagRunSnapshot(
   snapshot: Record<string, unknown>
 ): PersistedDagRunSnapshot | null {
+  try {
+    return normalizePersistedDagRunSnapshotUnsafe(snapshot);
+  } catch {
+    return null;
+  }
+}
+
+function isNonArrayRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePersistedDagRunSnapshotUnsafe(
+  snapshot: Record<string, unknown>
+): PersistedDagRunSnapshot | null {
   const runId = typeof snapshot.runId === 'string' ? snapshot.runId : null;
   const sessionId = typeof snapshot.sessionId === 'string' ? snapshot.sessionId : null;
   const template = typeof snapshot.template === 'string' ? snapshot.template : null;
-  const status = typeof snapshot.status === 'string' ? snapshot.status as DagRunExecutionState : null;
+  const status =
+    typeof snapshot.status === 'string' &&
+    ['queued', 'running', 'complete', 'failed', 'cancelled'].includes(snapshot.status)
+      ? snapshot.status as DagRunExecutionState
+      : null;
   const createdAt = typeof snapshot.createdAt === 'string' ? snapshot.createdAt : null;
   const updatedAt = typeof snapshot.updatedAt === 'string' ? snapshot.updatedAt : null;
-  const summary = snapshot.summary as DagRunSummary | undefined;
-  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes as StoredNodeDetail[] : null;
+  const rawSummary = snapshot.summary;
+  const summary =
+    isNonArrayRecord(rawSummary) &&
+    typeof rawSummary.runId === 'string' &&
+    typeof rawSummary.sessionId === 'string' &&
+    typeof rawSummary.template === 'string' &&
+    rawSummary.template.trim().length > 0 &&
+    typeof rawSummary.status === 'string' &&
+    typeof rawSummary.createdAt === 'string' &&
+    typeof rawSummary.updatedAt === 'string'
+      ? rawSummary as unknown as DagRunSummary
+      : undefined;
+  const knownNodeStatuses = new Set([
+    'queued',
+    'waiting',
+    'running',
+    'complete',
+    'failed',
+    'skipped',
+    'cancelled'
+  ]);
+  const nodes =
+    Array.isArray(snapshot.nodes) &&
+    snapshot.nodes.every(node =>
+      isNonArrayRecord(node) &&
+      typeof node.nodeId === 'string' &&
+      node.nodeId.trim().length > 0 &&
+      node.runId === runId &&
+      typeof node.status === 'string' &&
+      knownNodeStatuses.has(node.status)
+    )
+      ? snapshot.nodes as StoredNodeDetail[]
+      : null;
   const events = Array.isArray(snapshot.events) ? snapshot.events as DagEvent[] : null;
   const errors = Array.isArray(snapshot.errors) ? snapshot.errors as DagRunError[] : null;
   const guardViolations = Array.isArray(snapshot.guardViolations)
     ? snapshot.guardViolations as GuardViolation[]
     : null;
-  const metrics = snapshot.metrics as DagRunMetrics | undefined;
-  const verification = snapshot.verification as DagVerification | undefined;
-  const limits = snapshot.limits as ExecutionLimits | undefined;
-  const features = snapshot.features as FeatureFlags | undefined;
-  const orchestratorState = snapshot.orchestratorState as TrinityRunRecord | undefined;
+  const metrics = isNonArrayRecord(snapshot.metrics)
+    ? snapshot.metrics as unknown as DagRunMetrics
+    : undefined;
+  const verification = isNonArrayRecord(snapshot.verification)
+    ? snapshot.verification as unknown as DagVerification
+    : undefined;
+  const limits = isNonArrayRecord(snapshot.limits)
+    ? snapshot.limits as unknown as ExecutionLimits
+    : undefined;
+  const features = isNonArrayRecord(snapshot.features)
+    ? snapshot.features as unknown as FeatureFlags
+    : undefined;
+  const rawOrchestratorState = snapshot.orchestratorState;
+  const orchestratorState =
+    rawOrchestratorState === undefined
+      ? undefined
+      : isNonArrayRecord(rawOrchestratorState) &&
+        Array.isArray(rawOrchestratorState.activeNodes) &&
+        Array.isArray(rawOrchestratorState.completedNodes) &&
+        Array.isArray(rawOrchestratorState.failedNodes) &&
+        Array.isArray(rawOrchestratorState.artifacts)
+        ? rawOrchestratorState as unknown as TrinityRunRecord
+        : null;
 
   //audit Assumption: persisted run snapshots must include the core DAG contract fields; failure risk: malformed DB state causes route crashes or false not-found responses; expected invariant: required identifiers and snapshot arrays are present; handling strategy: reject invalid snapshots with `null`.
   if (
@@ -626,7 +842,11 @@ function normalizePersistedDagRunSnapshot(
     !metrics ||
     !verification ||
     !limits ||
-    !features
+    !features ||
+    orchestratorState === null ||
+    summary.runId !== runId ||
+    summary.sessionId !== sessionId ||
+    summary.status !== status
   ) {
     return null;
   }
@@ -671,7 +891,13 @@ function normalizePersistedDagRunSnapshot(
       resumable:
         typeof summary.resumable === 'boolean'
           ? summary.resumable
-          : status !== 'complete'
+          : status !== 'complete',
+      ...(typeof snapshot.cancellationRequestedAt === 'string'
+        ? { cancellationRequestedAt: snapshot.cancellationRequestedAt }
+        : {}),
+      ...(typeof snapshot.cancellationReason === 'string'
+        ? { cancellationReason: snapshot.cancellationReason }
+        : {})
     },
     nodes,
     events,
@@ -682,6 +908,12 @@ function normalizePersistedDagRunSnapshot(
     limits,
     features,
     loopDetected: snapshot.loopDetected === true,
+    ...(typeof snapshot.cancellationRequestedAt === 'string'
+      ? { cancellationRequestedAt: snapshot.cancellationRequestedAt }
+      : {}),
+    ...(typeof snapshot.cancellationReason === 'string'
+      ? { cancellationReason: snapshot.cancellationReason }
+      : {}),
     orchestratorState: normalizedOrchestratorState
   };
 }
@@ -748,6 +980,12 @@ function createApiSummary(record: StoredDagRunRecord): DagRunSummary {
     durationMs: record.metrics.wallClockDurationMs,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    ...(record.cancellationRequestedAt
+      ? { cancellationRequestedAt: record.cancellationRequestedAt }
+      : {}),
+    ...(record.cancellationReason
+      ? { cancellationReason: record.cancellationReason }
+      : {}),
     artifacts: [...orchestratorState.artifacts],
     resumable: record.status !== 'complete',
     finalOutput: record.summary.finalOutput
@@ -989,9 +1227,21 @@ function createErrorInfo(message: string, details?: unknown, type?: string): Err
  */
 export class ArcanosDagRunService {
   private readonly runsById = new Map<string, StoredDagRunRecord>();
-  private readonly persistenceByRunId = new Map<string, Promise<void>>();
+  private readonly persistenceByRunId =
+    new Map<string, Promise<DagSnapshotPersistenceOutcome>>();
   private readonly persistenceConflictedRunIds = new Set<string>();
-  private readonly trinityOrchestrator = new TrinityOrchestrator();
+  private readonly activeRunReservations = new Set<string>();
+  private readonly trinityOrchestrator: TrinityOrchestrator;
+  private readonly lifecycleSettings: DagRunLifecycleSettings;
+
+  constructor(options: ArcanosDagRunServiceOptions = {}) {
+    this.lifecycleSettings = getDagRunLifecycleSettings(options.lifecycle);
+    this.trinityOrchestrator = new TrinityOrchestrator();
+  }
+
+  getLifecycleSettings(): DagRunLifecycleSettings {
+    return { ...this.lifecycleSettings };
+  }
 
   /**
    * Return the feature flags exposed by the verification API.
@@ -1027,7 +1277,88 @@ export class ArcanosDagRunService {
     return createExecutionLimits(getDagWorkerPoolSettings(overrides));
   }
 
+  private isRetainedRunEvictable(record: StoredDagRunRecord): boolean {
+    return (
+      (record.status === 'complete' ||
+        record.status === 'failed' ||
+        record.status === 'cancelled') &&
+      record.executionSettled &&
+      !record.admissionPending &&
+      !record.cancellationPersistenceInProgress &&
+      !record.cancellationRequestPromise &&
+      !this.activeRunReservations.has(record.runId) &&
+      !this.persistenceByRunId.has(record.runId)
+    );
+  }
+
+  private evictExactRun(record: StoredDagRunRecord): boolean {
+    if (
+      this.runsById.get(record.runId) !== record ||
+      !this.isRetainedRunEvictable(record)
+    ) {
+      return false;
+    }
+
+    this.runsById.delete(record.runId);
+    this.persistenceByRunId.delete(record.runId);
+    this.persistenceConflictedRunIds.delete(record.runId);
+    this.trinityOrchestrator.forgetRun(record.runId);
+    return true;
+  }
+
+  private evictRetainedRuns(nowMs = Date.now()): void {
+    const eligibleRecords = Array.from(this.runsById.values())
+      .filter(record => this.isRetainedRunEvictable(record))
+      .sort((left, right) => {
+        const leftUpdatedAt = Date.parse(left.updatedAt);
+        const rightUpdatedAt = Date.parse(right.updatedAt);
+        return (
+          (Number.isFinite(leftUpdatedAt) ? leftUpdatedAt : Number.MAX_SAFE_INTEGER) -
+          (Number.isFinite(rightUpdatedAt) ? rightUpdatedAt : Number.MAX_SAFE_INTEGER)
+        );
+      });
+
+    for (const record of eligibleRecords) {
+      const updatedAtMs = Date.parse(record.updatedAt);
+      if (
+        Number.isFinite(updatedAtMs) &&
+        nowMs - updatedAtMs >= this.lifecycleSettings.terminalRetentionMs
+      ) {
+        this.evictExactRun(record);
+      }
+    }
+
+    if (this.runsById.size <= this.lifecycleSettings.maxRetainedRuns) {
+      return;
+    }
+
+    for (const record of eligibleRecords) {
+      if (this.runsById.size <= this.lifecycleSettings.maxRetainedRuns) {
+        break;
+      }
+      this.evictExactRun(record);
+    }
+  }
+
+  private reserveRunCapacity(runId: string): void {
+    this.evictRetainedRuns();
+    if (
+      this.activeRunReservations.size >=
+      this.lifecycleSettings.maxActiveRuns
+    ) {
+      throw new DagRunCapacityExceededError(
+        this.lifecycleSettings.retryAfterSeconds
+      );
+    }
+    this.activeRunReservations.add(runId);
+  }
+
+  private releaseRunCapacity(runId: string): void {
+    this.activeRunReservations.delete(runId);
+  }
+
   private getLatestLocalSnapshot(sessionId?: string): PersistedDagRunSnapshot | null {
+    this.evictRetainedRuns();
     const normalizedSessionId =
       typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
     let latestRecord: StoredDagRunRecord | null = null;
@@ -1371,6 +1702,7 @@ export class ArcanosDagRunService {
    * - Local in-memory state wins when available because it may be newer than the last persisted write.
    */
   private async getRunSnapshot(runId: string): Promise<PersistedDagRunSnapshot | null> {
+    this.evictRetainedRuns();
     const localRecord = this.runsById.get(runId);
     if (localRecord) {
       return createPersistedDagRunSnapshot(localRecord);
@@ -1449,9 +1781,20 @@ export class ArcanosDagRunService {
    * Edge case behavior:
    * - Persistence failures are logged but do not crash the active DAG execution loop.
    */
-  private queuePersistRecord(record: StoredDagRunRecord): void {
+  private queuePersistRecord(
+    record: StoredDagRunRecord,
+    options: { allowDuringCancellation?: boolean } = {}
+  ): Promise<DagSnapshotPersistenceOutcome> {
+    if (
+      record.cancellationPersistenceInProgress &&
+      !options.allowDuringCancellation
+    ) {
+      record.persistenceDeferredDuringCancellation = true;
+      return Promise.resolve('deferred');
+    }
+
     if (this.persistenceConflictedRunIds.has(record.runId)) {
-      return;
+      return Promise.resolve('conflict');
     }
 
     let envelope: DagRunSnapshotRecord;
@@ -1459,15 +1802,17 @@ export class ArcanosDagRunService {
       envelope = this.capturePersistenceEnvelope(record);
     } catch (error: unknown) {
       console.warn('[DAG Runs] Failed to capture DAG snapshot:', error);
-      return;
+      return Promise.resolve('capture_failed');
     }
 
-    const previousWrite = this.persistenceByRunId.get(record.runId) ?? Promise.resolve();
+    const previousWrite =
+      this.persistenceByRunId.get(record.runId) ??
+      Promise.resolve<DagSnapshotPersistenceOutcome>('applied');
     const nextWrite = previousWrite
-      .catch(() => undefined)
+      .catch(() => 'unavailable' as const)
       .then(async () => {
         if (this.persistenceConflictedRunIds.has(record.runId)) {
-          return;
+          return 'conflict' as const;
         }
 
         try {
@@ -1478,6 +1823,7 @@ export class ArcanosDagRunService {
               envelope.snapshotGeneration
             );
           }
+          return 'applied' as const;
         } catch (error: unknown) {
           if (error instanceof DagRunSnapshotOwnershipConflictError) {
             this.persistenceConflictedRunIds.add(record.runId);
@@ -1485,20 +1831,25 @@ export class ArcanosDagRunService {
               runId: error.runId,
               snapshotGeneration: error.snapshotGeneration
             });
-            return;
+            return 'conflict' as const;
           }
 
           //audit Assumption: snapshot persistence is required for cross-instance inspection but should not terminate active DAG execution; failure risk: monitoring data lags behind runtime state; expected invariant: write errors are observable in logs; handling strategy: log and continue.
           console.warn('[DAG Runs] Failed to persist DAG snapshot:', error);
+          return 'unavailable' as const;
         }
       });
 
     this.persistenceByRunId.set(record.runId, nextWrite);
-    void nextWrite.finally(() => {
-      if (this.persistenceByRunId.get(record.runId) === nextWrite) {
-        this.persistenceByRunId.delete(record.runId);
-      }
-    });
+    void nextWrite
+      .finally(() => {
+        if (this.persistenceByRunId.get(record.runId) === nextWrite) {
+          this.persistenceByRunId.delete(record.runId);
+        }
+        this.evictRetainedRuns();
+      })
+      .catch(() => undefined);
+    return nextWrite;
   }
 
   private forgetInitialRun(record: StoredDagRunRecord): void {
@@ -1600,17 +1951,35 @@ export class ArcanosDagRunService {
    * - Throws for unsupported templates so callers can return `400`.
    */
   async createRun(request: CreateDagRunRequest): Promise<DagRunSummary> {
+    const templateDefinition = buildDagTemplate(request);
     const runId = generateRequestId('dagrun');
+    //audit Assumption: JavaScript executes synchronously until the first await; failure risk: concurrent create calls all observe spare capacity before any records exist; expected invariant: each admitted call owns a reservation before yielding; handling strategy: reserve immediately and release only on admission rollback or execution settlement.
+    this.reserveRunCapacity(runId);
+    try {
+      return await this.createReservedRun(runId, request, templateDefinition);
+    } catch (error: unknown) {
+      this.runsById.delete(runId);
+      this.persistenceByRunId.delete(runId);
+      this.persistenceConflictedRunIds.delete(runId);
+      this.trinityOrchestrator.forgetRun(runId);
+      this.releaseRunCapacity(runId);
+      throw error;
+    }
+  }
+
+  private async createReservedRun(
+    runId: string,
+    request: CreateDagRunRequest,
+    templateDefinition: DagTemplateDefinition
+  ): Promise<DagRunSummary> {
     const settings = getDagWorkerPoolSettings({
       maxConcurrentNodes: request.options?.maxConcurrency
     });
     const limits = createExecutionLimits(settings);
     const features = createFeatureFlags();
-    const templateDefinition = buildDagTemplate(request);
     const publicTemplateName = templateDefinition.templateName;
     const createdAt = new Date().toISOString();
     const nodesById = new Map<string, StoredNodeDetail>();
-    const orchestratorState = this.trinityOrchestrator.startRun(runId);
 
     for (const [nodeId, node] of Object.entries(templateDefinition.graph.nodes)) {
       const nodeMetadata = templateDefinition.nodeMetadataById[nodeId];
@@ -1635,6 +2004,7 @@ export class ArcanosDagRunService {
       });
     }
 
+    const orchestratorState = this.trinityOrchestrator.startRun(runId);
     const record: StoredDagRunRecord = {
       runId,
       sessionId: request.sessionId,
@@ -1670,10 +2040,16 @@ export class ArcanosDagRunService {
       limits,
       features,
       loopDetected: false,
+      cancellationRequestedAt: undefined,
+      cancellationReason: undefined,
       snapshotGeneration: 0n,
       orchestratorState,
       templateDefinition,
-      abortController: new AbortController()
+      abortController: new AbortController(),
+      executionSettled: false,
+      admissionPending: true,
+      cancellationPersistenceInProgress: false,
+      persistenceDeferredDuringCancellation: false
     };
 
     record.summary = createApiSummary(record);
@@ -1698,7 +2074,22 @@ export class ArcanosDagRunService {
       throw error;
     }
 
-    record.executionPromise = this.executeRun(record, request, settings);
+    record.admissionPending = false;
+    const executionPromise = this.executeRun(record, request, settings);
+    record.executionPromise = executionPromise;
+    void executionPromise
+      .catch((error: unknown) => {
+        console.error('[DAG Runs] Background execution rejected:', {
+          runId: record.runId,
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        record.executionSettled = true;
+        this.releaseRunCapacity(record.runId);
+        this.evictRetainedRuns();
+      })
+      .catch(() => undefined);
     return record.summary;
   }
 
@@ -2092,44 +2483,280 @@ export class ArcanosDagRunService {
    * Edge case behavior:
    * - Returns the existing cancelled state when the run was already cancelled.
    */
-  cancelRun(runId: string): { runId: string; status: 'cancelled'; cancelledNodes: string[] } | null {
+  async cancelRun(runId: string): Promise<CancelDagRunResult> {
+    this.evictRetainedRuns();
     const record = this.runsById.get(runId);
     if (!record) {
-      return null;
+      return this.cancelPersistedRun(runId);
     }
 
-    const cancelledNodes: string[] = [];
-    for (const node of record.nodesById.values()) {
-      //audit Assumption: cancellation should only rewrite nodes that have not finished; failure risk: terminal node history is lost; expected invariant: only waiting or queued nodes become cancelled immediately; handling strategy: update pending nodes in place and leave running nodes to settle naturally.
-      if (node.status === 'waiting' || node.status === 'queued') {
-        node.status = 'cancelled';
-        node.completedAt = new Date().toISOString();
-        cancelledNodes.push(node.nodeId);
-        this.recordEvent(record, 'node.cancelled', {
-          nodeId: node.nodeId,
-          reason: 'Run cancellation requested.'
-        });
+    if (record.status === 'cancelled') {
+      return {
+        outcome: 'already_cancelled',
+        statusCode: 200,
+        data: {
+          runId,
+          status: 'cancelled',
+          cancelledNodes: this.getCancelledNodeIds(record.nodesById.values())
+        }
+      };
+    }
+
+    if (record.status === 'complete' || record.status === 'failed') {
+      return {
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: record.status
+      };
+    }
+
+    if (
+      record.cancellationRequestedAt &&
+      record.abortController.signal.aborted &&
+      !record.cancellationRequestPromise
+    ) {
+      return {
+        outcome: 'already_requested',
+        statusCode: 200,
+        data: {
+          runId,
+          status: 'cancellation_requested',
+          cancelledNodes: this.getCancellationTargetNodeIds(record)
+        }
+      };
+    }
+
+    if (record.cancellationRequestPromise) {
+      const inFlightResult = await record.cancellationRequestPromise;
+      if (inFlightResult.outcome === 'cancellation_requested') {
+        return {
+          outcome: 'already_requested',
+          statusCode: 200,
+          data: inFlightResult.data
+        };
       }
+      return inFlightResult;
     }
 
-    record.abortController.abort();
-    record.status = 'cancelled';
-    this.ensureTrackedRunState(record);
-    this.syncOrchestratorState(record, this.trinityOrchestrator.markRunCancelled(runId));
-    record.updatedAt = new Date().toISOString();
-    record.summary = createApiSummary(record);
-    record.verification = calculateVerification(record);
-    recordDagRunStatus('cancelled');
-    this.recordEvent(record, 'run.cancelled', {
-      runId,
-      cancelledNodes
+    if (this.persistenceConflictedRunIds.has(runId)) {
+      return {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+      };
+    }
+
+    const cancellationPromise = this.requestLocalRunCancellation(record);
+    record.cancellationRequestPromise = cancellationPromise;
+    try {
+      return await cancellationPromise;
+    } finally {
+      if (record.cancellationRequestPromise === cancellationPromise) {
+        record.cancellationRequestPromise = undefined;
+      }
+      this.evictRetainedRuns();
+    }
+  }
+
+  private getCancelledNodeIds(
+    nodes: Iterable<StoredNodeDetail>
+  ): string[] {
+    return Array.from(nodes)
+      .filter(node => node.status === 'cancelled')
+      .map(node => node.nodeId)
+      .sort();
+  }
+
+  private getCancellationTargetNodeIds(
+    record: StoredDagRunRecord
+  ): string[] {
+    return Array.from(record.nodesById.values())
+      .filter(node =>
+        node.status === 'waiting' ||
+        node.status === 'queued' ||
+        node.status === 'running'
+      )
+      .map(node => node.nodeId)
+      .sort();
+  }
+
+  private async requestLocalRunCancellation(
+    record: StoredDagRunRecord
+  ): Promise<CancelDagRunResult> {
+    const requestedAt = new Date().toISOString();
+    const reason = 'DAG run cancellation requested.';
+    const cancellationEventId = generateRequestId('dag-event');
+    const previousCancellationRequestedAt = record.cancellationRequestedAt;
+    const previousCancellationReason = record.cancellationReason;
+    const cancelledNodes = this.getCancellationTargetNodeIds(record);
+
+    record.cancellationPersistenceInProgress = true;
+    record.persistenceDeferredDuringCancellation = false;
+    record.cancellationRequestedAt = requestedAt;
+    record.cancellationReason = reason;
+    record.updatedAt = requestedAt;
+    record.events.push({
+      eventId: cancellationEventId,
+      type: 'run.cancellation_requested',
+      at: requestedAt,
+      data: {
+        runId: record.runId,
+        reason,
+        targetedNodes: cancelledNodes
+      }
     });
-    this.queuePersistRecord(record);
+    record.summary = createApiSummary(record);
+
+    const persistenceOutcome = await this.queuePersistRecord(record, {
+      allowDuringCancellation: true
+    });
+
+    if (persistenceOutcome !== 'applied') {
+      record.cancellationRequestedAt = previousCancellationRequestedAt;
+      record.cancellationReason = previousCancellationReason;
+      const eventIndex = record.events.findIndex(
+        event => event.eventId === cancellationEventId
+      );
+      if (eventIndex >= 0) {
+        record.events.splice(eventIndex, 1);
+      }
+      record.updatedAt = new Date().toISOString();
+      record.summary = createApiSummary(record);
+      const persistenceWasDeferred =
+        record.persistenceDeferredDuringCancellation;
+      record.persistenceDeferredDuringCancellation = false;
+      record.cancellationPersistenceInProgress = false;
+      if (persistenceWasDeferred) {
+        await this.queuePersistRecord(record);
+      }
+
+      return {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+      };
+    }
+
+    const persistenceWasDeferred =
+      record.persistenceDeferredDuringCancellation;
+    record.persistenceDeferredDuringCancellation = false;
+    record.cancellationPersistenceInProgress = false;
+
+    // Execution can become terminal while the durable cancellation intent is
+    // waiting behind earlier snapshots. Do not claim a new cancellation after
+    // that point; first flush the deferred terminal snapshot.
+    if (
+      record.status === 'complete' ||
+      record.status === 'failed' ||
+      record.status === 'cancelled'
+    ) {
+      if (persistenceWasDeferred) {
+        const terminalFlushOutcome = await this.queuePersistRecord(record);
+        if (terminalFlushOutcome !== 'applied') {
+          return {
+            outcome: 'unavailable',
+            statusCode: 503,
+            retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+          };
+        }
+      }
+
+      if (record.status === 'cancelled') {
+        return {
+          outcome: 'already_cancelled',
+          statusCode: 200,
+          data: {
+            runId: record.runId,
+            status: 'cancelled',
+            cancelledNodes: this.getCancelledNodeIds(record.nodesById.values())
+          }
+        };
+      }
+
+      return {
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: record.status
+      };
+    }
+
+    record.abortController.abort(createAbortError(reason));
+    if (persistenceWasDeferred) {
+      await this.queuePersistRecord(record);
+    }
 
     return {
-      runId,
-      status: 'cancelled',
-      cancelledNodes
+      outcome: 'cancellation_requested',
+      statusCode: 202,
+      data: {
+        runId: record.runId,
+        status: 'cancellation_requested',
+        cancelledNodes
+      }
+    };
+  }
+
+  private async cancelPersistedRun(
+    runId: string
+  ): Promise<CancelDagRunResult> {
+    const lookup = await lookupDagRunSnapshotForControl(runId);
+    if (lookup.outcome === 'not_found') {
+      return {
+        outcome: 'not_found',
+        statusCode: 404
+      };
+    }
+    if (lookup.outcome === 'unavailable' || lookup.outcome === 'invalid') {
+      return {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+      };
+    }
+
+    let snapshot: PersistedDagRunSnapshot | null;
+    try {
+      snapshot = normalizePersistedDagRunSnapshot(lookup.record.snapshot);
+    } catch {
+      // Control decisions must fail closed when a persisted snapshot has a
+      // structurally present but malformed nested contract field.
+      snapshot = null;
+    }
+    if (
+      !snapshot ||
+      snapshot.runId !== runId ||
+      snapshot.status !== lookup.record.status
+    ) {
+      return {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+      };
+    }
+
+    if (snapshot.status === 'cancelled') {
+      return {
+        outcome: 'already_cancelled',
+        statusCode: 200,
+        data: {
+          runId,
+          status: 'cancelled',
+          cancelledNodes: this.getCancelledNodeIds(snapshot.nodes)
+        }
+      };
+    }
+    if (snapshot.status === 'complete' || snapshot.status === 'failed') {
+      return {
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: snapshot.status
+      };
+    }
+
+    return {
+      outcome: 'owned_elsewhere',
+      statusCode: 503,
+      retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
     };
   }
 
@@ -2145,7 +2772,7 @@ export class ArcanosDagRunService {
     this.recordEvent(record, 'run.started', {
       runId: record.runId
     });
-    this.queuePersistRecord(record);
+    void this.queuePersistRecord(record);
 
     const orchestrator = new DAGOrchestrator({ settings });
     const observer = this.createObserver(record);
@@ -2170,7 +2797,8 @@ export class ArcanosDagRunService {
       this.finalizeRun(record, internalSummary);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      record.status = record.abortController.signal.aborted ? 'cancelled' : 'failed';
+      const cancellationRequested = record.abortController.signal.aborted;
+      record.status = cancellationRequested ? 'cancelled' : 'failed';
       recordDagRunStatus(record.status);
       this.syncOrchestratorState(
         record,
@@ -2179,29 +2807,37 @@ export class ArcanosDagRunService {
           : this.trinityOrchestrator.markRunFailed(record.runId)
       );
       record.updatedAt = new Date().toISOString();
-      record.errors.push({
-        errorId: generateRequestId('dagerr'),
-        nodeId: record.rootNodeId ?? 'run',
-        type: 'orchestrator_error',
-        message: errorMessage,
-        attempt: 1,
-        at: record.updatedAt,
-        retryScheduled: false
-      });
-      record.guardViolations.push({
-        type: 'unknown',
-        at: record.updatedAt,
-        message: errorMessage,
-        details: createErrorInfo(errorMessage)
-      });
+      if (!cancellationRequested) {
+        record.errors.push({
+          errorId: generateRequestId('dagerr'),
+          nodeId: record.rootNodeId ?? 'run',
+          type: 'orchestrator_error',
+          message: errorMessage,
+          attempt: 1,
+          at: record.updatedAt,
+          retryScheduled: false
+        });
+        record.guardViolations.push({
+          type: 'unknown',
+          at: record.updatedAt,
+          message: errorMessage,
+          details: createErrorInfo(errorMessage)
+        });
+      }
       record.metrics = recalculateMetrics(record);
       record.verification = calculateVerification(record);
       record.summary = createApiSummary(record);
-      this.recordEvent(record, 'run.failed', {
-        runId: record.runId,
-        message: errorMessage
-      });
-      this.queuePersistRecord(record);
+      this.recordEvent(
+        record,
+        cancellationRequested ? 'run.cancelled' : 'run.failed',
+        {
+          runId: record.runId,
+          ...(cancellationRequested
+            ? { reason: record.cancellationReason ?? errorMessage }
+            : { message: errorMessage })
+        }
+      );
+      void this.queuePersistRecord(record);
     }
   }
 
@@ -2244,7 +2880,7 @@ export class ArcanosDagRunService {
         status: record.status
       }
     );
-    this.queuePersistRecord(record);
+    void this.queuePersistRecord(record);
   }
 
   private createObserver(record: StoredDagRunRecord): DAGRunObserver {
@@ -2451,7 +3087,7 @@ export class ArcanosDagRunService {
     record.metrics = recalculateMetrics(record);
     record.verification = calculateVerification(record);
     record.summary = createApiSummary(record);
-    this.queuePersistRecord(record);
+    void this.queuePersistRecord(record);
   }
 }
 

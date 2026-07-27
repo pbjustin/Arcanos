@@ -37,6 +37,7 @@ jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
+  AUDITED_TRANSIENT_READ_QUERIES: Object.freeze({}),
   loadMemory: mockLoadMemory,
   query: mockQuery,
   saveMemory: mockSaveMemory,

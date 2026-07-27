@@ -995,6 +995,10 @@ export async function updateClaimedJobTerminal(
        AND claim_generation = $12::bigint
        AND lease_expires_at IS NOT NULL
        AND lease_expires_at >= NOW()
+       AND (
+         $1::varchar(50) = 'cancelled'::varchar(50)
+         OR cancel_requested_at IS NULL
+       )
      RETURNING *`,
     [
       terminalStatus,
@@ -1835,6 +1839,7 @@ export async function scheduleJobRetry(
        AND claim_generation = $6::bigint
        AND lease_expires_at IS NOT NULL
        AND lease_expires_at >= NOW()
+       AND cancel_requested_at IS NULL
      RETURNING *`,
     [
       options.errorMessage,
@@ -1893,6 +1898,7 @@ export async function deferJobForProviderRecovery(
        AND claim_generation = $6::bigint
        AND lease_expires_at IS NOT NULL
        AND lease_expires_at >= NOW()
+       AND cancel_requested_at IS NULL
      RETURNING *`,
     [
       options.errorMessage,

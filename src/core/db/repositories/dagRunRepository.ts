@@ -23,6 +23,12 @@ export interface DagRunSnapshotRecord {
   snapshot: Record<string, unknown>;
 }
 
+export type DagRunSnapshotControlLookup =
+  | { outcome: 'found'; record: DagRunSnapshotRecord }
+  | { outcome: 'not_found' }
+  | { outcome: 'unavailable' }
+  | { outcome: 'invalid' };
+
 const DAG_RUN_REPOSITORY_WORKER_ID = 'dag-runs';
 const DAG_RUN_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 
@@ -248,6 +254,98 @@ export async function getDagRunSnapshotById(runId: string): Promise<DagRunSnapsh
     createdAt: normalizeIsoString(row.created_at),
     updatedAt: normalizeIsoString(row.updated_at),
     snapshot: normalizedSnapshot
+  };
+}
+
+/**
+ * Load one DAG snapshot for a lifecycle-changing control decision.
+ *
+ * Unlike the inspection reader, this path preserves the distinction between a
+ * confirmed miss, unavailable persistence, and an invalid/mismatched row.
+ */
+export async function lookupDagRunSnapshotForControl(
+  runId: string
+): Promise<DagRunSnapshotControlLookup> {
+  const persistenceReady = await ensureDagRunPersistenceReady();
+  if (!persistenceReady) {
+    return { outcome: 'unavailable' };
+  }
+
+  let row: Record<string, unknown> | undefined;
+  try {
+    const result = await query(
+      `SELECT
+         run_id,
+         session_id,
+         template,
+         status,
+         planner_node_id,
+         root_node_id,
+         snapshot_generation::text AS snapshot_generation,
+         created_at,
+         updated_at,
+         snapshot
+       FROM dag_runs
+       WHERE run_id = $1
+       LIMIT 1`,
+      [runId]
+    );
+    row = result.rows[0] as Record<string, unknown> | undefined;
+  } catch {
+    return { outcome: 'unavailable' };
+  }
+
+  if (!row) {
+    return { outcome: 'not_found' };
+  }
+
+  const normalizedSnapshot = normalizeSnapshotObject(row.snapshot);
+  const snapshotGeneration = normalizePersistedSnapshotGeneration(
+    row.snapshot_generation
+  );
+  if (!normalizedSnapshot || !snapshotGeneration) {
+    return { outcome: 'invalid' };
+  }
+
+  const record: DagRunSnapshotRecord = {
+    runId: String(row.run_id ?? ''),
+    sessionId: String(row.session_id ?? ''),
+    template: String(row.template ?? ''),
+    status: String(row.status ?? ''),
+    snapshotGeneration,
+    plannerNodeId: normalizeNullableString(row.planner_node_id),
+    rootNodeId: normalizeNullableString(row.root_node_id),
+    createdAt: normalizeIsoString(row.created_at),
+    updatedAt: normalizeIsoString(row.updated_at),
+    snapshot: normalizedSnapshot
+  };
+  const snapshotRunId = normalizedSnapshot.runId;
+  const snapshotSessionId = normalizedSnapshot.sessionId;
+  const snapshotTemplate = normalizedSnapshot.template;
+  const snapshotStatus = normalizedSnapshot.status;
+  const knownStatuses = new Set([
+    'queued',
+    'running',
+    'complete',
+    'failed',
+    'cancelled'
+  ]);
+
+  //audit Assumption: lifecycle mutation must be based on one internally consistent persisted identity; failure risk: a denormalized row can authorize cancellation for a different or corrupt snapshot; expected invariant: requested id, row identity, snapshot identity, and status agree; handling strategy: reject mismatches as invalid instead of collapsing them into absence.
+  if (
+    record.runId !== runId ||
+    snapshotRunId !== record.runId ||
+    snapshotSessionId !== record.sessionId ||
+    snapshotTemplate !== record.template ||
+    snapshotStatus !== record.status ||
+    !knownStatuses.has(record.status)
+  ) {
+    return { outcome: 'invalid' };
+  }
+
+  return {
+    outcome: 'found',
+    record
   };
 }
 

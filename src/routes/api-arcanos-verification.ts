@@ -30,7 +30,10 @@ import type {
   WorkerStatus
 } from '../shared/types/arcanos-verification-contract.types.js';
 import { getWorkerControlStatus } from '../services/workerControlService.js';
-import { arcanosDagRunService } from '../services/arcanosDagRunService.js';
+import {
+  DagRunCapacityExceededError,
+  arcanosDagRunService
+} from '../services/arcanosDagRunService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { UnsupportedDagTemplateError } from '@dag/templates.js';
@@ -318,6 +321,14 @@ router.post(
         sendBadRequest(res, 'DAG_TEMPLATE_UNSUPPORTED');
         return;
       }
+      if (error instanceof DagRunCapacityExceededError) {
+        res.setHeader('Retry-After', error.retryAfterSeconds.toString());
+        res.status(429).json({
+          error: error.code,
+          message: error.message
+        });
+        return;
+      }
 
       sendInternalErrorPayload(res, {
         error: 'DAG_RUN_CREATE_FAILED',
@@ -503,15 +514,44 @@ router.post(
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
-    const cancelled = arcanosDagRunService.cancelRun(runId);
+    const cancellation = await arcanosDagRunService.cancelRun(runId);
 
-    if (!cancelled) {
+    if (cancellation.outcome === 'not_found') {
       sendNotFound(res, 'RUN_NOT_FOUND');
       return;
     }
+    if (cancellation.outcome === 'not_cancellable') {
+      res.status(409).json({
+        error: 'RUN_NOT_CANCELLABLE',
+        status: cancellation.runStatus
+      });
+      return;
+    }
+    if (
+      cancellation.outcome === 'owned_elsewhere' ||
+      cancellation.outcome === 'unavailable'
+    ) {
+      res.setHeader(
+        'Retry-After',
+        cancellation.retryAfterSeconds.toString()
+      );
+      res.status(503).json({
+        error:
+          cancellation.outcome === 'owned_elsewhere'
+            ? 'DAG_RUN_OWNED_ELSEWHERE'
+            : 'DAG_RUN_CANCELLATION_UNAVAILABLE'
+      });
+      return;
+    }
 
-    const data: CancelDagRunResponseData = cancelled;
-    sendVerificationEnvelope(req, res, data, 'verification.dag_run_cancel.response');
+    const data: CancelDagRunResponseData = cancellation.data;
+    sendVerificationEnvelope(
+      req,
+      res,
+      data,
+      'verification.dag_run_cancel.response',
+      cancellation.statusCode
+    );
   })
 );
 

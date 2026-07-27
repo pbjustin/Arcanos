@@ -145,6 +145,16 @@ Except for the conditional HTTP-only ActionPlan tools described above, the serve
 - `dag.run.verification`
 - `dag.run.cancel`
 
+`dag.run.create` reports process-local admission overload as
+`ERR_UNAVAILABLE` with `reasonCode: DAG_RUN_CAPACITY_EXCEEDED` and
+`retryAfterSeconds`. `dag.run.cancel` returns the accepted
+`cancellation_requested` data directly and is idempotent for repeated or
+already-cancelled requests. It maps a confirmed missing run to
+`ERR_NOT_FOUND`, complete/failed runs to `ERR_CONFLICT` with
+`RUN_NOT_CANCELLABLE`, and remote ownership or unavailable/corrupt control
+state to `ERR_UNAVAILABLE` with `DAG_RUN_OWNED_ELSEWHERE` or
+`DAG_RUN_CANCELLATION_UNAVAILABLE` plus retry metadata.
+
 ### RAG and research
 
 - `rag.ingest_url`
@@ -177,6 +187,8 @@ does not expose GPT Access-only definitions or executable handlers.
 | `ERR_DISABLED` | The registered operation is disabled by deployment policy. |
 | `ERR_GATED` | An additional policy gate failed, such as the module/action allowlist or disabled requester-owned ActionPlan execution. Inspect `details.category` for the stable policy category. |
 | `ERR_NOT_FOUND` | The referenced resource was not found. |
+| `ERR_CONFLICT` | The requested mutation conflicts with current terminal state, such as cancelling a complete or failed DAG run. |
+| `ERR_UNAVAILABLE` | Capacity, remote ownership, or required control state is temporarily unavailable; inspect `details.reasonCode` and retry metadata. |
 | `ERR_INTERNAL` | An unhandled tool exception was converted to a stable MCP error. |
 
 For example, requester-owned `plans.execute` returns `ERR_GATED` with

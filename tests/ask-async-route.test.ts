@@ -17,7 +17,13 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   findOrCreateGptJob: jest.fn(),
   createJob: createJobMock,
+  createClaimedJobFence: jest.fn((workerId: string, claimGeneration: string) => ({
+    workerId,
+    claimGeneration
+  })),
+  normalizeJobClaimGeneration: jest.fn((claimGeneration: string) => claimGeneration),
   claimNextPendingJob: jest.fn(),
+  failPendingJobIfUnclaimed: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   requeueFailedJob: jest.fn(),
   scheduleJobRetry: jest.fn(),
@@ -36,7 +42,14 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getLatestJob: jest.fn(),
   listFailedJobs: jest.fn(async () => []),
   getJobQueueSummary: jest.fn(),
-  getJobExecutionStatsSince: jest.fn()
+  getJobExecutionStatsSince: jest.fn(),
+  requestJobCancellation: jest.fn(),
+  updateClaimedJobTerminal: jest.fn(),
+  cleanupExpiredGptJobs: jest.fn(async () => ({
+    expiredPending: 0,
+    expiredTerminal: 0,
+    deletedExpired: 0
+  }))
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({

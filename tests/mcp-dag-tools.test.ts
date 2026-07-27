@@ -165,6 +165,41 @@ describe('registerDagMcpTools', () => {
     );
   });
 
+  it('returns a retryable MCP unavailable error when DAG capacity is exhausted', async () => {
+    const { server, tools } = buildFakeServer();
+    mockCreateRun.mockRejectedValueOnce(
+      Object.assign(
+        new Error('DAG run capacity is temporarily unavailable.'),
+        {
+          code: 'DAG_RUN_CAPACITY_EXCEEDED',
+          retryAfterSeconds: 7,
+        }
+      )
+    );
+
+    registerDagMcpTools(server as any, buildContext());
+    const output = await tools.get('dag.run.create')!.handler({
+      goal: 'Wait for available DAG capacity',
+    });
+
+    expect(output).toEqual(
+      expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_UNAVAILABLE',
+            message: 'DAG run capacity is temporarily unavailable.',
+            details: {
+              reasonCode: 'DAG_RUN_CAPACITY_EXCEEDED',
+              retryAfterSeconds: 7,
+            },
+            requestId: 'mcp-req-1',
+          }),
+        },
+      })
+    );
+  });
+
   it('rejects empty DAG run creation requests with an MCP bad-request error', async () => {
     const { server, tools } = buildFakeServer();
 
@@ -324,4 +359,137 @@ describe('registerDagMcpTools', () => {
       })
     );
   });
+
+  it('returns accepted and idempotent DAG cancellation results', async () => {
+    const { server, tools } = buildFakeServer();
+    mockCancelRun
+      .mockResolvedValueOnce({
+        outcome: 'cancellation_requested',
+        statusCode: 202,
+        data: {
+          runId: 'dagrun_cancel_accepted',
+          status: 'cancellation_requested',
+          cancelledNodes: ['writer'],
+        },
+      })
+      .mockResolvedValueOnce({
+        outcome: 'already_cancelled',
+        statusCode: 200,
+        data: {
+          runId: 'dagrun_cancelled',
+          status: 'cancelled',
+          cancelledNodes: ['writer'],
+        },
+      });
+
+    registerDagMcpTools(server as any, buildContext());
+    const accepted = await tools.get('dag.run.cancel')!.handler({
+      runId: 'dagrun_cancel_accepted',
+    });
+    const idempotent = await tools.get('dag.run.cancel')!.handler({
+      runId: 'dagrun_cancelled',
+    });
+
+    expect(accepted).toEqual(
+      expect.objectContaining({
+        structuredContent: {
+          runId: 'dagrun_cancel_accepted',
+          status: 'cancellation_requested',
+          cancelledNodes: ['writer'],
+        },
+      })
+    );
+    expect(idempotent).toEqual(
+      expect.objectContaining({
+        structuredContent: {
+          runId: 'dagrun_cancelled',
+          status: 'cancelled',
+          cancelledNodes: ['writer'],
+        },
+      })
+    );
+    expect(mockCancelRun).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      name: 'not found',
+      runId: 'dagrun_missing',
+      result: {
+        outcome: 'not_found',
+        statusCode: 404,
+      },
+      code: 'ERR_NOT_FOUND',
+      details: {
+        runId: 'dagrun_missing',
+      },
+    },
+    {
+      name: 'terminal conflict',
+      runId: 'dagrun_complete',
+      result: {
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: 'complete',
+      },
+      code: 'ERR_CONFLICT',
+      details: {
+        runId: 'dagrun_complete',
+        reasonCode: 'RUN_NOT_CANCELLABLE',
+        status: 'complete',
+      },
+    },
+    {
+      name: 'owned elsewhere',
+      runId: 'dagrun_owned_elsewhere',
+      result: {
+        outcome: 'owned_elsewhere',
+        statusCode: 503,
+        retryAfterSeconds: 11,
+      },
+      code: 'ERR_UNAVAILABLE',
+      details: {
+        runId: 'dagrun_owned_elsewhere',
+        reasonCode: 'DAG_RUN_OWNED_ELSEWHERE',
+        retryAfterSeconds: 11,
+      },
+    },
+    {
+      name: 'state unavailable',
+      runId: 'dagrun_unavailable',
+      result: {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: 13,
+      },
+      code: 'ERR_UNAVAILABLE',
+      details: {
+        runId: 'dagrun_unavailable',
+        reasonCode: 'DAG_RUN_CANCELLATION_UNAVAILABLE',
+        retryAfterSeconds: 13,
+      },
+    },
+  ])(
+    'returns an explicit MCP error when DAG cancellation is $name',
+    async ({ runId, result, code, details }) => {
+      const { server, tools } = buildFakeServer();
+      mockCancelRun.mockResolvedValueOnce(result);
+
+      registerDagMcpTools(server as any, buildContext());
+      const output = await tools.get('dag.run.cancel')!.handler({ runId });
+
+      expect(output).toEqual(
+        expect.objectContaining({
+          isError: true,
+          structuredContent: {
+            error: expect.objectContaining({
+              code,
+              details,
+              requestId: 'mcp-req-1',
+            }),
+          },
+        })
+      );
+    }
+  );
 });

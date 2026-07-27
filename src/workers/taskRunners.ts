@@ -15,9 +15,11 @@ import type { DagNodeJobInput } from '../jobs/jobSchema.js';
 import { dagLogger, type DagLogger } from '../utils/logger.js';
 import { dagMetrics, type DagMetricsRecorder } from '../utils/metrics.js';
 import type { PlannerExecutionFailureDetails } from './trinityWorkerPipeline.js';
+import { createAbortError } from '@arcanos/runtime';
 
 export interface DagTaskRunnerDependencies {
   runPrompt(prompt: string, options: DagAgentPromptOptions): Promise<unknown>;
+  abortSignal?: AbortSignal;
   logger?: DagLogger;
   metrics?: DagMetricsRecorder;
   artifactStore?: DagArtifactStore;
@@ -244,6 +246,11 @@ export async function runDagNodeJob(
   const artifactStore = dependencies.artifactStore ?? createDagArtifactStore();
   const startedAt = Date.now();
   const agentHandler = dagAgentManager.getAgent(jobInput.node.executionKey);
+  if (dependencies.abortSignal?.aborted) {
+    throw dependencies.abortSignal.reason instanceof Error
+      ? dependencies.abortSignal.reason
+      : createAbortError('DAG node execution was cancelled before it started.');
+  }
 
   //audit Assumption: every queued node must resolve to a registered execution handler; failure risk: worker burns queue capacity on non-runnable nodes; expected invariant: executionKey lookup succeeds for all scheduled nodes; handling strategy: return a structured failed result instead of throwing.
   if (!agentHandler) {
@@ -277,6 +284,11 @@ export async function runDagNodeJob(
   };
 
   try {
+    if (dependencies.abortSignal?.aborted) {
+      throw dependencies.abortSignal.reason instanceof Error
+        ? dependencies.abortSignal.reason
+        : createAbortError('DAG node execution was cancelled.');
+    }
     activeLogger.info('Executing DAG node job', {
       dagId: jobInput.dagId,
       nodeId: jobInput.node.id,
@@ -298,6 +310,11 @@ export async function runDagNodeJob(
     const promptOutput = await agentHandler(executionContext, {
       runPrompt: dependencies.runPrompt
     });
+    if (dependencies.abortSignal?.aborted) {
+      throw dependencies.abortSignal.reason instanceof Error
+        ? dependencies.abortSignal.reason
+        : createAbortError('DAG node execution was cancelled.');
+    }
     const normalizedPromptOutput = normalizeDagPromptOutput(promptOutput);
     const durationMs = Date.now() - startedAt;
     const tokenUsage = extractTokenUsageFromPromptOutput(normalizedPromptOutput);
@@ -345,6 +362,14 @@ export async function runDagNodeJob(
       logger: activeLogger
     });
   } catch (error: unknown) {
+    if (
+      dependencies.abortSignal?.aborted ||
+      (error instanceof Error && error.name === 'AbortError')
+    ) {
+      throw error instanceof Error
+        ? error
+        : createAbortError('DAG node execution was cancelled.');
+    }
     const durationMs = Date.now() - startedAt;
     const errorMessage = error instanceof Error ? error.message : String(error);
     const failureOutput = buildDagFailureOutput(error, durationMs);
