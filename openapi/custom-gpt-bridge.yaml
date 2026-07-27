@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Arcanos Custom GPT Bridge
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Secure HTTP bridge for Custom GPT Actions. The bridge authenticates inbound
     Custom GPT requests, enqueues them through the existing Arcanos job
@@ -121,7 +121,11 @@ paths:
     get:
       operationId: getArcanosBridgeHealth
       summary: Check bridge runtime health
-      description: Reports environment sanity, route reachability, database status, worker status, and recent bridge failure counters.
+      description: Reports environment sanity, route reachability, database status, worker status, and recent bridge failure counters to callers authenticated with the bridge shared secret.
+      security:
+        - bearerAuth: []
+        - openaiActionSecretHeader: []
+        - actionSecretHeader: []
       responses:
         "200":
           description: Bridge health is OK.
@@ -129,12 +133,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeHealthResponse"
-        "503":
-          description: Bridge health is degraded.
+        "401":
+          description: Missing or invalid bridge shared secret.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BridgeHealthResponse"
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "503":
+          description: Bridge health is degraded or the bridge secret is not configured.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BridgeHealthResponse"
+                  - $ref: "#/components/schemas/BridgeErrorResponse"
   /jobs/{jobId}:
     get:
       operationId: getBridgeJobStatus

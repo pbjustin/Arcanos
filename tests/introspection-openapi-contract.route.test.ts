@@ -173,10 +173,23 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('yaml');
     expect(response.text).toContain('/api/bridge/gpt');
+    expect(response.text).toContain('version: 1.2.0');
     expect(response.text).toContain('health_echo');
     expect(response.text).toContain('query_and_wait');
     expect(response.text).toContain('env:');
     expect(response.text).toContain('OPENAI_ACTION_SHARED_SECRET:');
+
+    const healthOperation = response.text
+      .split('/api/bridge/health:')[1]
+      ?.split('/jobs/{jobId}:')[0] ?? '';
+    expect(healthOperation).toContain('security:');
+    expect(healthOperation).toContain('bearerAuth:');
+    expect(healthOperation).toContain('openaiActionSecretHeader:');
+    expect(healthOperation).toContain('actionSecretHeader:');
+    expect(healthOperation).toContain('"401":');
+    expect(healthOperation).toContain('oneOf:');
+    expect(healthOperation).toContain('BridgeHealthResponse');
+    expect(healthOperation).toContain('BridgeErrorResponse');
 
     const pendingSchema = response.text.split('BridgePendingResponse:')[1]?.split('BridgeErrorResponse:')[0] ?? '';
     expect(pendingSchema).toContain('result:');

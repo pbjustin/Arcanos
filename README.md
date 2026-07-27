@@ -91,7 +91,9 @@ Required environment:
 
 Bridge endpoints:
 - `POST /api/bridge/gpt` accepts `{ "gptId": "arcanos-core", "prompt": "...", "action": "query" | "query_and_wait", "metadata": {} }`.
-- `GET /api/bridge/health` reports bridge env sanity, default GPT route reachability, database state, worker health when available, and bridge failure counters.
+- `GET /api/bridge/health` requires the same bridge shared secret and reports
+  no-store bridge env sanity, default GPT route reachability, database state,
+  worker health when available, and bridge failure counters.
 - Async job retrieval stays on `GET /jobs/{id}` and `GET /jobs/{id}/result`.
 
 The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.

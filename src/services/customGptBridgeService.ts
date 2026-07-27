@@ -7,6 +7,7 @@ import {
 } from '@core/db/repositories/jobRepository.js';
 import type { JobData } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import {
   buildQueuedGptJobInput,
   buildQueuedGptPendingResponse,
@@ -47,6 +48,12 @@ const BRIDGE_FAILURE_COUNTERS: BridgeFailureCounters = {
 };
 const DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE =
   'Durable GPT job persistence is unavailable.';
+const BRIDGE_REQUEST_FAILED_MESSAGE = 'Custom GPT bridge request failed.';
+const IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
+  'Idempotency key conflicts with an existing request.';
+const DATABASE_HEALTH_UNAVAILABLE_MESSAGE = 'Database health is unavailable.';
+const DEFAULT_GPT_ROUTE_UNAVAILABLE_MESSAGE = 'Default GPT route is unavailable.';
+const WORKER_HEALTH_UNAVAILABLE_MESSAGE = 'Worker health is unavailable.';
 const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: number }> = [];
 const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
 const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 3;
@@ -148,6 +155,58 @@ function resultUrl(jobId: string): string {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function projectBridgeHealthError(
+  health: Record<string, unknown>,
+  publicMessage: string,
+): Record<string, unknown> {
+  if (health.error === null || health.error === undefined) {
+    return health;
+  }
+  return {
+    ...health,
+    error: publicMessage,
+  };
+}
+
+function logBridgeHealthCheckFailure(
+  component: 'database' | 'routing' | 'worker',
+  requestId: string,
+  error: unknown,
+): void {
+  try {
+    logger.error('bridge.health.component_check_failed', {
+      component,
+      requestId,
+      error: resolveErrorMessage(error),
+    });
+  } catch {
+    // Health responses must not fail because diagnostics logging is unavailable.
+  }
+}
+
+function logBridgeRequestFailure(
+  requestId: string,
+  source: BridgeErrorSource,
+  statusCode: number,
+  error: unknown,
+): void {
+  try {
+    const metadata = {
+      requestId,
+      source,
+      statusCode,
+      error: resolveErrorMessage(error),
+    };
+    if (statusCode >= 500) {
+      logger.error('bridge.request.failed', metadata);
+    } else {
+      logger.warn('bridge.request.failed', metadata);
+    }
+  } catch {
+    // Bridge responses must not fail because diagnostics logging is unavailable.
+  }
 }
 
 function readNumberCandidate(value: unknown): number | undefined {
@@ -809,15 +868,19 @@ export async function executeCustomGptBridgeRequest(
         : 'routing';
     const statusCode =
       error instanceof IdempotencyKeyConflictError ? 409 : error instanceof JobRepositoryUnavailableError ? 503 : 500;
+    const publicMessage = error instanceof JobRepositoryUnavailableError
+      ? DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE
+      : error instanceof IdempotencyKeyConflictError
+        ? IDEMPOTENCY_KEY_CONFLICT_MESSAGE
+        : BRIDGE_REQUEST_FAILED_MESSAGE;
+    logBridgeRequestFailure(input.requestId, source, statusCode, error);
     return {
       statusCode,
       errorSource: source,
       body: buildBridgeErrorPayload({
         source,
         status: source === 'queue' ? 'queue_error' : 'routing_error',
-        message: error instanceof JobRepositoryUnavailableError
-          ? DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE
-          : resolveErrorMessage(error),
+        message: publicMessage,
         requestId: input.requestId,
         timing: buildBridgeTiming({
           startedAtMs,
@@ -837,11 +900,15 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
   let databaseHealth: Record<string, unknown>;
   try {
     const { getStatus } = await import('@core/db/index.js');
-    databaseHealth = getStatus() as unknown as Record<string, unknown>;
+    databaseHealth = projectBridgeHealthError(
+      getStatus() as unknown as Record<string, unknown>,
+      DATABASE_HEALTH_UNAVAILABLE_MESSAGE,
+    );
   } catch (error) {
+    logBridgeHealthCheckFailure('database', requestId, error);
     databaseHealth = {
       connected: false,
-      error: resolveErrorMessage(error),
+      error: DATABASE_HEALTH_UNAVAILABLE_MESSAGE,
     };
   }
   let routeReachability: Record<string, unknown> = {
@@ -869,6 +936,9 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
   if (defaultGptId) {
     const { resolveGptRouting } = await import('@routes/_core/gptDispatch.js');
     const routing = await resolveGptRouting(defaultGptId, requestId);
+    if (!routing.ok) {
+      logBridgeHealthCheckFailure('routing', requestId, routing.error);
+    }
     routeReachability = {
       ...routeReachability,
       default_gpt: {
@@ -876,7 +946,7 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
         path: `/gpt/${defaultGptId}`,
         reachable: routing.ok,
         source: routing.ok ? routing.plan.route : 'unregistered',
-        message: routing.ok ? undefined : routing.error.message,
+        message: routing.ok ? undefined : DEFAULT_GPT_ROUTE_UNAVAILABLE_MESSAGE,
       },
     };
   }
@@ -884,12 +954,16 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
   let workerStatus: Record<string, unknown>;
   try {
     const { getWorkerControlHealth } = await import('./workerControlService.js');
-    workerStatus = (await getWorkerControlHealth()) as unknown as Record<string, unknown>;
+    workerStatus = projectBridgeHealthError(
+      (await getWorkerControlHealth()) as unknown as Record<string, unknown>,
+      WORKER_HEALTH_UNAVAILABLE_MESSAGE,
+    );
   } catch (error) {
+    logBridgeHealthCheckFailure('worker', requestId, error);
     workerStatus = {
       ok: false,
       status: 'unavailable',
-      error: resolveErrorMessage(error),
+      error: WORKER_HEALTH_UNAVAILABLE_MESSAGE,
     };
   }
 

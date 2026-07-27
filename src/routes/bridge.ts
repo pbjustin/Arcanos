@@ -20,6 +20,18 @@ function buildFallbackRequestId(prefix: string): string {
   return `${prefix}-${Date.now()}-${randomUUID()}`;
 }
 
+function validateBridgeRequestSecret(req: express.Request) {
+  return validateCustomGptBridgeSecret({
+    authorization: req.header('authorization'),
+    actionSecret: req.header('x-openai-action-secret') ?? req.header('x-action-secret'),
+  });
+}
+
+function setPrivateBridgeResponseHeaders(res: express.Response): void {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+}
+
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(120, 5 * 60 * 1000));
 
@@ -43,10 +55,7 @@ router.all(BRIDGE_PATHS, (_req, res) => {
 
 router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (req, res) => {
   const requestId = req.requestId ?? req.traceId ?? buildFallbackRequestId('bridge');
-  const auth = validateCustomGptBridgeSecret({
-    authorization: req.header('authorization'),
-    actionSecret: req.header('x-openai-action-secret') ?? req.header('x-action-secret'),
-  });
+  const auth = validateBridgeRequestSecret(req);
 
   if (!auth.ok) {
     recordCustomGptBridgeFailure('auth');
@@ -108,6 +117,16 @@ router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (r
 }));
 
 router.get('/api/bridge/health', asyncHandler(async (req, res) => {
+  setPrivateBridgeResponseHeaders(res);
+  const auth = validateBridgeRequestSecret(req);
+  if (!auth.ok) {
+    recordCustomGptBridgeFailure('auth');
+    return sendBoundedJsonResponse(req, res, auth.body ?? { ok: false }, {
+      logEvent: 'bridge.health.auth_failure',
+      statusCode: auth.statusCode,
+    });
+  }
+
   const requestId = req.requestId ?? req.traceId ?? buildFallbackRequestId('bridge-health');
   const payload = await buildCustomGptBridgeHealthPayload(requestId);
   return sendBoundedJsonResponse(req, res, payload, {

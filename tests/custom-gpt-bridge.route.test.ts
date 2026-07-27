@@ -7,6 +7,9 @@ const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
 const resolveAsyncGptPollIntervalMsMock = jest.fn((requested?: number) => requested ?? 250);
 const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => requested ?? 3500);
+const getDatabaseStatusMock = jest.fn();
+const getWorkerControlHealthMock = jest.fn();
+const resolveGptRoutingMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -25,6 +28,18 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
   waitForQueuedGptJobCompletion: waitForQueuedGptJobCompletionMock,
   resolveAsyncGptPollIntervalMs: resolveAsyncGptPollIntervalMsMock,
   resolveAsyncGptWaitForResultMs: resolveAsyncGptWaitForResultMsMock,
+}));
+
+jest.unstable_mockModule('../src/core/db/index.js', () => ({
+  getStatus: getDatabaseStatusMock,
+}));
+
+jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
+  getWorkerControlHealth: getWorkerControlHealthMock,
+}));
+
+jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: resolveGptRoutingMock,
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -61,6 +76,21 @@ describe('Custom GPT bridge route', () => {
     delete process.env.OPENAI_ACTION_BRIDGE_QUERY_WAIT_TIMEOUT_MS;
     delete process.env.OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS;
     delete process.env.OPENAI_ACTION_BRIDGE_FAILURE_COUNTER_WINDOW_MS;
+    getDatabaseStatusMock.mockReturnValue({
+      connected: true,
+      hasPool: true,
+      error: null,
+    });
+    getWorkerControlHealthMock.mockResolvedValue({
+      ok: true,
+      status: 'healthy',
+    });
+    resolveGptRoutingMock.mockResolvedValue({
+      ok: true,
+      plan: {
+        route: '/gpt/arcanos-core',
+      },
+    });
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -73,6 +103,131 @@ describe('Custom GPT bridge route', () => {
       },
       planningReasons: [],
     });
+  });
+
+  it('requires bridge authentication before collecting health diagnostics', async () => {
+    const privateDefaultGptSentinel = 'private-bridge-health-gpt-sentinel';
+    process.env.DEFAULT_GPT_ID = privateDefaultGptSentinel;
+
+    const response = await request(buildApp()).get('/api/bridge/health');
+
+    expect(response.status).toBe(401);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unauthorized',
+      error: {
+        source: 'auth',
+        message: 'Missing or invalid bridge shared secret.',
+      },
+      request_id: null,
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateDefaultGptSentinel);
+    expect(response.body).not.toHaveProperty('env');
+    expect(response.body).not.toHaveProperty('database');
+    expect(response.body).not.toHaveProperty('worker_status');
+    expect(response.body).not.toHaveProperty('route_reachability');
+    expect(response.body).not.toHaveProperty('recent_failure_counters');
+    expect(response.body).not.toHaveProperty('failure_counters_since_start');
+    expect(getDatabaseStatusMock).not.toHaveBeenCalled();
+    expect(getWorkerControlHealthMock).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without collecting health diagnostics when the bridge secret is unconfigured', async () => {
+    delete process.env.OPENAI_ACTION_SHARED_SECRET;
+
+    const response = await request(buildApp())
+      .get('/api/bridge/health')
+      .set('Authorization', 'Bearer any-value');
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'misconfigured',
+      error: {
+        source: 'auth',
+        message: 'OPENAI_ACTION_SHARED_SECRET is not configured.',
+      },
+      request_id: null,
+    });
+    expect(getDatabaseStatusMock).not.toHaveBeenCalled();
+    expect(getWorkerControlHealthMock).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves bridge secret carrier precedence on health requests', async () => {
+    const response = await request(buildApp())
+      .get('/api/bridge/health')
+      .set('x-openai-action-secret', 'wrong-secret')
+      .set('x-action-secret', 'test-bridge-secret');
+
+    expect(response.status).toBe(401);
+    expect(getDatabaseStatusMock).not.toHaveBeenCalled();
+    expect(getWorkerControlHealthMock).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes authenticated bridge dependency health failures', async () => {
+    const privateDatabaseSentinel = 'PRIVATE_BRIDGE_DATABASE_HEALTH_SENTINEL';
+    const privateWorkerSentinel = 'PRIVATE_BRIDGE_WORKER_HEALTH_SENTINEL';
+    getDatabaseStatusMock.mockReturnValue({
+      connected: false,
+      hasPool: false,
+      error: `database connection failed: ${privateDatabaseSentinel}`,
+    });
+    getWorkerControlHealthMock.mockRejectedValue(
+      new Error(`worker health failed: ${privateWorkerSentinel}`),
+    );
+
+    const response = await request(buildApp())
+      .get('/api/bridge/health')
+      .set('Authorization', 'Bearer test-bridge-secret');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.body.database).toEqual({
+      connected: false,
+      hasPool: false,
+      error: 'Database health is unavailable.',
+    });
+    expect(response.body.worker_status).toEqual({
+      ok: false,
+      status: 'unavailable',
+      error: 'Worker health is unavailable.',
+    });
+    const serialized = JSON.stringify(response.body);
+    expect(serialized).not.toContain(privateDatabaseSentinel);
+    expect(serialized).not.toContain(privateWorkerSentinel);
+  });
+
+  it('replaces failed default-GPT routing text with a fixed health message', async () => {
+    const privateRoutingSentinel = 'PRIVATE_BRIDGE_ROUTING_HEALTH_SENTINEL';
+    resolveGptRoutingMock.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: `unregistered route: ${privateRoutingSentinel}`,
+      },
+    });
+
+    const response = await request(buildApp())
+      .get('/api/bridge/health')
+      .set('Authorization', 'Bearer test-bridge-secret');
+
+    expect(response.status).toBe(200);
+    expect(response.body.route_reachability.default_gpt).toEqual({
+      method: 'POST',
+      path: '/gpt/arcanos-core',
+      reachable: false,
+      source: 'unregistered',
+      message: 'Default GPT route is unavailable.',
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateRoutingSentinel);
   });
 
   it('rejects requests with an invalid bridge shared secret', async () => {
@@ -96,6 +251,102 @@ describe('Custom GPT bridge route', () => {
       }),
     );
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['/api/bridge/gpt', '/api/openai/gpt-action'])(
+    'returns a fixed error for unexpected failures from %s',
+    async (path) => {
+      const privateFailureSentinel = 'PRIVATE_BRIDGE_REQUEST_FAILURE_SENTINEL';
+      findOrCreateGptJobMock.mockRejectedValueOnce(
+        new Error(`unexpected bridge failure: ${privateFailureSentinel}`),
+      );
+
+      const response = await request(buildApp())
+        .post(path)
+        .set('Authorization', 'Bearer test-bridge-secret')
+        .send({
+          gptId: 'arcanos-core',
+          prompt: 'Analyze this deployment',
+          action: 'query',
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({
+        ok: false,
+        status: 'routing_error',
+        error: {
+          source: 'routing',
+          message: 'Custom GPT bridge request failed.',
+        },
+        request_id: expect.any(String),
+        timing: expect.any(Object),
+      });
+      expect(JSON.stringify(response.body)).not.toContain(privateFailureSentinel);
+    },
+  );
+
+  it('returns a fixed conflict message for explicit idempotency-key reuse', async () => {
+    const privateConflictSentinel = 'PRIVATE_BRIDGE_IDEMPOTENCY_CONFLICT_SENTINEL';
+    findOrCreateGptJobMock.mockRejectedValueOnce(
+      new MockIdempotencyKeyConflictError(
+        `conflicting request fingerprint: ${privateConflictSentinel}`,
+      ),
+    );
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .set('Idempotency-Key', 'client-retry-key')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'queue_error',
+      error: {
+        source: 'queue',
+        message: 'Idempotency key conflicts with an existing request.',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateConflictSentinel);
+  });
+
+  it('returns a sanitized 503 when durable persistence is unavailable during enqueue', async () => {
+    const privateRepositorySentinel = 'PRIVATE_BRIDGE_ENQUEUE_REPOSITORY_SENTINEL';
+    findOrCreateGptJobMock.mockRejectedValueOnce(
+      new MockJobRepositoryUnavailableError(
+        `bridge job repository unavailable: ${privateRepositorySentinel}`,
+      ),
+    );
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'queue_error',
+      error: {
+        source: 'queue',
+        message: 'Durable GPT job persistence is unavailable.',
+      },
+      request_id: expect.any(String),
+      timing: expect.any(Object),
+    });
+    expect(response.body).not.toHaveProperty('jobId');
+    expect(JSON.stringify(response.body)).not.toContain(privateRepositorySentinel);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it('returns a pending async job response for query actions', async () => {
