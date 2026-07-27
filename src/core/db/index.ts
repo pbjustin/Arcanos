@@ -41,8 +41,15 @@ export {
 // Query exports
 export {
   query,
-  transaction
+  transaction,
+  type DbQueryOptions,
+  type DbQueryTraceContext
 } from './query.js';
+export {
+  AUDITED_TRANSIENT_READ_QUERIES,
+  type AuditedTransientReadQuery,
+  type AuditedTransientReadQueryId
+} from './transientReadRegistry.js';
 
 // Repository exports
 export {

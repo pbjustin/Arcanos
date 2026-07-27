@@ -75,12 +75,12 @@ describe('workerRuntimeRepository', () => {
         '2026-04-23T01:00:30.000Z',
         'healthy'
       ],
-      1,
-      false,
-      expect.objectContaining({
-        queryName: 'worker_liveness_upsert',
-        workerId: 'async-queue-1'
-      })
+      {
+        traceContext: expect.objectContaining({
+          queryName: 'worker_liveness_upsert',
+          workerId: 'async-queue-1'
+        })
+      }
     );
   });
 
@@ -181,13 +181,13 @@ describe('workerRuntimeRepository', () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining('WITH state_upsert AS'),
       expect.any(Array),
-      1,
-      false,
-      expect.objectContaining({
-        queryName: 'worker_runtime_state_with_legacy_upsert',
-        workerId: 'async-queue-1',
-        source: 'worker-idle'
-      })
+      {
+        traceContext: expect.objectContaining({
+          queryName: 'worker_runtime_state_with_legacy_upsert',
+          workerId: 'async-queue-1',
+          source: 'worker-idle'
+        })
+      }
     );
     expect(queryMock.mock.calls[0][0]).toContain('worker_runtime_state');
     expect(queryMock.mock.calls[0][0]).toContain('worker_runtime_snapshots');

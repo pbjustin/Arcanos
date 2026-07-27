@@ -8,7 +8,11 @@ import {
   BOOKING_INSTRUCTIONS_SUFFIX,
   BOOKING_RESPONSE_GUIDELINES
 } from "@platform/runtime/prompts.js";
-import { query, saveMemory } from "@core/db/index.js";
+import {
+  AUDITED_TRANSIENT_READ_QUERIES,
+  query,
+  saveMemory
+} from "@core/db/index.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
@@ -367,28 +371,48 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
   try {
     const [rosterResult, eventsResult, beatsResult, savedStoriesResult] = await Promise.all([
       query(
-        'SELECT name, overall, updated_at FROM backstage_wrestlers ORDER BY updated_at DESC LIMIT 25',
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_ROSTER_RECENT.sql,
         [],
-        1,
-        true
+        {
+          useCache: true,
+          retry: 'transient-read',
+          idempotent: true,
+          auditedQueryId:
+            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_ROSTER_RECENT.id
+        }
       ),
       query(
-        'SELECT data, created_at FROM backstage_events ORDER BY created_at DESC LIMIT 5',
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_EVENTS_RECENT.sql,
         [],
-        1,
-        true
+        {
+          useCache: true,
+          retry: 'transient-read',
+          idempotent: true,
+          auditedQueryId:
+            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_EVENTS_RECENT.id
+        }
       ),
       query(
-        'SELECT data, created_at FROM backstage_story_beats ORDER BY created_at DESC LIMIT 5',
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORY_BEATS_RECENT.sql,
         [],
-        1,
-        true
+        {
+          useCache: true,
+          retry: 'transient-read',
+          idempotent: true,
+          auditedQueryId:
+            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORY_BEATS_RECENT.id
+        }
       ),
       query(
-        'SELECT story_key, storyline, updated_at FROM backstage_storylines ORDER BY updated_at DESC LIMIT 5',
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORYLINES_RECENT.sql,
         [],
-        1,
-        true
+        {
+          useCache: true,
+          retry: 'transient-read',
+          idempotent: true,
+          auditedQueryId:
+            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORYLINES_RECENT.id
+        }
       )
     ]);
 
@@ -510,10 +534,15 @@ export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
     );
 
     const result = await query(
-      'SELECT name, overall FROM backstage_wrestlers ORDER BY name ASC',
+      AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
       [],
-      1,
-      true
+      {
+        useCache: true,
+        retry: 'transient-read',
+        idempotent: true,
+        auditedQueryId:
+          AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.id
+      }
     );
 
     roster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
@@ -538,10 +567,15 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
   try {
     await query('INSERT INTO backstage_story_beats (data, created_at) VALUES ($1, NOW())', [data]);
     const result = await query(
-      'SELECT data FROM backstage_story_beats ORDER BY created_at ASC',
+      AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_STORYLINE_READ_AFTER_TRACK.sql,
       [],
-      1,
-      true
+      {
+        useCache: true,
+        retry: 'transient-read',
+        idempotent: true,
+        auditedQueryId:
+          AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_STORYLINE_READ_AFTER_TRACK.id
+      }
     );
     storylines.length = 0;
     storylines.push(...result.rows.map(row => row.data));
@@ -653,10 +687,15 @@ export async function simulateMatch(
   if (!activeRoster || activeRoster.length === 0) {
     try {
       const result = await query(
-        'SELECT name, overall FROM backstage_wrestlers ORDER BY name ASC',
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.sql,
         [],
-        1,
-        true
+        {
+          useCache: true,
+          retry: 'transient-read',
+          idempotent: true,
+          auditedQueryId:
+            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.id
+        }
       );
       activeRoster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
     } catch (error) {

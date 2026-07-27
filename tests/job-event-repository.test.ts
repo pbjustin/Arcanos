@@ -85,7 +85,12 @@ describe('jobEventRepository.recordJobEvent', () => {
     })).resolves.toEqual({ inserted: true });
 
     const params = queryMock.mock.calls[0]?.[1] as unknown[];
-    expect(queryMock.mock.calls[0]?.[2]).toBe(1);
+    expect(queryMock.mock.calls[0]?.[2]).toEqual({
+      traceContext: expect.objectContaining({
+        queryName: 'record_job_event',
+        source: 'job-events'
+      })
+    });
     expect(params[1]).toBeNull();
     expect(params[3]).toBeNull();
     expect(params[4]).toBe(0);
@@ -253,7 +258,12 @@ describe('jobEventRepository.cleanupJobEvents', () => {
     expect(queryMock.mock.calls[0]?.[0]).toContain('LIMIT $2');
     expect(queryMock.mock.calls[0]?.[0]).toContain('DELETE FROM job_events');
     expect(queryMock.mock.calls[0]?.[1]).toEqual([90, 1_500]);
-    expect(queryMock.mock.calls[0]?.[3]).toBe(false);
+    expect(queryMock.mock.calls[0]?.[2]).toEqual({
+      traceContext: expect.objectContaining({
+        queryName: 'cleanup_job_events',
+        source: 'job-events'
+      })
+    });
   });
 
   it('handles cleanup query failures without throwing', async () => {

@@ -23,6 +23,15 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 - The dedicated worker process requires database connectivity before it can claim queued jobs.
 - GPT and worker job state is stored in database-backed job tables, not Redis.
 - Redis supports fast shared state and health visibility; it is not the durable job source of truth.
+- Shared database queries execute once by default. A caller may opt into at
+  most three total attempts only with
+  `{ retry: 'transient-read', idempotent: true, auditedQueryId: ... }`; the
+  helper accepts that policy only when the identifier and normalized SQL
+  exactly match an immutable audited-query registry entry, and only retries an
+  explicit transient PostgreSQL SQLSTATE. Pool acquisition failures are
+  single-attempt and remain outside this query-execution retry policy. There is
+  no environment switch that can silently enable retries for writes, dynamic
+  SQL, arbitrary `SELECT` statements, or all reads.
 
 ## Local Configuration
 ```env

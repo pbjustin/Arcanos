@@ -184,12 +184,12 @@ export async function upsertWorkerRuntimeSnapshot(
         record.updatedAt,
         serializedSnapshot
       ],
-      1,
-      false,
       {
-        queryName: 'worker_runtime_snapshot_upsert',
-        workerId: record.workerId,
-        source
+        traceContext: {
+          queryName: 'worker_runtime_snapshot_upsert',
+          workerId: record.workerId,
+          source
+        }
       }
     );
   } catch (error) {
@@ -250,12 +250,12 @@ export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promis
         record.lastSeenAt,
         record.healthStatus
       ],
-      1,
-      false,
       {
-        queryName: 'worker_liveness_upsert',
-        workerId: record.workerId,
-        source: 'worker-liveness'
+        traceContext: {
+          queryName: 'worker_liveness_upsert',
+          workerId: record.workerId,
+          source: 'worker-liveness'
+        }
       }
     );
     queryCallWallMs = Date.now() - queryStartedAtMs;
@@ -405,24 +405,24 @@ export async function upsertWorkerRuntimeState(
            updated_at = EXCLUDED.updated_at,
            snapshot = EXCLUDED.snapshot`,
         params,
-        1,
-        false,
         {
-          queryName: 'worker_runtime_state_with_legacy_upsert',
-          workerId: record.workerId,
-          source
+          traceContext: {
+            queryName: 'worker_runtime_state_with_legacy_upsert',
+            workerId: record.workerId,
+            source
+          }
         }
       );
     } else {
       await query(
         stateUpsertSql,
         params,
-        1,
-        false,
         {
-          queryName: 'worker_runtime_state_upsert',
-          workerId: record.workerId,
-          source
+          traceContext: {
+            queryName: 'worker_runtime_state_upsert',
+            workerId: record.workerId,
+            source
+          }
         }
       );
     }
@@ -501,12 +501,12 @@ export async function appendWorkerRuntimeHistory(
         record.updatedAt,
         serializedSnapshot
       ],
-      1,
-      false,
       {
-        queryName: 'worker_runtime_history_insert',
-        workerId: record.workerId,
-        source
+        traceContext: {
+          queryName: 'worker_runtime_history_insert',
+          workerId: record.workerId,
+          source
+        }
       }
     );
   } catch (error) {
@@ -554,10 +554,10 @@ export async function listWorkerLiveness(): Promise<WorkerLivenessSnapshotRecord
        FROM worker_liveness
        ORDER BY last_seen_at DESC`,
       [],
-      1,
-      false,
       {
-        queryName: 'worker_liveness_list'
+        traceContext: {
+          queryName: 'worker_liveness_list'
+        }
       }
     );
 
@@ -611,10 +611,10 @@ export async function listWorkerRuntimeStateSnapshots(): Promise<WorkerRuntimeSn
        FROM worker_runtime_state
        ORDER BY changed_at DESC`,
       [],
-      1,
-      false,
       {
-        queryName: 'worker_runtime_state_list'
+        traceContext: {
+          queryName: 'worker_runtime_state_list'
+        }
       }
     );
 
@@ -670,11 +670,11 @@ export async function getWorkerRuntimeSnapshotById(
      WHERE worker_id = $1
      LIMIT 1`,
     [workerId],
-    1,
-    false,
     {
-      queryName: 'worker_runtime_snapshot_get',
-      workerId
+      traceContext: {
+        queryName: 'worker_runtime_snapshot_get',
+        workerId
+      }
     }
   );
 
@@ -715,10 +715,10 @@ export async function listWorkerRuntimeSnapshots(): Promise<WorkerRuntimeSnapsho
      FROM worker_runtime_snapshots
      ORDER BY updated_at DESC`,
     [],
-    1,
-    false,
     {
-      queryName: 'worker_runtime_snapshot_list'
+      traceContext: {
+        queryName: 'worker_runtime_snapshot_list'
+      }
     }
   );
 

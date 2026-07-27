@@ -143,8 +143,7 @@ export async function loadAllRagDocs(): Promise<RagDoc[]> {
   const result = await query(
     'SELECT id, url, content, embedding, metadata, created_at, updated_at FROM rag_docs',
     [],
-    1000,
-    true
+    { useCache: true }
   );
 
   return result.rows.map((row: RagDocRow) => {
