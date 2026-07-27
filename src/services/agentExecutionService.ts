@@ -26,6 +26,9 @@ import {
 import { dispatchCapabilityViaCef, getCapabilityRegistryEntry } from './agentCapabilityRegistry.js';
 import { planGoalExecution } from './agentGoalPlanner.js';
 import { isAgentPlanningValidationError } from './agentPlanningErrors.js';
+import type {
+  AgentExecutionPermitsByStepId,
+} from './agentExecutionConfirmation.js';
 import { AgentExecutionTraceRecorder } from './agentExecutionTraceService.js';
 import type {
   AgentCommandStepExecutionResult,
@@ -93,6 +96,11 @@ interface AgentExecutionServiceDependencies {
   ) => Promise<CommandExecutionResult>;
   createTraceRecorder?: (executionId: string, traceId: string) => AgentExecutionTraceRecorder;
   createDagOrchestrator?: () => DAGOrchestrator;
+}
+
+export interface AgentExecutionAuthorization {
+  plan: AgentExecutionPlan;
+  executionPermitsByStepId: AgentExecutionPermitsByStepId;
 }
 
 class InProcessCapabilityDagJobQueue implements AgentDagJobQueue {
@@ -318,7 +326,8 @@ async function executePlannedCommandStep(
   ) => Promise<CommandExecutionResult>,
   traceRecorder: AgentExecutionTraceRecorder,
   executionId: string,
-  traceId: string
+  traceId: string,
+  executionPermitsByStepId?: AgentExecutionPermitsByStepId
 ): Promise<AgentCommandStepExecutionResult> {
   const startedAt = new Date().toISOString();
   await traceRecorder.record('info', 'agent.step.started', {
@@ -333,7 +342,8 @@ async function executePlannedCommandStep(
       traceId,
       capabilityId: step.capabilityId,
       stepId: step.stepId,
-      source: 'agent-execution-service'
+      source: 'agent-execution-service',
+      executionPermit: executionPermitsByStepId?.get(step.stepId),
     });
     const completedAt = new Date().toISOString();
     const stepResult: AgentCommandStepExecutionResult = {
@@ -395,7 +405,8 @@ function compilePlanToDagGraph(
     payload?: Record<string, unknown>,
     context?: CommandExecutionContext
   ) => Promise<CommandExecutionResult>,
-  traceRecorder: AgentExecutionTraceRecorder
+  traceRecorder: AgentExecutionTraceRecorder,
+  executionPermitsByStepId?: AgentExecutionPermitsByStepId
 ): DAGGraph {
   const nodes: Record<string, DAGNode> = {};
   const edges: Array<{ from: string; to: string }> = [];
@@ -416,7 +427,8 @@ function compilePlanToDagGraph(
           commandExecutor,
           traceRecorder,
           executionId,
-          traceId
+          traceId,
+          executionPermitsByStepId
         );
 
         //audit Assumption: the DAG orchestrator must see failed command steps as failed nodes to preserve dependency blocking; failure risk: dependent nodes run after a failed command and the response claims success; expected invariant: unsuccessful CEF commands become failed DAG results; handling strategy: convert failed step results into `createDagFailureResult` payloads that still preserve the structured step result.
@@ -538,7 +550,10 @@ async function buildSkippedDependencyResult(
 export function createAgentExecutionService(
   dependencies: AgentExecutionServiceDependencies = {}
 ): {
-  executeGoal(request: AgentGoalExecutionRequest): Promise<AgentGoalExecutionResponse>;
+  executeGoal(
+    request: AgentGoalExecutionRequest,
+    authorization?: AgentExecutionAuthorization
+  ): Promise<AgentGoalExecutionResponse>;
 } {
   const commandExecutor = dependencies.commandExecutor ?? executeCommand;
   const createTraceRecorder = dependencies.createTraceRecorder ?? ((executionId: string, traceId: string) =>
@@ -558,7 +573,10 @@ export function createAgentExecutionService(
     }));
 
   return {
-    async executeGoal(request: AgentGoalExecutionRequest): Promise<AgentGoalExecutionResponse> {
+    async executeGoal(
+      request: AgentGoalExecutionRequest,
+      authorization?: AgentExecutionAuthorization
+    ): Promise<AgentGoalExecutionResponse> {
       const executionId = generateRequestId('agentexec');
       const traceId = request.traceId ?? generateRequestId('trace');
       const startedAt = new Date().toISOString();
@@ -566,7 +584,7 @@ export function createAgentExecutionService(
       let plan: AgentExecutionPlan;
 
       try {
-        plan = planGoalExecution(request);
+        plan = authorization?.plan ?? planGoalExecution(request);
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -616,7 +634,8 @@ export function createAgentExecutionService(
           traceId,
           plan,
           commandExecutor,
-          traceRecorder
+          traceRecorder,
+          authorization?.executionPermitsByStepId
         );
         const observer: DAGRunObserver = {
           onNodeQueued: (payload: NonNullable<DAGRunObserver['onNodeQueued']> extends (arg: infer T) => void ? T : never) => {
@@ -682,7 +701,8 @@ export function createAgentExecutionService(
             commandExecutor,
             traceRecorder,
             executionId,
-            traceId
+            traceId,
+            authorization?.executionPermitsByStepId
           );
           completedStepResults.set(step.stepId, stepResult);
           stepResults.push(stepResult);

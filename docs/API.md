@@ -386,8 +386,9 @@ establishes caller identity. Direct and worker-helper heal requests share one
 - `GET /api/commands/health` (control-plane operator and `arcanos:read`
   required)
 - `POST /api/commands/execute` (control-plane operator, `mcp:invoke`, and
-  confirmation required)
-- `POST /api/agent/execute` (control-plane operator and `mcp:invoke` required)
+  issued one-use confirmation challenge required)
+- `POST /api/agent/execute` (control-plane operator, `mcp:invoke`, and issued
+  one-use whole-plan confirmation challenge required)
 - `GET /api/control-plane/capabilities`
 - `POST /api/control-plane` (dedicated bearer authentication and server-owned operation scopes required; confirmation additionally required for gated operations)
 - `GET /api/control-plane/allowlist`
@@ -411,8 +412,23 @@ uncompressed JSON objects of at most 256 KiB and retain writing-plane
 consistency checks;
 their sensitive bindings block conflicts instead of rerouting to a GPT route.
 Unknown methods and paths under `/api/commands` or `/api/agent` terminate with a
-fixed 404. The command execution route retains its existing confirmation gate;
-the CEF ingress boundary does not treat confirmation as caller identity.
+fixed 404. Both execution routes require the issued challenge token; manual
+`x-confirmed: yes`, allow-all mode, trusted-GPT metadata, one-time-token
+compatibility, and automation-secret bypasses do not authorize CEF execution.
+Challenges bind the authenticated actor, control-plane principal, fixed CEF
+workspace, dispatch state, and exact validated command or stable plan intent.
+Changing the command, payload, goal, plan intent, principal, or relevant
+dispatch state requires a new challenge.
+
+After confirmation, the command center still fails closed unless it receives an
+opaque, single-use execution permit for the exact command and canonical
+validated payload. Direct command requests receive one permit. Agent requests
+freeze the confirmed plan and derive one independently bound permit for each
+step from the single whole-plan challenge; DAG nodes do not issue their own
+challenges. Unsupported commands and invalid command or planner payloads return
+their existing 400-class response before a challenge is issued. The CEF ingress
+boundary does not treat confirmation as caller identity, and challenges remain
+local to the replica that issued them.
 
 The exact `/rag/*` boundary authenticates and principal-throttles requests before
 allocating their bodies. It accepts strict JSON objects only, rejects compressed

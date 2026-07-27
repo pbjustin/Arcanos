@@ -55,7 +55,30 @@ This document summarizes the current hardening controls around the Command Execu
 - Command registration fails closed if any declared schema is missing.
 - Invalid payloads fail fast before any handler-side effect code runs and emit `cef.schema.invalid_payload`.
 
-## 5. CI layer-access and dependency checks
+## 5. Challenge-only execution authority
+
+- `POST /api/commands/execute` and `POST /api/agent/execute` authenticate and
+  validate their strict JSON input before issuing a confirmation challenge.
+- Their challenges require the issued one-use token and bind the bearer actor,
+  configured control-plane principal, fixed CEF workspace, relevant dispatch
+  state, and exact validated command or stable agent-plan intent.
+- Manual confirmation, global allow-all mode, trusted-GPT metadata,
+  one-time-token compatibility, and automation-secret bypasses do not authorize
+  either execution route.
+- Agent planning occurs once per request. The resulting plan is deeply frozen,
+  and its confirmation fingerprint excludes random plan and execution IDs.
+- After challenge consumption, `commandCenter` still requires an opaque,
+  non-serializable execution permit bound to the exact command, payload, source,
+  capability, and step. Recognized permits are consumed before comparison and
+  cannot be replayed.
+- One whole-plan agent challenge derives one independently bound permit per
+  step; DAG nodes do not create additional confirmation challenges.
+- Every registered command currently has `requiresConfirmation: true`.
+  Unsupported commands and schema-invalid payloads retain 400-class failures
+  before permit enforcement; otherwise missing or invalid permits return the
+  typed `CONFIRMATION_REQUIRED` 403 before handler or provider execution.
+
+## 6. CI layer-access and dependency checks
 
 - `scripts/check-boundaries.js` runs the planner/capability/agent
   infrastructure-import scan and fails on circular TypeScript dependencies in

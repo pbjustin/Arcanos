@@ -2,7 +2,6 @@ import express, { type Express } from 'express';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import errorHandler from '../src/transport/http/middleware/errorHandler.js';
-import { AgentPlanningValidationError } from '../src/services/agentPlanningErrors.js';
 import {
   PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
 } from '../src/shared/security/purposeBoundCredential.js';
@@ -60,6 +59,26 @@ function createApiAgentTestApp(): Express {
     });
   });
   return app;
+}
+
+async function submitConfirmedAgentRequest(
+  app: Express,
+  body: Record<string, unknown>
+) {
+  const pendingResponse = await request(app)
+    .post('/api/agent/execute')
+    .set('Authorization', `Bearer ${controlPlaneToken}`)
+    .send(body);
+  const challengeId = pendingResponse.headers['x-confirmation-challenge'];
+  expect(pendingResponse.status).toBe(403);
+  expect(pendingResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+  expect(challengeId).toEqual(expect.any(String));
+
+  return request(app)
+    .post('/api/agent/execute')
+    .set('Authorization', `Bearer ${controlPlaneToken}`)
+    .set('x-confirmed', `token:${challengeId}`)
+    .send(body);
 }
 
 describe('/api/agent/execute', () => {
@@ -169,12 +188,9 @@ describe('/api/agent/execute', () => {
       ]
     });
 
-    const response = await request(app)
-      .post('/api/agent/execute')
-      .set('Authorization', `Bearer ${controlPlaneToken}`)
-      .send({
-        goal: 'Summarize the current system status.'
-      });
+    const response = await submitConfirmedAgentRequest(app, {
+      goal: 'Summarize the current system status.'
+    });
 
     expect(response.status).toBe(200);
     expect(response.body.executionId).toBe('agentexec_1');
@@ -183,8 +199,130 @@ describe('/api/agent/execute', () => {
       expect.objectContaining({
         goal: 'Summarize the current system status.',
         traceId: 'trace-api-agent'
+      }),
+      expect.objectContaining({
+        plan: expect.objectContaining({
+          goal: 'Summarize the current system status.',
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              stepId: 'step_1',
+              capabilityId: 'goal-fulfillment',
+            }),
+          ]),
+        }),
+        executionPermitsByStepId: expect.any(Map),
       })
     );
+  });
+
+  it('does not accept manual confirmation for agent execution', async () => {
+    const response = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('x-confirmed', 'yes')
+      .send({
+        goal: 'Summarize the current system status.'
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.headers['x-confirmation-challenge']).toEqual(
+      expect.any(String)
+    );
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
+  it('binds the challenge to stable plan intent and rejects changed goals', async () => {
+    const pendingResponse = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        goal: 'Summarize the current system status.'
+      });
+    const challengeId = pendingResponse.headers['x-confirmation-challenge'];
+
+    const changedResponse = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('x-confirmed', `token:${challengeId}`)
+      .send({
+        goal: 'Summarize a different system.'
+      });
+
+    expect(changedResponse.status).toBe(403);
+    expect(changedResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(changedResponse.headers['x-confirmation-challenge']).not.toBe(
+      challengeId
+    );
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
+  it('binds the challenge to the authenticated control-plane principal', async () => {
+    const pendingResponse = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        goal: 'Summarize the current system status.'
+      });
+    const challengeId = pendingResponse.headers['x-confirmation-challenge'];
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID =
+      'operator:api-agent-route-other';
+
+    const mismatchedResponse = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('x-confirmed', `token:${challengeId}`)
+      .send({
+        goal: 'Summarize the current system status.'
+      });
+
+    expect(mismatchedResponse.status).toBe(403);
+    expect(mismatchedResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
+  it('derives one execution permit per step from one whole-plan challenge', async () => {
+    mockExecuteGoal.mockResolvedValue({
+      executionId: 'agentexec_2',
+      traceId: 'trace-api-agent',
+      goal: 'Enable audit safe mode and summarize status.',
+      planner: {
+        planId: 'agentplan_2',
+        executionMode: 'dag',
+        selectedCapabilityIds: [
+          'audit-safe-mode-control',
+          'goal-fulfillment'
+        ],
+        steps: []
+      },
+      execution: {
+        status: 'completed',
+        startedAt: '2026-03-09T12:00:00.000Z',
+        completedAt: '2026-03-09T12:00:01.000Z',
+        steps: [],
+        dagSummary: null,
+        finalOutput: null
+      },
+      logs: []
+    });
+
+    const response = await submitConfirmedAgentRequest(app, {
+      goal: 'Enable audit safe mode and summarize status.',
+      executionMode: 'dag',
+      payload: {
+        mode: 'true',
+        prompt: 'Summarize status.'
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const authorization = mockExecuteGoal.mock.calls[0]?.[1] as {
+      executionPermitsByStepId?: Map<string, unknown>;
+    };
+    expect(authorization.executionPermitsByStepId?.size).toBe(2);
+    expect([
+      ...authorization.executionPermitsByStepId!.keys()
+    ]).toEqual(['step_1', 'step_2']);
   });
 
   it('returns structured validation errors for invalid payloads', async () => {
@@ -202,13 +340,6 @@ describe('/api/agent/execute', () => {
   });
 
   it('returns a structured planning error for unknown capabilities', async () => {
-    mockExecuteGoal.mockRejectedValue(
-      new AgentPlanningValidationError(
-        'AGENT_UNKNOWN_CAPABILITY',
-        'Unknown capability "does-not-exist".'
-      )
-    );
-
     const response = await request(app)
       .post('/api/agent/execute')
       .set('Authorization', `Bearer ${controlPlaneToken}`)
@@ -226,16 +357,6 @@ describe('/api/agent/execute', () => {
   });
 
   it('returns a structured planning error for blocked exploit-chain goals', async () => {
-    mockExecuteGoal.mockRejectedValue(
-      new AgentPlanningValidationError(
-        'AGENT_BOUNDARY_VIOLATION',
-        'Blocked exploit chain request: "access storage directly" attempts to bypass capability -> CEF -> handler boundaries.',
-        {
-          matchedPhrase: 'access storage directly'
-        }
-      )
-    );
-
     const response = await request(app)
       .post('/api/agent/execute')
       .set('Authorization', `Bearer ${controlPlaneToken}`)

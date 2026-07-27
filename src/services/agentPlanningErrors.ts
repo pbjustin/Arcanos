@@ -5,7 +5,8 @@
 export type AgentPlanningValidationCode =
   | 'AGENT_BOUNDARY_VIOLATION'
   | 'AGENT_UNKNOWN_CAPABILITY'
-  | 'AGENT_INVALID_AUDIT_MODE';
+  | 'AGENT_INVALID_AUDIT_MODE'
+  | 'AGENT_INVALID_COMMAND_PAYLOAD';
 
 /**
  * Error type for planner-level validation failures.

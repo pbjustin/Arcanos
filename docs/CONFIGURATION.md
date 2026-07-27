@@ -240,6 +240,15 @@ agent execution route and optional-trailing-slash command route are now
 sensitive `strict_block` bindings. Do not disable the integrity check as a
 rollout shortcut.
 
+CEF execution confirmation uses the existing
+`CONFIRMATION_CHALLENGE_TTL_MS` setting and the in-memory challenge store. A
+retry must reach the same replica, use the same bearer actor and configured
+principal, and preserve the validated command payload or stable agent-plan
+intent and dispatch state. A successful retry consumes the challenge. The
+command center then consumes a separate non-serializable execution permit, so
+copying confirmation headers into an internal command call does not authorize
+handler or provider execution.
+
 ### Prompt and AI-routing trace containment
 
 | Variable | Default | Purpose |

@@ -4,12 +4,19 @@
 
 export type CommandName = 'audit-safe:set-mode' | 'audit-safe:interpret' | 'ai:prompt';
 
+declare const cefExecutionPermitBrand: unique symbol;
+
+export interface CefExecutionPermit {
+  readonly [cefExecutionPermitBrand]: true;
+}
+
 export interface CommandExecutionContext {
   traceId?: string;
   executionId?: string;
   capabilityId?: string;
   stepId?: string;
   source?: string;
+  executionPermit?: CefExecutionPermit;
 }
 
 export interface CommandExecutionError {

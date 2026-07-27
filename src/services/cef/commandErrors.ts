@@ -4,6 +4,7 @@ import { validateCefSchema } from './schemaRegistry.js';
 function resolveCommandErrorHttpStatusCode(errorCode: string): number {
   switch (errorCode) {
     case 'HANDLER_ACTION_NOT_ALLOWED':
+    case 'CONFIRMATION_REQUIRED':
       return 403;
     case 'INVALID_COMMAND_PAYLOAD':
     case 'UNSUPPORTED_COMMAND':
