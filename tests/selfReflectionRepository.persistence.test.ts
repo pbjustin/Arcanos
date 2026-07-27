@@ -4,11 +4,17 @@ type SelfReflectionRepositoryModule = typeof import('../src/core/db/repositories
 
 interface RepositoryHarness {
   module: SelfReflectionRepositoryModule;
+  getPoolMock: jest.Mock<() => object | null>;
   isDatabaseConnectedMock: jest.Mock<() => boolean>;
+  isDatabaseSchemaReadyMock: jest.Mock<() => boolean>;
   initializeDatabaseMock: jest.Mock<(workerId: string) => Promise<boolean>>;
-  initializeTablesMock: jest.Mock<() => Promise<void>>;
+  initializeTablesMock: jest.Mock<() => Promise<boolean>>;
   queryMock: jest.Mock;
-  dbState: { connected: boolean };
+  dbState: {
+    connected: boolean;
+    pool: object | null;
+    schemaReady: boolean;
+  };
 }
 
 /**
@@ -20,27 +26,44 @@ interface RepositoryHarness {
  */
 async function loadRepositoryHarness(options?: {
   connectedInitially?: boolean;
-  initializeDatabaseImpl?: (dbState: { connected: boolean }) => Promise<boolean>;
+  schemaReadyInitially?: boolean;
+  initializeDatabaseImpl?: (dbState: RepositoryHarness['dbState']) => Promise<boolean>;
+  initializeTablesImpl?: (dbState: RepositoryHarness['dbState']) => Promise<boolean>;
 }): Promise<RepositoryHarness> {
   jest.resetModules();
 
-  const dbState = { connected: options?.connectedInitially ?? false };
+  const connectedInitially = options?.connectedInitially ?? false;
+  const dbState: RepositoryHarness['dbState'] = {
+    connected: connectedInitially,
+    pool: connectedInitially ? {} : null,
+    schemaReady: options?.schemaReadyInitially ?? false
+  };
+  const getPoolMock = jest.fn<() => object | null>(() => dbState.pool);
   const isDatabaseConnectedMock = jest.fn<() => boolean>(() => dbState.connected);
+  const isDatabaseSchemaReadyMock = jest.fn<() => boolean>(() => dbState.schemaReady);
   const initializeDatabaseMock = jest.fn<(workerId: string) => Promise<boolean>>(async () => {
     if (!options?.initializeDatabaseImpl) {
       return false;
     }
     return options.initializeDatabaseImpl(dbState);
   });
-  const initializeTablesMock = jest.fn<() => Promise<void>>(async () => undefined);
+  const initializeTablesMock = jest.fn<() => Promise<boolean>>(async () => {
+    if (options?.initializeTablesImpl) {
+      return options.initializeTablesImpl(dbState);
+    }
+    dbState.schemaReady = true;
+    return true;
+  });
   const queryMock = jest.fn(async () => ({ rows: [], rowCount: 1 }));
 
   jest.unstable_mockModule('@core/db/client.js', () => ({
+    getPool: getPoolMock,
     isDatabaseConnected: isDatabaseConnectedMock,
     initializeDatabase: initializeDatabaseMock
   }));
   jest.unstable_mockModule('@core/db/schema.js', () => ({
-    initializeTables: initializeTablesMock
+    initializeTables: initializeTablesMock,
+    isDatabaseSchemaReady: isDatabaseSchemaReadyMock
   }));
   jest.unstable_mockModule('@core/db/query.js', () => ({
     query: queryMock
@@ -49,7 +72,9 @@ async function loadRepositoryHarness(options?: {
   const module = await import('../src/core/db/repositories/selfReflectionRepository.js');
   return {
     module,
+    getPoolMock,
     isDatabaseConnectedMock,
+    isDatabaseSchemaReadyMock,
     initializeDatabaseMock,
     initializeTablesMock,
     queryMock,
@@ -63,6 +88,7 @@ describe('selfReflectionRepository persistence bootstrap', () => {
       connectedInitially: false,
       initializeDatabaseImpl: async dbState => {
         dbState.connected = true;
+        dbState.pool = {};
         return true;
       }
     });
@@ -83,7 +109,8 @@ describe('selfReflectionRepository persistence bootstrap', () => {
 
   it('persists directly when DB is already connected', async () => {
     const harness = await loadRepositoryHarness({
-      connectedInitially: true
+      connectedInitially: true,
+      schemaReadyInitially: true
     });
 
     await harness.module.saveSelfReflection({
@@ -96,6 +123,25 @@ describe('selfReflectionRepository persistence bootstrap', () => {
 
     expect(harness.initializeDatabaseMock).not.toHaveBeenCalled();
     expect(harness.initializeTablesMock).not.toHaveBeenCalled();
+    expect(harness.queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('initializes the shared schema without reconnecting when the current pool is connected but not ready', async () => {
+    const harness = await loadRepositoryHarness({
+      connectedInitially: true,
+      schemaReadyInitially: false
+    });
+
+    await harness.module.saveSelfReflection({
+      priority: 'medium',
+      category: 'test',
+      content: 'schema bootstrap',
+      improvements: [],
+      metadata: {}
+    });
+
+    expect(harness.initializeDatabaseMock).not.toHaveBeenCalled();
+    expect(harness.initializeTablesMock).toHaveBeenCalledTimes(1);
     expect(harness.queryMock).toHaveBeenCalledTimes(1);
   });
 
@@ -131,7 +177,8 @@ describe('selfReflectionRepository persistence bootstrap', () => {
 
   it('loads recent reflections by category with normalized JSON fields', async () => {
     const harness = await loadRepositoryHarness({
-      connectedInitially: true
+      connectedInitially: true,
+      schemaReadyInitially: true
     });
 
     harness.queryMock.mockResolvedValueOnce({

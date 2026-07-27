@@ -6,8 +6,9 @@
  */
 
 import { z } from 'zod';
+import type { Pool } from 'pg';
 import { redactString } from '@shared/redaction.js';
-import { getPool } from './client.js';
+import { getPool, isDatabaseConnected } from './client.js';
 
 // Zod Schemas for Database Entities
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
@@ -833,25 +834,77 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_category_priority ON self_reflections(category, priority)`
 ];
 
-/**
- * Initialize required database tables
- */
-export async function initializeTables(): Promise<void> {
-  const pool = getPool();
-  //audit Assumption: no pool means DB unavailable; Handling: exit
-  if (!pool) return;
+const schemaReadyPools = new WeakSet<Pool>();
+const pendingSchemaInitializationByPool = new WeakMap<Pool, Promise<boolean>>();
 
+/**
+ * Return whether the exact current connected pool has completed schema setup.
+ */
+export function isDatabaseSchemaReady(): boolean {
+  const pool = getPool();
+  return Boolean(
+    pool &&
+    isDatabaseConnected() &&
+    schemaReadyPools.has(pool)
+  );
+}
+
+async function initializeTablesForPool(pool: Pool): Promise<boolean> {
   try {
     for (const query of TABLE_DEFINITIONS) {
       await pool.query(query);
     }
-    console.log('[🔌 DB] ✅ Database tables initialized successfully');
-  } catch (error: unknown) {
 
+    //audit Assumption: a pool can be replaced or disconnected while its DDL is in flight; failure risk: completion from an obsolete pool marks a replacement ready; expected invariant: readiness belongs only to the exact current connected pool; handling strategy: re-check identity and connectivity before recording readiness.
+    if (getPool() !== pool || !isDatabaseConnected()) {
+      return false;
+    }
+
+    schemaReadyPools.add(pool);
+    console.log('[🔌 DB] ✅ Database tables initialized successfully');
+    return true;
+  } catch (error: unknown) {
     //audit Assumption: initialization errors should surface; Handling: log + throw
     console.error('[🔌 DB] ❌ Failed to initialize tables:', getErrorMessage(error));
     throw error;
   }
+}
+
+/**
+ * Initialize required database tables
+ */
+export function initializeTables(): Promise<boolean> {
+  const pool = getPool();
+  //audit Assumption: no pool means DB unavailable; Handling: report false without recording readiness.
+  if (!pool) {
+    return Promise.resolve(false);
+  }
+
+  if (schemaReadyPools.has(pool)) {
+    return Promise.resolve(isDatabaseConnected());
+  }
+
+  const pendingInitialization = pendingSchemaInitializationByPool.get(pool);
+  if (pendingInitialization) {
+    return pendingInitialization;
+  }
+
+  const initialization = initializeTablesForPool(pool);
+  pendingSchemaInitializationByPool.set(pool, initialization);
+  void initialization.then(
+    () => {
+      if (pendingSchemaInitializationByPool.get(pool) === initialization) {
+        pendingSchemaInitializationByPool.delete(pool);
+      }
+    },
+    () => {
+      if (pendingSchemaInitializationByPool.get(pool) === initialization) {
+        pendingSchemaInitializationByPool.delete(pool);
+      }
+    }
+  );
+
+  return initialization;
 }
 
 function getErrorMessage(error: unknown): string {

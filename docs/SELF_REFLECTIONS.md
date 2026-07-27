@@ -53,10 +53,13 @@ Automatic Trinity path adds extra gates before writing:
 Repository: `src/core/db/repositories/selfReflectionRepository.ts`
 
 Write/read bootstrap strategy:
-1. Check active DB connectivity.
+1. Require both active DB connectivity and central schema readiness for the
+   exact current pool.
 2. If disconnected, attempt `initializeDatabase('self-reflections')`.
-3. Ensure required tables/indexes with `initializeTables()`.
-4. After a failed bootstrap, retry attempts are cooldown-throttled for 30 seconds.
+3. Await the shared, pool-keyed `initializeTables()` attempt and verify that
+   the same pool remains connected and centrally ready before persistence.
+4. Concurrent calls share the pending repository bootstrap. After a failed
+   bootstrap, later retry attempts are cooldown-throttled for 30 seconds.
 
 Fail-open behavior:
 - On write path, DB unavailability logs warning and skips persistence.

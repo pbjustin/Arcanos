@@ -4,9 +4,9 @@
  * Persists async worker health and recovery state for cross-instance inspection.
  */
 
-import { initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
+import { getPool, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
-import { initializeTables } from '@core/db/schema.js';
+import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONParse, safeJSONStringify } from '@shared/jsonHelpers.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -53,7 +53,6 @@ const WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS = 250;
 
 let pendingBootstrap: Promise<boolean> | null = null;
 let lastBootstrapFailureAtMs = 0;
-let tablesInitialized = false;
 
 /**
  * Ensure worker runtime persistence can reach PostgreSQL.
@@ -62,9 +61,14 @@ let tablesInitialized = false;
  * Edge case behavior: throttles repeated failed initialization attempts with a cooldown.
  */
 async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
-  //audit Assumption: an already connected database can serve worker snapshot persistence after this process has initialized the schema; failure risk: V2 tables are missing when startup connected before repository use; expected invariant: connected DB only short-circuits after schema initialization; handling strategy: require initializeTables once per process.
-  if (isDatabaseConnected() && tablesInitialized) {
+  //audit Assumption: worker runtime persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a repository-local flag survives pool replacement; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
+  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
     return true;
+  }
+
+  //audit Assumption: concurrent calls should share one bootstrap attempt even while a prior failure timestamp is still active; failure risk: followers fail closed instead of awaiting active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
+  if (pendingBootstrap) {
+    return pendingBootstrap;
   }
 
   const nowMs = Date.now();
@@ -77,28 +81,34 @@ async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
     return false;
   }
 
-  //audit Assumption: concurrent calls should share one bootstrap attempt; failure risk: duplicated pool initialization and DDL contention; expected invariant: one shared in-flight bootstrap; handling strategy: reuse the pending promise.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
   pendingBootstrap = (async () => {
     try {
       if (!isDatabaseConnected()) {
-        const connected = await initializeDatabase(WORKER_RUNTIME_REPOSITORY_WORKER_ID);
-        if (!connected || !isDatabaseConnected()) {
-          lastBootstrapFailureAtMs = Date.now();
-          return false;
-        }
+        await initializeDatabase(WORKER_RUNTIME_REPOSITORY_WORKER_ID);
       }
 
-      await initializeTables();
       if (!isDatabaseConnected()) {
         lastBootstrapFailureAtMs = Date.now();
         return false;
       }
 
-      tablesInitialized = true;
+      const bootstrapPool = getPool();
+      if (!bootstrapPool) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
+      const tablesInitialized = await initializeTables();
+      const persistenceReady =
+        tablesInitialized &&
+        getPool() === bootstrapPool &&
+        isDatabaseConnected() &&
+        isDatabaseSchemaReady();
+      if (!persistenceReady) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
       lastBootstrapFailureAtMs = 0;
       return true;
     } catch (error: unknown) {

@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const initializeDatabaseMock = jest.fn();
+const getPoolMock = jest.fn();
 const isDatabaseConnectedMock = jest.fn();
+const isDatabaseSchemaReadyMock = jest.fn();
 const initializeTablesMock = jest.fn();
 const queryMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerWarnMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
+  getPool: getPoolMock,
   initializeDatabase: initializeDatabaseMock,
   isDatabaseConnected: isDatabaseConnectedMock
 }));
@@ -17,7 +20,8 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/schema.js', () => ({
-  initializeTables: initializeTablesMock
+  initializeTables: initializeTablesMock,
+  isDatabaseSchemaReady: isDatabaseSchemaReadyMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -55,11 +59,18 @@ function buildSnapshotRecord() {
 describe('workerRuntimeRepository', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getPoolMock.mockReturnValue({});
     isDatabaseConnectedMock.mockReturnValue(true);
+    isDatabaseSchemaReadyMock.mockReturnValue(true);
+    initializeTablesMock.mockResolvedValue(true);
     queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
   });
 
   it('initializes worker runtime tables once even when the database is already connected', async () => {
+    const connectedPool = {};
+    getPoolMock.mockReturnValue(connectedPool);
+    isDatabaseSchemaReadyMock.mockReturnValueOnce(false).mockReturnValue(true);
+
     await recordWorkerLiveness({
       workerId: 'async-queue-1',
       healthStatus: 'healthy',
@@ -82,6 +93,38 @@ describe('workerRuntimeRepository', () => {
         })
       }
     );
+  });
+
+  it('consults central readiness again after the connected pool is replaced', async () => {
+    const firstPool = {};
+    const replacementPool = {};
+    let currentPool = firstPool;
+    let schemaReady = false;
+    getPoolMock.mockImplementation(() => currentPool);
+    isDatabaseSchemaReadyMock.mockImplementation(() => schemaReady);
+    initializeTablesMock.mockImplementation(async () => {
+      schemaReady = true;
+      return true;
+    });
+
+    await recordWorkerLiveness({
+      workerId: 'async-queue-1',
+      healthStatus: 'healthy',
+      lastSeenAt: '2026-04-23T01:00:30.000Z'
+    });
+
+    currentPool = replacementPool;
+    schemaReady = false;
+
+    await recordWorkerLiveness({
+      workerId: 'async-queue-1',
+      healthStatus: 'healthy',
+      lastSeenAt: '2026-04-23T01:01:30.000Z'
+    });
+
+    expect(initializeDatabaseMock).not.toHaveBeenCalled();
+    expect(initializeTablesMock).toHaveBeenCalledTimes(2);
+    expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
   it('logs runtime snapshot upsert failures with a failed event name', async () => {

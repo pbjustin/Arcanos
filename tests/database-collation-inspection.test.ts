@@ -17,7 +17,8 @@ jest.unstable_mockModule('../src/core/db/client.js', () => ({
   getPool: () =>
     databaseAvailable
       ? ({ query: queryMock } as unknown as Pool)
-      : null
+      : null,
+  isDatabaseConnected: () => databaseAvailable
 }));
 
 const {
@@ -168,8 +169,8 @@ describe('passive database collation inspection', () => {
       'utf8'
     );
 
-    expect(source).toContain(
-      "import { inspectDatabaseCollation, initializeTables } from './schema.js';"
+    expect(source).toMatch(
+      /import\s*\{[^}]*inspectDatabaseCollation[^}]*\}\s*from '\.\/schema\.js';/su
     );
     expect(source).toContain('await inspectDatabaseCollation();');
     expect(source).not.toContain('await refreshDatabaseCollation();');

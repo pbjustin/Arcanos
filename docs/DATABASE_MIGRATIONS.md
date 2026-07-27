@@ -19,7 +19,15 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 | `contracts/job_result.openapi.v1.json` | Contract for job result reads. |
 
 ## Runtime Behavior
-- The backend calls `initializeDatabaseWithSchema()` during startup and continues with in-memory fallback when the database is unavailable.
+- The backend calls `initializeDatabaseWithSchema()` during startup, reusing
+  an already-connected pool when available, and continues with in-memory
+  fallback when no connected, schema-ready pool can be established. A worker
+  heartbeat is written only after that exact pool is ready.
+- Runtime schema readiness is keyed to the concrete PostgreSQL pool object.
+  Concurrent callers for one pool share one initialization attempt, completed
+  pools do not repeat DDL, and a failed attempt can be retried. Replacing a
+  pool creates independent readiness state; completion from an obsolete or
+  disconnected pool cannot mark the current pool ready.
 - Startup performs one read-only catalog query to compare the database's
   configured collation version with
   `pg_database_collation_actual_version(oid)`. A mismatch emits a warning with

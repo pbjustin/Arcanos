@@ -378,3 +378,25 @@ export async function close(): Promise<void> {
     console.log('[🔌 DB] Connection pool closed');
   }
 }
+
+/**
+ * Close a captured pool only when it is still the active global pool.
+ *
+ * The captured pool is always ended so a replacement installed before this
+ * call cannot leak it. Global state is cleared only when the captured pool is
+ * still current after the await, so completion from an older pool cannot mark
+ * a replacement disconnected.
+ */
+export async function closePoolIfCurrent(
+  expectedPool: PoolType
+): Promise<boolean> {
+  await closePoolSafely(expectedPool);
+  if (pool !== expectedPool) {
+    return false;
+  }
+
+  pool = null;
+  isConnected = false;
+  console.log('[🔌 DB] Connection pool closed');
+  return true;
+}

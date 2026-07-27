@@ -27,6 +27,7 @@ export {
   inspectDatabaseCollation,
   refreshDatabaseCollation,
   initializeTables,
+  isDatabaseSchemaReady,
   MemoryEntrySchema,
   ExecutionLogSchema,
   JobDataSchema,
@@ -192,31 +193,59 @@ export {
  * Initialize database with full schema setup
  * This is the main entry point for database initialization
  */
-import { initializeDatabase as initDB, getPool } from './client.js';
-import { inspectDatabaseCollation, initializeTables } from './schema.js';
+import {
+  initializeDatabase as initDB,
+  getPool,
+  isDatabaseConnected
+} from './client.js';
+import {
+  inspectDatabaseCollation,
+  initializeTables,
+  isDatabaseSchemaReady
+} from './schema.js';
 
 export async function initializeDatabaseWithSchema(workerId = ''): Promise<boolean> {
-  const success = await initDB(workerId);
-  
-  if (success && getPool()) {
-    // Initialize required tables for ARCANOS operations
-    await inspectDatabaseCollation();
-    await initializeTables();
-
-    if (workerId) {
-      const pool = getPool();
-      if (pool) {
-        try {
-          await pool.query(
-            'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
-            [workerId, 'status', 'online', {}]
-          );
-        } catch (hbErr) {
-          console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
-        }
-      }
+  if (!isDatabaseConnected() || !getPool()) {
+    const connected = await initDB(workerId);
+    if (!connected) {
+      return false;
     }
   }
-  
-  return success;
+
+  const startupPool = getPool();
+  if (!startupPool || !isDatabaseConnected()) {
+    return false;
+  }
+
+  await inspectDatabaseCollation();
+  if (getPool() !== startupPool || !isDatabaseConnected()) {
+    return false;
+  }
+
+  const schemaInitialized = await initializeTables();
+  if (
+    !schemaInitialized ||
+    getPool() !== startupPool ||
+    !isDatabaseConnected() ||
+    !isDatabaseSchemaReady()
+  ) {
+    return false;
+  }
+
+  if (workerId) {
+    try {
+      await startupPool.query(
+        'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
+        [workerId, 'status', 'online', {}]
+      );
+    } catch (hbErr) {
+      console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
+    }
+  }
+
+  return (
+    getPool() === startupPool &&
+    isDatabaseConnected() &&
+    isDatabaseSchemaReady()
+  );
 }
