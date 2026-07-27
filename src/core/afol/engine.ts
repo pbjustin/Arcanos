@@ -11,7 +11,7 @@ import { interpreterSupervisor } from '@services/safety/interpreterSupervisor.js
 export async function decide(input: DecideInput): Promise<DecisionRecord> {
   const intent = typeof input.intent === 'string' ? input.intent : 'default';
   return interpreterSupervisor.runSupervisedCycle(
-    `afol:${intent}`,
+    'afol:decision',
     async (heartbeat: () => void) => {
       const started = Date.now();
       heartbeat();
@@ -19,9 +19,9 @@ export async function decide(input: DecideInput): Promise<DecisionRecord> {
       const policy = evaluate(snapshot, intent);
       const route = selectRoute(policy);
       recordTraceEvent('afol.decision.route', {
-        intent,
         route: route.name,
-        reason: route.reason
+        reason: route.reason,
+        intentProvided: typeof input.intent === 'string'
       });
       heartbeat();
       const response = await executeSelectedRoute(route, input);
@@ -54,7 +54,9 @@ export async function decide(input: DecideInput): Promise<DecisionRecord> {
     },
     {
       category: 'policy',
-      metadata: { intent }
+      metadata: {
+        intentProvided: typeof input.intent === 'string'
+      }
     }
   );
 }

@@ -55,6 +55,12 @@ import {
   reinforcementBodyParser,
 } from '@services/controlPlane/reinforcementBodyParser.js';
 import {
+  afolHttpBoundary,
+} from '@services/controlPlane/afolHttpBoundary.js';
+import {
+  afolBodyParser,
+} from '@services/controlPlane/afolBodyParser.js';
+import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
@@ -128,6 +134,11 @@ export function createApp(): Express {
   app.use('/audit', reinforcementBodyParser);
   app.use('/reinforcement', reinforcementBodyParser);
   app.use('/memory', reinforcementBodyParser);
+  // AFOL inspection and provider-backed decisions are operator-only. Establish
+  // identity, operation scope, and the strict decision body cap before CORS or
+  // the broad application parsers can allocate or expose retained records.
+  app.use('/api/afol', afolHttpBoundary);
+  app.use('/api/afol', afolBodyParser);
   app.use(cors(config.cors));
   // Durable session payloads share the memory trust domain. Authenticate the
   // entire prefix before the broad parsers can allocate or expose stored data.

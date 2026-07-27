@@ -69,7 +69,7 @@ async function executeModelRoute(
     route: route.name,
     reason: route.reason,
     model,
-    intent
+    intentProvided: typeof intent === 'string'
   });
 
   try {
@@ -127,7 +127,7 @@ async function executeModelRoute(
     const message = resolveErrorMessage(error, 'unknown error');
     recordTraceEvent('afol.route.error', {
       route: route.name,
-      error: message
+      errorKind: error instanceof Error ? 'error' : 'non_error'
     });
 
     const mock = generateMockResponse(prompt, 'query');
@@ -158,8 +158,8 @@ export async function executeRoute(route: RouteSelection, input: DecideInput): P
       return executeModelRoute(route, intent, prompt, getFallbackModel(), BACKUP_TOKEN_LIMIT);
     default:
       recordTraceEvent('afol.route.reject', {
-        intent,
-        reason: route.reason
+        reason: route.reason,
+        intentProvided: typeof intent === 'string'
       });
       return {
         route: 'reject',

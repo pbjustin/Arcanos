@@ -205,8 +205,8 @@ The OpenAI client resolves keys in this order:
 
 ### HTTP control-plane authentication
 
-Both `POST /api/control-plane` routes, reinforcement feedback and inspection
-routes, `/api/self-heal/*`, `/api/self-improve/*`, detailed
+Both `POST /api/control-plane` routes, `/api/afol/*`, reinforcement feedback
+and inspection routes, `/api/self-heal/*`, `/api/self-improve/*`, detailed
 `GET /status/safety/self-heal`, and integrity quarantine release require a
 purpose-bound bearer identity before scope authorization, confirmation,
 capability checks, provider probes, or execution. The self-healing surfaces
@@ -220,9 +220,9 @@ operations.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/api/afol/*`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/api/afol/decide`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
 | `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
 | `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
 
@@ -240,12 +240,18 @@ are rejected. Feedback mutations share a 30-per-15-minute authenticated
 principal budget, inspection reads share 120 per 5 minutes, and invalid
 credentials share 60 per 15 minutes by ingress socket/Express address.
 
+AFOL HTTP limits are fixed as well. `POST /api/afol/decide` accepts a strict,
+uncompressed object JSON body up to 64 KiB and depth 32 and requires a one-use
+challenge. AFOL reads reject bodies. Execution shares a 30-per-15-minute authenticated
+principal budget, inspection shares 120 per 5 minutes, and invalid credentials
+share 60 per 15 minutes by ingress socket/Express address.
+
 Command and agent CEF execution JSON is capped at 256 KiB. If
 `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` is pinned, deploying this version also
 requires a separately coordinated update to that protected digest because the
-agent execution route and optional-trailing-slash command route are now
-sensitive `strict_block` bindings. Do not disable the integrity check as a
-rollout shortcut.
+agent execution route, AFOL decision route, and optional-trailing-slash command
+route are sensitive `strict_block` bindings. Do not disable the integrity
+check as a rollout shortcut.
 
 CEF execution confirmation uses the existing
 `CONFIRMATION_CHALLENGE_TTL_MS` setting and the in-memory challenge store. A

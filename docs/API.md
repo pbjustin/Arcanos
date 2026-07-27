@@ -52,7 +52,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -239,6 +239,34 @@ automation bypasses are not accepted. The server accepts caller-selected
 `sessionId` values up to 100 characters for compatibility. This is
 deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
+
+### AFOL decision and inspection
+- `POST /api/afol/decide` (control-plane operator, `mcp:invoke`, and an issued
+  one-use confirmation challenge required)
+- `GET|HEAD /api/afol/health` (control-plane operator and `arcanos:read`
+  required)
+- `GET|HEAD /api/afol/logs` (control-plane operator and `arcanos:read`
+  required)
+- `GET|HEAD /api/afol/analytics` (control-plane operator and `arcanos:read`
+  required)
+
+The exact AFOL boundary authenticates and authorizes before its dedicated body
+parser. Inspection reads run before writing-plane consistency, reject bodies,
+and project existing in-memory or historical records at response time.
+`POST /decide` remains behind writing-plane consistency, accepts one strict,
+uncompressed object JSON body of at most 64 KiB and depth 32, and requires the
+issued principal-, actor-, dispatch-, and body-bound challenge. Manual, trusted,
+one-time-token, and automation compatibility paths do not authorize execution.
+Unknown methods, extra path segments, and more than one trailing slash
+terminate inside the protected namespace.
+
+All responses are `no-store`. Decision responses replace the submitted prompt
+and intent with fixed redaction markers and never return provider exception
+text; the current model answer is retained only after shared credential
+redaction. Log and analytics inspection additionally replaces every historical
+model output with a fixed marker. Execution uses a 30-request-per-15-minute
+authenticated-principal budget, reads use 120 per 5 minutes, and invalid
+credentials use a separate 60-per-15-minute ingress-address budget.
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce` (control-plane operator and `mcp:invoke` required)

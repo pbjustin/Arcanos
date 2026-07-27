@@ -23,6 +23,7 @@ import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsiste
 import { requireMemoryPlaneAuth } from "@transport/http/middleware/memoryPlaneAuth.js";
 import { isDagHttpRequestPath } from "@services/controlPlane/dagHttpBoundary.js";
 import { isCefCommandReadRequest } from '@services/controlPlane/cefHttpBoundary.js';
+import { isAfolReadRequest } from '@services/controlPlane/afolHttpBoundary.js';
 
 const router = Router();
 const routeDagControlPlane: RequestHandler = (req, res, next) => {
@@ -40,6 +41,14 @@ const routeCefCommandRead: RequestHandler = (req, res, next) => {
   }
 
   apiCommandsRouter(req, res, next);
+};
+const routeAfolRead: RequestHandler = (req, res, next) => {
+  if (!isAfolReadRequest(req)) {
+    next();
+    return;
+  }
+
+  afolRouter(req, res, next);
 };
 
 // The control plane is not part of the writing-plane consistency/reroute flow.
@@ -64,6 +73,10 @@ router.use('/api/arcanos', routeDagControlPlane);
 // them before the writing-plane gate so a read scope can never be rewritten
 // into GPT execution. Command and agent POSTs remain behind the gate.
 router.use('/api/commands', routeCefCommandRead);
+// AFOL health and retained-record inspection are control-plane reads. Dispatch
+// them before writing-plane consistency; provider-backed POST /decide retains
+// the Trinity gate and its exact strict-block binding.
+router.use('/api/afol', routeAfolRead);
 router.use('/api/memory', requireMemoryPlaneAuth);
 router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);
