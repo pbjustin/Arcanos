@@ -1,7 +1,18 @@
-import { describe, expect, it } from '@jest/globals';
 import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { describe, expect, it, jest } from '@jest/globals';
+import {
+  findCircularDependencies,
   findLayerAccessViolations,
   getProtectedLayerFiles,
+  runBoundaryChecks,
   scanFileForLayerAccessViolations
 } from '../scripts/check-boundaries.js';
 
@@ -64,5 +75,97 @@ describe('agent boundary architecture', () => {
       'src/capability/routeCommand.ts',
       'src/services/agentGoalPlanner.ts'
     ]);
+  });
+
+  it('includes circular TypeScript dependencies in the executable boundary report', async () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'arcanos-boundaries-'));
+    const sourceRoot = path.join(fixtureRoot, 'src');
+    mkdirSync(sourceRoot);
+    writeFileSync(
+      path.join(fixtureRoot, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          target: 'ES2022'
+        }
+      }),
+      'utf8'
+    );
+    writeFileSync(
+      path.join(sourceRoot, 'first.ts'),
+      "import './second.js';\nexport const first = true;\n",
+      'utf8'
+    );
+    writeFileSync(
+      path.join(sourceRoot, 'second.ts'),
+      "import './first.js';\nexport const second = true;\n",
+      'utf8'
+    );
+
+    try {
+      const circularDependencies = await findCircularDependencies({
+        repositoryRoot: fixtureRoot
+      });
+
+      expect(circularDependencies).toHaveLength(1);
+      expect(
+        [...(circularDependencies[0] ?? [])].sort()
+      ).toEqual(['src/first.ts', 'src/second.ts']);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it('runs layer access before cycles and marks a circular report as failed', async () => {
+    const callOrder: string[] = [];
+    const logged: string[] = [];
+    const errors: string[] = [];
+    const markFailure = jest.fn();
+
+    const circularDependencies = await runBoundaryChecks({
+      runLayerAccessCheck: () => {
+        callOrder.push('layer-access');
+      },
+      findCycles: async () => {
+        callOrder.push('cycles');
+        return [['first.ts', 'second.ts']];
+      },
+      log: (message: string) => {
+        logged.push(message);
+      },
+      error: (message: string) => {
+        errors.push(message);
+      },
+      markFailure
+    });
+
+    expect(callOrder).toEqual(['layer-access', 'cycles']);
+    expect(circularDependencies).toEqual([['first.ts', 'second.ts']]);
+    expect(logged).toEqual([]);
+    expect(errors.join('\n')).toContain('first.ts');
+    expect(errors.join('\n')).toContain('second.ts');
+    expect(markFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a clean cycle report successful after the layer access check', async () => {
+    const runLayerAccessCheck = jest.fn();
+    const markFailure = jest.fn();
+    const logged: string[] = [];
+
+    await expect(
+      runBoundaryChecks({
+        runLayerAccessCheck,
+        findCycles: async () => [],
+        log: (message: string) => {
+          logged.push(message);
+        },
+        markFailure
+      })
+    ).resolves.toEqual([]);
+
+    expect(runLayerAccessCheck).toHaveBeenCalledTimes(1);
+    expect(logged.join('\n')).toContain('No circular dependencies found');
+    expect(markFailure).not.toHaveBeenCalled();
   });
 });

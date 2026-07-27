@@ -182,7 +182,11 @@ structural redactor before the GPT Access-specific string, prompt-field, and
 diagnostic-payload projections. The gateway retains compatibility re-exports,
 so routes and dispatchers keep their existing public imports without pulling
 the gateway's database, worker, and runtime dependencies into direct policy
-tests.
+tests. The shared `@arcanos/runtime/redaction` boundary projects
+credential-shaped and prototype-sensitive property names to collision-safe
+opaque markers before recursively sanitizing values. This keeps attacker-owned
+keys from changing an output object's prototype or crossing logging,
+control-plane, job-event, and worker-diagnostic boundaries verbatim.
 
 Run `npm run reindex` after structural moves or deletions. It rewrites `backend-index.json`, `cli-agent-index.json`, `docs/BACKEND_INDEX.md`, and `docs/CLI_AGENT_INDEX.md` together; those generated inventories complement this maintained architecture map.
 

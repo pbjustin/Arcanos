@@ -91,6 +91,9 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
 ### Runtime helpers
 
 - `@arcanos/runtime` is canonical for runtime budgets, structured runtime errors, abort helpers, and redaction.
+- Its redactor preserves ordinary object shape while projecting
+  credential-shaped and prototype-sensitive property names to collision-safe
+  opaque markers before recursively sanitizing values.
 - `src/platform/resilience/runtimeBudget.ts` and `src/platform/resilience/runtimeErrors.ts` are backend compatibility facades that re-export package APIs. Do not add a second implementation there.
 - `arcanos-ai-runtime/src/runtime/runtimeBudget.ts` and `runtimeErrors.ts` are likewise compatibility facades over the workspace package.
 - New consumers should use package exports such as `@arcanos/runtime`, `@arcanos/runtime/runtimeBudget`, `@arcanos/runtime/runtimeErrors`, and `@arcanos/runtime/redaction`.

@@ -21,6 +21,7 @@ Automation-token flows require the backend's `ARCANOS_AUTOMATION_SECRET`.
 
 ## Run locally
 Common scripts:
+- `npm run check:boundaries` (CEF layer-access policy plus TypeScript dependency-cycle gate)
 - `npm run docs:check` (cross-platform documentation audit)
 - `npm run docs:links -- --local-only` (maintained-document links without network access)
 - `npm run docs:links` (bounded external-link audit; network access required)

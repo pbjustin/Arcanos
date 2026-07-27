@@ -66,6 +66,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Security
 
+- Replaced credential-shaped and prototype-sensitive property names with
+  collision-safe opaque markers in the shared runtime redactor, preventing
+  `__proto__` setter mutation and key-name disclosure across logs, control-plane
+  responses, job events, and worker diagnostics.
+- Removed the redundant direct `/api/reusables*` mount, leaving the canonical
+  API router as the sole owner so its memory-consistency middleware cannot be
+  bypassed by a future route-order change.
 - Replaced whole-directory service evaluation with a frozen 15-entry module
   catalog, strict name/action/exposure validation, immutable definition
   snapshots, coalesced loading, defensive cache results, and deterministic
@@ -177,6 +184,9 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Fixed
 
+- Restored the Madge TypeScript dependency-cycle gate to the executable
+  `check:boundaries` command while retaining its CEF layer-access checks, and
+  removed the obsolete unwired TypeScript script.
 - Corrected the `self-test` and `daily-summary` package scripts to use their
   emitted `dist/core/commands/` entry points.
 - Allowed the commit guard to inspect large staged diffs with a bounded

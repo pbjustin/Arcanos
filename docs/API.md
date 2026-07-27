@@ -655,10 +655,13 @@ cutover. Configure the same explicit `AI_RUNTIME_QUEUE_NAME` on the new API and
 worker replicas so old deployments cannot share their BullMQ/admission
 namespace with the new reservation protocol.
 
-## Verified route-order ambiguities
+## Verified route ownership and remaining order ambiguities
 - `POST /audit` is defined in multiple routers; current mount order means AI utility handling executes first.
 - `GET /health` is defined in multiple routers; health-group handler executes first because it is mounted before reinforcement and status routes.
-- `/api/reusables*` routes are mounted both through `api/index.ts` and directly in `register.ts`; first matching handler responds and the second mount is effectively redundant.
+
+The `/api/reusables*` routes have one canonical owner in `api/index.ts` after
+the writing-plane memory-consistency gate; `register.ts` does not mount their
+leaf router directly.
 
 ## Legacy ask-route mode
 `src/routes/ask/index.ts` currently mounts only `/brain` for the old ask-style Trinity route. The default `ASK_ROUTE_MODE` is `gone`, so `/brain` returns `410 Gone` with canonical `/gpt/{gptId}` migration metadata. Set `ASK_ROUTE_MODE=compat` only when temporarily supporting an older caller during migration.

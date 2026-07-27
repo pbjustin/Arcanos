@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-26T23:57:21.368Z",
+  "generatedAt": "2026-07-27T00:31:26.881Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -292,9 +292,6 @@
         },
         {
           "relativePath": "scripts/build-openai-finetune-dataset.ts"
-        },
-        {
-          "relativePath": "scripts/check-boundaries.ts"
         },
         {
           "relativePath": "scripts/compare-finetune-checkpoints.ts"
@@ -3797,6 +3794,9 @@
         },
         {
           "relativePath": "tests/runtime-inspection-routing.test.ts"
+        },
+        {
+          "relativePath": "tests/runtime-redaction.test.ts"
         },
         {
           "relativePath": "tests/safety-control-auth-composition.test.ts"

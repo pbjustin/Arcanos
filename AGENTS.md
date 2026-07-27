@@ -75,7 +75,7 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 | Railway config/startup | `npm run build` and the local, non-deploying `npm run validate:railway` |
 | Database/schema code | `npm run type-check`, `node scripts/run-jest.mjs --testPathPatterns=<db-or-route-pattern> --coverage=false`, and `npm run validate:railway`; do not apply a migration as routine validation |
 
-- `npm run type-check` and `npm run build` already run the three named boundary scripts and build shared packages; `check:boundaries` currently delegates to the same CEF implementation as `check:cef-layer-access`. Run an individual boundary script only for focused feedback.
+- `npm run type-check` and `npm run build` already run the three named boundary scripts and build shared packages. `check:boundaries` runs the CEF layer-access policy and the Madge TypeScript cycle gate; `check:cef-layer-access` repeats only the focused CEF scan for direct diagnostics. Run an individual boundary script only for focused feedback.
 - `npm run validate:all` is the expensive broad root readiness sweep and creates build/coverage output. It does not run the Python pytest suite or `arcanos-ai-runtime` tests.
 - `npm run test:all:stacks` runs root Jest and daemon pytest, but despite its name it does not run `arcanos-ai-runtime` tests.
 - There is no repository-wide format command or root `format` script. Do not invent one; `daemon-python/` separately declares Black as a development dependency.

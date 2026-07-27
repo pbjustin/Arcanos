@@ -26,7 +26,6 @@ import controlPlaneRouter from './control-plane.js';
 import systemStateRouter from './system-state.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
-import reusableCodeRouter from './api-reusable-code.js';
 import safetyRouter from './safety.js';
 import plansRouter from './plans.js';
 import clearRouter from './clear.js';
@@ -151,7 +150,6 @@ export function registerRoutes(app: Express): void {
   app.use('/sdk', sdkRouter);
   app.use('/', bridgeRouter);
   app.use('/', debugConfirmationRouter);
-  app.use('/', reusableCodeRouter);
   app.use('/', workerHelperRouter);
   console.info('[ROUTES] Mounted /worker-helper helper endpoints and canonical /gpt routing.');
   app.use('/', hrcRouter);

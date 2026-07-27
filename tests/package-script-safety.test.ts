@@ -45,4 +45,14 @@ describe('root package script safety', () => {
     );
     expect(existsSync(path.join(repositoryRoot, 'scripts', 'probe.js'))).toBe(false);
   });
+
+  it('routes both boundary aliases through the canonical JavaScript gate', () => {
+    const manifest = JSON.parse(
+      readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')
+    ) as RootPackageManifest;
+    const scripts = manifest.scripts ?? {};
+
+    expect(scripts['boundary-check']).toBe('node scripts/check-boundaries.js');
+    expect(scripts['check:boundaries']).toBe('node scripts/check-boundaries.js');
+  });
 });

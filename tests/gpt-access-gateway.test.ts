@@ -4239,6 +4239,10 @@ describe('/gpt-access gateway', () => {
   });
 
   it('returns sanitized logs from the GPT access log query endpoint', async () => {
+    const secretBearingPropertyKey = [
+      'sk',
+      'propertykeysentinelplaceholder123456',
+    ].join('-');
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
     queryMock.mockResolvedValueOnce({
       rows: [
@@ -4253,6 +4257,7 @@ describe('/gpt-access gateway', () => {
             cookie: 'sessionid=secret-session',
             nested: {
               database_url: 'postgres://user:pass@host/db',
+              [secretBearingPropertyKey]: 'ordinary metadata value',
               providerPayloads: {
                 messages: [{ content: 'SECRET-PROMPT provider message' }],
                 completion_text: 'SECRET-COMPLETION alias'
@@ -4289,6 +4294,12 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('sk-test-placeholder-value');
     expect(rendered).not.toContain('sessionid=secret-session');
     expect(rendered).not.toContain('postgres://user:pass@host/db');
+    expect(rendered).not.toContain(secretBearingPropertyKey);
+    expect(response.body.logs[0].metadata.nested).toEqual(
+      expect.objectContaining({
+        '[REDACTED_KEY_1]': 'ordinary metadata value'
+      })
+    );
   });
 
   it('applies log query limit and explicit time range filters', async () => {

@@ -55,9 +55,13 @@ This document summarizes the current hardening controls around the Command Execu
 - Command registration fails closed if any declared schema is missing.
 - Invalid payloads fail fast before any handler-side effect code runs and emit `cef.schema.invalid_payload`.
 
-## 5. CI layer-access checks
+## 5. CI layer-access and dependency checks
 
-- `scripts/check-boundaries.js` and `scripts/check-cef-layer-access.js` scan planner/capability/agent boundary files for direct infrastructure imports.
+- `scripts/check-boundaries.js` runs the planner/capability/agent
+  infrastructure-import scan and fails on circular TypeScript dependencies in
+  `src/`.
+- `scripts/check-cef-layer-access.js` provides the focused layer-access scan
+  used for direct diagnostics.
 - Blocked imports include filesystem/process modules, path-based storage wiring, DB clients/ORMs, storage adapters, external API clients, and queue clients.
 - The build and type-check flows now run both:
   - `npm run check:boundaries`
