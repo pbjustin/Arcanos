@@ -77,6 +77,9 @@ router.use('/api/commands', routeCefCommandRead);
 // them before writing-plane consistency; provider-backed POST /decide retains
 // the Trinity gate and its exact strict-block binding.
 router.use('/api/afol', routeAfolRead);
+// Assistant-registry reads and confirmed synchronization are direct
+// control-plane operations and must never enter writing-plane rerouting.
+router.use('/api/assistants', apiAssistantsRouter);
 router.use('/api/memory', requireMemoryPlaneAuth);
 router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);
@@ -87,7 +90,6 @@ router.use('/api/sim', apiSimRouter);
 router.use('/api/memory', apiMemoryRouter);
 router.use('/api/commands', apiCommandsRouter);
 router.use('/api/openai', openaiRouter);
-router.use('/api/assistants', apiAssistantsRouter);
 router.use('/api/afol', afolRouter);
 router.use('/', apiAgentRouter);
 router.use('/', apiVisionRouter);

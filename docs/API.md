@@ -714,9 +714,11 @@ GPT actions, and introspection routes expose contracts or sanitized routing
 metadata.
 
 ### API submodules mounted under `/api`
-- `GET /api/assistants`
-- `POST /api/assistants/sync`
-- `GET /api/assistants/:name`
+- `GET|HEAD /api/assistants` (control-plane operator and `arcanos:read`)
+- `GET|HEAD /api/assistants/:name` (control-plane operator and
+  `arcanos:read`)
+- `POST /api/assistants/sync` (control-plane operator, `mcp:invoke`, and an
+  issued one-use confirmation challenge)
 - `POST /api/sim`
 - `GET /api/sim/health`
 - `GET /api/sim/examples`
@@ -725,6 +727,37 @@ metadata.
   required)
 - `GET /api/pr-analysis/health`
 - `GET /api/pr-analysis/schema`
+
+Assistant-registry traffic is direct control-plane work and bypasses the
+writing-plane memory-consistency gate. Reads reject request bodies and return
+only a count plus sorted normalized names, or `name`, `normalizedName`, and
+`model` for one record. Provider IDs, instructions, and tools are never
+returned. A missing name is a local 404 and neither list nor detail reads call
+the provider.
+
+Sync accepts only an uncompressed, strict empty JSON object (`{}`) up to 1 KiB.
+Manual, trusted-GPT, automation, allow-all, and one-time-token confirmation
+bypasses do not apply: the caller must consume the issued challenge bound to
+the authenticated principal and the fixed `assistant-registry` workspace.
+There may be one sync per process; overlap returns 409 with a bounded
+`Retry-After`. Sync starts are limited to five per principal per 15 minutes,
+reads to 120 per principal per 5 minutes, and invalid credentials to 60 per
+ingress address per 15 minutes.
+
+One confirmed sync may enumerate at most 50 provider pages and 1,000 records.
+It rejects malformed or non-progressing cursors, duplicates, and oversized
+records before installing a complete candidate. The registry replacement uses
+an exclusive mode-`0600` same-directory temporary file, file flush, and atomic
+rename under a process-local persistence mutex. Missing or invalid cache files
+never overwrite an existing live snapshot, and sync failures return a fixed
+error rather than stale success.
+
+`npm run assistants-sync` is a one-shot backend client, not an OpenAI poller.
+Its first invocation requests a challenge and exits without consuming it.
+After operator approval, rerun
+`npm run assistants-sync -- --challenge <challenge-id>`. The client accepts
+HTTPS backends or exact HTTP loopback, refuses redirects, caps response bytes,
+and never reads `OPENAI_API_KEY`.
 
 Direct PR analysis is repository-verification control-plane work and bypasses
 the writing-plane memory-consistency gate. It accepts at most a 1.5 MB UTF-8

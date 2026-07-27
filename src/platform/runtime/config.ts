@@ -117,8 +117,6 @@ export const config = {
   },
 
   assistantSync: {
-    enabled: getEnv('ASSISTANT_SYNC_ENABLED') !== 'false',
-    schedule: getEnv('ASSISTANT_SYNC_CRON') || '15,45 * * * *',
     registryPath:
       getEnv('ASSISTANT_REGISTRY_PATH') || path.join(process.cwd(), 'config', 'assistants.json')
   },

@@ -57,16 +57,58 @@ const gptRouterMapSchema = z.record(
   })
 );
 
+function normalizeAssistantRegistryName(name: string): string | null {
+  const sanitized = name
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9_\s]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!sanitized) {
+    return null;
+  }
+  const normalized = sanitized.replace(/\s+/gu, '_').toUpperCase();
+  return normalized.length <= 256 ? normalized : null;
+}
+
 const assistantRegistrySchema = z.record(
   z.object({
-    id: z.string().min(1),
-    name: z.string().nullable(),
-    instructions: z.string().nullable(),
+    id: z.string().min(1).max(256),
+    name: z.string().min(1).max(256),
+    instructions: z.string().max(131_072).nullable(),
     tools: z.unknown().nullable(),
-    model: z.string().nullable().optional(),
-    normalizedName: z.string().min(1)
-  })
-);
+    model: z.string().max(256).nullable().optional(),
+    normalizedName: z.string().min(1).max(256)
+  }).strict()
+).superRefine((registry, context) => {
+  if (Object.keys(registry).length > 1_000) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Assistant registry exceeds the record limit'
+    });
+  }
+  const assistantIds = new Set<string>();
+  for (const [key, record] of Object.entries(registry)) {
+    const expectedNormalizedName = normalizeAssistantRegistryName(record.name);
+    if (
+      key !== record.normalizedName
+      || expectedNormalizedName !== record.normalizedName
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key, 'normalizedName'],
+        message: 'Assistant registry key and normalized name are inconsistent'
+      });
+    }
+    if (assistantIds.has(record.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key, 'id'],
+        message: 'Assistant registry contains a duplicate provider ID'
+      });
+    }
+    assistantIds.add(record.id);
+  }
+});
 
 const daemonTokensSchema = z.record(z.string().min(1));
 

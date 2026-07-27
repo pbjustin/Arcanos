@@ -1,12 +1,15 @@
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
 import { afterAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { z } from 'zod';
 import {
   assertProtectedConfigIntegrity,
-  IntegrityValidationError
+  IntegrityValidationError,
+  prepareAssistantRegistryIntegrityUpdate
 } from '../src/services/safety/configIntegrity.js';
 import {
   getActiveQuarantines,
+  getTrustedHash,
   hasUnsafeBlockingConditions,
   releaseQuarantine,
   resetSafetyRuntimeStateForTests
@@ -35,12 +38,17 @@ function computeHash(value: unknown): string {
 
 describe('config integrity safety', () => {
   const expectedHashEnvName = 'SAFETY_EXPECTED_HASH_PROTECTED_JSON';
+  const assistantRegistryHashEnvName =
+    'SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY';
   const originalExpectedHash = process.env[expectedHashEnvName];
+  const originalAssistantRegistryHash =
+    process.env[assistantRegistryHashEnvName];
 
   beforeEach(() => {
     resetSafetyRuntimeStateForTests();
     resetTelemetry();
     delete process.env[expectedHashEnvName];
+    delete process.env[assistantRegistryHashEnvName];
   });
 
   afterAll(() => {
@@ -50,6 +58,12 @@ describe('config integrity safety', () => {
       delete process.env[expectedHashEnvName];
     } else {
       process.env[expectedHashEnvName] = originalExpectedHash;
+    }
+    if (originalAssistantRegistryHash === undefined) {
+      delete process.env[assistantRegistryHashEnvName];
+    } else {
+      process.env[assistantRegistryHashEnvName] =
+        originalAssistantRegistryHash;
     }
   });
 
@@ -163,5 +177,72 @@ describe('config integrity safety', () => {
     expect(releaseResult.released).toBe(true);
     expect(getActiveQuarantines('integrity')).toHaveLength(0);
     expect(hasUnsafeBlockingConditions()).toBe(false);
+  });
+
+  it('rotates assistant-registry TOFU only after durable-install commit', () => {
+    const registry = {
+      ALPHA: {
+        id: 'asst_alpha',
+        name: 'Alpha',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'ALPHA'
+      }
+    };
+
+    const prepared = prepareAssistantRegistryIntegrityUpdate(registry, {
+      source: 'tests/config-integrity.assistant-registry-update'
+    });
+
+    expect(prepared.hash).toBe(computeHash(registry));
+    expect(getTrustedHash('assistant_registry')).toBeUndefined();
+
+    prepared.commit();
+    prepared.commit();
+
+    expect(getTrustedHash('assistant_registry')).toBe(prepared.hash);
+    const rotations = getTelemetrySnapshot().traces.recentEvents.filter(
+      trace => trace.name === 'safety.integrity_baseline_rotated'
+    );
+    expect(rotations).toHaveLength(1);
+  });
+
+  it('accepts the tracked assistant registry semantic mapping', () => {
+    const registry = JSON.parse(
+      readFileSync('config/assistants.json', 'utf8')
+    );
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'config/assistants.json'
+      })
+    ).not.toThrow();
+    expect(Object.keys(registry)).toEqual([
+      'CLI_HYBRID_CHATGPT_CODING_AGENT'
+    ]);
+  });
+
+  it('does not let assistant-registry updates bypass an explicit hash pin', () => {
+    const registry = {
+      ALPHA: {
+        id: 'asst_alpha',
+        name: 'Alpha',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'ALPHA'
+      }
+    };
+    process.env[assistantRegistryHashEnvName] = '0'.repeat(64);
+
+    expect(() =>
+      prepareAssistantRegistryIntegrityUpdate(registry, {
+        source: 'tests/config-integrity.assistant-registry-pinned'
+      })
+    ).toThrow(IntegrityValidationError);
+
+    expect(getTrustedHash('assistant_registry')).toBeUndefined();
+    expect(getActiveQuarantines('integrity')).toHaveLength(1);
   });
 });

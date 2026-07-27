@@ -94,6 +94,18 @@ function resolveExpectedHash(entry: ProtectedConfigManifestEntry): string | unde
   return undefined;
 }
 
+function resolvePinnedExpectedHash(
+  entry: ProtectedConfigManifestEntry
+): string | undefined {
+  const envHash = getEnv(entry.expectedHashEnv)?.trim();
+  if (envHash) {
+    return envHash;
+  }
+
+  const builtInHash = entry.builtInExpectedHash?.trim();
+  return builtInHash || undefined;
+}
+
 function quarantineIntegrityFailure(
   protectedId: ProtectedConfigId,
   source: string,
@@ -225,6 +237,104 @@ export function assertProtectedConfigIntegrity(
     }
   });
   return actualHash;
+}
+
+export interface PreparedAssistantRegistryIntegrityUpdate {
+  hash: string;
+  commit(): void;
+}
+
+/**
+ * Validate an operator-authorized assistant-registry replacement.
+ *
+ * Explicit environment or built-in hashes remain immutable pins. The mutable
+ * registry may rotate only its process-owned trust-on-first-load hash; callers
+ * must invoke `commit` only after the validated payload is durably installed.
+ */
+export function prepareAssistantRegistryIntegrityUpdate(
+  payload: unknown,
+  options: {
+    source: string;
+  }
+): PreparedAssistantRegistryIntegrityUpdate {
+  const protectedId: ProtectedConfigId = 'assistant_registry';
+  const entry = INTEGRITY_MANIFEST[protectedId];
+  const source = normalizeIntegritySource(protectedId, options.source);
+
+  try {
+    ensureSchema(entry.schema, payload);
+  } catch (error) {
+    return quarantineIntegrityFailure(
+      protectedId,
+      source,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  const actualHash = computeIntegrityHash(payload);
+  const pinnedExpectedHash = resolvePinnedExpectedHash(entry);
+  if (pinnedExpectedHash && pinnedExpectedHash !== actualHash) {
+    return quarantineIntegrityFailure(
+      protectedId,
+      source,
+      'Hash mismatch',
+      pinnedExpectedHash,
+      actualHash
+    );
+  }
+  if (
+    !pinnedExpectedHash
+    && !entry.allowTrustOnFirstLoad
+    && config.safety.failClosedIntegrity
+  ) {
+    return quarantineIntegrityFailure(
+      protectedId,
+      source,
+      'Missing expected hash baseline in fail-closed mode'
+    );
+  }
+
+  let committed = false;
+  return {
+    hash: actualHash,
+    commit(): void {
+      if (committed) {
+        return;
+      }
+      committed = true;
+      try {
+        setTrustedHash(protectedId, actualHash);
+      } catch {
+        // The runtime hash is assigned before its best-effort persistence and
+        // observability hooks. Verify the assignment before emitting rotation.
+      }
+
+      let baselineRotated = false;
+      try {
+        baselineRotated = getTrustedHash(protectedId) === actualHash;
+      } catch {
+        // A post-install integrity hook must never turn a durable sync into a
+        // false failure. A later registry load will revalidate the baseline.
+      }
+      if (!baselineRotated) {
+        return;
+      }
+
+      try {
+        emitSafetyAuditEvent({
+          event: 'integrity_baseline_rotated',
+          severity: 'warn',
+          details: {
+            protectedId,
+            source,
+            hash: actualHash
+          }
+        });
+      } catch {
+        // Baseline rotation is already committed; audit delivery is best effort.
+      }
+    }
+  };
 }
 
 /**

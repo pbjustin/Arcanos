@@ -205,8 +205,9 @@ The OpenAI client resolves keys in this order:
 
 ### HTTP control-plane authentication
 
-Both `POST /api/control-plane` routes, `/api/afol/*`, reinforcement feedback
-and inspection routes, `/api/self-heal/*`, `/api/self-improve/*`, detailed
+Both `POST /api/control-plane` routes, `/api/afol/*`, `/api/assistants/*`,
+reinforcement feedback and inspection routes, `/api/self-heal/*`,
+`/api/self-improve/*`, detailed
 `GET /status/safety/self-heal`, and integrity quarantine release require a
 purpose-bound bearer identity before scope authorization, confirmation,
 capability checks, provider probes, or execution. The self-healing surfaces
@@ -220,9 +221,9 @@ operations.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/api/afol/*`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/api/afol/*`, `/api/assistants/*`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/api/afol/decide`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, assistant-registry list/detail reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/api/afol/decide`, `/api/assistants/sync`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
 | `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
 | `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
 
@@ -265,6 +266,38 @@ bounded rewrites; malformed lines are skipped. Reset helpers use atomic empty
 replacement rather than deletion. Older files are not proactively removed and
 may require a separately approved operator rotation if they predate metadata-
 only persistence.
+
+Assistant-registry HTTP limits are fixed. Reads reject bodies, require
+`arcanos:read`, and allow 120 starts per authenticated principal per 5 minutes.
+`POST /api/assistants/sync` requires `mcp:invoke`, accepts only an uncompressed
+empty JSON object up to 1 KiB, and allows five starts per principal per
+15 minutes. Invalid credentials share a separate 60-per-15-minute ingress
+address budget. The sync is challenge-only and bound to the authenticated
+principal plus fixed `assistant-registry` workspace. Only that confirmed
+operation enumerates provider assistants; reads and misses stay local, and the
+historical startup/cron provider sync is retired.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ASSISTANT_REGISTRY_PATH` | `config/assistants.json` under the process working directory | Internal registry cache. The resolved target must not be a filesystem root; its parent must canonicalize to an existing directory, and an existing target must be a regular non-symlink file. |
+| `ASSISTANTS_BACKEND_URL` | `SERVER_URL`, then `http://127.0.0.1:3000` | Base origin used only by the one-shot `npm run assistants-sync` client. Credentials, paths, query strings, and fragments are rejected. Non-loopback origins require HTTPS. |
+| `ASSISTANTS_SYNC_TIMEOUT_MS` | `10000` | One-shot backend request deadline; valid range 1,000–30,000 ms. |
+| `ASSISTANTS_SYNC_CONFIRMATION_CHALLENGE` | none | Optional alternative to the script's `--challenge` argument after explicit operator approval. It must be the exact issued UUID and is never an automatic approval bypass. |
+
+Provider listing is capped at 50 pages, 20 records per page, and 1,000 records
+in total. Cursor progress, provider IDs, names, models, record bytes, and
+duplicate IDs/names are validated before a candidate is built. Installation is
+serialized and uses an exclusive mode-`0600` same-directory temporary file,
+file flush, and atomic rename. A failed fetch or install retains the prior live
+registry and returns a fixed failure. `ASSISTANT_SYNC_ENABLED` and
+`ASSISTANT_SYNC_CRON` are retired and no longer schedule provider work.
+
+`SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY`, when set, remains an immutable
+deployment pin: a changed sync candidate is rejected and quarantined until the
+expected hash is coordinated. Without an explicit pin, a challenge-confirmed
+successful atomic replacement rotates only the process-owned
+trust-on-first-load baseline after installation; normal reads continue to
+verify the complete registry.
 
 Command and agent CEF execution JSON is capped at 256 KiB. If
 `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` is pinned, deploying this version also

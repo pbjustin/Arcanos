@@ -61,6 +61,12 @@ import {
   afolBodyParser,
 } from '@services/controlPlane/afolBodyParser.js';
 import {
+  assistantRegistryHttpBoundary,
+} from '@services/controlPlane/assistantRegistryHttpBoundary.js';
+import {
+  assistantRegistryBodyParser,
+} from '@services/controlPlane/assistantRegistryBodyParser.js';
+import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
@@ -139,6 +145,11 @@ export function createApp(): Express {
   // the broad application parsers can allocate or expose retained records.
   app.use('/api/afol', afolHttpBoundary);
   app.use('/api/afol', afolBodyParser);
+  // Assistant-registry reads and the confirmed provider-backed synchronization
+  // are direct control-plane operations. Authenticate and strictly bound the
+  // exact namespace before CORS or broad application parsing.
+  app.use('/api/assistants', assistantRegistryHttpBoundary);
+  app.use('/api/assistants', assistantRegistryBodyParser);
   app.use(cors(config.cors));
   // Durable session payloads share the memory trust domain. Authenticate the
   // entire prefix before the broad parsers can allocate or expose stored data.
