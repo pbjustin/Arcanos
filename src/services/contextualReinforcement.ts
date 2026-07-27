@@ -9,7 +9,7 @@
  * - Audit history for compliance and debugging
  * - Trace event logging for request lifecycle analysis
  * - Pattern-based bias scoring for reinforcement learning
- * - System prompt augmentation based on learned context
+ * - System prompt augmentation based on trusted server configuration
  * 
  * All tracking respects the configured reinforcement mode (reinforcement, audit-only, disabled).
  * 
@@ -48,6 +48,8 @@ const traceHistory: ReinforcementTraceEvent[] = [];
  * Maximum number of trace events to retain in memory.
  */
 const MAX_TRACE_HISTORY = 200;
+const MAX_PROMPT_WINDOW_VALUE = 10_000;
+const MAX_PROMPT_CLEAR_SCORE = 10;
 
 /**
  * Checks if reinforcement tracking is enabled based on configuration.
@@ -84,31 +86,30 @@ function limitText(text: string, maxLength: number = 320): string {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
-function buildReinforcementSection(basePrompt: string, digest?: string, lastAudit?: AuditRecord): string {
+function clampFiniteNumber(value: number, minimum: number, maximum: number, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function buildReinforcementSection(basePrompt: string): string {
+  const safeMode = config.reinforcement.mode === 'reinforcement' ? 'reinforcement' : 'off';
+  const safeWindow = Math.floor(
+    clampFiniteNumber(config.reinforcement.window, 1, MAX_PROMPT_WINDOW_VALUE, 50)
+  );
+  const safeMinimumClearScore = clampFiniteNumber(
+    config.reinforcement.minimumClearScore,
+    0,
+    MAX_PROMPT_CLEAR_SCORE,
+    0.85
+  );
   const reinforcementLines = [
     '[ARCANOS Contextual Reinforcement]',
-    `Mode: ${config.reinforcement.mode}`,
-    `Window: ${config.reinforcement.window}`,
-    `Minimum CLEAR score: ${config.reinforcement.minimumClearScore}`
+    `Mode: ${safeMode}`,
+    `Window: ${safeWindow}`,
+    `Minimum CLEAR score: ${safeMinimumClearScore}`
   ];
-
-  if (digest) {
-    //audit assumption: digest is non-empty string when present
-    //audit failure risk: undefined digest reduces context clarity
-    //audit expected invariant: digest lines are appended only when available
-    //audit handling strategy: guard on digest presence
-    reinforcementLines.push(`Recent context digest:\n${digest}`);
-  }
-
-  if (lastAudit) {
-    //audit assumption: lastAudit exists when audit history is non-empty
-    //audit failure risk: missing audit details for reviewers
-    //audit expected invariant: lastAudit contains clearScore metadata
-    //audit handling strategy: guard on lastAudit presence
-    reinforcementLines.push(
-      `Last CLEAR score: ${lastAudit.clearScore.toFixed(2)} (${lastAudit.scoreScale}, normalized ${lastAudit.normalizedClearScore.toFixed(2)}) (${lastAudit.patternId ?? 'n/a'})`
-    );
-  }
 
   return `${basePrompt}\n\n${reinforcementLines.join('\n')}`;
 }
@@ -287,7 +288,11 @@ export function registerTraceEvent(event: ReinforcementTraceEvent): void {
 }
 
 /**
- * Build the system prompt augmented with contextual reinforcement details.
+ * Build the system prompt augmented only with trusted reinforcement configuration.
+ *
+ * Context summaries remain available to operator memory and telemetry consumers, but
+ * are intentionally excluded here because every summary source can contain
+ * caller-, model-, trace-, or persistence-controlled text.
  *
  * @param basePrompt - Primary system prompt text.
  * @returns Prompt with reinforcement context appended when enabled.
@@ -301,31 +306,11 @@ export function buildContextualSystemPrompt(basePrompt: string): string {
     return basePrompt;
   }
 
-  if (contextWindow.length === 0) {
-    //audit assumption: empty context window yields no digest
-    //audit failure risk: prompt missing reinforcement header
-    //audit expected invariant: reinforcement header still emitted
-    //audit handling strategy: build header without digest
-    return buildReinforcementSection(basePrompt);
-  }
-
-  const effectiveWindow = Math.min(contextWindow.length, config.reinforcement.window);
-  const recentEntries = contextWindow.slice(-effectiveWindow);
-
-  const digest = recentEntries
-    .map((entry, index) => {
-      const position = index + 1;
-      const header = `[${entry.source.toUpperCase()}]`;
-      const scoreSegment = entry.score !== undefined ? ` score=${entry.score.toFixed(2)}` : '';
-      const biasSegment = entry.bias ? ` bias=${entry.bias}` : '';
-      const patternSegment = entry.patternId ? ` pattern=${entry.patternId}` : '';
-      return `${position}. ${header}${patternSegment}${scoreSegment}${biasSegment} → ${entry.summary}`;
-    })
-    .join('\n');
-
-  const lastAudit = auditHistory[auditHistory.length - 1];
-
-  return buildReinforcementSection(basePrompt, digest, lastAudit);
+  //audit assumption: reinforcement summaries are untrusted observations, even when hydrated from storage
+  //audit failure risk: rendering a summary as system text turns feedback into persistent prompt injection
+  //audit expected invariant: no context-window or audit-history text reaches a system-role message
+  //audit handling strategy: append only a fixed header and finite, bounded server configuration values
+  return buildReinforcementSection(basePrompt);
 }
 
 /**
