@@ -217,6 +217,18 @@ describe('Trinity autoscaling architecture', () => {
     expect(orchestrator.getRun('run-dup')?.artifacts).toEqual([]);
   });
 
+  it('forgets one exact tracker run for pre-execution admission rollback', () => {
+    const orchestrator = new TrinityOrchestrator();
+
+    orchestrator.startRun('run-forget');
+    orchestrator.startRun('run-preserve');
+
+    expect(orchestrator.forgetRun('run-forget')).toBe(true);
+    expect(orchestrator.getRun('run-forget')).toBeNull();
+    expect(orchestrator.getRun('run-preserve')).not.toBeNull();
+    expect(orchestrator.forgetRun('run-forget')).toBe(false);
+  });
+
   it('reconciles replayed terminal node updates and retires expired terminal runs', () => {
     let nowMs = 1_000;
     const orchestrator = new TrinityOrchestrator({

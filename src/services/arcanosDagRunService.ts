@@ -2,7 +2,8 @@ import { generateRequestId } from '../shared/idGenerator.js';
 import {
   getLatestDagRunSnapshot,
   getDagRunSnapshotById,
-  upsertDagRunSnapshot
+  upsertDagRunSnapshot,
+  type DagRunSnapshotRecord
 } from '../core/db/repositories/dagRunRepository.js';
 import { DAGOrchestrator, type DAGRunObserver, type DAGRunSummary as InternalDagRunSummary } from '../dag/orchestrator.js';
 import {
@@ -76,6 +77,7 @@ interface StoredDagRunRecord {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  snapshotGeneration: bigint;
   orchestratorState: TrinityRunRecord;
   templateDefinition: DagTemplateDefinition;
   abortController: AbortController;
@@ -109,6 +111,21 @@ const TRINITY_PIPELINE_VERSION = '1.0' as const;
 const DEFAULT_DAG_TRACE_MAX_EVENTS = 200;
 const MAX_DAG_TRACE_MAX_EVENTS = 1000;
 const DAG_SLOW_NODE_THRESHOLD_MS = 5_000;
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+
+export class DagRunSnapshotOwnershipConflictError extends Error {
+  readonly runId: string;
+  readonly snapshotGeneration: string;
+
+  constructor(runId: string, snapshotGeneration: string) {
+    super(
+      `DAG run "${runId}" rejected stale snapshot generation ${snapshotGeneration}.`
+    );
+    this.name = 'DagRunSnapshotOwnershipConflictError';
+    this.runId = runId;
+    this.snapshotGeneration = snapshotGeneration;
+  }
+}
 
 export interface WaitForDagRunUpdateOptions {
   updatedAfter?: string;
@@ -973,6 +990,7 @@ function createErrorInfo(message: string, details?: unknown, type?: string): Err
 export class ArcanosDagRunService {
   private readonly runsById = new Map<string, StoredDagRunRecord>();
   private readonly persistenceByRunId = new Map<string, Promise<void>>();
+  private readonly persistenceConflictedRunIds = new Set<string>();
   private readonly trinityOrchestrator = new TrinityOrchestrator();
 
   /**
@@ -1379,19 +1397,43 @@ export class ArcanosDagRunService {
    * Edge case behavior:
    * - Throws on persistence failure so the caller can surface an explicit error.
    */
-  private async persistRecordNow(record: StoredDagRunRecord): Promise<void> {
+  private capturePersistenceEnvelope(
+    record: StoredDagRunRecord
+  ): DagRunSnapshotRecord {
+    const currentGeneration = record.snapshotGeneration ?? 0n;
+    if (
+      currentGeneration < 0n ||
+      currentGeneration >= POSTGRES_BIGINT_MAX
+    ) {
+      throw new RangeError(
+        `DAG run "${record.runId}" exhausted the PostgreSQL BIGINT snapshot generation range.`
+      );
+    }
+
+    const nextGeneration = currentGeneration + 1n;
     const snapshot = createPersistedDagRunSnapshot(record);
-    await upsertDagRunSnapshot({
+    const envelope: DagRunSnapshotRecord = {
       runId: snapshot.runId,
       sessionId: snapshot.sessionId,
       template: snapshot.template,
       status: snapshot.status,
+      snapshotGeneration: nextGeneration.toString(),
       plannerNodeId: snapshot.plannerNodeId,
       rootNodeId: snapshot.rootNodeId,
       createdAt: snapshot.createdAt,
       updatedAt: snapshot.updatedAt,
-      snapshot: cloneSerializable(snapshot) as unknown as Record<string, unknown>
-    });
+      snapshot: snapshot as unknown as Record<string, unknown>
+    };
+
+    //audit Assumption: queued writes can run after the live record mutates; failure risk: an older queue entry serializes newer state under an older generation; expected invariant: every generation owns one immutable complete envelope; handling strategy: deep-clone the envelope synchronously at capture time.
+    const capturedEnvelope = cloneSerializable(envelope);
+    record.snapshotGeneration = nextGeneration;
+    return capturedEnvelope;
+  }
+
+  private async persistRecordNow(record: StoredDagRunRecord): Promise<boolean> {
+    const envelope = this.capturePersistenceEnvelope(record);
+    return upsertDagRunSnapshot(envelope);
   }
 
   /**
@@ -1408,13 +1450,44 @@ export class ArcanosDagRunService {
    * - Persistence failures are logged but do not crash the active DAG execution loop.
    */
   private queuePersistRecord(record: StoredDagRunRecord): void {
+    if (this.persistenceConflictedRunIds.has(record.runId)) {
+      return;
+    }
+
+    let envelope: DagRunSnapshotRecord;
+    try {
+      envelope = this.capturePersistenceEnvelope(record);
+    } catch (error: unknown) {
+      console.warn('[DAG Runs] Failed to capture DAG snapshot:', error);
+      return;
+    }
+
     const previousWrite = this.persistenceByRunId.get(record.runId) ?? Promise.resolve();
     const nextWrite = previousWrite
       .catch(() => undefined)
       .then(async () => {
+        if (this.persistenceConflictedRunIds.has(record.runId)) {
+          return;
+        }
+
         try {
-          await this.persistRecordNow(record);
+          const applied = await upsertDagRunSnapshot(envelope);
+          if (!applied) {
+            throw new DagRunSnapshotOwnershipConflictError(
+              record.runId,
+              envelope.snapshotGeneration
+            );
+          }
         } catch (error: unknown) {
+          if (error instanceof DagRunSnapshotOwnershipConflictError) {
+            this.persistenceConflictedRunIds.add(record.runId);
+            console.error('[DAG Runs] Snapshot persistence ownership conflict:', {
+              runId: error.runId,
+              snapshotGeneration: error.snapshotGeneration
+            });
+            return;
+          }
+
           //audit Assumption: snapshot persistence is required for cross-instance inspection but should not terminate active DAG execution; failure risk: monitoring data lags behind runtime state; expected invariant: write errors are observable in logs; handling strategy: log and continue.
           console.warn('[DAG Runs] Failed to persist DAG snapshot:', error);
         }
@@ -1426,6 +1499,15 @@ export class ArcanosDagRunService {
         this.persistenceByRunId.delete(record.runId);
       }
     });
+  }
+
+  private forgetInitialRun(record: StoredDagRunRecord): void {
+    if (this.runsById.get(record.runId) === record) {
+      this.runsById.delete(record.runId);
+    }
+    this.persistenceByRunId.delete(record.runId);
+    this.persistenceConflictedRunIds.delete(record.runId);
+    this.trinityOrchestrator.forgetRun(record.runId);
   }
 
   /**
@@ -1588,6 +1670,7 @@ export class ArcanosDagRunService {
       limits,
       features,
       loopDetected: false,
+      snapshotGeneration: 0n,
       orchestratorState,
       templateDefinition,
       abortController: new AbortController()
@@ -1602,7 +1685,18 @@ export class ArcanosDagRunService {
       sessionId: request.sessionId,
       template: publicTemplateName
     });
-    await this.persistRecordNow(record);
+    try {
+      const initialSnapshotApplied = await this.persistRecordNow(record);
+      if (!initialSnapshotApplied) {
+        throw new DagRunSnapshotOwnershipConflictError(
+          record.runId,
+          record.snapshotGeneration.toString()
+        );
+      }
+    } catch (error: unknown) {
+      this.forgetInitialRun(record);
+      throw error;
+    }
 
     record.executionPromise = this.executeRun(record, request, settings);
     return record.summary;

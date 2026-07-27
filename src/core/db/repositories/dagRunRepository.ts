@@ -15,6 +15,7 @@ export interface DagRunSnapshotRecord {
   sessionId: string;
   template: string;
   status: string;
+  snapshotGeneration: string;
   plannerNodeId: string | null;
   rootNodeId: string | null;
   createdAt: string;
@@ -27,6 +28,33 @@ const DAG_RUN_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 
 let pendingBootstrap: Promise<boolean> | null = null;
 let lastBootstrapFailureAtMs = 0;
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+
+export function normalizeDagSnapshotGeneration(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !/^(0|[1-9]\d*)$/u.test(value)
+  ) {
+    throw new TypeError(
+      'DAG snapshot generation must be a canonical non-negative decimal string.'
+    );
+  }
+
+  if (value.length > 19) {
+    throw new RangeError(
+      'DAG snapshot generation exceeds the PostgreSQL BIGINT range.'
+    );
+  }
+
+  const parsed = BigInt(value);
+  if (parsed > POSTGRES_BIGINT_MAX) {
+    throw new RangeError(
+      'DAG snapshot generation exceeds the PostgreSQL BIGINT range.'
+    );
+  }
+
+  return value;
+}
 
 /**
  * Ensure DAG run persistence can reach PostgreSQL.
@@ -104,7 +132,9 @@ async function ensureDagRunPersistenceReady(): Promise<boolean> {
  * Inputs/outputs: accepts one normalized snapshot record and upserts it into PostgreSQL.
  * Edge cases: throws when persistence is unavailable so callers can decide whether to fail or degrade.
  */
-export async function upsertDagRunSnapshot(record: DagRunSnapshotRecord): Promise<void> {
+export async function upsertDagRunSnapshot(
+  record: DagRunSnapshotRecord
+): Promise<boolean> {
   const persistenceReady = await ensureDagRunPersistenceReady();
   if (!persistenceReady) {
     throw new Error('DAG run persistence is unavailable');
@@ -115,8 +145,11 @@ export async function upsertDagRunSnapshot(record: DagRunSnapshotRecord): Promis
   if (!serializedSnapshot) {
     throw new Error('Failed to serialize DAG run snapshot');
   }
+  const snapshotGeneration = normalizeDagSnapshotGeneration(
+    record.snapshotGeneration
+  );
 
-  await query(
+  const result = await query(
     `INSERT INTO dag_runs (
        run_id,
        session_id,
@@ -124,11 +157,12 @@ export async function upsertDagRunSnapshot(record: DagRunSnapshotRecord): Promis
        status,
        planner_node_id,
        root_node_id,
+       snapshot_generation,
        snapshot,
        created_at,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::timestamptz, $9::timestamptz)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::bigint, $8::jsonb, $9::timestamptz, $10::timestamptz)
      ON CONFLICT (run_id)
      DO UPDATE SET
        session_id = EXCLUDED.session_id,
@@ -136,9 +170,12 @@ export async function upsertDagRunSnapshot(record: DagRunSnapshotRecord): Promis
        status = EXCLUDED.status,
        planner_node_id = EXCLUDED.planner_node_id,
        root_node_id = EXCLUDED.root_node_id,
+       snapshot_generation = EXCLUDED.snapshot_generation,
        snapshot = EXCLUDED.snapshot,
        created_at = EXCLUDED.created_at,
-       updated_at = EXCLUDED.updated_at`,
+       updated_at = EXCLUDED.updated_at
+     WHERE dag_runs.snapshot_generation < EXCLUDED.snapshot_generation
+     RETURNING run_id`,
     [
       record.runId,
       record.sessionId,
@@ -146,11 +183,14 @@ export async function upsertDagRunSnapshot(record: DagRunSnapshotRecord): Promis
       record.status,
       record.plannerNodeId,
       record.rootNodeId,
+      snapshotGeneration,
       serializedSnapshot,
       record.createdAt,
       record.updatedAt
     ]
   );
+
+  return result.rows.length === 1;
 }
 
 /**
@@ -174,6 +214,7 @@ export async function getDagRunSnapshotById(runId: string): Promise<DagRunSnapsh
        status,
        planner_node_id,
        root_node_id,
+       snapshot_generation::text AS snapshot_generation,
        created_at,
        updated_at,
        snapshot
@@ -189,7 +230,10 @@ export async function getDagRunSnapshotById(runId: string): Promise<DagRunSnapsh
   }
 
   const normalizedSnapshot = normalizeSnapshotObject(row.snapshot);
-  if (!normalizedSnapshot) {
+  const snapshotGeneration = normalizePersistedSnapshotGeneration(
+    row.snapshot_generation
+  );
+  if (!normalizedSnapshot || !snapshotGeneration) {
     return null;
   }
 
@@ -198,6 +242,7 @@ export async function getDagRunSnapshotById(runId: string): Promise<DagRunSnapsh
     sessionId: String(row.session_id ?? ''),
     template: String(row.template ?? ''),
     status: String(row.status ?? ''),
+    snapshotGeneration,
     plannerNodeId: normalizeNullableString(row.planner_node_id),
     rootNodeId: normalizeNullableString(row.root_node_id),
     createdAt: normalizeIsoString(row.created_at),
@@ -231,6 +276,7 @@ export async function getLatestDagRunSnapshot(
            status,
            planner_node_id,
            root_node_id,
+           snapshot_generation::text AS snapshot_generation,
            created_at,
            updated_at,
            snapshot
@@ -248,6 +294,7 @@ export async function getLatestDagRunSnapshot(
            status,
            planner_node_id,
            root_node_id,
+           snapshot_generation::text AS snapshot_generation,
            created_at,
            updated_at,
            snapshot
@@ -262,7 +309,10 @@ export async function getLatestDagRunSnapshot(
   }
 
   const normalizedSnapshot = normalizeSnapshotObject(row.snapshot);
-  if (!normalizedSnapshot) {
+  const snapshotGeneration = normalizePersistedSnapshotGeneration(
+    row.snapshot_generation
+  );
+  if (!normalizedSnapshot || !snapshotGeneration) {
     return null;
   }
 
@@ -271,12 +321,21 @@ export async function getLatestDagRunSnapshot(
     sessionId: String(row.session_id ?? ''),
     template: String(row.template ?? ''),
     status: String(row.status ?? ''),
+    snapshotGeneration,
     plannerNodeId: normalizeNullableString(row.planner_node_id),
     rootNodeId: normalizeNullableString(row.root_node_id),
     createdAt: normalizeIsoString(row.created_at),
     updatedAt: normalizeIsoString(row.updated_at),
     snapshot: normalizedSnapshot
   };
+}
+
+function normalizePersistedSnapshotGeneration(value: unknown): string | null {
+  try {
+    return normalizeDagSnapshotGeneration(value);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeSnapshotObject(value: unknown): Record<string, unknown> | null {

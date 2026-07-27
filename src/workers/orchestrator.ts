@@ -227,6 +227,16 @@ export class TrinityOrchestrator {
   }
 
   /**
+   * Forget one exact run regardless of lifecycle status.
+   *
+   * This is reserved for admission rollback before DAG execution launches;
+   * normal terminal retention continues through retireExpiredRuns().
+   */
+  forgetRun(runId: string): boolean {
+    return this.runsById.delete(runId);
+  }
+
+  /**
    * Remove terminal runs whose retention window has elapsed.
    */
   retireExpiredRuns(nowMs: number = this.readNowMs()): number {

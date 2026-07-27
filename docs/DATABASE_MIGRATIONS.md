@@ -143,6 +143,41 @@ PostgreSQL 18 database by setting
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`; the guarded test never reads an
 inherited `DATABASE_URL`.
 
+### DAG snapshot-generation fencing migration
+
+`migrations/20260727_dag_run_snapshot_generation_v1.sql` adds the
+non-negative `BIGINT NOT NULL DEFAULT 0`
+`dag_runs.snapshot_generation` fencing token. Runtime initialization enforces
+the same exact type, default, nullability, and validated named-check contract.
+At the TypeScript repository boundary, generations remain canonical decimal
+strings so PostgreSQL `BIGINT` precision is preserved.
+
+The DAG service captures generation `1` before admitting a new run and
+deep-clones the complete persistence envelope before each serialized write.
+An upsert applies only when its generation is higher than the stored
+generation. Initial persistence must apply before execution launches; an
+exception or rejected generation removes only the new local/tracker state.
+Later rejected generations quarantine that run's persistence lane and emit one
+ownership-conflict diagnostic, preventing further stale writes without
+rewriting run lifecycle state.
+
+This change requires a coordinated writer rollout. A pre-fencing binary still
+uses an unconditional conflict update and can overwrite snapshot data without
+advancing `snapshot_generation`, so applying the schema migration alone does
+not fence mixed-version writers. Drain or stop every DAG-writing process,
+apply the migration and compatible code together, and do not allow an older
+binary to run concurrently. Likewise, attempt rollback only after all writers
+are stopped or confirmed compatible with the rolled-back schema.
+
+`migrations/20260727_dag_run_snapshot_generation_v1.rollback.sql` verifies
+the complete installed column and validated constraint before destructive
+DDL, and refuses rollback while any row has an unknown or nonterminal status.
+Validate this migration only against the explicitly created disposable
+PostgreSQL 18 database selected through
+`DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`. The guarded integration test
+requires an explicit loopback host and port plus the exact disposable database
+name, rejects URL overrides, and never reads an inherited `DATABASE_URL`.
+
 ### Productivity core migration
 
 `migrations/20260724_productivity_core.sql` is an additive, idempotent,
