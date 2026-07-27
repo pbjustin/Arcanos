@@ -42,6 +42,11 @@ Launcher behavior:
 - Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-safe` override. It starts a passive health-only server without importing application, worker, provider, database, Redis, migration, or scheduler modules.
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
+- Database-backed startup passively inspects the configured and actual
+  collation versions with one read-only catalog query. A mismatch is warning
+  telemetry only: Railway startup does not run collation maintenance. Schedule
+  any required maintenance separately against an explicitly confirmed
+  database target under the operational approval gate.
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, while `/readyz` returns `503` until Redis reconnects; see `STARTUP_RESILIENCE.md`.

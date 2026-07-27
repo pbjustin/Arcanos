@@ -24,6 +24,7 @@ export {
 
 // Schema exports
 export {
+  inspectDatabaseCollation,
   refreshDatabaseCollation,
   initializeTables,
   MemoryEntrySchema,
@@ -34,6 +35,7 @@ export {
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
+  type DatabaseCollationInspectionStatus,
   type ReasoningLog,
   type RagDoc
 } from './schema.js';
@@ -191,14 +193,14 @@ export {
  * This is the main entry point for database initialization
  */
 import { initializeDatabase as initDB, getPool } from './client.js';
-import { refreshDatabaseCollation, initializeTables } from './schema.js';
+import { inspectDatabaseCollation, initializeTables } from './schema.js';
 
 export async function initializeDatabaseWithSchema(workerId = ''): Promise<boolean> {
   const success = await initDB(workerId);
   
   if (success && getPool()) {
     // Initialize required tables for ARCANOS operations
-    await refreshDatabaseCollation();
+    await inspectDatabaseCollation();
     await initializeTables();
 
     if (workerId) {

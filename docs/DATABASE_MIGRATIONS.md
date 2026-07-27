@@ -20,6 +20,12 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 
 ## Runtime Behavior
 - The backend calls `initializeDatabaseWithSchema()` during startup and continues with in-memory fallback when the database is unavailable.
+- Startup performs one read-only catalog query to compare the database's
+  configured collation version with
+  `pg_database_collation_actual_version(oid)`. A mismatch emits a warning with
+  both versions and requires separately approved operator maintenance; startup
+  never runs `REINDEX`, refreshes the stored version, or otherwise repairs
+  collation state.
 - The dedicated worker process requires database connectivity before it can claim queued jobs.
 - GPT and worker job state is stored in database-backed job tables, not Redis.
 - Redis supports fast shared state and health visibility; it is not the durable job source of truth.

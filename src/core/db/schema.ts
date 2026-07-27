@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { redactString } from '@shared/redaction.js';
 import { getPool } from './client.js';
 
 // Zod Schemas for Database Entities
@@ -126,78 +127,82 @@ export type RagDoc = z.infer<typeof RagDocSchema>;
 export type SessionRecord = z.infer<typeof SessionRecordSchema>;
 export type SessionVersionRecord = z.infer<typeof SessionVersionRecordSchema>;
 
+export type DatabaseCollationInspectionStatus =
+  | 'current'
+  | 'mismatch'
+  | 'version_unavailable'
+  | 'database_unavailable'
+  | 'inspection_failed';
+
+const MAX_COLLATION_VERSION_LOG_LENGTH = 128;
+
+function formatCollationVersionForLog(value: string): string {
+  const redacted = redactString(value);
+  const bounded = redacted.slice(0, MAX_COLLATION_VERSION_LOG_LENGTH);
+  const suffix =
+    redacted.length > MAX_COLLATION_VERSION_LOG_LENGTH ? '…' : '';
+  return JSON.stringify(`${bounded}${suffix}`);
+}
+
 /**
- * Refresh database collation if version mismatch detected
+ * Inspect the current database's collation version without changing database
+ * state. Collation maintenance is always an explicit operator action.
  */
-export async function refreshDatabaseCollation(): Promise<void> {
+export async function inspectDatabaseCollation(): Promise<DatabaseCollationInspectionStatus> {
   const pool = getPool();
-  //audit Assumption: no pool means DB unavailable; Handling: exit
-  if (!pool) return;
+  //audit Assumption: no pool means the database cannot be inspected; Handling: report unavailable.
+  if (!pool) {
+    return 'database_unavailable';
+  }
 
   try {
-    const { rows: dbRows } = await pool.query<{
-      name: string;
-      datcollate: string;
-      datcollversion: string | null;
+    const { rows } = await pool.query<{
+      configured_version: string | null;
+      actual_version: string | null;
     }>(
-      `SELECT datname AS name, datcollate, datcollversion
+      `SELECT
+         datcollversion AS configured_version,
+         pg_database_collation_actual_version(oid) AS actual_version
        FROM pg_database
        WHERE datname = current_database()`
     );
 
-    //audit Assumption: missing database row means no current DB; Handling: exit
-    if (!dbRows.length) {
-      return;
+    //audit Assumption: a missing current-database row means inspection is unavailable; Handling: report unavailable.
+    if (!rows.length) {
+      return 'database_unavailable';
     }
 
-    const { name, datcollate, datcollversion } = dbRows[0];
-
-    //audit Assumption: missing collation version means no refresh required
-    if (!datcollversion) {
-      return;
+    const { configured_version: configuredVersion, actual_version: actualVersion } = rows[0];
+    if (!configuredVersion || !actualVersion) {
+      return 'version_unavailable';
     }
 
-    const { rows: collationRows } = await pool.query<{ collversion: string | null }>(
-      `SELECT collversion
-       FROM pg_collation
-       WHERE collname = $1 AND collversion IS NOT NULL
-       ORDER BY collversion DESC
-       LIMIT 1`,
-      [datcollate]
-    );
-
-    //audit Assumption: missing collation info means no refresh required
-    if (!collationRows.length) {
-      return;
-    }
-
-    const latestCollationVersion = collationRows[0].collversion;
-
-    //audit Assumption: unchanged versions need no action; Handling: exit
-    if (!latestCollationVersion || latestCollationVersion === datcollversion) {
-      return;
+    if (configuredVersion === actualVersion) {
+      return 'current';
     }
 
     console.warn(
-      `[🔌 DB] Collation version mismatch detected (database=${datcollversion}, system=${latestCollationVersion}) - rebuilding indexes & refreshing...`
+      '[🔌 DB] Collation version mismatch detected ' +
+      `(configured=${formatCollationVersionForLog(configuredVersion)}, ` +
+      `actual=${formatCollationVersionForLog(actualVersion)}). ` +
+      'Startup is read-only; schedule operator-controlled collation maintenance against the confirmed database.'
     );
-
-    const safeName = name.replace(/"/g, '""');
-
-    try {
-      await pool.query(`REINDEX DATABASE "${safeName}"`);
-      console.log('[🔌 DB] Database reindexed successfully prior to collation refresh');
-    } catch (reindexError: unknown) {
-      //audit Assumption: reindex failure should not block refresh; Handling: warn
-      console.warn('[🔌 DB] Database reindex skipped:', getErrorMessage(reindexError));
-    }
-
-    await pool.query(`ALTER DATABASE "${safeName}" REFRESH COLLATION VERSION`);
-    console.log('[🔌 DB] Collation version refreshed successfully');
-  } catch (error: unknown) {
-    //audit Assumption: refresh failure should be non-fatal; Handling: warn
-    console.warn('[🔌 DB] Collation refresh skipped:', getErrorMessage(error));
+    return 'mismatch';
+  } catch {
+    //audit Assumption: a diagnostic failure must not prevent startup; Handling: warn and return a bounded status.
+    console.warn(
+      '[🔌 DB] Collation inspection failed; startup will continue without this diagnostic.'
+    );
+    return 'inspection_failed';
   }
+}
+
+/**
+ * @deprecated Use inspectDatabaseCollation(). This compatibility wrapper is
+ * passive and never performs collation maintenance.
+ */
+export async function refreshDatabaseCollation(): Promise<void> {
+  await inspectDatabaseCollation();
 }
 
 // Database Table Definitions
