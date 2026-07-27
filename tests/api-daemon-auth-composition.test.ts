@@ -211,7 +211,7 @@ describe('daemon-plane production composition', () => {
 
   it('keeps the writing-plane gate active for unrelated API paths', async () => {
     const response = await request(buildApp())
-      .get('/api/commands')
+      .get('/api/openai/models')
       .set('x-arcanos-daemon-token', daemonAccessToken);
 
     expect(response.status).toBe(418);

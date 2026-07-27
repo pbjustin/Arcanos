@@ -382,9 +382,12 @@ establishes caller identity. Direct and worker-helper heal requests share one
 10-per-15-minute principal budget whose keys never contain the credential.
 
 ### Research, RAG, and command routing
-- `GET /api/commands`
-- `GET /api/commands/health`
-- `POST /api/commands/execute` (confirmation required)
+- `GET /api/commands` (control-plane operator and `arcanos:read` required)
+- `GET /api/commands/health` (control-plane operator and `arcanos:read`
+  required)
+- `POST /api/commands/execute` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /api/agent/execute` (control-plane operator and `mcp:invoke` required)
 - `GET /api/control-plane/capabilities`
 - `POST /api/control-plane` (dedicated bearer authentication and server-owned operation scopes required; confirmation additionally required for gated operations)
 - `GET /api/control-plane/allowlist`
@@ -398,6 +401,18 @@ establishes caller identity. Direct and worker-helper heal requests share one
   one-use confirmation challenge required)
 - `POST /rag/query` (control-plane operator and `arcanos:read` required;
   confirmation is not required)
+
+The exact command/agent CEF boundary authenticates before body allocation,
+returns `Cache-Control: no-store`, and uses separate authenticated-principal
+budgets for registry reads and execution. `GET` and `HEAD` command registry
+reads accept one optional trailing slash, reject request bodies, and run outside
+writing-plane consistency rerouting. The two execution routes accept strict,
+uncompressed JSON objects of at most 256 KiB and retain writing-plane
+consistency checks;
+their sensitive bindings block conflicts instead of rerouting to a GPT route.
+Unknown methods and paths under `/api/commands` or `/api/agent` terminate with a
+fixed 404. The command execution route retains its existing confirmation gate;
+the CEF ingress boundary does not treat confirmation as caller identity.
 
 The exact `/rag/*` boundary authenticates and principal-throttles requests before
 allocating their bodies. It accepts strict JSON objects only, rejects compressed

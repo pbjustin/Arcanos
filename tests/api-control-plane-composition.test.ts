@@ -164,8 +164,8 @@ describe('API control-plane production composition', () => {
     expect(memoryConsistencyGateMock).not.toHaveBeenCalled();
   });
 
-  it('keeps the writing-plane gate active for later API mounts', async () => {
-    const response = await request(buildApp()).get('/api/commands');
+  it('keeps the writing-plane gate active for later non-control-plane API mounts', async () => {
+    const response = await request(buildApp()).get('/api/openai/models');
 
     expect(response.status).toBe(418);
     expect(response.body.error.code).toBe('WRITING_PLANE_GATE_REACHED');

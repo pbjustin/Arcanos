@@ -22,6 +22,7 @@ import webSearchRouter from "@routes/web-search.js";
 import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsistencyGate.js";
 import { requireMemoryPlaneAuth } from "@transport/http/middleware/memoryPlaneAuth.js";
 import { isDagHttpRequestPath } from "@services/controlPlane/dagHttpBoundary.js";
+import { isCefCommandReadRequest } from '@services/controlPlane/cefHttpBoundary.js';
 
 const router = Router();
 const routeDagControlPlane: RequestHandler = (req, res, next) => {
@@ -31,6 +32,14 @@ const routeDagControlPlane: RequestHandler = (req, res, next) => {
   }
 
   apiArcanosRouter(req, res, next);
+};
+const routeCefCommandRead: RequestHandler = (req, res, next) => {
+  if (!isCefCommandReadRequest(req)) {
+    next();
+    return;
+  }
+
+  apiCommandsRouter(req, res, next);
 };
 
 // The control plane is not part of the writing-plane consistency/reroute flow.
@@ -51,6 +60,10 @@ router.use('/api/pr-analysis', prAnalysisRouter);
 // inside its leaf router. Dispatch it before the writing-plane consistency gate
 // so that control-plane methods and paths can never be rewritten as GPT work.
 router.use('/api/arcanos', routeDagControlPlane);
+// Command registry reads are authenticated control-plane inspection. Dispatch
+// them before the writing-plane gate so a read scope can never be rewritten
+// into GPT execution. Command and agent POSTs remain behind the gate.
+router.use('/api/commands', routeCefCommandRead);
 router.use('/api/memory', requireMemoryPlaneAuth);
 router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);

@@ -1,15 +1,17 @@
 import express, { Request, Response } from 'express';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
-import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { createValidationMiddleware } from "@platform/runtime/security.js";
 import { asyncHandler } from "@shared/http/index.js";
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
 import { executeCommand, listAvailableCommands } from "@services/commandCenter.js";
 import type { CommandName } from "@services/commandCenter.js";
+import { cefHttpBoundary } from '@services/controlPlane/cefHttpBoundary.js';
+import { cefBodyParser } from '@services/controlPlane/cefBodyParser.js';
 
 const router = express.Router();
 
-router.use(securityHeaders);
-router.use(createRateLimitMiddleware(50, 15 * 60 * 1000));
+router.use(cefHttpBoundary);
+router.use(cefBodyParser);
 
 const commandExecutionSchema = {
   command: {

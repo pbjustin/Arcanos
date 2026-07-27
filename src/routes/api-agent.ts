@@ -8,6 +8,8 @@ import {
   AgentExecutionResponseSchema,
   validateAgentExecutionPayload
 } from '@services/agentExecutionSchemas.js';
+import { cefBodyParser } from '@services/controlPlane/cefBodyParser.js';
+import { cefHttpBoundary } from '@services/controlPlane/cefHttpBoundary.js';
 import { auditTrace } from '@transport/http/middleware/auditTrace.js';
 
 const router = express.Router();
@@ -21,6 +23,8 @@ const executeAgentGoalSchema = z.object({
   sessionId: z.string().trim().min(1).max(200).optional()
 });
 
+router.use('/api/agent', cefHttpBoundary);
+router.use('/api/agent', cefBodyParser);
 router.use('/api/agent', auditTrace);
 
 function asRecord(value: unknown): Record<string, unknown> | null {

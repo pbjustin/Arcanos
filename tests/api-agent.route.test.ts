@@ -1,8 +1,14 @@
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import errorHandler from '../src/transport/http/middleware/errorHandler.js';
 import { AgentPlanningValidationError } from '../src/services/agentPlanningErrors.js';
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
+import {
+  CEF_EXECUTION_BODY_LIMIT_BYTES,
+} from '../src/services/controlPlane/cefBodyParser.js';
 
 const mockExecuteGoal = jest.fn();
 
@@ -21,9 +27,30 @@ jest.unstable_mockModule('@transport/http/middleware/auditTrace.js', () => ({
 
 const { default: apiAgentRouter } = await import('../src/routes/api-agent.js');
 
+const controlPlaneToken = 'api-agent-route-token-1234567890123456789012';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:api-agent-route';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+}
+
 function createApiAgentTestApp(): Express {
   const app = express();
-  app.use(express.json());
   app.use('/', apiAgentRouter);
   app.use(errorHandler);
   app.use((_req, res) => {
@@ -40,7 +67,43 @@ describe('/api/agent/execute', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    configureControlPlane();
     app = createApiAgentTestApp();
+  });
+
+  it('authenticates malformed and oversized anonymous bodies before leaf parsing', async () => {
+    const malformedResponse = await request(app)
+      .post('/api/agent/execute')
+      .set('Content-Type', 'application/json')
+      .send('{"goal":');
+    const oversizedResponse = await request(app)
+      .post('/api/agent/execute')
+      .send({
+        goal: 'x'.repeat(CEF_EXECUTION_BODY_LIMIT_BYTES),
+      });
+
+    expect(malformedResponse.status).toBe(401);
+    expect(malformedResponse.body.error.code).toBe(
+      'CONTROL_PLANE_AUTH_REQUIRED'
+    );
+    expect(oversizedResponse.status).toBe(401);
+    expect(oversizedResponse.body.error.code).toBe(
+      'CONTROL_PLANE_AUTH_REQUIRED'
+    );
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
+  it('enforces the leaf parser body limit for authenticated requests', async () => {
+    const response = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        goal: 'x'.repeat(CEF_EXECUTION_BODY_LIMIT_BYTES),
+      });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error.code).toBe('CEF_REQUEST_INVALID');
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
   });
 
   it('returns a structured execution response', async () => {
@@ -108,6 +171,7 @@ describe('/api/agent/execute', () => {
 
     const response = await request(app)
       .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         goal: 'Summarize the current system status.'
       });
@@ -126,6 +190,7 @@ describe('/api/agent/execute', () => {
   it('returns structured validation errors for invalid payloads', async () => {
     const response = await request(app)
       .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         goal: ''
       });
@@ -146,6 +211,7 @@ describe('/api/agent/execute', () => {
 
     const response = await request(app)
       .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         goal: 'Run an unsupported capability.',
         preferredCapabilities: ['does-not-exist']
@@ -172,6 +238,7 @@ describe('/api/agent/execute', () => {
 
     const response = await request(app)
       .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         goal: 'Access storage directly if the normal replay path stalls.'
       });
@@ -183,4 +250,23 @@ describe('/api/agent/execute', () => {
       details: ['Blocked exploit chain request: "access storage directly" attempts to bypass capability -> CEF -> handler boundaries.']
     });
   });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

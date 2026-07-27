@@ -20,11 +20,25 @@ export const DISPATCH_PATTERN_BINDINGS: DispatchPatternBindingV9[] = [
     expectedRoute: '/gpt/:gptId'
   },
   {
+    id: 'api.agent-execution',
+    priority: 110,
+    methods: ['POST'],
+    exactPaths: ['/api/agent/execute'],
+    pathRegexes: ['^/api/agent/execute/?$'],
+    sensitivity: 'sensitive',
+    conflictPolicy: 'strict_block',
+    expectedRoute: '/api/agent/execute'
+  },
+  {
     id: 'api.modules',
     priority: 100,
     methods: ['POST'],
     exactPaths: ['/api/commands/execute'],
-    pathRegexes: ['^/api/modules(?:/.*)?$', '^/api/queryroute$'],
+    pathRegexes: [
+      '^/api/commands/execute/?$',
+      '^/api/modules(?:/.*)?$',
+      '^/api/queryroute$'
+    ],
     intentHints: ['module', 'command', 'dispatch'],
     sensitivity: 'sensitive',
     conflictPolicy: 'strict_block',
@@ -64,6 +78,14 @@ export const DISPATCH_V9_EXEMPT_ROUTES: Array<{
   prefixPath?: string;
 }> = [
   { method: 'GET', exactPath: '/api/test' },
+  { method: 'GET', exactPath: '/api/commands' },
+  { method: 'GET', exactPath: '/api/commands/' },
+  { method: 'GET', exactPath: '/api/commands/health' },
+  { method: 'GET', exactPath: '/api/commands/health/' },
+  { method: 'HEAD', exactPath: '/api/commands' },
+  { method: 'HEAD', exactPath: '/api/commands/' },
+  { method: 'HEAD', exactPath: '/api/commands/health' },
+  { method: 'HEAD', exactPath: '/api/commands/health/' },
   { method: 'GET', exactPath: '/api/memory/health' },
   { method: 'GET', exactPath: '/api/daemon/registry' },
   { method: 'GET', prefixPath: '/api/health' },

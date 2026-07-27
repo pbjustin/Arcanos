@@ -51,6 +51,12 @@ import {
 import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
+import {
+  cefHttpBoundary,
+} from '@services/controlPlane/cefHttpBoundary.js';
+import {
+  cefBodyParser,
+} from '@services/controlPlane/cefBodyParser.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
@@ -98,6 +104,13 @@ export function createApp(): Express {
   });
 
   app.use(requestContext);
+  // CORS answers preflight requests without calling later middleware. Establish
+  // the exact CEF trust boundary first so OPTIONS cannot bypass authentication;
+  // authorized, supported requests continue through the shared CORS policy.
+  app.use('/api/commands', cefHttpBoundary);
+  app.use('/api/agent', cefHttpBoundary);
+  app.use('/api/commands', cefBodyParser);
+  app.use('/api/agent', cefBodyParser);
   app.use(cors(config.cors));
   // Durable session payloads share the memory trust domain. Authenticate the
   // entire prefix before the broad parsers can allocate or expose stored data.
