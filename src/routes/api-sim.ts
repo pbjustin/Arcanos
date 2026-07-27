@@ -148,8 +148,7 @@ async function sendSimulationStream(
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
+    'Connection': 'keep-alive'
   });
 
   for await (const chunk of result.stream) {

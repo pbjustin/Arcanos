@@ -155,7 +155,17 @@ and never calls `FLUSHDB`. That job must pass before activation.
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 | `JSON_LIMIT` | `10mb` | JSON payload size limit. |
 | `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
-| `ALLOWED_ORIGINS` | — | Comma-separated CORS allow list (non-development). |
+| `ALLOWED_ORIGINS` | — | Optional comma-separated exact HTTP(S) browser origins. Outside development, missing or blank configuration disables cross-origin access. |
+
+### Browser CORS policy
+
+- Development preserves reflected request origins for local browser tooling.
+- Every other environment emits CORS headers only for an exact configured
+  origin. Same-origin and server-to-server requests do not require CORS.
+- Entries are trimmed, canonicalized, and deduplicated. Wildcards, URL
+  credentials, paths, queries, fragments, and non-HTTP(S) schemes are rejected.
+- An absent, blank, or malformed allowlist disables browser CORS without
+  preventing same-origin or server-to-server traffic.
 
 ### OpenAI API key resolution
 
@@ -566,7 +576,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
-| `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`. |
+| `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`, its compatibility alias, and `/api/bridge/health`. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be explicit before they enqueue, discover, execute capability work, or recover workers. |

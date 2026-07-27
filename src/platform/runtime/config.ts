@@ -8,6 +8,7 @@ import path from 'path';
 import type { ReinforcementMode } from "@shared/types/reinforcement.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
+import { resolveRuntimeCorsConfig } from '@platform/runtime/corsConfig.js';
 
 // Load environment variables
 dotenv.config();
@@ -58,10 +59,7 @@ export const config = {
   },
 
   // CORS configuration
-  cors: {
-    origin: nodeEnv === 'development' ? true : getEnv('ALLOWED_ORIGINS')?.split(','),
-    credentials: true
-  },
+  cors: resolveRuntimeCorsConfig(nodeEnv, getEnv('ALLOWED_ORIGINS')),
 
   // Request limits
   limits: {
