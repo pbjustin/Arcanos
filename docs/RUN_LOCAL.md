@@ -22,11 +22,14 @@ Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
 
 `PORT=3000` matches `.env.example` and the direct local server default. Railway injects `PORT`, and the Railway launcher also validates `ARCANOS_PROCESS_KIND`.
 
-To use HTTP control-plane, `/api/self-heal/*`, `/api/self-improve/*`, detailed
+To use HTTP control-plane, reinforcement feedback or inspection,
+`/api/self-heal/*`, `/api/self-improve/*`, detailed
 `GET /status/safety/self-heal`, or `arcanos inspect self-heal` locally, also
 configure a distinct `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`,
 `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID`, and the least-privilege
-`ARCANOS_CONTROL_PLANE_SCOPES`. Self-heal reads use `arcanos:read`; do not grant
+`ARCANOS_CONTROL_PLANE_SCOPES`. Root `/memory`, `/memory/digest`, and
+`/reinforcement/metrics` reads use `arcanos:read`; feedback writes use
+`mcp:invoke`. Self-heal reads use `arcanos:read`; do not grant
 `self-heal:probe`, `self-heal:execute`, or `self-improve:control` merely for
 local health checks.
 

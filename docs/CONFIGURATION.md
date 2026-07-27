@@ -205,9 +205,9 @@ The OpenAI client resolves keys in this order:
 
 ### HTTP control-plane authentication
 
-Both `POST /api/control-plane` routes, `/api/self-heal/*`,
-`/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity
-quarantine release require a
+Both `POST /api/control-plane` routes, reinforcement feedback and inspection
+routes, `/api/self-heal/*`, `/api/self-improve/*`, detailed
+`GET /status/safety/self-heal`, and integrity quarantine release require a
 purpose-bound bearer identity before scope authorization, confirmation,
 capability checks, provider probes, or execution. The self-healing surfaces
 share an ingress-derived client limiter before the broad JSON parser; decisions,
@@ -220,9 +220,9 @@ operations.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/rag/*`, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, and `GET`/`HEAD` command registry reads require `arcanos:read`; `POST /system-state`, `/rag/fetch`, and `/rag/save` require `mcp:invoke` plus an issued, principal- and body-bound one-use confirmation challenge (manual and trusted-mode confirmation bypasses do not apply), while DAG run creation/cancellation and command/agent execution require `mcp:invoke`. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
 | `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
 | `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
 
@@ -232,6 +232,13 @@ settings: fetch JSON is capped at 8 KiB, query JSON at 16 KiB, and save JSON at
 metadata bounds are documented in [API.md](API.md#research-rag-and-command-routing).
 These routes expose one operator-controlled deployment corpus; control-plane
 identity does not add tenant or workspace isolation.
+
+Reinforcement HTTP limits are also fixed rather than environment settings.
+`POST /reinforce` accepts a strict object JSON body up to 32 KiB;
+`POST /audit` and `POST /reinforcement/judge` accept up to 128 KiB. Read bodies
+are rejected. Feedback mutations share a 30-per-15-minute authenticated
+principal budget, inspection reads share 120 per 5 minutes, and invalid
+credentials share 60 per 15 minutes by ingress socket/Express address.
 
 Command and agent CEF execution JSON is capped at 256 KiB. If
 `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` is pinned, deploying this version also

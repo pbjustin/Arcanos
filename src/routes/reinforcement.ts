@@ -10,8 +10,23 @@ import {
 import type { ClearFeedbackPayload, JudgedResponsePayload } from "@shared/types/reinforcement.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendBadRequest } from '@shared/http/index.js';
+import {
+  reinforcementHttpBoundary,
+} from '@services/controlPlane/reinforcementHttpBoundary.js';
+import {
+  reinforcementBodyParser,
+} from '@services/controlPlane/reinforcementBodyParser.js';
 
 const router = express.Router();
+
+router.use('/reinforce', reinforcementHttpBoundary, reinforcementBodyParser);
+router.use('/audit', reinforcementHttpBoundary, reinforcementBodyParser);
+router.use(
+  '/reinforcement',
+  reinforcementHttpBoundary,
+  reinforcementBodyParser
+);
+router.use('/memory', reinforcementHttpBoundary, reinforcementBodyParser);
 
 router.post('/reinforce', auditTrace, (req: Request, res: Response) => {
   const { context, bias, metadata, requestId } = req.body ?? {};

@@ -241,14 +241,33 @@ deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
 
 ### Reinforcement and reflection feedback
-- `POST /reinforce`
-- `POST /audit`
-- `POST /reinforcement/judge`
-- `GET /reinforcement/metrics`
-- `GET /memory/digest`
-- `GET /memory`
+- `POST /reinforce` (control-plane operator and `mcp:invoke` required)
+- `POST /audit` (control-plane operator and `mcp:invoke` required)
+- `POST /reinforcement/judge` (control-plane operator and `mcp:invoke`
+  required)
+- `GET`/`HEAD /reinforcement/metrics` (control-plane operator and
+  `arcanos:read` required)
+- `GET`/`HEAD /memory/digest` (control-plane operator and `arcanos:read`
+  required)
+- `GET`/`HEAD /memory` (control-plane operator and `arcanos:read` required)
 - `POST /api/web/search`
 - `GET /metrics` (Prometheus metrics; enabled unless `METRICS_ENABLED=false`)
+
+The six reinforcement and root-memory routes above authenticate before CORS
+and broad body parsing, return `no-store`, and terminate unsupported methods or
+subpaths inside their exact namespaces. `/reinforce` accepts only an object
+JSON or `application/*+json` body up to 32 KiB. `/audit` and
+`/reinforcement/judge` use the same strict media-type rules with a 128 KiB
+ceiling. Read requests reject bodies. Authenticated principals share a
+30-request-per-15-minute feedback budget and a
+120-request-per-5-minute inspection budget; invalid credentials use a separate
+60-request-per-15-minute ingress-address budget.
+
+These machine-feedback routes do not gain a new confirmation challenge. The
+current legacy `ai-endpoints.ts` owner of `POST /audit` retains its existing
+confirmation requirement; when legacy GPT routes are disabled, the CLEAR
+feedback owner remains confirmation-free. Public `GET /health` is unchanged
+and continues to be owned by the earlier health-group router.
 
 ### AI utility and media
 - `POST /write` (confirmation required)

@@ -96,6 +96,11 @@ Judged-feedback path includes strong sanitization and bounded state:
 
 Endpoint: `GET /reinforcement/metrics`
 
+This operator route requires
+`Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>` and the
+server-owned `arcanos:read` scope. `POST /reinforcement/judge` requires the
+same operator identity with `mcp:invoke`.
+
 Returns:
 - `judgedFeedback` counters (`attempts`, `duplicatesSkipped`, `persistedWrites`, `persistenceFailures`, cache stats).
 - `reinforcement` subsystem health snapshot (`mode`, `window`, `minimumClearScore`, context counts).
@@ -122,10 +127,12 @@ Use this endpoint to verify judged feedback behavior after deploy/restart.
 ## Verification Checklist
 ```bash
 curl -X POST http://localhost:3000/reinforcement/judge \
+  -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"prompt\":\"p\",\"response\":\"r\",\"score\":9.2,\"scoreScale\":\"0-10\",\"feedback\":\"good\"}"
 
-curl http://localhost:3000/reinforcement/metrics
+curl -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \
+  http://localhost:3000/reinforcement/metrics
 ```
 
 Expected checks:

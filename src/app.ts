@@ -49,6 +49,12 @@ import {
   ragBodyParser,
 } from '@services/controlPlane/ragBodyParser.js';
 import {
+  reinforcementHttpBoundary,
+} from '@services/controlPlane/reinforcementHttpBoundary.js';
+import {
+  reinforcementBodyParser,
+} from '@services/controlPlane/reinforcementBodyParser.js';
+import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
@@ -111,6 +117,17 @@ export function createApp(): Express {
   app.use('/api/agent', cefHttpBoundary);
   app.use('/api/commands', cefBodyParser);
   app.use('/api/agent', cefBodyParser);
+  // Feedback ingestion and reinforcement-memory inspection are operator-only.
+  // Establish identity, scope, and strict route-specific body bounds before
+  // CORS or either broad application parser can handle these exact namespaces.
+  app.use('/reinforce', reinforcementHttpBoundary);
+  app.use('/audit', reinforcementHttpBoundary);
+  app.use('/reinforcement', reinforcementHttpBoundary);
+  app.use('/memory', reinforcementHttpBoundary);
+  app.use('/reinforce', reinforcementBodyParser);
+  app.use('/audit', reinforcementBodyParser);
+  app.use('/reinforcement', reinforcementBodyParser);
+  app.use('/memory', reinforcementBodyParser);
   app.use(cors(config.cors));
   // Durable session payloads share the memory trust domain. Authenticate the
   // entire prefix before the broad parsers can allocate or expose stored data.
