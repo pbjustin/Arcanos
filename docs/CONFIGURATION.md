@@ -246,6 +246,26 @@ challenge. AFOL reads reject bodies. Execution shares a 30-per-15-minute authent
 principal budget, inspection shares 120 per 5 minutes, and invalid credentials
 share 60 per 15 minutes by ingress socket/Express address.
 
+AFOL persistence stores metadata rather than request or provider content.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AFOL_ANALYTICS_PATH` | `logs/afol-analytics.json` | Atomic analytics snapshot target. The parent is canonicalized and validated; an existing target must be a regular non-symlink file. |
+| `AFOL_ANALYTICS_RECENT_LIMIT` | `50` | Number of metadata-only decisions retained in the analytics snapshot, clamped to 1–1,000. |
+| `AFOL_LOG_PATH` | `logs/afol-decisions.log` | Bounded metadata-only JSONL target with the same path checks and same-directory atomic replacement. |
+| `AFOL_LOG_RETENTION_LIMIT` | `100` | Number of projected decision/error records retained in the JSONL file, clamped to 1–1,000. |
+| `AFOL_LOG_TAIL_BYTES` | `524288` | Maximum tail window read from an existing JSONL file, clamped to 1,024–4,194,304 bytes. |
+
+AFOL writes use an exclusive mode-`0600` temporary file in the validated target
+directory, flush it, and rename it over the regular target. Writes and
+configuration/reset transitions are serialized per persistence surface.
+Analytics memory state advances only after its file replacement succeeds.
+Legacy JSONL lines are reprojected to the fixed metadata union on reads and
+bounded rewrites; malformed lines are skipped. Reset helpers use atomic empty
+replacement rather than deletion. Older files are not proactively removed and
+may require a separately approved operator rotation if they predate metadata-
+only persistence.
+
 Command and agent CEF execution JSON is capped at 256 KiB. If
 `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` is pinned, deploying this version also
 requires a separately coordinated update to that protected digest because the

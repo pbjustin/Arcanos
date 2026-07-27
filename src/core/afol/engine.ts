@@ -3,6 +3,7 @@ import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { evaluate } from './policies.js';
 import { getStatus } from './health.js';
 import { logDecision } from './logger.js';
+import { projectAfolDecisionForPersistence } from './persistence.js';
 import { executeRoute as executeSelectedRoute } from './routes.js';
 import { persistDecision } from './analytics.js';
 import type { DecideInput, DecisionRecord, PolicyEvaluation, RouteExecutionResult, RouteSelection } from './types.js';
@@ -42,8 +43,7 @@ export async function decide(input: DecideInput): Promise<DecisionRecord> {
       };
 
       heartbeat();
-      await persistDecision(decision);
-      logDecision(input, decision);
+      await persistDecisionMetadata(decision);
       recordTraceEvent('afol.decision.completed', {
         decisionId,
         ok,
@@ -59,6 +59,20 @@ export async function decide(input: DecideInput): Promise<DecisionRecord> {
       }
     }
   );
+}
+
+async function persistDecisionMetadata(
+  decision: DecisionRecord
+): Promise<void> {
+  const persistenceRecord = projectAfolDecisionForPersistence(decision);
+  await Promise.allSettled([
+    Promise.resolve().then(
+      () => persistDecision(persistenceRecord)
+    ),
+    Promise.resolve().then(
+      () => logDecision(persistenceRecord)
+    ),
+  ]);
 }
 
 function selectRoute(policy: PolicyEvaluation): RouteSelection {
@@ -102,6 +116,6 @@ export async function __runDecideWithoutSupervisorForTest(input: DecideInput): P
       timestamp: new Date().toISOString()
     }
   };
-  await persistDecision(decision);
+  await persistDecisionMetadata(decision);
   return decision;
 }

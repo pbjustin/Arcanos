@@ -365,6 +365,42 @@ describe('AFOL route security and redaction', () => {
       api: { ok: true, latency: 53 },
     });
   });
+
+  it.each([
+    {
+      path: '/api/afol/logs',
+      reject: () => getRecentMock.mockRejectedValueOnce(
+        new Error('logs-path-secret-sentinel')
+      ),
+      sentinel: 'logs-path-secret-sentinel',
+    },
+    {
+      path: '/api/afol/analytics',
+      reject: () => getAnalyticsSnapshotMock.mockRejectedValueOnce(
+        new Error('analytics-path-secret-sentinel')
+      ),
+      sentinel: 'analytics-path-secret-sentinel',
+    },
+  ])(
+    'contains rejected $path reads in Express 4 with a fixed response',
+    async ({ path: inspectionPath, reject, sentinel }) => {
+      reject();
+
+      const response = await afolRead(buildApp(), inspectionPath)
+        .timeout({ response: 1_000, deadline: 2_000 });
+
+      expect(response.status).toBe(503);
+      expect(response.headers['cache-control']).toContain('no-store');
+      expect(response.body).toEqual({
+        ok: false,
+        error: {
+          code: 'AFOL_INSPECTION_UNAVAILABLE',
+          message: 'AFOL inspection data is temporarily unavailable.',
+        },
+      });
+      expect(JSON.stringify(response.body)).not.toContain(sentinel);
+    }
+  );
 });
 
 afterAll(() => {

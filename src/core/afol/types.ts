@@ -51,10 +51,34 @@ export interface DecisionRecord {
   };
 }
 
-export interface AfolLogEntry {
+export interface AfolPersistedDecisionRecord {
+  kind: 'decision';
+  id: string;
   timestamp: string;
-  input?: unknown;
-  decision?: DecisionRecord;
-  context?: string;
-  error?: string;
+  ok: boolean;
+  route: RouteName;
+  latencyMs: number;
+  cached: boolean;
+  degraded: boolean;
 }
+
+export type AfolErrorCategory =
+  | 'decision_failed'
+  | 'persistence_failed'
+  | 'internal_failure';
+
+export interface AfolPersistedErrorRecord {
+  kind: 'error';
+  timestamp: string;
+  category: AfolErrorCategory;
+}
+
+export type AfolPersistenceRecord =
+  | AfolPersistedDecisionRecord
+  | AfolPersistedErrorRecord;
+
+/**
+ * Historical name retained for consumers of the AFOL log reader. New records
+ * are the strict metadata-only persistence union above.
+ */
+export type AfolLogEntry = AfolPersistenceRecord;

@@ -263,10 +263,21 @@ terminate inside the protected namespace.
 All responses are `no-store`. Decision responses replace the submitted prompt
 and intent with fixed redaction markers and never return provider exception
 text; the current model answer is retained only after shared credential
-redaction. Log and analytics inspection additionally replaces every historical
-model output with a fixed marker. Execution uses a 30-request-per-15-minute
-authenticated-principal budget, reads use 120 per 5 minutes, and invalid
-credentials use a separate 60-per-15-minute ingress-address budget.
+redaction. New AFOL files contain only decision metadata
+(`kind`, `id`, `timestamp`, `ok`, `route`, `latencyMs`, `cached`, and
+`degraded`) or a fixed error category; prompts, completions, intents, policy
+prose, and provider error text are never written. Log reads reproject legacy
+JSONL records into that same metadata union and skip malformed lines without
+loading the whole file. Analytics and log writes are serialized and atomically
+replace bounded snapshots. A persistence failure does not convert a successful
+model decision into an HTTP failure.
+
+Existing files created by an older release may still contain sensitive fields
+until the next successful bounded rewrite or a separately approved operator
+rotation. Runtime reset helpers replace content atomically and do not delete
+files. Execution uses a 30-request-per-15-minute authenticated-principal
+budget, reads use 120 per 5 minutes, and invalid credentials use a separate
+60-per-15-minute ingress-address budget.
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce` (control-plane operator and `mcp:invoke` required)

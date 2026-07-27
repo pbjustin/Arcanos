@@ -1,7 +1,9 @@
 import { redactString } from '@shared/redaction.js';
 
 import type {
-  AfolLogEntry,
+  AfolErrorCategory,
+  AfolPersistedDecisionRecord,
+  AfolPersistedErrorRecord,
   DecisionRecord,
   HealthSnapshot,
   RouteName,
@@ -26,7 +28,10 @@ interface AfolAnalyticsSnapshot {
     averageMs: number;
     lastMs: number;
   };
-  recent: ReturnType<typeof projectAfolDecisionForInspection>[];
+  recent: Array<
+    AfolPersistedDecisionRecord |
+    ReturnType<typeof projectAfolDecisionForInspection>
+  >;
   lastUpdated: string | null;
 }
 
@@ -93,6 +98,42 @@ function projectDecisionId(value: unknown): string {
   return typeof value === 'string' && AFOL_DECISION_ID_PATTERN.test(value)
     ? value
     : 'redacted';
+}
+
+function projectPersistedDecision(
+  value: Record<string, unknown>
+): AfolPersistedDecisionRecord {
+  return {
+    kind: 'decision',
+    id: projectDecisionId(value.id),
+    timestamp: projectTimestamp(value.timestamp),
+    ok: asBoolean(value.ok),
+    route: asRouteName(value.route),
+    latencyMs: asFiniteNonNegativeNumber(value.latencyMs),
+    cached: asBoolean(value.cached),
+    degraded: asBoolean(value.degraded),
+  };
+}
+
+function projectErrorCategory(value: unknown): AfolErrorCategory {
+  if (
+    value === 'decision_failed' ||
+    value === 'persistence_failed' ||
+    value === 'internal_failure'
+  ) {
+    return value;
+  }
+  return 'internal_failure';
+}
+
+function projectPersistedError(
+  value: Record<string, unknown>
+): AfolPersistedErrorRecord {
+  return {
+    kind: 'error',
+    timestamp: projectTimestamp(value.timestamp),
+    category: projectErrorCategory(value.category),
+  };
 }
 
 function projectModel(value: unknown): string | undefined {
@@ -223,14 +264,23 @@ function projectLogContext(value: unknown): string | undefined {
 }
 
 export function projectAfolLogsForHttp(
-  entries: readonly AfolLogEntry[]
-): AfolLogEntry[] {
-  return entries.flatMap((entry) => {
+  entries: readonly unknown[]
+): unknown[] {
+  const projectedEntries: unknown[] = [];
+  for (const entry of entries) {
     if (!isRecord(entry)) {
-      return [];
+      continue;
+    }
+    if (entry.kind === 'decision') {
+      projectedEntries.push(projectPersistedDecision(entry));
+      continue;
+    }
+    if (entry.kind === 'error') {
+      projectedEntries.push(projectPersistedError(entry));
+      continue;
     }
     const context = projectLogContext(entry.context);
-    return [{
+    projectedEntries.push({
       timestamp: projectTimestamp(entry.timestamp),
       ...(Object.hasOwn(entry, 'input')
         ? { input: AFOL_REDACTED_PROMPT }
@@ -242,8 +292,9 @@ export function projectAfolLogsForHttp(
       ...(Object.hasOwn(entry, 'error')
         ? { error: AFOL_ROUTE_FAILURE_MESSAGE }
         : {}),
-    }];
-  });
+    });
+  }
+  return projectedEntries;
 }
 
 export function projectAfolAnalyticsForHttp(
@@ -254,6 +305,17 @@ export function projectAfolAnalyticsForHttp(
   const perRoute = isRecord(snapshot.perRoute) ? snapshot.perRoute : {};
   const latency = isRecord(snapshot.latency) ? snapshot.latency : {};
   const recent = Array.isArray(snapshot.recent) ? snapshot.recent : [];
+  const projectedRecent: AfolAnalyticsSnapshot['recent'] = [];
+  for (const record of recent) {
+    if (isRecord(record) && record.kind === 'decision') {
+      projectedRecent.push(projectPersistedDecision(record));
+      continue;
+    }
+    if (isRecord(record) && record.kind === 'error') {
+      continue;
+    }
+    projectedRecent.push(projectAfolDecisionForInspection(record));
+  }
 
   return {
     totals: {
@@ -270,7 +332,7 @@ export function projectAfolAnalyticsForHttp(
       averageMs: asFiniteNonNegativeNumber(latency.averageMs),
       lastMs: asFiniteNonNegativeNumber(latency.lastMs),
     },
-    recent: recent.map(projectAfolDecisionForInspection),
+    recent: projectedRecent,
     lastUpdated: projectOptionalTimestamp(snapshot.lastUpdated),
   };
 }

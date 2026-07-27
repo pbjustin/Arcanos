@@ -27,6 +27,40 @@ const router = Router();
 
 router.use(afolHttpBoundary, afolBodyParser);
 
+type AfolInspectionSurface = 'logs' | 'analytics';
+
+function sendAfolInspectionFailure(
+  req: Request,
+  res: Response,
+  surface: AfolInspectionSurface,
+  error: unknown
+): void {
+  try {
+    req.logger?.warn?.('afol.inspection_unavailable', {
+      requestId: req.requestId,
+      traceId: req.traceId,
+      surface,
+      errorKind: error instanceof Error ? 'error' : 'non_error',
+    });
+  } catch {
+    // Diagnostic logging must not prevent the fixed inspection response.
+  }
+
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
+  res
+    .status(503)
+    .set('Cache-Control', 'no-store')
+    .json({
+      ok: false,
+      error: {
+        code: 'AFOL_INSPECTION_UNAVAILABLE',
+        message: 'AFOL inspection data is temporarily unavailable.',
+      },
+    });
+}
+
 function requireAfolDecisionConfirmation(
   req: Request,
   res: Response,
@@ -83,7 +117,7 @@ router.post('/decide', requireAfolDecisionConfirmation, async (req, res) => {
       errorKind: error instanceof Error ? 'error' : 'non_error',
     });
     try {
-      logError('decide', new Error(AFOL_ROUTE_FAILURE_MESSAGE));
+      await logError('decide', new Error(AFOL_ROUTE_FAILURE_MESSAGE));
     } catch {
       req.logger?.warn?.('afol.failure_log_unavailable', {
         requestId: req.requestId,
@@ -105,12 +139,26 @@ router.get('/health', (_req, res) => {
   res.json(projectAfolHealthForHttp(getStatus()));
 });
 
-router.get('/logs', (_req, res) => {
-  res.json(projectAfolLogsForHttp(getRecent()));
+router.get('/logs', async (req, res) => {
+  try {
+    const recent = await getRecent();
+    if (!res.headersSent && !res.writableEnded) {
+      res.json(projectAfolLogsForHttp(recent));
+    }
+  } catch (error) {
+    sendAfolInspectionFailure(req, res, 'logs', error);
+  }
 });
 
-router.get('/analytics', (_req, res) => {
-  res.json(projectAfolAnalyticsForHttp(getAnalyticsSnapshot()));
+router.get('/analytics', async (req, res) => {
+  try {
+    const snapshot = await getAnalyticsSnapshot();
+    if (!res.headersSent && !res.writableEnded) {
+      res.json(projectAfolAnalyticsForHttp(snapshot));
+    }
+  } catch (error) {
+    sendAfolInspectionFailure(req, res, 'analytics', error);
+  }
 });
 
 export default router;
