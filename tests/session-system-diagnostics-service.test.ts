@@ -105,4 +105,66 @@ describe('sessionSystemDiagnosticsService.getQueueDiagnostics', () => {
     expect(result.failureRate).toBe(0.1);
     expect(result.historicalFailureRate).toBe(0.1429);
   });
+
+  it('projects persisted failure reasons to fixed public category labels', async () => {
+    const privateFailureSentinel = 'PRIVATE_QUEUE_FAILURE_SENTINEL';
+    const categoryExpectations = [
+      ['authentication', 'Authentication failure.'],
+      ['network', 'Network failure.'],
+      ['provider', 'Provider failure.'],
+      ['rate_limited', 'Rate limit failure.'],
+      ['timeout', 'Timeout failure.'],
+      ['validation', 'Validation failure.'],
+      ['unknown', 'Worker job failure.']
+    ] as const;
+    mockGetJobQueueSummary.mockResolvedValue({
+      pending: 0,
+      running: 0,
+      completed: 7,
+      failed: 7,
+      total: 14,
+      delayed: 0,
+      stalledRunning: 0,
+      oldestPendingJobAgeMs: 0,
+      failureBreakdown: {
+        retryable: 3,
+        permanent: 4,
+        retryScheduled: 0,
+        retryExhausted: 4,
+        deadLetter: 0,
+        authentication: 1,
+        network: 1,
+        provider: 1,
+        rateLimited: 1,
+        timeout: 1,
+        validation: 1,
+        unknown: 1
+      },
+      recentFailureReasons: categoryExpectations.map(([category], index) => ({
+        reason: `${category}: ${privateFailureSentinel}_${index}`,
+        category,
+        retryable: index % 2 === 0,
+        count: index + 1,
+        lastSeenAt: '2026-04-05T00:51:45.711Z'
+      })),
+      recentTerminalWindowMs: 3600000,
+      recentCompleted: 7,
+      recentFailed: 7,
+      recentTotalTerminal: 14
+    });
+    mockGetLatestJob.mockResolvedValue(null);
+
+    const result = await getQueueDiagnostics();
+
+    expect(result.recentFailureReasons).toEqual(
+      categoryExpectations.map(([category, reason], index) => ({
+        reason,
+        category,
+        retryable: index % 2 === 0,
+        count: index + 1,
+        lastSeenAt: '2026-04-05T00:51:45.711Z'
+      }))
+    );
+    expect(JSON.stringify(result)).not.toContain(privateFailureSentinel);
+  });
 });

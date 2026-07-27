@@ -198,7 +198,7 @@ router.get('/api/diagnostics/session-system', asyncHandler(async (req, res) => {
  * Canonical queue diagnostics endpoint.
  *
  * Purpose:
- * - Return JSON-only queue health facts for audit and worker verification.
+ * - Return a cache-resistant public queue summary with fixed failure categories.
  *
  * Inputs/outputs:
  * - Input: Express request.
@@ -206,8 +206,10 @@ router.get('/api/diagnostics/session-system', asyncHandler(async (req, res) => {
  *
  * Edge case behavior:
  * - Returns explicit null job fields when no queue history is available.
+ * - Never returns persisted worker failure text.
  */
 router.get('/api/diagnostics/queues', asyncHandler(async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   sendValidatedJson(
     res,
     200,
