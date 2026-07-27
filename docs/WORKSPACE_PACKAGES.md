@@ -105,6 +105,9 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
   refusal, usage, and legacy function/custom-tool projection contract. Backend
   and worker adapters keep only their surface-specific IDs, timestamps, models,
   envelopes, telemetry, and orchestration.
+- Its structured JSON helpers require an explicit completed lifecycle before
+  parsing, reject incomplete partial JSON, and surface terminal, pending,
+  unknown, or missing status without accepting provider output as success.
 - The backend keeps server-specific adapter configuration, credential resolution, telemetry, circuit-breaker integration, request staging, and chat-flow orchestration in `src/core/adapters/openai.adapter.ts` and `src/services/openai/`.
 - `workers/` and `arcanos-ai-runtime/` import shared client/retry helpers rather than maintaining separate copies.
 - Retry is not globally app-only: the backend adapter can configure SDK retries, while backend chat flow and other runtimes may also apply an application retry helper. Changes must account for the combined attempt budget.

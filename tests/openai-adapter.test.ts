@@ -56,6 +56,7 @@ describe('openai adapter', () => {
       id: 'resp_1',
       created_at: 1,
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: 'hello',
       output: [],
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -150,6 +151,7 @@ describe('openai adapter', () => {
       id: 'resp_parse_1',
       created_at: 1,
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: '{"ok":true}',
       output: [],
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
@@ -190,6 +192,7 @@ describe('openai adapter', () => {
       id: 'resp_prompt_1',
       created_at: 1,
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: 'hello',
       output: [],
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }

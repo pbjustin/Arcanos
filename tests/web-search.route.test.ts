@@ -99,7 +99,9 @@ describe('web-search route', () => {
   });
 
   it('maps agent failures to a stable error payload', async () => {
-    webSearchAgentMock.mockRejectedValueOnce(new Error('provider unavailable'));
+    const privateErrorSentinel = 'PRIVATE_WEB_SEARCH_PROVIDER_SENTINEL';
+    const rawMessage = `provider unavailable: ${privateErrorSentinel}`;
+    webSearchAgentMock.mockRejectedValueOnce(new Error(rawMessage));
 
     const response = await request(buildApp())
       .post('/api/web/search')
@@ -108,6 +110,9 @@ describe('web-search route', () => {
     expect(response.status).toBe(500);
     expect(response.body.ok).toBe(false);
     expect(response.body.error).toBe('WEB_SEARCH_FAILED');
-    expect(response.body.message).toBe('provider unavailable');
+    expect(response.body.message).toBe('Web search failed.');
+    expect(response.body.timestamp).toEqual(expect.any(String));
+    expect(JSON.stringify(response.body)).not.toContain(rawMessage);
+    expect(JSON.stringify(response.body)).not.toContain(privateErrorSentinel);
   });
 });

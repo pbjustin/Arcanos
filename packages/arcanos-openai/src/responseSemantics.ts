@@ -100,7 +100,7 @@ const SUPPORTED_STATUSES = new Set([
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -259,7 +259,7 @@ function resolveConversionFailure(input: {
   if (input.lifecycle === 'pending') {
     return 'pending_status';
   }
-  if (input.status !== null && !SUPPORTED_STATUSES.has(input.status)) {
+  if (input.status === null || !SUPPORTED_STATUSES.has(input.status)) {
     return 'unsupported_status';
   }
 

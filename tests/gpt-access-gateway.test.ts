@@ -2520,6 +2520,7 @@ describe('/gpt-access gateway', () => {
   it('dry-runs an LLM-sourced natural-language dispatch without executing it', async () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'diagnostics.run',
         payload: {
@@ -2561,6 +2562,7 @@ describe('/gpt-access gateway', () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'workers.recover',
         payload: {},
@@ -2626,6 +2628,7 @@ describe('/gpt-access gateway', () => {
       }
     ]);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'ARCANOS:CORE.system_state',
         payload: {},
@@ -2684,6 +2687,7 @@ describe('/gpt-access gateway', () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'INTENT_CLARIFICATION_REQUIRED',
         payload: {},
@@ -2777,6 +2781,7 @@ describe('/gpt-access gateway', () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock
       .mockResolvedValueOnce({
+        status: 'completed',
         output_text: JSON.stringify({
           action: 'ARCANOS:CORE.query',
           payload: {
@@ -2789,6 +2794,7 @@ describe('/gpt-access gateway', () => {
         })
       })
       .mockResolvedValueOnce({
+        status: 'completed',
         output_text: JSON.stringify({
           action: 'ARCANOS:CORE.query',
           payload: {

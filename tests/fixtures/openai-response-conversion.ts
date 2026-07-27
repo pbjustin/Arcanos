@@ -410,7 +410,12 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       workerId: `worker_legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
       created: OPENAI_CONVERSION_FROZEN_NOW_SECONDS,
       model: OPENAI_CONVERSION_REQUESTED_MODEL,
-      status: null
+      status: null,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
     }
   ),
   {
@@ -432,7 +437,12 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       providerUsage: null,
       incomplete: false,
       truncated: false,
-      contentFiltered: false
+      contentFiltered: false,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
     }
   },
   defineFixture(
@@ -470,6 +480,38 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       }
     }
   ),
+  {
+    name: 'statusless_error_shaped_provider_response',
+    categories: ['error-shaped-provider-response', 'missing-fields', 'fail-closed'],
+    response: {
+      error: {
+        code: 'provider_failure',
+        message: 'provider error details'
+      }
+    },
+    expected: {
+      id: `legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
+      workerId: `worker_legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
+      created: OPENAI_CONVERSION_FROZEN_NOW_SECONDS,
+      model: OPENAI_CONVERSION_REQUESTED_MODEL,
+      content: '',
+      refusal: null,
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: ZERO_USAGE,
+      status: null,
+      incompleteDetails: null,
+      providerUsage: null,
+      incomplete: false,
+      truncated: false,
+      contentFiltered: false,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
+    }
+  },
   defineFixture(
     'queued_provider_response',
     ['non-terminal', 'queued'],
@@ -560,8 +602,9 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
 
 export const invalidOpenAIResponseRoots: readonly {
   name: string;
-  response: null | undefined;
+  response: unknown;
 }[] = [
   { name: 'null_response', response: null },
-  { name: 'undefined_response', response: undefined }
+  { name: 'undefined_response', response: undefined },
+  { name: 'array_response', response: [] }
 ];

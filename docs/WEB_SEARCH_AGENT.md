@@ -42,6 +42,11 @@ This feature adds a grounded web-search pipeline to ARCANOS.
 10. Evaluate the plan with CLEAR 2.0.
 11. Optionally synthesize a cited answer from fetched packets.
 
+Provider and execution failures return `500` with
+`{ "ok": false, "error": "WEB_SEARCH_FAILED", "message": "Web search failed." }`
+plus a timestamp. Provider exception text remains in redacted server-side
+diagnostics and is not returned to the caller.
+
 ## SearchPacket schema
 
 Each source is returned as a versioned packet with:

@@ -279,8 +279,9 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
   const prompt = normalizeDispatchPrompt(body.prompt);
 
   try {
+    // Keep asynchronous branch failures inside this route's stable error boundary.
     if (target === 'dag') {
-      return runDagDispatch(req, res, {
+      return await runDagDispatch(req, res, {
         gptId,
         action,
         prompt,
@@ -292,7 +293,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     }
 
     if (target === 'gpt') {
-      return runGptDispatch(req, res, {
+      return await runGptDispatch(req, res, {
         gptId,
         action,
         prompt,
@@ -309,7 +310,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     }
 
     if (gptId) {
-      return runGptDispatch(req, res, {
+      return await runGptDispatch(req, res, {
         gptId,
         action,
         prompt,
@@ -322,7 +323,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     }
 
     if (isDagDispatchAction(action) || executionMode === 'dag') {
-      return runDagDispatch(req, res, {
+      return await runDagDispatch(req, res, {
         gptId,
         action,
         prompt,
@@ -338,7 +339,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     }
 
     if (executionMode === 'gpt') {
-      return runGptDispatch(req, res, {
+      return await runGptDispatch(req, res, {
         gptId,
         action,
         prompt,
@@ -353,7 +354,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     if (executionMode === 'auto') {
       const decision = classifyDispatchIntent({ prompt, action, payload });
       if (decision.mode === 'dag' && decision.confidence >= DAG_DISPATCH_CONFIDENCE_THRESHOLD) {
-        return runDagDispatch(req, res, {
+        return await runDagDispatch(req, res, {
           gptId,
           action,
           prompt,
@@ -365,7 +366,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
       }
     }
 
-    return runGptDispatch(req, res, {
+    return await runGptDispatch(req, res, {
       gptId,
       action,
       prompt,
@@ -387,7 +388,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     return res.status(500).json({
       ok: false,
       code: 'DISPATCH_FAILED',
-      message,
+      message: 'Dispatch failed.',
       routeFamily: 'dispatch',
       target,
       action,

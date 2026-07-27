@@ -46,6 +46,7 @@ describe('runStructuredReasoning budget handling', () => {
 
   it('uses the available runtime budget when no explicit timeout is provided', async () => {
     const create = jest.fn().mockResolvedValue({
+      status: 'completed',
       output_text: '{"answer":"ok"}',
       output: []
     });
@@ -71,6 +72,7 @@ describe('runStructuredReasoning budget handling', () => {
 
   it('still honors an explicit smaller timeout override', async () => {
     const create = jest.fn().mockResolvedValue({
+      status: 'completed',
       output_text: '{"answer":"ok"}',
       output: []
     });
@@ -96,6 +98,7 @@ describe('runStructuredReasoning budget handling', () => {
 
   it('accepts native Promise responses without SDK parse helpers', async () => {
     const create = jest.fn().mockResolvedValue({
+      status: 'completed',
       output_text: '{"answer":"ok"}',
       output: [
         {
@@ -128,6 +131,7 @@ describe('runStructuredReasoning budget handling', () => {
 
   it('fails clearly when the structured response JSON is malformed', async () => {
     const create = jest.fn().mockResolvedValue({
+      status: 'completed',
       output_text: '{"answer":',
       output: [
         {
@@ -150,6 +154,7 @@ describe('runStructuredReasoning budget handling', () => {
 
   it('treats pre-call abort hooks as OpenAI aborts and skips the SDK request', async () => {
     const create = jest.fn().mockResolvedValue({
+      status: 'completed',
       output_text: '{"answer":"ok"}',
       output: []
     });

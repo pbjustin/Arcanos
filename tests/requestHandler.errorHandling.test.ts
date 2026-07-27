@@ -74,14 +74,21 @@ describe('requestHandler error mapping', () => {
 
   it('returns 408 with provider timeout code for provider timeouts', () => {
     const res = createResponseMock();
+    const secretSentinel = 'PRIVATE_PROVIDER_DIAGNOSTIC_SENTINEL';
+    const rawMessage = `OpenAI Responses request timed out after 2250ms: ${secretSentinel}`;
 
-    handleAIError(new Error('OpenAI Responses request timed out after 2250ms'), 'prompt', 'prompt', res);
+    handleAIError(new Error(rawMessage), 'prompt', 'prompt', res);
 
     expect(res.status).toHaveBeenCalledWith(408);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+    expect(res.json).toHaveBeenCalledWith({
       error: 'AI provider timeout',
+      detail: 'AI provider timeout',
+      details: 'AI provider timeout',
       code: 'PROVIDER_TIMEOUT'
-    }));
+    });
+    const serializedPayload = JSON.stringify(res.json.mock.calls[0]?.[0]);
+    expect(serializedPayload).not.toContain(rawMessage);
+    expect(serializedPayload).not.toContain(secretSentinel);
   });
 
   it('returns 408 with pipeline timeout code for pipeline timeouts', () => {
@@ -115,13 +122,43 @@ describe('requestHandler error mapping', () => {
 
   it('returns 500 for non-budget errors when mock fallback is disabled', () => {
     const res = createResponseMock();
+    const secretSentinel = 'PRIVATE_UPSTREAM_DIAGNOSTIC_SENTINEL';
+    const rawMessage = `upstream failure at internal database host: ${secretSentinel}`;
 
-    handleAIError(new Error('upstream failure'), 'prompt', 'ask', res);
+    handleAIError(new Error(rawMessage), 'prompt', 'ask', res);
 
     expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+    expect(res.json).toHaveBeenCalledWith({
       error: 'AI service failure',
+      detail: 'AI service failure',
+      details: 'AI service failure',
       code: 'AI_FAILURE'
-    }));
+    });
+    const serializedPayload = JSON.stringify(res.json.mock.calls[0]?.[0]);
+    expect(serializedPayload).not.toContain(rawMessage);
+    expect(serializedPayload).not.toContain(secretSentinel);
+  });
+
+  it('does not expose the processing exception in mock fallback responses', () => {
+    process.env.ALLOW_MOCK_FALLBACK = 'true';
+    const res = createResponseMock();
+    const secretSentinel = 'PRIVATE_MOCK_FALLBACK_DIAGNOSTIC_SENTINEL';
+    const rawMessage = `mock fallback failure: ${secretSentinel}`;
+
+    handleAIError(new Error(rawMessage), 'prompt', 'ask', res);
+
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      result: 'mock',
+      meta: {
+        id: 'mock',
+        created: expect.any(Number)
+      },
+      error: 'AI service failure'
+    });
+    expect(generateMockResponseMock).toHaveBeenCalledWith('prompt', 'ask');
+    const serializedPayload = JSON.stringify(res.json.mock.calls[0]?.[0]);
+    expect(serializedPayload).not.toContain(rawMessage);
+    expect(serializedPayload).not.toContain(secretSentinel);
   });
 });
