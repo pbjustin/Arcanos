@@ -1,8 +1,11 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { applySecurityCompliance } from "@services/securityCompliance.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+const GIT_GREP_TIMEOUT_MS = 10_000;
+const GIT_GREP_MAX_BUFFER_BYTES = 1024 * 1024;
+const MAX_REPO_CONTEXT_KEYWORD_CHARS = 200;
 
 export interface RepoContextOptions {
   keywords: string[];
@@ -29,20 +32,45 @@ export async function gatherRepoContext(opts: RepoContextOptions): Promise<{ sum
     maxTotalChars = 8000,
   } = opts;
 
-  const kw = Array.from(new Set((keywords || []).map(k => k.trim()).filter(Boolean))).slice(0, 12);
+  const kw = Array.from(new Set(
+    (keywords || [])
+      .map(keyword => keyword.trim())
+      .filter(keyword =>
+        keyword.length > 0 &&
+        keyword.length <= MAX_REPO_CONTEXT_KEYWORD_CHARS &&
+        !/[\0\r\n]/u.test(keyword)
+      )
+  )).slice(0, 12);
   if (kw.length === 0) return { summary: "No repo context requested.", snippets: [] };
 
-  // Build a conservative grep query: multiple -e terms (OR).
-  const args = kw.map(k => `-e ${shellQuote(k)}`).join(" ");
-  const cmd = `git grep -n ${args} -- ':!dist' ':!node_modules' ':!workers/dist'`;
+  // Keep every model-influenced keyword in a distinct process argument.
+  const args = [
+    "grep",
+    "-n",
+    "--fixed-strings",
+    ...kw.flatMap(keyword => ["-e", keyword]),
+    "--",
+    ":!dist",
+    ":!node_modules",
+    ":!workers/dist",
+  ];
 
   let stdout = "";
   try {
-    const res = await execAsync(cmd, { cwd: workingDir });
+    const res = await execFileAsync("git", args, {
+      cwd: workingDir,
+      windowsHide: true,
+      timeout: GIT_GREP_TIMEOUT_MS,
+      maxBuffer: GIT_GREP_MAX_BUFFER_BYTES,
+      encoding: "utf8",
+    });
     stdout = res.stdout || "";
-  } catch (e: any) {
+  } catch (error: unknown) {
     // git grep exits 1 when no matches; treat as empty.
-    stdout = e?.stdout || "";
+    const commandError = error as { code?: unknown; stdout?: unknown };
+    stdout = commandError.code === 1 && typeof commandError.stdout === "string"
+      ? commandError.stdout
+      : "";
   }
 
   const lines = stdout.split("\n").filter(Boolean).slice(0, maxMatches);
@@ -94,9 +122,4 @@ export async function gatherRepoContext(opts: RepoContextOptions): Promise<{ sum
     summary: `Repo context grounded via git grep (${lines.length} matches, ${snippets.length} files).`,
     snippets: sanitizedSnippets,
   };
-}
-
-function shellQuote(s: string): string {
-  // safest minimal single-quote wrapper (bash)
-  return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }

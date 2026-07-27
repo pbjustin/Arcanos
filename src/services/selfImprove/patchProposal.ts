@@ -1,7 +1,8 @@
 import { z } from "zod";
 import fs from "fs/promises";
+import os from "os";
 import path from "path";
-import { exec as execCallback } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { callOpenAI } from "@services/openai/chatFlow/index.js";
 import { getDefaultModel } from "@services/openai/credentialProvider.js";
@@ -10,7 +11,17 @@ import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { applySecurityCompliance } from "@services/securityCompliance.js";
 import { renderPromptGuidanceSections } from "@shared/promptGuidance.js";
 
-const execAsync = promisify(execCallback);
+const execFileAsync = promisify(execFile);
+const GIT_APPLY_TIMEOUT_MS = 15_000;
+const GIT_APPLY_MAX_BUFFER_BYTES = 1024 * 1024;
+const MAX_MODEL_OUTPUT_BYTES = 512 * 1024;
+const MAX_PATCH_DIFF_BYTES = 256 * 1024;
+const MAX_PATCH_PATH_CHARS = 1024;
+const MAX_PATCH_FILES = 80;
+const MAX_PATCH_SECTIONS = 80;
+const MAX_PATCH_HUNKS = 256;
+const WINDOWS_DEVICE_NAME_PATTERN =
+  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 
 export const patchProposalSchema = z.object({
   kind: z.literal("self_improve_patch"),
@@ -27,12 +38,37 @@ export type PatchProposal = z.infer<typeof patchProposalSchema>;
 
 interface DiffValidationResult {
   valid: boolean;
+  diagnosticCode?: PatchProposalDiagnosticCode;
   reason?: string;
 }
 
-interface GeneratedDiffResult {
-  diff: string;
-  fallbackTargetPath: string;
+interface DiffPathValidationResult extends DiffValidationResult {
+  files?: string[];
+}
+
+type PatchProposalDiagnosticCode =
+  | "MODEL_OUTPUT_TOO_LARGE"
+  | "MODEL_OUTPUT_INVALID_JSON"
+  | "PROVIDER_REQUEST_FAILED"
+  | "PROPOSAL_SCHEMA_INVALID"
+  | "DIFF_TOO_LARGE"
+  | "DIFF_SECTION_LIMIT_EXCEEDED"
+  | "DIFF_HUNK_LIMIT_EXCEEDED"
+  | "DIFF_SHAPE_INVALID"
+  | "DIFF_PATH_INVALID"
+  | "DIFF_PATH_PROHIBITED"
+  | "DIFF_PATH_UNSAFE"
+  | "DIFF_GIT_APPLY_REJECTED"
+  | "PATCH_PROPOSAL_ATTEMPT_FAILED";
+
+class PatchProposalValidationError extends Error {
+  constructor(
+    readonly diagnosticCode: PatchProposalDiagnosticCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "PatchProposalValidationError";
+  }
 }
 
 /**
@@ -42,6 +78,12 @@ interface GeneratedDiffResult {
  * Edge cases: handles fenced JSON and extra prose before/after object payloads.
  */
 function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
+  if (Buffer.byteLength(rawOutput || "", "utf8") > MAX_MODEL_OUTPUT_BYTES) {
+    throw new PatchProposalValidationError(
+      "MODEL_OUTPUT_TOO_LARGE",
+      "Patch proposal model output exceeds the byte limit."
+    );
+  }
   const raw = (rawOutput || "").trim();
   //audit Assumption: some model runs return clean JSON; risk: parse failure on decorated output; invariant: parser should accept strict JSON first; handling: direct JSON.parse attempt.
   try {
@@ -74,10 +116,12 @@ function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
   }
 
   //audit Assumption: model sometimes appends trailing non-JSON tokens; risk: O(n^2) parse attempts on very long output; invariant: bounded token limits keep this tractable; handling: progressively trim trailing chars until parse succeeds.
-  for (let end = raw.length - 1; end > 0; end--) {
+  let trailingObjectAttempts = 0;
+  for (let end = raw.length - 1; end > 0 && trailingObjectAttempts < 32; end--) {
     if (raw[end] !== "}") continue;
     const start = raw.indexOf("{");
     if (start < 0 || end <= start) continue;
+    trailingObjectAttempts += 1;
     const candidate = raw.slice(start, end + 1);
     try {
       return JSON.parse(candidate);
@@ -86,7 +130,46 @@ function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
     }
   }
 
-  throw new Error("Patch proposal is not valid JSON.");
+  throw new PatchProposalValidationError(
+    "MODEL_OUTPUT_INVALID_JSON",
+    "Patch proposal is not valid JSON."
+  );
+}
+
+function validateDiffResourceLimits(diff: string): DiffValidationResult {
+  if (Buffer.byteLength(diff || "", "utf8") > MAX_PATCH_DIFF_BYTES) {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_TOO_LARGE",
+      reason: "Unified diff exceeds the byte limit.",
+    };
+  }
+
+  let sectionCount = 0;
+  let hunkCount = 0;
+  for (const line of (diff || "").replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      sectionCount += 1;
+      if (sectionCount > MAX_PATCH_SECTIONS) {
+        return {
+          valid: false,
+          diagnosticCode: "DIFF_SECTION_LIMIT_EXCEEDED",
+          reason: "Unified diff exceeds the file-section limit.",
+        };
+      }
+    }
+    if (line.startsWith("@@ ")) {
+      hunkCount += 1;
+      if (hunkCount > MAX_PATCH_HUNKS) {
+        return {
+          valid: false,
+          diagnosticCode: "DIFF_HUNK_LIMIT_EXCEEDED",
+          reason: "Unified diff exceeds the hunk limit.",
+        };
+      }
+    }
+  }
+  return { valid: true };
 }
 
 /**
@@ -96,10 +179,19 @@ function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
  * Edge cases: rejects placeholder lines (e.g. "..."), missing headers, and missing hunks.
  */
 function validateUnifiedDiffShape(diff: string): DiffValidationResult {
+  const resourceValidation = validateDiffResourceLimits(diff);
+  if (!resourceValidation.valid) {
+    return resourceValidation;
+  }
+
   const normalized = (diff || "").replace(/\r\n/g, "\n");
   //audit Assumption: a valid proposal must include git diff headers; risk: malformed patch reaches actuator; invariant: diff starts with at least one file header; handling: fail-fast before git apply check.
   if (!/^diff --git a\/.+ b\/.+/m.test(normalized)) {
-    return { valid: false, reason: "Missing required 'diff --git a/... b/...' header." };
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SHAPE_INVALID",
+      reason: "Missing required 'diff --git a/... b/...' header.",
+    };
   }
 
   //audit Assumption: model may emit placeholder scaffolding tokens; risk: non-applicable patches; invariant: diff must not contain placeholder-only lines; handling: reject and request regeneration.
@@ -108,18 +200,402 @@ function validateUnifiedDiffShape(diff: string): DiffValidationResult {
     return trimmed === "..." || trimmed === "<existing code>" || trimmed === "[existing code]";
   });
   if (hasPlaceholders) {
-    return { valid: false, reason: "Diff contains placeholder lines (for example '...')." };
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SHAPE_INVALID",
+      reason: "Diff contains placeholder lines (for example '...').",
+    };
   }
 
   //audit Assumption: unified diff requires both old/new file markers and at least one hunk; risk: git apply corruption errors; invariant: each proposal includes hunk metadata; handling: reject malformed shape.
-  if (!/^--- a\/.+$/m.test(normalized) || !/^\+\+\+ b\/.+$/m.test(normalized)) {
-    return { valid: false, reason: "Missing '--- a/...' or '+++ b/...' file markers." };
+  if (
+    !/^--- (?:a\/.+|\/dev\/null)$/m.test(normalized) ||
+    !/^\+\+\+ (?:b\/.+|\/dev\/null)$/m.test(normalized)
+  ) {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SHAPE_INVALID",
+      reason: "Missing valid old or new file markers.",
+    };
   }
   if (!/^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m.test(normalized)) {
-    return { valid: false, reason: "Missing valid unified hunk header (@@ -x,y +x,y @@)." };
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SHAPE_INVALID",
+      reason: "Missing valid unified hunk header (@@ -x,y +x,y @@).",
+    };
   }
 
   return { valid: true };
+}
+
+function normalizeRepositoryPath(rawPath: string): string | null {
+  if (
+    rawPath.length === 0 ||
+    rawPath.length > MAX_PATCH_PATH_CHARS ||
+    rawPath.includes("\0") ||
+    rawPath.includes("\r") ||
+    rawPath.includes("\n")
+  ) {
+    return null;
+  }
+
+  const slashPath = rawPath.replace(/\\/g, "/");
+  if (
+    path.posix.isAbsolute(slashPath) ||
+    path.win32.isAbsolute(rawPath) ||
+    /^[A-Za-z]:/u.test(rawPath)
+  ) {
+    return null;
+  }
+
+  const segments = slashPath.split("/");
+  if (
+    segments.some(segment =>
+      segment.length === 0 ||
+      segment === "." ||
+      segment === ".." ||
+      segment.includes(":") ||
+      /[ .]$/u.test(segment) ||
+      WINDOWS_DEVICE_NAME_PATTERN.test(segment)
+    )
+  ) {
+    return null;
+  }
+
+  const normalized = path.posix.normalize(slashPath);
+  return normalized === slashPath ? normalized : null;
+}
+
+function escapeRegularExpressionCharacter(character: string): string {
+  return /[\\^$.*+?()[\]{}|]/u.test(character) ? `\\${character}` : character;
+}
+
+function prohibitedPathPatternToRegExp(rawPattern: string): RegExp | null {
+  const normalizedPattern = rawPattern
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\//u, "");
+  if (normalizedPattern.length === 0 || normalizedPattern.includes("\0")) {
+    return null;
+  }
+
+  let source = "";
+  for (let index = 0; index < normalizedPattern.length; index += 1) {
+    const character = normalizedPattern[index]!;
+    if (character === "*") {
+      if (normalizedPattern[index + 1] === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else if (character === "?") {
+      source += "[^/]";
+    } else {
+      source += escapeRegularExpressionCharacter(character);
+    }
+  }
+
+  if (normalizedPattern.endsWith("/")) {
+    source += ".*";
+  }
+  return new RegExp(`^${source}$`, "iu");
+}
+
+function isProhibitedPatchPath(
+  repositoryPath: string,
+  prohibitedPaths: string[]
+): boolean {
+  return prohibitedPaths.some(pattern =>
+    prohibitedPathPatternToRegExp(pattern)?.test(repositoryPath) === true
+  );
+}
+
+function isContainedPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative.length > 0
+    && relative !== ".."
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative);
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error !== null
+    && typeof error === "object"
+    && (error as { code?: unknown }).code === "ENOENT";
+}
+
+async function validateRepositoryPathAccess(
+  canonicalRepoRoot: string,
+  repositoryPath: string
+): Promise<DiffValidationResult> {
+  const candidate = path.resolve(canonicalRepoRoot, ...repositoryPath.split("/"));
+  if (!isContainedPath(canonicalRepoRoot, candidate)) {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_PATH_UNSAFE",
+      reason: "Patch path escapes the repository root.",
+    };
+  }
+
+  let cursor = canonicalRepoRoot;
+  const segments = repositoryPath.split("/");
+  for (const [index, segment] of segments.entries()) {
+    cursor = path.join(cursor, segment);
+
+    let stats;
+    try {
+      stats = await fs.lstat(cursor);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return { valid: true };
+      }
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path could not be inspected.",
+      };
+    }
+
+    if (stats.isSymbolicLink()) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path contains a symbolic link.",
+      };
+    }
+    if (index < segments.length - 1 && !stats.isDirectory()) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path has a non-directory parent.",
+      };
+    }
+    if (index === segments.length - 1 && !stats.isFile()) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path does not reference a regular file.",
+      };
+    }
+
+    let canonicalCursor: string;
+    try {
+      canonicalCursor = await fs.realpath(cursor);
+    } catch {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path could not be resolved.",
+      };
+    }
+    if (!isContainedPath(canonicalRepoRoot, canonicalCursor)) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_UNSAFE",
+        reason: "Patch path resolves outside the repository root.",
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+function extractDiffSectionPaths(diff: string): DiffPathValidationResult {
+  const resourceValidation = validateDiffResourceLimits(diff);
+  if (!resourceValidation.valid) {
+    return resourceValidation;
+  }
+
+  const normalized = (diff || "").replace(/\r\n/g, "\n");
+  const headerMatches = Array.from(normalized.matchAll(/^diff --git /gmu));
+  if (headerMatches.length === 0 || headerMatches[0]?.index !== 0) {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SHAPE_INVALID",
+      reason: "Diff must begin with a git file header.",
+    };
+  }
+
+  const files = new Set<string>();
+  for (const [index, headerMatch] of headerMatches.entries()) {
+    const sectionStart = headerMatch.index ?? 0;
+    const sectionEnd = headerMatches[index + 1]?.index ?? normalized.length;
+    const sectionLines = normalized.slice(sectionStart, sectionEnd).split("\n");
+    const firstHunkIndex = sectionLines.findIndex(line => line.startsWith("@@ "));
+    if (firstHunkIndex < 0) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_SHAPE_INVALID",
+        reason: "Each diff section must contain a unified hunk.",
+      };
+    }
+    const metadataLines = sectionLines.slice(0, firstHunkIndex);
+    const oldMarkers = metadataLines.filter(line => line.startsWith("--- "));
+    const newMarkers = metadataLines.filter(line => line.startsWith("+++ "));
+    if (oldMarkers.length !== 1 || newMarkers.length !== 1) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_SHAPE_INVALID",
+        reason: "Each diff section must contain one old and one new file marker.",
+      };
+    }
+
+    const oldMarker = oldMarkers[0]!;
+    const newMarker = newMarkers[0]!;
+    const oldRawPath = oldMarker === "--- /dev/null"
+      ? null
+      : oldMarker.startsWith("--- a/")
+        ? oldMarker.slice("--- a/".length)
+        : undefined;
+    const newRawPath = newMarker === "+++ /dev/null"
+      ? null
+      : newMarker.startsWith("+++ b/")
+        ? newMarker.slice("+++ b/".length)
+        : undefined;
+    if (
+      oldRawPath === undefined ||
+      newRawPath === undefined ||
+      (oldRawPath === null && newRawPath === null)
+    ) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_SHAPE_INVALID",
+        reason: "Diff contains invalid old or new file markers.",
+      };
+    }
+
+    const headerOldRawPath = oldRawPath ?? newRawPath!;
+    const headerNewRawPath = newRawPath ?? oldRawPath;
+    if (
+      sectionLines[0] !==
+      `diff --git a/${headerOldRawPath} b/${headerNewRawPath}`
+    ) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_SHAPE_INVALID",
+        reason: "Diff file headers and file markers do not agree.",
+      };
+    }
+
+    const oldPath = oldRawPath === null
+      ? null
+      : normalizeRepositoryPath(oldRawPath);
+    const newPath = newRawPath === null
+      ? null
+      : normalizeRepositoryPath(newRawPath);
+    if (
+      (oldRawPath !== null && !oldPath) ||
+      (newRawPath !== null && !newPath)
+    ) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_INVALID",
+        reason: "Diff contains an invalid or non-normalized repository path.",
+      };
+    }
+
+    const renameFrom = metadataLines.filter(line => line.startsWith("rename from "));
+    const renameTo = metadataLines.filter(line => line.startsWith("rename to "));
+    const copyFrom = metadataLines.filter(line => line.startsWith("copy from "));
+    const copyTo = metadataLines.filter(line => line.startsWith("copy to "));
+    const hasRenameMetadata = renameFrom.length > 0 || renameTo.length > 0;
+    const hasCopyMetadata = copyFrom.length > 0 || copyTo.length > 0;
+    if (
+      (hasRenameMetadata && hasCopyMetadata) ||
+      renameFrom.length > 1 ||
+      renameTo.length > 1 ||
+      copyFrom.length > 1 ||
+      copyTo.length > 1 ||
+      (hasRenameMetadata && (renameFrom.length !== 1 || renameTo.length !== 1)) ||
+      (hasCopyMetadata && (copyFrom.length !== 1 || copyTo.length !== 1))
+    ) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_SHAPE_INVALID",
+        reason: "Diff contains inconsistent rename or copy metadata.",
+      };
+    }
+
+    if (hasRenameMetadata || hasCopyMetadata) {
+      if (!oldPath || !newPath) {
+        return {
+          valid: false,
+          diagnosticCode: "DIFF_SHAPE_INVALID",
+          reason: "New and deleted file sections cannot contain rename or copy metadata.",
+        };
+      }
+      const fromRawPath = hasRenameMetadata
+        ? renameFrom[0]!.slice("rename from ".length)
+        : copyFrom[0]!.slice("copy from ".length);
+      const toRawPath = hasRenameMetadata
+        ? renameTo[0]!.slice("rename to ".length)
+        : copyTo[0]!.slice("copy to ".length);
+      const fromPath = normalizeRepositoryPath(fromRawPath);
+      const toPath = normalizeRepositoryPath(toRawPath);
+      if (!fromPath || !toPath || fromPath !== oldPath || toPath !== newPath) {
+        return {
+          valid: false,
+          diagnosticCode: "DIFF_PATH_INVALID",
+          reason: "Diff rename or copy paths do not match validated file markers.",
+        };
+      }
+    }
+
+    if (oldPath) files.add(oldPath);
+    if (newPath) files.add(newPath);
+  }
+
+  if (files.size > MAX_PATCH_FILES) {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_SECTION_LIMIT_EXCEEDED",
+      reason: "Diff exceeds the validated file limit.",
+    };
+  }
+  return { valid: true, files: Array.from(files) };
+}
+
+async function validateDiffPaths(
+  diff: string,
+  prohibitedPaths: string[],
+  repoRoot: string = process.cwd()
+): Promise<DiffPathValidationResult> {
+  const extracted = extractDiffSectionPaths(diff);
+  if (!extracted.valid || !extracted.files) {
+    return extracted;
+  }
+
+  let canonicalRepoRoot: string;
+  try {
+    canonicalRepoRoot = await fs.realpath(repoRoot);
+  } catch {
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_PATH_UNSAFE",
+      reason: "Repository root could not be resolved.",
+    };
+  }
+
+  for (const repositoryPath of extracted.files) {
+    if (isProhibitedPatchPath(repositoryPath, prohibitedPaths)) {
+      return {
+        valid: false,
+        diagnosticCode: "DIFF_PATH_PROHIBITED",
+        reason: "Patch path is prohibited by the loop contract.",
+      };
+    }
+    const accessValidation = await validateRepositoryPathAccess(
+      canonicalRepoRoot,
+      repositoryPath
+    );
+    if (!accessValidation.valid) {
+      return accessValidation;
+    }
+  }
+
+  return extracted;
 }
 
 /**
@@ -129,75 +605,40 @@ function validateUnifiedDiffShape(diff: string): DiffValidationResult {
  * Edge cases: cleans up temp files even when git apply fails.
  */
 async function validateDiffWithGitApplyCheck(diff: string, repoRoot: string = process.cwd()): Promise<DiffValidationResult> {
-  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const tempFileName = `.arcanos_patch_check_${stamp}.diff`;
-  const tempFilePath = path.join(repoRoot, tempFileName);
+  const resourceValidation = validateDiffResourceLimits(diff);
+  if (!resourceValidation.valid) {
+    return resourceValidation;
+  }
+
+  let tempDirectory: string | null = null;
 
   try {
+    tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "arcanos-patch-check-"));
+    const tempFilePath = path.join(tempDirectory, "proposal.diff");
     await fs.writeFile(tempFilePath, diff.endsWith("\n") ? diff : `${diff}\n`, "utf8");
-    await execAsync(`git apply --check "${tempFileName}"`, { cwd: repoRoot });
+    await execFileAsync("git", ["apply", "--check", "--", tempFilePath], {
+      cwd: repoRoot,
+      windowsHide: true,
+      timeout: GIT_APPLY_TIMEOUT_MS,
+      maxBuffer: GIT_APPLY_MAX_BUFFER_BYTES,
+      encoding: "utf8",
+    });
     return { valid: true };
-  } catch (error: unknown) {
-    return { valid: false, reason: `git apply --check failed: ${String((error as { stderr?: string }).stderr || (error as { message?: string }).message || error).trim()}` };
-  } finally {
-    try {
-      await fs.unlink(tempFilePath);
-    } catch {
-      //audit Assumption: temp cleanup can fail on transient file locking; risk: stale temp files accumulate; invariant: cleanup failures must not fail main flow; handling: ignore cleanup failure.
-    }
-  }
-}
-
-/**
- * Build a deterministic fallback diff when model-generated diffs repeatedly fail.
- * Inputs: optional target component path and last failure reason for traceability.
- * Outputs: unified diff and target path when fallback can be generated.
- * Edge cases: returns null if no safe fallback target exists.
- */
-async function buildDeterministicFallbackDiff(component: string | undefined, lastFailureReason: string): Promise<GeneratedDiffResult | null> {
-  const repoRoot = process.cwd();
-  const candidate = component || "src/services/selfImprove/controller.ts";
-  const normalized = candidate.replace(/\\/g, "/").replace(/^\.\//, "");
-  const absolute = path.resolve(repoRoot, normalized);
-
-  //audit Assumption: fallback must only touch repository-local text files; risk: invalid or unsafe file mutation target; invariant: resolved path remains inside repo and file exists; handling: reject unsupported targets.
-  if (!absolute.startsWith(repoRoot) || !/\.(ts|js|mjs|cjs)$/i.test(normalized)) {
-    return null;
-  }
-
-  try {
-    await fs.access(absolute);
   } catch {
-    return null;
-  }
-
-  const original = await fs.readFile(absolute, "utf8");
-  const eol = original.includes("\r\n") ? "\r\n" : "\n";
-  const marker = `//audit Assumption: deterministic fallback patch is comment-only; risk: model diff generation failed (${lastFailureReason.slice(0, 120)}); invariant: runtime behavior remains unchanged; handling: append observability breadcrumb.`;
-
-  //audit Assumption: duplicate fallback marker reduces patch utility on retries; risk: generating empty or redundant diffs; invariant: fallback must create a net new line; handling: add a retry-safe suffix when marker already exists.
-  const markerLine = original.includes(marker)
-    ? `${marker} [retry-${Date.now()}]`
-    : marker;
-  const updated = original.endsWith("\n") || original.endsWith("\r\n")
-    ? `${original}${markerLine}${eol}`
-    : `${original}${eol}${markerLine}${eol}`;
-
-  let diffOutput = "";
-  try {
-    await fs.writeFile(absolute, updated, "utf8");
-    const { stdout } = await execAsync(`git -c core.autocrlf=false diff -- "${normalized}"`, { cwd: repoRoot });
-    diffOutput = stdout || "";
+    return {
+      valid: false,
+      diagnosticCode: "DIFF_GIT_APPLY_REJECTED",
+      reason: "git apply rejected the proposed diff.",
+    };
   } finally {
-    try {
-      await fs.writeFile(absolute, original, "utf8");
-    } catch {
-      //audit Assumption: restore can fail on transient locks; risk: dirty working tree after fallback synthesis; invariant: best-effort restoration should never hide failure; handling: continue and let downstream cleanliness checks fail loudly.
+    if (tempDirectory) {
+      try {
+        await fs.rm(tempDirectory, { recursive: true, force: true });
+      } catch {
+        //audit Assumption: temp cleanup can fail on transient file locking; risk: stale temp files accumulate; invariant: cleanup failures must not fail main flow; handling: ignore cleanup failure.
+      }
     }
   }
-
-  if (!diffOutput.trim()) return null;
-  return { diff: diffOutput, fallbackTargetPath: normalized };
 }
 
 export function extractFilesFromUnifiedDiff(diff: string): string[] {
@@ -258,7 +699,7 @@ function buildPatchProposalPrompt(args: {
       "NEVER output placeholder lines such as `...`, `<existing code>`, or `[existing code]`.",
       "Only modify files that are necessary.",
       `DO NOT touch prohibited paths/patterns: ${args.prohibitedPaths.join(", ") || "(none)"}`,
-      "If you cannot safely propose a patch, still output JSON but use risk='high' and an empty diff is NOT allowed; instead propose a minimal safe no-op change that improves observability."
+      "Do not invent a no-op, breadcrumb, or unrelated observability change; every diff must directly support the diagnosed goal."
     ],
     "Tool rules": [
       "Do not claim a command was run; only list commands that should validate the patch.",
@@ -298,8 +739,17 @@ function buildPatchProposalPrompt(args: {
 
 export const patchProposalTestUtils = {
   parseJsonObjectFromModelOutput,
+  validateDiffResourceLimits,
   validateUnifiedDiffShape,
+  validateDiffPaths,
+  validateDiffWithGitApplyCheck,
   buildPatchProposalPrompt,
+  limits: {
+    maxModelOutputBytes: MAX_MODEL_OUTPUT_BYTES,
+    maxPatchDiffBytes: MAX_PATCH_DIFF_BYTES,
+    maxPatchSections: MAX_PATCH_SECTIONS,
+    maxPatchHunks: MAX_PATCH_HUNKS,
+  },
 };
 
 export async function generatePatchProposal(args: {
@@ -313,14 +763,16 @@ export async function generatePatchProposal(args: {
   const model = getEnv("SELF_IMPROVE_PATCH_MODEL") || getDefaultModel();
   const tokenLimit = getEnvNumber("SELF_IMPROVE_PATCH_TOKEN_LIMIT", 900);
   const maxAttempts = Math.max(1, Math.min(5, getEnvNumber("SELF_IMPROVE_PATCH_ATTEMPTS", 3)));
-  let lastFailureReason = "Unknown patch proposal failure.";
+  let lastDiagnosticCode: PatchProposalDiagnosticCode =
+    "PATCH_PROPOSAL_ATTEMPT_FAILED";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const prompt = buildPatchProposalPrompt({
       ...args,
-      retryFeedback: attempt > 1 ? lastFailureReason : undefined,
+      retryFeedback: attempt > 1 ? lastDiagnosticCode : undefined,
     });
 
+    let responseOutput: string;
     try {
       const resp = await callOpenAI(model, prompt, tokenLimit, true, {
         systemPrompt: renderPromptGuidanceSections({
@@ -351,58 +803,60 @@ export async function generatePatchProposal(args: {
           attempt,
         },
       });
+      responseOutput = resp.output || "";
+    } catch {
+      // Never retain or replay provider error text; it may contain request or transport details.
+      lastDiagnosticCode = "PROVIDER_REQUEST_FAILED";
+      continue;
+    }
 
-      const parsed = parseJsonObjectFromModelOutput(resp.output || "");
-      const proposal = patchProposalSchema.parse(parsed);
-
-      // If files list wasn't accurate, derive from diff and merge.
-      const fromDiff = extractFilesFromUnifiedDiff(proposal.diff);
-      proposal.files = Array.from(new Set([...(proposal.files || []), ...fromDiff]));
+    try {
+      const parsed = parseJsonObjectFromModelOutput(responseOutput);
+      const schemaResult = patchProposalSchema.safeParse(parsed);
+      if (!schemaResult.success) {
+        lastDiagnosticCode = "PROPOSAL_SCHEMA_INVALID";
+        continue;
+      }
+      const proposal = schemaResult.data;
 
       const shapeValidation = validateUnifiedDiffShape(proposal.diff);
       //audit Assumption: malformed diff shape cannot be repaired downstream; risk: actuator failures or unsafe PR automation; invariant: only structurally valid patches proceed; handling: regenerate with explicit feedback.
       if (!shapeValidation.valid) {
-        lastFailureReason = shapeValidation.reason || "Unified diff shape validation failed.";
+        lastDiagnosticCode =
+          shapeValidation.diagnosticCode ?? "DIFF_SHAPE_INVALID";
         continue;
       }
+
+      const pathValidation = await validateDiffPaths(
+        proposal.diff,
+        args.prohibitedPaths
+      );
+      //audit Assumption: model-authored paths are untrusted even when git accepts the patch; risk: traversal, symlink escape, or prohibited-surface modification; invariant: every normalized diff path stays within the canonical repository and loop contract; handling: reject and regenerate before invoking git.
+      if (!pathValidation.valid || !pathValidation.files) {
+        lastDiagnosticCode =
+          pathValidation.diagnosticCode ?? "DIFF_PATH_INVALID";
+        continue;
+      }
+      proposal.files = pathValidation.files;
 
       const applyValidation = await validateDiffWithGitApplyCheck(proposal.diff);
       //audit Assumption: git apply --check is the most reliable compatibility gate before PR creation; risk: repository-context mismatch; invariant: only check-clean patches can proceed; handling: regenerate with specific apply error context.
       if (!applyValidation.valid) {
-        lastFailureReason = applyValidation.reason || "git apply --check validation failed.";
+        lastDiagnosticCode =
+          applyValidation.diagnosticCode ?? "DIFF_GIT_APPLY_REJECTED";
         continue;
       }
 
       return proposal;
     } catch (error: unknown) {
       //audit Assumption: model output can intermittently violate schema/JSON contract; risk: premature cycle failure; invariant: retries should preserve deterministic constraints; handling: retry until max attempts then raise structured error.
-      lastFailureReason = error instanceof Error ? error.message : String(error);
+      lastDiagnosticCode = error instanceof PatchProposalValidationError
+        ? error.diagnosticCode
+        : "PATCH_PROPOSAL_ATTEMPT_FAILED";
     }
   }
 
-  //audit Assumption: model retries can still fail under ambiguous repo context; risk: blocking actuator test workflows; invariant: fallback stays non-functional and traceable; handling: deterministic comment-only fallback patch.
-  const fallback = await buildDeterministicFallbackDiff(args.component, lastFailureReason);
-  if (fallback) {
-    const fallbackShape = validateUnifiedDiffShape(fallback.diff);
-    const fallbackApply = fallbackShape.valid
-      ? await validateDiffWithGitApplyCheck(fallback.diff)
-      : fallbackShape;
-    if (fallbackApply.valid) {
-      return {
-        kind: "self_improve_patch",
-        goal: "Preserve self-improve actuator continuity with a deterministic, behavior-neutral fallback patch.",
-        summary: "Adds a non-functional //audit observability comment after model-generated diffs failed validation.",
-        risk: "low",
-        files: [fallback.fallbackTargetPath],
-        diff: fallback.diff,
-        commands: ["npm run type-check"],
-        successMetrics: [
-          "Fallback patch applies cleanly with git apply --check",
-          "Type-check passes",
-        ],
-      };
-    }
-  }
-
-  throw new Error(`Unable to generate a valid self-improve patch proposal after ${maxAttempts} attempts. Last failure: ${lastFailureReason}`);
+  throw new Error(
+    `Unable to generate a valid self-improve patch proposal after ${maxAttempts} attempts. Last diagnostic: ${lastDiagnosticCode}`
+  );
 }
