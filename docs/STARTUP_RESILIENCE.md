@@ -29,12 +29,21 @@ dependency state and are retried in-process.
 | `DEGRADED` | Bound | Unavailable | `200` | `503` |
 | `READY` | Bound | Connected and verified | `200` | `200` |
 
-Liveness responses contain only sanitized lifecycle metadata. Readiness reads
-the process-local lifecycle snapshot; it does not create a probe client or make
-a Redis command. Redis failures use stable codes such as
-`REDIS_INITIALIZING`, `REDIS_CONNECTION_REFUSED`, `REDIS_CONNECT_TIMEOUT`,
-`REDIS_AUTH_FAILED`, and `REDIS_DEPENDENCY_UNAVAILABLE`. Connection strings and
-raw provider errors are never part of the public lifecycle projection.
+Liveness responses contain only sanitized lifecycle metadata. Root-backend
+readiness aggregates OpenAI, database, process-local Redis lifecycle, and
+startup checks; it does not create a Redis probe client or issue a Redis
+command. Both `GET` and `HEAD /readyz` are credential-free and return
+`Cache-Control: no-store` on `200` and `503`; `HEAD` has no response body.
+
+The `GET /readyz` check projection allowlists `name`, `healthy`, `duration`,
+and fixed public `code`/`error` values for failures. Only the Redis check may
+include metadata, limited to `recoveryCount`, `readyGeneration`,
+`circuitEnabled`, and `circuitState` for the bounded recovery verifier. Redis
+readiness failures use `REDIS_INITIALIZING` or
+`REDIS_DEPENDENCY_UNAVAILABLE`; other dependency failures likewise use stable
+classification codes. Connection strings, raw database/provider exceptions,
+OpenAI configuration, and arbitrary checker metadata are never part of this
+public projection.
 
 ## Dependency and Redis lifecycles
 

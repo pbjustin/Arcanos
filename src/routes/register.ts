@@ -36,9 +36,14 @@ import selfHealRouter from './self-heal.js';
 import workerHelperRouter from './worker-helper.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from '@platform/logging/structuredLogging.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { resolveConfiguredPurposeBoundCredential } from '@shared/security/purposeBoundCredential.js';
+import {
+  projectPublicRailwayHealthcheck,
+  RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+  RAILWAY_HEALTHCHECK_UNAVAILABLE_MESSAGE,
+} from '@shared/http/railwayHealthcheckProjection.js';
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import trinityRouter from './trinity.js';
@@ -62,21 +67,37 @@ export function registerRoutes(app: Express): void {
     res.type('text/plain').send('User-agent: *\nDisallow:\n');
   });
 
-  app.get('/railway/healthcheck', (_: Request, res: Response) => {
+  app.get('/railway/healthcheck', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
     try {
       const report = runHealthCheck();
-      const statusCode = report.status === 'ok' ? 200 : 503;
+      const publicReport = projectPublicRailwayHealthcheck(report);
+      const statusCode = publicReport.status === 'ok' ? 200 : 503;
 
-      sendTimestampedStatus(res, statusCode, {
-        status: report.status,
-        components: report.components,
-        summary: report.summary
-      });
+      sendTimestampedStatus(res, statusCode, publicReport);
     } catch (error) {
-      console.error('[Railway Healthcheck] Error generating health report', error);
+      try {
+        const failureDetails = {
+          code: RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+          errorType: error instanceof Error ? 'Error' : typeof error,
+        };
+        if (req.logger?.error) {
+          req.logger.error('railway.healthcheck.failed', failureDetails);
+        } else {
+          logger.error('railway.healthcheck.failed', {
+            requestId: req.requestId ?? 'unknown',
+            traceId: req.traceId ?? 'unknown',
+            ...failureDetails,
+          });
+        }
+      } catch {
+        // Public health behavior must not depend on diagnostics logging.
+      }
       sendTimestampedStatus(res, 503, {
         status: 'error',
-        message: resolveErrorMessage(error)
+        code: RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+        message: RAILWAY_HEALTHCHECK_UNAVAILABLE_MESSAGE,
       });
     }
   });
