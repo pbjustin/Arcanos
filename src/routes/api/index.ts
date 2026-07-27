@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import apiArcanosRouter from "@routes/api-arcanos.js";
 import apiSimRouter from "@routes/api-sim.js";
 import apiMemoryRouter from "@routes/api-memory.js";
@@ -21,8 +21,17 @@ import afolRouter from "@routes/afol.js";
 import webSearchRouter from "@routes/web-search.js";
 import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsistencyGate.js";
 import { requireMemoryPlaneAuth } from "@transport/http/middleware/memoryPlaneAuth.js";
+import { isDagHttpRequestPath } from "@services/controlPlane/dagHttpBoundary.js";
 
 const router = Router();
+const routeDagControlPlane: RequestHandler = (req, res, next) => {
+  if (!isDagHttpRequestPath(req)) {
+    next();
+    return;
+  }
+
+  apiArcanosRouter(req, res, next);
+};
 
 // The control plane is not part of the writing-plane consistency/reroute flow.
 router.use('/api/control-plane', apiControlPlaneRouter);
@@ -38,6 +47,10 @@ router.use('/', apiAiRoutingDebugRouter);
 // operator boundary while health, schema, and the inert webhook retain their
 // existing public contracts.
 router.use('/api/pr-analysis', prAnalysisRouter);
+// DAG traffic is already authenticated at the application ingress and again
+// inside its leaf router. Dispatch it before the writing-plane consistency gate
+// so that control-plane methods and paths can never be rewritten as GPT work.
+router.use('/api/arcanos', routeDagControlPlane);
 router.use('/api/memory', requireMemoryPlaneAuth);
 router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);

@@ -34,6 +34,7 @@ import { arcanosDagRunService } from '../services/arcanosDagRunService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { UnsupportedDagTemplateError } from '@dag/templates.js';
+import { dagHttpBoundary } from '@services/controlPlane/dagHttpBoundary.js';
 
 const router = express.Router();
 const API_VERSION = '1.0.0';
@@ -77,7 +78,8 @@ function buildDagRateLimitKey(req: express.Request, scope: string): string {
   const runId = typeof req.params.runId === 'string' && req.params.runId.trim().length > 0
     ? req.params.runId.trim()
     : 'global';
-  return `${getRequestActorKey(req)}:scope:${scope}:run:${runId}`;
+  const principalId = req.controlPlanePrincipal?.principalId ?? 'missing';
+  return `principal:${principalId}:scope:${scope}:run:${runId}`;
 }
 
 const verificationControlRateLimit = createRateLimitMiddleware({
@@ -91,7 +93,9 @@ const dagRunWriteRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-dag-write',
   maxRequests: 60,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:scope:dag-write`
+  keyGenerator: (req) => (
+    `principal:${req.controlPlanePrincipal?.principalId ?? 'missing'}:scope:dag-write`
+  )
 });
 
 const dagRunStatusRateLimit = createRateLimitMiddleware({
@@ -152,6 +156,8 @@ function setDagRunPollingHeaders(
     'X-Arcanos-Run-Updated': options.updated ? 'true' : 'false'
   });
 }
+
+router.use('/dag', dagHttpBoundary);
 
 function mapWorkerHealthStatus(input: {
   connected?: boolean;

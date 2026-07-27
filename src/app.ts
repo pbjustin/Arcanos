@@ -48,6 +48,9 @@ import {
 import {
   ragBodyParser,
 } from '@services/controlPlane/ragBodyParser.js';
+import {
+  dagHttpBoundary,
+} from '@services/controlPlane/dagHttpBoundary.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
@@ -124,6 +127,9 @@ export function createApp(): Express {
   // Establish operator trust and operation-specific bounds before broad parsing.
   app.use('/rag', ragHttpBoundary);
   app.use('/rag', ragBodyParser);
+  // DAG runs are paid, persistent control-plane work. Establish the operator
+  // principal and method-specific scope before the broad application parser.
+  app.use('/api/arcanos/dag', dagHttpBoundary);
   // Self-healing control traffic is authenticated and client-throttled before
   // the broad JSON parser can allocate for an unauthenticated request body.
   app.use('/api/self-heal', selfHealingControlHttpBoundary);

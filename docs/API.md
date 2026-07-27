@@ -206,6 +206,18 @@ correlation. Railway deployments should continue probing `GET /health`.
 - `POST /siri` (confirmation required)
 - `POST /api/ask-hrc`
 - `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
+- `POST /api/arcanos/dag/runs` (control-plane operator and `mcp:invoke`
+  required)
+- `GET|HEAD /api/arcanos/dag/runs/*` (control-plane operator and
+  `arcanos:read` required)
+- `POST /api/arcanos/dag/runs/:runId/cancel` (control-plane operator and
+  `mcp:invoke` required)
+
+The exact `/api/arcanos/dag/*` boundary authenticates before broad request
+parsing, marks responses `no-store`, and assigns read versus execution scopes
+by method and canonical path. Both the boundary and the existing per-route
+limits use the authenticated control-plane principal, so rotating caller-owned
+session IDs does not create fresh DAG execution buckets.
 
 ### State and Custom GPT bridge
 - `GET /system-state` (control-plane operator and `arcanos:read` required)

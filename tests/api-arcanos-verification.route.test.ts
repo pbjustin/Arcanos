@@ -1,4 +1,18 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { Test } from 'supertest';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
+
+const controlPlaneToken = 'api-arcanos-dag-token-12345678901234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
 const mockGetWorkerControlStatus = jest.fn();
 const mockCreateRun = jest.fn();
@@ -45,6 +59,29 @@ const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos-verification.js')).default;
 
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(
+  scopes = 'arcanos:read,mcp:invoke',
+  principalId = 'operator:api-arcanos-verification'
+): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = principalId;
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
+
+function authorizeDagRequest(pendingRequest: Test): Test {
+  return pendingRequest.set(
+    'Authorization',
+    `Bearer ${controlPlaneToken}`
+  );
+}
+
 function buildApp() {
   const app = express();
   app.use(express.json());
@@ -59,6 +96,7 @@ function buildApp() {
 describe('api-arcanos-verification routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    configureControlPlane();
 
     mockGetFeatureFlags.mockReturnValue({
       dagOrchestration: true,
@@ -380,9 +418,9 @@ describe('api-arcanos-verification routes', () => {
       cancelledNodes: ['writer']
     });
 
-    const createResponse = await request(buildApp())
-      .post('/dag/runs')
-      .send({
+    const createResponse = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
         sessionId: 'session-1',
         template: 'verification-default',
         input: { goal: 'test the DAG' }
@@ -394,14 +432,30 @@ describe('api-arcanos-verification routes', () => {
     expect(createResponse.body.data.run.pipeline).toBe('trinity');
     expect(createResponse.body.data.run.template).toBe('trinity-core');
 
-    const latestResponse = await request(buildApp()).get('/dag/runs/latest');
-    const runResponse = await request(buildApp()).get('/dag/runs/run-1');
-    const traceResponse = await request(buildApp()).get('/dag/runs/run-1/trace');
-    const treeResponse = await request(buildApp()).get('/dag/runs/run-1/tree');
-    const nodeResponse = await request(buildApp()).get('/dag/runs/run-1/nodes/planner');
-    const metricsResponse = await request(buildApp()).get('/dag/runs/run-1/metrics');
-    const verificationResponse = await request(buildApp()).get('/dag/runs/run-1/verification');
-    const cancelResponse = await request(buildApp()).post('/dag/runs/run-1/cancel');
+    const latestResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/latest')
+    );
+    const runResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1')
+    );
+    const traceResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/trace')
+    );
+    const treeResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/tree')
+    );
+    const nodeResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/nodes/planner')
+    );
+    const metricsResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/metrics')
+    );
+    const verificationResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/verification')
+    );
+    const cancelResponse = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-1/cancel')
+    );
 
     expect(latestResponse.status).toBe(200);
     expect(latestResponse.headers['x-response-bytes']).toBeTruthy();
@@ -467,9 +521,9 @@ describe('api-arcanos-verification routes', () => {
       waited: true
     });
 
-    const response = await request(buildApp())
-      .get('/dag/runs/run-1')
-      .query({
+    const response = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1')
+    ).query({
         updatedAfter: '2026-03-07T00:00:01.000Z',
         waitForUpdateMs: 5000
       });
@@ -484,4 +538,85 @@ describe('api-arcanos-verification routes', () => {
       waitForUpdateMs: 5000
     });
   });
+
+  it('rejects anonymous DAG execution before invoking the run service', async () => {
+    const response = await request(buildApp())
+      .post('/dag/runs')
+      .send({
+        sessionId: 'anonymous-session',
+        template: 'verification-default',
+        input: { goal: 'must not execute' }
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateRun).not.toHaveBeenCalled();
+  });
+
+  it('principal-throttles DAG writes across caller-selected session rotation', async () => {
+    configureControlPlane(
+      'mcp:invoke',
+      'operator:api-arcanos-dag-rate-limit'
+    );
+    mockCreateRun.mockReturnValue({
+      runId: 'run-rate-limit',
+      sessionId: 'session-rate-limit',
+      template: 'trinity-core',
+      status: 'queued',
+      plannerNodeId: 'planner',
+      rootNodeId: 'writer',
+      createdAt: '2026-03-07T00:00:00.000Z',
+      updatedAt: '2026-03-07T00:00:00.000Z'
+    });
+    const app = buildApp();
+
+    const firstResponse = await authorizeDagRequest(
+      request(app)
+        .post('/dag/runs')
+        .set('X-Session-ID', 'caller-selected-session-1')
+    ).send({
+      sessionId: 'body-session-1',
+      template: 'verification-default',
+      input: { goal: 'first request' }
+    });
+    const secondResponse = await authorizeDagRequest(
+      request(app)
+        .post('/dag/runs')
+        .set('X-Session-ID', 'caller-selected-session-2')
+    ).send({
+      sessionId: 'body-session-2',
+      template: 'verification-default',
+      input: { goal: 'second request' }
+    });
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(firstResponse.headers['x-ratelimit-bucket']).toBe(
+      'api-arcanos-dag-write'
+    );
+    expect(Number(secondResponse.headers['x-ratelimit-remaining'])).toBe(
+      Number(firstResponse.headers['x-ratelimit-remaining']) - 1
+    );
+    expect(mockCreateRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });
