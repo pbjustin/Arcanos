@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T03:17:51.964Z",
+  "generatedAt": "2026-07-27T05:59:39.101Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1556,6 +1556,12 @@
           "relativePath": "src/services/controlPlane/legacyOperatorHttpBoundary.ts"
         },
         {
+          "relativePath": "src/services/controlPlane/ragBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/ragHttpBoundary.ts"
+        },
+        {
           "relativePath": "src/services/controlPlane/routeVerification.ts"
         },
         {
@@ -1575,6 +1581,12 @@
         },
         {
           "relativePath": "src/services/controlPlane/service.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/systemStateBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/systemStateHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/types.ts"
@@ -3739,6 +3751,9 @@
           "relativePath": "tests/queuedGptCompletionService.test.ts"
         },
         {
+          "relativePath": "tests/rag-http-boundary.test.ts"
+        },
+        {
           "relativePath": "tests/railway-client.test.ts"
         },
         {
@@ -3944,6 +3959,9 @@
         },
         {
           "relativePath": "tests/system-diagnostics-local-agent-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/system-state-http-boundary.test.ts"
         },
         {
           "relativePath": "tests/system-state.route.test.ts"

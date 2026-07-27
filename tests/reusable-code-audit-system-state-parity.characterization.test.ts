@@ -23,6 +23,12 @@ const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const tryExecutePromptRouteShortcutMock = jest.fn();
 const updateAiExecutionContextMock = jest.fn();
+const confirmGateMock = jest.fn((
+  _req: unknown,
+  _res: unknown,
+  next: () => void,
+  _options?: unknown,
+) => next());
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
@@ -47,7 +53,7 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
-  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+  confirmGate: confirmGateMock,
 }));
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
@@ -146,6 +152,8 @@ const {
 
 const originalEnv = { ...process.env };
 const fixedNow = new Date('2026-07-16T18:30:00.000Z');
+const systemStateControlToken =
+  'system-state-parity-control-token-1234567890';
 
 function restoreEnvironment(): void {
   for (const key of Object.keys(process.env)) {
@@ -202,6 +210,10 @@ describe('reusable-code audit: /brain and /system-state characterization', () =>
     process.env.PROMPT_DEBUG_TRACE_MODE = 'metadata';
     process.env.PROMPT_DEBUG_TRACE_PERSIST = 'true';
     process.env.PROMPT_DEBUG_TRACE_MAX_BYTES = '1048576';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = systemStateControlToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID =
+      'operator:system-state-parity';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read,mcp:invoke';
     await clearPromptDebugTracesForTest();
 
     requestLogger = {
@@ -240,6 +252,7 @@ describe('reusable-code audit: /brain and /system-state characterization', () =>
       });
     const directResponse = await request(buildDirectApp())
       .get('/system-state')
+      .set('Authorization', `Bearer ${systemStateControlToken}`)
       .query({ sessionId });
 
     expect(brainResponse.status).toBe(200);
@@ -307,6 +320,7 @@ describe('reusable-code audit: /brain and /system-state characterization', () =>
       .send(invalidUpdate);
     const directResponse = await request(buildDirectApp())
       .post('/system-state')
+      .set('Authorization', `Bearer ${systemStateControlToken}`)
       .send(invalidUpdate);
 
     expect(brainResponse.status).toBe(400);
@@ -331,6 +345,19 @@ describe('reusable-code audit: /brain and /system-state characterization', () =>
     });
     expect(directResponse.headers['x-route-deprecated']).toBeUndefined();
     expect(directResponse.headers['x-response-bytes']).toBeUndefined();
+    expect(confirmGateMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+      expect.objectContaining({
+        challengeBinding: expect.objectContaining({
+          principalId: 'operator:system-state-parity',
+          workspaceId: 'system-state:control-plane',
+        }),
+        requestFingerprintBody: invalidUpdate,
+        requireChallengeToken: true,
+      }),
+    );
 
     await flushPromptDebugTracePersistenceForTest();
     expect(await fsp.readFile(storagePath, 'utf8')).toContain(

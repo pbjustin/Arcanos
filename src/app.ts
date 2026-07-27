@@ -36,6 +36,18 @@ import {
 import {
   legacyOperatorBodyParser,
 } from '@services/controlPlane/legacyOperatorBodyParser.js';
+import {
+  systemStateHttpBoundary,
+} from '@services/controlPlane/systemStateHttpBoundary.js';
+import {
+  systemStateBodyParser,
+} from '@services/controlPlane/systemStateBodyParser.js';
+import {
+  ragHttpBoundary,
+} from '@services/controlPlane/ragHttpBoundary.js';
+import {
+  ragBodyParser,
+} from '@services/controlPlane/ragBodyParser.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
@@ -104,6 +116,14 @@ export function createApp(): Express {
   app.use('/sdk', legacyOperatorBodyParser);
   app.use('/orchestration/reset', legacyOperatorBodyParser);
   app.use('/orchestration/purge', legacyOperatorBodyParser);
+  // System-state is a direct control-plane surface. Establish operator identity,
+  // method-specific scope, and a bounded body before the broad application parser.
+  app.use('/system-state', systemStateHttpBoundary);
+  app.use('/system-state', systemStateBodyParser);
+  // Direct RAG traffic can fetch, persist, retrieve, and invoke paid providers.
+  // Establish operator trust and operation-specific bounds before broad parsing.
+  app.use('/rag', ragHttpBoundary);
+  app.use('/rag', ragBodyParser);
   // Self-healing control traffic is authenticated and client-throttled before
   // the broad JSON parser can allocate for an unauthenticated request body.
   app.use('/api/self-heal', selfHealingControlHttpBoundary);

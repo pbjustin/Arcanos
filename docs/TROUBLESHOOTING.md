@@ -86,6 +86,24 @@ If failing, inspect Railway build/deploy logs first.
   existing confirmation header or challenge. Confirmation without the bearer
   remains a 401. A 409 means the matching SDK or orchestration mutation family
   already has an in-process operation running.
+- System-state 401/403/503: configure the purpose-bound control-plane bearer
+  and operator principal. GET/HEAD requires `arcanos:read`; POST requires
+  `mcp:invoke` and then the one-use challenge returned in
+  `x-confirmation-challenge`. Retry the unchanged body with
+  `x-confirmed: token:<challenge>`; `x-confirmed: yes`, trusted-client, and
+  automation shortcuts do not approve this mutation. Authentication runs
+  before the dedicated 64 KiB JSON parser, so an unauthenticated malformed body
+  still returns the authentication denial. This boundary is operator
+  containment, not tenant or session ownership.
+- Direct RAG 401/403/413: configure the same purpose-bound control-plane bearer
+  and operator principal, grant `arcanos:read` for `/rag/query` or `mcp:invoke`
+  for `/rag/fetch|save`, and retry ingestion with the issued one-use challenge.
+  Oversized, compressed, non-object, or schema-invalid JSON is rejected before
+  provider or database work; fixed per-operation limits are documented in
+  `docs/API.md`. The routes address one shared operator corpus rather than
+  tenant-owned data. A `RAG_OPERATION_BUSY` 429 means both HTTP work slots are
+  occupied; excess requests are not queued, so retry after the response's
+  `Retry-After` interval.
 - Self-healing `CONTROL_PLANE_SCOPE_DENIED` 403: passive `/api/self-heal/*`, `/api/self-improve/status`, and detailed safety diagnostics require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; a decision body with `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; and freeze, unfreeze, autonomy changes, or integrity-quarantine release require `self-improve:control`. Missing scope names are intentionally omitted from the public response.
 - Self-heal decision still returns a capability 401/403 after valid bearer authentication: the route deliberately retains `capabilityGate('self_improve_admin')` as a compatibility prerequisite. Supply an authorized agent identity or the configured automation credential; neither one is identity-bound authorization or replaces the control-plane bearer.
 - Confirmation-required 403: include `x-confirmed` or trusted automation headers only after authenticating and satisfying server-owned scope authorization.

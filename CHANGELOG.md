@@ -66,6 +66,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Security
 
+- Moved direct system-state reads and optimistic updates behind an exact,
+  pre-parser control-plane boundary: reads require the operator bearer and
+  `arcanos:read`, mutations require `mcp:invoke` plus a principal- and
+  body-bound one-use challenge, strict mutation JSON is capped at 64 KiB,
+  caller-selected session identifiers are bounded, responses are `no-store`,
+  invalid traffic cannot exhaust an authenticated operator's ingress bucket,
+  and invalid requests no longer reflect internal exception text.
+- Contained direct `/rag/*` HTTP access behind an exact pre-parser operator
+  boundary: queries require `arcanos:read`, persistent fetch/save ingestion
+  requires `mcp:invoke` plus an actor-, principal-, path-, and body-bound one-use
+  challenge, operation-specific strict JSON/schema limits run before broad
+  parsing, provider/database work shares a two-slot immediate-admission cap
+  with stable retryable busy responses instead of an unbounded queue, public
+  failures are stable and non-reflective, and documentation now makes the
+  deployment-wide shared-corpus boundary explicit.
 - Preserved the deprecated `GET /status` and confirmed `POST /status` success
   contracts while marking their responses—including confirmation
   challenges—`no-store` and replacing raw exception responses and route logs

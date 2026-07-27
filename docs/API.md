@@ -52,7 +52,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -87,7 +87,11 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - Error shape: `{ ok:false, action, error:{ code, message } }`
 - A repository outage after a job is accepted returns HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and the stable message `Async GPT job status is temporarily unavailable because durable job persistence is unavailable.` The response keeps the accepted `jobId`, `poll`, and `stream` coordinates; creation-stage outages cannot include job coordinates.
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
-- `200 OK` system-state retrieval/update: `POST /system-state` with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is handled directly on the control plane and never enters the GPT writing dispatcher.
+- `200 OK` system-state retrieval/update: authenticated `POST /system-state`
+  with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is
+  handled directly on the control plane and never enters the GPT writing
+  dispatcher. It requires the control-plane operator bearer, `mcp:invoke`, and
+  the issued one-use confirmation challenge.
 - `400 Bad Request` control rejection: prompt-based job lookups, explicit job lookup actions, diagnostics, system_state, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
 
 Canonical client-facing async acknowledgement:
@@ -204,12 +208,25 @@ correlation. Railway deployments should continue probing `GET /health`.
 - `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
 
 ### State and Custom GPT bridge
-- `GET /system-state`
-- `POST /system-state`
+- `GET /system-state` (control-plane operator and `arcanos:read` required)
+- `POST /system-state` (control-plane operator, `mcp:invoke`, and an issued
+  one-use confirmation challenge required)
 - `POST /api/bridge/gpt`
 - `POST /api/openai/gpt-action` (bridge compatibility alias)
 - `GET /api/bridge/health` (requires the bridge shared secret; returns a
   no-store operational payload with fixed database and worker failure text)
+
+System-state authentication and method-specific authorization run before broad
+request parsing. Mutation JSON is strict and capped at 64 KiB; every response
+is marked `no-store`, and unknown protected subpaths terminate within the
+control-plane boundary. A rejected mutation returns
+`x-confirmation-challenge`; retry the same authenticated request body with
+`x-confirmed: token:<challenge-id-placeholder>`. The token is one-use and bound to the
+authenticated principal and request body; manual `yes`, trusted-client, and
+automation bypasses are not accepted. The server accepts caller-selected
+`sessionId` values up to 100 characters for compatibility. This is
+deployment-wide operator containment, not tenant or per-session ownership
+enforcement.
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce`
@@ -363,11 +380,36 @@ establishes caller identity. Direct and worker-helper heal requests share one
 - `POST /api/control-plane/operations` (dedicated bearer authentication and server-owned operation scopes required; confirmation additionally required)
 - `POST /commands/research` (confirmation required)
 - `POST /sdk/research` (confirmation required)
-- `POST /rag/fetch`
-- `POST /rag/save`
-- `POST /rag/query`
+- `POST /rag/fetch` (control-plane operator, `mcp:invoke`, and issued
+  one-use confirmation challenge required)
+- `POST /rag/save` (control-plane operator, `mcp:invoke`, and issued
+  one-use confirmation challenge required)
+- `POST /rag/query` (control-plane operator and `arcanos:read` required;
+  confirmation is not required)
 
-For either control-plane POST route, send
+The exact `/rag/*` boundary authenticates and principal-throttles requests before
+allocating their bodies. It accepts strict JSON objects only, rejects compressed
+or ambiguous content types, and returns `Cache-Control: no-store`.
+`/rag/fetch` accepts at most 8 KiB of JSON with one HTTP(S) URL no longer than
+2,048 characters; the fetcher additionally denies URL credentials, private or
+reserved destinations, redirects, proxying, and unbounded response work.
+`/rag/query` accepts at most 16 KiB with a non-empty question no longer than
+4,000 characters. `/rag/save` accepts at most 256 KiB; content is capped at
+200,000 characters, identifiers at 200 characters, sources at 2,048 characters,
+and JSON-safe metadata at 16 KiB with bounded depth and fan-out. Unknown fields
+and unsafe metadata keys are rejected.
+
+Fetch, save, and query share a process-local HTTP concurrency cap of two.
+Excess work is not queued: it returns HTTP `429` with
+`error.code: "RAG_OPERATION_BUSY"` and `Retry-After: 5`. Fetch and save
+challenges are bound to the authenticated actor, configured principal, exact
+path, and exact parsed request body; manual, trusted-GPT, automation, and
+one-time-token shortcuts do not replace the issued challenge. Successful
+ingestion still performs outbound/provider and persistent database work. This
+boundary provides deployment-wide operator containment, not tenant or workspace
+ownership: all three routes address the same configured RAG corpus.
+
+For either `/api/control-plane` POST route, send
 `Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>`. Authentication,
 server-owned scope authorization, and action confirmation are separate checks:
 `x-confirmed`, body approval fields, `context.caller`, and caller-supplied scopes

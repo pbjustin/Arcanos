@@ -7,7 +7,7 @@ Arcanos is split into a TypeScript backend and an optional Python daemon client.
 ARCANOS now enforces two planes before any module dispatch occurs:
 
 - Writing plane: `POST /gpt/:gptId` for generative work only. This lane is limited to prompt generation, assistant responses, and other true write/query actions.
-- Control plane: direct handlers and explicit control endpoints for system operations. This includes `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, protected DevOps/PR verification execution, `POST /system-state`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
+- Control plane: direct handlers and explicit control endpoints for system operations. This includes `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, protected DevOps/PR verification execution, `POST /system-state`, `POST /rag/*`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
 
 Implementation rules:
 - `src/routes/gptRouter.ts` runs pre-dispatch classification through `src/routes/_core/gptPlaneClassification.ts`.
@@ -39,6 +39,26 @@ Implementation rules:
   mutations, and retains confirmation only as a post-authentication approval.
   SDK mutations and orchestration reset/purge have separate principal budgets
   and process-local single-flight locks.
+- `GET|POST /system-state` is a direct control-plane surface. Its idempotent
+  exact-path boundary authenticates the operator before broad JSON parsing,
+  requires `arcanos:read` for GET/HEAD and `mcp:invoke` for POST, applies
+  client and principal budgets, caps strict mutation JSON at 64 KiB, and keeps
+  a principal- and body-bound one-use confirmation challenge as a
+  post-authentication mutation approval. Valid control-plane credentials bypass
+  the anonymous ingress bucket and remain subject to the principal budget, so
+  invalid traffic from a shared client address cannot starve the operator. The
+  current deployment-wide operator boundary does not establish tenant or
+  per-session ownership for caller-selected `sessionId` values.
+- `POST /rag/fetch|save|query` uses a separate idempotent exact-path boundary
+  before broad JSON parsing. Query requires the operator bearer and
+  `arcanos:read`; persistent fetch/save ingestion requires `mcp:invoke` and a
+  principal-, actor-, path-, and body-bound one-use challenge.
+  Operation-specific strict JSON limits, separate anonymous/principal budgets,
+  `no-store` responses, and a shared two-slot immediate-admission HTTP gate
+  contain provider, database, and corpus work. Excess work receives a stable
+  retryable 429 instead of entering an in-process queue. The boundary protects
+  one deployment-wide corpus; it does not establish tenant or workspace
+  ownership.
 - `/api/daemon/*` is a separate transport/control-plane namespace. The daemon
   router applies path-scoped security headers, rate limiting, and strict
   purpose-bound authentication before its handlers, terminates unknown paths,
@@ -228,7 +248,7 @@ Long-running GPT requests are handled through the DB-backed `job_data` queue ins
 
 Execution model:
 1. `POST /gpt/:gptId` classifies the request as writing-plane or control-plane before dispatch.
-2. Control-plane reads use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `POST /gpt-access/diagnostics/deep`, `GET /system-state`, `POST /system-state`) and never create GPT jobs.
+2. Control-plane reads and RAG operations use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `POST /gpt-access/diagnostics/deep`, `GET /system-state`, `POST /system-state`, `POST /rag/*`) and never create GPT jobs.
 3. Writing-plane durable requests (`query`, non-core `query_and_wait`, or prompt-first async compatibility mode) persist a canonical GPT job row with hashed idempotency metadata.
 4. `query` returns the canonical `jobId` without inline waiting. On core GPT IDs, `query_and_wait` uses the lightweight synchronous direct action lane and returns the final result inline.
 5. `src/workers/jobRunner.ts` claims `job_type='gpt'` rows and executes them in background mode.

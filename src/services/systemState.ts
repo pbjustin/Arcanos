@@ -12,6 +12,11 @@ const systemStatePatchSchema = z.object({
   status: z.enum(['active', 'paused', 'completed']).optional(),
   label: z.string().min(1).max(200).optional()
 });
+export const SYSTEM_STATE_SESSION_ID_MAX_LENGTH = 100;
+const systemStateSessionIdSchema = z.string()
+  .trim()
+  .min(1)
+  .max(SYSTEM_STATE_SESSION_ID_MAX_LENGTH);
 
 export type SystemStatePatch = z.infer<typeof systemStatePatchSchema>;
 
@@ -109,10 +114,13 @@ export function executeSystemStateRequest(payload: unknown): GovernedSystemState
       ? (payload as Record<string, unknown>)
       : {};
 
-  const sessionId =
-    typeof record.sessionId === 'string' && record.sessionId.trim().length > 0
-      ? record.sessionId.trim()
-      : undefined;
+  const parsedSessionId = record.sessionId === undefined
+    ? undefined
+    : systemStateSessionIdSchema.safeParse(record.sessionId);
+  if (parsedSessionId && !parsedSessionId.success) {
+    throw new Error('system_state sessionId invalid');
+  }
+  const sessionId = parsedSessionId?.data;
 
   const expectedVersion =
     typeof record.expectedVersion === 'number' && Number.isInteger(record.expectedVersion)
