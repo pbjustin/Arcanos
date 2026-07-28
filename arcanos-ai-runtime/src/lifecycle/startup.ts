@@ -27,7 +27,6 @@ export async function waitForRuntimeWorkerStartup(
         new Error("AI runtime worker startup timed out")
       );
     }, options.timeoutMs);
-    timeoutHandle.unref();
   });
 
   try {

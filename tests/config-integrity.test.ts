@@ -223,6 +223,134 @@ describe('config integrity safety', () => {
     ]);
   });
 
+  it('rejects an assistant name that normalizes to an empty value', () => {
+    const registry = {
+      PUNCTUATION: {
+        id: 'asst_punctuation',
+        name: '!!!',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'PUNCTUATION'
+      }
+    };
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-empty-normalization'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
+  it('rejects an assistant name whose NFKD normalization exceeds the length limit', () => {
+    const registry = {
+      EXPANDED_NAME: {
+        id: 'asst_expanded_name',
+        name: '\uFB03'.repeat(86),
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'EXPANDED_NAME'
+      }
+    };
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-expanded-name'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
+  it('rejects an assistant registry key that differs from its normalized name', () => {
+    const registry = {
+      WRONG_KEY: {
+        id: 'asst_alpha',
+        name: 'Alpha',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'ALPHA'
+      }
+    };
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-key-mismatch'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
+  it('rejects a normalized name that does not match the assistant name', () => {
+    const registry = {
+      ALPHA: {
+        id: 'asst_alpha',
+        name: 'Beta',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'ALPHA'
+      }
+    };
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-name-mismatch'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
+  it('rejects duplicate assistant provider IDs', () => {
+    const registry = {
+      ALPHA: {
+        id: 'asst_duplicate',
+        name: 'Alpha',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'ALPHA'
+      },
+      BETA: {
+        id: 'asst_duplicate',
+        name: 'Beta',
+        instructions: null,
+        tools: null,
+        model: 'gpt-4.1-mini',
+        normalizedName: 'BETA'
+      }
+    };
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-duplicate-id'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
+  it('rejects an assistant registry that exceeds the record limit', () => {
+    const registry = Object.fromEntries(
+      Array.from({ length: 1_001 }, (_, index) => {
+        const normalizedName = `ASSISTANT_${index}`;
+        return [
+          normalizedName,
+          {
+            id: `asst_${index}`,
+            name: `Assistant ${index}`,
+            instructions: null,
+            tools: null,
+            model: 'gpt-4.1-mini',
+            normalizedName
+          }
+        ];
+      })
+    );
+
+    expect(() =>
+      assertProtectedConfigIntegrity('assistant_registry', registry, {
+        source: 'tests/config-integrity.assistant-registry-record-limit'
+      })
+    ).toThrow(IntegrityValidationError);
+  });
+
   it('does not let assistant-registry updates bypass an explicit hash pin', () => {
     const registry = {
       ALPHA: {
