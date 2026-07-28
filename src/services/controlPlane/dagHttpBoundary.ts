@@ -26,7 +26,7 @@ const DAG_READ_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_DAG_CLIENT_RATE_LIMIT = 120;
 const dagBoundaryApplied = Symbol('dagBoundaryApplied');
 
-type DagHttpOperationKind = 'execution' | 'read';
+type DagHttpOperationKind = 'execution' | 'admission' | 'read';
 
 interface DagHttpOperation {
   kind: DagHttpOperationKind;
@@ -41,6 +41,7 @@ const DAG_READ_PATH_PATTERNS = [
 ];
 const DAG_CREATE_PATH_PATTERN = /^\/dag\/runs$/u;
 const DAG_CANCEL_PATH_PATTERN = /^\/dag\/runs\/[^/]+\/cancel$/u;
+const DAG_ADMISSION_PATH_PATTERN = /^\/dag\/runs\/[^/]+\/admission$/u;
 
 const DAG_PRINCIPAL_POLICIES: Readonly<
   Record<DagHttpOperationKind, RateLimitPolicy>
@@ -49,6 +50,11 @@ const DAG_PRINCIPAL_POLICIES: Readonly<
     bucketName: 'api-arcanos-dag-execution',
     maxRequests: 60,
     windowMs: DAG_RATE_LIMIT_WINDOW_MS,
+  },
+  admission: {
+    bucketName: 'api-arcanos-dag-admission',
+    maxRequests: 900,
+    windowMs: DAG_READ_RATE_LIMIT_WINDOW_MS,
   },
   read: {
     bucketName: 'api-arcanos-dag-read',
@@ -108,6 +114,16 @@ export function resolveDagHttpOperation(req: Request): DagHttpOperation | null {
     return {
       kind: 'read',
       scope: DAG_READ_SCOPE,
+    };
+  }
+
+  if (
+    method === 'GET'
+    && DAG_ADMISSION_PATH_PATTERN.test(path)
+  ) {
+    return {
+      kind: 'admission',
+      scope: DAG_EXECUTION_SCOPE,
     };
   }
 

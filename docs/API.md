@@ -208,8 +208,10 @@ correlation. Railway deployments should continue probing `GET /health`.
 - `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
 - `POST /api/arcanos/dag/runs` (control-plane operator and `mcp:invoke`
   required)
-- `GET|HEAD /api/arcanos/dag/runs/*` (control-plane operator and
-  `arcanos:read` required)
+- `GET|HEAD /api/arcanos/dag/runs/:runId/admission` (exact-run admission
+  monitor; control-plane operator and `mcp:invoke` required)
+- Other `GET|HEAD /api/arcanos/dag/runs/*` inspection routes
+  (control-plane operator and `arcanos:read` required)
 - `POST /api/arcanos/dag/runs/:runId/cancel` (control-plane operator and
   `mcp:invoke` required)
 
@@ -221,8 +223,20 @@ session IDs does not create fresh DAG execution buckets.
 
 DAG run creation also has a per-web-process active-run limit. When that
 capacity is full, `POST /api/arcanos/dag/runs` returns `429` with
-`DAG_RUN_CAPACITY_EXCEEDED` and a `Retry-After` header. An accepted cancellation
-first persists cooperative cancellation intent, then returns `202` with
+`DAG_RUN_CAPACITY_EXCEEDED` and a `Retry-After` header. If the initial durable
+snapshot commit cannot be confirmed, creation remains an accepted request: it
+returns `202` with `Retry-After`, a `Location` under
+`/api/arcanos/dag/runs/:runId/admission`, and a stable admission identity
+containing the `runId` and snapshot generation. The admission monitor requires
+the same `mcp:invoke` scope as creation and reports distinct `pending`,
+`admitted`, and `rejected` states. `pending` and `admitted` always set
+`createNewRun: false`; only a definitive `rejected` state sets
+`createNewRun: true`. A temporarily unavailable monitor returns `503` for the
+idempotent `GET`, preserves `createNewRun: false`, and directs the caller to poll
+the same URL. Clients must never repeat the create `POST` while admission is
+pending or unavailable, and full run inspection remains separately protected by
+`arcanos:read`. An accepted cancellation first persists cooperative
+cancellation intent, then returns `202` with
 `status: "cancellation_requested"`; a repeated request or an already-cancelled
 run returns `200`. A confirmed absent run returns `404 RUN_NOT_FOUND`, a
 complete or failed run returns `409 RUN_NOT_CANCELLABLE`, and an active run

@@ -125,6 +125,25 @@ type DagAdmissionReadbackOutcome =
   | 'conflict'
   | 'unavailable';
 
+export type DagRunAdmissionStatus =
+  | {
+      runId: string;
+      snapshotGeneration: string;
+      state: 'pending';
+      retryAfterSeconds: number;
+    }
+  | {
+      runId: string;
+      snapshotGeneration: string;
+      state: 'admitted' | 'rejected';
+    }
+  | {
+      runId: string;
+      snapshotGeneration: string;
+      state: 'unavailable';
+      retryAfterSeconds: number;
+    };
+
 interface RetainedDagRunAdmission {
   record: StoredDagRunRecord;
   request: CreateDagRunRequest;
@@ -135,12 +154,19 @@ interface RetainedDagRunAdmission {
   reconciliationPromise?: Promise<number | null>;
 }
 
+interface ResolvedDagRunAdmissionOutcome {
+  snapshotGeneration: string;
+  state: 'admitted' | 'rejected';
+  expiresAtMs: number;
+}
+
 const TRINITY_PIPELINE_NAME = 'trinity' as const;
 const TRINITY_PIPELINE_VERSION = '1.0' as const;
 const DEFAULT_DAG_TRACE_MAX_EVENTS = 200;
 const MAX_DAG_TRACE_MAX_EVENTS = 1000;
 const DAG_SLOW_NODE_THRESHOLD_MS = 5_000;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+const DAG_ADMISSION_OUTCOME_MIN_RETENTION_MS = 60_000;
 export const DEFAULT_DAG_MAX_ACTIVE_RUNS = 4;
 export const DEFAULT_DAG_TERMINAL_RETENTION_MS = 15 * 60 * 1_000;
 export const DEFAULT_DAG_MAX_RETAINED_RUNS = 100;
@@ -833,6 +859,21 @@ function timestampsRepresentSameInstant(left: string, right: string): boolean {
   );
 }
 
+function parseCanonicalSnapshotGeneration(value: string): bigint | null {
+  if (!/^[1-9][0-9]*$/u.test(value)) {
+    return null;
+  }
+
+  try {
+    const generation = BigInt(value);
+    return generation <= POSTGRES_BIGINT_MAX && generation.toString() === value
+      ? generation
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function isExactAdmissionSnapshotReadback(
   persistedRecord: DagRunSnapshotRecord,
   expectedEnvelope: DagRunSnapshotRecord
@@ -854,6 +895,31 @@ function isExactAdmissionSnapshotReadback(
       expectedEnvelope.updatedAt
     ) &&
     isDeepStrictEqual(persistedRecord.snapshot, expectedEnvelope.snapshot)
+  );
+}
+
+function isConsistentAdmissionStatusReadback(
+  persistedRecord: DagRunSnapshotRecord,
+  snapshot: PersistedDagRunSnapshot,
+  runId: string
+): boolean {
+  return (
+    persistedRecord.runId === runId &&
+    snapshot.runId === runId &&
+    persistedRecord.sessionId === snapshot.sessionId &&
+    resolvePublicDagTemplateName(persistedRecord.template) === snapshot.template &&
+    persistedRecord.status === snapshot.status &&
+    persistedRecord.plannerNodeId === snapshot.plannerNodeId &&
+    persistedRecord.rootNodeId === snapshot.rootNodeId &&
+    timestampsRepresentSameInstant(
+      persistedRecord.createdAt,
+      snapshot.createdAt
+    ) &&
+    timestampsRepresentSameInstant(
+      persistedRecord.updatedAt,
+      snapshot.updatedAt
+    ) &&
+    typeof persistedRecord.snapshot.admissionPending === 'boolean'
   );
 }
 
@@ -1340,6 +1406,8 @@ export class ArcanosDagRunService {
   private readonly activeRunReservations = new Set<string>();
   private readonly retainedAdmissionsByRunId =
     new Map<string, RetainedDagRunAdmission>();
+  private readonly resolvedAdmissionOutcomesByRunId =
+    new Map<string, ResolvedDagRunAdmissionOutcome>();
   private readonly trinityOrchestrator: TrinityOrchestrator;
   private readonly lifecycleSettings: DagRunLifecycleSettings;
   private readonly admissionReconciliationSettings: DagAdmissionReconciliationSettings;
@@ -2012,6 +2080,54 @@ export class ArcanosDagRunService {
     return this.trackPersistenceWrite(record, nextWrite);
   }
 
+  private getAdmissionPendingRetryAfterSeconds(): number {
+    return Math.max(
+      1,
+      Math.ceil(this.admissionReconciliationSettings.retryDelayMs / 1_000)
+    );
+  }
+
+  private pruneResolvedAdmissionOutcomes(nowMs = Date.now()): void {
+    for (const [runId, outcome] of this.resolvedAdmissionOutcomesByRunId) {
+      if (outcome.expiresAtMs <= nowMs) {
+        this.resolvedAdmissionOutcomesByRunId.delete(runId);
+      }
+    }
+  }
+
+  private rememberResolvedAdmissionOutcome(
+    runId: string,
+    snapshotGeneration: string,
+    state: ResolvedDagRunAdmissionOutcome['state']
+  ): void {
+    const nowMs = Date.now();
+    this.pruneResolvedAdmissionOutcomes(nowMs);
+    this.resolvedAdmissionOutcomesByRunId.delete(runId);
+
+    while (
+      this.resolvedAdmissionOutcomesByRunId.size >=
+      this.lifecycleSettings.maxRetainedRuns
+    ) {
+      const oldestRunId =
+        this.resolvedAdmissionOutcomesByRunId.keys().next().value;
+      if (typeof oldestRunId !== 'string') {
+        break;
+      }
+      this.resolvedAdmissionOutcomesByRunId.delete(oldestRunId);
+    }
+
+    const retentionMs = Math.max(
+      DAG_ADMISSION_OUTCOME_MIN_RETENTION_MS,
+      this.lifecycleSettings.terminalRetentionMs,
+      this.admissionReconciliationSettings.cooldownMs
+    );
+    this.resolvedAdmissionOutcomesByRunId.set(runId, {
+      snapshotGeneration,
+      state,
+      expiresAtMs: nowMs + retentionMs
+    });
+  }
+
   private retainUncertainAdmission(
     record: StoredDagRunRecord,
     request: CreateDagRunRequest,
@@ -2138,6 +2254,11 @@ export class ArcanosDagRunService {
     }
 
     if (readbackOutcome === 'confirmed') {
+      this.rememberResolvedAdmissionOutcome(
+        record.runId,
+        retainedAdmission.envelope.snapshotGeneration,
+        'admitted'
+      );
       this.retainedAdmissionsByRunId.delete(record.runId);
       this.clearRetainedAdmissionTimer(retainedAdmission);
       record.admissionPending = false;
@@ -2153,6 +2274,11 @@ export class ArcanosDagRunService {
       readbackOutcome === 'not_found' ||
       readbackOutcome === 'conflict'
     ) {
+      this.rememberResolvedAdmissionOutcome(
+        record.runId,
+        retainedAdmission.envelope.snapshotGeneration,
+        'rejected'
+      );
       this.retainedAdmissionsByRunId.delete(record.runId);
       this.clearRetainedAdmissionTimer(retainedAdmission);
       this.forgetInitialRun(record);
@@ -2522,6 +2648,148 @@ export class ArcanosDagRunService {
     record.admissionPending = false;
     this.launchRunExecution(record, request, settings);
     return record.summary;
+  }
+
+  /**
+   * Resolve the bounded admission state for one previously uncertain run.
+   *
+   * Pending ownership remains observable only through the stable run and
+   * generation pair returned by create. Definitive local reconciliation
+   * outcomes are retained briefly so rejection does not collapse into an
+   * indistinguishable not-found response after local cleanup.
+   */
+  async getRunAdmissionStatus(
+    runId: string,
+    expectedSnapshotGeneration: string
+  ): Promise<DagRunAdmissionStatus> {
+    const unavailable = (): DagRunAdmissionStatus => ({
+      runId,
+      snapshotGeneration: expectedSnapshotGeneration,
+      state: 'unavailable',
+      retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+    });
+    const expectedGeneration = parseCanonicalSnapshotGeneration(
+      expectedSnapshotGeneration
+    );
+    if (
+      runId.length === 0 ||
+      runId.length > 256 ||
+      runId !== runId.trim() ||
+      expectedGeneration === null
+    ) {
+      return unavailable();
+    }
+
+    this.pruneResolvedAdmissionOutcomes();
+
+    const retainedAdmission = this.retainedAdmissionsByRunId.get(runId);
+    if (retainedAdmission) {
+      if (
+        retainedAdmission.envelope.runId !== runId ||
+        retainedAdmission.envelope.snapshotGeneration !==
+          expectedSnapshotGeneration ||
+        this.runsById.get(runId) !== retainedAdmission.record ||
+        !retainedAdmission.record.admissionPending
+      ) {
+        return unavailable();
+      }
+
+      return {
+        runId,
+        snapshotGeneration: expectedSnapshotGeneration,
+        state: 'pending',
+        retryAfterSeconds: this.getAdmissionPendingRetryAfterSeconds()
+      };
+    }
+
+    const resolvedOutcome = this.resolvedAdmissionOutcomesByRunId.get(runId);
+    if (resolvedOutcome) {
+      if (
+        resolvedOutcome.snapshotGeneration !== expectedSnapshotGeneration
+      ) {
+        return unavailable();
+      }
+      return {
+        runId,
+        snapshotGeneration: expectedSnapshotGeneration,
+        state: resolvedOutcome.state
+      };
+    }
+
+    const localRecord = this.runsById.get(runId);
+    if (localRecord) {
+      if (localRecord.snapshotGeneration < expectedGeneration) {
+        return unavailable();
+      }
+      if (localRecord.admissionPending) {
+        return localRecord.snapshotGeneration === expectedGeneration
+          ? {
+              runId,
+              snapshotGeneration: expectedSnapshotGeneration,
+              state: 'pending',
+              retryAfterSeconds: this.getAdmissionPendingRetryAfterSeconds()
+            }
+          : unavailable();
+      }
+      return {
+        runId,
+        snapshotGeneration: expectedSnapshotGeneration,
+        state: 'admitted'
+      };
+    }
+
+    let lookup: Awaited<ReturnType<typeof lookupDagRunSnapshotForControl>>;
+    try {
+      lookup = await lookupDagRunSnapshotForControl(runId);
+    } catch {
+      return unavailable();
+    }
+    if (lookup.outcome === 'not_found') {
+      return {
+        runId,
+        snapshotGeneration: expectedSnapshotGeneration,
+        state: 'rejected'
+      };
+    }
+    if (lookup.outcome !== 'found') {
+      return unavailable();
+    }
+
+    let persistedGeneration: bigint | null;
+    let snapshot: PersistedDagRunSnapshot | null;
+    try {
+      persistedGeneration = parseCanonicalSnapshotGeneration(
+        lookup.record.snapshotGeneration
+      );
+      snapshot = normalizePersistedDagRunSnapshot(lookup.record.snapshot);
+    } catch {
+      return unavailable();
+    }
+    if (
+      persistedGeneration === null ||
+      persistedGeneration < expectedGeneration ||
+      !snapshot ||
+      !isConsistentAdmissionStatusReadback(lookup.record, snapshot, runId)
+    ) {
+      return unavailable();
+    }
+
+    if (snapshot.admissionPending) {
+      return persistedGeneration === expectedGeneration
+        ? {
+            runId,
+            snapshotGeneration: expectedSnapshotGeneration,
+            state: 'pending',
+            retryAfterSeconds: this.getAdmissionPendingRetryAfterSeconds()
+          }
+        : unavailable();
+    }
+
+    return {
+      runId,
+      snapshotGeneration: expectedSnapshotGeneration,
+      state: 'admitted'
+    };
   }
 
   /**

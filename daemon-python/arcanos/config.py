@@ -157,12 +157,52 @@ def is_valid_daemon_access_token(value: Optional[str]) -> bool:
 
 def get_daemon_access_token() -> Optional[str]:
     """
-    Purpose: Read the dedicated daemon-plane credential without compatibility fallbacks.
-    Inputs/Outputs: Reads ARCANOS_DAEMON_ACCESS_TOKEN; returns the exact valid value or None.
-    Edge cases: Never falls back to BACKEND_TOKEN, ARCANOS_API_KEY, or ADMIN_KEY.
+    Purpose: Read the dedicated daemon-plane credential without peer reuse.
+    Inputs/Outputs: Returns the exact valid ARCANOS_DAEMON_ACCESS_TOKEN or None.
+    Edge cases: Preserves its grammar and never uses generic fallback tokens.
     """
     token = get_env("ARCANOS_DAEMON_ACCESS_TOKEN")
-    return token if is_valid_daemon_access_token(token) else None
+    if not isinstance(token, str) or not is_valid_daemon_access_token(token):
+        return None
+    if has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ARCANOS_DAEMON_ACCESS_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
+def get_action_plan_executor_token() -> Optional[str]:
+    """
+    Purpose: Read the ActionPlan executor credential without canonical peer reuse.
+    Inputs/Outputs: Returns its existing raw non-empty value or None.
+    Edge cases: Preserves downstream required-value validation and trimming.
+    """
+    token = get_env("ACTION_PLAN_EXECUTOR_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ACTION_PLAN_EXECUTOR_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
+def get_local_agent_executor_token() -> Optional[str]:
+    """
+    Purpose: Read the local-agent credential without canonical peer reuse.
+    Inputs/Outputs: Returns its existing raw non-empty value or None.
+    Edge cases: Preserves downstream required-value validation and trimming.
+    """
+    token = get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
 
 
 def get_debug_server_token() -> Optional[str]:
@@ -264,9 +304,7 @@ class Config:
     # Historical Phase 2E tests may enable this in-process only. It is deliberately
     # not environment-backed so deployed runtimes cannot restore the unsafe route.
     ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM: bool = False
-    ACTION_PLAN_EXECUTOR_TOKEN: Optional[str] = (
-        get_env("ACTION_PLAN_EXECUTOR_TOKEN") or None
-    )
+    ACTION_PLAN_EXECUTOR_TOKEN: Optional[str] = get_action_plan_executor_token()
     ACTION_PLAN_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
         get_env("ACTION_PLAN_EXECUTOR_PRINCIPAL_ID") or None
     )
@@ -287,9 +325,7 @@ class Config:
         "ARCANOS_LOCAL_AGENT_ENABLED",
         False,
     )
-    LOCAL_AGENT_EXECUTOR_TOKEN: Optional[str] = (
-        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN") or None
-    )
+    LOCAL_AGENT_EXECUTOR_TOKEN: Optional[str] = get_local_agent_executor_token()
     LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
         get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID") or None
     )

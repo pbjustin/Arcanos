@@ -40,6 +40,19 @@ class MockDagRunCapacityExceededError extends Error {
   }
 }
 
+class MockDagRunAdmissionUncertainError extends Error {
+  readonly code = 'DAG_RUN_ADMISSION_UNCERTAIN';
+  readonly runId: string;
+  readonly snapshotGeneration: string;
+
+  constructor(runId: string, snapshotGeneration: string) {
+    super('DAG run admission could not be confirmed.');
+    this.name = 'DagRunAdmissionUncertainError';
+    this.runId = runId;
+    this.snapshotGeneration = snapshotGeneration;
+  }
+}
+
 jest.unstable_mockModule(
   '@transport/http/middleware/memoryConsistencyGate.js',
   () => ({
@@ -52,6 +65,8 @@ jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
+  DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS: 1_000,
+  DagRunAdmissionUncertainError: MockDagRunAdmissionUncertainError,
   DagRunCapacityExceededError: MockDagRunCapacityExceededError,
   arcanosDagRunService: {
     createRun: mockCreateRun,

@@ -345,7 +345,7 @@ describe('ArcanosDagRunService lifecycle controls', () => {
     expect((service as any).executeRun).not.toHaveBeenCalled();
   });
 
-  it('reconciles a retained admission to the exact run id and launches one executor', async () => {
+  it('reports a retained admission as pending then admitted and launches one executor', async () => {
     jest.useFakeTimers();
     const service = new ArcanosDagRunService({
       admissionReconciliation: {
@@ -375,6 +375,22 @@ describe('ArcanosDagRunService lifecycle controls', () => {
       code: 'DAG_RUN_ADMISSION_UNCERTAIN',
       runId: initialEnvelope.runId,
       snapshotGeneration: '1'
+    });
+    await expect(
+      service.getRunAdmissionStatus(initialEnvelope.runId, '1')
+    ).resolves.toEqual({
+      runId: initialEnvelope.runId,
+      snapshotGeneration: '1',
+      state: 'pending',
+      retryAfterSeconds: 1
+    });
+    await expect(
+      service.getRunAdmissionStatus(initialEnvelope.runId, '2')
+    ).resolves.toEqual({
+      runId: initialEnvelope.runId,
+      snapshotGeneration: '2',
+      state: 'unavailable',
+      retryAfterSeconds: 5
     });
 
     const retainedAdmission = (service as any).retainedAdmissionsByRunId.get(
@@ -424,6 +440,13 @@ describe('ArcanosDagRunService lifecycle controls', () => {
     await expect(service.getRun(initialEnvelope.runId)).resolves.toEqual(
       expect.objectContaining({ runId: initialEnvelope.runId })
     );
+    await expect(
+      service.getRunAdmissionStatus(initialEnvelope.runId, '1')
+    ).resolves.toEqual({
+      runId: initialEnvelope.runId,
+      snapshotGeneration: '1',
+      state: 'admitted'
+    });
     expect(jest.getTimerCount()).toBe(0);
 
     (service as any).scheduleRetainedAdmissionReconciliation(
@@ -477,6 +500,14 @@ describe('ArcanosDagRunService lifecycle controls', () => {
         runId: expect.any(String),
         snapshotGeneration: '1'
       });
+      await expect(
+        service.getRunAdmissionStatus(initialEnvelope.runId, '1')
+      ).resolves.toEqual({
+        runId: initialEnvelope.runId,
+        snapshotGeneration: '1',
+        state: 'pending',
+        retryAfterSeconds: 1
+      });
       expect(jest.getTimerCount()).toBe(1);
 
       await jest.advanceTimersByTimeAsync(100);
@@ -490,6 +521,13 @@ describe('ArcanosDagRunService lifecycle controls', () => {
         .toBeNull();
       expect((service as any).executeRun).not.toHaveBeenCalled();
       expect(jest.getTimerCount()).toBe(0);
+      await expect(
+        service.getRunAdmissionStatus(initialEnvelope.runId, '1')
+      ).resolves.toEqual({
+        runId: initialEnvelope.runId,
+        snapshotGeneration: '1',
+        state: 'rejected'
+      });
     }
   );
 
@@ -578,6 +616,102 @@ describe('ArcanosDagRunService lifecycle controls', () => {
     expect((service as any).runsById.get(runId).admissionPending).toBe(true);
     expect((service as any).activeRunReservations.has(runId)).toBe(true);
     expect((service as any).executeRun).not.toHaveBeenCalled();
+  });
+
+  it('validates persisted admission identity and generation while preserving terminal outcomes', async () => {
+    const service = new ArcanosDagRunService({
+      lifecycle: {
+        retryAfterSeconds: 9
+      },
+      admissionReconciliation: {
+        retryDelayMs: 1_250
+      }
+    });
+    const baseRecord = createPersistedControlRecord('running');
+    const admittedRecord = {
+      ...baseRecord,
+      snapshot: {
+        ...baseRecord.snapshot,
+        admissionPending: false
+      }
+    };
+    const pendingRecord = {
+      ...baseRecord,
+      snapshot: {
+        ...baseRecord.snapshot,
+        admissionPending: true
+      }
+    };
+
+    lookupDagRunSnapshotForControlMock
+      .mockResolvedValueOnce({ outcome: 'unavailable' })
+      .mockResolvedValueOnce({ outcome: 'not_found' })
+      .mockResolvedValueOnce({
+        outcome: 'found',
+        record: pendingRecord
+      })
+      .mockResolvedValueOnce({
+        outcome: 'found',
+        record: admittedRecord
+      })
+      .mockResolvedValueOnce({
+        outcome: 'found',
+        record: admittedRecord
+      })
+      .mockResolvedValueOnce({
+        outcome: 'found',
+        record: {
+          ...admittedRecord,
+          runId: 'run-mismatched-identity'
+        }
+      });
+
+    await expect(
+      service.getRunAdmissionStatus('run-unavailable', '1')
+    ).resolves.toEqual({
+      runId: 'run-unavailable',
+      snapshotGeneration: '1',
+      state: 'unavailable',
+      retryAfterSeconds: 9
+    });
+    await expect(
+      service.getRunAdmissionStatus('run-rejected', '1')
+    ).resolves.toEqual({
+      runId: 'run-rejected',
+      snapshotGeneration: '1',
+      state: 'rejected'
+    });
+    await expect(
+      service.getRunAdmissionStatus(baseRecord.runId, '3')
+    ).resolves.toEqual({
+      runId: baseRecord.runId,
+      snapshotGeneration: '3',
+      state: 'pending',
+      retryAfterSeconds: 2
+    });
+    await expect(
+      service.getRunAdmissionStatus(baseRecord.runId, '3')
+    ).resolves.toEqual({
+      runId: baseRecord.runId,
+      snapshotGeneration: '3',
+      state: 'admitted'
+    });
+    await expect(
+      service.getRunAdmissionStatus(baseRecord.runId, '4')
+    ).resolves.toEqual({
+      runId: baseRecord.runId,
+      snapshotGeneration: '4',
+      state: 'unavailable',
+      retryAfterSeconds: 9
+    });
+    await expect(
+      service.getRunAdmissionStatus(baseRecord.runId, '3')
+    ).resolves.toEqual({
+      runId: baseRecord.runId,
+      snapshotGeneration: '3',
+      state: 'unavailable',
+      retryAfterSeconds: 9
+    });
   });
 
   it('persists local cancellation intent before abort and restores state after a failed CAS', async () => {

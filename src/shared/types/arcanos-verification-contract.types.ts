@@ -218,7 +218,24 @@ export interface CreateDagRunData {
   run: DagRunSummary;
 }
 
-export type CreateDagRunResponse = ApiEnvelope<CreateDagRunData>;
+export type DagRunAdmissionState = 'pending' | 'admitted' | 'rejected';
+
+export interface DagRunAdmissionStatus {
+  runId: string;
+  snapshotGeneration: string;
+  state: DagRunAdmissionState;
+  createNewRun: boolean;
+  pollAfterSeconds?: number;
+}
+
+export interface DagRunAdmissionData {
+  admission: DagRunAdmissionStatus;
+}
+
+export type CreateDagRunResponse =
+  ApiEnvelope<CreateDagRunData | DagRunAdmissionData>;
+
+export type DagRunAdmissionResponse = ApiEnvelope<DagRunAdmissionData>;
 
 export interface DagRunData {
   run: DagRunSummary;
@@ -487,6 +504,10 @@ export interface ArcanosVerificationApi {
   'GET /api/arcanos/dag/runs/:runId': {
     request: { runId: string };
     response: DagRunResponse;
+  };
+  'GET /api/arcanos/dag/runs/:runId/admission': {
+    request: { runId: string; snapshotGeneration: string };
+    response: DagRunAdmissionResponse;
   };
   'GET /api/arcanos/dag/runs/:runId/trace': {
     request: { runId: string; maxEvents?: number };

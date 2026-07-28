@@ -10,12 +10,33 @@ import pytest
 
 from arcanos import cli_runner
 from arcanos.cli.local_bridge import LocalBridge
-from arcanos.config import get_automation_auth, get_debug_server_token
+from arcanos.config import (
+    get_action_plan_executor_token,
+    get_automation_auth,
+    get_daemon_access_token,
+    get_debug_server_token,
+    get_local_agent_executor_token,
+)
 from arcanos.credential_verification import PURPOSE_BOUND_CREDENTIAL_ENV_NAMES
 
 
 CredentialLoader = Callable[[], str | None]
 PYTHON_OWNED_LOADERS: tuple[tuple[str, str, CredentialLoader], ...] = (
+    (
+        "daemon",
+        "ARCANOS_DAEMON_ACCESS_TOKEN",
+        get_daemon_access_token,
+    ),
+    (
+        "action_plan_executor",
+        "ACTION_PLAN_EXECUTOR_TOKEN",
+        get_action_plan_executor_token,
+    ),
+    (
+        "local_agent_executor",
+        "ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN",
+        get_local_agent_executor_token,
+    ),
     (
         "automation",
         "ARCANOS_AUTOMATION_SECRET",
@@ -176,3 +197,26 @@ def test_automation_loader_preserves_header_and_trimmed_secret_semantics(
 
 def test_automation_loader_preserves_default_optional_semantics() -> None:
     assert get_automation_auth() == ("x-arcanos-automation", "")
+
+
+@pytest.mark.parametrize(
+    ("environment_name", "loader"),
+    (
+        ("ACTION_PLAN_EXECUTOR_TOKEN", get_action_plan_executor_token),
+        (
+            "ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN",
+            get_local_agent_executor_token,
+        ),
+    ),
+)
+def test_executor_loaders_preserve_raw_optional_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    environment_name: str,
+    loader: CredentialLoader,
+) -> None:
+    assert loader() is None
+
+    credential = " python-raw-executor-credential-123456 "
+    monkeypatch.setenv(environment_name, credential)
+
+    assert loader() == credential

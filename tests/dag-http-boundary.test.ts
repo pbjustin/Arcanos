@@ -62,6 +62,13 @@ function buildApp(options: {
       runId: req.params.runId,
     });
   });
+  app.get('/api/arcanos/dag/runs/:runId/admission', (req, res) => {
+    res.status(200).json({
+      ok: true,
+      runId: req.params.runId,
+      state: 'pending',
+    });
+  });
   app.post('/api/arcanos/dag/runs/:runId/cancel', (req, res) => {
     res.status(200).json({
       ok: true,
@@ -137,10 +144,16 @@ describe('DAG HTTP ingress boundary', () => {
     const readResponse = await authenticatedGet(readOnlyApp);
     const executionDenied = await authenticatedPost(readOnlyApp)
       .send({ sessionId: 'session-read-only' });
+    const admissionDenied = await authenticatedGet(
+      readOnlyApp,
+      '/api/arcanos/dag/runs/run-1/admission'
+    );
 
     expect(readResponse.status).toBe(200);
     expect(executionDenied.status).toBe(403);
     expect(executionDenied.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(admissionDenied.status).toBe(403);
+    expect(admissionDenied.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
 
     configureControlPlane('mcp:invoke');
     const executionOnlyApp = buildApp();
@@ -150,10 +163,15 @@ describe('DAG HTTP ingress boundary', () => {
       executionOnlyApp,
       '/api/arcanos/dag/runs/run-1/cancel'
     );
+    const admissionResponse = await authenticatedGet(
+      executionOnlyApp,
+      '/api/arcanos/dag/runs/run-1/admission'
+    );
     const readDenied = await authenticatedGet(executionOnlyApp);
 
     expect(createResponse.status).toBe(202);
     expect(cancelResponse.status).toBe(200);
+    expect(admissionResponse.status).toBe(200);
     expect(readDenied.status).toBe(403);
     expect(readDenied.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
   });

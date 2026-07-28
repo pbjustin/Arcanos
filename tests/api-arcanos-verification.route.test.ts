@@ -16,6 +16,7 @@ const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
 const mockGetWorkerControlStatus = jest.fn();
 const mockCreateRun = jest.fn();
+const mockGetRunAdmissionStatus = jest.fn();
 const mockGetLatestRun = jest.fn();
 const mockGetRun = jest.fn();
 const mockWaitForRunUpdate = jest.fn();
@@ -41,14 +42,30 @@ class MockDagRunCapacityExceededError extends Error {
   }
 }
 
+class MockDagRunAdmissionUncertainError extends Error {
+  readonly code = 'DAG_RUN_ADMISSION_UNCERTAIN';
+  readonly runId: string;
+  readonly snapshotGeneration: string;
+
+  constructor(runId: string, snapshotGeneration: string) {
+    super('DAG run admission could not be confirmed.');
+    this.name = 'DagRunAdmissionUncertainError';
+    this.runId = runId;
+    this.snapshotGeneration = snapshotGeneration;
+  }
+}
+
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
   getWorkerControlStatus: mockGetWorkerControlStatus
 }));
 
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
+  DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS: 1_000,
+  DagRunAdmissionUncertainError: MockDagRunAdmissionUncertainError,
   DagRunCapacityExceededError: MockDagRunCapacityExceededError,
   arcanosDagRunService: {
     createRun: mockCreateRun,
+    getRunAdmissionStatus: mockGetRunAdmissionStatus,
     getLatestRun: mockGetLatestRun,
     getRun: mockGetRun,
     waitForRunUpdate: mockWaitForRunUpdate,
@@ -536,6 +553,161 @@ describe('api-arcanos-verification routes', () => {
     expect(response.body).toEqual({
       error: 'DAG_RUN_CAPACITY_EXCEEDED',
       message: 'DAG run capacity is temporarily unavailable.'
+    });
+  });
+
+  it('accepts ambiguous DAG admission and directs polling to its dedicated monitor', async () => {
+    mockCreateRun.mockRejectedValueOnce(
+      new MockDagRunAdmissionUncertainError(
+        'dagrun-uncertain-1',
+        '1'
+      )
+    );
+
+    const response = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
+      sessionId: 'uncertain-session',
+      template: 'verification-default',
+      input: { goal: 'reconcile the original DAG admission' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['retry-after']).toBe('1');
+    expect(response.headers.location).toBe(
+      '/api/arcanos/dag/runs/dagrun-uncertain-1/admission?snapshotGeneration=1'
+    );
+    expect(response.body).toEqual({
+      ok: true,
+      timestamp: expect.any(String),
+      version: '1.0.0',
+      requestId: 'req-test',
+      data: {
+        admission: {
+          runId: 'dagrun-uncertain-1',
+          snapshotGeneration: '1',
+          state: 'pending',
+          createNewRun: false,
+          pollAfterSeconds: 1
+        }
+      }
+    });
+    expect(mockCreateRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an execution-only creator poll pending admission without gaining run-read scope', async () => {
+    configureControlPlane('mcp:invoke');
+    mockCreateRun.mockRejectedValueOnce(
+      new MockDagRunAdmissionUncertainError(
+        'dagrun-execution-only',
+        '1'
+      )
+    );
+    mockGetRunAdmissionStatus.mockResolvedValueOnce({
+      runId: 'dagrun-execution-only',
+      snapshotGeneration: '1',
+      state: 'pending',
+      retryAfterSeconds: 1
+    });
+
+    const app = buildApp();
+    const createResponse = await authorizeDagRequest(
+      request(app).post('/dag/runs')
+    ).send({
+      sessionId: 'execution-only-session',
+      template: 'verification-default',
+      input: { goal: 'monitor only this admission' }
+    });
+    const admissionPath = createResponse.headers.location.replace(
+      '/api/arcanos',
+      ''
+    );
+    const admissionResponse = await authorizeDagRequest(
+      request(app).get(admissionPath)
+    );
+    const fullRunResponse = await authorizeDagRequest(
+      request(app).get('/dag/runs/dagrun-execution-only')
+    );
+
+    expect(createResponse.status).toBe(202);
+    expect(admissionResponse.status).toBe(200);
+    expect(admissionResponse.headers['retry-after']).toBe('1');
+    expect(admissionResponse.body.data.admission).toEqual({
+      runId: 'dagrun-execution-only',
+      snapshotGeneration: '1',
+      state: 'pending',
+      createNewRun: false,
+      pollAfterSeconds: 1
+    });
+    expect(fullRunResponse.status).toBe(403);
+    expect(fullRunResponse.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(mockGetRunAdmissionStatus).toHaveBeenCalledWith(
+      'dagrun-execution-only',
+      '1'
+    );
+  });
+
+  it.each([
+    ['admitted', false],
+    ['rejected', true]
+  ] as const)(
+    'returns terminal %s admission status with an unambiguous create policy',
+    async (state, createNewRun) => {
+      configureControlPlane('mcp:invoke');
+      mockGetRunAdmissionStatus.mockResolvedValueOnce({
+        runId: 'dagrun-terminal',
+        snapshotGeneration: '1',
+        state
+      });
+
+      const response = await authorizeDagRequest(
+        request(buildApp())
+          .get('/dag/runs/dagrun-terminal/admission')
+          .query({ snapshotGeneration: '1' })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers['retry-after']).toBeUndefined();
+      expect(response.body.data.admission).toEqual({
+        runId: 'dagrun-terminal',
+        snapshotGeneration: '1',
+        state,
+        createNewRun
+      });
+    }
+  );
+
+  it('keeps admission retries on GET when status lookup is unavailable', async () => {
+    configureControlPlane('mcp:invoke');
+    mockGetRunAdmissionStatus.mockResolvedValueOnce({
+      runId: 'dagrun-unavailable',
+      snapshotGeneration: '1',
+      state: 'unavailable',
+      retryAfterSeconds: 4
+    });
+
+    const response = await authorizeDagRequest(
+      request(buildApp())
+        .get('/dag/runs/dagrun-unavailable/admission')
+        .query({ snapshotGeneration: '1' })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers['retry-after']).toBe('4');
+    expect(response.headers.location).toBe(
+      '/api/arcanos/dag/runs/dagrun-unavailable/admission?snapshotGeneration=1'
+    );
+    expect(response.body).toEqual({
+      error: 'DAG_RUN_ADMISSION_STATUS_UNAVAILABLE',
+      message:
+        'DAG run admission status is temporarily unavailable. Poll this admission URL again without creating another run.',
+      admission: {
+        runId: 'dagrun-unavailable',
+        snapshotGeneration: '1',
+        state: 'unavailable',
+        createNewRun: false,
+        pollAfterSeconds: 4
+      }
     });
   });
 
