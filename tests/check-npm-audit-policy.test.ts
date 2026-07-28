@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ type AuditVulnerability = {
 const auditPolicyScriptPath = fileURLToPath(
   new URL('../scripts/check-npm-audit.js', import.meta.url),
 );
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function runAuditPolicy(vulnerabilities: Record<string, AuditVulnerability>) {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-policy-'));
@@ -179,8 +180,9 @@ describe('npm audit policy', () => {
   it.each([
     [1_120_311, 'GHSA-jxxr-4gwj-5jf2'],
     [1_123_898, 'GHSA-3jxr-9vmj-r5cp'],
+    [1_124_334, 'GHSA-mh99-v99m-4gvg'],
   ] as const)(
-    'retains the source-scoped brace-expansion exception for %s',
+    'does not suppress the remediated brace-expansion advisory %s',
     (source, ghsa) => {
       const result = runAuditPolicy({
         'brace-expansion': advisory('brace-expansion', 'high', source, ghsa, [
@@ -188,8 +190,8 @@ describe('npm audit policy', () => {
         ]),
       });
 
-      expect(result.status).toBe(0);
-      expect(parseStdout(result).ignored[0].name).toBe('brace-expansion');
+      expect(result.status).toBe(1);
+      expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
     },
   );
 
@@ -220,6 +222,29 @@ describe('npm audit policy', () => {
 
     expect(result.status).toBe(1);
     expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
+  });
+
+  it('locks the vendored brace-expansion patch to its immutable commit', () => {
+    const expectedDependency =
+      'git+https://github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59';
+    const vendorPackage = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'vendor/minimatch-9.0.7/package.json'), 'utf8'),
+    );
+    const packageLock = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
+    );
+    const lockedVendor = packageLock.packages['vendor/minimatch-9.0.7'];
+    const lockedBraceExpansion =
+      packageLock.packages[
+        'vendor/minimatch-9.0.7/node_modules/brace-expansion'
+      ];
+
+    expect(vendorPackage.dependencies['brace-expansion']).toBe(expectedDependency);
+    expect(lockedVendor.dependencies['brace-expansion']).toBe(expectedDependency);
+    expect(lockedBraceExpansion.version).toBe('5.0.8');
+    expect(lockedBraceExpansion.resolved).toContain(
+      'github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59',
+    );
   });
 
   it('retains source- and node-scoped exceptions for the unpublished Hono builds', () => {

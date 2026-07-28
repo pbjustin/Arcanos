@@ -307,7 +307,7 @@ describe('custom GPT route OpenAPI contract', () => {
       ...Object.values(errorResponses?.['400']?.content?.['application/json']?.examples ?? {}),
       ...Object.values(errorResponses?.['503']?.content?.['application/json']?.examples ?? {}),
     ] as Array<{ value?: Record<string, unknown> }>;
-    expect(errorExamples).toHaveLength(8);
+    expect(errorExamples).toHaveLength(9);
     for (const example of errorExamples) {
       expect(example.value).toEqual(expect.objectContaining({
         ok: false,

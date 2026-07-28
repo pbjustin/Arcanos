@@ -1,5 +1,4 @@
 import type {
-  CancelDagRunResponseData,
   DagRunError,
   DagEventsData,
   DagLineageData,
@@ -145,19 +144,33 @@ const ArcanosTracker: ModuleDef = {
     async cancelRun(payload: unknown) {
       const normalizedPayload = normalizeTrackerPayload(payload);
       const runId = requireTrackerRunId(normalizedPayload);
-      const cancelledRun = arcanosDagRunService.cancelRun(runId);
+      const cancellation = await arcanosDagRunService.cancelRun(runId);
 
-      if (!cancelledRun) {
+      if (cancellation.outcome === 'not_found') {
         throw new Error(`ARCANOS:TRACKER cancelRun could not find run "${runId}".`);
       }
+      if (cancellation.outcome === 'not_cancellable') {
+        throw new Error(
+          `ARCANOS:TRACKER cancelRun cannot cancel terminal run "${runId}" (${cancellation.runStatus}).`
+        );
+      }
+      if (
+        cancellation.outcome === 'owned_elsewhere' ||
+        cancellation.outcome === 'unavailable'
+      ) {
+        throw new Error(
+          `ARCANOS:TRACKER cancelRun is temporarily unavailable for run "${runId}".`
+        );
+      }
 
-      logger.info('arcanos.tracker.run.cancelled', {
+      logger.info('arcanos.tracker.run.cancellation', {
         module: 'arcanos-tracker',
         runId,
-        cancelledNodes: cancelledRun.cancelledNodes
+        cancellationOutcome: cancellation.outcome,
+        cancelledNodes: cancellation.data.cancelledNodes
       });
 
-      return cancelledRun;
+      return cancellation.data;
     }
   }
 };

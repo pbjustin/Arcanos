@@ -22,6 +22,8 @@ Poll `GET /jobs/:id/result` until the status is terminal. `completed` is success
 
 Clients must bound total polling time and use a capped interval/backoff. Missing `jobId` on a queued, running, or timed-out acknowledgement is a client-visible protocol error because there is no safe canonical job to poll.
 
+Repository-unavailable HTTP `503` responses are not `not_found`. Retain any accepted `jobId`, `poll`, and `stream` coordinates and retry the same lookup with bounded backoff; do not submit replacement work solely because durable status storage is temporarily unavailable. A post-enqueue GPT wait failure uses `ASYNC_GPT_JOBS_UNAVAILABLE`, while direct job routes use `JOB_REPOSITORY_UNAVAILABLE`.
+
 ## Degraded Pipeline Fallback
 ARCANOS core can return a completed job that is degraded fallback output after a pipeline timeout. Documentation generation must not treat that output as usable.
 

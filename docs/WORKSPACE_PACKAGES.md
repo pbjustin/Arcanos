@@ -59,7 +59,17 @@ npm run build
 npm start
 ```
 
-`arcanos-ai-runtime/` is standalone and can be tested independently through its package scripts.
+`arcanos-ai-runtime/` is standalone and can be tested independently through its
+package scripts. Its package test builds the workspace and exercises the
+fail-closed `/jobs` HTTP boundary against an injected queue; it does not require
+Redis, OpenAI, or a live listener outside loopback. Runtime callers must
+configure the purpose-bound Bearer token, stable server-owned principal, and
+explicit `runtime:enqueue`/`runtime:read` scopes documented in
+`CONFIGURATION.md`. The separately guarded `test:redis-integration` suite
+exercises admission concurrency and BullMQ lifecycle fencing only against an
+explicitly confirmed disposable loopback Redis database; the required CI job
+provides that service. Never point this suite at shared, developer, staging, or
+production Redis.
 
 ## Deploy (Railway)
 Railway builds from the root package and uses `scripts/start-railway-service.mjs`. Workspace package changes must be built into `dist/` before deploy.
@@ -81,6 +91,9 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
 ### Runtime helpers
 
 - `@arcanos/runtime` is canonical for runtime budgets, structured runtime errors, abort helpers, and redaction.
+- Its redactor preserves ordinary object shape while projecting
+  credential-shaped and prototype-sensitive property names to collision-safe
+  opaque markers before recursively sanitizing values.
 - `src/platform/resilience/runtimeBudget.ts` and `src/platform/resilience/runtimeErrors.ts` are backend compatibility facades that re-export package APIs. Do not add a second implementation there.
 - `arcanos-ai-runtime/src/runtime/runtimeBudget.ts` and `runtimeErrors.ts` are likewise compatibility facades over the workspace package.
 - New consumers should use package exports such as `@arcanos/runtime`, `@arcanos/runtime/runtimeBudget`, `@arcanos/runtime/runtimeErrors`, and `@arcanos/runtime/redaction`.
@@ -88,6 +101,13 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
 ### OpenAI integration
 
 - `@arcanos/openai` owns portable client construction, retry/backoff utilities, resilience defaults, Responses helpers, structured-reasoning helpers, and response parsing.
+- `@arcanos/openai/responses` owns the cross-runtime Responses lifecycle,
+  refusal, usage, and legacy function/custom-tool projection contract. Backend
+  and worker adapters keep only their surface-specific IDs, timestamps, models,
+  envelopes, telemetry, and orchestration.
+- Its structured JSON helpers require an explicit completed lifecycle before
+  parsing, reject incomplete partial JSON, and surface terminal, pending,
+  unknown, or missing status without accepting provider output as success.
 - The backend keeps server-specific adapter configuration, credential resolution, telemetry, circuit-breaker integration, request staging, and chat-flow orchestration in `src/core/adapters/openai.adapter.ts` and `src/services/openai/`.
 - `workers/` and `arcanos-ai-runtime/` import shared client/retry helpers rather than maintaining separate copies.
 - Retry is not globally app-only: the backend adapter can configure SDK retries, while backend chat flow and other runtimes may also apply an application retry helper. Changes must account for the combined attempt budget.

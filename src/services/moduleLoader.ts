@@ -1,7 +1,9 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from '@platform/logging/structuredLogging.js';
+import {
+  defineModuleCatalog,
+  MODULE_CATALOG,
+  type ModuleCatalogEntry
+} from './moduleCatalog.js';
 
 export type ModuleActionRisk = 'readonly' | 'privileged' | 'destructive';
 export type ModuleActionExecutionTarget = 'typescript' | 'python-daemon';
@@ -52,58 +54,216 @@ export interface ModuleDef {
 }
 
 export interface LoadedModule {
-  route: string;
-  definition: ModuleDef;
+  readonly route: string;
+  readonly definition: ModuleDef;
 }
 
-let cachedModules: LoadedModule[] | null = null;
+export type ModuleImporter = (source: string) => Promise<unknown>;
 
-function normalizeRouteFromFilename(fileName: string): string {
-  return fileName.replace(/\.(ts|js)$/i, '').replace(/^arcanos-/, '');
+export interface ModuleDefinitionLoader {
+  load(): Promise<LoadedModule[]>;
+  clear(): void;
 }
 
-function shouldIncludeFile(fileName: string): boolean {
-  //audit Assumption: only .ts/.js module files should load
-  if (!/\.(ts|js)$/i.test(fileName)) return false;
-  if (/\.d\.ts$/i.test(fileName)) return false;
-  if (/moduleLoader\.(ts|js)$/i.test(fileName)) return false;
-  return true;
+type ModuleDefinitionRejection =
+  | 'missing_default'
+  | 'name_mismatch'
+  | 'invalid_actions'
+  | 'exposure_mismatch';
+
+type LoadedModuleSnapshot = Readonly<LoadedModule>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function loadModuleDefinitions(): Promise<LoadedModule[]> {
-  if (cachedModules) {
-    return cachedModules;
+function getModuleDefinitionRejection(
+  value: unknown,
+  entry: ModuleCatalogEntry
+): ModuleDefinitionRejection | null {
+  if (!isRecord(value)) {
+    return 'missing_default';
+  }
+  if (value.name !== entry.name) {
+    return 'name_mismatch';
   }
 
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const modulesDir = __dirname;
-  const files = await fs.readdir(modulesDir, { withFileTypes: true });
+  const actions = value.actions;
+  if (
+    !isRecord(actions)
+    || Object.keys(actions).length === 0
+    || !Object.values(actions).every((handler) => typeof handler === 'function')
+  ) {
+    return 'invalid_actions';
+  }
+  const expectedGptAccessOnly = entry.gptAccessOnly === true;
+  if (
+    (value.gptAccessOnly === true) !== expectedGptAccessOnly
+    || (
+      expectedGptAccessOnly
+      && value.exposeLegacyRoute !== false
+    )
+  ) {
+    return 'exposure_mismatch';
+  }
 
-  const loaded: LoadedModule[] = [];
+  return null;
+}
 
-  for (const file of files) {
-    if (!file.isFile()) continue;
-    if (!shouldIncludeFile(file.name)) continue;
+function cloneAndFreezeMetadataValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return Object.freeze(
+      value.map((entry) => cloneAndFreezeMetadataValue(entry))
+    );
+  }
+  if (isRecord(value)) {
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          cloneAndFreezeMetadataValue(entry)
+        ])
+      )
+    );
+  }
+  return value;
+}
 
-    const route = normalizeRouteFromFilename(file.name);
-    const moduleUrl = pathToFileURL(path.join(modulesDir, file.name)).href;
+function createModuleDefinitionSnapshot(value: unknown): ModuleDef {
+  const definition = value as ModuleDef;
+  return Object.freeze({
+    ...definition,
+    actions: Object.freeze({ ...definition.actions }),
+    ...(definition.actionMetadata
+      ? {
+          actionMetadata: cloneAndFreezeMetadataValue(
+            definition.actionMetadata
+          ) as Record<string, ModuleActionMetadata>
+        }
+      : {}),
+    ...(definition.gptIds
+      ? {
+          gptIds: Object.freeze(
+            [...definition.gptIds]
+          ) as unknown as string[]
+        }
+      : {})
+  }) as ModuleDef;
+}
 
+function cloneLoadedModules(
+  modules: readonly LoadedModuleSnapshot[]
+): LoadedModule[] {
+  return modules.map(({ route, definition }) => ({ route, definition }));
+}
+
+async function loadCatalogSnapshot(
+  catalog: readonly ModuleCatalogEntry[],
+  importModule: ModuleImporter
+): Promise<readonly LoadedModuleSnapshot[]> {
+  const loaded: LoadedModuleSnapshot[] = [];
+
+  for (const entry of catalog) {
+    let imported: unknown;
     try {
-      const imported = await import(moduleUrl);
-      const mod: ModuleDef | undefined = imported.default;
-      if (mod && mod.actions) {
-        loaded.push({ route, definition: mod });
-      }
-    } catch (err: unknown) {
-      //audit Assumption: module load failure should not halt loading
-      console.error(`Failed to load module ${file.name}:`, resolveErrorMessage(err));
+      imported = await importModule(entry.source);
+    } catch {
+      logger.error('module.catalog.entry_unavailable', {
+        module: 'module-loader',
+        operation: 'import',
+        route: entry.route,
+        expectedModule: entry.name,
+        source: entry.source,
+        reason: 'import_failed'
+      });
+      continue;
     }
+
+    const candidate = isRecord(imported) ? imported.default : undefined;
+    const rejection = getModuleDefinitionRejection(candidate, entry);
+    if (rejection) {
+      logger.error('module.catalog.entry_unavailable', {
+        module: 'module-loader',
+        operation: 'validate',
+        route: entry.route,
+        expectedModule: entry.name,
+        source: entry.source,
+        reason: rejection
+      });
+      continue;
+    }
+
+    loaded.push(Object.freeze({
+      route: entry.route,
+      definition: createModuleDefinitionSnapshot(candidate)
+    }));
   }
 
-  cachedModules = loaded;
-  return loaded;
+  return Object.freeze(loaded);
 }
 
-export function clearModuleDefinitionCache() {
-  cachedModules = null;
+async function importCatalogModule(source: string): Promise<unknown> {
+  return import(source);
+}
+
+/**
+ * Creates an isolated catalog loader. The factory keeps discovery testable
+ * without importing unrelated service files or mutating the process-wide cache.
+ */
+export function createModuleDefinitionLoader(
+  catalog: readonly ModuleCatalogEntry[],
+  importModule: ModuleImporter = importCatalogModule
+): ModuleDefinitionLoader {
+  const ownedCatalog = defineModuleCatalog(catalog);
+  let cachedModules: readonly LoadedModuleSnapshot[] | null = null;
+  let loadingPromise: Promise<readonly LoadedModuleSnapshot[]> | null = null;
+  let cacheGeneration = 0;
+
+  return {
+    async load(): Promise<LoadedModule[]> {
+      if (cachedModules) {
+        return cloneLoadedModules(cachedModules);
+      }
+
+      if (!loadingPromise) {
+        const loadGeneration = cacheGeneration;
+        let currentLoad: Promise<readonly LoadedModuleSnapshot[]>;
+        currentLoad = loadCatalogSnapshot(ownedCatalog, importModule)
+          .then((loaded) => {
+            if (cacheGeneration === loadGeneration) {
+              cachedModules = loaded;
+            }
+            return loaded;
+          })
+          .finally(() => {
+            if (loadingPromise === currentLoad) {
+              loadingPromise = null;
+            }
+          });
+        loadingPromise = currentLoad;
+      }
+
+      return cloneLoadedModules(await loadingPromise);
+    },
+
+    clear(): void {
+      cacheGeneration += 1;
+      cachedModules = null;
+      loadingPromise = null;
+    }
+  };
+}
+
+const defaultModuleDefinitionLoader = createModuleDefinitionLoader(MODULE_CATALOG);
+
+export function loadModuleDefinitions(): Promise<LoadedModule[]> {
+  return defaultModuleDefinitionLoader.load();
+}
+
+/**
+ * Clears only the validated registry snapshot. Node's ESM evaluation cache is
+ * process-owned, so source changes or evaluation failures require a restart.
+ */
+export function clearModuleDefinitionCache(): void {
+  defaultModuleDefinitionLoader.clear();
 }

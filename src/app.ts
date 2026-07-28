@@ -18,6 +18,71 @@ import {
   ACTION_PLAN_EXECUTION_BODY_LIMIT,
   isActionPlanExecutionBoundedBodyRoute,
 } from '@services/actionPlanExecution/http.js';
+import {
+  selfHealingControlHttpBoundary,
+} from '@services/controlPlane/selfHealingControlHttpBoundary.js';
+import {
+  selfHealingControlBodyParser,
+} from '@services/controlPlane/selfHealingControlBodyParser.js';
+import {
+  diagnosticExecutionHttpBoundary,
+} from '@services/controlPlane/diagnosticExecutionHttpBoundary.js';
+import {
+  diagnosticExecutionBodyParser,
+} from '@services/controlPlane/diagnosticExecutionBodyParser.js';
+import {
+  legacyOperatorHttpBoundary,
+} from '@services/controlPlane/legacyOperatorHttpBoundary.js';
+import {
+  legacyOperatorBodyParser,
+} from '@services/controlPlane/legacyOperatorBodyParser.js';
+import {
+  systemStateHttpBoundary,
+} from '@services/controlPlane/systemStateHttpBoundary.js';
+import {
+  systemStateBodyParser,
+} from '@services/controlPlane/systemStateBodyParser.js';
+import {
+  ragHttpBoundary,
+} from '@services/controlPlane/ragHttpBoundary.js';
+import {
+  ragBodyParser,
+} from '@services/controlPlane/ragBodyParser.js';
+import {
+  reinforcementHttpBoundary,
+} from '@services/controlPlane/reinforcementHttpBoundary.js';
+import {
+  reinforcementBodyParser,
+} from '@services/controlPlane/reinforcementBodyParser.js';
+import {
+  afolHttpBoundary,
+} from '@services/controlPlane/afolHttpBoundary.js';
+import {
+  afolBodyParser,
+} from '@services/controlPlane/afolBodyParser.js';
+import {
+  assistantRegistryHttpBoundary,
+} from '@services/controlPlane/assistantRegistryHttpBoundary.js';
+import {
+  assistantRegistryBodyParser,
+} from '@services/controlPlane/assistantRegistryBodyParser.js';
+import {
+  dagHttpBoundary,
+} from '@services/controlPlane/dagHttpBoundary.js';
+import {
+  cefHttpBoundary,
+} from '@services/controlPlane/cefHttpBoundary.js';
+import {
+  cefBodyParser,
+} from '@services/controlPlane/cefBodyParser.js';
+import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
+import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
+import {
+  configureDefaultAppMetricsRuntimeProviders
+} from '@services/appMetricsRuntimeProviders.js';
+import {
+  configureDefaultArcanosCoreRuntimeProviders
+} from '@services/arcanosCoreRuntimeProviders.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -34,6 +99,7 @@ export function startAppRuntimeOnce(app: Express): boolean {
   }
 
   startedRuntimeApps.add(app);
+  void startConfiguredWorkerRuntime();
   startSelfHealingControlLoop(app);
   void runtimeDiagnosticsService.logStartupSummary(app);
   return true;
@@ -43,6 +109,8 @@ export function startAppRuntimeOnce(app: Express): boolean {
  * Creates and configures the Express application.
  */
 export function createApp(): Express {
+  configureDefaultAppMetricsRuntimeProviders();
+  configureDefaultArcanosCoreRuntimeProviders();
   const app = express();
   const gptFallbackBodyParser = express.text({
     type: () => true,
@@ -54,7 +122,75 @@ export function createApp(): Express {
   });
 
   app.use(requestContext);
+  // CORS answers preflight requests without calling later middleware. Establish
+  // the exact CEF trust boundary first so OPTIONS cannot bypass authentication;
+  // authorized, supported requests continue through the shared CORS policy.
+  app.use('/api/commands', cefHttpBoundary);
+  app.use('/api/agent', cefHttpBoundary);
+  app.use('/api/commands', cefBodyParser);
+  app.use('/api/agent', cefBodyParser);
+  // Feedback ingestion and reinforcement-memory inspection are operator-only.
+  // Establish identity, scope, and strict route-specific body bounds before
+  // CORS or either broad application parser can handle these exact namespaces.
+  app.use('/reinforce', reinforcementHttpBoundary);
+  app.use('/audit', reinforcementHttpBoundary);
+  app.use('/reinforcement', reinforcementHttpBoundary);
+  app.use('/memory', reinforcementHttpBoundary);
+  app.use('/reinforce', reinforcementBodyParser);
+  app.use('/audit', reinforcementBodyParser);
+  app.use('/reinforcement', reinforcementBodyParser);
+  app.use('/memory', reinforcementBodyParser);
+  // AFOL inspection and provider-backed decisions are operator-only. Establish
+  // identity, operation scope, and the strict decision body cap before CORS or
+  // the broad application parsers can allocate or expose retained records.
+  app.use('/api/afol', afolHttpBoundary);
+  app.use('/api/afol', afolBodyParser);
+  // Assistant-registry reads and the confirmed provider-backed synchronization
+  // are direct control-plane operations. Authenticate and strictly bound the
+  // exact namespace before CORS or broad application parsing.
+  app.use('/api/assistants', assistantRegistryHttpBoundary);
+  app.use('/api/assistants', assistantRegistryBodyParser);
   app.use(cors(config.cors));
+  // Durable session payloads share the memory trust domain. Authenticate the
+  // entire prefix before the broad parsers can allocate or expose stored data.
+  app.use('/api/sessions', requireMemoryPlaneAuth);
+  // Model- and subprocess-backed diagnostics are operator control-plane work.
+  // Authenticate, authorize, throttle, and serialize them before body parsing.
+  app.use('/devops/self-test', diagnosticExecutionHttpBoundary);
+  app.use('/devops/daily-summary', diagnosticExecutionHttpBoundary);
+  app.use('/api/pr-analysis/analyze', diagnosticExecutionHttpBoundary);
+  app.use('/devops/self-test', diagnosticExecutionBodyParser);
+  app.use('/devops/daily-summary', diagnosticExecutionBodyParser);
+  app.use('/api/pr-analysis/analyze', diagnosticExecutionBodyParser);
+  // Legacy SDK and orchestration routes retain confirmation as approval only;
+  // caller identity and scope are established before their request bodies.
+  app.use('/sdk', legacyOperatorHttpBoundary);
+  app.use('/orchestration/reset', legacyOperatorHttpBoundary);
+  app.use('/orchestration/purge', legacyOperatorHttpBoundary);
+  app.use('/orchestration/status', legacyOperatorHttpBoundary);
+  app.use('/sdk', legacyOperatorBodyParser);
+  app.use('/orchestration/reset', legacyOperatorBodyParser);
+  app.use('/orchestration/purge', legacyOperatorBodyParser);
+  // System-state is a direct control-plane surface. Establish operator identity,
+  // method-specific scope, and a bounded body before the broad application parser.
+  app.use('/system-state', systemStateHttpBoundary);
+  app.use('/system-state', systemStateBodyParser);
+  // Direct RAG traffic can fetch, persist, retrieve, and invoke paid providers.
+  // Establish operator trust and operation-specific bounds before broad parsing.
+  app.use('/rag', ragHttpBoundary);
+  app.use('/rag', ragBodyParser);
+  // DAG runs are paid, persistent control-plane work. Establish the operator
+  // principal and method-specific scope before the broad application parser.
+  app.use('/api/arcanos/dag', dagHttpBoundary);
+  // Self-healing control traffic is authenticated and client-throttled before
+  // the broad JSON parser can allocate for an unauthenticated request body.
+  app.use('/api/self-heal', selfHealingControlHttpBoundary);
+  app.use('/api/self-improve', selfHealingControlHttpBoundary);
+  app.use('/status/safety/self-heal', selfHealingControlHttpBoundary);
+  app.use('/status/safety/quarantine', selfHealingControlHttpBoundary);
+  app.use('/api/self-heal/decide', selfHealingControlBodyParser);
+  app.use('/api/self-improve', selfHealingControlBodyParser);
+  app.use('/status/safety/quarantine', selfHealingControlBodyParser);
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (!isActionPlanExecutionBoundedBodyRoute(req.method, req.path)) {
       next();

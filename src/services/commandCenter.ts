@@ -4,9 +4,11 @@ import { traceCefBoundary } from './cef/boundaryTrace.js';
 import { buildCommandError } from './cef/commandErrors.js';
 import {
   assertCefSchemaRegistered,
-  listRegisteredCommandSchemaCoverage
+  listRegisteredCommandSchemaCoverage,
+  validateCefSchema
 } from './cef/schemaRegistry.js';
 import { dispatchWhitelistedCefHandler } from './cef/handlers/index.js';
+import { consumeCefExecutionPermit } from './cef/executionPermit.js';
 import type {
   CefHandlerContext,
   CommandDefinition,
@@ -27,6 +29,17 @@ export type {
 interface RoutedCommandDefinition extends CommandDefinition {
   description: string;
 }
+
+export type CommandExecutionValidationResult =
+  | {
+      ok: true;
+      command: CommandName;
+      payload: Record<string, unknown>;
+    }
+  | {
+      ok: false;
+      errorCode: 'INVALID_COMMAND_PAYLOAD' | 'UNSUPPORTED_COMMAND';
+    };
 
 const COMMAND_DEFINITIONS: Record<CommandName, RoutedCommandDefinition> = {
   'audit-safe:set-mode': {
@@ -94,8 +107,9 @@ function buildHandlerContext(
   commandTraceId: string,
   context: CommandExecutionContext = {}
 ): CefHandlerContext {
+  const { executionPermit: _executionPermit, ...safeContext } = context;
   return {
-    ...context,
+    ...safeContext,
     command: definition.name,
     commandTraceId,
     domain: definition.handlerDomain,
@@ -159,6 +173,45 @@ async function routeCommandToHandler(
 }
 
 /**
+ * Validate command identity and payload without executing handler code.
+ *
+ * HTTP callers use this inspection before issuing confirmation challenges so
+ * malformed or unsupported requests keep their existing 400 semantics.
+ */
+export function validateCommandForExecution(
+  command: string,
+  payload: Record<string, unknown> = {}
+): CommandExecutionValidationResult {
+  assertCommandDefinitionSchemasRegistered();
+  const definition = COMMAND_DEFINITIONS[command as CommandName];
+  if (!definition) {
+    return {
+      ok: false,
+      errorCode: 'UNSUPPORTED_COMMAND',
+    };
+  }
+
+  const parsedPayload = validateCefSchema<Record<string, unknown>>(
+    definition.inputSchemaName,
+    payload
+  );
+  if (!parsedPayload.success || !parsedPayload.data) {
+    return {
+      ok: false,
+      errorCode: 'INVALID_COMMAND_PAYLOAD',
+    };
+  }
+
+  return {
+    ok: true,
+    command: definition.name,
+    payload: Object.freeze({
+      ...parsedPayload.data,
+    }),
+  };
+}
+
+/**
  * Execute one typed CEF command with handler whitelisting, schema validation, and boundary tracing.
  *
  * Purpose:
@@ -208,6 +261,82 @@ export async function executeCommand(
   }
 
   const handlerContext = buildHandlerContext(definition, commandTraceId, context);
+  const parsedPayload = validateCefSchema<Record<string, unknown>>(
+    definition.inputSchemaName,
+    payload
+  );
+  if (!parsedPayload.success || !parsedPayload.data) {
+    const invalidPayloadError = buildCommandError(
+      'INVALID_COMMAND_PAYLOAD',
+      'Command payload failed schema validation.',
+      {
+        schemaName: definition.inputSchemaName,
+        issues: parsedPayload.issues,
+      }
+    );
+    await traceCefBoundary(
+      'warn',
+      'cef.schema.invalid_payload',
+      handlerContext,
+      {
+        status: 'error',
+        errorCode: invalidPayloadError.code,
+        fallbackUsed: false,
+        retryCount: 0,
+        metadata: {
+          schemaName: definition.inputSchemaName,
+          issueCount: parsedPayload.issues.length,
+          issues: parsedPayload.issues,
+        },
+      }
+    );
+    return buildFailureResult(
+      definition,
+      invalidPayloadError,
+      commandTraceId,
+      context
+    );
+  }
+
+  if (
+    definition.requiresConfirmation
+    && !consumeCefExecutionPermit(
+      context.executionPermit,
+      definition.name,
+      parsedPayload.data,
+      context
+    )
+  ) {
+    const confirmationError = buildCommandError(
+      'CONFIRMATION_REQUIRED',
+      'Command execution requires a consumed one-use confirmation permit.',
+      {
+        command: definition.name,
+      }
+    );
+    await traceCefBoundary(
+      'warn',
+      'cef.dispatch.rejected',
+      handlerContext,
+      {
+        status: 'rejected',
+        startedAtMs: dispatchStartedAtMs,
+        errorCode: confirmationError.code,
+        fallbackUsed: false,
+        retryCount: 0,
+        metadata: {
+          confirmationRequired: true,
+        },
+      }
+    );
+    return buildFailureResult(
+      definition,
+      confirmationError,
+      commandTraceId,
+      context
+    );
+  }
+
   await traceCefBoundary('info', 'cef.dispatch.start', handlerContext, {
     status: 'start',
     startedAtMs: dispatchStartedAtMs,
@@ -219,7 +348,11 @@ export async function executeCommand(
     }
   });
 
-  const handlerResult = await routeCommandToHandler(definition, payload, handlerContext);
+  const handlerResult = await routeCommandToHandler(
+    definition,
+    parsedPayload.data,
+    handlerContext
+  );
 
   //audit Assumption: command-level success should reflect the normalized handler result instead of duplicating handler internals; failure risk: command and handler traces disagree on success/failure; expected invariant: command completion mirrors handler completion exactly; handling strategy: emit command completion or failure after handler dispatch resolves.
   if (!handlerResult.success || !handlerResult.output) {

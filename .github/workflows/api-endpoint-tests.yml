@@ -35,6 +35,9 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export FORCE_MOCK=true
           export OPENAI_BASE_URL=http://127.0.0.1:9/v1
+          export ARCANOS_CONTROL_PLANE_ACCESS_TOKEN=ci-codebase-route-smoke-7d3e9f2c8a1b4d6f
+          export ARCANOS_CONTROL_PLANE_PRINCIPAL_ID=operator:ci-codebase-smoke
+          export ARCANOS_CONTROL_PLANE_SCOPES=repo:read
           
           # Start server in background
           npm start > server.log 2>&1 &

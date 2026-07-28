@@ -35,7 +35,7 @@ jest.unstable_mockModule('@services/safety/runtimeState.js', () => ({
 }));
 
 const request = (await import('supertest')).default;
-const CURRENT_GPT_ROUTER_HASH = '8bf52c870195f165b17397ca16e87361fa401553fa10f86ebdbcc857a4fbba58';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
 
 async function buildApp() {
   jest.resetModules();
@@ -164,5 +164,28 @@ describe('/metrics route', () => {
       [credential, wrongSameLength, wrongDifferentLength]
         .some((value) => rejectedOutput.includes(value)),
     ).toBe(false);
+  });
+
+  it('fails a configured metrics credential closed when it reuses a canonical peer', async () => {
+    const credential = 'metrics-purpose-bound-collision-token';
+    const previousDebugServerToken = process.env.DEBUG_SERVER_TOKEN;
+    try {
+      process.env.METRICS_AUTH_TOKEN = credential;
+      process.env.DEBUG_SERVER_TOKEN = credential;
+      const app = await buildApp();
+
+      const response = await request(app)
+        .get('/metrics')
+        .set('x-metrics-token', credential);
+
+      expect(response.status).toBe(403);
+      expect(JSON.stringify(response.body)).not.toContain(credential);
+    } finally {
+      if (previousDebugServerToken === undefined) {
+        delete process.env.DEBUG_SERVER_TOKEN;
+      } else {
+        process.env.DEBUG_SERVER_TOKEN = previousDebugServerToken;
+      }
+    }
   });
 });

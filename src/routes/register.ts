@@ -26,7 +26,6 @@ import controlPlaneRouter from './control-plane.js';
 import systemStateRouter from './system-state.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
-import reusableCodeRouter from './api-reusable-code.js';
 import safetyRouter from './safety.js';
 import plansRouter from './plans.js';
 import clearRouter from './clear.js';
@@ -37,8 +36,14 @@ import selfHealRouter from './self-heal.js';
 import workerHelperRouter from './worker-helper.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from '@platform/logging/structuredLogging.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { resolveConfiguredPurposeBoundCredential } from '@shared/security/purposeBoundCredential.js';
+import {
+  projectPublicRailwayHealthcheck,
+  RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+  RAILWAY_HEALTHCHECK_UNAVAILABLE_MESSAGE,
+} from '@shared/http/railwayHealthcheckProjection.js';
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import trinityRouter from './trinity.js';
@@ -62,32 +67,54 @@ export function registerRoutes(app: Express): void {
     res.type('text/plain').send('User-agent: *\nDisallow:\n');
   });
 
-  app.get('/railway/healthcheck', (_: Request, res: Response) => {
+  app.get('/railway/healthcheck', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
     try {
       const report = runHealthCheck();
-      const statusCode = report.status === 'ok' ? 200 : 503;
+      const publicReport = projectPublicRailwayHealthcheck(report);
+      const statusCode = publicReport.status === 'ok' ? 200 : 503;
 
-      sendTimestampedStatus(res, statusCode, {
-        status: report.status,
-        components: report.components,
-        summary: report.summary
-      });
+      sendTimestampedStatus(res, statusCode, publicReport);
     } catch (error) {
-      console.error('[Railway Healthcheck] Error generating health report', error);
+      try {
+        const failureDetails = {
+          code: RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+          errorType: error instanceof Error ? 'Error' : typeof error,
+        };
+        if (req.logger?.error) {
+          req.logger.error('railway.healthcheck.failed', failureDetails);
+        } else {
+          logger.error('railway.healthcheck.failed', {
+            requestId: req.requestId ?? 'unknown',
+            traceId: req.traceId ?? 'unknown',
+            ...failureDetails,
+          });
+        }
+      } catch {
+        // Public health behavior must not depend on diagnostics logging.
+      }
       sendTimestampedStatus(res, 503, {
         status: 'error',
-        message: resolveErrorMessage(error)
+        code: RAILWAY_HEALTHCHECK_UNAVAILABLE_CODE,
+        message: RAILWAY_HEALTHCHECK_UNAVAILABLE_MESSAGE,
       });
     }
   });
 
   if (process.env.DEBUG_WATCHDOG === 'true') {
     app.get('/debug/watchdog', (req: Request, res: Response) => {
-      const expectedDebugKey = process.env.DEBUG_WATCHDOG_KEY;
-      if (
-        expectedDebugKey
-        && !timingSafeEqualOpaqueSecret(req.header('x-debug-key'), expectedDebugKey)
-      ) {
+      const expectedDebugKey = resolveConfiguredPurposeBoundCredential({
+        ownEnvironmentName: 'DEBUG_WATCHDOG_KEY',
+        readEnvironmentValue: (environmentName) => process.env[environmentName],
+      });
+      res.setHeader('Cache-Control', 'no-store');
+
+      if (!expectedDebugKey) {
+        return res.status(503).json({ error: 'Service Unavailable' });
+      }
+
+      if (!timingSafeEqualOpaqueSecret(req.header('x-debug-key'), expectedDebugKey)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
@@ -122,6 +149,8 @@ export function registerRoutes(app: Express): void {
   app.use('/', mcpRouter);
   app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);
+  app.use('/', selfHealRouter);
+  app.use('/', selfImproveRouter);
   app.use('/', systemStateRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);
@@ -142,7 +171,6 @@ export function registerRoutes(app: Express): void {
   app.use('/sdk', sdkRouter);
   app.use('/', bridgeRouter);
   app.use('/', debugConfirmationRouter);
-  app.use('/', reusableCodeRouter);
   app.use('/', workerHelperRouter);
   console.info('[ROUTES] Mounted /worker-helper helper endpoints and canonical /gpt routing.');
   app.use('/', hrcRouter);
@@ -151,9 +179,6 @@ export function registerRoutes(app: Express): void {
   app.use('/', researchRouter);
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
-  app.use('/', selfImproveRouter);
-  app.use('/', selfHealRouter);
-
   // ActionPlan orchestration + CLEAR 2.0 governance
   app.use('/', actionPlanExecutionsRouter);
   app.use('/', plansRouter);

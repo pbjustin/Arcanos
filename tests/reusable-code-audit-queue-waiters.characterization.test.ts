@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import type { JobData } from '../src/core/db/schema.js';
+import { JobRepositoryUnavailableError } from '../src/core/db/repositories/jobRepository.js';
 import {
   resolveAsyncAskPollIntervalMs,
   resolveAsyncAskWaitForResultMs,
@@ -14,11 +15,15 @@ import {
 interface WaitOptions {
   waitForResultMs?: number;
   pollIntervalMs?: number;
+  signal?: AbortSignal;
 }
 
 interface WaitDependencies {
   getJobByIdFn?: (jobId: string) => Promise<JobData | null>;
-  sleepFn?: (milliseconds: number) => Promise<void>;
+  sleepFn?: (
+    milliseconds: number,
+    options?: { unref?: boolean; signal?: AbortSignal }
+  ) => Promise<void>;
   nowFn?: () => number;
 }
 
@@ -311,7 +316,7 @@ describe.each(WAITERS)('$name queue polling characterization', (waiter) => {
     expect(sleepFn).toHaveBeenCalledTimes(3);
   });
 
-  it('characterizes the maximum nominal poll count after wait and poll clamping', async () => {
+  it('enforces the maximum nominal poll count after wait and poll clamping', async () => {
     let nowMs = 0;
     const pendingJob = createJob('running');
     const getJobByIdFn = jest
@@ -331,6 +336,26 @@ describe.each(WAITERS)('$name queue polling characterization', (waiter) => {
     expect(getJobByIdFn).toHaveBeenCalledTimes(601);
     expect(sleepFn).toHaveBeenCalledTimes(600);
     expect(nowMs).toBe(30_000);
+  });
+
+  it('returns the last pending snapshot at the hard cap without a missing extra read', async () => {
+    const pendingJob = createJob('running');
+    let readCount = 0;
+    const getJobByIdFn = jest.fn(async () => {
+      readCount += 1;
+      return readCount <= 601 ? pendingJob : null;
+    });
+    const sleepFn = jest.fn(async () => undefined);
+
+    await expect(
+      waiter.wait(
+        `queue-audit-hard-cap-${waiter.name.toLowerCase()}`,
+        { waitForResultMs: 45_000, pollIntervalMs: 1 },
+        { getJobByIdFn, sleepFn, nowFn: () => 0 }
+      )
+    ).resolves.toEqual({ state: 'pending', job: pendingJob });
+    expect(getJobByIdFn).toHaveBeenCalledTimes(601);
+    expect(sleepFn).toHaveBeenCalledTimes(600);
   });
 
   it('still performs one final repository observation when the clock moves past the deadline before the loop', async () => {
@@ -355,6 +380,33 @@ describe.each(WAITERS)('$name queue polling characterization', (waiter) => {
     expect(sleepFn).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a terminal job', createJob('completed'), 'completed'],
+    ['a missing job', null, 'missing']
+  ])(
+    'honors %s on the final allowed repository observation',
+    async (_label, finalJob, expectedState) => {
+      const getJobByIdFn = jest
+        .fn<(jobId: string) => Promise<JobData | null>>()
+        .mockResolvedValue(finalJob);
+      const sleepFn = jest.fn<(milliseconds: number) => Promise<void>>();
+      const nowFn = jest
+        .fn<() => number>()
+        .mockReturnValueOnce(0)
+        .mockReturnValue(101);
+
+      const result = await waiter.wait(
+        `queue-audit-final-observation-${waiter.name.toLowerCase()}`,
+        { waitForResultMs: 100, pollIntervalMs: 50 },
+        { getJobByIdFn, sleepFn, nowFn }
+      );
+
+      expect(result).toEqual({ state: expectedState, job: finalJob });
+      expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+      expect(sleepFn).not.toHaveBeenCalled();
+    }
+  );
+
   it('returns the current snapshot when the clock jumps past the deadline during repository access', async () => {
     let nowMs = 0;
     const pendingJob = createJob('running');
@@ -375,28 +427,23 @@ describe.each(WAITERS)('$name queue polling characterization', (waiter) => {
     expect(sleepFn).not.toHaveBeenCalled();
   });
 
-  it('allows backward clock movement to add polls because there is no independent iteration cap', async () => {
+  it('bounds polling independently when the clock freezes or moves backward', async () => {
     const pendingJob = createJob('running');
-    const completedJob = createJob('completed');
     const getJobByIdFn = jest
       .fn<(jobId: string) => Promise<JobData | null>>()
-      .mockResolvedValueOnce(pendingJob)
-      .mockResolvedValueOnce(pendingJob)
-      .mockResolvedValueOnce(pendingJob)
-      .mockResolvedValueOnce(completedJob);
+      .mockResolvedValue(pendingJob);
     const sleepFn = jest.fn(async () => undefined);
-    const clockValues = [100, 100, 0, 0, 0, 0, 0, 200];
-    const nowFn = jest.fn(() => clockValues.shift() ?? 200);
+    const nowFn = jest.fn(() => 0);
 
     await expect(
       waiter.wait(
-        `queue-audit-backward-clock-${waiter.name.toLowerCase()}`,
+        `queue-audit-frozen-clock-${waiter.name.toLowerCase()}`,
         { waitForResultMs: 100, pollIntervalMs: 50 },
         { getJobByIdFn, sleepFn, nowFn }
       )
-    ).resolves.toEqual({ state: 'completed', job: completedJob });
-    expect(getJobByIdFn).toHaveBeenCalledTimes(4);
-    expect(sleepFn).toHaveBeenCalledTimes(3);
+    ).resolves.toEqual({ state: 'pending', job: pendingJob });
+    expect(getJobByIdFn).toHaveBeenCalledTimes(3);
+    expect(sleepFn).toHaveBeenCalledTimes(2);
   });
 
   it('stops immediately after observing a terminal state', async () => {
@@ -421,6 +468,10 @@ describe.each(WAITERS)('$name queue polling characterization', (waiter) => {
 describe.each(WAITERS)('$name queue failure and abort characterization', (waiter) => {
   it.each([
     ['repository failure', new Error('queue audit repository failure')],
+    [
+      'repository unavailable',
+      new JobRepositoryUnavailableError('queue audit repository unavailable')
+    ],
     ['repository AbortError', createAbortError('queue audit repository aborted')]
   ])('propagates %s unchanged', async (_label, expectedError) => {
     const getJobByIdFn = jest
@@ -481,28 +532,165 @@ describe.each(WAITERS)('$name queue failure and abort characterization', (waiter
     expect(sleepFn).not.toHaveBeenCalled();
   });
 
-  it('ignores an extra already-aborted signal because the current dependency contract does not consume it', async () => {
+  it('rejects an already-aborted nonzero wait before clock, repository, or sleeper work', async () => {
     const controller = new AbortController();
-    controller.abort(createAbortError('queue audit external abort'));
-    const completedJob = createJob('completed');
-    const getJobByIdFn = jest
-      .fn<(jobId: string) => Promise<JobData | null>>()
-      .mockResolvedValue(completedJob);
-    const dependencies = {
-      getJobByIdFn,
-      sleepFn: async () => undefined,
-      nowFn: () => 0,
-      signal: controller.signal
-    } as WaitDependencies & { signal: AbortSignal };
+    const expectedError = createAbortError('queue audit external abort');
+    controller.abort(expectedError);
+    const getJobByIdFn = jest.fn<(jobId: string) => Promise<JobData | null>>();
+    const sleepFn = jest.fn<(milliseconds: number) => Promise<void>>();
+    const nowFn = jest.fn<() => number>();
 
     await expect(
       waiter.wait(
-        `queue-audit-ignored-signal-${waiter.name.toLowerCase()}`,
-        { waitForResultMs: 100 },
-        dependencies
+        `queue-audit-pre-aborted-${waiter.name.toLowerCase()}`,
+        { waitForResultMs: 100, signal: controller.signal },
+        { getJobByIdFn, sleepFn, nowFn }
       )
-    ).resolves.toEqual({ state: 'completed', job: completedJob });
+    ).rejects.toBe(expectedError);
+    expect(nowFn).not.toHaveBeenCalled();
+    expect(getJobByIdFn).not.toHaveBeenCalled();
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it('passes the exact signal to each sleep', async () => {
+    const controller = new AbortController();
+    let nowMs = 0;
+    const pendingJob = createJob('running');
+    const getJobByIdFn = jest
+      .fn<(jobId: string) => Promise<JobData | null>>()
+      .mockResolvedValue(pendingJob);
+    const sleepFn = jest.fn(
+      async (
+        milliseconds: number,
+        options?: { unref?: boolean; signal?: AbortSignal }
+      ) => {
+        expect(options?.signal).toBe(controller.signal);
+        nowMs += milliseconds;
+      }
+    );
+
+    await waiter.wait(
+      `queue-audit-forwarded-signal-${waiter.name.toLowerCase()}`,
+      {
+        waitForResultMs: 100,
+        pollIntervalMs: 50,
+        signal: controller.signal
+      },
+      { getJobByIdFn, sleepFn, nowFn: () => nowMs }
+    );
+
+    expect(sleepFn).toHaveBeenCalledTimes(2);
+    for (const call of sleepFn.mock.calls) {
+      expect(call[1]?.signal).toBe(controller.signal);
+    }
+  });
+
+  it('detects abort after a repository read before mapping its result', async () => {
+    const controller = new AbortController();
+    const expectedError = createAbortError('queue audit abort during repository read');
+    const getJobByIdFn = jest.fn(async () => {
+      controller.abort(expectedError);
+      return createJob('completed');
+    });
+    const sleepFn = jest.fn<(milliseconds: number) => Promise<void>>();
+
+    await expect(
+      waiter.wait(
+        `queue-audit-repository-abort-${waiter.name.toLowerCase()}`,
+        { waitForResultMs: 100, signal: controller.signal },
+        { getJobByIdFn, sleepFn, nowFn: () => 0 }
+      )
+    ).rejects.toBe(expectedError);
     expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it('detects abort after an injected sleeper ignores it and performs no later read', async () => {
+    const controller = new AbortController();
+    const expectedError = createAbortError('queue audit abort during sleep');
+    const pendingJob = createJob('running');
+    const getJobByIdFn = jest
+      .fn<(jobId: string) => Promise<JobData | null>>()
+      .mockResolvedValue(pendingJob);
+    const sleepFn = jest.fn(
+      async (
+        _milliseconds: number,
+        options?: { unref?: boolean; signal?: AbortSignal }
+      ) => {
+        expect(options?.signal).toBe(controller.signal);
+        controller.abort(expectedError);
+      }
+    );
+
+    await expect(
+      waiter.wait(
+        `queue-audit-sleeper-abort-${waiter.name.toLowerCase()}`,
+        {
+          waitForResultMs: 100,
+          pollIntervalMs: 50,
+          signal: controller.signal
+        },
+        { getJobByIdFn, sleepFn, nowFn: () => 0 }
+      )
+    ).rejects.toBe(expectedError);
+    expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+    expect(sleepFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GPT queue repository-error abort precedence', () => {
+  it('propagates the abort reason when a repository read aborts and rejects concurrently', async () => {
+    const controller = new AbortController();
+    const expectedAbort = createAbortError('queue audit abort during failed GPT repository read');
+    const repositoryError = new JobRepositoryUnavailableError(
+      'queue audit GPT repository unavailable'
+    );
+    const getJobByIdFn = jest.fn(async () => {
+      controller.abort(expectedAbort);
+      throw repositoryError;
+    });
+    const sleepFn = jest.fn<(milliseconds: number) => Promise<void>>();
+
+    await expect(
+      waitForQueuedGptJobCompletion(
+        'queue-audit-failed-repository-abort-gpt',
+        {
+          waitForResultMs: 100,
+          signal: controller.signal
+        },
+        { getJobByIdFn, sleepFn, nowFn: () => 0 }
+      )
+    ).rejects.toBe(expectedAbort);
+    expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('Ask queue repository-error abort precedence', () => {
+  it('preserves the repository error when a read aborts and rejects concurrently', async () => {
+    const controller = new AbortController();
+    const expectedAbort = createAbortError('queue audit abort during failed Ask repository read');
+    const repositoryError = new JobRepositoryUnavailableError(
+      'queue audit Ask repository unavailable'
+    );
+    const getJobByIdFn = jest.fn(async () => {
+      controller.abort(expectedAbort);
+      throw repositoryError;
+    });
+    const sleepFn = jest.fn<(milliseconds: number) => Promise<void>>();
+
+    await expect(
+      waitForQueuedAskJobCompletion(
+        'queue-audit-failed-repository-abort-ask',
+        {
+          waitForResultMs: 100,
+          signal: controller.signal
+        },
+        { getJobByIdFn, sleepFn, nowFn: () => 0 }
+      )
+    ).rejects.toBe(repositoryError);
+    expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+    expect(sleepFn).not.toHaveBeenCalled();
   });
 });
 

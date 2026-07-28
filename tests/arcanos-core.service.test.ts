@@ -33,10 +33,6 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter,
 }));
 
-jest.unstable_mockModule('@services/gptAccessNaturalLanguageDispatch.js', () => ({
-  routeOperatorCommandThroughDispatch: routeOperatorCommandThroughDispatchMock
-}));
-
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudgetWithLimit: mockCreateRuntimeBudget,
   getSafeRemainingMs: jest.fn(() => 36_750),
@@ -63,6 +59,8 @@ jest.unstable_mockModule('@arcanos/runtime', () => ({
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
 }));
 
+const { configureArcanosCoreOperatorDispatch } =
+  await import('../src/services/arcanosCoreOperatorDispatchPort.js');
 const { ArcanosCore } = await import('../src/services/arcanos-core.js');
 
 describe('ARCANOS:CORE service', () => {
@@ -74,6 +72,7 @@ describe('ARCANOS:CORE service', () => {
     getRequestAbortContextMock.mockReturnValue(null);
     mockCreateRuntimeBudget.mockReturnValue({ budget: 'runtime' });
     routeOperatorCommandThroughDispatchMock.mockResolvedValue(null);
+    configureArcanosCoreOperatorDispatch(routeOperatorCommandThroughDispatchMock);
   });
 
   it('routes query requests through Trinity with the core source endpoint', async () => {
@@ -196,6 +195,20 @@ describe('ARCANOS:CORE service', () => {
         source: 'llm'
       })
     }));
+  });
+
+  it('fails closed before Trinity when operator dispatch is not composed', async () => {
+    configureArcanosCoreOperatorDispatch(null);
+
+    await expect(ArcanosCore.actions.query({
+      prompt: "what's wrong with the backend?"
+    })).rejects.toMatchObject({
+      code: 'ARCANOS_CORE_OPERATOR_DISPATCH_NOT_CONFIGURED',
+      message: 'ARCANOS:CORE operator dispatch is not configured.'
+    });
+
+    expect(mockGetOpenAIClientOrAdapter).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('passes advisory improvement prompts through Trinity instead of GPT Access dispatch', async () => {

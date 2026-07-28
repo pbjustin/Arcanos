@@ -1,8 +1,11 @@
 import {
-  clearModuleDefinitionCache,
-  loadModuleDefinitions,
-  LoadedModule
-} from '@services/moduleLoader.js';
+  initializeModuleRegistry,
+  type RegisteredModule
+} from '@services/moduleRegistry.js';
+import {
+  isProtectedModuleIdentifier,
+  isPublicGptModule
+} from '@services/moduleCatalog.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
@@ -86,7 +89,7 @@ function addBinding(
 ): void {
   const raw = gptId.trim();
   //audit Assumption: blank GPT IDs are invalid routing keys; failure risk: accidental empty map key collisions; expected invariant: only non-empty IDs are stored; handling strategy: ignore blank IDs.
-  if (!raw) {
+  if (!raw || isProtectedModuleIdentifier(raw)) {
     return;
   }
   const lower = raw.toLowerCase();
@@ -94,11 +97,13 @@ function addBinding(
   map[lower] = { ...entry };
 }
 
-function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModuleEntry> {
+function buildDefaultBindings(
+  modules: readonly RegisteredModule[]
+): Record<string, GptModuleEntry> {
   const defaults: Record<string, GptModuleEntry> = {};
 
   for (const { route, definition } of modules) {
-    if (definition.gptAccessOnly === true) {
+    if (!isPublicGptModule(definition)) {
       continue;
     }
     const entry: GptModuleEntry = { route, module: definition.name };
@@ -120,11 +125,13 @@ function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModule
 /**
  * Builds a mapping of GPT IDs to module routes and names.
  *
- * Auto-discovers module definitions from `src/modules` so that any module that
- * declares `gptIds` is automatically routable. The `GPT_MODULE_MAP`
- * environment variable can still override or extend the mapping by providing a
- * JSON object where each key is a GPT ID and the value is an object with
- * `route` and `module` properties. Example:
+ * Builds default bindings from the definitions registered in the explicit
+ * `src/services/moduleCatalog.ts` inventory. Cataloged definitions that declare
+ * `gptIds` are routable unless they are marked GPT Access-only. The
+ * `GPT_MODULE_MAP` environment variable can still override or extend the
+ * mapping by providing a JSON object where each key is a GPT ID and the value
+ * is an object with the exact registered `route` and `module` pair. It cannot
+ * target an absent, mismatched, or protected catalog module. Example:
  *
  * ```bash
  * GPT_MODULE_MAP='{"gpt-1":{"route":"tutor","module":"ARCANOS:TUTOR"}}'
@@ -135,42 +142,54 @@ function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModule
  * configuration format.
  */
 export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
-  const loadedModules = await loadModuleDefinitions();
+  const loadedModules = (
+    await initializeModuleRegistry()
+  ).listRegisteredModules();
   const defaults = buildDefaultBindings(loadedModules);
-  const gptAccessOnlyModuleKeys = new Set(
-    loadedModules
-      .filter(({ definition }) => definition.gptAccessOnly === true)
-      .flatMap(({ definition, route }) => [
-        definition.name.trim().toLowerCase(),
-        route.trim().toLowerCase()
-      ])
-  );
 
   const map: Record<string, GptModuleEntry> = { ...defaults };
+  const moduleRoutesByName = new Map<string, string>();
+  const publicModuleRoutesByName = new Map<string, string>();
+  for (const { route, definition } of loadedModules) {
+    moduleRoutesByName.set(definition.name, route);
+    if (isPublicGptModule(definition)) {
+      publicModuleRoutesByName.set(definition.name, route);
+    }
+  }
 
   // Use config layer for env access (adapter boundary pattern)
   const raw = getEnv('GPT_MODULE_MAP');
   if (raw) {
     try {
-      const parsed = JSON.parse(raw) as Record<string, GptModuleEntry>;
-      for (const [gptId, entry] of Object.entries(parsed)) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('GPT_MODULE_MAP must be a JSON object.');
+      }
+      for (const [gptId, candidate] of Object.entries(parsed)) {
         if (
-          entry.route
-          && entry.module
-          && !gptAccessOnlyModuleKeys.has(entry.module.trim().toLowerCase())
-          && !gptAccessOnlyModuleKeys.has(entry.route.trim().toLowerCase())
+          !candidate
+          || typeof candidate !== 'object'
+          || Array.isArray(candidate)
         ) {
-          addBinding(map, gptId, entry);
+          continue;
+        }
+        const entry = candidate as Record<string, unknown>;
+        if (
+          typeof entry.route === 'string'
+          && typeof entry.module === 'string'
+          && !isProtectedModuleIdentifier(entry.module)
+          && !isProtectedModuleIdentifier(entry.route)
+          && publicModuleRoutesByName.get(entry.module) === entry.route
+        ) {
+          addBinding(map, gptId, {
+            route: entry.route,
+            module: entry.module
+          });
         }
       }
-    } catch (err) {
-      console.warn('Failed to parse GPT_MODULE_MAP', err);
+    } catch {
+      console.warn('Failed to parse GPT_MODULE_MAP');
     }
-  }
-
-  const moduleRoutesByName = new Map<string, string>();
-  for (const { route, definition } of loadedModules) {
-    moduleRoutesByName.set(definition.name, route);
   }
 
   const legacyEntries: Array<[string | undefined, string]> = [
@@ -209,7 +228,6 @@ export function resetGptModuleMapCache(): void {
 }
 
 export async function rebuildGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
-  clearModuleDefinitionCache();
   resetGptModuleMapCache();
   return getGptModuleMap();
 }

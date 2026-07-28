@@ -7,7 +7,6 @@ import { logExecution } from '@core/db/repositories/executionLogRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { redactSensitive, redactString } from '@shared/redaction.js';
-import { arcanosMcpService } from '@services/arcanosMcp.js';
 
 import { assertValidControlPlaneResponse } from './schemas.js';
 import { verifyControlPlaneRoute } from './routeVerification.js';
@@ -257,6 +256,15 @@ const operationDefinitionsByKey = new Map(
   ])
 );
 
+export function getControlPlaneOperationRequiredScopes(
+  request: Pick<ControlPlaneRequestPayload, 'adapter' | 'operation'>
+): string[] | null {
+  const definition = operationDefinitionsByKey.get(
+    buildOperationKey(request.adapter, request.operation)
+  );
+  return definition ? [...definition.scopes] : null;
+}
+
 const defaultProcessRunner: ControlPlaneProcessRunner = {
   async run(executable, args, options) {
     try {
@@ -289,11 +297,6 @@ const defaultProcessRunner: ControlPlaneProcessRunner = {
       };
     }
   }
-};
-
-const defaultMcpClient: ControlPlaneMcpClient = {
-  listTools: (options) => arcanosMcpService.listTools(options),
-  invokeTool: (options) => arcanosMcpService.invokeTool(options)
 };
 
 function buildOperationKey(adapter: ControlPlaneAdapter, operation: string): string {
@@ -603,8 +606,15 @@ function filterMcpToolList(data: unknown): unknown {
 
 async function invokeMcpOperation(
   request: ControlPlaneRequestPayload & { requestId: string },
-  mcpClient: ControlPlaneMcpClient
+  mcpClient: ControlPlaneMcpClient | undefined
 ): Promise<ControlPlaneResult> {
+  if (!mcpClient) {
+    throw buildControlPlaneError(
+      'CONTROL_PLANE_MCP_UNAVAILABLE',
+      'ARCANOS MCP client is unavailable for this control-plane operation.'
+    );
+  }
+
   if (request.operation === 'listTools') {
     const data = await mcpClient.listTools({
       sessionId: request.context?.sessionId
@@ -788,7 +798,7 @@ export async function executeControlPlaneRequest(
   const now = dependencies.now ?? (() => new Date());
   const repositoryRoot = resolveRepositoryRoot(dependencies.repositoryRoot);
   const processRunner = dependencies.processRunner ?? defaultProcessRunner;
-  const mcpClient = dependencies.mcpClient ?? defaultMcpClient;
+  const mcpClient = dependencies.mcpClient;
   const auditLogger = dependencies.auditLogger ?? logExecution;
   const auditId = generateRequestId('control_audit');
   let auditLogged = false;

@@ -4,7 +4,7 @@ import { sendBadRequestPayload } from '@shared/http/index.js';
  * Provides endpoints for reading and updating system state
  */
 
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import { loadState, updateState, SystemState } from "@services/stateManager.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { getOpenAIServiceHealth } from "@services/openai.js";
@@ -12,28 +12,70 @@ import { queryCache, configCache } from "@platform/resilience/cache.js";
 import { getStatus as getDbStatus } from "@core/db/index.js";
 import { sendJsonError } from "@transport/http/responseHelpers.js";
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from "@platform/resilience/healthChecks.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { writePublicHealthResponse } from "@core/diagnostics.js";
+import { logger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
+const STATUS_UNAVAILABLE_CODE = 'STATUS_UNAVAILABLE';
+const STATUS_UNAVAILABLE_MESSAGE = 'Status endpoint unavailable.';
+const STATUS_UPDATE_FAILED_CODE = 'STATUS_UPDATE_FAILED';
+const STATUS_UPDATE_FAILED_MESSAGE = 'System state update failed.';
+const HEALTH_STATUS_UNAVAILABLE_CODE = 'HEALTH_STATUS_UNAVAILABLE';
+const HEALTH_STATUS_UNAVAILABLE_MESSAGE = 'Health status unavailable.';
+
+function setNoStoreHeaders(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+}
+
+function markNoStore(_req: Request, res: Response, next: NextFunction): void {
+  setNoStoreHeaders(res);
+  next();
+}
+
+function logStatusFailure(
+  req: Request,
+  event: string,
+  code: string,
+  error: unknown,
+): void {
+  try {
+    const failureDetails = {
+      code,
+      errorType: error instanceof Error ? 'Error' : typeof error,
+    };
+    if (req.logger?.error) {
+      req.logger.error(event, failureDetails);
+    } else {
+      logger.error(event, {
+        requestId: req.requestId ?? 'unknown',
+        traceId: req.traceId ?? 'unknown',
+        ...failureDetails,
+      });
+    }
+  } catch {
+    // Public status behavior must not depend on diagnostics logging.
+  }
+}
 
 /**
  * GET /status - Legacy health alias
  */
 router.get('/status', async (req: Request, res: Response) => {
+  res.setHeader('x-status-endpoint', 'deprecated');
+  res.setHeader('x-status-replacement', '/health');
+  setNoStoreHeaders(res);
   try {
-    res.setHeader('x-status-endpoint', 'deprecated');
-    res.setHeader('x-status-replacement', '/health');
     await writePublicHealthResponse(req, res);
   } catch (error) {
-    //audit Assumption: state load failures should return 500; risk: leaking internal details; invariant: client gets structured error; handling: log and return error response.
-    console.error('[STATUS] Error retrieving system state:', error);
+    //audit Assumption: legacy status failures need correlation without retaining arbitrary exception text; risk: response or log disclosure; invariant: fixed public message and closed log classification; handling: log stable metadata and return a no-store error.
+    logStatusFailure(req, 'status.legacy_health.failed', STATUS_UNAVAILABLE_CODE, error);
     sendJsonError(
       res,
       500,
       'Failed to retrieve system state',
-      resolveErrorMessage(error)
+      STATUS_UNAVAILABLE_MESSAGE
     );
   }
 });
@@ -41,7 +83,7 @@ router.get('/status', async (req: Request, res: Response) => {
 /**
  * GET /health - Comprehensive health check including services, caches, and circuit breakers
  */
-router.get('/health', async (_: Request, res: Response) => {
+router.get('/health', markNoStore, async (req: Request, res: Response) => {
   try {
     const openaiHealth = getOpenAIServiceHealth();
     const dbStatus = await getDbStatus();
@@ -82,13 +124,18 @@ router.get('/health', async (_: Request, res: Response) => {
     res.status(statusCode).json(health);
     
   } catch (error) {
-    //audit Assumption: health failures should return 500; risk: masking root cause; invariant: error response includes context; handling: log and send JSON error.
-    console.error('[HEALTH] Error retrieving health status:', error);
+    //audit Assumption: this shadowed compatibility handler may become reachable after route-order changes; risk: latent exception disclosure; invariant: fixed public message and closed log classification; handling: mark no-store and log stable metadata only.
+    logStatusFailure(
+      req,
+      'status.legacy_detailed_health.failed',
+      HEALTH_STATUS_UNAVAILABLE_CODE,
+      error,
+    );
     sendJsonError(
       res,
       500,
       'Failed to retrieve health status',
-      resolveErrorMessage(error),
+      HEALTH_STATUS_UNAVAILABLE_MESSAGE,
       { status: 'unhealthy' }
     );
   }
@@ -97,7 +144,7 @@ router.get('/health', async (_: Request, res: Response) => {
 /**
  * POST /status - Update system state
  */
-router.post('/status', confirmGate, (req: Request, res: Response) => {
+router.post('/status', markNoStore, confirmGate, (req: Request, res: Response) => {
   try {
     const updates: Partial<SystemState> = req.body;
     
@@ -115,13 +162,13 @@ router.post('/status', confirmGate, (req: Request, res: Response) => {
 
     res.json(updatedState);
   } catch (error) {
-    //audit Assumption: update failures should return 500; risk: leaking internal details; invariant: client gets structured error; handling: log and return error response.
-    console.error('[STATUS] Error updating system state:', error);
+    //audit Assumption: update failures need correlation without retaining filesystem or serialization text; risk: response or log disclosure; invariant: fixed public message and closed log classification; handling: log stable metadata and return a no-store error.
+    logStatusFailure(req, 'status.update.failed', STATUS_UPDATE_FAILED_CODE, error);
     sendJsonError(
       res,
       500,
       'Failed to update system state',
-      resolveErrorMessage(error)
+      STATUS_UPDATE_FAILED_MESSAGE
     );
   }
 });

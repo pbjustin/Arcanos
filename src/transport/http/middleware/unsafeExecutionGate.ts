@@ -3,6 +3,9 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
+import {
+  isSafetyQuarantineReleaseHttpRequest,
+} from '@services/controlPlane/selfHealingControlHttpBoundary.js';
 import { validateGamingEvidenceRetryRequest } from '@services/gamingModes.js';
 import { dispatchPublicGamingRequest } from '@services/gamingPublicDispatcher.js';
 import {
@@ -17,7 +20,7 @@ import { GPT_QUERY_AND_WAIT_ACTION } from '@shared/gpt/gptJobResult.js';
 import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
+const SELF_IMPROVE_FREEZE_PATH = '/api/self-improve/freeze';
 const GPT_ACCESS_READONLY_POST_PATHS = new Set([
   '/gpt-access/jobs/result',
   '/gpt-access/diagnostics/deep',
@@ -27,6 +30,11 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
 ]);
 const LOCAL_AGENT_LIFECYCLE_PATH_PATTERN =
   /^\/gpt-access\/local-agent\/(?:heartbeat|jobs\/[0-9a-f-]{36}\/(?:heartbeat|result))$/iu;
+
+function isSelfImproveFreezePath(path: string): boolean {
+  const normalizedPath = path.toLowerCase().replace(/\/+$/u, '');
+  return normalizedPath === SELF_IMPROVE_FREEZE_PATH;
+}
 
 function isGptAccessSafetyExemptRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST'
@@ -49,8 +57,27 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  //audit Assumption: operator release endpoint must remain reachable during unsafe state; failure risk: deadlocked recovery; expected invariant: release path bypasses global mutating block; handling strategy: regex-based allowlist.
-  if (SAFETY_RELEASE_PATH_PATTERN.test(req.path)) {
+  // Recovery reachability is not authorization. The pre-parser control boundary
+  // establishes this operator principal before the unsafe gate runs.
+  if (
+    isSafetyQuarantineReleaseHttpRequest(req)
+    && req.controlPlanePrincipal?.audience === 'control-plane-http'
+    && req.controlPlanePrincipal.role === 'operator'
+  ) {
+    req.logger?.info?.('unsafe_execution_gate.bypass', {
+      reason: 'authenticated_quarantine_recovery',
+    });
+    next();
+    return;
+  }
+
+  // Freezing self-improvement is a restrictive recovery action. Authentication,
+  // scope authorization, rate limiting, and the capability gate still run later.
+  if (method === 'POST' && isSelfImproveFreezePath(req.path)) {
+    req.logger?.info?.('unsafe_execution_gate.bypass', {
+      reason: 'self_improve_restrictive_control',
+      path: SELF_IMPROVE_FREEZE_PATH,
+    });
     next();
     return;
   }

@@ -38,7 +38,13 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   findOrCreateGptJob: findOrCreateGptJobMock,
   getJobById: getJobByIdMock,
   createJob: jest.fn(),
+  createClaimedJobFence: jest.fn((workerId: string, claimGeneration: string) => ({
+    workerId,
+    claimGeneration
+  })),
+  normalizeJobClaimGeneration: jest.fn((claimGeneration: string) => claimGeneration),
   claimNextPendingJob: jest.fn(),
+  failPendingJobIfUnclaimed: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   scheduleJobRetry: jest.fn(),
   deferJobForProviderRecovery: jest.fn(),
@@ -58,6 +64,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   getJobQueueSummary: jest.fn(),
   getJobExecutionStatsSince: jest.fn(),
   requestJobCancellation: jest.fn(),
+  updateClaimedJobTerminal: jest.fn(),
   cleanupExpiredGptJobs: jest.fn(async () => ({
     expiredPending: 0,
     expiredTerminal: 0,

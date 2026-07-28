@@ -25,8 +25,10 @@ async function loadAIReflectionsHarness(): Promise<AIReflectionsHarness> {
   }));
   const saveSelfReflectionMock = jest.fn(async () => undefined);
 
-  jest.unstable_mockModule('../src/services/openai.js', () => ({
-    callOpenAI: callOpenAIMock,
+  jest.unstable_mockModule('../src/services/openai/chatFlow/index.js', () => ({
+    callOpenAI: callOpenAIMock
+  }));
+  jest.unstable_mockModule('../src/services/openai/credentialProvider.js', () => ({
     getDefaultModel: () => 'gpt-test-model'
   }));
   jest.unstable_mockModule('@core/db/repositories/selfReflectionRepository.js', () => ({

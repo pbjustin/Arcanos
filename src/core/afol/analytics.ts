@@ -1,8 +1,18 @@
-import fs from 'fs';
-import path from 'path';
-import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
-import { DecisionRecord } from './types.js';
-import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import path from 'node:path';
+
+import { recordTraceEvent } from '@platform/logging/telemetry.js';
+import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
+
+import {
+  clampAfolPersistenceRecordLimit,
+  projectAfolPersistenceRecord,
+  resolveSafePersistenceTarget,
+  writeFileAtomically,
+} from './persistence.js';
+import type {
+  AfolPersistedDecisionRecord,
+  RouteName,
+} from './types.js';
 
 interface AnalyticsState {
   totals: {
@@ -10,123 +20,208 @@ interface AnalyticsState {
     successful: number;
     rejected: number;
   };
-  perRoute: Record<string, number>;
+  perRoute: Record<RouteName, number>;
   latency: {
     averageMs: number;
     lastMs: number;
   };
-  recent: DecisionRecord[];
+  recent: AfolPersistedDecisionRecord[];
   lastUpdated: string | null;
 }
 
-// Use config layer for env access (adapter boundary pattern)
-const RECENT_LIMIT = getEnvNumber('AFOL_ANALYTICS_RECENT_LIMIT', 50);
+const DEFAULT_RECENT_LIMIT = 50;
 
-const defaultAnalyticsPath = getEnv('AFOL_ANALYTICS_PATH')
-  ? path.resolve(getEnv('AFOL_ANALYTICS_PATH')!)
-  : path.resolve(process.cwd(), 'logs', 'afol-analytics.json');
+const configuredAnalyticsPath = getEnv('AFOL_ANALYTICS_PATH');
+const defaultAnalyticsPath = path.resolve(
+  configuredAnalyticsPath ?? path.join('logs', 'afol-analytics.json')
+);
+const defaultRecentLimit = clampAfolPersistenceRecordLimit(
+  getEnvNumber('AFOL_ANALYTICS_RECENT_LIMIT', DEFAULT_RECENT_LIMIT),
+  DEFAULT_RECENT_LIMIT
+);
 
 let analyticsFilePath = defaultAnalyticsPath;
+let recentLimit = defaultRecentLimit;
+let analyticsQueue: Promise<void> = Promise.resolve();
 
-const state: AnalyticsState = {
-  totals: {
-    decisions: 0,
-    successful: 0,
-    rejected: 0
-  },
-  perRoute: {
-    primary: 0,
-    backup: 0,
-    reject: 0
-  },
-  latency: {
-    averageMs: 0,
-    lastMs: 0
-  },
-  recent: [],
-  lastUpdated: null
-};
-
-function ensureDestination(): void {
-  const directory = path.dirname(analyticsFilePath);
-  if (!fs.existsSync(directory)) {
-    fs.mkdirSync(directory, { recursive: true });
-  }
-}
-
-function updateLatency(latencyMs: number): void {
-  state.latency.lastMs = latencyMs;
-  const previousAverage = state.latency.averageMs;
-  const count = state.totals.decisions;
-  state.latency.averageMs = count === 1 ? latencyMs : Math.round(((previousAverage * (count - 1)) + latencyMs) / count);
-}
-
-export function configureAnalytics(options: { filePath?: string } = {}): void {
-  if (options.filePath) {
-    analyticsFilePath = path.resolve(options.filePath);
-  } else {
-    analyticsFilePath = defaultAnalyticsPath;
-  }
-}
-
-export async function persistDecision(decision: DecisionRecord): Promise<void> {
-  state.totals.decisions += 1;
-  if (decision.ok) {
-    state.totals.successful += 1;
-  } else {
-    state.totals.rejected += 1;
-  }
-
-  state.perRoute[decision.route.name] = (state.perRoute[decision.route.name] || 0) + 1;
-  updateLatency(decision.meta.latencyMs);
-
-  state.recent.push(decision);
-  if (state.recent.length > Math.max(5, RECENT_LIMIT)) {
-    state.recent.splice(0, state.recent.length - RECENT_LIMIT);
-  }
-
-  state.lastUpdated = new Date().toISOString();
-
-  ensureDestination();
-
-  const payload = {
-    ...state,
-    recent: state.recent
+function createEmptyState(): AnalyticsState {
+  return {
+    totals: {
+      decisions: 0,
+      successful: 0,
+      rejected: 0,
+    },
+    perRoute: {
+      primary: 0,
+      backup: 0,
+      reject: 0,
+    },
+    latency: {
+      averageMs: 0,
+      lastMs: 0,
+    },
+    recent: [],
+    lastUpdated: null,
   };
+}
 
-  try {
-    await fs.promises.writeFile(analyticsFilePath, JSON.stringify(payload, null, 2), { encoding: 'utf8' });
-  } catch (error) {
-    console.warn('[afol-analytics] Failed to persist analytics snapshot', error);
-  }
+let state = createEmptyState();
 
-  recordTraceEvent('afol.analytics.persisted', {
-    decisionId: decision.id,
-    route: decision.route.name,
-    ok: decision.ok
+function enqueueAnalyticsOperation<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  const result = analyticsQueue.then(operation, operation);
+  analyticsQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+function strictDecisionCopy(
+  value: AfolPersistedDecisionRecord
+): AfolPersistedDecisionRecord | null {
+  const projected = projectAfolPersistenceRecord(value);
+  return projected?.kind === 'decision' ? projected : null;
+}
+
+function cloneState(value: AnalyticsState): AnalyticsState {
+  return {
+    totals: { ...value.totals },
+    perRoute: { ...value.perRoute },
+    latency: { ...value.latency },
+    recent: value.recent.flatMap((record) => {
+      const copy = strictDecisionCopy(record);
+      return copy ? [copy] : [];
+    }),
+    lastUpdated: value.lastUpdated,
+  };
+}
+
+function buildCandidateState(
+  current: AnalyticsState,
+  decision: AfolPersistedDecisionRecord
+): AnalyticsState {
+  const decisions = current.totals.decisions + 1;
+  const averageMs = decisions === 1
+    ? decision.latencyMs
+    : Math.round(
+      (
+        current.latency.averageMs * current.totals.decisions +
+        decision.latencyMs
+      ) / decisions
+    );
+  const recent = [
+    ...current.recent,
+    decision,
+  ].slice(-recentLimit);
+
+  return {
+    totals: {
+      decisions,
+      successful:
+        current.totals.successful + (decision.ok ? 1 : 0),
+      rejected:
+        current.totals.rejected + (decision.ok ? 0 : 1),
+    },
+    perRoute: {
+      ...current.perRoute,
+      [decision.route]: current.perRoute[decision.route] + 1,
+    },
+    latency: {
+      averageMs,
+      lastMs: decision.latencyMs,
+    },
+    recent,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+async function writeAnalyticsState(
+  candidate: AnalyticsState
+): Promise<void> {
+  await writeFileAtomically(
+    analyticsFilePath,
+    `${JSON.stringify(candidate, null, 2)}\n`
+  );
+}
+
+export function configureAnalytics(
+  options: { filePath?: string; recentLimit?: number } = {}
+): Promise<void> {
+  return enqueueAnalyticsOperation(async () => {
+    const nextPath = options.filePath
+      ? path.resolve(options.filePath)
+      : defaultAnalyticsPath;
+    const canonicalPath = await resolveSafePersistenceTarget(nextPath, {
+      createParent: true,
+    });
+    analyticsFilePath = canonicalPath;
+    recentLimit = options.recentLimit === undefined
+      ? defaultRecentLimit
+      : clampAfolPersistenceRecordLimit(
+        options.recentLimit,
+        DEFAULT_RECENT_LIMIT
+      );
   });
 }
 
-export function getAnalyticsSnapshot() {
-  return {
-    ...state,
-    recent: [...state.recent]
-  };
-}
-
-export function resetAnalytics(): void {
-  state.totals = { decisions: 0, successful: 0, rejected: 0 };
-  state.perRoute = { primary: 0, backup: 0, reject: 0 };
-  state.latency = { averageMs: 0, lastMs: 0 };
-  state.recent = [];
-  state.lastUpdated = null;
-
-  if (fs.existsSync(analyticsFilePath)) {
-    try {
-      fs.unlinkSync(analyticsFilePath);
-    } catch (error) {
-      console.warn('[afol-analytics] Failed to reset analytics file', error);
-    }
+/**
+ * Persist a metadata-only analytics candidate and publish it in memory only
+ * after the atomic replacement succeeds.
+ */
+export function persistDecision(
+  value: AfolPersistedDecisionRecord
+): Promise<boolean> {
+  const decision = strictDecisionCopy(value);
+  if (!decision) {
+    recordTraceEvent('afol.analytics.persist_failed', {
+      category: 'invalid_record',
+    });
+    return Promise.resolve(false);
   }
+
+  return enqueueAnalyticsOperation(async () => {
+    const candidate = buildCandidateState(state, decision);
+    try {
+      await writeAnalyticsState(candidate);
+    } catch {
+      recordTraceEvent('afol.analytics.persist_failed', {
+        category: 'io_failure',
+      });
+      return false;
+    }
+
+    state = candidate;
+    recordTraceEvent('afol.analytics.persisted', {
+      decisionId: decision.id,
+      route: decision.route,
+      ok: decision.ok,
+    });
+    return true;
+  });
 }
 
+export function getAnalyticsSnapshot(): Promise<AnalyticsState> {
+  return enqueueAnalyticsOperation(async () => cloneState(state));
+}
+
+/**
+ * Reset through the same write queue. The existing file is atomically replaced
+ * with an empty snapshot rather than deleted.
+ */
+export function resetAnalytics(): Promise<boolean> {
+  return enqueueAnalyticsOperation(async () => {
+    const candidate = createEmptyState();
+    try {
+      await writeAnalyticsState(candidate);
+    } catch {
+      recordTraceEvent('afol.analytics.reset_failed', {
+        category: 'io_failure',
+      });
+      return false;
+    }
+    state = candidate;
+    return true;
+  });
+}

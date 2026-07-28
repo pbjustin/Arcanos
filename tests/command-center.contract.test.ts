@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type {
+  CommandExecutionContext,
+  CommandName,
+} from '../src/services/commandCenter.js';
 
 const workspaceRoot = process.cwd();
 let mockedAuditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'false';
@@ -74,10 +78,24 @@ const {
   listAvailableCommands,
   listCommandSchemaCoverage
 } = await import('../src/services/commandCenter.js');
+const {
+  issueCefExecutionPermit,
+} = await import('../src/services/cef/executionPermit.js');
 const { dispatchAuditSafeHandler } = await import('../src/services/cef/handlers/auditSafe.handler.js');
 const { dispatchWhitelistedCefHandler } = await import('../src/services/cef/handlers/index.js');
 
 describe('commandCenter contracts and tracing', () => {
+  function confirmedContext(
+    command: CommandName,
+    payload: Record<string, unknown>,
+    context: CommandExecutionContext
+  ): CommandExecutionContext {
+    return {
+      ...context,
+      executionPermit: issueCefExecutionPermit(command, payload, context),
+    };
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockedAuditSafeMode = 'false';
@@ -203,13 +221,19 @@ describe('commandCenter contracts and tracing', () => {
   });
 
   it('traces command dispatch and handler success across the CEF boundary', async () => {
-    const result = await executeCommand('audit-safe:set-mode', { mode: 'true' }, {
+    const payload = { mode: 'true' };
+    const context = {
       traceId: 'trace-cef-success',
       executionId: 'exec-success',
       stepId: 'step-success',
       capabilityId: 'audit-safe-mode-control',
       source: 'test'
-    });
+    };
+    const result = await executeCommand(
+      'audit-safe:set-mode',
+      payload,
+      confirmedContext('audit-safe:set-mode', payload, context)
+    );
 
     expect(result.success).toBe(true);
     expect(result.output).toEqual({
@@ -249,13 +273,19 @@ describe('commandCenter contracts and tracing', () => {
         meta: { tokens: { total_tokens: 42 } }
       });
 
-    const result = await executeCommand('ai:prompt', { prompt: 'Retry the AI handler once.' }, {
+    const payload = { prompt: 'Retry the AI handler once.' };
+    const context = {
       traceId: 'trace-cef-retry',
       executionId: 'exec-retry',
       stepId: 'step-retry',
       capabilityId: 'goal-fulfillment',
       source: 'test'
-    });
+    };
+    const result = await executeCommand(
+      'ai:prompt',
+      payload,
+      confirmedContext('ai:prompt', payload, context)
+    );
 
     expect(result.success).toBe(true);
     expect(result.output).toEqual(
@@ -282,13 +312,19 @@ describe('commandCenter contracts and tracing', () => {
   });
 
   it('traces handler fallback paths for AI prompt execution', async () => {
-    const result = await executeCommand('ai:prompt', { prompt: 'Hello from fallback test' }, {
+    const payload = { prompt: 'Hello from fallback test' };
+    const context = {
       traceId: 'trace-cef-fallback',
       executionId: 'exec-fallback',
       stepId: 'step-fallback',
       capabilityId: 'goal-fulfillment',
       source: 'test'
-    });
+    };
+    const result = await executeCommand(
+      'ai:prompt',
+      payload,
+      confirmedContext('ai:prompt', payload, context)
+    );
 
     expect(result.success).toBe(true);
     expect(result.output).toEqual(
@@ -336,13 +372,19 @@ describe('commandCenter contracts and tracing', () => {
       throw new Error('mock generation failed');
     });
 
-    const result = await executeCommand('ai:prompt', { prompt: 'Force fallback failure' }, {
+    const payload = { prompt: 'Force fallback failure' };
+    const context = {
       traceId: 'trace-cef-error',
       executionId: 'exec-error',
       stepId: 'step-error',
       capabilityId: 'goal-fulfillment',
       source: 'test'
-    });
+    };
+    const result = await executeCommand(
+      'ai:prompt',
+      payload,
+      confirmedContext('ai:prompt', payload, context)
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toEqual(
@@ -374,6 +416,103 @@ describe('commandCenter contracts and tracing', () => {
       fallbackUsed: true,
       retryCount: 0
     }));
+  });
+
+  it('fails closed before handler mutation when a confirmation permit is absent', async () => {
+    const result = await executeCommand(
+      'audit-safe:set-mode',
+      { mode: 'true' },
+      {
+        traceId: 'trace-cef-unconfirmed',
+        source: 'test',
+      }
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      error: expect.objectContaining({
+        code: 'CONFIRMATION_REQUIRED',
+        httpStatusCode: 403,
+      }),
+    }));
+    expect(mockSetAuditSafeMode).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockLogExecution).toHaveBeenCalledWith(
+      'cef-boundary',
+      'warn',
+      'cef.dispatch.rejected',
+      expect.objectContaining({
+        errorCode: 'CONFIRMATION_REQUIRED',
+        status: 'rejected',
+      })
+    );
+  });
+
+  it('binds a permit to one exact payload and consumes it on mismatch', async () => {
+    const context = {
+      traceId: 'trace-cef-mismatch',
+      source: 'test',
+    };
+    const permit = issueCefExecutionPermit(
+      'audit-safe:set-mode',
+      { mode: 'true' },
+      context
+    );
+
+    const mismatched = await executeCommand(
+      'audit-safe:set-mode',
+      { mode: 'false' },
+      {
+        ...context,
+        executionPermit: permit,
+      }
+    );
+    const replayed = await executeCommand(
+      'audit-safe:set-mode',
+      { mode: 'true' },
+      {
+        ...context,
+        executionPermit: permit,
+      }
+    );
+
+    expect(mismatched.error?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(replayed.error?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(mockSetAuditSafeMode).not.toHaveBeenCalled();
+  });
+
+  it('consumes a valid permit after one command execution', async () => {
+    const payload = { mode: 'true' };
+    const context = {
+      traceId: 'trace-cef-single-use',
+      source: 'test',
+    };
+    const permit = issueCefExecutionPermit(
+      'audit-safe:set-mode',
+      payload,
+      context
+    );
+
+    const first = await executeCommand(
+      'audit-safe:set-mode',
+      payload,
+      {
+        ...context,
+        executionPermit: permit,
+      }
+    );
+    const second = await executeCommand(
+      'audit-safe:set-mode',
+      payload,
+      {
+        ...context,
+        executionPermit: permit,
+      }
+    );
+
+    expect(first.success).toBe(true);
+    expect(second.error?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(mockSetAuditSafeMode).toHaveBeenCalledTimes(1);
   });
 
   it('blocks non-whitelisted handler actions before dispatch', async () => {

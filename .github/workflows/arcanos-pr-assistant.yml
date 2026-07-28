@@ -94,7 +94,10 @@ jobs:
           export NODE_ENV=production
           export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
           export ARCANOS_GPT_ACCESS_TOKEN="${{ secrets.ARCANOS_GPT_ACCESS_TOKEN || 'ci-gpt-access-token-for-local-workflow-only' }}"
-          CI_API_KEY="${OPENAI_API_KEY}"
+          export ARCANOS_CONTROL_PLANE_ACCESS_TOKEN="ci-pr-analysis-control-token-local-only-2026"
+          export ARCANOS_CONTROL_PLANE_PRINCIPAL_ID="operator:ci-pr-analysis"
+          export ARCANOS_CONTROL_PLANE_SCOPES="repo:verify"
+          CI_CONTROL_PLANE_TOKEN="${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}"
           
           # Start the ARCANOS server in background
           npm start > server.log 2>&1 &
@@ -143,7 +146,7 @@ jobs:
           echo "Running PR analysis..."
           HTTP_CODE=$(curl -X POST http://localhost:8080/api/pr-analysis/analyze \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $CI_API_KEY" \
+            -H "Authorization: Bearer $CI_CONTROL_PLANE_TOKEN" \
             --data-binary @analysis_request.json \
             -w "%{http_code}" \
             -o analysis_result.json \

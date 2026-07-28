@@ -93,10 +93,6 @@ jest.unstable_mockModule('@services/systemState.js', () => ({
   executeSystemStateRequest: jest.fn()
 }));
 
-jest.unstable_mockModule('@services/gptAccessNaturalLanguageDispatch.js', () => ({
-  routeOperatorCommandThroughDispatch: jest.fn(async () => null)
-}));
-
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock,
   getRequestAbortSignal: getRequestAbortSignalMock,

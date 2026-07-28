@@ -19,6 +19,7 @@ export const JOB_EVENT_TYPES = [
   'job.retry.scheduled',
   'job.completed',
   'job.failed',
+  'job.cancelled',
   'job.expired',
   'worker.heartbeat',
   'worker.stale_detected',
@@ -33,7 +34,6 @@ export const DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE = 1_000;
 export const MAX_JOB_EVENT_CLEANUP_BATCH_SIZE = 10_000;
 export const DEFAULT_JOB_EVENT_TIMELINE_LIMIT = 100;
 export const MAX_JOB_EVENT_TIMELINE_LIMIT = 1_000;
-const JOB_EVENT_INSERT_RETRY_COUNT = 1;
 
 export interface RecordJobEventInput {
   jobId: string;
@@ -246,12 +246,12 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
     await query(
       insert.sql,
       insert.params,
-      JOB_EVENT_INSERT_RETRY_COUNT,
-      false,
       {
-        queryName: 'record_job_event',
-        source: 'job-events',
-        workerId: normalizeNullableString(input.workerId) ?? undefined
+        traceContext: {
+          queryName: 'record_job_event',
+          source: 'job-events',
+          workerId: normalizeNullableString(input.workerId) ?? undefined
+        }
       }
     );
     return { inserted: true };
@@ -341,11 +341,11 @@ export async function cleanupJobEvents(
     const result = await query(
       cleanupSql,
       [retentionDays, batchSize],
-      3,
-      false,
       {
-        queryName: dryRun ? 'cleanup_job_events_dry_run' : 'cleanup_job_events',
-        source: 'job-events'
+        traceContext: {
+          queryName: dryRun ? 'cleanup_job_events_dry_run' : 'cleanup_job_events',
+          source: 'job-events'
+        }
       }
     );
     const eventIds = (result.rows as Array<{ id: string }>).map((row) => row.id);
@@ -481,11 +481,11 @@ export async function listJobEventTimeline(
     const result = await query(
       timelineQuery.text,
       timelineQuery.params,
-      3,
-      false,
       {
-        queryName: 'list_job_event_timeline',
-        source: 'job-events'
+        traceContext: {
+          queryName: 'list_job_event_timeline',
+          source: 'job-events'
+        }
       }
     );
     return {

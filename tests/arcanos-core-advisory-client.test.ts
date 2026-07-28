@@ -50,6 +50,12 @@ describe('ArcanosCoreAdvisoryClient', () => {
 
     expect(fetchFn).not.toHaveBeenCalled();
     expect(() => resolveArcanosCoreAdvisoryConfig({})).toThrow('Advisory bridge configuration is unavailable.');
+    const collidingCredential = 'advisory-purpose-bound-token-value';
+    expect(() => resolveArcanosCoreAdvisoryConfig({
+      ARCANOS_CORE_ADVISORY_BASE_URL: 'https://advisory.example.test',
+      ARCANOS_CORE_ADVISORY_ACCESS_TOKEN: collidingCredential,
+      DEBUG_SERVER_TOKEN: collidingCredential,
+    })).toThrow('Advisory bridge configuration is unavailable.');
   });
 
   it('creates one fixed arcanos-core job and polls only the fixed result endpoint', async () => {

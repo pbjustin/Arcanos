@@ -7,20 +7,25 @@ import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/in
 import fs from 'fs';
 import path from 'path';
 import { Router, Request, Response } from 'express';
+import { pathToFileURL } from 'url';
 import { createWorkerContext } from "@platform/runtime/workerContext.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { requireWorkerRunPrivilegedAuth } from "@transport/http/middleware/workerHelperPrivilegedAuth.js";
+import { workerHealMutationRateLimit } from '@transport/http/middleware/workerHealRateLimit.js';
 import { dispatchArcanosTask, getWorkerRuntimeStatus } from "@platform/runtime/workerConfig.js";
 import type {
   WorkerInfoDTO,
   WorkerRunResponseDTO,
   WorkerStatusResponseDTO
 } from "@shared/types/dto.js";
-import { resolveWorkersDirectory } from "@platform/runtime/workerPaths.js";
+import {
+  resolveWorkerModuleFile,
+  resolveWorkersDirectory
+} from "@platform/runtime/workerPaths.js";
 import { buildAutoHealPlan, summarizeAutoHeal } from "@services/autoHealService.js";
 import { loadState, updateState } from "@services/stateManager.js";
 import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import { healWorkerRuntime } from '@services/workerControlService.js';
 
@@ -58,13 +63,13 @@ async function loadWorkerInventory(): Promise<WorkerInfoDTO[]> {
         file: file,
         available: true
       });
-    } catch (error) {
+    } catch {
       workers.push({
         id: file.replace('.js', ''),
         description: 'Failed to load worker',
         file: file,
         available: false,
-        error: resolveErrorMessage(error)
+        error: 'Worker module could not be loaded.'
       });
     }
   }
@@ -106,109 +111,119 @@ async function buildStatusPayload(): Promise<WorkerStatusResponseDTO> {
  */
 router.get(
   '/workers/status',
-  async (_: Request, res: Response<WorkerStatusResponseDTO | { error: string; message: string }>) => {
+  async (req: Request, res: Response<WorkerStatusResponseDTO | { error: string; message: string }>) => {
   try {
     const payload = await buildStatusPayload();
     res.json(payload);
-  } catch (error) {
-    console.error('Error getting worker status:', error);
+  } catch {
+    req.logger?.error?.('workers.status.failed', {
+      requestId: req.requestId,
+    });
     sendInternalErrorPayload(res, {
       error: 'Failed to get worker status',
-      message: resolveErrorMessage(error)
+      message: 'Worker status request failed.'
     });
   }
   }
 );
 
-router.post('/workers/heal', confirmGate, async (req: Request, res: Response) => {
-  try {
-    const healRequest = parseWorkerHealRequest(req.body, req.query);
-    if (!healRequest.success) {
-      sendBadRequestPayload(res, {
-        error: 'INVALID_WORKER_HEAL_REQUEST',
-        details: healRequest.issues
-      });
-      return;
-    }
+router.post(
+  '/workers/heal',
+  requireWorkerRunPrivilegedAuth,
+  workerHealMutationRateLimit,
+  confirmGate,
+  async (req: Request, res: Response) => {
+    try {
+      const healRequest = parseWorkerHealRequest(req.body, req.query);
+      if (!healRequest.success) {
+        sendBadRequestPayload(res, {
+          error: 'INVALID_WORKER_HEAL_REQUEST',
+          details: healRequest.issues
+        });
+        return;
+      }
 
-    const payload = await buildStatusPayload();
-    const plan = await buildAutoHealPlan(payload);
-    const planOnlyRequested = healRequest.data.planOnlyRequested;
-    const trustedAutomation = Boolean(
-      req.confirmationContext?.isTrustedGpt || req.confirmationContext?.automationSecretApproved,
-    );
-    const autoExecutionAllowed = trustedAutomation && !planOnlyRequested;
-    const requestedExecution = healRequest.data.requestedExecution;
-    const shouldExecute = !planOnlyRequested && (requestedExecution || autoExecutionAllowed);
+      const payload = await buildStatusPayload();
+      const plan = await buildAutoHealPlan(payload);
+      const planOnlyRequested = healRequest.data.planOnlyRequested;
+      const trustedAutomation = Boolean(
+        req.confirmationContext?.isTrustedGpt || req.confirmationContext?.automationSecretApproved,
+      );
+      const autoExecutionAllowed = trustedAutomation && !planOnlyRequested;
+      const requestedExecution = healRequest.data.requestedExecution;
+      const shouldExecute = !planOnlyRequested && (requestedExecution || autoExecutionAllowed);
 
-    let execution: Record<string, unknown> | undefined;
-    if (shouldExecute) {
-      const healResult = await healWorkerRuntime(healRequest.data.force, 'workers_route');
-      execution = {
-        restart: healResult.restart,
-        autoExecuted: autoExecutionAllowed && !requestedExecution,
-        requestedForce: healResult.requestedForce,
-        confirmation: {
-          status: req.confirmationContext?.confirmationStatus,
-          gptId: req.confirmationContext?.gptId,
-          trustedAutomation,
-        },
-      };
-      const existingState = loadState() as Record<string, unknown>;
-      const rawWorkers = existingState?.workers;
-      const existingWorkersState =
-        rawWorkers && typeof rawWorkers === 'object' ? (rawWorkers as Record<string, unknown>) : {};
-      updateState({
-        workers: {
-          ...existingWorkersState,
-          lastHeal: {
-            executedAt: new Date().toISOString(),
-            planId: plan.planId,
-            severity: plan.severity,
+      let execution: Record<string, unknown> | undefined;
+      if (shouldExecute) {
+        const healResult = await healWorkerRuntime(healRequest.data.force, 'workers_route');
+        execution = {
+          restart: healResult.restart,
+          autoExecuted: autoExecutionAllowed && !requestedExecution,
+          requestedForce: healResult.requestedForce,
+          confirmation: {
+            status: req.confirmationContext?.confirmationStatus,
+            gptId: req.confirmationContext?.gptId,
+            trustedAutomation,
+          },
+        };
+        const existingState = loadState() as Record<string, unknown>;
+        const rawWorkers = existingState?.workers;
+        const existingWorkersState =
+          rawWorkers && typeof rawWorkers === 'object' ? (rawWorkers as Record<string, unknown>) : {};
+        updateState({
+          workers: {
+            ...existingWorkersState,
+            lastHeal: {
+              executedAt: new Date().toISOString(),
+              planId: plan.planId,
+              severity: plan.severity,
+              recommendedAction: plan.recommendedAction
+            }
+          }
+        });
+      } else {
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'workers_route',
+          trigger: 'manual',
+          reason: planOnlyRequested ? 'worker heal plan requested without execution' : 'worker heal execution not requested',
+          actionTaken: 'workers/heal',
+          healedComponent: 'worker_runtime',
+          details: {
+            autoExecutionAllowed,
+            planOnlyRequested,
+            requestedExecution,
+            requestedForce: healRequest.data.force ?? true,
             recommendedAction: plan.recommendedAction
           }
-        }
+        });
+      }
+
+      res.json({
+        timestamp: new Date().toISOString(),
+        mode: healRequest.data.mode ?? (shouldExecute ? 'execute' : 'plan'),
+        plan,
+        autoHeal: payload.autoHeal,
+        execution,
+        requestedForce: healRequest.data.force ?? true,
+        runtime: getWorkerRuntimeStatus()
       });
-    } else {
-      recordSelfHealEvent({
-        kind: 'noop',
-        source: 'workers_route',
-        trigger: 'manual',
-        reason: planOnlyRequested ? 'worker heal plan requested without execution' : 'worker heal execution not requested',
-        actionTaken: 'workers/heal',
-        healedComponent: 'worker_runtime',
-        details: {
-          autoExecutionAllowed,
-          planOnlyRequested,
-          requestedExecution,
-          requestedForce: healRequest.data.force ?? true,
-          recommendedAction: plan.recommendedAction
-        }
+    } catch {
+      req.logger?.error?.('workers.heal.failed', {
+        requestId: req.requestId,
+      });
+      sendInternalErrorPayload(res, {
+        error: 'WORKER_HEAL_FAILED',
+        message: 'Worker heal request failed.'
       });
     }
-
-    res.json({
-      timestamp: new Date().toISOString(),
-      mode: healRequest.data.mode ?? (shouldExecute ? 'execute' : 'plan'),
-      plan,
-      autoHeal: payload.autoHeal,
-      execution,
-      requestedForce: healRequest.data.force ?? true,
-      runtime: getWorkerRuntimeStatus()
-    });
-  } catch (error) {
-    console.error('[AUTO-HEAL] Failed to process request', error);
-    sendInternalErrorPayload(res, {
-      error: 'Auto-heal failed',
-      message: resolveErrorMessage(error)
-    });
   }
-});
+);
 
 /**
  * POST /workers/run/:workerId - Run a specific worker
  */
-router.post('/workers/run/:workerId', confirmGate, async (
+router.post('/workers/run/:workerId', requireWorkerRunPrivilegedAuth, confirmGate, async (
   req: Request,
   res: Response<WorkerRunResponseDTO>
 ) => {
@@ -252,9 +267,21 @@ router.post('/workers/run/:workerId', confirmGate, async (
       return res.json(response);
     }
 
-    const workerPath = path.join(workersDir, `${workerId}.js`);
+    const workerModule = isWorkerInventoryFile(`${workerId}.js`)
+      ? resolveWorkerModuleFile(workersDir, workerId)
+      : { status: 'invalid_worker_id' as const };
 
-    if (!fs.existsSync(workerPath)) {
+    if (workerModule.status === 'invalid_worker_id' || workerModule.status === 'outside_workers_directory') {
+      return res.status(400).json({
+        success: false,
+        workerId,
+        executionTime: '0ms',
+        timestamp: new Date().toISOString(),
+        error: 'Invalid worker identifier'
+      });
+    }
+
+    if (workerModule.status === 'not_found') {
       return res.status(404).json({
         success: false,
         workerId,
@@ -264,7 +291,7 @@ router.post('/workers/run/:workerId', confirmGate, async (
       });
     }
 
-    const worker = await import(workerPath);
+    const worker = await import(pathToFileURL(workerModule.path).href);
     const startTime = Date.now();
     let result: unknown;
     let workerInfo: {
@@ -327,15 +354,18 @@ router.post('/workers/run/:workerId', confirmGate, async (
 
     res.json(response);
 
-  } catch (error) {
-    console.error(`Error running worker ${workerId}:`, error);
+  } catch {
+    req.logger?.error?.('workers.run.failed', {
+      requestId: req.requestId,
+      workerId,
+    });
     sendInternalErrorPayload(res, {
       success: false,
       workerId,
       executionTime: '0ms',
       timestamp: new Date().toISOString(),
       error: 'Worker execution failed',
-      message: resolveErrorMessage(error)
+      message: 'Worker execution request failed.'
     });
   }
 });

@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { createGPT5Reasoning } from "@services/openai.js";
+import { createGPT5Reasoning } from "@services/openai/chatFlow/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import type { ReasoningLedger } from "@core/logic/trinityTypes.js";
 import type { RuntimeBudget } from "@platform/resilience/runtimeBudget.js";

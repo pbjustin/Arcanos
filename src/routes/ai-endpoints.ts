@@ -13,8 +13,15 @@ import {
   buildLegacyDispatchBody,
   createLegacyRouteDeprecationMiddleware
 } from './_core/legacyRouteAdapters.js';
+import {
+  reinforcementHttpBoundary,
+} from '@services/controlPlane/reinforcementHttpBoundary.js';
+import {
+  reinforcementBodyParser,
+} from '@services/controlPlane/reinforcementBodyParser.js';
 
 const router = express.Router();
+router.use('/audit', reinforcementHttpBoundary, reinforcementBodyParser);
 // Write endpoint compatibility shim
 router.post(
   '/write',

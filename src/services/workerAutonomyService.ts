@@ -1,6 +1,7 @@
 import type { JobData } from '@core/db/schema.js';
 import {
   cleanupExpiredGptJobs,
+  createClaimedJobFence,
   deferJobForProviderRecovery as deferJobForProviderRecoveryInRepository,
   getJobExecutionStatsSince,
   getJobQueueSummary,
@@ -9,7 +10,7 @@ import {
   recoverStaleJobs,
   resolveJobWorkerStaleAfterMs,
   scheduleJobRetry,
-  updateJob,
+  updateClaimedJobTerminal,
   type CreateJobOptions,
   type JobExecutionStats,
   type JobQueueSummary,
@@ -191,6 +192,10 @@ interface WorkerSnapshotContext {
 interface WorkerSnapshotPersistOptions {
   force?: boolean;
   source?: string;
+}
+
+interface WorkerHeartbeatPersistOptions extends WorkerSnapshotPersistOptions {
+  shouldApplyResult?: () => boolean;
 }
 
 interface WorkerWatchdogState {
@@ -1091,10 +1096,27 @@ export class WorkerAutonomyService {
    * Edge case behavior: no-ops safely when the job is already terminal and no longer running.
    */
   async recordHeartbeat(
-    jobId: string,
-    options: WorkerSnapshotPersistOptions = {}
+    job: Pick<JobData, 'id' | 'claim_generation'>,
+    options: WorkerHeartbeatPersistOptions = {}
   ): Promise<JobData | null> {
-    const updatedJob = await recordJobHeartbeat(jobId, this.getClaimOptions());
+    const updatedJob = await recordJobHeartbeat(job.id, {
+      fence: createClaimedJobFence(this.settings.workerId, job.claim_generation),
+      leaseMs: this.settings.leaseMs
+    });
+    const shouldApplyResult = options.shouldApplyResult?.() ?? true;
+    if (!updatedJob) {
+      if (shouldApplyResult) {
+        await this.markJobLeaseLost(
+          job.id,
+          'Heartbeat fence was lost before the job lease could be renewed.'
+        );
+      }
+      return null;
+    }
+    if (!shouldApplyResult) {
+      return updatedJob;
+    }
+
     this.state.lastHeartbeatAt = new Date().toISOString();
     this.state.lastActivityAt = this.state.lastHeartbeatAt;
     await this.persistSnapshot({
@@ -1170,9 +1192,13 @@ export class WorkerAutonomyService {
     errorMessage: string,
     retryable: boolean,
     output: unknown = null
-  ): Promise<{ action: 'retried' | 'failed'; delayMs?: number }> {
+  ): Promise<{ action: 'retried' | 'failed' | 'lease_lost'; delayMs?: number }> {
     const retryCount = Number(job.retry_count ?? 0);
     const maxRetries = Number(job.max_retries ?? this.settings.defaultMaxRetries);
+    const fence = createClaimedJobFence(
+      this.settings.workerId,
+      job.claim_generation
+    );
 
     //audit Assumption: only transient failures should consume retry budget; failure risk: deterministic schema or business failures loop unnecessarily; expected invariant: non-retryable failures terminate immediately; handling strategy: gate retries on both the classification and remaining budget.
     if (retryable && retryCount < maxRetries) {
@@ -1182,12 +1208,8 @@ export class WorkerAutonomyService {
         this.settings.retryBackoffMaxMs
       );
       const failedAt = new Date().toISOString();
-      this.state.currentJobId = null;
-      this.state.lastError = errorMessage;
-      this.state.lastActivityAt = failedAt;
-      this.state.lastProcessedJobAt = failedAt;
       const retriedJob = await scheduleJobRetry(job.id, {
-        workerId: this.settings.workerId,
+        fence,
         delayMs,
         errorMessage,
         autonomyState: {
@@ -1201,6 +1223,10 @@ export class WorkerAutonomyService {
         }
       });
       if (!retriedJob) {
+        await this.markJobLeaseLost(
+          job.id,
+          'Retry scheduling fence was lost before the job could be requeued.'
+        );
         logger.warn('worker.job.retry_schedule.skipped', {
           module: 'worker-autonomy',
           workerId: this.settings.workerId,
@@ -1210,15 +1236,14 @@ export class WorkerAutonomyService {
           maxRetries,
           delayMs
         });
-        await this.persistSnapshot({
-          healthStatus: 'degraded',
-          alerts: [`Retry scheduling skipped for job ${job.id}; live lease was no longer owned by this worker.`]
-        }, { force: true, source: 'job-retry-skipped' });
-        this.state.lastError = null;
         return {
-          action: 'failed'
+          action: 'lease_lost'
         };
       }
+      this.state.currentJobId = null;
+      this.state.lastError = errorMessage;
+      this.state.lastActivityAt = failedAt;
+      this.state.lastProcessedJobAt = failedAt;
       this.state.scheduledRetries += 1;
       this.recordRecoveryAction({
         action: 'retry_scheduled',
@@ -1248,29 +1273,42 @@ export class WorkerAutonomyService {
       };
     }
 
+    const lifecycleDeadlines =
+      job.job_type === 'gpt'
+        ? computeGptJobLifecycleDeadlines('failed')
+        : { idempotencyUntil: null, retentionUntil: null };
+    const terminalJob = await updateClaimedJobTerminal(
+      job.id,
+      'failed',
+      {
+        fence,
+        output,
+        errorMessage,
+        autonomyState: {
+          lastFailure: buildFailureSnapshot(errorMessage, {
+            retryable,
+            retryExhausted: retryable && retryCount >= maxRetries,
+            deadLetter: retryable && retryCount >= maxRetries
+          })
+        },
+        metadata: lifecycleDeadlines
+      }
+    );
+    if (!terminalJob) {
+      await this.markJobLeaseLost(
+        job.id,
+        'Terminal failure fence was lost before the job could be finalized.'
+      );
+      return {
+        action: 'lease_lost'
+      };
+    }
+
     this.state.currentJobId = null;
     this.state.lastError = errorMessage;
     this.state.lastActivityAt = new Date().toISOString();
     this.state.lastProcessedJobAt = this.state.lastActivityAt;
     this.state.terminalFailures += 1;
-    const lifecycleDeadlines =
-      job.job_type === 'gpt'
-        ? computeGptJobLifecycleDeadlines('failed')
-        : { idempotencyUntil: null, retentionUntil: null };
-    await updateJob(
-      job.id,
-      'failed',
-      output,
-      errorMessage,
-      {
-        lastFailure: buildFailureSnapshot(errorMessage, {
-          retryable,
-          retryExhausted: retryable && retryCount >= maxRetries,
-          deadLetter: retryable && retryCount >= maxRetries
-        })
-      },
-      lifecycleDeadlines
-    );
     if (retryable && retryCount >= maxRetries) {
       this.state.deadLetterJobs += 1;
       this.recordRecoveryAction({
@@ -1319,16 +1357,15 @@ export class WorkerAutonomyService {
       providerNextRetryAt?: string | null;
       providerFailureCategory?: string | null;
     }
-  ): Promise<{ action: 'deferred' | 'skipped'; delayMs: number }> {
+  ): Promise<{ action: 'deferred' | 'lease_lost'; delayMs: number }> {
     const deferredAt = new Date().toISOString();
     const delayMs = Math.max(0, Math.trunc(options.delayMs));
-    this.state.currentJobId = null;
-    this.state.lastError = options.errorMessage;
-    this.state.lastActivityAt = deferredAt;
-    this.state.lastClaimResult = 'provider_unavailable';
 
     const deferredJob = await deferJobForProviderRecoveryInRepository(job.id, {
-      workerId: this.settings.workerId,
+      fence: createClaimedJobFence(
+        this.settings.workerId,
+        job.claim_generation
+      ),
       delayMs,
       errorMessage: options.errorMessage,
       autonomyState: {
@@ -1343,22 +1380,25 @@ export class WorkerAutonomyService {
       }
     });
     if (!deferredJob) {
-      this.state.lastError = null;
+      await this.markJobLeaseLost(
+        job.id,
+        'Provider deferral fence was lost before the job could be requeued.'
+      );
       logger.warn('worker.provider_recovery_defer.skipped_status_mismatch', {
         module: 'worker-autonomy',
         workerId: this.settings.workerId,
         jobId: job.id,
         providerFailureCategory: options.providerFailureCategory ?? null
       });
-      await this.persistSnapshot({
-        healthStatus: 'degraded',
-        alerts: [`Provider deferral skipped for job ${job.id}; job was no longer running.`]
-      }, { force: true, source: 'provider-deferred-skipped' });
       return {
-        action: 'skipped',
+        action: 'lease_lost',
         delayMs
       };
     }
+    this.state.currentJobId = null;
+    this.state.lastError = options.errorMessage;
+    this.state.lastActivityAt = deferredAt;
+    this.state.lastClaimResult = 'provider_unavailable';
     this.recordRecoveryAction({
       action: 'provider_deferred',
       source: 'provider-recovery',

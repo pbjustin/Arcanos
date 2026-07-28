@@ -36,7 +36,12 @@ const dagNodeJobInputSchema = z.object({
   waitingTimeoutMs: z.number().int().positive().default(DEFAULT_DAG_NODE_TIMEOUT_MS)
 });
 
-export type DagQueueJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type DagQueueJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface DagNodeJobInput {
   dagId: string;
@@ -89,6 +94,8 @@ function normalizeDagQueueJobStatus(status: string): DagQueueJobStatus {
       return 'completed';
     case 'failed':
       return 'failed';
+    case 'cancelled':
+      return 'cancelled';
     default:
       return 'failed';
   }

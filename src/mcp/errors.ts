@@ -7,6 +7,8 @@ export type McpErrorCode =
   | 'ERR_CONFIRM_INVALID'
   | 'ERR_NOT_FOUND'
   | 'ERR_BAD_REQUEST'
+  | 'ERR_CONFLICT'
+  | 'ERR_UNAVAILABLE'
   | 'ERR_TIMEOUT'
   | 'ERR_INTERNAL';
 

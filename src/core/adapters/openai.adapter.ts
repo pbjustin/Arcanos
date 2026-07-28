@@ -1,5 +1,4 @@
 import {
-  extractResponseOutputText,
   extractTextFromContentParts,
   normalizeUsage as normalizeOpenAIUsage
 } from '@arcanos/openai/responseParsing';
@@ -7,6 +6,10 @@ import {
   createSafeResponsesParse,
   type OpenAIResponsesClientLike,
 } from '@arcanos/openai';
+import {
+  attachOpenAIResponsesMetadataToChatCompletion,
+  normalizeOpenAIResponseForLegacyChat
+} from '@arcanos/openai/responses';
 /**
  * OpenAI Adapter
  * 
@@ -27,8 +30,6 @@ import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'opena
 import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import {
-  attachOpenAIResponsesMetadataToChatCompletion,
-  resolveOpenAIResponsesLegacyFinishReason,
   type OpenAIResponsesLegacyChatCompletion
 } from './openaiResponsesMetadata.js';
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
@@ -242,10 +243,6 @@ function normalizeMessageContent(content: unknown): string {
   return extractTextFromContentParts(content, { includeOutputText: false });
 }
 
-function extractResponseText(response: unknown): string {
-  return extractResponseOutputText(response, '');
-}
-
 function normalizeUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
   return normalizeOpenAIUsage(usage);
 }
@@ -413,11 +410,9 @@ function convertResponseToLegacyChatCompletion(
   response: OpenAIResponse,
   requestedModel: string
 ): OpenAIResponsesLegacyChatCompletion {
-  const usage = normalizeUsage(response.usage);
-  const outputText = extractResponseText(response);
+  const semantics = normalizeOpenAIResponseForLegacyChat(response);
   const createdAt = (response as { created_at?: unknown }).created_at;
   const created = typeof createdAt === 'number' ? Math.floor(createdAt) : Math.floor(Date.now() / 1000);
-  const finishReason = resolveOpenAIResponsesLegacyFinishReason(response);
 
   const legacyResponse: ChatCompletion = {
     id: response.id || `legacy_${Date.now()}`,
@@ -429,21 +424,29 @@ function convertResponseToLegacyChatCompletion(
         index: 0,
         message: {
           role: 'assistant',
-          content: outputText,
-          refusal: null
+          content: semantics.content,
+          refusal: semantics.refusal,
+          ...(semantics.toolCalls.length > 0
+            ? { tool_calls: semantics.toolCalls }
+            : {})
         },
-        finish_reason: finishReason,
+        finish_reason: semantics.finishReason,
         logprobs: null
       }
     ],
     usage: {
-      prompt_tokens: usage.promptTokens,
-      completion_tokens: usage.completionTokens,
-      total_tokens: usage.totalTokens
+      prompt_tokens: semantics.usage.promptTokens,
+      completion_tokens: semantics.usage.completionTokens,
+      total_tokens: semantics.usage.totalTokens
     }
   };
 
-  return attachOpenAIResponsesMetadataToChatCompletion(legacyResponse, response, finishReason);
+  return attachOpenAIResponsesMetadataToChatCompletion(
+    legacyResponse,
+    response,
+    semantics.finishReason,
+    semantics
+  );
 }
 
 /**

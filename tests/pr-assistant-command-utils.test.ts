@@ -86,6 +86,15 @@ describe('PR Assistant command utilities', () => {
     ])).rejects.toThrow(/stderr details[\s\S]*Command failed with exit code 7:/);
   });
 
+  it('terminates commands whose combined output exceeds the bounded capture', async () => {
+    await expect(runCommand(process.execPath, [
+      '-e',
+      'process.stdout.write("x".repeat(2 * 1024 * 1024))'
+    ], { timeout: 10_000 })).rejects.toThrow(
+      'Command output exceeded 1048576 bytes:'
+    );
+  });
+
   it('rejects at the timeout even if the child delays termination', async () => {
     const timeoutMs = 100;
 

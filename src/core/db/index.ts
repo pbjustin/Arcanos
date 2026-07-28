@@ -24,8 +24,10 @@ export {
 
 // Schema exports
 export {
+  inspectDatabaseCollation,
   refreshDatabaseCollation,
   initializeTables,
+  isDatabaseSchemaReady,
   MemoryEntrySchema,
   ExecutionLogSchema,
   JobDataSchema,
@@ -34,6 +36,7 @@ export {
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
+  type DatabaseCollationInspectionStatus,
   type ReasoningLog,
   type RagDoc
 } from './schema.js';
@@ -41,8 +44,15 @@ export {
 // Query exports
 export {
   query,
-  transaction
+  transaction,
+  type DbQueryOptions,
+  type DbQueryTraceContext
 } from './query.js';
+export {
+  AUDITED_TRANSIENT_READ_QUERIES,
+  type AuditedTransientReadQuery,
+  type AuditedTransientReadQueryId
+} from './transientReadRegistry.js';
 
 // Repository exports
 export {
@@ -71,10 +81,15 @@ export {
 
 export {
   createJob,
+  createClaimedJobFence,
   claimNextPendingJob,
+  deferJobForProviderRecovery,
+  failPendingJobIfUnclaimed,
+  normalizeJobClaimGeneration,
   recordJobHeartbeat,
   scheduleJobRetry,
   recoverStaleJobs,
+  updateClaimedJobTerminal,
   updateJob,
   getJobById,
   getLatestJob,
@@ -84,7 +99,13 @@ export {
   type JobExecutionStats,
   type CreateJobOptions,
   type ClaimNextPendingJobOptions,
+  type ClaimedJobFence,
+  type ClaimedJobTerminalStatus,
+  type DeferJobForProviderRecoveryOptions,
+  type FailPendingJobIfUnclaimedOptions,
+  type RecordJobHeartbeatOptions,
   type ScheduleJobRetryOptions,
+  type UpdateClaimedJobTerminalOptions,
   type RecoverStaleJobsOptions,
   type RecoverStaleJobsResult
 } from './repositories/jobRepository.js';
@@ -172,31 +193,59 @@ export {
  * Initialize database with full schema setup
  * This is the main entry point for database initialization
  */
-import { initializeDatabase as initDB, getPool } from './client.js';
-import { refreshDatabaseCollation, initializeTables } from './schema.js';
+import {
+  initializeDatabase as initDB,
+  getPool,
+  isDatabaseConnected
+} from './client.js';
+import {
+  inspectDatabaseCollation,
+  initializeTables,
+  isDatabaseSchemaReady
+} from './schema.js';
 
 export async function initializeDatabaseWithSchema(workerId = ''): Promise<boolean> {
-  const success = await initDB(workerId);
-  
-  if (success && getPool()) {
-    // Initialize required tables for ARCANOS operations
-    await refreshDatabaseCollation();
-    await initializeTables();
-
-    if (workerId) {
-      const pool = getPool();
-      if (pool) {
-        try {
-          await pool.query(
-            'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
-            [workerId, 'status', 'online', {}]
-          );
-        } catch (hbErr) {
-          console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
-        }
-      }
+  if (!isDatabaseConnected() || !getPool()) {
+    const connected = await initDB(workerId);
+    if (!connected) {
+      return false;
     }
   }
-  
-  return success;
+
+  const startupPool = getPool();
+  if (!startupPool || !isDatabaseConnected()) {
+    return false;
+  }
+
+  await inspectDatabaseCollation();
+  if (getPool() !== startupPool || !isDatabaseConnected()) {
+    return false;
+  }
+
+  const schemaInitialized = await initializeTables();
+  if (
+    !schemaInitialized ||
+    getPool() !== startupPool ||
+    !isDatabaseConnected() ||
+    !isDatabaseSchemaReady()
+  ) {
+    return false;
+  }
+
+  if (workerId) {
+    try {
+      await startupPool.query(
+        'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
+        [workerId, 'status', 'online', {}]
+      );
+    } catch (hbErr) {
+      console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
+    }
+  }
+
+  return (
+    getPool() === startupPool &&
+    isDatabaseConnected() &&
+    isDatabaseSchemaReady()
+  );
 }

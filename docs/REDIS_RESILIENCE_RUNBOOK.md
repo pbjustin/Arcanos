@@ -16,7 +16,9 @@ The failure threshold is one. A transport error, socket loss, or two-second oper
 
 Every rejected or failed application operation returns the stable, credential-free code `REDIS_DEPENDENCY_UNAVAILABLE`. The HTTP boundary maps uncaught dependency errors to HTTP 503. Durable jobs remain PostgreSQL-backed; never introduce an in-memory durable-job fallback.
 
-Every deployed web/worker Redis command must enter through `executeRedisOperation` with an allowlisted operation name. The standalone `arcanos-ai-runtime` workspace has its own experimental BullMQ/ioredis topology, but neither Railway launcher entrypoint imports or starts that workspace; it is outside this web/worker lifecycle and preview proof. Activating it as a service requires a separate lifecycle and durability review.
+Every deployed web/worker Redis command must enter through `executeRedisOperation` with an allowlisted operation name. The standalone `arcanos-ai-runtime` workspace has its own BullMQ/ioredis topology, but neither Railway launcher entrypoint imports or starts that workspace; it is outside this web/worker lifecycle and preview proof. Its code boundary now includes the purpose-bound Bearer identity, endpoint scopes, server-owned job principal, owner-only reads, a shared Redis admission ledger, an explicit deployment-scoped queue name, separate liveness/readiness probes, readiness-gated worker startup, and bounded shutdown ownership.
+
+Those source controls do not establish deployment readiness. Before separately activating the workspace, obtain current target-specific evidence for Redis ACL/TLS and private-network enforcement, persistence and high-availability behavior, eviction policy, the exact versioned queue cutover and backlog state, probe wiring, and the platform termination grace. No such operational evidence is available in this repository review, so this runbook makes no production-readiness claim for the standalone workspace.
 
 ## Health semantics
 

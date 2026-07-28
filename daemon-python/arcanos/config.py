@@ -4,6 +4,7 @@ Loads and validates environment variables with sensible defaults.
 Uses a user-writable data dir for configuration, logs, and crash reports.
 """
 
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,9 @@ from .env import (
     get_fallback_env_path,
     get_primary_env_path,
     get_runtime_base_dir,
+)
+from .credential_verification import (
+    has_configured_purpose_bound_credential_collision,
 )
 
 # Note: Removed PyInstaller frozen EXE detection - CLI agent runs as Python application
@@ -98,6 +102,12 @@ def get_backend_base_url() -> Optional[str]:
 def get_automation_auth() -> tuple[str, str]:
     header_name = (get_env("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation") or "x-arcanos-automation").lower()
     secret = (get_env("ARCANOS_AUTOMATION_SECRET", "") or "").strip()
+    if secret and has_configured_purpose_bound_credential_collision(
+        credential=secret,
+        own_environment_name="ARCANOS_AUTOMATION_SECRET",
+        read_environment_value=get_env,
+    ):
+        secret = ""
     return header_name, secret
 
 
@@ -108,15 +118,107 @@ def get_backend_token() -> Optional[str]:
     Edge cases: Ignores blank values so whitespace-only secrets cannot be treated as valid credentials.
     """
     # //audit The backend token is resolved with the following precedence, returning the first non-empty value:
-    # //audit 1. BACKEND_TOKEN: The canonical daemon credential.
+    # //audit 1. BACKEND_TOKEN: The canonical generic backend credential.
     # //audit 2. ARCANOS_API_KEY: A compatibility fallback for certain deployments.
-    # //audit 3. ADMIN_KEY: A final fallback for environments that reuse this key for daemon auth.
+    # //audit 3. ADMIN_KEY: A final compatibility fallback for generic backend auth.
     for key in ("BACKEND_TOKEN", "ARCANOS_API_KEY", "ADMIN_KEY"):
         token = (get_env(key) or "").strip()
         if token:
             return token
 
     return None
+
+
+MIN_DAEMON_ACCESS_TOKEN_LENGTH = 32
+MAX_DAEMON_ACCESS_TOKEN_LENGTH = 4_096
+_DAEMON_ACCESS_TOKEN_PLACEHOLDER_PATTERN = re.compile(
+    r"^(?:<[^>]+>|(?:change[-_]?me|example|placeholder)(?:[-_].*)?|replace[-_]?with(?:[-_].*)?)$",
+    re.IGNORECASE,
+)
+
+
+def is_valid_daemon_access_token(value: Optional[str]) -> bool:
+    """
+    Purpose: Validate the dedicated daemon-plane token without normalizing it.
+    Inputs/Outputs: Optional raw token; returns whether it satisfies the transport contract.
+    Edge cases: Counts UTF-16 code units to match the TypeScript server's string-length limits.
+    """
+    if not isinstance(value, str):
+        return False
+
+    utf16_length = len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+    return (
+        MIN_DAEMON_ACCESS_TOKEN_LENGTH <= utf16_length <= MAX_DAEMON_ACCESS_TOKEN_LENGTH
+        and value == value.strip()
+        and not any(character.isspace() for character in value)
+        and _DAEMON_ACCESS_TOKEN_PLACEHOLDER_PATTERN.fullmatch(value) is None
+    )
+
+
+def get_daemon_access_token() -> Optional[str]:
+    """
+    Purpose: Read the dedicated daemon-plane credential without peer reuse.
+    Inputs/Outputs: Returns the exact valid ARCANOS_DAEMON_ACCESS_TOKEN or None.
+    Edge cases: Preserves its grammar and never uses generic fallback tokens.
+    """
+    token = get_env("ARCANOS_DAEMON_ACCESS_TOKEN")
+    if not isinstance(token, str) or not is_valid_daemon_access_token(token):
+        return None
+    if has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ARCANOS_DAEMON_ACCESS_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
+def get_action_plan_executor_token() -> Optional[str]:
+    """
+    Purpose: Read the ActionPlan executor credential without canonical peer reuse.
+    Inputs/Outputs: Returns its existing raw non-empty value or None.
+    Edge cases: Preserves downstream required-value validation and trimming.
+    """
+    token = get_env("ACTION_PLAN_EXECUTOR_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ACTION_PLAN_EXECUTOR_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
+def get_local_agent_executor_token() -> Optional[str]:
+    """
+    Purpose: Read the local-agent credential without canonical peer reuse.
+    Inputs/Outputs: Returns its existing raw non-empty value or None.
+    Edge cases: Preserves downstream required-value validation and trimming.
+    """
+    token = get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
+def get_debug_server_token() -> Optional[str]:
+    """
+    Purpose: Read the debug-server credential without accepting a configured peer.
+    Inputs/Outputs: Reads DEBUG_SERVER_TOKEN and canonical application peers.
+    Edge cases: Preserves the existing raw-value and optional-setting semantics.
+    """
+    token = get_env("DEBUG_SERVER_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="DEBUG_SERVER_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
 
 
 _DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
@@ -139,6 +241,7 @@ class Config:
     # ============================================
     BACKEND_URL: Optional[str] = get_backend_base_url()
     BACKEND_TOKEN: Optional[str] = get_backend_token()
+    DAEMON_ACCESS_TOKEN: Optional[str] = get_daemon_access_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
     BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
 
@@ -201,9 +304,7 @@ class Config:
     # Historical Phase 2E tests may enable this in-process only. It is deliberately
     # not environment-backed so deployed runtimes cannot restore the unsafe route.
     ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM: bool = False
-    ACTION_PLAN_EXECUTOR_TOKEN: Optional[str] = (
-        get_env("ACTION_PLAN_EXECUTOR_TOKEN") or None
-    )
+    ACTION_PLAN_EXECUTOR_TOKEN: Optional[str] = get_action_plan_executor_token()
     ACTION_PLAN_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
         get_env("ACTION_PLAN_EXECUTOR_PRINCIPAL_ID") or None
     )
@@ -224,9 +325,7 @@ class Config:
         "ARCANOS_LOCAL_AGENT_ENABLED",
         False,
     )
-    LOCAL_AGENT_EXECUTOR_TOKEN: Optional[str] = (
-        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN") or None
-    )
+    LOCAL_AGENT_EXECUTOR_TOKEN: Optional[str] = get_local_agent_executor_token()
     LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
         get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID") or None
     )
@@ -340,7 +439,7 @@ class Config:
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = get_env_int("DEBUG_SERVER_LOG_RETENTION_DAYS", 7)
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    DEBUG_SERVER_TOKEN: Optional[str] = get_env("DEBUG_SERVER_TOKEN") or None
+    DEBUG_SERVER_TOKEN: Optional[str] = get_debug_server_token()
     # Security: Allow unauthenticated access to debug server (default: false, only for development)
     DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = get_env_bool("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", False)
     

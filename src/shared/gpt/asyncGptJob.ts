@@ -5,7 +5,7 @@ import {
   GPT_ECHO_ACTION,
   GPT_HEALTH_ECHO_ACTION,
   isGptBridgeSmokeAction,
-  type GptBridgeSmokeAction
+  type QueuedBridgeSmokeInput
 } from './bridgeSmoke.js';
 
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
@@ -34,7 +34,7 @@ const queuedGptJobInputSchema = z.object({
   bridgeAction: z.enum([GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION]).optional()
 }).passthrough();
 
-export interface QueuedGptJobInput {
+export interface QueuedGptJobInput extends QueuedBridgeSmokeInput {
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string;
@@ -45,8 +45,6 @@ export interface QueuedGptJobInput {
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
-  bridgeSmoke?: true;
-  bridgeAction?: GptBridgeSmokeAction;
 }
 
 export interface QueuedGptPendingResponse {

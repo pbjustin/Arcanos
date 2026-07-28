@@ -4,9 +4,9 @@
  * Persists AI reflection outputs for historical analysis and tooling reuse.
  */
 
-import { isDatabaseConnected, initializeDatabase } from "@core/db/client.js";
+import { getPool, isDatabaseConnected, initializeDatabase } from "@core/db/client.js";
 import { query } from "@core/db/query.js";
-import { initializeTables } from "@core/db/schema.js";
+import { initializeTables, isDatabaseSchemaReady } from "@core/db/schema.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
 
 export interface SelfReflectionInsert {
@@ -41,9 +41,14 @@ let lastBootstrapFailureAtMs = 0;
  * Edge cases: applies cooldown after failed bootstrap to avoid retry storms.
  */
 async function ensureSelfReflectionPersistenceReady(): Promise<boolean> {
-  //audit Assumption: connected pool means persistence can proceed immediately; risk: stale status flag; invariant: no redundant bootstrap when already connected; handling: fast-path return.
-  if (isDatabaseConnected()) {
+  //audit Assumption: reflection persistence is safe only after the exact current pool has completed shared schema initialization; risk: a connected replacement pool is mistaken for schema-ready storage; invariant: fast-path readiness requires current connectivity and central schema readiness; handling: consult both shared states.
+  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
     return true;
+  }
+
+  //audit Assumption: concurrent save calls should share one bootstrap attempt even while a prior failure timestamp is still active; risk: followers fail closed instead of awaiting active recovery; invariant: an in-flight bootstrap takes precedence over cooldown; handling: reuse the pending promise first.
+  if (pendingBootstrap) {
+    return pendingBootstrap;
   }
 
   //audit Assumption: repeated failed bootstraps in tight loops cause noise and overhead; risk: retry storm; invariant: retries are throttled by cooldown; handling: short-circuit until cooldown expires.
@@ -55,21 +60,35 @@ async function ensureSelfReflectionPersistenceReady(): Promise<boolean> {
     return false;
   }
 
-  //audit Assumption: concurrent save calls should share one bootstrap attempt; risk: duplicate pool initialization and table DDL races; invariant: at most one bootstrap promise in flight; handling: reuse pending promise.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
   pendingBootstrap = (async () => {
     try {
-      const connected = await initializeDatabase(SELF_REFLECTION_DB_WORKER_ID);
-      //audit Assumption: initializeDatabase may return false without throwing; risk: hidden connectivity failure; invariant: false response marks bootstrap failure; handling: record cooldown and stop.
-      if (!connected || !isDatabaseConnected()) {
+      if (!isDatabaseConnected()) {
+        await initializeDatabase(SELF_REFLECTION_DB_WORKER_ID);
+      }
+
+      //audit Assumption: initializeDatabase results can be stale after concurrent pool transitions; risk: repository proceeds without a current connection; invariant: readiness is derived from current shared state; handling: post-check connectivity.
+      if (!isDatabaseConnected()) {
         lastBootstrapFailureAtMs = Date.now();
         return false;
       }
 
-      await initializeTables();
+      const bootstrapPool = getPool();
+      if (!bootstrapPool) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
+      const tablesInitialized = await initializeTables();
+      const persistenceReady =
+        tablesInitialized &&
+        getPool() === bootstrapPool &&
+        isDatabaseConnected() &&
+        isDatabaseSchemaReady();
+      if (!persistenceReady) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
       lastBootstrapFailureAtMs = 0;
       return true;
     } catch (error: unknown) {

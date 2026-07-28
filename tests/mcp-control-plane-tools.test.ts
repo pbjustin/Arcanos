@@ -23,11 +23,22 @@ function buildFakeServer() {
   };
 }
 
-function buildContext() {
+function buildContext(arcanosMcp?: {
+  invokeTool: jest.Mock;
+  listTools: jest.Mock;
+}) {
   return {
     requestId: 'mcp-control-plane-req-1',
     sessionId: 'mcp-control-plane-session-1',
-    req: {},
+    req: arcanosMcp
+      ? {
+          app: {
+            locals: {
+              arcanosMcp,
+            },
+          },
+        }
+      : {},
     logger: {
       info: jest.fn(),
       warn: jest.fn(),
@@ -97,6 +108,64 @@ describe('registerControlPlaneMcpTools', () => {
       error: expect.objectContaining({
         code: 'ERR_CONTROL_PLANE_GPT_POLICY',
       }),
+    }));
+  });
+
+  it('uses the request-scoped MCP port for executed MCP operations', async () => {
+    const arcanosMcp = {
+      invokeTool: jest.fn(),
+      listTools: jest.fn(async () => ({
+        tools: [{ name: 'modules.list' }],
+      })),
+    };
+    const { server, tools } = buildFakeServer();
+    registerControlPlaneMcpTools(server as any, buildContext(arcanosMcp));
+
+    const output = await tools.get('control_plane.invoke')!.handler({
+      operation: 'mcp.list-tools',
+      provider: 'arcanos-mcp',
+      target: { resource: 'tools' },
+      environment: 'local',
+      scope: 'mcp:read',
+      params: {},
+      dryRun: false,
+      traceId: 'trace-mcp-control-plane-list',
+      requestedBy: 'test-runner',
+    }) as { structuredContent: Record<string, unknown> };
+
+    expect(arcanosMcp.listTools).toHaveBeenCalledWith({
+      request: undefined,
+    });
+    expect(output.structuredContent).toEqual(expect.objectContaining({
+      ok: true,
+      result: {
+        tools: [{ name: 'modules.list' }],
+      },
+    }));
+  });
+
+  it('fails closed with a stable error when an executed MCP operation has no port', async () => {
+    const { server, tools } = buildFakeServer();
+    registerControlPlaneMcpTools(server as any, buildContext());
+
+    const output = await tools.get('control_plane.invoke')!.handler({
+      operation: 'mcp.list-tools',
+      provider: 'arcanos-mcp',
+      target: { resource: 'tools' },
+      environment: 'local',
+      scope: 'mcp:read',
+      params: {},
+      dryRun: false,
+      traceId: 'trace-mcp-control-plane-unavailable',
+      requestedBy: 'test-runner',
+    }) as { structuredContent: Record<string, unknown> };
+
+    expect(output.structuredContent).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'ERR_CONTROL_PLANE_EXECUTION',
+        message: 'ARCANOS MCP service is unavailable for this control-plane operation.',
+      },
     }));
   });
 });

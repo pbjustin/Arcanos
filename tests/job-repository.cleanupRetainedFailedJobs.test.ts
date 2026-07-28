@@ -76,7 +76,11 @@ describe('jobRepository.cleanupRetainedFailedJobs', () => {
 
   it('persists a correlation id from job input metadata', async () => {
     queryMock.mockResolvedValueOnce({
-      rows: [{ id: 'job-correlation', correlation_id: 'req-123' }]
+      rows: [{
+        id: 'job-correlation',
+        correlation_id: 'req-123',
+        claim_generation: '0'
+      }]
     });
 
     await createJob(

@@ -28,6 +28,7 @@ describe('HRC core', () => {
   it('evaluates HRC output through the shared structured response helper', async () => {
     const create = jest.fn().mockResolvedValue({
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: '{"fidelity":"0.9","resilience":0.7,"verdict":"stable"}',
       output: [],
     });

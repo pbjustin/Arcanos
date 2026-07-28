@@ -4,321 +4,368 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag name'
+        description: Exact SemVer release tag (for example, v1.2.3)
         required: true
         type: string
       trigger_source:
-        description: 'Source that triggered this workflow'
+        description: Source that requested this release
         required: false
-        default: 'manual'
+        default: manual
         type: string
       patch_only:
-        description: 'Only update binaries (patch/hotfix); skip AI analysis and append to existing body'
+        description: Append deterministic validation notes to an existing release
         required: false
         default: false
         type: boolean
 
-env:
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  DEPLOY_MODE: agent-control
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: arcanos-release-${{ inputs.tag_name }}
+  cancel-in-progress: false
 
 jobs:
-  arcanos-release:
+  validate-release:
+    name: Validate release candidate
     runs-on: ubuntu-latest
-    outputs:
-      approved: ${{ steps.approve.outputs.approved }}
+    timeout-minutes: 45
     permissions:
-      contents: write
-      actions: write
-      issues: read
-      pull-requests: write
+      actions: read
+      contents: read
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      notes_artifact_name: ${{ steps.resolve.outputs.notes_artifact_name }}
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+      tag_object_sha: ${{ steps.resolve.outputs.tag_object_sha }}
+      tag_ref: ${{ steps.resolve.outputs.tag_ref }}
 
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - name: Check out the trusted default branch and release refs
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
 
-      - name: 🧰 Set up Node.js
-        if: ${{ inputs.patch_only != true }}
-        uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20.19.0'
-          cache: 'npm'
+          node-version: 20.19.0
+          cache: npm
 
-      - name: 📦 Install dependencies
-        if: ${{ inputs.patch_only != true }}
-        run: npm ci
-
-      - name: 🧹 Lint code
-        if: ${{ inputs.patch_only != true }}
-        run: npm run lint
-
-      - name: 🔧 Build project
-        if: ${{ inputs.patch_only != true }}
-        run: npm run build
-
-      - name: 🧪 Run tests
-        if: ${{ inputs.patch_only != true }}
-        run: npm test
-
-      - name: 🤖 ARCANOS Release Analysis
-        if: ${{ inputs.patch_only != true }}
+      - name: Resolve and check out the exact release tag
+        id: resolve
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG_NAME: ${{ inputs.tag_name }}
         run: |
-          echo "Running ARCANOS release analysis..."
-          
-          # Start ARCANOS backend
-          npm start &
-          SERVER_PID=$!
-          
-          # Wait for server to be ready
-          sleep 10
-          
-          # Analyze release
-          curl -X POST http://localhost:8080/gpt/arcanos-daemon \
-            -H "Content-Type: application/json" \
-            -d '{
-              "action": "query",
-              "prompt": "Analyze this release: Tag ${{ inputs.tag_name }}. Generate: 1) Release notes summary, 2) Breaking changes assessment, 3) Upgrade instructions, 4) Documentation updates needed, 5) Post-release monitoring recommendations.",
-              "metadata": {
-                "context": "release_analysis"
-              }
-            }' \
-            -o release_analysis.json
-          
-          # Stop the server
-          kill $SERVER_PID || true
-          
-          echo "Release analysis completed"
+          set -euo pipefail
 
-      - name: 📋 Generate Release Documentation
-        if: ${{ inputs.patch_only != true }}
+          node <<'NODE'
+          const tag = process.env.TAG_NAME ?? '';
+          const semverTag =
+            /^(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+
+          if (!semverTag.test(tag)) {
+            console.error('tag_name must be one exact SemVer tag, optionally prefixed with v');
+            process.exit(1);
+          }
+          NODE
+
+          tag_ref="refs/tags/${TAG_NAME}"
+          default_ref="refs/remotes/origin/${DEFAULT_BRANCH}"
+
+          git show-ref --verify --quiet "$tag_ref" || {
+            echo "The exact tag does not exist: $tag_ref" >&2
+            exit 1
+          }
+          git show-ref --verify --quiet "$default_ref" || {
+            echo "The default branch ref is unavailable: $default_ref" >&2
+            exit 1
+          }
+
+          tag_object_sha="$(git rev-parse --verify "$tag_ref")"
+          commit_sha="$(git rev-parse --verify "${tag_ref}^{commit}")"
+
+          git merge-base --is-ancestor "$commit_sha" "$default_ref" || {
+            echo "The release tag commit is not reachable from the default branch" >&2
+            exit 1
+          }
+
+          audit_policy_path="${RUNNER_TEMP}/arcanos-release-check-npm-audit.js"
+          notes_artifact_name="arcanos-release-notes-${TAG_NAME}-${commit_sha}"
+          cp scripts/check-npm-audit.js "$audit_policy_path"
+          chmod 0444 "$audit_policy_path"
+
+          {
+            echo "audit_policy_path=$audit_policy_path"
+            echo "commit_sha=$commit_sha"
+            echo "notes_artifact_name=$notes_artifact_name"
+            echo "tag_name=$TAG_NAME"
+            echo "tag_object_sha=$tag_object_sha"
+            echo "tag_ref=$tag_ref"
+          } >> "$GITHUB_OUTPUT"
+
+          git checkout --detach "$commit_sha"
+          test "$(git rev-parse HEAD)" = "$commit_sha"
+
+      - name: Require successful authoritative CI for the exact commit
+        shell: bash
+        env:
+          CI_RUNS_PATH: ${{ runner.temp }}/arcanos-authoritative-ci-runs.json
+          COMMIT_SHA: ${{ steps.resolve.outputs.commit_sha }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f release_analysis.json ]; then
-            echo "ARCANOS Release Analysis:"
-            cat release_analysis.json
-            
-            # Generate release notes
-            echo "# 🚀 ARCANOS Release ${{ inputs.tag_name }}" > release_notes.md
-            echo "" >> release_notes.md
-            echo "**Release Date:** $(date -u +"%Y-%m-%d")" >> release_notes.md
-            echo "**Tag:** ${{ inputs.tag_name }}" >> release_notes.md
-            echo "**Triggered by:** ${{ inputs.trigger_source }}" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## 🤖 ARCANOS Analysis" >> release_notes.md
-            echo '```json' >> release_notes.md
-            cat release_analysis.json >> release_notes.md
-            echo '```' >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## 📋 Generated by ARCANOS" >> release_notes.md
-            echo "This release has been analyzed and documented by ARCANOS AI backend controller." >> release_notes.md
-          else
-            echo "No release analysis available"
+          set -euo pipefail
+
+          gh api \
+            --method GET \
+            "repos/${GH_REPO}/actions/workflows/ci-cd.yml/runs" \
+            -f head_sha="$COMMIT_SHA" \
+            -f status=success \
+            -F per_page=100 \
+            > "$CI_RUNS_PATH"
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.env.CI_RUNS_PATH, 'utf8'));
+          const expectedSha = process.env.COMMIT_SHA;
+          const matchingRun = Array.isArray(report.workflow_runs)
+            ? report.workflow_runs.find(run =>
+                run?.name === 'CI/CD Pipeline' &&
+                run?.path === '.github/workflows/ci-cd.yml' &&
+                run?.head_sha === expectedSha &&
+                run?.status === 'completed' &&
+                run?.conclusion === 'success',
+              )
+            : undefined;
+
+          if (!matchingRun) {
+            throw new Error(
+              'The exact release commit has no successful authoritative CI/CD Pipeline run',
+            );
+          }
+          NODE
+
+      - name: Enforce the trusted Node dependency audit policy before installation
+        shell: bash
+        env:
+          AUDIT_POLICY_PATH: ${{ steps.resolve.outputs.audit_policy_path }}
+        run: |
+          set -euo pipefail
+          audit_exit=0
+          npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+
+          if (
+            report.auditReportVersion !== 2 ||
+            !report.vulnerabilities ||
+            typeof report.vulnerabilities !== 'object' ||
+            Array.isArray(report.vulnerabilities)
+          ) {
+            throw new Error('npm audit did not return a complete version 2 vulnerability report');
+          }
+          NODE
+
+          node "$AUDIT_POLICY_PATH" npm-audit.json
+          echo "npm audit completed with raw exit code $audit_exit; repository policy accepted the report"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Enforce the Python dependency audit policy before installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
+          python -m pip_audit \
+            --ignore-vuln CVE-2026-4539 \
+            --requirement daemon-python/requirements.txt
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client type stubs
+        run: node node_modules/@prisma/client/scripts/postinstall.js
+
+      - name: Verify installation left the tracked tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_changes="$(git status --porcelain=v1 --untracked-files=no)"
+          if [ -n "$tracked_changes" ]; then
+            echo "Dependency installation changed tracked files:" >&2
+            printf '%s\n' "$tracked_changes" >&2
             exit 1
           fi
 
-      - name: 🏗️ Build Release Artifacts
-        if: ${{ inputs.patch_only != true }}
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate Railway compatibility
+        run: npm run validate:railway
+
+      - name: Test
+        run: npm test
+
+      - name: Verify validation left the tracked tree clean
+        shell: bash
         run: |
-          echo "Building release artifacts..."
-          
-          # Create release directory
-          mkdir -p release-artifacts
-          
-          # Copy built application
-          cp -r dist/ release-artifacts/
-          
-          # Copy configuration files
-          cp package.json package-lock.json release-artifacts/
-          cp README.md release-artifacts/ || echo "README.md not found"
-          
-          # Create deployment package
-          cd release-artifacts
-          tar -czf ../arcanos-${{ inputs.tag_name }}.tar.gz .
-          cd ..
-          
-          echo "Release artifacts created"
+          set -euo pipefail
+          tracked_changes="$(git status --porcelain=v1 --untracked-files=no)"
+          if [ -n "$tracked_changes" ]; then
+            echo "Release validation changed tracked files:" >&2
+            printf '%s\n' "$tracked_changes" >&2
+            exit 1
+          fi
 
-      - name: 📤 Upload release artifacts
-        if: ${{ inputs.patch_only != true }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: arcanos-release-${{ inputs.tag_name }}
-          path: |
-            release_notes.md
-            release_analysis.json
-            arcanos-${{ inputs.tag_name }}.tar.gz
-          retention-days: 90
-
-      - name: Set approval for release
-        id: approve
-        run: echo "approved=true" >> $GITHUB_OUTPUT
-
-  # Windows executable build job removed - Windows builds deprecated
-  # CLI agent now runs as Python application
-
-  create-github-release:
-    name: Create GitHub Release
-    needs: [arcanos-release]
-    runs-on: ubuntu-latest
-    if: needs.arcanos-release.outputs.approved == 'true'
-    permissions:
-      contents: write
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag_name }}
-
-      # Windows executable downloads removed - Windows builds deprecated
-
-      - name: 📥 Download release notes
-        if: ${{ inputs.patch_only != true }}
-        uses: actions/download-artifact@v4
-        with:
-          name: arcanos-release-${{ inputs.tag_name }}
-          path: .
-
-      - name: 📋 Read release notes
-        id: release-notes
+      - name: Generate deterministic release notes
+        shell: bash
         env:
+          COMMIT_SHA: ${{ steps.resolve.outputs.commit_sha }}
           PATCH_ONLY: ${{ inputs.patch_only }}
+          TAG_NAME: ${{ steps.resolve.outputs.tag_name }}
+          TRIGGER_SOURCE: ${{ inputs.trigger_source }}
         run: |
-          if [ "$PATCH_ONLY" = "true" ]; then
-            { echo 'notes<<PATCHEOF'; echo "### Patch ($(date -u +%Y-%m-%d))"; echo "- Updated daemon binary."; echo 'PATCHEOF'; } >> $GITHUB_OUTPUT
-          else
-            { echo '## Application / Downloads';
-            echo '';
-            echo '- **Source code** — Install via: `pip install arcanos` or `python -m arcanos.cli`';
-            echo '- **Python package** — Cross-platform CLI agent';
-            echo '';
-            echo '## Source code';
-            echo '';
-            echo 'Source for this release is available via **Source code (zip)** and **Source code (tar.gz)** at the top of this release.';
-            echo '';
-            echo '---';
-            echo ''; } > body_part1.txt
-            if [ -f release_notes.md ]; then
-              { echo 'notes<<RELEASE_BODY_END'; cat body_part1.txt; echo '## Release notes'; echo ''; cat release_notes.md; echo 'RELEASE_BODY_END'; } >> $GITHUB_OUTPUT
-            else
-              { echo 'notes<<RELEASE_BODY_END'; cat body_part1.txt; echo '## Release notes'; echo ''; echo "# 🚀 ARCANOS Release ${{ inputs.tag_name }}"; echo 'RELEASE_BODY_END'; } >> $GITHUB_OUTPUT
-            fi
-          fi
+          set -euo pipefail
 
-      - name: 🚀 Create GitHub Release
-        uses: softprops/action-gh-release@v1
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const oneLine = value =>
+            String(value ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
+          const patchOnly = process.env.PATCH_ONLY === 'true';
+          const heading = patchOnly
+            ? `### Validated patch notes for ${process.env.TAG_NAME}`
+            : `# ARCANOS ${process.env.TAG_NAME}`;
+          const lines = [
+            heading,
+            '',
+            `- Commit: \`${process.env.COMMIT_SHA}\``,
+            `- Requested by: ${oneLine(process.env.TRIGGER_SOURCE) || 'manual'}`,
+            '- Authoritative CI/CD Pipeline: passed for this exact commit.',
+            '- Release validation: Node/Python dependency policies, type-check, lint, build, Railway compatibility, and tests passed.',
+          ];
+
+          fs.writeFileSync('release_notes.md', `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Upload deterministic release notes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          tag_name: ${{ inputs.tag_name }}
-          name: ARCANOS ${{ inputs.tag_name }}
-          body: ${{ steps.release-notes.outputs.notes }}
-          append_body: ${{ inputs.patch_only }}
-          files: |
-            # Windows executables removed - CLI agent runs as Python application
-          draft: false
-          prerelease: false
+          name: ${{ steps.resolve.outputs.notes_artifact_name }}
+          path: release_notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish GitHub release notes
+    needs: validate-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Check out the validated release tag
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ needs.validate-release.outputs.tag_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Download deterministic release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.validate-release.outputs.notes_artifact_name }}
+          path: release-bundle
+
+      - name: Recheck the remote tag and publish deterministic notes
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ needs.validate-release.outputs.commit_sha }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          PATCH_ONLY: ${{ inputs.patch_only }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+          TAG_OBJECT_SHA: ${{ needs.validate-release.outputs.tag_object_sha }}
+          TAG_REF: ${{ needs.validate-release.outputs.tag_ref }}
+        run: |
+          set -euo pipefail
 
-      - name: 📝 Create Release Issue
-        if: ${{ inputs.patch_only != true }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
-              
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `🚀 Release ${{ inputs.tag_name }} - ARCANOS Analysis`,
-                body: releaseNotes,
-                labels: ['arcanos', 'release', 'documentation']
-              });
-              
-              console.log('Created release documentation issue');
-            } catch (error) {
-              console.log('Error creating release issue:', error.message);
+          notes_path="release-bundle/release_notes.md"
+          test -f "$notes_path"
+
+          actual_tag_object="$(git rev-parse --verify "$TAG_REF")"
+          actual_commit="$(git rev-parse --verify "${TAG_REF}^{commit}")"
+          checked_out_commit="$(git rev-parse HEAD)"
+
+          test "$actual_tag_object" = "$TAG_OBJECT_SHA" || {
+            echo "The release tag object changed after validation" >&2
+            exit 1
+          }
+          test "$actual_commit" = "$COMMIT_SHA" || {
+            echo "The release tag now resolves to a different commit" >&2
+            exit 1
+          }
+          test "$checked_out_commit" = "$COMMIT_SHA" || {
+            echo "The publication checkout does not match the validated commit" >&2
+            exit 1
+          }
+
+          assert_remote_tag_unchanged() {
+            remote_tag_object="$(
+              gh api "repos/${GH_REPO}/git/ref/tags/${TAG_NAME}" --jq .object.sha
+            )"
+            test "$remote_tag_object" = "$TAG_OBJECT_SHA" || {
+              echo "The remote release tag changed after validation" >&2
+              exit 1
             }
+          }
 
-      - name: 🔐 Security Scan
-        if: ${{ inputs.patch_only != true }}
-        run: |
-          echo "Running security scan..."
-          
-          # Run npm audit
-          npm audit --audit-level=moderate || echo "Security scan completed with warnings"
-          
-          # Start ARCANOS for security analysis
-          npm start &
-          SERVER_PID=$!
-          sleep 10
-          
-          # Security analysis via ARCANOS
-          curl -X POST http://localhost:8080/gpt/arcanos-daemon \
-            -H "Content-Type: application/json" \
-            -d '{
-              "action": "query",
-              "prompt": "Perform a security analysis of this release. Check for: 1) Known vulnerabilities, 2) Dependency risks, 3) Configuration security, 4) API security, 5) Deployment security considerations.",
-              "metadata": {
-                "context": "security_analysis"
-              }
-            }' \
-            -o security_analysis.json
-          
-          kill $SERVER_PID || true
-          
-          echo "Security analysis completed"
+          if [ "$PATCH_ONLY" = true ]; then
+            gh release view "$TAG_NAME" --repo "$GH_REPO" --json body --jq .body \
+              > existing_release_body.md
+            {
+              cat existing_release_body.md
+              echo
+              echo "---"
+              echo
+              cat "$notes_path"
+            } > updated_release_body.md
 
-      - name: 📊 Release Quality Gate
-        if: ${{ inputs.patch_only != true }}
-        run: |
-          SECURITY_ISSUES=false
-          
-          if [ -f security_analysis.json ]; then
-            SECURITY_CONTENT=$(cat security_analysis.json)
-            
-            if echo "$SECURITY_CONTENT" | grep -qi "critical\|high risk\|vulnerability\|security issue"; then
-              SECURITY_ISSUES=true
-              echo "⚠️ Security issues detected"
+            assert_remote_tag_unchanged
+            gh release edit "$TAG_NAME" \
+              --notes-file updated_release_body.md \
+              --repo "$GH_REPO"
+          else
+            if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+              echo "A release already exists; use patch_only to append notes" >&2
+              exit 1
             fi
-          fi
-          
-          if [ "$SECURITY_ISSUES" = true ]; then
-            echo "❌ Release blocked due to security concerns"
-            echo "RELEASE_APPROVED=false" >> $GITHUB_ENV
-          else
-            echo "✅ Release security validation passed"
-            echo "RELEASE_APPROVED=true" >> $GITHUB_ENV
-          fi
 
-      - name: Set release approval output
-        if: ${{ inputs.patch_only != true }}
-        id: release-status
-        run: |
-          if [ "$RELEASE_APPROVED" = "true" ]; then
-            echo "approved=true" >> $GITHUB_OUTPUT
-          else
-            echo "approved=false" >> $GITHUB_OUTPUT
+            assert_remote_tag_unchanged
+            gh release create "$TAG_NAME" \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --title "ARCANOS $TAG_NAME" \
+              --notes-file "$notes_path"
           fi
-        env:
-          RELEASE_APPROVED: ${{ env.RELEASE_APPROVED }}
-
-      - name: 💾 Upload Release Artifacts
-        if: ${{ inputs.patch_only != true }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: arcanos-release-${{ inputs.tag_name }}
-          path: |
-            release_analysis.json
-            security_analysis.json
-            release_notes.md
-            arcanos-${{ inputs.tag_name }}.tar.gz
-          retention-days: 365
-
-      - name: ❌ Block Release
-        if: needs.arcanos-release.outputs.approved == 'false'
-        run: |
-          echo "❌ Release ${{ inputs.tag_name }} blocked due to security concerns"
-          exit 1

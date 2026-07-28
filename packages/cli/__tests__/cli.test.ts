@@ -781,7 +781,10 @@ describe("Arcanos CLI", () => {
 
   it("queries runtime routes for workers and self-heal inspection commands", async () => {
     const originalAccessToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    const originalControlPlaneToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
     process.env.ARCANOS_GPT_ACCESS_TOKEN = "test-gpt-access-token";
+    const controlPlaneToken = "test-control-plane-token-1234567890";
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
     const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const pathname = url instanceof URL ? url.pathname : String(url);
       if (pathname.endsWith("/workers/status")) {
@@ -843,6 +846,15 @@ describe("Arcanos CLI", () => {
         }
       }
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/status/safety/self-heal", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {
+          authorization: `Bearer ${controlPlaneToken}`
+        },
+        redirect: "error"
+      })
+    );
 
     const logsStdout = createWritableCapture();
     const logsExitCode = await runCli(
@@ -871,6 +883,98 @@ describe("Arcanos CLI", () => {
       delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
     } else {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = originalAccessToken;
+    }
+    if (originalControlPlaneToken === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = originalControlPlaneToken;
+    }
+  });
+
+  it("fails self-heal inspection locally without the dedicated control-plane token", async () => {
+    const originalControlPlaneToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    const originalGptAccessToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = "gpt-token-must-not-authorize-self-heal";
+    const fetchMock = jest.spyOn(globalThis, "fetch");
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["inspect", "self-heal", "--base-url", "http://127.0.0.1:3000"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(stderr.read()).toContain("ARCANOS_CONTROL_PLANE_ACCESS_TOKEN");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    if (originalControlPlaneToken === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = originalControlPlaneToken;
+    }
+    if (originalGptAccessToken === undefined) {
+      delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_GPT_ACCESS_TOKEN = originalGptAccessToken;
+    }
+  });
+
+  it("rejects cleartext non-loopback self-heal inspection before sending the bearer", async () => {
+    const originalControlPlaneToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = "test-control-plane-token-1234567890";
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("fetch must not be called for an unsafe control-plane origin")
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["inspect", "self-heal", "--base-url", "http://example.com"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(stderr.read()).toContain("HTTPS origin or HTTP loopback origin");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    if (originalControlPlaneToken === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = originalControlPlaneToken;
+    }
+  });
+
+  it("rejects a non-transportable control-plane token before network access", async () => {
+    const originalControlPlaneToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN =
+      "test-control-plane-token-with interior-whitespace-1234567890";
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("fetch must not be called for an invalid control-plane token")
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["inspect", "self-heal", "--base-url", "http://127.0.0.1:3000"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(stderr.read()).toContain("visible-ASCII");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    if (originalControlPlaneToken === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = originalControlPlaneToken;
     }
   });
 

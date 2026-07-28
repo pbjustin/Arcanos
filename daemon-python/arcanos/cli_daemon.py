@@ -5,11 +5,9 @@ import time
 
 from .backend_client import BackendRequestError
 from .cli_types import DaemonCommand
-from .config import Config
+from .config import Config, is_valid_daemon_access_token
 from .error_handler import logger as error_logger
 
-
-_PLACEHOLDER_TOKENS = {"REPLACE_WITH_BACKEND_TOKEN", ""}
 
 # Timing constants for daemon background threads
 _INITIAL_HEARTBEAT_DELAY_S = 2       # Stagger first heartbeat to avoid race with command poll
@@ -28,12 +26,12 @@ def start_daemon_threads(self) -> None:
 
     generic_ready = bool(
         self.backend_client
-        and (Config.BACKEND_TOKEN or "") not in _PLACEHOLDER_TOKENS
+        and is_valid_daemon_access_token(Config.DAEMON_ACCESS_TOKEN)
     )
     execution_ready = bool(Config.ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED)
     if not generic_ready and not execution_ready:
         error_logger.info(
-            "[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured."
+            "[DAEMON] Skipping daemon threads: ARCANOS_DAEMON_ACCESS_TOKEN is not configured."
         )
         return
 
@@ -105,7 +103,13 @@ def heartbeat_loop(self) -> None:
             status_code = response.status_code
             retry_after = response.headers.get("Retry-After")
 
-            if status_code == 429:
+            if status_code == 401:
+                consecutive_429_count = 0
+                error_logger.warning(
+                    "[DAEMON] Authentication failed, stopping heartbeat"
+                )
+                break
+            elif status_code == 429:
                 consecutive_429_count += 1
                 # 429 = rate limit; back off and log as warning (not connection failure)
                 backoff_time = min(_MAX_BACKOFF_S, self._heartbeat_interval * (2 ** min(consecutive_429_count, _MAX_BACKOFF_EXPONENT)))

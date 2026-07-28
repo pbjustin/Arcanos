@@ -4,6 +4,12 @@ import type {
 } from 'openai/resources/responses/responses';
 
 import { extractResponseOutputText } from './responseParsing.js';
+import {
+  extractResponseRefusal,
+  normalizeOpenAIResponseForLegacyChat,
+} from './responseSemantics.js';
+
+export * from './responseSemantics.js';
 
 export interface OpenAIResponsesRequestOptions {
   signal?: AbortSignal;
@@ -45,6 +51,13 @@ export class OpenAIResponseMissingOutputError extends Error {
   }
 }
 
+export class OpenAIResponseIncompleteError extends Error {
+  constructor(readonly source: string) {
+    super(`${source} returned incomplete structured output.`);
+    this.name = 'OpenAIResponseIncompleteError';
+  }
+}
+
 export class OpenAIResponseMalformedJsonError extends Error {
   constructor(message: string, readonly source: string) {
     super(message);
@@ -80,54 +93,22 @@ function validateStructuredValue<T>(
   return value as T;
 }
 
-export function extractResponseRefusal(response: unknown): string | null {
-  if (!isObject(response)) {
-    return null;
-  }
-
-  if (typeof response.refusal === 'string' && response.refusal.trim().length > 0) {
-    return response.refusal.trim();
-  }
-
-  const outputItems = Array.isArray(response.output) ? response.output : [];
-  for (const outputItem of outputItems) {
-    if (!isObject(outputItem)) {
-      continue;
-    }
-
-    const contentItems = Array.isArray(outputItem.content) ? outputItem.content : [];
-    for (const contentItem of contentItems) {
-      if (!isObject(contentItem)) {
-        continue;
-      }
-
-      if (typeof contentItem.refusal === 'string' && contentItem.refusal.trim().length > 0) {
-        return contentItem.refusal.trim();
-      }
-
-      if (
-        contentItem.type === 'refusal' &&
-        typeof contentItem.text === 'string' &&
-        contentItem.text.trim().length > 0
-      ) {
-        return contentItem.text.trim();
-      }
-    }
-  }
-
-  return null;
-}
-
 export function parseStructuredJson<T = unknown>(
   response: unknown,
   options: StructuredResponseParseOptions<T> = {}
 ): T {
+  const source = normalizeSource(options.source);
   const refusalReason = (options.extractRefusal ?? extractResponseRefusal)(response);
   if (refusalReason) {
     throw new OpenAIResponseRefusalError(
       `Model refusal: ${refusalReason}`,
-      normalizeSource(options.source)
+      source
     );
+  }
+
+  const semantics = normalizeOpenAIResponseForLegacyChat(response);
+  if (semantics.lifecycle === 'incomplete') {
+    throw new OpenAIResponseIncompleteError(source);
   }
 
   if (isObject(response) && response.output_parsed !== undefined && response.output_parsed !== null) {
@@ -136,14 +117,13 @@ export function parseStructuredJson<T = unknown>(
 
   const outputText = extractResponseOutputText(response, '').trim();
   if (!outputText) {
-    throw new OpenAIResponseMissingOutputError(normalizeSource(options.source));
+    throw new OpenAIResponseMissingOutputError(source);
   }
 
   let parsedValue: unknown;
   try {
     parsedValue = JSON.parse(outputText);
   } catch (error) {
-    const source = normalizeSource(options.source);
     throw new OpenAIResponseMalformedJsonError(
       `${source} returned malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
       source

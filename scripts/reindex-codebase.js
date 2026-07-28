@@ -15,6 +15,12 @@ const BACKEND_MD_PATH = path.join(REPOSITORY_ROOT, BACKEND_MD_RELATIVE);
 // Output paths for CLI Agent (Python)
 const CLI_AGENT_JSON_PATH = path.join(REPOSITORY_ROOT, CLI_AGENT_JSON_RELATIVE);
 const CLI_AGENT_MD_PATH = path.join(REPOSITORY_ROOT, CLI_AGENT_MD_RELATIVE);
+const CHECK_MODE = process.argv.includes('--check');
+
+const unsupportedArguments = process.argv.slice(2).filter(argument => argument !== '--check');
+if (unsupportedArguments.length > 0) {
+  throw new Error(`Unsupported reindex arguments: ${unsupportedArguments.join(', ')}`);
+}
 
 const EXCLUDED_DIRS = [
   'node_modules',
@@ -77,8 +83,7 @@ function groupFiles(files) {
     files: groups[scope].sort((a, b) => a.relativePath.localeCompare(b.relativePath))
   }));
 }
-function renderMarkdown(title, groupedEntries, generatorScript) {
-  const generatedTimestamp = new Date().toISOString();
+function renderMarkdown(title, groupedEntries, generatorScript, generatedTimestamp) {
   const lines = [
     `# ${title}`,
     '',
@@ -104,8 +109,65 @@ function renderMarkdown(title, groupedEntries, generatorScript) {
   return lines.join('\n');
 }
 
+function normalizeLineEndings(value) {
+  return value.replaceAll('\r\n', '\n');
+}
+
+async function verifyJsonIndex(filePath, groupedEntries) {
+  const raw = await fs.readFile(filePath, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (typeof parsed.generatedAt !== 'string' || parsed.generatedAt.length === 0) {
+    throw new Error(`${path.relative(REPOSITORY_ROOT, filePath)} has no generatedAt timestamp.`);
+  }
+
+  const expected = JSON.stringify({
+    generatedAt: parsed.generatedAt,
+    scopes: groupedEntries
+  }, null, 2);
+  if (normalizeLineEndings(raw) !== expected) {
+    throw new Error(`${path.relative(REPOSITORY_ROOT, filePath)} is stale.`);
+  }
+}
+
+async function verifyMarkdownIndex(filePath, title, groupedEntries) {
+  const raw = normalizeLineEndings(await fs.readFile(filePath, 'utf8'));
+  const generatedTimestamp = /^Generated at: (.+)$/mu.exec(raw)?.[1];
+  if (!generatedTimestamp) {
+    throw new Error(`${path.relative(REPOSITORY_ROOT, filePath)} has no generated timestamp.`);
+  }
+
+  const expected = renderMarkdown(
+    title,
+    groupedEntries,
+    'scripts/reindex-codebase.js',
+    generatedTimestamp
+  );
+  if (raw !== expected) {
+    throw new Error(`${path.relative(REPOSITORY_ROOT, filePath)} is stale.`);
+  }
+}
+
+async function verifyGeneratedIndexes(groupedTs, groupedPy) {
+  await verifyJsonIndex(BACKEND_JSON_PATH, groupedTs);
+  await verifyMarkdownIndex(
+    BACKEND_MD_PATH,
+    'Backend Index (TypeScript)',
+    groupedTs
+  );
+  await verifyJsonIndex(CLI_AGENT_JSON_PATH, groupedPy);
+  await verifyMarkdownIndex(
+    CLI_AGENT_MD_PATH,
+    'CLI Agent Index (Python)',
+    groupedPy
+  );
+}
+
 async function run() {
-  console.log('[reindex] Starting codebase re-indexing...');
+  console.log(
+    CHECK_MODE
+      ? '[reindex] Checking generated codebase indexes...'
+      : '[reindex] Starting codebase re-indexing...'
+  );
 
   // 1. Collect and group TypeScript files (Backend)
   console.log('[reindex] Indexing TypeScript files...');
@@ -117,13 +179,20 @@ async function run() {
   const pyFiles = await collectFiles(REPOSITORY_ROOT, ['.py']);
   const groupedPy = groupFiles(pyFiles);
 
+  if (CHECK_MODE) {
+    await verifyGeneratedIndexes(groupedTs, groupedPy);
+    console.log('[reindex] Generated indexes are current.');
+    return;
+  }
+
   // 3. Write Backend artifacts
-  await fs.writeFile(BACKEND_JSON_PATH, JSON.stringify({ generatedAt: new Date().toISOString(), scopes: groupedTs }, null, 2));
-  await fs.writeFile(BACKEND_MD_PATH, renderMarkdown('Backend Index (TypeScript)', groupedTs, 'scripts/reindex-codebase.js'));
+  const generatedTimestamp = new Date().toISOString();
+  await fs.writeFile(BACKEND_JSON_PATH, JSON.stringify({ generatedAt: generatedTimestamp, scopes: groupedTs }, null, 2));
+  await fs.writeFile(BACKEND_MD_PATH, renderMarkdown('Backend Index (TypeScript)', groupedTs, 'scripts/reindex-codebase.js', generatedTimestamp));
 
   // 4. Write CLI Agent artifacts
-  await fs.writeFile(CLI_AGENT_JSON_PATH, JSON.stringify({ generatedAt: new Date().toISOString(), scopes: groupedPy }, null, 2));
-  await fs.writeFile(CLI_AGENT_MD_PATH, renderMarkdown('CLI Agent Index (Python)', groupedPy, 'scripts/reindex-codebase.js'));
+  await fs.writeFile(CLI_AGENT_JSON_PATH, JSON.stringify({ generatedAt: generatedTimestamp, scopes: groupedPy }, null, 2));
+  await fs.writeFile(CLI_AGENT_MD_PATH, renderMarkdown('CLI Agent Index (Python)', groupedPy, 'scripts/reindex-codebase.js', generatedTimestamp));
 
   console.log(`[reindex] Success!`);
   console.log(`[reindex] Backend: ${tsFiles.length} files -> ${BACKEND_JSON_RELATIVE}`);

@@ -12,6 +12,7 @@ import {
 } from '@arcanos/cli/security/cliPolicy';
 import { logExecution } from '@core/db/repositories/executionLogRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 const SERVICE_VERSION = '0.1.0';
 const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8765';
@@ -62,7 +63,7 @@ interface BridgeRunResponse {
   };
 }
 
-export const CLI_READONLY_ACTIONS = new Set([
+const cliReadOnlyActions = new Set([
   'status',
   'policy',
   'repoContext',
@@ -70,6 +71,10 @@ export const CLI_READONLY_ACTIONS = new Set([
   'proposePatch',
   'tailAudit'
 ]);
+
+export function isArcanosCliReadOnlyAction(action: string): boolean {
+  return cliReadOnlyActions.has(action.trim());
+}
 
 export function isArcanosCliBridgeEnabled(): boolean {
   return process.env.ARCANOS_CLI_BRIDGE_ENABLED === 'true';
@@ -475,6 +480,23 @@ function buildPersistedPolicyMetadata(decision: CliPolicyDecision, policy: CliPo
 
 async function postBridgeJson(pathname: string, body: Record<string, unknown>): Promise<BridgeRunResponse> {
   const bridgeToken = process.env.ARCANOS_CLI_BRIDGE_TOKEN?.trim();
+  if (
+    bridgeToken
+    && hasConfiguredPurposeBoundCredentialCollision({
+      credential: bridgeToken,
+      ownEnvironmentName: 'ARCANOS_CLI_BRIDGE_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
+  ) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      error: {
+        code: 'ARCANOS_CLI_DAEMON_UNREACHABLE',
+        message: 'ARCANOS CLI daemon bridge is unreachable.'
+      }
+    };
+  }
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (bridgeToken) {
     headers[BRIDGE_TOKEN_HEADER] = bridgeToken;

@@ -7,14 +7,14 @@ const plan = readFileSync(
     import.meta.url
   ),
   'utf8'
-);
+).replace(/\r\n?/gu, '\n');
 const requestDocument = readFileSync(
   new URL(
     '../docs/audits/action-plan-execution/2026-07-18/private-only-gate-r/gate-r1-postgres-r3-authorization-request-2026-07-20.md',
     import.meta.url
   ),
   'utf8'
-);
+).replace(/\r\n?/gu, '\n');
 
 describe('Gate R1 PostgreSQL R3A identity-creation contract', () => {
   it('uses one fresh one-attempt identity and preserves R2 evidence', () => {

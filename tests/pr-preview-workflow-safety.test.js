@@ -49,4 +49,15 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain('export OPENAI_BASE_URL=http://127.0.0.1:9/v1');
     expect(workflow).not.toContain('OPENAI_API_KEY:-');
   });
+
+  it('runs PostgreSQL fencing suites against the exact disposable PostgreSQL 18 database', () => {
+    const workflow = readWorkflow('.github/workflows/ci-cd.yml');
+
+    expect(workflow).toContain('image: postgres:18-alpine');
+    expect(workflow).toContain('POSTGRES_DB: arcanos_audit_pg18_20260727');
+    expect(workflow).toContain('JOB_CLAIM_FENCING_TEST_DATABASE_URL:');
+    expect(workflow).toContain('DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL:');
+    expect(workflow).toContain('run: npm run test:local-agent-postgres');
+    expect(workflow).toContain('run: npm run test:postgres-fencing');
+  });
 });

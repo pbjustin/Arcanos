@@ -9,22 +9,51 @@ export interface LegacyUsageExpectation {
   total_tokens: number;
 }
 
+export type LegacyToolCallExpectation =
+  | {
+      id: string;
+      type: 'function';
+      function: {
+        name: string;
+        arguments: string;
+      };
+    }
+  | {
+      id: string;
+      type: 'custom';
+      custom: {
+        name: string;
+        input: string;
+      };
+    };
+
+export interface OpenAIResponseConversionErrorExpectation {
+  code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR';
+  reason:
+    | 'terminal_status'
+    | 'pending_status'
+    | 'unsupported_status'
+    | 'unsupported_tool_call';
+  responseStatus: string | null;
+}
+
 export interface OpenAIResponseConversionExpectation {
   id: string;
   workerId: string;
   created: number;
   model: string;
   content: string;
+  refusal: string | null;
+  toolCalls: readonly LegacyToolCallExpectation[];
   finishReason: 'stop' | 'length' | 'content_filter' | 'tool_calls';
-  workerFinishReason: 'stop';
   usage: LegacyUsageExpectation;
-  workerUsage: LegacyUsageExpectation;
   status: string | null;
   incompleteDetails: unknown;
   providerUsage: unknown;
   incomplete: boolean;
   truncated: boolean;
   contentFiltered: boolean;
+  conversionError?: OpenAIResponseConversionErrorExpectation;
 }
 
 export interface OpenAIResponseConversionFixture {
@@ -68,10 +97,10 @@ function defineFixture(
       created: FIXTURE_CREATED_AT,
       model: FIXTURE_MODEL,
       content: '',
+      refusal: null,
+      toolCalls: [],
       finishReason: 'stop',
-      workerFinishReason: 'stop',
       usage: ZERO_USAGE,
-      workerUsage: ZERO_USAGE,
       status: 'completed',
       incompleteDetails: null,
       providerUsage: null,
@@ -99,7 +128,6 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
     {
       content: 'Hello from Responses.',
       usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
-      workerUsage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
       providerUsage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 }
     }
   ),
@@ -160,7 +188,8 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
           content: [{ type: 'refusal', refusal: 'cannot comply' }]
         }
       ]
-    }
+    },
+    { refusal: 'cannot comply' }
   ),
   defineFixture(
     'safety_refusal',
@@ -176,6 +205,7 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       ]
     },
     {
+      refusal: 'safety policy refusal',
       finishReason: 'content_filter',
       status: 'incomplete',
       incompleteDetails: { reason: 'content_filter' },
@@ -236,7 +266,6 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
     {
       content: 'usage total differs',
       usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
-      workerUsage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 0 },
       providerUsage: { input_tokens: 2, output_tokens: 3, total_tokens: 0 }
     }
   ),
@@ -250,7 +279,6 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
     {
       content: 'legacy usage shape',
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 10 },
-      workerUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 10 },
       providerUsage: { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 }
     }
   ),
@@ -273,24 +301,65 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       output: [
         {
           type: 'function_call',
+          id: 'function_item_1',
           call_id: 'call_1',
           name: 'lookup_status',
           arguments: '{"id":"job_1"}'
         }
       ]
     },
-    { finishReason: 'tool_calls' }
+    {
+      finishReason: 'tool_calls',
+      toolCalls: [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: {
+            name: 'lookup_status',
+            arguments: '{"id":"job_1"}'
+          }
+        }
+      ]
+    }
   ),
   defineFixture(
     'custom_tool_call',
-    ['tool-output', 'unknown-fields', 'finish-reason'],
+    ['tool-output', 'custom-tool-call', 'finish-reason'],
     {
       output: [
-        { type: 'computer_tool_call', id: 'tool_1', payload: { action: 'inspect' } },
+        {
+          type: 'custom_tool_call',
+          id: 'custom_item_1',
+          call_id: 'call_2',
+          name: 'shell',
+          input: 'pwd'
+        }
+      ]
+    },
+    {
+      finishReason: 'tool_calls',
+      toolCalls: [
+        {
+          id: 'call_2',
+          type: 'custom',
+          custom: {
+            name: 'shell',
+            input: 'pwd'
+          }
+        }
+      ]
+    }
+  ),
+  defineFixture(
+    'hosted_tool_call_with_message',
+    ['hosted-tool-output', 'finish-reason'],
+    {
+      output: [
+        { type: 'web_search_call', id: 'tool_1', status: 'completed' },
         { type: 'message', content: [{ type: 'output_text', text: 'tool selected' }] }
       ]
     },
-    { content: 'tool selected', finishReason: 'tool_calls' }
+    { content: 'tool selected', finishReason: 'stop' }
   ),
   defineFixture(
     'unknown_content_type_with_text',
@@ -341,7 +410,12 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       workerId: `worker_legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
       created: OPENAI_CONVERSION_FROZEN_NOW_SECONDS,
       model: OPENAI_CONVERSION_REQUESTED_MODEL,
-      status: null
+      status: null,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
     }
   ),
   {
@@ -354,16 +428,21 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       created: OPENAI_CONVERSION_FROZEN_NOW_SECONDS,
       model: OPENAI_CONVERSION_REQUESTED_MODEL,
       content: '',
+      refusal: null,
+      toolCalls: [],
       finishReason: 'stop',
-      workerFinishReason: 'stop',
       usage: ZERO_USAGE,
-      workerUsage: ZERO_USAGE,
       status: null,
       incompleteDetails: null,
       providerUsage: null,
       incomplete: false,
       truncated: false,
-      contentFiltered: false
+      contentFiltered: false,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
     }
   },
   defineFixture(
@@ -373,7 +452,14 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
       status: 'in_progress',
       output: [null, { type: 'message' }, { content: [] }]
     },
-    { status: 'in_progress' }
+    {
+      status: 'in_progress',
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'pending_status',
+        responseStatus: 'in_progress'
+      }
+    }
   ),
   defineFixture(
     'error_shaped_provider_response',
@@ -385,7 +471,116 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
         message: 'provider error details'
       }
     },
-    { status: 'failed' }
+    {
+      status: 'failed',
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'terminal_status',
+        responseStatus: 'failed'
+      }
+    }
+  ),
+  {
+    name: 'statusless_error_shaped_provider_response',
+    categories: ['error-shaped-provider-response', 'missing-fields', 'fail-closed'],
+    response: {
+      error: {
+        code: 'provider_failure',
+        message: 'provider error details'
+      }
+    },
+    expected: {
+      id: `legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
+      workerId: `worker_legacy_${OPENAI_CONVERSION_FROZEN_NOW_MS}`,
+      created: OPENAI_CONVERSION_FROZEN_NOW_SECONDS,
+      model: OPENAI_CONVERSION_REQUESTED_MODEL,
+      content: '',
+      refusal: null,
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: ZERO_USAGE,
+      status: null,
+      incompleteDetails: null,
+      providerUsage: null,
+      incomplete: false,
+      truncated: false,
+      contentFiltered: false,
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: null
+      }
+    }
+  },
+  defineFixture(
+    'queued_provider_response',
+    ['non-terminal', 'queued'],
+    {
+      status: 'queued',
+      output: []
+    },
+    {
+      status: 'queued',
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'pending_status',
+        responseStatus: 'queued'
+      }
+    }
+  ),
+  defineFixture(
+    'cancelled_provider_response',
+    ['terminal', 'cancelled'],
+    {
+      status: 'cancelled',
+      output: []
+    },
+    {
+      status: 'cancelled',
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'terminal_status',
+        responseStatus: 'cancelled'
+      }
+    }
+  ),
+  defineFixture(
+    'future_provider_status',
+    ['unknown-status', 'fail-closed'],
+    {
+      status: 'future_status',
+      output_text: 'must not masquerade as completed'
+    },
+    {
+      status: 'future_status',
+      content: 'must not masquerade as completed',
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_status',
+        responseStatus: 'future_status'
+      }
+    }
+  ),
+  defineFixture(
+    'unsupported_builtin_tool_call',
+    ['unsupported-tool-call', 'fail-closed'],
+    {
+      output: [
+        {
+          type: 'computer_call',
+          id: 'computer_item_1',
+          call_id: 'computer_call_1',
+          status: 'completed'
+        }
+      ]
+    },
+    {
+      conversionError: {
+        code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR',
+        reason: 'unsupported_tool_call',
+        responseStatus: 'completed'
+      }
+    }
   ),
   defineFixture(
     'unicode',
@@ -407,8 +602,9 @@ export const openAIResponseConversionFixtures: readonly OpenAIResponseConversion
 
 export const invalidOpenAIResponseRoots: readonly {
   name: string;
-  response: null | undefined;
+  response: unknown;
 }[] = [
   { name: 'null_response', response: null },
-  { name: 'undefined_response', response: undefined }
+  { name: 'undefined_response', response: undefined },
+  { name: 'array_response', response: [] }
 ];

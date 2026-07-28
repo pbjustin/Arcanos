@@ -87,6 +87,10 @@ class RequestHarness {
   readonly runs: ActionPlanExecutionRunRecord[] = [];
   readonly events: Array<Record<string, unknown>> = [];
   actions = baseActions();
+  agent: { id: string; capabilities: string[] } | null = {
+    id: 'agent-1',
+    capabilities: ['terminal.run'],
+  };
   plan = basePlan();
   failEventInsert = false;
   released = false;
@@ -143,7 +147,7 @@ class RequestHarness {
       return this.result(active.length > 0 ? [{}] : []);
     }
     if (sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')) {
-      return this.result([{ id: 'agent-1', capabilities: ['terminal.run'] }]);
+      return this.result(this.agent ? [this.agent] : []);
     }
     if (sql.startsWith('INSERT INTO "ActionPlanExecutionCommand"')) {
       this.commands.push({
@@ -419,6 +423,9 @@ describe('Phase 2E authoritative repository behavior without an external databas
     expect(harness.runs).toHaveLength(2);
     expect(harness.events).toHaveLength(2);
     expect(harness.calls.filter(call => call.sql.startsWith('INSERT INTO "ActionPlanExecutionRun"'))).toHaveLength(2);
+    expect(harness.calls.filter(
+      call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+    )).toHaveLength(1);
     expect(harness.calls.some(call => call.sql.startsWith('INSERT INTO "ExecutionResult"'))).toBe(false);
     expect(harness.calls.at(-1)?.sql).toBe('COMMIT');
     expect(harness.released).toBe(true);
@@ -441,6 +448,26 @@ describe('Phase 2E authoritative repository behavior without an external databas
     expect(harness.commands).toHaveLength(0);
     expect(harness.runs).toHaveLength(0);
     expect(harness.events).toHaveLength(0);
+    expect(harness.calls.at(-1)?.sql).toBe('ROLLBACK');
+  });
+
+  it.each([
+    ['missing agent', null],
+    ['missing capability', { id: 'agent-1', capabilities: [] }],
+  ] as const)('creates no command or run for a %s', async (_name, agent) => {
+    const harness = new RequestHarness();
+    harness.agent = agent;
+    const repository = new ActionPlanExecutionRepository(harness.pool);
+
+    await expect(repository.requestExecution(requestInput())).rejects.toMatchObject({
+      code: 'ACTION_PLAN_EXECUTOR_UNAVAILABLE',
+    });
+    expect(harness.commands).toHaveLength(0);
+    expect(harness.runs).toHaveLength(0);
+    expect(harness.events).toHaveLength(0);
+    expect(harness.calls.filter(
+      call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+    )).toHaveLength(1);
     expect(harness.calls.at(-1)?.sql).toBe('ROLLBACK');
   });
 
@@ -483,11 +510,17 @@ describe('Phase 2E authoritative repository behavior without an external databas
       const repository = new ActionPlanExecutionRepository(harness.pool);
       const created = await repository.requestExecution(requestInput());
       harness.plan.status = status;
+      const agentLookupCountBeforeReplay = harness.calls.filter(
+        call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+      ).length;
 
       await expect(repository.replayExecution(requestInput())).resolves.toMatchObject({
         disposition: 'idempotent-replay',
         commandId: created.commandId,
       });
+      expect(harness.calls.filter(
+        call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+      )).toHaveLength(agentLookupCountBeforeReplay + 1);
       expect(harness.commands).toHaveLength(1);
       expect(harness.runs).toHaveLength(2);
     },
@@ -502,6 +535,48 @@ describe('Phase 2E authoritative repository behavior without an external databas
     expect(harness.commands).toHaveLength(0);
     expect(harness.runs).toHaveLength(0);
     expect(harness.events).toHaveLength(0);
+  });
+
+  it.each([
+    ['missing agent', null],
+    ['missing capability', { id: 'agent-1', capabilities: [] }],
+  ] as const)('rejects replay with the existing conflict code for a %s', async (_name, agent) => {
+    const harness = new RequestHarness();
+    const repository = new ActionPlanExecutionRepository(harness.pool);
+    await repository.requestExecution(requestInput());
+    harness.plan.status = 'in_progress';
+    harness.agent = agent;
+    const agentLookupCountBeforeReplay = harness.calls.filter(
+      call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+    ).length;
+
+    await expect(repository.replayExecution(requestInput())).rejects.toMatchObject({
+      code: 'ACTION_PLAN_EXECUTION_IDEMPOTENCY_CONFLICT',
+    });
+    expect(harness.calls.filter(
+      call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+    )).toHaveLength(agentLookupCountBeforeReplay + 1);
+    expect(harness.calls.at(-1)?.sql).toBe('ROLLBACK');
+  });
+
+  it('preserves missing-agent precedence over a later malformed action during replay', async () => {
+    const harness = new RequestHarness();
+    const repository = new ActionPlanExecutionRepository(harness.pool);
+    await repository.requestExecution(requestInput());
+    harness.plan.status = 'in_progress';
+    harness.agent = null;
+    harness.actions[1] = {
+      ...harness.actions[1],
+      params: {},
+    };
+
+    await expect(repository.replayExecution(requestInput())).rejects.toMatchObject({
+      code: 'ACTION_PLAN_EXECUTION_IDEMPOTENCY_CONFLICT',
+    });
+    expect(harness.calls.filter(
+      call => call.sql.startsWith('SELECT "id", "capabilities" FROM "Agent"')
+    )).toHaveLength(2);
+    expect(harness.calls.at(-1)?.sql).toBe('ROLLBACK');
   });
 
   it('rejects same-key replay when locked action evidence changes without a generation bump', async () => {

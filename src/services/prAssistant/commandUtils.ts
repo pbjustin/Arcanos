@@ -3,6 +3,8 @@ import { existsSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
 const FORCE_KILL_DELAY_MS = 1000;
+const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
+const MAX_COMMAND_ERROR_DETAIL_BYTES = 8 * 1024;
 
 interface ResolvedCommand {
   executable: string;
@@ -98,7 +100,10 @@ function resolvePlatformCommand(command: string, args: string[]): ResolvedComman
 
 function formatCommandFailure(command: string, args: string[], failureReason: string, stderr: string): string {
   const commandDetails = `Command failed with ${failureReason}: ${command} ${args.join(' ')}`;
-  const stderrDetails = stderr.trimEnd();
+  const stderrBuffer = Buffer.from(stderr.trimEnd(), 'utf8');
+  const stderrDetails = stderrBuffer.byteLength > MAX_COMMAND_ERROR_DETAIL_BYTES
+    ? `${stderrBuffer.subarray(0, MAX_COMMAND_ERROR_DETAIL_BYTES).toString('utf8')}\n...[truncated]`
+    : stderrBuffer.toString('utf8');
   return stderrDetails ? `${stderrDetails}\n${commandDetails}` : commandDetails;
 }
 
@@ -150,12 +155,10 @@ export function runCommand(command: string, args: string[], options: SpawnOption
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let outputBytes = 0;
     let settled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let cleanupKillHandle: ReturnType<typeof setTimeout> | undefined;
-
-    proc.stdout?.on('data', d => { stdout += d; });
-    proc.stderr?.on('data', d => { stderr += d; });
 
     function settle(action: () => void): void {
       if (settled) {
@@ -168,6 +171,47 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       }
       action();
     }
+
+    function terminateForOutputLimit(): void {
+      killProcessTree(proc, 'SIGTERM');
+      cleanupKillHandle = setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) {
+          killProcessTree(proc, 'SIGKILL');
+        }
+      }, FORCE_KILL_DELAY_MS);
+      settle(() => reject(new Error(
+        `Command output exceeded ${MAX_COMMAND_OUTPUT_BYTES} bytes: ${command} ${args.join(' ')}`
+      )));
+    }
+
+    function appendOutput(
+      destination: 'stderr' | 'stdout',
+      chunk: Buffer | string
+    ): void {
+      if (settled) {
+        return;
+      }
+      const chunkBuffer = Buffer.isBuffer(chunk)
+        ? chunk
+        : Buffer.from(chunk, 'utf8');
+      outputBytes += chunkBuffer.byteLength;
+      if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
+        terminateForOutputLimit();
+        return;
+      }
+      if (destination === 'stdout') {
+        stdout += chunkBuffer.toString('utf8');
+      } else {
+        stderr += chunkBuffer.toString('utf8');
+      }
+    }
+
+    proc.stdout?.on('data', (chunk: Buffer | string) => {
+      appendOutput('stdout', chunk);
+    });
+    proc.stderr?.on('data', (chunk: Buffer | string) => {
+      appendOutput('stderr', chunk);
+    });
 
     if (timeoutMs && timeoutMs > 0) {
       timeoutHandle = setTimeout(() => {

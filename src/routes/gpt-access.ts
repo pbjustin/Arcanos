@@ -26,9 +26,12 @@ import {
   dispatchModuleAction,
   getModuleMetadata,
   getModulesForRegistry,
+  initializeModuleRegistry,
   ModuleActionNotFoundError,
   ModuleNotFoundError
-} from './modules.js';
+} from '@services/moduleRegistry.js';
+import ArcanosCli from '@services/arcanos-cli.js';
+import { MODULE_CATALOG } from '@services/moduleCatalog.js';
 import {
   asyncHandler,
   sendBadRequestPayload,
@@ -56,16 +59,8 @@ import {
   sendGptAccessResult,
 } from '@services/gptAccessGateway.js';
 import {
-  CLI_READONLY_ACTIONS,
-  applyArcanosCliApprovedPatch,
-  getArcanosCliPolicyMetadata,
-  getArcanosCliRepoContext,
-  getArcanosCliStatus,
-  isArcanosCliBridgeEnabled,
-  proposeArcanosCliCommand,
-  proposeArcanosCliPatch,
-  runArcanosCliApprovedCommand,
-  tailArcanosCliAudit
+  isArcanosCliReadOnlyAction,
+  isArcanosCliBridgeEnabled
 } from '@services/arcanosCliBridge.js';
 import {
   buildDispatchPolicyBlockPayload,
@@ -103,20 +98,21 @@ const GPT_ACCESS_CONTEXT_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,127})$/u
 const CORE_CAPABILITY_ID = 'ARCANOS:CORE';
 const CORE_CAPABILITY_ROUTE = 'core';
 const CORE_READONLY_ACTIONS = new Set(['system_state']);
-const CLI_CAPABILITY_ID = 'ARCANOS:CLI';
-const CLI_CAPABILITY_ROUTE = 'cli';
-const CLI_GATED_ACTIONS = new Set(['runApprovedCommand', 'applyApprovedPatch']);
+const CLI_CATALOG_ENTRY = MODULE_CATALOG.find(
+  (entry) => entry.name === ArcanosCli.name
+);
+if (!CLI_CATALOG_ENTRY || CLI_CATALOG_ENTRY.gptAccessOnly !== true) {
+  throw new Error('ARCANOS CLI catalog registration is unavailable.');
+}
+const CLI_CAPABILITY_ID = ArcanosCli.name;
+const CLI_CAPABILITY_ROUTE = CLI_CATALOG_ENTRY.route;
+const CLI_CAPABILITY_ACTIONS = Object.freeze(Object.keys(ArcanosCli.actions));
 const LOCAL_AGENT_CAPABILITY_ID = 'ARCANOS:LOCAL_AGENT';
 const LOCAL_AGENT_CAPABILITY_ROUTE = 'local-agent';
 const LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS = new Set([
   'tests.run',
   'patch.apply'
 ]);
-const CLI_CAPABILITY_ACTIONS = [
-  ...CLI_READONLY_ACTIONS,
-  ...CLI_GATED_ACTIONS
-];
-
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
     ? req.ip.trim()
@@ -132,7 +128,7 @@ const gptAccessRateLimit = createRateLimitMiddleware({
   keyGenerator: (req) => `${getGptAccessRateLimitActorKey(req)}:gpt-access`
 });
 
-function sortStrings(values: string[]): string[] {
+function sortStrings(values: readonly string[]): string[] {
   return [...values].sort((left, right) => left.localeCompare(right));
 }
 
@@ -262,7 +258,7 @@ function getCliCapabilitySummary() {
   return {
     id: CLI_CAPABILITY_ID,
     enabled: isArcanosCliBridgeEnabled(),
-    description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
+    description: ArcanosCli.description ?? null,
     route: CLI_CAPABILITY_ROUTE,
     actions: sortStrings(CLI_CAPABILITY_ACTIONS)
   };
@@ -273,11 +269,11 @@ function getCliCapabilityDetail() {
     id: CLI_CAPABILITY_ID,
     name: CLI_CAPABILITY_ID,
     enabled: isArcanosCliBridgeEnabled(),
-    description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
+    description: ArcanosCli.description ?? null,
     route: CLI_CAPABILITY_ROUTE,
     actions: sortStrings(CLI_CAPABILITY_ACTIONS),
-    defaultAction: 'status',
-    defaultTimeoutMs: 30000
+    defaultAction: ArcanosCli.defaultAction ?? null,
+    defaultTimeoutMs: ArcanosCli.defaultTimeoutMs ?? null
   };
 }
 
@@ -421,11 +417,11 @@ function capabilityRunNeedsConfirmation(req: express.Request): boolean {
   }
 
   const action = (req.body as Record<string, unknown>).action;
-  return typeof action !== 'string' || !CLI_READONLY_ACTIONS.has(action.trim());
+  return typeof action !== 'string' || !isArcanosCliReadOnlyAction(action);
 }
 
 function cliActionNeedsModuleAllowlist(moduleName: string, action: string): boolean {
-  return moduleName !== CLI_CAPABILITY_ID || !CLI_READONLY_ACTIONS.has(action);
+  return moduleName !== CLI_CAPABILITY_ID || !isArcanosCliReadOnlyAction(action);
 }
 
 function confirmCapabilityRunWhenRequired(
@@ -707,6 +703,23 @@ function sendGptAccessUnavailable(
   });
 }
 
+async function requireGptAccessModuleRegistry(
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): Promise<void> {
+  try {
+    await initializeModuleRegistry();
+    next();
+  } catch {
+    sendGptAccessUnavailable(
+      res,
+      'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+      'Capability registry is unavailable.'
+    );
+  }
+}
+
 function isModuleDispatchNotFoundError(error: unknown): boolean {
   return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
 }
@@ -942,7 +955,9 @@ async function runFallbackArcanosCliCapabilityAction(
       statusCode: 200,
       payload: {
         ok: true,
-        result: sanitizeGptAccessPayload(await runFallbackArcanosCliAction(action, payload))
+        result: sanitizeGptAccessPayload(
+          await ArcanosCli.actions[action]!(payload)
+        )
       }
     };
   } catch {
@@ -956,29 +971,6 @@ async function runFallbackArcanosCliCapabilityAction(
         }
       }
     };
-  }
-}
-
-async function runFallbackArcanosCliAction(action: string, payload: unknown): Promise<unknown> {
-  switch (action) {
-    case 'status':
-      return getArcanosCliStatus();
-    case 'policy':
-      return getArcanosCliPolicyMetadata();
-    case 'repoContext':
-      return getArcanosCliRepoContext(payload);
-    case 'proposeCommand':
-      return proposeArcanosCliCommand(payload);
-    case 'runApprovedCommand':
-      return runArcanosCliApprovedCommand(payload);
-    case 'proposePatch':
-      return proposeArcanosCliPatch(payload);
-    case 'applyApprovedPatch':
-      return applyArcanosCliApprovedPatch(payload);
-    case 'tailAudit':
-      return tailArcanosCliAudit();
-    default:
-      throw new Error('Unsupported ARCANOS CLI action.');
   }
 }
 
@@ -1150,18 +1142,21 @@ router.use('/gpt-access', gptAccessAuthMiddleware);
 router.get(
   '/gpt-access/capabilities/v1',
   requireGptAccessScope('capabilities.read'),
+  requireGptAccessModuleRegistry,
   listGptAccessCapabilities
 );
 
 router.get(
   '/gpt-access/capabilities/v1/:id',
   requireGptAccessScope('capabilities.read'),
+  requireGptAccessModuleRegistry,
   getGptAccessCapability
 );
 
 router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireGptAccessScope('capabilities.run'),
+  requireGptAccessModuleRegistry,
   mapCapabilityRunConfirmationToken,
   validateCapabilityIdempotencyKey,
   confirmCapabilityRunWhenRequired,
@@ -1171,12 +1166,14 @@ router.post(
 router.get(
   '/gpt-access/modules',
   requireGptAccessScope('capabilities.read'),
+  requireGptAccessModuleRegistry,
   listGptAccessCapabilities
 );
 
 router.get(
   '/gpt-access/modules/:id',
   requireGptAccessScope('capabilities.read'),
+  requireGptAccessModuleRegistry,
   getGptAccessCapability
 );
 
@@ -1331,6 +1328,7 @@ router.post(
 
 router.post(
   '/gpt-access/dispatch/run',
+  requireGptAccessModuleRegistry,
   mapDispatchRunConfirmationToken,
   validateCapabilityIdempotencyKey,
   runGptAccessDispatch

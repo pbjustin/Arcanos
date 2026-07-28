@@ -21,9 +21,10 @@ jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   validateGptRegistry: mockValidateGptRegistry,
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: mockDispatchModuleAction,
   getModuleMetadata: mockGetModuleMetadata,
+  initializeModuleRegistry: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule('../src/services/moduleConversationPersistence.js', () => ({

@@ -4,6 +4,7 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 
 import {
+  advanceClaimedJobAbortState,
   buildJobRunnerSlotDefinitions,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
@@ -14,10 +15,44 @@ import {
   resolveJobRunnerIdleBackoffDelayMs,
   resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
-  selectJobRunnerSlotTransientRetryEvent
+  selectJobRunnerSlotTransientRetryEvent,
+  shouldPersistClaimedJobCancellation
 } from '../src/workers/jobRunnerRuntime.js';
 
 describe('jobRunnerRuntime', () => {
+  it.each(['ask', 'dag-node', 'gpt'])(
+    'leaves %s work for lease recovery on shutdown but terminalizes durable cancellation',
+    () => {
+      const shutdownState = advanceClaimedJobAbortState(
+        {
+          cause: null,
+          durableCancellationReason: null
+        },
+        'process_shutdown',
+        'deployment is stopping'
+      );
+      expect(shouldPersistClaimedJobCancellation(shutdownState.cause)).toBe(false);
+
+      const durableState = advanceClaimedJobAbortState(
+        shutdownState,
+        'durable_cancellation',
+        'operator requested cancellation'
+      );
+      expect(shouldPersistClaimedJobCancellation(durableState.cause)).toBe(true);
+      expect(durableState).toEqual({
+        cause: 'durable_cancellation',
+        durableCancellationReason: 'operator requested cancellation'
+      });
+
+      const laterLeaseLoss = advanceClaimedJobAbortState(
+        durableState,
+        'lease_lost',
+        'lease expired'
+      );
+      expect(laterLeaseLoss).toEqual(durableState);
+    }
+  );
+
   it('falls back to WORKER_COUNT when explicit job-worker concurrency is absent', () => {
     const runtimeSettings = resolveJobRunnerRuntimeSettings({
       WORKER_COUNT: '3',
@@ -430,6 +465,96 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("logWorkerShutdownDuringBootstrap(workerId, 'database_exception_retry')");
     expect(source).toContain("logWorkerShutdownDuringBootstrap(workerId, 'database_status_retry')");
     expect(source).toContain("logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry')");
+  });
+
+  it('uses live claim-generation fences for worker heartbeats and terminal outcomes', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+
+    expect(source).toContain('createClaimedJobFence(');
+    expect(source).toContain('job.claim_generation');
+    expect(source).toContain('updateClaimedJobTerminal(');
+    expect(source).not.toContain('await updateJob(');
+    expect(source).toContain("failureResult.action === 'lease_lost'");
+    expect(source).not.toContain("outcome: 'lease_lost'");
+    expect(source).toContain('claimGeneration: job.claim_generation');
+  });
+
+  it('starts cancellation control before provider initialization and never terminalizes shutdown as cancelled', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const claimedJobControllerIndex = source.indexOf(
+      'const jobCancellationController = new AbortController()'
+    );
+    const heartbeatIndex = source.indexOf(
+      'heartbeatHandle = startHeartbeatLoop(',
+      claimedJobControllerIndex
+    );
+    const providerInitializationIndex = source.indexOf(
+      'const ensuredClientState = await ensureOpenAIClientForSlot({',
+      claimedJobControllerIndex
+    );
+    const providerDeferralIndex = source.indexOf(
+      'const deferralResult = await autonomyService.deferJobForProviderRecovery(',
+      providerInitializationIndex
+    );
+
+    expect(claimedJobControllerIndex).toBeGreaterThanOrEqual(0);
+    expect(heartbeatIndex).toBeGreaterThan(claimedJobControllerIndex);
+    expect(providerInitializationIndex).toBeGreaterThan(heartbeatIndex);
+    expect(providerDeferralIndex).toBeGreaterThan(providerInitializationIndex);
+    expect(source).toContain("abortClaimedJob(\n          'process_shutdown'");
+    expect(source).toContain("abortClaimedJob(\n            'durable_cancellation'");
+    expect(source).toContain(
+      'shouldPersistClaimedJobCancellation(jobAbortState.cause)'
+    );
+    expect(source).toContain(
+      'the live claim was left for lease recovery.'
+    );
+    expect(
+      source.match(/jobCancellationController\.abort\(/gu)
+    ).toHaveLength(1);
+  });
+
+  it('preloads the module registry before declaring the worker ready or claiming jobs', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const enabledGuardIndex = source.indexOf('if (!entrypointRuntimeMode.enabled)');
+    const operatorDispatchProviderIndex = source.indexOf(
+      'configureDefaultArcanosCoreRuntimeProviders()',
+      enabledGuardIndex
+    );
+    const databaseBootstrapIndex = source.indexOf(
+      "await initializeJobRunnerDatabaseWithRetry('job-runner'"
+    );
+    const autonomyBootstrapIndex = source.indexOf(
+      'await bootstrapWorkerAutonomyWithRetry('
+    );
+    const moduleRegistryPreloadIndex = source.indexOf(
+      'await initializeModuleRegistry()',
+      autonomyBootstrapIndex
+    );
+    const readinessMarkerIndex = source.indexOf(
+      "logger.info('worker.bootstrap.completed'",
+      moduleRegistryPreloadIndex
+    );
+    const consumerStartIndex = source.indexOf(
+      'await Promise.all(',
+      readinessMarkerIndex
+    );
+
+    expect([
+      enabledGuardIndex,
+      operatorDispatchProviderIndex,
+      databaseBootstrapIndex,
+      autonomyBootstrapIndex,
+      moduleRegistryPreloadIndex,
+      readinessMarkerIndex,
+      consumerStartIndex
+    ]).not.toContain(-1);
+    expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
+    expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
+    expect(databaseBootstrapIndex).toBeLessThan(autonomyBootstrapIndex);
+    expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
+    expect(moduleRegistryPreloadIndex).toBeLessThan(readinessMarkerIndex);
+    expect(readinessMarkerIndex).toBeLessThan(consumerStartIndex);
   });
 
   it('caps delayed worker interval work at one active task per slot and source', async () => {

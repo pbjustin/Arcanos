@@ -21,6 +21,7 @@ Automation-token flows require the backend's `ARCANOS_AUTOMATION_SECRET`.
 
 ## Run locally
 Common scripts:
+- `npm run check:boundaries` (CEF layer-access policy plus TypeScript dependency-cycle gate)
 - `npm run docs:check` (cross-platform documentation audit)
 - `npm run docs:links -- --local-only` (maintained-document links without network access)
 - `npm run docs:links` (bounded external-link audit; network access required)
@@ -60,11 +61,15 @@ The root `package.json` still lists several scripts whose target files are missi
 - `audit:python`, `audit:python:fix` -> `daemon-python/scripts/continuous_audit.py`
 - `sync:auto` -> `scripts/auto-sync-watcher.js`
 
-Do not run `npm run probe`: its current implementation prints a prefix of
-`OPENAI_API_KEY` and depends on a missing test file. Use the focused validation
-commands documented for the subsystem you changed.
+The legacy root probe command was retired because it exposed credential prefixes
+and depended on a missing test file. Use the focused validation commands
+documented for the subsystem you changed; use `npm run validate:railway` for the
+local, non-deploying Railway configuration check.
 
-`self-test` and `daily-summary` point at incorrect compiled command paths.
+`self-test` and `daily-summary` use the compiled command entry points under
+`dist/core/commands/` and therefore require a successful build. They execute
+application diagnostic or summary behavior and are not substitutes for
+read-only build and test validation.
 `sync:fix` accepts its flag but does not currently apply a fix. `sync:setup`
 writes Git hooks and may create local tooling directories; it is not a read-only
 validation command.

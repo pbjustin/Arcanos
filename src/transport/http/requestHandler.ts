@@ -78,6 +78,8 @@ const TIMEOUT_PAYLOAD_BY_KIND = {
   }
 } as const;
 
+const AI_FAILURE_PUBLIC_MESSAGE = 'AI service failure';
+
 const REQUEST_FEEDBACK_PATH_ENV = 'REQUEST_FEEDBACK_PATH';
 const DEFAULT_REQUEST_FEEDBACK_PATH = '/tmp/last-gpt-request';
 
@@ -355,7 +357,7 @@ export function handleAIError(
   const allowMockFallback = process.env.ALLOW_MOCK_FALLBACK === 'true';
   if (allowMockFallback) {
     sendMockAIResponse(res, input, endpointName, 'processing failed', {
-      error: `AI service failure: ${errorMessage}`
+      error: AI_FAILURE_PUBLIC_MESSAGE
     });
     return;
   }
@@ -365,17 +367,17 @@ export function handleAIError(
     const timeoutPayload = TIMEOUT_PAYLOAD_BY_KIND[budgetAbortKind];
     res.status(408).json({
       error: timeoutPayload.error,
-      detail: errorMessage,
-      details: errorMessage,
+      detail: timeoutPayload.error,
+      details: timeoutPayload.error,
       code: timeoutPayload.code
     } as ErrorResponseDTO);
     return;
   }
 
   sendInternalErrorPayload(res, {
-    error: 'AI service failure',
-    detail: errorMessage,
-    details: errorMessage,
+    error: AI_FAILURE_PUBLIC_MESSAGE,
+    detail: AI_FAILURE_PUBLIC_MESSAGE,
+    details: AI_FAILURE_PUBLIC_MESSAGE,
     code: 'AI_FAILURE'
   } as ErrorResponseDTO);
 }

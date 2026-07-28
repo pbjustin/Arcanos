@@ -20,6 +20,12 @@ const { guardPublicGamingCanaryResponse } = await import('../src/services/public
 type MockRequest = {
   method: string;
   path: string;
+  controlPlanePrincipal?: {
+    audience: 'control-plane-http';
+    role: 'operator';
+    principalId: string;
+    scopes: string[];
+  };
   body?: unknown;
   requestId?: string;
   traceId?: string;
@@ -55,17 +61,102 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(response.status).not.toHaveBeenCalled();
   });
 
-  it('bypasses the quarantine release path even for mutating requests', () => {
-    const next = jest.fn();
-    const response = createResponse();
+  it('bypasses only an exact authenticated quarantine recovery POST', () => {
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+    const logger = { info: jest.fn() };
+    const principal = {
+      audience: 'control-plane-http' as const,
+      role: 'operator' as const,
+      principalId: 'operator:safety-recovery-test',
+      scopes: ['self-improve:control'],
+    };
 
-    unsafeExecutionGate({
-      method: 'POST',
-      path: '/status/safety/quarantine/quarantine-123/release'
-    } as MockRequest as any, response as any, next);
+    for (const path of [
+      '/status/safety/quarantine/quarantine-123/release',
+      '/STATUS/SAFETY/QUARANTINE/QUARANTINE-123/RELEASE',
+      '/status/safety/quarantine/quarantine-123/release/',
+    ]) {
+      const next = jest.fn();
+      const response = createResponse();
+      unsafeExecutionGate({
+        method: 'POST',
+        path,
+        controlPlanePrincipal: principal,
+        logger,
+      } as MockRequest as any, response as any, next);
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(response.status).not.toHaveBeenCalled();
+    }
+    expect(logger.info).toHaveBeenCalledWith('unsafe_execution_gate.bypass', {
+      reason: 'authenticated_quarantine_recovery'
+    });
 
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(response.status).not.toHaveBeenCalled();
+    for (const requestShape of [
+      {
+        method: 'POST',
+        path: '/status/safety/quarantine/quarantine-123/release',
+      },
+      {
+        method: 'PUT',
+        path: '/status/safety/quarantine/quarantine-123/release',
+        controlPlanePrincipal: principal,
+      },
+      {
+        method: 'POST',
+        path: '/status/safety/quarantine/quarantine%2F123/release',
+        controlPlanePrincipal: principal,
+      },
+      {
+        method: 'POST',
+        path: '/status/safety/quarantine/quarantine-123/release/extra',
+        controlPlanePrincipal: principal,
+      },
+    ] as MockRequest[]) {
+      const next = jest.fn();
+      const response = createResponse();
+      unsafeExecutionGate(requestShape as any, response as any, next);
+      expect(next).not.toHaveBeenCalled();
+      expect(response.status).toHaveBeenCalledWith(503);
+    }
+  });
+
+  it('allows only the restrictive self-improve freeze action during unsafe state', () => {
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+    const logger = { info: jest.fn() };
+    for (const path of [
+      '/api/self-improve/freeze',
+      '/API/SELF-IMPROVE/FREEZE',
+      '/api/self-improve/freeze/'
+    ]) {
+      const freezeNext = jest.fn();
+      const freezeResponse = createResponse();
+      unsafeExecutionGate({
+        method: 'POST',
+        path,
+        logger
+      } as MockRequest as any, freezeResponse as any, freezeNext);
+      expect(freezeNext).toHaveBeenCalledTimes(1);
+      expect(freezeResponse.status).not.toHaveBeenCalled();
+    }
+    expect(logger.info).toHaveBeenCalledWith('unsafe_execution_gate.bypass', {
+      reason: 'self_improve_restrictive_control',
+      path: '/api/self-improve/freeze'
+    });
+
+    for (const path of [
+      '/api/self-improve/unfreeze',
+      '/api/self-improve/autonomy',
+      '/api/self-improve/run'
+    ]) {
+      const next = jest.fn();
+      const response = createResponse();
+      unsafeExecutionGate({
+        method: 'POST',
+        path
+      } as MockRequest as any, response as any, next);
+      expect(next).not.toHaveBeenCalled();
+      expect(response.status).toHaveBeenCalledWith(503);
+    }
   });
 
   it('does not bypass diagnostics actions sent through /gpt', () => {

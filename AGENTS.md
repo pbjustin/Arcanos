@@ -75,7 +75,7 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 | Railway config/startup | `npm run build` and the local, non-deploying `npm run validate:railway` |
 | Database/schema code | `npm run type-check`, `node scripts/run-jest.mjs --testPathPatterns=<db-or-route-pattern> --coverage=false`, and `npm run validate:railway`; do not apply a migration as routine validation |
 
-- `npm run type-check` and `npm run build` already run the three named boundary scripts and build shared packages; `check:boundaries` currently delegates to the same CEF implementation as `check:cef-layer-access`. Run an individual boundary script only for focused feedback.
+- `npm run type-check` and `npm run build` already run the three named boundary scripts and build shared packages. `check:boundaries` runs the CEF layer-access policy and the Madge TypeScript cycle gate; `check:cef-layer-access` repeats only the focused CEF scan for direct diagnostics. Run an individual boundary script only for focused feedback.
 - `npm run validate:all` is the expensive broad root readiness sweep and creates build/coverage output. It does not run the Python pytest suite or `arcanos-ai-runtime` tests.
 - `npm run test:all:stacks` runs root Jest and daemon pytest, but despite its name it does not run `arcanos-ai-runtime` tests.
 - There is no repository-wide format command or root `format` script. Do not invent one; `daemon-python/` separately declares Black as a development dependency.
@@ -115,8 +115,8 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Known command traps
 
-- Do not run `npm run probe`: it depends on a missing test file and prints part of `OPENAI_API_KEY`.
-- `self-test` and `daily-summary` point at incorrect `dist/commands/` paths. `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, root `audit*`, `audit:python*`, and `sync:auto` reference missing targets. Treat them as unavailable until repaired.
+- The unsafe root probe command was retired because it depended on a missing test file and printed part of `OPENAI_API_KEY`; do not restore or invoke historical copies.
+- `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, root `audit*`, `audit:python*`, and `sync:auto` reference missing targets. Treat them as unavailable until repaired. `self-test` and `daily-summary` use compiled entry points and require a successful build; they execute application behavior and are not routine read-only validation.
 - `sync:fix` currently parses its flag but performs no fix. `sync:setup` writes Git hooks and may create local tooling directories.
 - `clean` and `rebuild` use `rm -rf`; they are destructive and are not portable to the default Windows npm shell. Never run them automatically.
 

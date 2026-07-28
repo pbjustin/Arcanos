@@ -57,4 +57,43 @@ describe('daemon-store credential binding contract', () => {
         .some((value) => logOutput.includes(value)),
     ).toBe(false);
   });
+
+  it('preserves historical opaque partitions byte-for-byte when adding a canonical instance', () => {
+    const historicalPartition = 'historical-opaque-partition-value';
+    const persistedInput = JSON.stringify({
+      'historical-instance': historicalPartition,
+    });
+    const writeFileSync = jest.fn();
+    const logger = {
+      error: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+    };
+    const store = createDaemonStore({
+      fs: {
+        existsSync: jest.fn(() => true),
+        mkdirSync: jest.fn(),
+        readFileSync: jest.fn(() => persistedInput),
+        writeFileSync,
+      } as never,
+      path: {
+        dirname: jest.fn(() => 'phase2a-daemon-store'),
+      },
+      logger: logger as never,
+      now: () => new Date('2026-07-16T12:00:00.000Z'),
+      tokensFilePath: 'phase2a-daemon-store/tokens.json',
+    });
+
+    store.loadTokens();
+    store.setTokenForInstance('new-instance', 'anonymous-daemon');
+    store.saveTokens();
+
+    expect(store.getTokenForInstance('historical-instance')).toBe(historicalPartition);
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    const persistedOutput = JSON.parse(writeFileSync.mock.calls[0]?.[1] as string);
+    expect(persistedOutput).toEqual({
+      'historical-instance': historicalPartition,
+      'new-instance': 'anonymous-daemon',
+    });
+  });
 });

@@ -19,11 +19,73 @@ interface WorkersDirectoryResolution {
   checked: string[];
 }
 
+export type WorkerModuleFileResolution =
+  | { status: 'ready'; path: string }
+  | { status: 'invalid_worker_id' }
+  | { status: 'not_found' }
+  | { status: 'outside_workers_directory' };
+
+const WORKER_MODULE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
 function existsDir(p: string): boolean {
   try {
     return fs.existsSync(p) && fs.statSync(p).isDirectory();
   } catch {
     return false;
+  }
+}
+
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return relativePath !== ''
+    && !path.isAbsolute(relativePath)
+    && relativePath !== '..'
+    && !relativePath.startsWith(`..${path.sep}`);
+}
+
+/**
+ * Resolve one file-backed worker identifier to an existing JavaScript module
+ * that remains inside the selected workers directory after canonicalization.
+ */
+export function resolveWorkerModuleFile(
+  workersDirectory: string,
+  workerId: string
+): WorkerModuleFileResolution {
+  if (!WORKER_MODULE_ID_PATTERN.test(workerId)) {
+    return { status: 'invalid_worker_id' };
+  }
+
+  const resolvedWorkersDirectory = path.resolve(workersDirectory);
+  const candidatePath = path.resolve(resolvedWorkersDirectory, `${workerId}.js`);
+
+  if (!isPathInside(resolvedWorkersDirectory, candidatePath)) {
+    return { status: 'outside_workers_directory' };
+  }
+
+  if (!fs.existsSync(candidatePath)) {
+    return { status: 'not_found' };
+  }
+
+  try {
+    const candidateStats = fs.statSync(candidatePath);
+    if (!candidateStats.isFile()) {
+      return { status: 'not_found' };
+    }
+
+    const canonicalWorkersDirectory = fs.realpathSync(resolvedWorkersDirectory);
+    const canonicalCandidatePath = fs.realpathSync(candidatePath);
+
+    //audit Assumption: worker module identifiers and worker-directory contents can be influenced by deployment configuration; failure risk: path traversal or an escaping symlink imports executable code outside the selected worker root; expected invariant: only canonical regular files beneath that root are importable; handling strategy: allowlist identifier characters and compare canonical relative paths before import.
+    if (!isPathInside(canonicalWorkersDirectory, canonicalCandidatePath)) {
+      return { status: 'outside_workers_directory' };
+    }
+
+    return {
+      status: 'ready',
+      path: canonicalCandidatePath
+    };
+  } catch {
+    return { status: 'not_found' };
   }
 }
 

@@ -6,9 +6,30 @@
  */
 
 import { z } from 'zod';
-import { getPool } from './client.js';
+import type { Pool } from 'pg';
+import { redactString } from '@shared/redaction.js';
+import { getPool, isDatabaseConnected } from './client.js';
 
 // Zod Schemas for Database Entities
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+export const PostgreSQLBigintDecimalSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/u)
+  .refine(
+    value => {
+      if (value.length > 19) {
+        return false;
+      }
+
+      try {
+        return BigInt(value) <= POSTGRES_BIGINT_MAX;
+      } catch {
+        return false;
+      }
+    },
+    'Value exceeds the PostgreSQL BIGINT range.'
+  );
+
 export const MemoryEntrySchema = z.object({
   id: z.number(),
   key: z.string(),
@@ -32,6 +53,7 @@ export const JobDataSchema = z.object({
   worker_id: z.string(),
   job_type: z.string(),
   status: z.string(),
+  claim_generation: PostgreSQLBigintDecimalSchema,
   input: z.unknown(),
   output: z.unknown().optional(),
   error_message: z.string().optional(),
@@ -106,78 +128,82 @@ export type RagDoc = z.infer<typeof RagDocSchema>;
 export type SessionRecord = z.infer<typeof SessionRecordSchema>;
 export type SessionVersionRecord = z.infer<typeof SessionVersionRecordSchema>;
 
+export type DatabaseCollationInspectionStatus =
+  | 'current'
+  | 'mismatch'
+  | 'version_unavailable'
+  | 'database_unavailable'
+  | 'inspection_failed';
+
+const MAX_COLLATION_VERSION_LOG_LENGTH = 128;
+
+function formatCollationVersionForLog(value: string): string {
+  const redacted = redactString(value);
+  const bounded = redacted.slice(0, MAX_COLLATION_VERSION_LOG_LENGTH);
+  const suffix =
+    redacted.length > MAX_COLLATION_VERSION_LOG_LENGTH ? '…' : '';
+  return JSON.stringify(`${bounded}${suffix}`);
+}
+
 /**
- * Refresh database collation if version mismatch detected
+ * Inspect the current database's collation version without changing database
+ * state. Collation maintenance is always an explicit operator action.
  */
-export async function refreshDatabaseCollation(): Promise<void> {
+export async function inspectDatabaseCollation(): Promise<DatabaseCollationInspectionStatus> {
   const pool = getPool();
-  //audit Assumption: no pool means DB unavailable; Handling: exit
-  if (!pool) return;
+  //audit Assumption: no pool means the database cannot be inspected; Handling: report unavailable.
+  if (!pool) {
+    return 'database_unavailable';
+  }
 
   try {
-    const { rows: dbRows } = await pool.query<{
-      name: string;
-      datcollate: string;
-      datcollversion: string | null;
+    const { rows } = await pool.query<{
+      configured_version: string | null;
+      actual_version: string | null;
     }>(
-      `SELECT datname AS name, datcollate, datcollversion
+      `SELECT
+         datcollversion AS configured_version,
+         pg_database_collation_actual_version(oid) AS actual_version
        FROM pg_database
        WHERE datname = current_database()`
     );
 
-    //audit Assumption: missing database row means no current DB; Handling: exit
-    if (!dbRows.length) {
-      return;
+    //audit Assumption: a missing current-database row means inspection is unavailable; Handling: report unavailable.
+    if (!rows.length) {
+      return 'database_unavailable';
     }
 
-    const { name, datcollate, datcollversion } = dbRows[0];
-
-    //audit Assumption: missing collation version means no refresh required
-    if (!datcollversion) {
-      return;
+    const { configured_version: configuredVersion, actual_version: actualVersion } = rows[0];
+    if (!configuredVersion || !actualVersion) {
+      return 'version_unavailable';
     }
 
-    const { rows: collationRows } = await pool.query<{ collversion: string | null }>(
-      `SELECT collversion
-       FROM pg_collation
-       WHERE collname = $1 AND collversion IS NOT NULL
-       ORDER BY collversion DESC
-       LIMIT 1`,
-      [datcollate]
-    );
-
-    //audit Assumption: missing collation info means no refresh required
-    if (!collationRows.length) {
-      return;
-    }
-
-    const latestCollationVersion = collationRows[0].collversion;
-
-    //audit Assumption: unchanged versions need no action; Handling: exit
-    if (!latestCollationVersion || latestCollationVersion === datcollversion) {
-      return;
+    if (configuredVersion === actualVersion) {
+      return 'current';
     }
 
     console.warn(
-      `[🔌 DB] Collation version mismatch detected (database=${datcollversion}, system=${latestCollationVersion}) - rebuilding indexes & refreshing...`
+      '[🔌 DB] Collation version mismatch detected ' +
+      `(configured=${formatCollationVersionForLog(configuredVersion)}, ` +
+      `actual=${formatCollationVersionForLog(actualVersion)}). ` +
+      'Startup is read-only; schedule operator-controlled collation maintenance against the confirmed database.'
     );
-
-    const safeName = name.replace(/"/g, '""');
-
-    try {
-      await pool.query(`REINDEX DATABASE "${safeName}"`);
-      console.log('[🔌 DB] Database reindexed successfully prior to collation refresh');
-    } catch (reindexError: unknown) {
-      //audit Assumption: reindex failure should not block refresh; Handling: warn
-      console.warn('[🔌 DB] Database reindex skipped:', getErrorMessage(reindexError));
-    }
-
-    await pool.query(`ALTER DATABASE "${safeName}" REFRESH COLLATION VERSION`);
-    console.log('[🔌 DB] Collation version refreshed successfully');
-  } catch (error: unknown) {
-    //audit Assumption: refresh failure should be non-fatal; Handling: warn
-    console.warn('[🔌 DB] Collation refresh skipped:', getErrorMessage(error));
+    return 'mismatch';
+  } catch {
+    //audit Assumption: a diagnostic failure must not prevent startup; Handling: warn and return a bounded status.
+    console.warn(
+      '[🔌 DB] Collation inspection failed; startup will continue without this diagnostic.'
+    );
+    return 'inspection_failed';
   }
+}
+
+/**
+ * @deprecated Use inspectDatabaseCollation(). This compatibility wrapper is
+ * passive and never performs collation maintenance.
+ */
+export async function refreshDatabaseCollation(): Promise<void> {
+  await inspectDatabaseCollation();
 }
 
 // Database Table Definitions
@@ -277,6 +303,7 @@ export const TABLE_DEFINITIONS = [
     worker_id VARCHAR(255) NOT NULL,
     job_type VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    claim_generation BIGINT NOT NULL DEFAULT 0,
     input JSONB NOT NULL,
     output JSONB,
     error_message TEXT,
@@ -303,6 +330,61 @@ export const TABLE_DEFINITIONS = [
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ
   )`,
+  `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS claim_generation BIGINT`,
+  `DO $$
+   DECLARE
+     claim_generation_type OID;
+   BEGIN
+     SELECT atttypid
+     INTO claim_generation_type
+     FROM pg_attribute
+     WHERE attrelid = 'job_data'::regclass
+       AND attname = 'claim_generation'
+       AND NOT attisdropped;
+
+     IF claim_generation_type IS DISTINCT FROM 'bigint'::regtype THEN
+       RAISE EXCEPTION
+         'job_data.claim_generation must have PostgreSQL BIGINT type'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `UPDATE job_data SET claim_generation = 0 WHERE claim_generation IS NULL`,
+  `ALTER TABLE job_data ALTER COLUMN claim_generation SET DEFAULT 0`,
+  `ALTER TABLE job_data ALTER COLUMN claim_generation SET NOT NULL`,
+  `DO $$
+   DECLARE
+     constraint_type "char";
+     constraint_definition TEXT;
+   BEGIN
+     SELECT contype, pg_get_constraintdef(oid, false)
+     INTO constraint_type, constraint_definition
+       FROM pg_constraint
+       WHERE conrelid = 'job_data'::regclass
+         AND conname = 'job_data_claim_generation_nonnegative';
+
+     IF constraint_definition IS NULL THEN
+       ALTER TABLE job_data
+         ADD CONSTRAINT job_data_claim_generation_nonnegative
+         CHECK (claim_generation >= 0) NOT VALID;
+     ELSIF constraint_type <> 'c'
+       OR regexp_replace(
+         constraint_definition,
+         '[[:space:]]+',
+         '',
+         'g'
+       ) NOT IN (
+         'CHECK((claim_generation>=0))',
+         'CHECK((claim_generation>=0))NOTVALID'
+       ) THEN
+       RAISE EXCEPTION
+         'job_data_claim_generation_nonnegative has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `ALTER TABLE job_data
+     VALIDATE CONSTRAINT job_data_claim_generation_nonnegative`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 2`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
@@ -343,10 +425,66 @@ export const TABLE_DEFINITIONS = [
     status VARCHAR(50) NOT NULL,
     planner_node_id TEXT,
     root_node_id TEXT,
+    snapshot_generation BIGINT NOT NULL DEFAULT 0,
     snapshot JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
   )`,
+  `ALTER TABLE dag_runs ADD COLUMN IF NOT EXISTS snapshot_generation BIGINT`,
+  `DO $$
+   DECLARE
+     snapshot_generation_type OID;
+   BEGIN
+     SELECT atttypid
+     INTO snapshot_generation_type
+     FROM pg_attribute
+     WHERE attrelid = 'dag_runs'::regclass
+       AND attname = 'snapshot_generation'
+       AND NOT attisdropped;
+
+     IF snapshot_generation_type IS DISTINCT FROM 'bigint'::regtype THEN
+       RAISE EXCEPTION
+         'dag_runs.snapshot_generation must have PostgreSQL BIGINT type'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `UPDATE dag_runs SET snapshot_generation = 0 WHERE snapshot_generation IS NULL`,
+  `ALTER TABLE dag_runs ALTER COLUMN snapshot_generation SET DEFAULT 0`,
+  `ALTER TABLE dag_runs ALTER COLUMN snapshot_generation SET NOT NULL`,
+  `DO $$
+   DECLARE
+     constraint_type "char";
+     constraint_definition TEXT;
+   BEGIN
+     SELECT contype, pg_get_constraintdef(oid, false)
+     INTO constraint_type, constraint_definition
+       FROM pg_constraint
+       WHERE conrelid = 'dag_runs'::regclass
+         AND conname = 'dag_runs_snapshot_generation_nonnegative';
+
+     IF constraint_definition IS NULL THEN
+       ALTER TABLE dag_runs
+         ADD CONSTRAINT dag_runs_snapshot_generation_nonnegative
+         CHECK (snapshot_generation >= 0) NOT VALID;
+     ELSIF constraint_type <> 'c'
+       OR regexp_replace(
+         constraint_definition,
+         '[[:space:]]+',
+         '',
+         'g'
+       ) NOT IN (
+         'CHECK((snapshot_generation>=0))',
+         'CHECK((snapshot_generation>=0))NOTVALID'
+       ) THEN
+       RAISE EXCEPTION
+         'dag_runs_snapshot_generation_nonnegative has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `ALTER TABLE dag_runs
+     VALIDATE CONSTRAINT dag_runs_snapshot_generation_nonnegative`,
 
   // Shared DAG artifact storage for cross-service Trinity dependency hydration
   `CREATE TABLE IF NOT EXISTS dag_artifacts (
@@ -752,25 +890,77 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_category_priority ON self_reflections(category, priority)`
 ];
 
-/**
- * Initialize required database tables
- */
-export async function initializeTables(): Promise<void> {
-  const pool = getPool();
-  //audit Assumption: no pool means DB unavailable; Handling: exit
-  if (!pool) return;
+const schemaReadyPools = new WeakSet<Pool>();
+const pendingSchemaInitializationByPool = new WeakMap<Pool, Promise<boolean>>();
 
+/**
+ * Return whether the exact current connected pool has completed schema setup.
+ */
+export function isDatabaseSchemaReady(): boolean {
+  const pool = getPool();
+  return Boolean(
+    pool &&
+    isDatabaseConnected() &&
+    schemaReadyPools.has(pool)
+  );
+}
+
+async function initializeTablesForPool(pool: Pool): Promise<boolean> {
   try {
     for (const query of TABLE_DEFINITIONS) {
       await pool.query(query);
     }
-    console.log('[🔌 DB] ✅ Database tables initialized successfully');
-  } catch (error: unknown) {
 
+    //audit Assumption: a pool can be replaced or disconnected while its DDL is in flight; failure risk: completion from an obsolete pool marks a replacement ready; expected invariant: readiness belongs only to the exact current connected pool; handling strategy: re-check identity and connectivity before recording readiness.
+    if (getPool() !== pool || !isDatabaseConnected()) {
+      return false;
+    }
+
+    schemaReadyPools.add(pool);
+    console.log('[🔌 DB] ✅ Database tables initialized successfully');
+    return true;
+  } catch (error: unknown) {
     //audit Assumption: initialization errors should surface; Handling: log + throw
     console.error('[🔌 DB] ❌ Failed to initialize tables:', getErrorMessage(error));
     throw error;
   }
+}
+
+/**
+ * Initialize required database tables
+ */
+export function initializeTables(): Promise<boolean> {
+  const pool = getPool();
+  //audit Assumption: no pool means DB unavailable; Handling: report false without recording readiness.
+  if (!pool) {
+    return Promise.resolve(false);
+  }
+
+  if (schemaReadyPools.has(pool)) {
+    return Promise.resolve(isDatabaseConnected());
+  }
+
+  const pendingInitialization = pendingSchemaInitializationByPool.get(pool);
+  if (pendingInitialization) {
+    return pendingInitialization;
+  }
+
+  const initialization = initializeTablesForPool(pool);
+  pendingSchemaInitializationByPool.set(pool, initialization);
+  void initialization.then(
+    () => {
+      if (pendingSchemaInitializationByPool.get(pool) === initialization) {
+        pendingSchemaInitializationByPool.delete(pool);
+      }
+    },
+    () => {
+      if (pendingSchemaInitializationByPool.get(pool) === initialization) {
+        pendingSchemaInitializationByPool.delete(pool);
+      }
+    }
+  );
+
+  return initialization;
 }
 
 function getErrorMessage(error: unknown): string {

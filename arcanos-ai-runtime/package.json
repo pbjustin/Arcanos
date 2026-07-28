@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test tests/smoke.test.js",
-    "test:integration": "npm --prefix .. run build:packages && npm run build && node --test tests/runtime_integration.test.js"
+    "test": "npm run build && node --test tests/smoke.test.js tests/http_security.test.js tests/job_boundary_security.test.js tests/admission_security.test.js tests/redis_transport_security.test.js tests/startup_lifecycle.test.js tests/shutdown_lifecycle.test.js",
+    "test:integration": "npm --prefix .. run build:packages && npm run build && node --test tests/runtime_integration.test.js tests/http_security.test.js tests/job_boundary_security.test.js tests/admission_security.test.js tests/redis_transport_security.test.js tests/startup_lifecycle.test.js tests/shutdown_lifecycle.test.js",
+    "test:redis-integration": "npm --prefix .. run build:packages && npm run build && node --test tests/admission_redis.integration.test.js"
   },
   "keywords": [],
   "author": "",

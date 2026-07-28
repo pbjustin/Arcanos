@@ -89,22 +89,29 @@ function configureMockImplementations(): void {
   getAiExecutionContextMock.mockReturnValue(null);
 }
 
-function buildCoreServiceExpectation(fixture: OpenAIResponseConversionFixture): Record<string, unknown> {
+function buildCompletionExpectation(
+  fixture: OpenAIResponseConversionFixture,
+  id: string
+): Record<string, unknown> {
   const expected = fixture.expected;
+  const message = {
+    role: 'assistant',
+    content: expected.content,
+    refusal: expected.refusal,
+    ...(expected.toolCalls.length > 0
+      ? { tool_calls: [...expected.toolCalls] }
+      : {})
+  };
 
   return {
-    id: expected.id,
+    id,
     object: 'chat.completion',
     created: expected.created,
     model: expected.model,
     choices: [
       {
         index: 0,
-        message: {
-          role: 'assistant',
-          content: expected.content,
-          refusal: null
-        },
+        message,
         finish_reason: expected.finishReason,
         logprobs: null
       }
@@ -131,28 +138,12 @@ function buildCoreServiceExpectation(fixture: OpenAIResponseConversionFixture): 
   };
 }
 
-function buildWorkerExpectation(fixture: OpenAIResponseConversionFixture): Record<string, unknown> {
-  const expected = fixture.expected;
+function buildCoreServiceExpectation(fixture: OpenAIResponseConversionFixture): Record<string, unknown> {
+  return buildCompletionExpectation(fixture, fixture.expected.id);
+}
 
-  return {
-    id: expected.workerId,
-    object: 'chat.completion',
-    created: expected.created,
-    model: expected.model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: 'assistant',
-          content: expected.content,
-          refusal: null
-        },
-        finish_reason: expected.workerFinishReason,
-        logprobs: null
-      }
-    ],
-    usage: expected.workerUsage
-  };
+function buildWorkerExpectation(fixture: OpenAIResponseConversionFixture): Record<string, unknown> {
+  return buildCompletionExpectation(fixture, fixture.expected.workerId);
 }
 
 async function convertThroughCore(response: unknown): Promise<unknown> {
@@ -238,8 +229,15 @@ afterAll(() => {
 });
 
 describe('OpenAI Responses to ChatCompletion conversion parity', () => {
-  it.each(openAIResponseConversionFixtures)(
-    '$name preserves the observed converter outputs',
+  const completionFixtures = openAIResponseConversionFixtures.filter(
+    (fixture) => fixture.expected.conversionError === undefined
+  );
+  const conversionErrorFixtures = openAIResponseConversionFixtures.filter(
+    (fixture) => fixture.expected.conversionError !== undefined
+  );
+
+  it.each(completionFixtures)(
+    '$name preserves the shared provider contract',
     async (fixture) => {
       const serviceResult = convertServiceResponse(
         fixture.response as never,
@@ -254,7 +252,7 @@ describe('OpenAI Responses to ChatCompletion conversion parity', () => {
       expect(workerResult).toEqual(buildWorkerExpectation(fixture));
 
       expect(Object.hasOwn(serviceResult, 'provider_metadata')).toBe(true);
-      expect(Object.hasOwn(workerResult as object, 'provider_metadata')).toBe(false);
+      expect(Object.hasOwn(workerResult as object, 'provider_metadata')).toBe(true);
       expect(Object.hasOwn(serviceResult.choices[0]?.message ?? {}, 'refusal')).toBe(true);
       expect(
         Object.hasOwn(
@@ -262,6 +260,49 @@ describe('OpenAI Responses to ChatCompletion conversion parity', () => {
           'refusal'
         )
       ).toBe(true);
+
+      for (const result of [serviceResult, coreResult, workerResult] as Array<{
+        choices: Array<{
+          finish_reason: string;
+          message: {
+            tool_calls?: unknown[];
+          };
+        }>;
+      }>) {
+        const choice = result.choices[0];
+        const hasToolCalls = Array.isArray(choice?.message.tool_calls)
+          && choice.message.tool_calls.length > 0;
+        expect(choice?.finish_reason === 'tool_calls').toBe(hasToolCalls);
+      }
+
+      expect(coreResponsesCreateMock).toHaveBeenCalledTimes(1);
+      expect(workerResponsesCreateMock).toHaveBeenCalledTimes(1);
+      expect(retryWithBackoffMock).toHaveBeenCalledTimes(1);
+      expect(coreChatCreateMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(conversionErrorFixtures)(
+    '$name rejects a non-convertible provider outcome through all three seams',
+    async (fixture) => {
+      const expectedError = fixture.expected.conversionError;
+      if (!expectedError) {
+        throw new Error(`Missing conversion error expectation for ${fixture.name}`);
+      }
+
+      let serviceError: unknown;
+      try {
+        convertServiceResponse(
+          fixture.response as never,
+          OPENAI_CONVERSION_REQUESTED_MODEL
+        );
+      } catch (error) {
+        serviceError = error;
+      }
+
+      expect(serviceError).toMatchObject(expectedError);
+      await expect(convertThroughCore(fixture.response)).rejects.toMatchObject(expectedError);
+      await expect(convertThroughWorker(fixture.response)).rejects.toMatchObject(expectedError);
 
       expect(coreResponsesCreateMock).toHaveBeenCalledTimes(1);
       expect(workerResponsesCreateMock).toHaveBeenCalledTimes(1);

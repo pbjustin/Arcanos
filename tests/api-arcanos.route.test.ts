@@ -349,6 +349,7 @@ describe('api-arcanos route', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
     expect(response.text).toContain('"type":"chunk"');
     expect(response.text).toContain('"pipeline":"trinity"');
     expect(response.text).toContain('"type":"done"');

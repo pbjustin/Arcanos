@@ -147,7 +147,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
 /**
  * Run full SDK initialization sequence
  */
-router.post('/init-all', confirmGate, async (_, res) => {
+router.post('/init-all', confirmGate, async (req, res) => {
   try {
     const workerBootstrap = await startWorkers();
     const results: InitAllResults = {
@@ -166,9 +166,12 @@ router.post('/init-all', confirmGate, async (_, res) => {
     try {
       const diagnosticsResult = await runSystemDiagnostics();
       results.diagnostics = diagnosticsResult.diagnostics;
-    } catch (error: unknown) {
+    } catch {
+      req.logger?.warn?.('sdk.init_all.diagnostics_unavailable', {
+        requestId: req.requestId,
+      });
       results.diagnostics = {
-        error: error instanceof Error ? error.message : String(error),
+        error: 'Diagnostics unavailable',
       };
     }
 

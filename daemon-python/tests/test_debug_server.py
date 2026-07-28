@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from arcanos.debug import DebugMetrics, get_metrics, liveness, readiness
-from arcanos.config import Config
+from arcanos.config import Config, get_automation_auth
 from arcanos.debug.middleware import handle_request as handle_debug_request
 from arcanos.debug_server import DebugAPIHandler
 from tests.credential_observation import assert_no_credential_material
@@ -28,6 +28,7 @@ def make_request(
     *,
     request_headers: dict[str, str] | None = None,
     automation_secret: str = "test-automation-secret",
+    automation_auth: tuple[str, str] | None = None,
 ) -> tuple[int, dict]:
     """
     Helper to execute DebugAPIHandler using a socket-like in-memory request.
@@ -94,7 +95,9 @@ def make_request(
 
     with patch(
         "arcanos.debug_server.get_automation_auth",
-        return_value=("x-arcanos-automation", automation_secret),
+        return_value=automation_auth
+        if automation_auth is not None
+        else ("x-arcanos-automation", automation_secret),
     ):
         handler_class(mock_socket, ("127.0.0.1", 0), server)
 
@@ -210,6 +213,52 @@ class TestDebugServerAuthentication:
             credential,
             exact_data,
             padded_data,
+            request_log.call_args_list,
+            audit_log.call_args_list,
+            captured.out,
+            captured.err,
+        )
+
+    def test_colliding_automation_secret_cannot_authenticate(
+        self,
+        monkeypatch,
+        mock_cli_instance,
+        capsys,
+    ):
+        credential = "".join(
+            ("opaque", "-automation-collision-", "credential-marker")
+        )
+        monkeypatch.setenv("ARCANOS_AUTOMATION_SECRET", credential)
+        monkeypatch.setenv(
+            "ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN",
+            credential,
+        )
+        monkeypatch.setattr(Config, "DEBUG_SERVER_TOKEN", None)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", False)
+        automation_auth = get_automation_auth()
+        assert automation_auth == ("x-arcanos-automation", "")
+
+        class TestHandler(DebugAPIHandler):
+            cli_instance = mock_cli_instance
+
+        with patch("arcanos.debug.middleware.log_request") as request_log, patch(
+            "arcanos.debug_server.log_audit_event"
+        ) as audit_log:
+            status, data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                request_headers={"x-arcanos-automation": credential},
+                automation_secret="",
+                automation_auth=automation_auth,
+            )
+
+        assert status == 401
+        captured = capsys.readouterr()
+        assert_no_credential_material(
+            credential,
+            data,
             request_log.call_args_list,
             audit_log.call_args_list,
             captured.out,

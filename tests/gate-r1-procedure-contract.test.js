@@ -7,14 +7,14 @@ const runbook = readFileSync(
     import.meta.url
   ),
   'utf8'
-);
+).replace(/\r\n?/gu, '\n');
 const authorizationRequest = readFileSync(
   new URL(
     '../docs/audits/action-plan-execution/2026-07-18/private-only-gate-r/gate-r-authorization-request.md',
     import.meta.url
   ),
   'utf8'
-);
+).replace(/\r\n?/gu, '\n');
 
 describe('Gate R1 procedure contract', () => {
   it('uses an isolated exact-target link and guards every R1 Railway mutation', () => {

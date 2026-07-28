@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { getEnv } from '@platform/runtime/env.js';
 import { sendInternalErrorCode } from '@shared/http/index.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 /**
  * Minimal auth / origin protection for MCP Streamable HTTP.
@@ -15,7 +16,15 @@ function parseAllowedOrigins(raw: string): string[] {
     .filter(Boolean);
 }
 
-const mcpBearerToken = getEnv('MCP_BEARER_TOKEN');
+const configuredMcpBearerToken = getEnv('MCP_BEARER_TOKEN');
+const mcpBearerToken = configuredMcpBearerToken
+  && !hasConfiguredPurposeBoundCredentialCollision({
+    credential: configuredMcpBearerToken,
+    ownEnvironmentName: 'MCP_BEARER_TOKEN',
+    readEnvironmentValue: environmentName => process.env[environmentName],
+  })
+  ? configuredMcpBearerToken
+  : undefined;
 const allowedOrigins = parseAllowedOrigins(getEnv('MCP_ALLOWED_ORIGINS', ''));
 
 export function mcpAuthMiddleware(req: Request, res: Response, next: NextFunction): void {

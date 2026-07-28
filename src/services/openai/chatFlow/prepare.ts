@@ -35,9 +35,11 @@ export function prepareChatFlow(
     model
   };
 
-  trackPromptUsage(prompt, reinforcementMetadata);
-
   const preparedMessages = buildChatMessages(prompt, systemPrompt, options);
+
+  // Record only after message construction so the current prompt cannot influence
+  // the system-role instructions for its own request.
+  trackPromptUsage(prompt, reinforcementMetadata);
 
   if (Object.keys(reinforcementMetadata).length > 0) {
     aiLogger.debug("OpenAI call metadata", {

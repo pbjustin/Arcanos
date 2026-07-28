@@ -80,6 +80,7 @@ export type GuardViolationType =
 export type DagEventType =
   | 'run.created'
   | 'run.started'
+  | 'run.cancellation_requested'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -206,6 +207,8 @@ export interface DagRunSummary extends TrinityRuntimeMetadata {
   durationMs?: number;
   createdAt: ISODateString;
   updatedAt: ISODateString;
+  cancellationRequestedAt?: ISODateString;
+  cancellationReason?: string;
   artifacts?: string[];
   resumable?: boolean;
   finalOutput?: FinalOutput;
@@ -215,7 +218,24 @@ export interface CreateDagRunData {
   run: DagRunSummary;
 }
 
-export type CreateDagRunResponse = ApiEnvelope<CreateDagRunData>;
+export type DagRunAdmissionState = 'pending' | 'admitted' | 'rejected';
+
+export interface DagRunAdmissionStatus {
+  runId: string;
+  snapshotGeneration: string;
+  state: DagRunAdmissionState;
+  createNewRun: boolean;
+  pollAfterSeconds?: number;
+}
+
+export interface DagRunAdmissionData {
+  admission: DagRunAdmissionStatus;
+}
+
+export type CreateDagRunResponse =
+  ApiEnvelope<CreateDagRunData | DagRunAdmissionData>;
+
+export type DagRunAdmissionResponse = ApiEnvelope<DagRunAdmissionData>;
 
 export interface DagRunData {
   run: DagRunSummary;
@@ -376,11 +396,17 @@ export interface DagLineageData {
 
 export type DagLineageResponse = ApiEnvelope<DagLineageData>;
 
-export interface CancelDagRunResponseData {
-  runId: string;
-  status: 'cancelled';
-  cancelledNodes: string[];
-}
+export type CancelDagRunResponseData =
+  | {
+      runId: string;
+      status: 'cancellation_requested';
+      cancelledNodes: string[];
+    }
+  | {
+      runId: string;
+      status: 'cancelled';
+      cancelledNodes: string[];
+    };
 
 export type CancelDagRunResponse = ApiEnvelope<CancelDagRunResponseData>;
 
@@ -478,6 +504,10 @@ export interface ArcanosVerificationApi {
   'GET /api/arcanos/dag/runs/:runId': {
     request: { runId: string };
     response: DagRunResponse;
+  };
+  'GET /api/arcanos/dag/runs/:runId/admission': {
+    request: { runId: string; snapshotGeneration: string };
+    response: DagRunAdmissionResponse;
   };
   'GET /api/arcanos/dag/runs/:runId/trace': {
     request: { runId: string; maxEvents?: number };

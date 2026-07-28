@@ -27,7 +27,7 @@ Redis is infrastructure support. It is used for fast shared state and coordinati
 There are two worker execution modes:
 
 1. In-process worker runtime
-The main app can execute work immediately through the in-process runtime. That path is used by direct worker dispatch.
+The main app can execute work immediately through the in-process runtime. That path is used by direct worker dispatch and is bootstrapped explicitly by the application startup lifecycle when configured; importing shared worker modules does not start it.
 
 Relevant code:
 - `src/services/workerControlService.ts`
@@ -110,12 +110,16 @@ Now Arcanos builds one canonical tool definition and emits:
 This is why the remaining ask-style compatibility code builds tool payloads correctly when temporarily enabled, while new callers should use canonical GPT and control-plane routes.
 
 ### Worker/operator auth boundaries
-Worker-helper authentication is route-specific.
+Worker privilege requirements are assigned per route, while credential verification is shared.
 
 These bounded summary routes do not apply the worker-helper privileged-auth middleware:
 - `GET /worker-helper/status`
 - `GET /worker-helper/health`
 - `GET /worker-helper/jobs/failed`
+
+The bundled helper's `status` command intentionally sends no worker-helper
+credential. Configuring `ARCANOS_WORKER_HELPER_TOKEN` does not add it to that
+public request.
 
 These job-detail and mutation routes require authenticated operator or trusted internal access:
 - `GET /worker-helper/jobs/latest`
@@ -126,8 +130,37 @@ These job-detail and mutation routes require authenticated operator or trusted i
 
 Privileged access accepts a daemon context, a configured `ARCANOS_WORKER_HELPER_TOKEN` supplied through `x-arcanos-worker-helper-token` or Bearer authentication, an authenticated `admin`/`operator`/`owner` role, or an established operator actor. The `operator-light` role is explicitly denied. These checks supplement deployment-level access controls; they are not removed for a solo-operator deployment.
 
+The worker-helper token must be an exact 32–4096 character value with no whitespace or placeholder text and must be distinct from every credential in the canonical ARCANOS application-auth registry. Send it through one non-empty carrier only. Duplicate token or Authorization headers, simultaneous custom and Bearer credentials, and values that require trimming are rejected with the generic authentication response.
+
+The direct `POST /workers/heal` and `POST /workers/run/:workerId` routes are
+stricter: they accept the configured worker-helper token or an established full
+`admin`/`operator`/`owner` identity, then separately require action
+confirmation. A daemon marker, operator audit label, automation confirmation,
+or `x-confirmed` alone does not authorize direct worker control. Direct and
+worker-helper heal requests share a 10-per-15-minute principal budget.
+
+### Safety quarantine recovery
+
+`GET /status/safety` is a public, allowlisted summary and does not reveal
+quarantine IDs, reasons, metadata, or entity-keyed counters. For an integrity
+quarantine:
+
+1. Read authenticated `GET /status/safety/self-heal` with the control-plane
+   bearer and `arcanos:read`.
+2. Read the quarantine ID from `safetyState`.
+3. Call `POST /status/safety/quarantine/:id/release` with the same bearer,
+   `self-improve:control`, and exact deterministic confirmation.
+4. Recheck the public summary.
+
+The release route remains reachable during unsafe state only after the
+pre-parser boundary authenticates the operator. `ADMIN_KEY`, `x-api-key`,
+`x-operator-id`, or confirmation alone do not authorize it.
+
 Relevant code:
 - `src/routes/worker-helper.ts`
+- `src/routes/workers.ts`
+- `src/routes/safety.ts`
+- `src/transport/http/middleware/workerHelperPrivilegedAuth.ts`
 - `scripts/worker-helper.mjs`
 
 ## What This Means For The End User
@@ -196,7 +229,37 @@ Use:
 - `node scripts/worker-helper.mjs dispatch "your input"`
 - `node scripts/worker-helper.mjs heal`
 
-The bundled script sends no worker-helper credential. Its privileged commands therefore require a surrounding authenticated integration or will return `401`; the script is not an authentication bypass.
+Only `status` is credential-free. Every protected command requires
+`ARCANOS_WORKER_HELPER_TOKEN` in the script environment and fails locally before
+network access when it is absent, malformed, placeholder-like, or equal to
+another canonical application credential. The script accepts no token,
+worker-helper-token, or Authorization CLI flag and sends the credential only as
+`x-arcanos-worker-helper-token`, never as outbound Authorization. Configure the
+same exact token on the caller and target.
+
+For a protected command, `ARCANOS_BASE_URL` or `--base-url` must be an exact
+explicit HTTPS origin without user information, path, query, or fragment. Exact
+HTTP origins are accepted only for `localhost`, `127.0.0.1`, or IPv6 loopback.
+Redirects are rejected. The script accepts at most 1 MiB of JSON response data
+and removes exact credential reflections before printing the result.
+
+### Remote worker repair actuator
+
+Remote self-healing uses `SELF_HEAL_WORKER_SERVICE_URL`; compatibility aliases
+are `WORKER_HELPER_BASE_URL`, `RAILWAY_SERVICE_ARCANOS_WORKER_URL`, and
+`ARCANOS_WORKER_PUBLIC_URL`. Every configured alias must be valid and normalize
+to the same exact HTTPS origin, with exact loopback HTTP as the only exception.
+The actuator reports itself unavailable when URL aliases are invalid or
+conflicting, or when the caller lacks a valid `ARCANOS_WORKER_HELPER_TOKEN`.
+
+The caller and target must hold the identical token. The actuator re-resolves it
+immediately before fetch, sends only the custom worker-helper header, and rejects
+redirects. A successful target response must be a JSON object no larger than 64
+KiB with matching `requestedForce` and the bounded restart fields. The actuator
+returns only `requestedForce`, `restart.started`, `restart.alreadyRunning`,
+`restart.runWorkers`, and a locally generated `restart.message`. It validates
+but discards the target-controlled message so arbitrary remote text, fields, and
+unrelated secrets do not reach logs or telemetry.
 
 ### Queue and GPT job observability
 

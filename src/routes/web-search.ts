@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { webSearchAgent } from '@services/webSearchAgent.js';
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
 
@@ -74,11 +74,21 @@ router.post(
         ...result
       });
     } catch (error) {
-      //audit Assumption: upstream search/provider failures are operational errors, not validation errors; failure risk: leaking internal stack details; expected invariant: client gets a stable failure contract; handling strategy: map to WEB_SEARCH_FAILED with resolved message only.
+      try {
+        apiLogger.error('Web search request failed', {
+          module: 'web-search',
+          operation: 'web-search.execute',
+          requestId: req.requestId ?? 'unknown'
+        }, undefined, error instanceof Error ? error : undefined);
+      } catch {
+        // Logging must not replace the stable public failure response.
+      }
+
+      //audit Assumption: upstream search/provider failures are operational errors, not validation errors; failure risk: leaking internal stack details; expected invariant: client gets a stable failure contract; handling strategy: log server-side and return fixed public text.
       res.status(500).json({
         ok: false,
         error: 'WEB_SEARCH_FAILED',
-        message: resolveErrorMessage(error),
+        message: 'Web search failed.',
         timestamp: new Date().toISOString()
       });
     }

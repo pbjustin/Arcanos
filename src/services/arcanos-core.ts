@@ -15,7 +15,7 @@ import { recordTraceEvent } from '@platform/logging/telemetry.js';
 import { generateMockResponse } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
-import { routeOperatorCommandThroughDispatch } from '@services/gptAccessNaturalLanguageDispatch.js';
+import { getArcanosCoreOperatorDispatch } from '@services/arcanosCoreOperatorDispatchPort.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
@@ -1060,7 +1060,7 @@ export const ArcanosCore: ModuleDef = {
         normalizedPayload[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]
       );
       if (requestedAction === 'query') {
-        const dispatchResult = await routeOperatorCommandThroughDispatch({
+        const dispatchResult = await getArcanosCoreOperatorDispatch()({
           utterance: prompt,
           context: {
             sourceEndpoint,

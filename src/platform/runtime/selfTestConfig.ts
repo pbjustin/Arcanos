@@ -12,8 +12,8 @@ export const DEFAULT_SELF_TEST_PROMPTS: SelfTestPrompt[] = [
   },
   {
     id: 'memory-awareness',
-    prompt: 'Summarize any memory context you can access in one paragraph.',
-    expectation: 'Model references stored memory context without errors.'
+    prompt: 'Report only whether the memory subsystem is available. Do not quote, summarize, or reveal stored memory.',
+    expectation: 'Model reports memory-subsystem availability without returning stored content.'
   },
   {
     id: 'module-routing',

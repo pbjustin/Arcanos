@@ -8,12 +8,32 @@ import {
   getLatestJob,
   getJobQueueSummary,
   type JobFailureBreakdown,
+  type JobFailureCategory,
   type JobFailureReasonSummary
 } from '@core/db/repositories/jobRepository.js';
 import { getSessionStorageMetrics } from '@core/db/repositories/sessionRepository.js';
 import { getCanonicalPublicRouteTable } from './runtimeRouteTableService.js';
 
 type DiagnosticStatus = 'live' | 'offline' | 'degraded';
+
+const PUBLIC_FAILURE_REASON_BY_CATEGORY = {
+  authentication: 'Authentication failure.',
+  network: 'Network failure.',
+  provider: 'Provider failure.',
+  rate_limited: 'Rate limit failure.',
+  timeout: 'Timeout failure.',
+  validation: 'Validation failure.',
+  unknown: 'Worker job failure.'
+} as const satisfies Record<JobFailureCategory, string>;
+
+function projectPublicFailureReason(
+  failure: JobFailureReasonSummary
+): JobFailureReasonSummary {
+  return {
+    ...failure,
+    reason: PUBLIC_FAILURE_REASON_BY_CATEGORY[failure.category] ?? 'Worker job failure.'
+  };
+}
 
 function resolveBuildIdentifier(): string {
   return (
@@ -153,7 +173,7 @@ export async function getQueueDiagnostics(): Promise<{
       validation: 0,
       unknown: 0
     },
-    recentFailureReasons: queueSummary?.recentFailureReasons ?? [],
+    recentFailureReasons: (queueSummary?.recentFailureReasons ?? []).map(projectPublicFailureReason),
     lastJobId: latestJob?.id ?? null,
     lastJobStatus: latestJob?.status ?? null,
     lastJobFinishedAt: finishedAt,

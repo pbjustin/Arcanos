@@ -52,7 +52,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -85,8 +85,13 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - `200 OK` completed direct action: `{ ok:true, action:"query_and_wait", status:"completed", result:"...", directAction:{ inline:true, queueBypassed:true }, _route }`
 - `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - Error shape: `{ ok:false, action, error:{ code, message } }`
+- A repository outage after a job is accepted returns HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and the stable message `Async GPT job status is temporarily unavailable because durable job persistence is unavailable.` The response keeps the accepted `jobId`, `poll`, and `stream` coordinates; creation-stage outages cannot include job coordinates.
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
-- `200 OK` system-state retrieval/update: `POST /system-state` with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is handled directly on the control plane and never enters the GPT writing dispatcher.
+- `200 OK` system-state retrieval/update: authenticated `POST /system-state`
+  with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is
+  handled directly on the control plane and never enters the GPT writing
+  dispatcher. It requires the control-plane operator bearer, `mcp:invoke`, and
+  the issued one-use confirmation challenge.
 - `400 Bad Request` control rejection: prompt-based job lookups, explicit job lookup actions, diagnostics, system_state, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
 
 Canonical client-facing async acknowledgement:
@@ -113,6 +118,8 @@ Job status routes:
 - `GET /jobs/:id/result`: returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
 - `GET /jobs/:id/stream`: SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
 - `POST /jobs/:id/cancel`: cancels a queued GPT job immediately or requests best-effort cancellation for a running GPT job.
+- When job persistence is unavailable, the status, result, and cancellation routes return HTTP `503` with `{ "error": "JOB_REPOSITORY_UNAVAILABLE" }`. This is distinct from a successful missing-job lookup.
+- If persistence is unavailable before an SSE stream opens, `/jobs/:id/stream` returns the same JSON `503`. If it becomes unavailable after streaming begins, the route emits `event: error` with `{ "code": "JOB_REPOSITORY_UNAVAILABLE", "jobId": "..." }` and closes.
 - These generic routes expose GPT jobs only. A `local-agent` job is returned exactly like a missing job and its output is available only through the authenticated, tenant-bound `POST /gpt-access/jobs/result` operation.
 
 GPT job lifecycle:
@@ -137,6 +144,7 @@ Client retry guidance:
 - Natural-language retrieval through `prompt` text is intentionally blocked. Retrieval must use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result`.
 - Do not send prompts that ask the GPT route to inspect runtime state, trigger DAGs, or call MCP tools. Use the direct control endpoints instead.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
+- Treat repository-unavailable `503` responses as temporary: retain any returned `jobId` and retry the same result lookup with bounded backoff. Never reinterpret `503` as `not_found` or create replacement work solely because status storage is temporarily unavailable.
 
 ## Primary Supported Surfaces and Notable Endpoint Groups
 
@@ -146,16 +154,51 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /`
 - `GET /health`
 - `GET /healthz`
-- `GET /readyz`
+- `GET|HEAD /readyz`
 - `GET /railway/healthcheck`
-- `GET /status`
-- `POST /status` (confirmation required)
+- `GET /diagnostics` (public no-store runtime summary; its module map is
+  catalog-backed and includes only the 12 non-protected definitions; `active`
+  means the validated definition is loaded in the process registry, not that
+  every downstream dependency of that module is ready)
+- `GET /api/diagnostics/queues` (credential-free, no-store aggregate queue
+  summary; recent failure entries retain category, retryability, count, and
+  timestamp but replace persisted failure text with fixed category labels)
+- `GET /status` (deprecated no-store alias for the public health response;
+  unexpected failures retain the deprecation headers and return a fixed
+  `500` message without exception text)
+- `POST /status` (confirmation required; confirmation challenges and handler
+  responses are no-store, and persistence failures return fixed text)
 - `POST /heartbeat` (confirmation required)
 - `GET /api/test`
 - `GET /api/fallback/test`
 
+The root backend's credential-free `/readyz` checks OpenAI, database, Redis,
+and startup readiness in that order. It returns `200` only when every critical
+check is healthy and otherwise returns `503`; all responses use
+`Cache-Control: no-store`. `GET` returns the top-level fields `ready`, `status`,
+`timestamp`, `checks`, and `duration`. Each check exposes only `name`,
+`healthy`, `duration`, and, when unhealthy, a stable `code` and fixed public
+`error`. The Redis check additionally retains only `recoveryCount`,
+`readyGeneration`, `circuitEnabled`, and `circuitState` under `metadata` for
+the lifecycle recovery verifier. `HEAD` preserves the same status and headers
+without a body. Provider and database exceptions, connection details, OpenAI
+configuration metadata, and arbitrary checker metadata are never returned.
+
+`GET /railway/healthcheck` is a credential-free compatibility diagnostic, not
+the canonical Railway deployment probe. It returns `200` when its internal
+report is healthy and `503` when degraded or unavailable, and all responses
+are marked `no-store`. Its bounded payload contains only a stable status code,
+fixed summary, worker booleans and file count, normalized aggregate memory
+values, and a timestamp. Internal worker filenames, checked filesystem paths,
+free-form reasons, and exception messages are not returned. Unexpected
+failures are logged only by stable code and error type with request
+correlation. Railway deployments should continue probing `GET /health`.
+
 ### Core AI interaction
 - `POST /gpt/:gptId` (canonical GPT writing plane)
+- `POST /dispatch` (universal GPT/DAG compatibility dispatcher; asynchronous
+  branch failures return the stable `500 DISPATCH_FAILED` envelope without
+  internal exception text)
 - `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
 - `GET /trinity/status`
 - `POST /arcanos` (confirmation required)
@@ -163,23 +206,133 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `POST /siri` (confirmation required)
 - `POST /api/ask-hrc`
 - `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
+- `POST /api/arcanos/dag/runs` (control-plane operator and `mcp:invoke`
+  required)
+- `GET|HEAD /api/arcanos/dag/runs/:runId/admission` (exact-run admission
+  monitor; control-plane operator and `mcp:invoke` required)
+- Other `GET|HEAD /api/arcanos/dag/runs/*` inspection routes
+  (control-plane operator and `arcanos:read` required)
+- `POST /api/arcanos/dag/runs/:runId/cancel` (control-plane operator and
+  `mcp:invoke` required)
+
+The exact `/api/arcanos/dag/*` boundary authenticates before broad request
+parsing, marks responses `no-store`, and assigns read versus execution scopes
+by method and canonical path. Both the boundary and the existing per-route
+limits use the authenticated control-plane principal, so rotating caller-owned
+session IDs does not create fresh DAG execution buckets.
+
+DAG run creation also has a per-web-process active-run limit. When that
+capacity is full, `POST /api/arcanos/dag/runs` returns `429` with
+`DAG_RUN_CAPACITY_EXCEEDED` and a `Retry-After` header. If the initial durable
+snapshot commit cannot be confirmed, creation remains an accepted request: it
+returns `202` with `Retry-After`, a `Location` under
+`/api/arcanos/dag/runs/:runId/admission`, and a stable admission identity
+containing the `runId` and snapshot generation. The admission monitor requires
+the same `mcp:invoke` scope as creation and reports distinct `pending`,
+`admitted`, and `rejected` states. `pending` and `admitted` always set
+`createNewRun: false`; only a definitive `rejected` state sets
+`createNewRun: true`. A temporarily unavailable monitor returns `503` for the
+idempotent `GET`, preserves `createNewRun: false`, and directs the caller to poll
+the same URL. Clients must never repeat the create `POST` while admission is
+pending or unavailable, and full run inspection remains separately protected by
+`arcanos:read`. An accepted cancellation first persists cooperative
+cancellation intent, then returns `202` with
+`status: "cancellation_requested"`; a repeated request or an already-cancelled
+run returns `200`. A confirmed absent run returns `404 RUN_NOT_FOUND`, a
+complete or failed run returns `409 RUN_NOT_CANCELLABLE`, and an active run
+owned by another replica or unavailable/corrupt control persistence returns
+`503` with `DAG_RUN_OWNED_ELSEWHERE` or `DAG_RUN_CANCELLATION_UNAVAILABLE` plus
+`Retry-After`. Cancellation does not release the admitting replica's capacity
+reservation until the background execution promise settles.
 
 ### State and Custom GPT bridge
-- `GET /system-state`
-- `POST /system-state`
+- `GET /system-state` (control-plane operator and `arcanos:read` required)
+- `POST /system-state` (control-plane operator, `mcp:invoke`, and an issued
+  one-use confirmation challenge required)
 - `POST /api/bridge/gpt`
 - `POST /api/openai/gpt-action` (bridge compatibility alias)
-- `GET /api/bridge/health`
+- `GET /api/bridge/health` (requires the bridge shared secret; returns a
+  no-store operational payload with fixed database and worker failure text)
+
+System-state authentication and method-specific authorization run before broad
+request parsing. Mutation JSON is strict and capped at 64 KiB; every response
+is marked `no-store`, and unknown protected subpaths terminate within the
+control-plane boundary. A rejected mutation returns
+`x-confirmation-challenge`; retry the same authenticated request body with
+`x-confirmed: token:<challenge-id-placeholder>`. The token is one-use and bound to the
+authenticated principal and request body; manual `yes`, trusted-client, and
+automation bypasses are not accepted. The server accepts caller-selected
+`sessionId` values up to 100 characters for compatibility. This is
+deployment-wide operator containment, not tenant or per-session ownership
+enforcement.
+
+### AFOL decision and inspection
+- `POST /api/afol/decide` (control-plane operator, `mcp:invoke`, and an issued
+  one-use confirmation challenge required)
+- `GET|HEAD /api/afol/health` (control-plane operator and `arcanos:read`
+  required)
+- `GET|HEAD /api/afol/logs` (control-plane operator and `arcanos:read`
+  required)
+- `GET|HEAD /api/afol/analytics` (control-plane operator and `arcanos:read`
+  required)
+
+The exact AFOL boundary authenticates and authorizes before its dedicated body
+parser. Inspection reads run before writing-plane consistency, reject bodies,
+and project existing in-memory or historical records at response time.
+`POST /decide` remains behind writing-plane consistency, accepts one strict,
+uncompressed object JSON body of at most 64 KiB and depth 32, and requires the
+issued principal-, actor-, dispatch-, and body-bound challenge. Manual, trusted,
+one-time-token, and automation compatibility paths do not authorize execution.
+Unknown methods, extra path segments, and more than one trailing slash
+terminate inside the protected namespace.
+
+All responses are `no-store`. Decision responses replace the submitted prompt
+and intent with fixed redaction markers and never return provider exception
+text; the current model answer is retained only after shared credential
+redaction. New AFOL files contain only decision metadata
+(`kind`, `id`, `timestamp`, `ok`, `route`, `latencyMs`, `cached`, and
+`degraded`) or a fixed error category; prompts, completions, intents, policy
+prose, and provider error text are never written. Log reads reproject legacy
+JSONL records into that same metadata union and skip malformed lines without
+loading the whole file. Analytics and log writes are serialized and atomically
+replace bounded snapshots. A persistence failure does not convert a successful
+model decision into an HTTP failure.
+
+Existing files created by an older release may still contain sensitive fields
+until the next successful bounded rewrite or a separately approved operator
+rotation. Runtime reset helpers replace content atomically and do not delete
+files. Execution uses a 30-request-per-15-minute authenticated-principal
+budget, reads use 120 per 5 minutes, and invalid credentials use a separate
+60-per-15-minute ingress-address budget.
 
 ### Reinforcement and reflection feedback
-- `POST /reinforce`
-- `POST /audit`
-- `POST /reinforcement/judge`
-- `GET /reinforcement/metrics`
-- `GET /memory/digest`
-- `GET /memory`
+- `POST /reinforce` (control-plane operator and `mcp:invoke` required)
+- `POST /audit` (control-plane operator and `mcp:invoke` required)
+- `POST /reinforcement/judge` (control-plane operator and `mcp:invoke`
+  required)
+- `GET`/`HEAD /reinforcement/metrics` (control-plane operator and
+  `arcanos:read` required)
+- `GET`/`HEAD /memory/digest` (control-plane operator and `arcanos:read`
+  required)
+- `GET`/`HEAD /memory` (control-plane operator and `arcanos:read` required)
 - `POST /api/web/search`
 - `GET /metrics` (Prometheus metrics; enabled unless `METRICS_ENABLED=false`)
+
+The six reinforcement and root-memory routes above authenticate before CORS
+and broad body parsing, return `no-store`, and terminate unsupported methods or
+subpaths inside their exact namespaces. `/reinforce` accepts only an object
+JSON or `application/*+json` body up to 32 KiB. `/audit` and
+`/reinforcement/judge` use the same strict media-type rules with a 128 KiB
+ceiling. Read requests reject bodies. Authenticated principals share a
+30-request-per-15-minute feedback budget and a
+120-request-per-5-minute inspection budget; invalid credentials use a separate
+60-request-per-15-minute ingress-address budget.
+
+These machine-feedback routes do not gain a new confirmation challenge. The
+current legacy `ai-endpoints.ts` owner of `POST /audit` retains its existing
+confirmation requirement; when legacy GPT routes are disabled, the CLEAR
+feedback owner remains confirmation-free. Public `GET /health` is unchanged
+and continues to be owned by the earlier health-group router.
 
 ### AI utility and media
 - `POST /write` (confirmation required)
@@ -193,8 +346,24 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `POST /api/openai/prompt`
 
 ### Memory, codebase, and reusable code
+
+Every `/api/memory/*`, `/api/save-conversation*`, and `/api/sessions*` route
+listed below requires the exact `ARCANOS_MEMORY_ACCESS_TOKEN` in
+`x-arcanos-memory-token`.
+`Authorization`, cookies, query parameters, and body fields are not memory
+credential carriers. Missing or invalid server configuration returns
+`503 MEMORY_AUTH_UNAVAILABLE`; missing, malformed, duplicate, or incorrect
+request credentials return `401 MEMORY_AUTH_REQUIRED`. Authentication precedes
+the writing-plane consistency gate and any listed confirmation requirement.
+The credential grants deployment-wide access only; it does not bind
+caller-controlled `sessionId` values to a tenant.
+
 - `POST /api/save-conversation`
 - `GET /api/save-conversation/:recordId`
+- `POST /api/sessions`
+- `GET /api/sessions`
+- `GET /api/sessions/:id`
+- `POST /api/sessions/:id/replay`
 - `GET /api/memory/health`
 - `POST /api/memory/save` (confirmation required)
 - `GET /api/memory/load`
@@ -205,15 +374,39 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /api/memory/search`
 - `POST /api/memory/nl`
 - `POST /api/memory/bulk` (confirmation required)
-- `GET /api/codebase/tree`
-- `GET /api/codebase/file`
+- `GET /api/codebase/tree` (control-plane bearer and `repo:read` required)
+- `GET /api/codebase/file` (control-plane bearer and `repo:read` required)
 - `POST /api/reusables`
 - `GET /api/reusables/health`
 
+The codebase routes are read-only control-plane inspection, not memory or
+writing-plane traffic. They require the purpose-bound control-plane bearer,
+server-owned operator principal, and `repo:read`; successful responses are
+`Cache-Control: no-store`, and unsupported subpaths terminate with JSON 404.
+Paths must resolve canonically inside `CODEBASE_ROOT`; static symbolic-link and
+Windows-junction components in a requested path are rejected. Concurrent local
+path replacement is detected on a best-effort basis because portable Node does
+not expose race-free `openat`-style directory traversal on Windows. File reads
+accept positive-integer line bounds and `maxBytes` from 1 through 262,144, read
+only the bounded prefix, and reject larger or malformed limits. Directory
+reads fail closed above 256 entries rather than materializing an unbounded
+listing.
+
+For `POST /gpt/:gptId`, the same custom header is required only when the request
+matches the dispatcher’s existing natural-language memory interception
+predicate: direct-module routing is not forced, the prompt parses as a memory
+command, a memory cue exists or no module action is routable, and the effective
+action is absent or `query`. Authenticated interceptions execute directly and
+do not enter the fast path or job queue, even when async, fast, or idempotency
+hints are present. Explicit `query` and `query_and_wait` requests already bypass
+intent interception and retain their existing behavior.
+
 ### Workers, orchestration, and DevOps
 - `GET /workers/status`
-- `POST /workers/heal` (confirmation required)
-- `POST /workers/run/:workerId` (confirmation required)
+- `POST /workers/heal` (strict privileged worker authentication, shared
+  worker-heal rate limit, and confirmation required)
+- `POST /workers/run/:workerId` (privileged worker authentication and confirmation required)
+  - File-backed `workerId` values are limited to 1–128 ASCII letters, digits, dots, underscores, or hyphens, beginning with a letter or digit. The resolved regular `.js` file must remain canonically inside the selected workers directory; path separators, absolute paths, traversal, escaping symlinks, the executable job runner, and shared helper modules are rejected before import.
 - `GET /worker-helper/status`
 - `GET /worker-helper/health`
 - `GET /worker-helper/jobs/latest` (privileged auth required)
@@ -221,29 +414,140 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /worker-helper/jobs/:id` (privileged auth required)
 - `POST /worker-helper/queue/ask` (privileged auth required)
 - `POST /worker-helper/dispatch` (privileged auth required)
-- `POST /worker-helper/heal` (privileged auth required)
+- `POST /worker-helper/heal` (privileged auth and shared worker-heal rate limit
+  required)
 - `GET /jobs/:id`
 - `GET /jobs/:id/result`
 - `GET /jobs/:id/stream`
 - `POST /jobs/:id/cancel`
-- `POST /orchestration/reset` (confirmation required)
-- `GET /orchestration/status`
-- `POST /orchestration/purge` (confirmation required)
-- `POST /devops/self-test`
-- `POST /devops/daily-summary`
+- `POST /orchestration/reset` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `GET /orchestration/status` (control-plane operator and `arcanos:read`
+  required)
+- `POST /orchestration/purge` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /devops/self-test` (control-plane operator and
+  `diagnostics:execute` required)
+- `POST /devops/daily-summary` (control-plane operator and
+  `diagnostics:execute` required)
+
+Both DevOps execution routes accept only an absent body or `{}`. The self-test
+target and both routes' attribution are server-owned; callers cannot select a
+base URL or `triggeredBy` value. They share one in-process single-flight lock
+and one five-starts-per-15-minutes principal bucket. Self-test outbound
+requests reject redirects, time out after 30 seconds per prompt, bound JSON
+responses to 256 KiB, and do not retain model-response previews. Daily-summary
+sources pass through centralized credential redaction before model submission
+or persistence, and responses expose a repository-relative artifact path
+rather than an absolute server path.
+
+Orchestration reset and purge share a two-starts-per-15-minutes principal
+budget and one process-local single-flight lock. Their strict JSON bodies are
+capped at 1 MiB; `agentId` and `sessionId` remain operation context, not caller
+identity. Confirmation is checked only after the purpose-bound bearer,
+server-owned operator principal, and scope have been established. Internal
+orchestration failures return fixed public errors.
+
+`POST /workers/heal` and `POST /workers/run/:workerId` reuse the strict
+worker-helper credential verifier:
+send `ARCANOS_WORKER_HELPER_TOKEN` through
+`x-arcanos-worker-helper-token` or Bearer authentication, or enter through an
+already established full `admin`/`operator`/`owner` identity. Token
+configuration must be an exact 32–4096 character value with no whitespace or
+placeholder text and must not duplicate another credential in the canonical
+ARCANOS application-auth registry.
+Token requests may use one non-empty carrier only; duplicate headers,
+whitespace-normalized values, and simultaneous custom and Authorization
+credentials fail closed with the generic authentication response. The
+`operator-light` role is denied. Legacy daemon markers and operator audit labels
+do not authorize either direct route. Authentication runs before confirmation,
+and neither `x-confirmed`, trusted automation, nor a confirmation challenge
+establishes caller identity. Direct and worker-helper heal requests share one
+10-per-15-minute principal budget whose keys never contain the credential.
 
 ### Research, RAG, and command routing
-- `GET /api/commands`
-- `GET /api/commands/health`
-- `POST /api/commands/execute` (confirmation required)
+- `GET /api/commands` (control-plane operator and `arcanos:read` required)
+- `GET /api/commands/health` (control-plane operator and `arcanos:read`
+  required)
+- `POST /api/commands/execute` (control-plane operator, `mcp:invoke`, and
+  issued one-use confirmation challenge required)
+- `POST /api/agent/execute` (control-plane operator, `mcp:invoke`, and issued
+  one-use whole-plan confirmation challenge required)
+- `GET /api/control-plane/capabilities`
+- `POST /api/control-plane` (dedicated bearer authentication and server-owned operation scopes required; confirmation additionally required for gated operations)
 - `GET /api/control-plane/allowlist`
 - `GET /api/control-plane/deep-diagnostics`
-- `POST /api/control-plane/operations` (confirmation required)
+- `POST /api/control-plane/operations` (dedicated bearer authentication and server-owned operation scopes required; confirmation additionally required)
 - `POST /commands/research` (confirmation required)
 - `POST /sdk/research` (confirmation required)
-- `POST /rag/fetch`
-- `POST /rag/save`
-- `POST /rag/query`
+- `POST /rag/fetch` (control-plane operator, `mcp:invoke`, and issued
+  one-use confirmation challenge required)
+- `POST /rag/save` (control-plane operator, `mcp:invoke`, and issued
+  one-use confirmation challenge required)
+- `POST /rag/query` (control-plane operator and `arcanos:read` required;
+  confirmation is not required)
+
+The exact command/agent CEF boundary authenticates before body allocation,
+returns `Cache-Control: no-store`, and uses separate authenticated-principal
+budgets for registry reads and execution. `GET` and `HEAD` command registry
+reads accept one optional trailing slash, reject request bodies, and run outside
+writing-plane consistency rerouting. The two execution routes accept strict,
+uncompressed JSON objects of at most 256 KiB and retain writing-plane
+consistency checks;
+their sensitive bindings block conflicts instead of rerouting to a GPT route.
+Unknown methods and paths under `/api/commands` or `/api/agent` terminate with a
+fixed 404. Both execution routes require the issued challenge token; manual
+`x-confirmed: yes`, allow-all mode, trusted-GPT metadata, one-time-token
+compatibility, and automation-secret bypasses do not authorize CEF execution.
+Challenges bind the authenticated actor, control-plane principal, fixed CEF
+workspace, dispatch state, and exact validated command or stable plan intent.
+Changing the command, payload, goal, plan intent, principal, or relevant
+dispatch state requires a new challenge.
+
+After confirmation, the command center still fails closed unless it receives an
+opaque, single-use execution permit for the exact command and canonical
+validated payload. Direct command requests receive one permit. Agent requests
+freeze the confirmed plan and derive one independently bound permit for each
+step from the single whole-plan challenge; DAG nodes do not issue their own
+challenges. Unsupported commands and invalid command or planner payloads return
+their existing 400-class response before a challenge is issued. The CEF ingress
+boundary does not treat confirmation as caller identity, and challenges remain
+local to the replica that issued them.
+
+The exact `/rag/*` boundary authenticates and principal-throttles requests before
+allocating their bodies. It accepts strict JSON objects only, rejects compressed
+or ambiguous content types, and returns `Cache-Control: no-store`.
+`/rag/fetch` accepts at most 8 KiB of JSON with one HTTP(S) URL no longer than
+2,048 characters; the fetcher additionally denies URL credentials, private or
+reserved destinations, redirects, proxying, and unbounded response work.
+`/rag/query` accepts at most 16 KiB with a non-empty question no longer than
+4,000 characters. `/rag/save` accepts at most 256 KiB; content is capped at
+200,000 characters, identifiers at 200 characters, sources at 2,048 characters,
+and JSON-safe metadata at 16 KiB with bounded depth and fan-out. Unknown fields
+and unsafe metadata keys are rejected.
+
+Fetch, save, and query share a process-local HTTP concurrency cap of two.
+Excess work is not queued: it returns HTTP `429` with
+`error.code: "RAG_OPERATION_BUSY"` and `Retry-After: 5`. Fetch and save
+challenges are bound to the authenticated actor, configured principal, exact
+path, and exact parsed request body; manual, trusted-GPT, automation, and
+one-time-token shortcuts do not replace the issued challenge. Successful
+ingestion still performs outbound/provider and persistent database work. This
+boundary provides deployment-wide operator containment, not tenant or workspace
+ownership: all three routes address the same configured RAG corpus.
+
+For either `/api/control-plane` POST route, send
+`Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>`. Authentication,
+server-owned scope authorization, and action confirmation are separate checks:
+`x-confirmed`, body approval fields, `context.caller`, and caller-supplied scopes
+cannot authenticate or authorize a request. The server binds caller identity and
+approval attribution to `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID`. The application can
+start without this optional HTTP credential configuration, but both POST routes
+fail closed with 503 until the access token and principal settings are valid.
+Missing or empty server scopes are a valid empty grant and deny operations with 403.
+These control-plane routes are mounted outside the writing-plane consistency and
+reroute middleware; their own authentication, authorization, and confirmation
+checks remain authoritative.
 
 ### Daemon, debug, and registry paths
 - `POST /mcp` (MCP Streamable HTTP, bearer token required, origin-restricted when configured)
@@ -251,17 +555,56 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `POST /api/daemon/heartbeat` (daemon auth required)
 - `GET /api/daemon/commands` (daemon auth required)
 - `POST /api/daemon/commands/ack` (daemon auth required)
+- `POST /api/daemon/commands/result` (daemon auth required)
 - `POST /api/daemon/confirm-actions` (daemon auth required)
 - `GET /api/daemon/registry` (daemon auth required)
-- `POST /api/update` (public validation path; daemon-auth variant also exists)
+- `POST /api/update` (separate public validation path)
+- `GET /api/prompt-debug/latest` (control-plane bearer and `arcanos:read`
+  required; metadata-only by default, with content available only in explicit
+  sensitive `full` mode)
+- `GET /api/prompt-debug/events` (control-plane bearer and `arcanos:read`
+  required; same trace-content policy)
+- `GET /api/ai-routing/debug/latest` (control-plane bearer and `arcanos:read`
+  required; bounded routing metadata by default)
+- `GET /debug/watchdog` (mounted only when `DEBUG_WATCHDOG=true`; requires the
+  exact `x-debug-key` purpose-bound credential, returns `503` when server key
+  configuration is unavailable and `403` for missing or incorrect request
+  credentials, and is always `Cache-Control: no-store`)
 - `POST /debug/create-confirmation-token` (automation secret required)
 - `POST /debug/consume-confirm-token` (automation secret required)
 - `ALL /bridge-status`, `/bridge`, `/bridge/handshake`, `/ipc`, `/ipc/handshake`, `/ipc/status`
-- `GET /registry`
-- `GET /registry/:moduleName`
-- `POST /queryroute`
-- `POST /modules/:moduleRoute` (dynamic module route from runtime module loader)
+- `GET /registry` (legacy public projection of the 12 non-protected catalog definitions)
+- `GET /registry/:moduleName` (legacy public detail; protected catalog definitions are indistinguishable from absent)
+- `POST /queryroute` (legacy catalog-backed dispatch for exposed definitions only)
+- `POST /modules/:moduleRoute` (legacy catalog-backed route for exposed definitions only)
 - `POST /gpt/:gptId` (writing plane; control compatibility actions are intercepted before write dispatch)
+
+The source-owned catalog contains 15 definitions. `ARCANOS:CLI`,
+`ARCANOS:LOCAL_AGENT`, and `ARCANOS:PRODUCTIVITY` are GPT Access-only and are
+excluded from all four legacy/public module projections above and from default
+GPT-ID routing. Their route, source-stem, and normalized name variants are
+reserved before fuzzy matching and return `UNKNOWN_GPT` on the writing plane.
+Catalog membership alone grants no execution authority.
+
+Every `/api/daemon/*` request must send exactly one
+`x-arcanos-daemon-token` matching `ARCANOS_DAEMON_ACCESS_TOKEN`. The configured
+and presented values must be exact, case-sensitive, 32–4096 character,
+whitespace-free, non-placeholder credentials, and the configured value must be
+distinct from every other canonical purpose-bound application credential.
+Bearer authorization, `x-gpt-id`, cookies, query parameters, and body fields do
+not grant daemon access. Missing or invalid server configuration returns
+`503 DAEMON_AUTH_UNAVAILABLE`; missing, malformed, duplicate, or incorrect
+request credentials return `401 DAEMON_AUTH_REQUIRED`. Both responses use
+`Cache-Control: no-store`.
+
+Rate limiting and authentication run before daemon handling. Authenticated
+unknown `/api/daemon/*` paths terminate with 404 and never enter writing-plane
+consistency or GPT rerouting. This is deployment-wide transport containment,
+not per-instance identity: any holder can address any known daemon `instanceId`.
+New instance records use the non-secret `anonymous-daemon` store partition.
+Historical opaque partitions are preserved locally for compatibility, never
+placed on request context, logged, or returned, and the access credential is
+never persisted to the daemon token file.
 
 ### GPT Access protected gateway
 - `GET /gpt-access/openapi.json` (public schema metadata)
@@ -324,6 +667,7 @@ These routes use the ActionPlan role/auth boundary and the separate ActionPlan e
 - `POST /api/self-improve/freeze`
 - `POST /api/self-improve/unfreeze`
 - `POST /api/self-improve/autonomy`
+- `POST /status/safety/quarantine/:quarantineId/release`
 - `GET /_introspection`
 - `GET /_introspection/gpt/:gptId`
 - `GET /contracts/custom_gpt_route.openapi.v1.json`
@@ -333,39 +677,230 @@ These routes use the ActionPlan role/auth boundary and the separate ActionPlan e
 - `GET /contracts/action_plan_execution.openapi.v1.json`
 - `GET /openapi/custom-gpt-bridge.yaml`
 
-Self-heal/self-improve operations are operator capabilities, and introspection routes expose contracts or sanitized routing metadata. They are not writing-plane GPT actions.
+Every `/api/self-heal/*` and `/api/self-improve/*` request, the detailed
+`GET /status/safety/self-heal` compatibility route, and integrity-quarantine
+release are direct control-plane operations. These surfaces share an
+ingress-client rate limit and require
+`Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>` before the broad
+JSON parser or any handler. Authenticated mutation bodies then use a 256 KiB
+JSON ceiling before the broad application parser. Requests with a body must use
+a JSON media type, and self-improve mutation schemas reject unknown fields. The
+configured principal must be an operator and must have these server-owned
+scopes:
+
+- Runtime, event, inspection, and passive provider-health reads:
+  `arcanos:read`.
+- Provider health with `probe=1`, `probe=true`, or `probe=yes`:
+  `arcanos:read` plus `self-heal:probe`. The active probe may make upstream
+  provider requests and has a separate, tighter rate limit.
+- Predictive decision requests: `self-heal:decide`.
+- A predictive request whose JSON body contains `execute: true`:
+  `self-heal:decide` plus `self-heal:execute`.
+- Detailed safety status and self-improve status: `arcanos:read`.
+- Manual `POST /api/self-improve/run`: `self-heal:decide` plus
+  `self-heal:execute`; it shares the decision rate-limit bucket.
+- Freeze, unfreeze, autonomy changes, and integrity-quarantine release:
+  `self-improve:control`; these share a tighter control-mutation bucket.
+  Autonomy accepts only integer levels 0–3, and control reasons/release notes
+  are bounded strings.
+
+`POST /api/self-heal/decide` still applies
+`capabilityGate('self_improve_admin')` after control-plane authentication and
+scope authorization. All five `/api/self-improve/*` routes retain the same
+capability check as a secondary compatibility prerequisite; its caller-supplied
+agent ID is not identity-bound authorization. Agent identity or the automation
+bypass never substitutes for the bearer principal. The restrictive freeze
+operation remains reachable when the global unsafe-execution gate is active;
+run, unfreeze, and autonomy changes remain blocked in that state.
+The caller-provided `source` field is a compatibility label, not authenticated
+identity. Authenticated unknown paths terminate with the standard API 404 and
+do not enter writing-plane consistency or GPT routing.
+
+Simulation input is recommendation-only: `simulate` requires explicit
+`dryRun: true` and cannot be combined with `execute: true`. A live HTTP
+execution request cannot override server policy: it returns 409 while
+`PREDICTIVE_HEALING_ENABLED` is false or
+`PREDICTIVE_HEALING_DRY_RUN` is true.
+
+The compact `GET /status/safety` route remains public but exposes only
+allowlisted condition/quarantine classifications, counts, and aggregate
+counters—never raw IDs, reasons, metadata, or entity-keyed counters. Its
+detailed `GET /status/safety/self-heal` companion requires the control-plane
+bearer and `arcanos:read` and includes raw operator safety state under
+`safetyState`; it is not a public health check.
+
+To release an integrity quarantine, first read its ID from the authenticated
+detail route, then `POST /status/safety/quarantine/:quarantineId/release` with
+the same bearer, `self-improve:control`, and either `x-confirmed: yes` or the
+exact JSON confirmation `release:<quarantineId>`. The unsafe-state gate keeps
+this recovery path reachable only after the pre-parser boundary has established
+the operator principal; that exemption is not authorization. Recheck the public
+summary after release. Self-heal/self-improve operations are not writing-plane
+GPT actions, and introspection routes expose contracts or sanitized routing
+metadata.
 
 ### API submodules mounted under `/api`
-- `GET /api/assistants`
-- `POST /api/assistants/sync`
-- `GET /api/assistants/:name`
+- `GET|HEAD /api/assistants` (control-plane operator and `arcanos:read`)
+- `GET|HEAD /api/assistants/:name` (control-plane operator and
+  `arcanos:read`)
+- `POST /api/assistants/sync` (control-plane operator, `mcp:invoke`, and an
+  issued one-use confirmation challenge)
 - `POST /api/sim`
 - `GET /api/sim/health`
 - `GET /api/sim/examples`
 - `POST /api/pr-analysis/webhook`
-- `POST /api/pr-analysis/analyze`
+- `POST /api/pr-analysis/analyze` (control-plane operator and `repo:verify`
+  required)
 - `GET /api/pr-analysis/health`
 - `GET /api/pr-analysis/schema`
 
-### SDK routes mounted under `/sdk`
-- `POST /sdk/workers/init` (confirmation required)
-- `GET /sdk/workers/status`
-- `POST /sdk/routes/register` (confirmation required)
-- `POST /sdk/scheduler/activate` (confirmation required)
-- `POST /sdk/jobs/dispatch` (confirmation required)
-- `POST /sdk/test-job` (confirmation required)
-- `POST /sdk/init-all` (confirmation required)
-- `GET /sdk/diagnostics`
-- `POST /sdk/system-test` (confirmation required)
+Assistant-registry traffic is direct control-plane work and bypasses the
+writing-plane memory-consistency gate. Reads reject request bodies and return
+only a count plus sorted normalized names, or `name`, `normalizedName`, and
+`model` for one record. Provider IDs, instructions, and tools are never
+returned. A missing name is a local 404 and neither list nor detail reads call
+the provider.
 
-## Verified route-order ambiguities
+Sync accepts only an uncompressed, strict empty JSON object (`{}`) up to 1 KiB.
+Manual, trusted-GPT, automation, allow-all, and one-time-token confirmation
+bypasses do not apply: the caller must consume the issued challenge bound to
+the authenticated principal and the fixed `assistant-registry` workspace.
+There may be one sync per process; overlap returns 409 with a bounded
+`Retry-After`. Sync starts are limited to five per principal per 15 minutes,
+reads to 120 per principal per 5 minutes, and invalid credentials to 60 per
+ingress address per 15 minutes.
+
+One confirmed sync may enumerate at most 50 provider pages and 1,000 records.
+It rejects malformed or non-progressing cursors, duplicates, and oversized
+records before installing a complete candidate. The registry replacement uses
+an exclusive mode-`0600` same-directory temporary file, file flush, and atomic
+rename under a process-local persistence mutex. Missing or invalid cache files
+never overwrite an existing live snapshot, and sync failures return a fixed
+error rather than stale success.
+
+`npm run assistants-sync` is a one-shot backend client, not an OpenAI poller.
+Its first invocation requests a challenge and exits without consuming it.
+After operator approval, rerun
+`npm run assistants-sync -- --challenge <challenge-id>`. The client accepts
+HTTPS backends or exact HTTP loopback, refuses redirects, caps response bytes,
+and never reads `OPENAI_API_KEY`.
+
+Direct PR analysis is repository-verification control-plane work and bypasses
+the writing-plane memory-consistency gate. It accepts at most a 1.5 MB UTF-8
+diff and 500 unique, normalized repository-relative file paths. Absolute,
+drive, UNC, traversal, control-character, and escaping-symlink paths are
+rejected. One analysis may run per process, with two starts per principal per
+30 minutes. Command names and arguments remain fixed, command output capture is
+bounded to 1 MiB, and public failures omit subprocess and internal exception
+details. The webhook route remains an inert compatibility stub; it does not
+perform the analysis described by its acknowledgement.
+
+### SDK routes mounted under `/sdk`
+- `POST /sdk/research` (control-plane operator, `mcp:invoke`, and confirmation
+  required)
+- `POST /sdk/workers/init` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `GET /sdk/workers/status` (control-plane operator and `arcanos:read`
+  required)
+- `POST /sdk/routes/register` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /sdk/scheduler/activate` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /sdk/jobs/dispatch` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /sdk/test-job` (control-plane operator, `mcp:invoke`, and confirmation
+  required)
+- `POST /sdk/init-all` (control-plane operator, `mcp:invoke`, and confirmation
+  required)
+- `GET /sdk/diagnostics` (control-plane operator and `arcanos:read` required)
+- `POST /sdk/system-test` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+
+The complete SDK namespace authenticates before parsing and terminates unknown
+subpaths. Mutations share a ten-starts-per-15-minutes principal budget, one
+process-local single-flight lock, a strict 1 MiB JSON limit, and the existing
+confirmation challenge. Reads share a higher read-only budget. SDK failure
+responses omit raw provider, database, filesystem, and worker error text.
+
+### Standalone `arcanos-ai-runtime` API
+
+These routes belong to the separately runnable `arcanos-ai-runtime/` workspace,
+not the root backend routes documented above:
+
+- `GET|HEAD /health` and `/healthz` are credential-free process-liveness
+  probes and return only `{ "status": "ok" }`.
+- `GET|HEAD /readyz` is a credential-free Redis/Queue readiness probe. It
+  returns `200 { "status": "ready" }` only while the producer connection is
+  ready, otherwise `503 { "status": "unavailable" }`.
+- `POST /jobs` requires the purpose-bound runtime Bearer identity and
+  `runtime:enqueue`.
+- `GET|HEAD /jobs/:id` requires the same identity and `runtime:read`.
+
+Authentication and scope checks precede the route-local 256 KiB JSON parser.
+The configured `ARCANOS_AI_RUNTIME_PRINCIPAL_ID` is written into every new job;
+caller body fields cannot choose it. Reads return the same `404` response for
+an absent job, a historical job without an owner, or a job owned by another
+principal. The listener accepts only UUID-v4 job IDs, returns fixed public
+failure text rather than BullMQ/provider failure detail, marks responses
+`no-store`, and does not accept the former `x-api-key` transport.
+
+`POST /jobs` accepts only an exact name in the required
+`AI_RUNTIME_ALLOWED_MODELS` policy, one to 100 message records, and an optional
+integer `maxTokens`. The server materializes
+`AI_RUNTIME_DEFAULT_MAX_TOKENS` when that field is omitted and rejects values
+above the required `AI_RUNTIME_MAX_TOKENS` policy (whose absolute ceiling is
+32768). Missing or malformed job policy returns
+`503 AI_RUNTIME_JOB_POLICY_UNAVAILABLE` before JSON parsing.
+The same path requires explicit shared Redis admission configuration. Enqueue
+rate is consumed before JSON parsing; exhausted windows return fixed `429`
+responses, and exhausted global reservations return fixed `503` responses, both
+with `Retry-After`. Reservations are confirmed after BullMQ enqueue, claimed
+with the worker's BullMQ token before provider execution, and released after a
+terminal queue transition. Stale pending/live reservations are reconciled in
+bounded batches, and missing jobs require two observations before release.
+Because the admission ledger and high-level `Queue.add` are not one Redis
+transaction, an ambiguous physical queue entry may temporarily remain, but a
+job without a valid reservation cannot execute the provider.
+Message roles are limited to `system`, `user`, `assistant`, `developer`, `tool`,
+and `function`; content may remain a string, array, or object for compatibility.
+The boundary reconstructs owned JSON and rejects repeated/cyclic references,
+non-plain objects, prototype-relevant keys, nesting beyond 16 containers, more
+than 8192 JSON values, arrays over 256 entries, objects over 64 keys, more than
+4096 aggregate keys, individual strings over 64 KiB, content strings over
+64,000 characters, or more than 192 KiB of aggregate UTF-8 string data. The
+separately running worker applies the same validation, configured model/token
+policy, and exact server-owned principal again before provider execution.
+
+Completed reads do not expose the stored provider response. The public
+`result` is either `{ "output_text": "..." }` (plus
+`"truncated": true` when the UTF-8 text was capped at 128 KiB) or the bounded
+runtime-budget timeout envelope. Provider response IDs, instructions, raw
+output items, encrypted reasoning, metadata, provider error objects, and
+unknown fields are omitted. New worker results are projected before BullMQ
+persistence, and the read route projects historical return values again.
+Resolved provider failures and unrecognized completed values use the same fixed
+`"Job execution failed"` response as BullMQ failures.
+
+The canonical Railway launcher does not start this workspace. Its actual
+deployment, network ACL, proxy, and caller state cannot be inferred from source
+and must be verified separately before activation or rollout. Enabling the
+admission ledger requires draining the existing queue or a versioned queue
+cutover. Configure the same explicit `AI_RUNTIME_QUEUE_NAME` on the new API and
+worker replicas so old deployments cannot share their BullMQ/admission
+namespace with the new reservation protocol.
+
+## Verified route ownership and remaining order ambiguities
 - `POST /audit` is defined in multiple routers; current mount order means AI utility handling executes first.
-- `POST /api/update` has a public route and a daemon-authenticated route; current mount order executes the public route first.
 - `GET /health` is defined in multiple routers; health-group handler executes first because it is mounted before reinforcement and status routes.
-- `/api/reusables*` routes are mounted both through `api/index.ts` and directly in `register.ts`; first matching handler responds and the second mount is effectively redundant.
+
+The `/api/reusables*` routes have one canonical owner in `api/index.ts` after
+the writing-plane memory-consistency gate; `register.ts` does not mount their
+leaf router directly.
 
 ## Legacy ask-route mode
 `src/routes/ask/index.ts` currently mounts only `/brain` for the old ask-style Trinity route. The default `ASK_ROUTE_MODE` is `gone`, so `/brain` returns `410 Gone` with canonical `/gpt/{gptId}` migration metadata. Set `ASK_ROUTE_MODE=compat` only when temporarily supporting an older caller during migration.
+
+In compatibility mode, an async `/brain` repository outage returns HTTP `503` with `error: "ASYNC_ASK_JOBS_UNAVAILABLE"`. A wait failure after enqueue includes `jobId` and `poll`; a creation-stage failure cannot include job coordinates.
 
 
 ## Daemon command result reporting
@@ -383,5 +918,7 @@ Body:
 ```
 
 Notes:
+- The endpoint requires the same `x-arcanos-daemon-token` as every other
+  `/api/daemon/*` route.
 - The backend stores results temporarily (in-memory by default).
 - `src/routes/ask/daemonTools.ts` will poll for results up to `DAEMON_RESULT_WAIT_MS` and feed them back to OpenAI as `function_call_output`.

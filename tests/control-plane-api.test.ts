@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockExecuteControlPlaneOperation = jest.fn();
 const mockGetControlPlaneDeepDiagnostics = jest.fn();
 const mockListControlPlaneAllowlist = jest.fn();
+let capturedRateLimitOptions:
+  | { keyGenerator?: (req: { ip?: string }) => string }
+  | undefined;
 
 jest.unstable_mockModule('@services/controlPlane/index.js', () => ({
   executeControlPlaneOperation: mockExecuteControlPlaneOperation,
@@ -15,13 +18,31 @@ jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/security.js', () => ({
-  createRateLimitMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  createRateLimitMiddleware: (options: typeof capturedRateLimitOptions) => {
+    capturedRateLimitOptions = options;
+    return (_req: unknown, _res: unknown, next: () => void) => next();
+  },
+  getRequestClientAddress: () => 'fallback-client-address',
   securityHeaders: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
+const { CONTROL_PLANE_PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } =
+  await import('../src/services/controlPlane/httpAuth.js');
 const router = (await import('../src/routes/api-control-plane.js')).default;
+
+const controlPlaneAccessToken = 'control-plane-api-access-token-1234567890';
+const controlPlanePrincipalId = 'operator:control-plane-api-test';
+const authEnvironmentNames = [
+  'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+  'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  'ARCANOS_CONTROL_PLANE_SCOPES',
+  ...CONTROL_PLANE_PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+] as const;
+const originalAuthEnvironment = new Map(
+  authEnvironmentNames.map((name) => [name, process.env[name]])
+);
 
 function buildApp() {
   const app = express();
@@ -112,6 +133,13 @@ function buildDeepDiagnosticsResponse(overrides: Record<string, unknown> = {}) {
 
 describe('api-control-plane route', () => {
   beforeEach(() => {
+    for (const name of authEnvironmentNames) {
+      delete process.env[name];
+    }
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = controlPlanePrincipalId;
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'backend:read,repo:verify';
+
     jest.clearAllMocks();
     mockListControlPlaneAllowlist.mockReturnValue([
       {
@@ -142,6 +170,23 @@ describe('api-control-plane route', () => {
       ],
     });
     expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+  });
+
+  it('keys pre-authentication rate limits by client address, not bearer contents', () => {
+    const keyGenerator = capturedRateLimitOptions?.keyGenerator;
+    expect(keyGenerator).toBeDefined();
+
+    const firstKey = keyGenerator?.({
+      ip: '203.0.113.20',
+      authorization: 'Bearer test-invalid-one',
+    } as { ip?: string });
+    const rotatedCredentialKey = keyGenerator?.({
+      ip: '203.0.113.20',
+      authorization: 'Bearer test-invalid-two',
+    } as { ip?: string });
+
+    expect(firstKey).toBe('ip:203.0.113.20:control-plane-operations');
+    expect(rotatedCredentialKey).toBe(firstKey);
   });
 
   it('returns deep diagnostics as a redacted read-only no-store response', async () => {
@@ -277,6 +322,7 @@ describe('api-control-plane route', () => {
 
     const response = await request(buildApp())
       .post('/api/control-plane/operations')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
       .send({
         operation: 'backend.health',
         provider: 'backend-api',
@@ -291,5 +337,114 @@ describe('api-control-plane route', () => {
     expect(response.status).toBe(expectedStatus);
     expect(response.body).toEqual(controlPlaneResponse);
     expect(mockExecuteControlPlaneOperation).toHaveBeenCalledTimes(1);
+    expect(mockExecuteControlPlaneOperation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      scope: ['backend:read', 'repo:verify'],
+      requestedBy: controlPlanePrincipalId,
+      dryRun: true,
+    }));
   });
+
+  it('rejects self-asserted identity and scope without the dedicated bearer credential', async () => {
+    const response = await request(buildApp())
+      .post('/api/control-plane/operations')
+      .set('x-confirmed', 'yes')
+      .send({
+        operation: 'npm.test',
+        provider: 'local-command',
+        target: { resource: 'repository' },
+        environment: 'local',
+        scope: 'repo:verify',
+        params: {},
+        dryRun: false,
+        traceId: 'trace-api-unauthenticated-test',
+        requestedBy: 'spoofed-operator',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before execution when HTTP authentication is not configured', async () => {
+    delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+
+    const response = await request(buildApp())
+      .post('/api/control-plane/operations')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({
+        operation: 'backend.health',
+        provider: 'backend-api',
+        target: { resource: 'health' },
+        environment: 'local',
+        scope: 'backend:read',
+        params: {},
+        traceId: 'trace-api-auth-unavailable-test',
+        requestedBy: 'spoofed-operator',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
+    expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+  });
+
+  it('rejects caller-supplied scope when the server principal lacks the required grant', async () => {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'backend:read';
+
+    const response = await request(buildApp())
+      .post('/api/control-plane/operations')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .set('x-confirmed', 'yes')
+      .send({
+        operation: 'npm.test',
+        provider: 'local-command',
+        target: { resource: 'repository' },
+        environment: 'local',
+        scope: 'repo:verify',
+        params: {},
+        dryRun: false,
+        traceId: 'trace-api-scope-test',
+        requestedBy: 'spoofed-operator',
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+  });
+
+  it('binds executor scope and audit identity to the authenticated principal', async () => {
+    mockExecuteControlPlaneOperation.mockResolvedValue(buildControlPlaneResponse());
+
+    const response = await request(buildApp())
+      .post('/api/control-plane/operations')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({
+        operation: 'backend.health',
+        provider: 'backend-api',
+        target: { resource: 'health' },
+        environment: 'local',
+        scope: 'caller:admin',
+        params: {},
+        traceId: 'trace-api-authoritative-principal-test',
+        requestedBy: 'spoofed-operator',
+      });
+
+    expect(response.status).toBe(200);
+    expect(mockExecuteControlPlaneOperation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      scope: ['backend:read', 'repo:verify'],
+      requestedBy: controlPlanePrincipalId,
+    }));
+  });
+});
+
+afterAll(() => {
+  for (const [name, value] of originalAuthEnvironment) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
 });

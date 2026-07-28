@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 const getSelfHealingLoopStatusMock = jest.fn();
 const getSelfHealingControlLoopStatusMock = jest.fn();
@@ -14,6 +18,17 @@ const recordSelfHealEventMock = jest.fn();
 const buildPredictiveHealingStatusSnapshotMock = jest.fn();
 const buildPredictiveHealingCompactSummaryMock = jest.fn();
 const buildSafetySelfHealSnapshotMock = jest.fn();
+const getActiveQuarantinesMock = jest.fn(() => [] as Record<string, unknown>[]);
+const getActiveUnsafeConditionsMock = jest.fn(() => [] as Record<string, unknown>[]);
+const getSafetyRuntimeSnapshotMock = jest.fn(() => ({
+  counters: {
+    duplicateSuppressions: 0,
+    quarantineActivations: 0,
+    workerFailures: {},
+    heartbeatMisses: {},
+    healthyCycles: {}
+  }
+}));
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
   getSelfHealingLoopStatus: getSelfHealingLoopStatusMock
@@ -53,23 +68,15 @@ jest.unstable_mockModule('../src/services/safety/runtimeState.js', () => ({
   buildUnsafeToProceedPayload: jest.fn(() => ({
     error: 'UNSAFE_TO_PROCEED',
     conditions: [],
-    quarantineIds: [],
+    quarantineCount: 0,
     timestamp: '2026-03-25T12:00:00.000Z'
   })),
   clearUnsafeCondition: jest.fn(() => false),
   clearUnsafeConditionsByQuarantine: jest.fn(() => 0),
-  getActiveQuarantines: jest.fn(() => []),
-  getActiveUnsafeConditions: jest.fn(() => []),
+  getActiveQuarantines: getActiveQuarantinesMock,
+  getActiveUnsafeConditions: getActiveUnsafeConditionsMock,
   getTrustedHash: jest.fn(() => undefined),
-  getSafetyRuntimeSnapshot: jest.fn(() => ({
-    counters: {
-      duplicateSuppressions: 0,
-      quarantineActivations: 0,
-      workerFailures: {},
-      heartbeatMisses: {},
-      healthyCycles: {}
-    }
-  })),
+  getSafetyRuntimeSnapshot: getSafetyRuntimeSnapshotMock,
   hasUnsafeBlockingConditions: jest.fn(() => false),
   incrementHeartbeatMiss: jest.fn(() => ({ count: 0, exceeded: false })),
   incrementHealthyCycle: jest.fn(() => 0),
@@ -95,15 +102,65 @@ jest.unstable_mockModule('../src/services/safety/runtimeState.js', () => ({
 }));
 
 const safetyRouter = (await import('../src/routes/safety.js')).default;
+const controlPlaneAccessToken = 'safety-self-heal-route-token-1234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
-function createApp(): express.Express {
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:safety-self-heal-route-test';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read';
+}
+
+function createApp(authenticate = true): express.Express {
+  configureControlPlane();
   const app = express();
+  if (authenticate) {
+    app.use((req, _res, next) => {
+      req.headers.authorization = `Bearer ${controlPlaneAccessToken}`;
+      next();
+    });
+  }
   app.use(express.json());
   app.use(safetyRouter);
   return app;
 }
 
 describe('safety self-heal routes', () => {
+  it('keeps compact safety public while protecting detailed self-heal state', async () => {
+    getSelfHealingLoopStatusMock.mockReturnValue({
+      loopRunning: false,
+      activeMitigation: null,
+      lastAction: null,
+    });
+    getTrinitySelfHealingStatusMock.mockReturnValue({ enabled: false });
+    getPromptRouteMitigationStateMock.mockReturnValue({ active: false });
+    buildSelfHealTelemetrySnapshotMock.mockReturnValue({});
+    buildCompactSelfHealSummaryMock.mockReturnValue({ status: 'idle' });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({});
+    buildPredictiveHealingCompactSummaryMock.mockReturnValue({ status: 'idle' });
+    const app = createApp(false);
+
+    await request(app).get('/status/safety').expect(200);
+    const detailedResponse = await request(app).get('/status/safety/self-heal');
+
+    expect(detailedResponse.status).toBe(401);
+    expect(detailedResponse.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(buildSafetySelfHealSnapshotMock).not.toHaveBeenCalled();
+  });
+
   it('returns structured self-heal telemetry with nested subsystem status', async () => {
     getSelfHealingLoopStatusMock.mockReturnValue({
       inFlight: false,
@@ -572,9 +629,9 @@ describe('safety self-heal routes', () => {
       lastEventKind: 'success',
       lastTriggerAt: '2026-03-25T11:59:59.000Z',
       lastAttemptAt: '2026-03-25T11:59:58.000Z',
-      triggerReason: 'worker stall detected',
-      actionTaken: 'healWorkerRuntime:started',
-      healedComponent: 'worker_runtime',
+      triggerReason: 'sentinel-public-self-heal-secret',
+      actionTaken: 'sentinel-public-self-heal-action',
+      healedComponent: 'sentinel-public-self-heal-component',
       recentEventCount: 3,
       detailsPath: '/status/safety/self-heal'
     });
@@ -617,9 +674,6 @@ describe('safety self-heal routes', () => {
         lastEventKind: 'success',
         lastTriggerAt: '2026-03-25T11:59:59.000Z',
         lastAttemptAt: '2026-03-25T11:59:58.000Z',
-        triggerReason: 'worker stall detected',
-        actionTaken: 'healWorkerRuntime:started',
-        healedComponent: 'worker_runtime',
         recentEventCount: 3,
         detailsPath: '/status/safety/self-heal'
       },
@@ -635,5 +689,153 @@ describe('safety self-heal routes', () => {
         detailsPath: '/api/self-heal/decide'
       }
     }));
+    expect(response.body.selfHealing).not.toHaveProperty('triggerReason');
+    expect(response.body.selfHealing).not.toHaveProperty('actionTaken');
+    expect(response.body.selfHealing).not.toHaveProperty('healedComponent');
+    expect(JSON.stringify(response.body)).not.toContain('sentinel-public-self-heal');
   });
+
+  it('keeps raw safety identifiers in authenticated detail only', async () => {
+    const quarantineId = 'quarantine-sensitive-123';
+    const expectedHash = 'expected-hash-sensitive-456';
+    const entityId = 'worker:sensitive-789';
+    const quarantineReason = 'sensitive integrity reason';
+    getActiveUnsafeConditionsMock.mockReturnValueOnce([{
+      conditionId: 'condition-sensitive-123',
+      code: 'PATTERN_INTEGRITY_FAILURE',
+      message: 'sensitive condition message',
+      blocking: true,
+      createdAt: '2026-03-25T12:00:00.000Z',
+      monotonicTsMs: 1,
+      quarantineId,
+      metadata: { expectedHash, entityId },
+    }]);
+    getActiveQuarantinesMock.mockReturnValueOnce([{
+      quarantineId,
+      kind: 'integrity',
+      reason: quarantineReason,
+      integrityFailure: true,
+      autoRecoverable: false,
+      createdAt: '2026-03-25T12:00:00.000Z',
+      monotonicTsMs: 1,
+      metadata: { expectedHash, entityId },
+    }]);
+    getSafetyRuntimeSnapshotMock.mockReturnValueOnce({
+      counters: {
+        duplicateSuppressions: 1,
+        quarantineActivations: 2,
+        workerFailures: { [entityId]: { count: 3, windowStartedMs: 1, lastFailureMs: 2 } },
+        heartbeatMisses: { [entityId]: 4 },
+        healthyCycles: { [entityId]: 5 },
+      },
+    });
+    getSelfHealingLoopStatusMock.mockReturnValue({
+      loopRunning: false,
+      activeMitigation: null,
+      lastAction: null,
+    });
+    getTrinitySelfHealingStatusMock.mockReturnValue({ enabled: false });
+    getPromptRouteMitigationStateMock.mockReturnValue({ active: false });
+    buildSelfHealTelemetrySnapshotMock.mockReturnValue({});
+    buildCompactSelfHealSummaryMock.mockReturnValue({ status: 'idle' });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({});
+    buildPredictiveHealingCompactSummaryMock.mockReturnValue({ status: 'idle' });
+
+    const publicResponse = await request(createApp(false))
+      .get('/status/safety')
+      .expect(200);
+    const publicJson = JSON.stringify(publicResponse.body);
+
+    expect(publicResponse.headers['cache-control']).toBe('no-store');
+    expect(publicResponse.body).toMatchObject({
+      activeConditionCount: 1,
+      activeQuarantineCount: 1,
+      activeConditions: [{
+        code: 'PATTERN_INTEGRITY_FAILURE',
+        blocking: true,
+      }],
+      activeQuarantines: [{
+        kind: 'integrity',
+        integrityFailure: true,
+        autoRecoverable: false,
+      }],
+      counters: {
+        duplicateSuppressions: 1,
+        quarantineActivations: 2,
+        workerFailureEvents: 3,
+        heartbeatMissEvents: 4,
+        healthyCycleEvents: 5,
+      },
+    });
+    for (const sensitiveValue of [
+      quarantineId,
+      expectedHash,
+      entityId,
+      quarantineReason,
+      'condition-sensitive-123',
+      'sensitive condition message',
+    ]) {
+      expect(publicJson).not.toContain(sensitiveValue);
+    }
+
+    getActiveUnsafeConditionsMock.mockReturnValueOnce([{
+      conditionId: 'condition-sensitive-123',
+      code: 'PATTERN_INTEGRITY_FAILURE',
+      message: 'sensitive condition message',
+      blocking: true,
+      createdAt: '2026-03-25T12:00:00.000Z',
+      monotonicTsMs: 1,
+      quarantineId,
+      metadata: { expectedHash, entityId },
+    }]);
+    getActiveQuarantinesMock.mockReturnValueOnce([{
+      quarantineId,
+      kind: 'integrity',
+      reason: quarantineReason,
+      integrityFailure: true,
+      autoRecoverable: false,
+      createdAt: '2026-03-25T12:00:00.000Z',
+      monotonicTsMs: 1,
+      metadata: { expectedHash, entityId },
+    }]);
+    getSafetyRuntimeSnapshotMock.mockReturnValueOnce({
+      counters: {
+        duplicateSuppressions: 1,
+        quarantineActivations: 2,
+        workerFailures: { [entityId]: { count: 3, windowStartedMs: 1, lastFailureMs: 2 } },
+        heartbeatMisses: { [entityId]: 4 },
+        healthyCycles: { [entityId]: 5 },
+      },
+    });
+    buildSafetySelfHealSnapshotMock.mockReturnValueOnce({ status: 'ok' });
+
+    const detailResponse = await request(createApp())
+      .get('/status/safety/self-heal')
+      .expect(200);
+    expect(detailResponse.body.safetyState.activeQuarantines[0].quarantineId)
+      .toBe(quarantineId);
+    expect(detailResponse.body.safetyState.activeConditions[0].metadata.expectedHash)
+      .toBe(expectedHash);
+    expect(detailResponse.body.safetyState.counters.workerFailures)
+      .toHaveProperty(entityId);
+  });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

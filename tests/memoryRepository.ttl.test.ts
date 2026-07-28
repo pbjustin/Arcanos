@@ -126,9 +126,7 @@ describe('memoryRepository TTL persistence', () => {
     expect(value).toEqual({ answer: 42 });
     expect(harness.queryMock).toHaveBeenCalledWith(
       expect.stringContaining('(expires_at IS NULL OR expires_at > NOW())'),
-      ['memory:load'],
-      1,
-      false
+      ['memory:load']
     );
   });
 });

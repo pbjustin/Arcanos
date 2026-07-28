@@ -21,6 +21,7 @@ import type {
   CreateDagRunData,
   CreateDagRunRequest,
   DagLatestRunData,
+  DagRunAdmissionData,
   DagRunData,
   DagTraceData,
   HealthData,
@@ -30,14 +31,24 @@ import type {
   WorkerStatus
 } from '../shared/types/arcanos-verification-contract.types.js';
 import { getWorkerControlStatus } from '../services/workerControlService.js';
-import { arcanosDagRunService } from '../services/arcanosDagRunService.js';
+import {
+  DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS,
+  DagRunAdmissionUncertainError,
+  DagRunCapacityExceededError,
+  arcanosDagRunService
+} from '../services/arcanosDagRunService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { UnsupportedDagTemplateError } from '@dag/templates.js';
+import { dagHttpBoundary } from '@services/controlPlane/dagHttpBoundary.js';
 
 const router = express.Router();
 const API_VERSION = '1.0.0';
 const DAG_RUN_LONG_POLL_MAX_MS = 30_000;
+const DAG_RUN_ADMISSION_RETRY_AFTER_SECONDS = Math.max(
+  1,
+  Math.ceil(DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS / 1_000)
+);
 
 const dagRunParamsSchema = z.object({
   runId: z.string().trim().min(1)
@@ -64,6 +75,10 @@ const dagRunWaitQuerySchema = z.object({
   waitForUpdateMs: z.coerce.number().int().min(0).max(DAG_RUN_LONG_POLL_MAX_MS).optional()
 });
 
+const dagRunAdmissionQuerySchema = z.object({
+  snapshotGeneration: z.string().trim().regex(/^[1-9]\d{0,18}$/u)
+});
+
 const dagLatestRunQuerySchema = z.object({
   sessionId: z.string().trim().min(1).optional()
 });
@@ -77,7 +92,8 @@ function buildDagRateLimitKey(req: express.Request, scope: string): string {
   const runId = typeof req.params.runId === 'string' && req.params.runId.trim().length > 0
     ? req.params.runId.trim()
     : 'global';
-  return `${getRequestActorKey(req)}:scope:${scope}:run:${runId}`;
+  const principalId = req.controlPlanePrincipal?.principalId ?? 'missing';
+  return `principal:${principalId}:scope:${scope}:run:${runId}`;
 }
 
 const verificationControlRateLimit = createRateLimitMiddleware({
@@ -91,7 +107,9 @@ const dagRunWriteRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-dag-write',
   maxRequests: 60,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:scope:dag-write`
+  keyGenerator: (req) => (
+    `principal:${req.controlPlanePrincipal?.principalId ?? 'missing'}:scope:dag-write`
+  )
 });
 
 const dagRunStatusRateLimit = createRateLimitMiddleware({
@@ -152,6 +170,18 @@ function setDagRunPollingHeaders(
     'X-Arcanos-Run-Updated': options.updated ? 'true' : 'false'
   });
 }
+
+function buildDagRunAdmissionStatusPath(
+  runId: string,
+  snapshotGeneration: string
+): string {
+  return (
+    `/api/arcanos/dag/runs/${encodeURIComponent(runId)}/admission`
+    + `?snapshotGeneration=${encodeURIComponent(snapshotGeneration)}`
+  );
+}
+
+router.use('/dag', dagHttpBoundary);
 
 function mapWorkerHealthStatus(input: {
   connected?: boolean;
@@ -312,6 +342,42 @@ router.post(
         sendBadRequest(res, 'DAG_TEMPLATE_UNSUPPORTED');
         return;
       }
+      //audit Assumption: an ambiguous initial write may already have committed and remains under bounded background reconciliation; failure risk: a failed POST response or generic retry hint causes clients to create duplicate runs; expected invariant: the response accepts the stable run identity and directs all continuation traffic to a dedicated admission monitor; handling strategy: return `202` with GET-only polling metadata and explicitly forbid another create while admission is pending.
+      if (error instanceof DagRunAdmissionUncertainError) {
+        const statusPath = buildDagRunAdmissionStatusPath(
+          error.runId,
+          error.snapshotGeneration
+        );
+        res.set({
+          'Retry-After': DAG_RUN_ADMISSION_RETRY_AFTER_SECONDS.toString(),
+          Location: statusPath
+        });
+        const data: DagRunAdmissionData = {
+          admission: {
+            runId: error.runId,
+            snapshotGeneration: error.snapshotGeneration,
+            state: 'pending',
+            createNewRun: false,
+            pollAfterSeconds: DAG_RUN_ADMISSION_RETRY_AFTER_SECONDS
+          }
+        };
+        sendVerificationEnvelope(
+          req,
+          res,
+          data,
+          'verification.dag_run_admission_pending.response',
+          202
+        );
+        return;
+      }
+      if (error instanceof DagRunCapacityExceededError) {
+        res.setHeader('Retry-After', error.retryAfterSeconds.toString());
+        res.status(429).json({
+          error: error.code,
+          message: error.message
+        });
+        return;
+      }
 
       sendInternalErrorPayload(res, {
         error: 'DAG_RUN_CREATE_FAILED',
@@ -336,6 +402,76 @@ router.get(
 
     const data: DagLatestRunData = { run };
     sendVerificationEnvelope(req, res, data, 'verification.dag_run_latest.response');
+  })
+);
+
+router.get(
+  '/dag/runs/:runId/admission',
+  dagRunStatusRateLimit,
+  validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
+  validateQuery(dagRunAdmissionQuerySchema, {
+    errorCode: 'RUN_ADMISSION_QUERY_INVALID',
+    includeDetails: true
+  }),
+  asyncHandler(async (req, res) => {
+    const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
+    const { snapshotGeneration } = req.validated!.query as z.infer<
+      typeof dagRunAdmissionQuerySchema
+    >;
+    const admission = await arcanosDagRunService.getRunAdmissionStatus(
+      runId,
+      snapshotGeneration
+    );
+    const statusPath = buildDagRunAdmissionStatusPath(
+      runId,
+      snapshotGeneration
+    );
+
+    if (admission.state === 'unavailable') {
+      res.set({
+        'Retry-After': admission.retryAfterSeconds.toString(),
+        Location: statusPath
+      });
+      res.status(503).json({
+        error: 'DAG_RUN_ADMISSION_STATUS_UNAVAILABLE',
+        message:
+          'DAG run admission status is temporarily unavailable. Poll this admission URL again without creating another run.',
+        admission: {
+          runId,
+          snapshotGeneration,
+          state: 'unavailable',
+          createNewRun: false,
+          pollAfterSeconds: admission.retryAfterSeconds
+        }
+      });
+      return;
+    }
+
+    const data: DagRunAdmissionData = {
+      admission: {
+        runId: admission.runId,
+        snapshotGeneration: admission.snapshotGeneration,
+        state: admission.state,
+        createNewRun: admission.state === 'rejected',
+        ...(admission.state === 'pending'
+          ? { pollAfterSeconds: admission.retryAfterSeconds }
+          : {})
+      }
+    };
+
+    if (admission.state === 'pending') {
+      res.set({
+        'Retry-After': admission.retryAfterSeconds.toString(),
+        Location: statusPath
+      });
+    }
+
+    sendVerificationEnvelope(
+      req,
+      res,
+      data,
+      'verification.dag_run_admission_status.response'
+    );
   })
 );
 
@@ -497,15 +633,44 @@ router.post(
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
-    const cancelled = arcanosDagRunService.cancelRun(runId);
+    const cancellation = await arcanosDagRunService.cancelRun(runId);
 
-    if (!cancelled) {
+    if (cancellation.outcome === 'not_found') {
       sendNotFound(res, 'RUN_NOT_FOUND');
       return;
     }
+    if (cancellation.outcome === 'not_cancellable') {
+      res.status(409).json({
+        error: 'RUN_NOT_CANCELLABLE',
+        status: cancellation.runStatus
+      });
+      return;
+    }
+    if (
+      cancellation.outcome === 'owned_elsewhere' ||
+      cancellation.outcome === 'unavailable'
+    ) {
+      res.setHeader(
+        'Retry-After',
+        cancellation.retryAfterSeconds.toString()
+      );
+      res.status(503).json({
+        error:
+          cancellation.outcome === 'owned_elsewhere'
+            ? 'DAG_RUN_OWNED_ELSEWHERE'
+            : 'DAG_RUN_CANCELLATION_UNAVAILABLE'
+      });
+      return;
+    }
 
-    const data: CancelDagRunResponseData = cancelled;
-    sendVerificationEnvelope(req, res, data, 'verification.dag_run_cancel.response');
+    const data: CancelDagRunResponseData = cancellation.data;
+    sendVerificationEnvelope(
+      req,
+      res,
+      data,
+      'verification.dag_run_cancel.response',
+      cancellation.statusCode
+    );
   })
 );
 

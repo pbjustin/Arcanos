@@ -131,6 +131,8 @@ describe('legacy root route compatibility', () => {
 
   it.each([
     ['UNKNOWN_GPT', 404],
+    ['MEMORY_AUTH_REQUIRED', 401],
+    ['MEMORY_AUTH_UNAVAILABLE', 503],
     ['SYSTEM_STATE_CONFLICT', 409],
     ['MODULE_TIMEOUT', 504]
   ] as const)(

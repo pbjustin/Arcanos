@@ -25,6 +25,10 @@ def main():
     print("\n[Configuration]")
     print(f"  BACKEND_URL: {Config.BACKEND_URL or 'NOT SET'}")
     print(f"  BACKEND_TOKEN: {'SET' if Config.BACKEND_TOKEN else 'NOT SET'}")
+    print(
+        "  ARCANOS_DAEMON_ACCESS_TOKEN: "
+        f"{'SET' if Config.DAEMON_ACCESS_TOKEN else 'NOT SET'}"
+    )
     print(f"  OPENAI_API_KEY: {'SET' if Config.OPENAI_API_KEY and Config.OPENAI_API_KEY != 'sk-dummy-api-key' else 'NOT SET or dummy'}")
     
     # Initialize backend client (like CLI does)
@@ -38,7 +42,8 @@ def main():
         backend_client = BackendApiClient(
             base_url=Config.BACKEND_URL,
             token_provider=lambda: Config.BACKEND_TOKEN,
-            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
+            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT,
+            daemon_access_token_provider=lambda: Config.DAEMON_ACCESS_TOKEN,
         )
         print("  [OK] Backend client initialized")
     else:

@@ -138,6 +138,7 @@ class ArcanosCLI:
                     base_url=Config.BACKEND_URL,
                     token_provider=lambda: Config.BACKEND_TOKEN,
                     timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT,
+                    daemon_access_token_provider=lambda: Config.DAEMON_ACCESS_TOKEN,
                 )
             except Exception:
                 raise
@@ -153,7 +154,8 @@ class ArcanosCLI:
                 self.console.print("[green]?[/green] Backend connection active (heartbeat + command polling)")
             else:
                 self.console.print(
-                    "[yellow]?[/yellow] Backend configured but daemon threads skipped (check BACKEND_TOKEN)"
+                    "[yellow]?[/yellow] Backend configured but daemon threads skipped "
+                    "(check ARCANOS_DAEMON_ACCESS_TOKEN)"
                 )
 
         self._ptt_available = PTT_AVAILABLE

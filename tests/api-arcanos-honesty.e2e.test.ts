@@ -49,6 +49,32 @@ jest.unstable_mockModule('@services/openai.js', () => ({
   createGPT5Reasoning: jest.fn()
 }));
 
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  resolveOpenAIBaseURL: () => undefined,
+  resolveOpenAIKey: () => null,
+  getOpenAIKeySource: () => 'test',
+  resetCredentialCache: jest.fn(),
+  hasValidAPIKey: () => true,
+  setDefaultModel: jest.fn(),
+  getDefaultModel: () => 'arcanos-intake-model',
+  getComplexModel: () => 'arcanos-final-model',
+  getFallbackModel: () => 'gpt-4.1',
+  getGPT5Model: () => 'gpt-5-reasoning-model'
+}));
+
+jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
+  createChatCompletionWithFallback: mockCreateChatCompletionWithFallback,
+  createSingleChatCompletion: mockCreateChatCompletionWithFallback
+}));
+
+jest.unstable_mockModule('@services/openai/structuredReasoning.js', () => ({
+  runStructuredReasoning: mockRunStructuredReasoning
+}));
+
+jest.unstable_mockModule('@services/openai/chatFlow/index.js', () => ({
+  createGPT5Reasoning: jest.fn()
+}));
+
 jest.unstable_mockModule('@services/memoryAware.js', () => ({
   getMemoryContext: jest.fn(() => ({
     relevantEntries: [],

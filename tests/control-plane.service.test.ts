@@ -17,16 +17,10 @@ jest.unstable_mockModule('@core/db/repositories/executionLogRepository.js', () =
   logExecution: jest.fn(async () => undefined)
 }));
 
-jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
-  arcanosMcpService: {
-    listTools: jest.fn(),
-    invokeTool: jest.fn()
-  }
-}));
-
 const {
   executeControlPlaneRequest,
   getControlPlaneCapabilities,
+  getControlPlaneOperationRequiredScopes,
   requiresControlPlaneApproval
 } = await import('../src/services/controlPlane/service.js');
 
@@ -45,6 +39,24 @@ function buildDeps(overrides: Record<string, unknown> = {}) {
 describe('executeControlPlaneRequest', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('resolves defensive copies of the server-owned operation scopes', () => {
+    const deployScopes = getControlPlaneOperationRequiredScopes({
+      adapter: 'railway-cli',
+      operation: 'deploy'
+    });
+
+    expect(deployScopes).toEqual(['railway:deploy']);
+    deployScopes?.push('caller:injected');
+    expect(getControlPlaneOperationRequiredScopes({
+      adapter: 'railway-cli',
+      operation: 'deploy'
+    })).toEqual(['railway:deploy']);
+    expect(getControlPlaneOperationRequiredScopes({
+      adapter: 'railway-cli',
+      operation: 'not-allowlisted'
+    })).toBeNull();
   });
 
   it('registers ARCANOS CLI read-only status and repo context operations', () => {
@@ -636,6 +648,21 @@ describe('executeControlPlaneRequest', () => {
       'ops.health_report',
       'memory.save'
     ]);
+  });
+
+  it('fails closed with a stable error when an executed MCP operation has no client', async () => {
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-mcp-unavailable-1',
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'listTools'
+    }, buildDeps() as never);
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toEqual(expect.objectContaining({
+      code: 'CONTROL_PLANE_MCP_UNAVAILABLE',
+      message: 'ARCANOS MCP client is unavailable for this control-plane operation.'
+    }));
   });
 
   it('redacts secret-like process output and thrown error messages', async () => {

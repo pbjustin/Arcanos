@@ -1,6 +1,30 @@
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
+
+const controlPlaneToken =
+  'reinforcement-metrics-token-123456789012';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+
+function configureControlPlane(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID =
+    'operator:reinforcement-metrics';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read';
+}
 
 /**
  * Build reinforcement router with isolated dependency mocks.
@@ -11,6 +35,7 @@ import { describe, expect, it, jest } from '@jest/globals';
  */
 async function buildReinforcementTestApp() {
   jest.resetModules();
+  configureControlPlane();
 
   const judgedTelemetry = {
     attempts: 5,
@@ -69,9 +94,14 @@ describe('reinforcement metrics route', () => {
   it('returns judged-feedback runtime telemetry snapshot', async () => {
     const { app, judgedTelemetry, reinforcementHealth } = await buildReinforcementTestApp();
 
-    const response = await request(app).get('/reinforcement/metrics');
+    const anonymousResponse = await request(app).get('/reinforcement/metrics');
+    const response = await request(app)
+      .get('/reinforcement/metrics')
+      .set('Authorization', `Bearer ${controlPlaneToken}`);
 
+    expect(anonymousResponse.status).toBe(401);
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toMatchObject({
       status: 'ok',
       judgedFeedback: judgedTelemetry,
@@ -80,3 +110,23 @@ describe('reinforcement metrics route', () => {
   });
 });
 
+afterAll(() => {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
+});

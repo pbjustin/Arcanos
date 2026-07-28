@@ -1,7 +1,22 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { Test } from 'supertest';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
+
+const controlPlaneToken = 'api-arcanos-dag-token-12345678901234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
 const mockGetWorkerControlStatus = jest.fn();
 const mockCreateRun = jest.fn();
+const mockGetRunAdmissionStatus = jest.fn();
 const mockGetLatestRun = jest.fn();
 const mockGetRun = jest.fn();
 const mockWaitForRunUpdate = jest.fn();
@@ -17,13 +32,40 @@ const mockGetRunVerification = jest.fn();
 const mockGetFeatureFlags = jest.fn();
 const mockGetExecutionLimits = jest.fn();
 
+class MockDagRunCapacityExceededError extends Error {
+  readonly code = 'DAG_RUN_CAPACITY_EXCEEDED';
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 5) {
+    super('DAG run capacity is temporarily unavailable.');
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+class MockDagRunAdmissionUncertainError extends Error {
+  readonly code = 'DAG_RUN_ADMISSION_UNCERTAIN';
+  readonly runId: string;
+  readonly snapshotGeneration: string;
+
+  constructor(runId: string, snapshotGeneration: string) {
+    super('DAG run admission could not be confirmed.');
+    this.name = 'DagRunAdmissionUncertainError';
+    this.runId = runId;
+    this.snapshotGeneration = snapshotGeneration;
+  }
+}
+
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
   getWorkerControlStatus: mockGetWorkerControlStatus
 }));
 
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
+  DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS: 1_000,
+  DagRunAdmissionUncertainError: MockDagRunAdmissionUncertainError,
+  DagRunCapacityExceededError: MockDagRunCapacityExceededError,
   arcanosDagRunService: {
     createRun: mockCreateRun,
+    getRunAdmissionStatus: mockGetRunAdmissionStatus,
     getLatestRun: mockGetLatestRun,
     getRun: mockGetRun,
     waitForRunUpdate: mockWaitForRunUpdate,
@@ -45,6 +87,29 @@ const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos-verification.js')).default;
 
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(
+  scopes = 'arcanos:read,mcp:invoke',
+  principalId = 'operator:api-arcanos-verification'
+): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = principalId;
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
+
+function authorizeDagRequest(pendingRequest: Test): Test {
+  return pendingRequest.set(
+    'Authorization',
+    `Bearer ${controlPlaneToken}`
+  );
+}
+
 function buildApp() {
   const app = express();
   app.use(express.json());
@@ -59,6 +124,7 @@ function buildApp() {
 describe('api-arcanos-verification routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    configureControlPlane();
 
     mockGetFeatureFlags.mockReturnValue({
       dagOrchestration: true,
@@ -374,15 +440,19 @@ describe('api-arcanos-verification routes', () => {
         observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
       }
     });
-    mockCancelRun.mockReturnValue({
-      runId: 'run-1',
-      status: 'cancelled',
-      cancelledNodes: ['writer']
+    mockCancelRun.mockResolvedValue({
+      outcome: 'already_cancelled',
+      statusCode: 200,
+      data: {
+        runId: 'run-1',
+        status: 'cancelled',
+        cancelledNodes: ['writer']
+      }
     });
 
-    const createResponse = await request(buildApp())
-      .post('/dag/runs')
-      .send({
+    const createResponse = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
         sessionId: 'session-1',
         template: 'verification-default',
         input: { goal: 'test the DAG' }
@@ -394,14 +464,30 @@ describe('api-arcanos-verification routes', () => {
     expect(createResponse.body.data.run.pipeline).toBe('trinity');
     expect(createResponse.body.data.run.template).toBe('trinity-core');
 
-    const latestResponse = await request(buildApp()).get('/dag/runs/latest');
-    const runResponse = await request(buildApp()).get('/dag/runs/run-1');
-    const traceResponse = await request(buildApp()).get('/dag/runs/run-1/trace');
-    const treeResponse = await request(buildApp()).get('/dag/runs/run-1/tree');
-    const nodeResponse = await request(buildApp()).get('/dag/runs/run-1/nodes/planner');
-    const metricsResponse = await request(buildApp()).get('/dag/runs/run-1/metrics');
-    const verificationResponse = await request(buildApp()).get('/dag/runs/run-1/verification');
-    const cancelResponse = await request(buildApp()).post('/dag/runs/run-1/cancel');
+    const latestResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/latest')
+    );
+    const runResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1')
+    );
+    const traceResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/trace')
+    );
+    const treeResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/tree')
+    );
+    const nodeResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/nodes/planner')
+    );
+    const metricsResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/metrics')
+    );
+    const verificationResponse = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1/verification')
+    );
+    const cancelResponse = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-1/cancel')
+    );
 
     expect(latestResponse.status).toBe(200);
     expect(latestResponse.headers['x-response-bytes']).toBeTruthy();
@@ -451,6 +537,276 @@ describe('api-arcanos-verification routes', () => {
     expect(cancelResponse.body.data.status).toBe('cancelled');
   });
 
+  it('returns a stable overload response when DAG run capacity is exhausted', async () => {
+    mockCreateRun.mockRejectedValueOnce(new MockDagRunCapacityExceededError(7));
+
+    const response = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
+      sessionId: 'capacity-session',
+      template: 'verification-default',
+      input: { goal: 'wait for available DAG capacity' }
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers['retry-after']).toBe('7');
+    expect(response.body).toEqual({
+      error: 'DAG_RUN_CAPACITY_EXCEEDED',
+      message: 'DAG run capacity is temporarily unavailable.'
+    });
+  });
+
+  it('accepts ambiguous DAG admission and directs polling to its dedicated monitor', async () => {
+    mockCreateRun.mockRejectedValueOnce(
+      new MockDagRunAdmissionUncertainError(
+        'dagrun-uncertain-1',
+        '1'
+      )
+    );
+
+    const response = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs')
+    ).send({
+      sessionId: 'uncertain-session',
+      template: 'verification-default',
+      input: { goal: 'reconcile the original DAG admission' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['retry-after']).toBe('1');
+    expect(response.headers.location).toBe(
+      '/api/arcanos/dag/runs/dagrun-uncertain-1/admission?snapshotGeneration=1'
+    );
+    expect(response.body).toEqual({
+      ok: true,
+      timestamp: expect.any(String),
+      version: '1.0.0',
+      requestId: 'req-test',
+      data: {
+        admission: {
+          runId: 'dagrun-uncertain-1',
+          snapshotGeneration: '1',
+          state: 'pending',
+          createNewRun: false,
+          pollAfterSeconds: 1
+        }
+      }
+    });
+    expect(mockCreateRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an execution-only creator poll pending admission without gaining run-read scope', async () => {
+    configureControlPlane('mcp:invoke');
+    mockCreateRun.mockRejectedValueOnce(
+      new MockDagRunAdmissionUncertainError(
+        'dagrun-execution-only',
+        '1'
+      )
+    );
+    mockGetRunAdmissionStatus.mockResolvedValueOnce({
+      runId: 'dagrun-execution-only',
+      snapshotGeneration: '1',
+      state: 'pending',
+      retryAfterSeconds: 1
+    });
+
+    const app = buildApp();
+    const createResponse = await authorizeDagRequest(
+      request(app).post('/dag/runs')
+    ).send({
+      sessionId: 'execution-only-session',
+      template: 'verification-default',
+      input: { goal: 'monitor only this admission' }
+    });
+    const admissionPath = createResponse.headers.location.replace(
+      '/api/arcanos',
+      ''
+    );
+    const admissionResponse = await authorizeDagRequest(
+      request(app).get(admissionPath)
+    );
+    const fullRunResponse = await authorizeDagRequest(
+      request(app).get('/dag/runs/dagrun-execution-only')
+    );
+
+    expect(createResponse.status).toBe(202);
+    expect(admissionResponse.status).toBe(200);
+    expect(admissionResponse.headers['retry-after']).toBe('1');
+    expect(admissionResponse.body.data.admission).toEqual({
+      runId: 'dagrun-execution-only',
+      snapshotGeneration: '1',
+      state: 'pending',
+      createNewRun: false,
+      pollAfterSeconds: 1
+    });
+    expect(fullRunResponse.status).toBe(403);
+    expect(fullRunResponse.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(mockGetRunAdmissionStatus).toHaveBeenCalledWith(
+      'dagrun-execution-only',
+      '1'
+    );
+  });
+
+  it.each([
+    ['admitted', false],
+    ['rejected', true]
+  ] as const)(
+    'returns terminal %s admission status with an unambiguous create policy',
+    async (state, createNewRun) => {
+      configureControlPlane('mcp:invoke');
+      mockGetRunAdmissionStatus.mockResolvedValueOnce({
+        runId: 'dagrun-terminal',
+        snapshotGeneration: '1',
+        state
+      });
+
+      const response = await authorizeDagRequest(
+        request(buildApp())
+          .get('/dag/runs/dagrun-terminal/admission')
+          .query({ snapshotGeneration: '1' })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers['retry-after']).toBeUndefined();
+      expect(response.body.data.admission).toEqual({
+        runId: 'dagrun-terminal',
+        snapshotGeneration: '1',
+        state,
+        createNewRun
+      });
+    }
+  );
+
+  it('keeps admission retries on GET when status lookup is unavailable', async () => {
+    configureControlPlane('mcp:invoke');
+    mockGetRunAdmissionStatus.mockResolvedValueOnce({
+      runId: 'dagrun-unavailable',
+      snapshotGeneration: '1',
+      state: 'unavailable',
+      retryAfterSeconds: 4
+    });
+
+    const response = await authorizeDagRequest(
+      request(buildApp())
+        .get('/dag/runs/dagrun-unavailable/admission')
+        .query({ snapshotGeneration: '1' })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers['retry-after']).toBe('4');
+    expect(response.headers.location).toBe(
+      '/api/arcanos/dag/runs/dagrun-unavailable/admission?snapshotGeneration=1'
+    );
+    expect(response.body).toEqual({
+      error: 'DAG_RUN_ADMISSION_STATUS_UNAVAILABLE',
+      message:
+        'DAG run admission status is temporarily unavailable. Poll this admission URL again without creating another run.',
+      admission: {
+        runId: 'dagrun-unavailable',
+        snapshotGeneration: '1',
+        state: 'unavailable',
+        createNewRun: false,
+        pollAfterSeconds: 4
+      }
+    });
+  });
+
+  it('maps DAG cancellation lifecycle outcomes to stable HTTP responses', async () => {
+    mockCancelRun
+      .mockResolvedValueOnce({
+        outcome: 'cancellation_requested',
+        statusCode: 202,
+        data: {
+          runId: 'run-cancel-requested',
+          status: 'cancellation_requested',
+          cancelledNodes: ['writer']
+        }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'already_cancelled',
+        statusCode: 200,
+        data: {
+          runId: 'run-already-cancelled',
+          status: 'cancelled',
+          cancelledNodes: ['writer']
+        }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'not_found',
+        statusCode: 404
+      })
+      .mockResolvedValueOnce({
+        outcome: 'not_cancellable',
+        statusCode: 409,
+        runStatus: 'complete'
+      })
+      .mockResolvedValueOnce({
+        outcome: 'owned_elsewhere',
+        statusCode: 503,
+        retryAfterSeconds: 11
+      })
+      .mockResolvedValueOnce({
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: 13
+      });
+
+    const cancellationRequested = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-cancel-requested/cancel')
+    );
+    const alreadyCancelled = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-already-cancelled/cancel')
+    );
+    const notFound = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-missing/cancel')
+    );
+    const notCancellable = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-complete/cancel')
+    );
+    const ownedElsewhere = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-owned-elsewhere/cancel')
+    );
+    const unavailable = await authorizeDagRequest(
+      request(buildApp()).post('/dag/runs/run-state-unavailable/cancel')
+    );
+
+    expect(cancellationRequested.status).toBe(202);
+    expect(cancellationRequested.body.data).toEqual({
+      runId: 'run-cancel-requested',
+      status: 'cancellation_requested',
+      cancelledNodes: ['writer']
+    });
+
+    expect(alreadyCancelled.status).toBe(200);
+    expect(alreadyCancelled.body.data).toEqual({
+      runId: 'run-already-cancelled',
+      status: 'cancelled',
+      cancelledNodes: ['writer']
+    });
+
+    expect(notFound.status).toBe(404);
+    expect(notFound.body).toEqual({ error: 'RUN_NOT_FOUND' });
+
+    expect(notCancellable.status).toBe(409);
+    expect(notCancellable.body).toEqual({
+      error: 'RUN_NOT_CANCELLABLE',
+      status: 'complete'
+    });
+
+    expect(ownedElsewhere.status).toBe(503);
+    expect(ownedElsewhere.headers['retry-after']).toBe('11');
+    expect(ownedElsewhere.body).toEqual({
+      error: 'DAG_RUN_OWNED_ELSEWHERE'
+    });
+
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.headers['retry-after']).toBe('13');
+    expect(unavailable.body).toEqual({
+      error: 'DAG_RUN_CANCELLATION_UNAVAILABLE'
+    });
+    expect(mockCancelRun).toHaveBeenCalledTimes(6);
+  });
+
   it('supports long-poll run status queries with explicit wait cursors', async () => {
     mockWaitForRunUpdate.mockResolvedValue({
       run: {
@@ -467,9 +823,9 @@ describe('api-arcanos-verification routes', () => {
       waited: true
     });
 
-    const response = await request(buildApp())
-      .get('/dag/runs/run-1')
-      .query({
+    const response = await authorizeDagRequest(
+      request(buildApp()).get('/dag/runs/run-1')
+    ).query({
         updatedAfter: '2026-03-07T00:00:01.000Z',
         waitForUpdateMs: 5000
       });
@@ -484,4 +840,85 @@ describe('api-arcanos-verification routes', () => {
       waitForUpdateMs: 5000
     });
   });
+
+  it('rejects anonymous DAG execution before invoking the run service', async () => {
+    const response = await request(buildApp())
+      .post('/dag/runs')
+      .send({
+        sessionId: 'anonymous-session',
+        template: 'verification-default',
+        input: { goal: 'must not execute' }
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateRun).not.toHaveBeenCalled();
+  });
+
+  it('principal-throttles DAG writes across caller-selected session rotation', async () => {
+    configureControlPlane(
+      'mcp:invoke',
+      'operator:api-arcanos-dag-rate-limit'
+    );
+    mockCreateRun.mockReturnValue({
+      runId: 'run-rate-limit',
+      sessionId: 'session-rate-limit',
+      template: 'trinity-core',
+      status: 'queued',
+      plannerNodeId: 'planner',
+      rootNodeId: 'writer',
+      createdAt: '2026-03-07T00:00:00.000Z',
+      updatedAt: '2026-03-07T00:00:00.000Z'
+    });
+    const app = buildApp();
+
+    const firstResponse = await authorizeDagRequest(
+      request(app)
+        .post('/dag/runs')
+        .set('X-Session-ID', 'caller-selected-session-1')
+    ).send({
+      sessionId: 'body-session-1',
+      template: 'verification-default',
+      input: { goal: 'first request' }
+    });
+    const secondResponse = await authorizeDagRequest(
+      request(app)
+        .post('/dag/runs')
+        .set('X-Session-ID', 'caller-selected-session-2')
+    ).send({
+      sessionId: 'body-session-2',
+      template: 'verification-default',
+      input: { goal: 'second request' }
+    });
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(firstResponse.headers['x-ratelimit-bucket']).toBe(
+      'api-arcanos-dag-write'
+    );
+    expect(Number(secondResponse.headers['x-ratelimit-remaining'])).toBe(
+      Number(firstResponse.headers['x-ratelimit-remaining']) - 1
+    );
+    expect(mockCreateRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

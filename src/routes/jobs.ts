@@ -3,6 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import {
   getJobById,
+  JobRepositoryUnavailableError,
   requestJobCancellation
 } from "@core/db/repositories/jobRepository.js";
 import { asyncHandler, validateParams, sendNotFound } from '@shared/http/index.js';
@@ -74,6 +75,51 @@ function sendJobsJsonResponse(
   });
 }
 
+function sendJobRepositoryUnavailable(
+  req: express.Request,
+  res: express.Response,
+  jobId: string,
+  logEvent: string
+): void {
+  req.logger?.error?.('gpt.job.repository_unavailable', {
+    endpoint: req.originalUrl,
+    jobId,
+    requestId: (req as any).requestId
+  });
+  sendJobsJsonResponse(
+    req,
+    res,
+    { error: 'JOB_REPOSITORY_UNAVAILABLE' },
+    logEvent,
+    503
+  );
+}
+
+type JobLookupResult =
+  | { available: true; job: JobData | null }
+  | { available: false };
+
+async function lookupJobForRoute(
+  req: express.Request,
+  res: express.Response,
+  jobId: string,
+  logEvent: string
+): Promise<JobLookupResult> {
+  try {
+    return {
+      available: true,
+      job: await getJobById(jobId)
+    };
+  } catch (error) {
+    if (!(error instanceof JobRepositoryUnavailableError)) {
+      throw error;
+    }
+
+    sendJobRepositoryUnavailable(req, res, jobId, logEvent);
+    return { available: false };
+  }
+}
+
 function validateJobsJsonRouteParams(
   req: express.Request,
   res: express.Response,
@@ -99,7 +145,17 @@ router.get(
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
 
-    const job = await getJobById(id);
+    const lookup = await lookupJobForRoute(req, res, id, 'jobs.status.repository_unavailable');
+    if (!lookup.available) {
+      recordGptJobLookup({
+        channel: 'jobs_status',
+        lookup: 'status',
+        outcome: 'unavailable'
+      });
+      return;
+    }
+
+    const job = lookup.job;
     if (!job || isLocalAgentJob(job)) {
       req.logger?.warn?.('gpt.job.status_lookup.not_found', {
         endpoint: req.originalUrl,
@@ -143,7 +199,17 @@ router.get(
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
-    const job = await getJobById(id);
+    const lookup = await lookupJobForRoute(req, res, id, 'jobs.result.repository_unavailable');
+    if (!lookup.available) {
+      recordGptJobLookup({
+        channel: 'jobs_result',
+        lookup: 'result',
+        outcome: 'unavailable'
+      });
+      return;
+    }
+
+    const job = lookup.job;
     const publicJob = isLocalAgentJob(job) ? null : job;
     const jobLookup = buildGptJobResultLookupPayload(id, publicJob);
 
@@ -201,7 +267,12 @@ router.post(
       typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
         ? req.body.reason.trim()
         : 'Job cancellation requested by client.';
-    const job = await getJobById(id);
+    const lookup = await lookupJobForRoute(req, res, id, 'jobs.cancel.repository_unavailable');
+    if (!lookup.available) {
+      return;
+    }
+
+    const job = lookup.job;
 
     if (!job || isLocalAgentJob(job)) {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
@@ -239,7 +310,17 @@ router.post(
       return;
     }
 
-    const cancellation = await requestJobCancellation(id, reason);
+    let cancellation;
+    try {
+      cancellation = await requestJobCancellation(id, reason);
+    } catch (error) {
+      if (!(error instanceof JobRepositoryUnavailableError)) {
+        throw error;
+      }
+
+      sendJobRepositoryUnavailable(req, res, id, 'jobs.cancel.repository_unavailable');
+      return;
+    }
 
     if (cancellation.outcome === 'not_found') {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
@@ -272,7 +353,17 @@ router.get(
   validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
-    const initialJob = await getJobById(id);
+    const initialLookup = await lookupJobForRoute(
+      req,
+      res,
+      id,
+      'jobs.stream.repository_unavailable'
+    );
+    if (!initialLookup.available) {
+      return;
+    }
+
+    const initialJob = initialLookup.job;
 
     if (!initialJob || isLocalAgentJob(initialJob)) {
       sendNotFound(res, 'JOB_NOT_FOUND');
@@ -337,6 +428,20 @@ router.get(
 
         await sleep(DEFAULT_JOB_STREAM_POLL_MS);
       }
+    } catch (error) {
+      if (!(error instanceof JobRepositoryUnavailableError)) {
+        throw error;
+      }
+
+      req.logger?.error?.('gpt.job.stream.repository_unavailable', {
+        endpoint: req.originalUrl,
+        jobId: id,
+        requestId: (req as any).requestId
+      });
+      writeSseEvent(res, 'error', {
+        code: 'JOB_REPOSITORY_UNAVAILABLE',
+        jobId: id
+      });
     } finally {
       req.off('close', handleClosedStream);
       if (!res.writableEnded) {

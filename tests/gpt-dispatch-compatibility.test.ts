@@ -95,12 +95,14 @@ jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
   validateGptRegistry: jest.fn(() => ({ requiredGptIds: ['arcanos-core'] })),
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   getModuleMetadata: mockGetModuleMetadata,
-  dispatchModuleAction: mockDispatchModuleAction
+  dispatchModuleAction: mockDispatchModuleAction,
+  initializeModuleRegistry: jest.fn(async () => undefined)
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { listPromptDebugTraces } = await import('../src/services/promptDebugTraceService.js');
 
 describe('gpt dispatch compatibility', () => {
   beforeEach(() => {
@@ -149,6 +151,48 @@ describe('gpt dispatch compatibility', () => {
         extra: 'kept'
       })
     );
+  });
+
+  it('stores the GPT route template instead of caller-controlled URL segments in trace metadata', async () => {
+    const previousMode = process.env.PROMPT_DEBUG_TRACE_MODE;
+    const previousPersist = process.env.PROMPT_DEBUG_TRACE_PERSIST;
+    process.env.PROMPT_DEBUG_TRACE_MODE = 'metadata';
+    process.env.PROMPT_DEBUG_TRACE_PERSIST = 'false';
+
+    try {
+      await routeGptRequest({
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Reply with exactly OK.',
+        },
+        requestId: 'req_dynamic_endpoint_trace',
+        request: {
+          method: 'POST',
+          originalUrl: '/gpt/alice@example.com?private=marker',
+          url: '/gpt/alice@example.com?private=marker',
+          path: '/gpt/alice@example.com',
+        } as never,
+      });
+
+      const [trace] = await listPromptDebugTraces(
+        1,
+        'req_dynamic_endpoint_trace',
+      );
+      expect(trace?.endpoint).toBe('/gpt/:gptId');
+      expect(JSON.stringify(trace)).not.toContain('alice@example.com');
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.PROMPT_DEBUG_TRACE_MODE;
+      } else {
+        process.env.PROMPT_DEBUG_TRACE_MODE = previousMode;
+      }
+      if (previousPersist === undefined) {
+        delete process.env.PROMPT_DEBUG_TRACE_PERSIST;
+      } else {
+        process.env.PROMPT_DEBUG_TRACE_PERSIST = previousPersist;
+      }
+    }
   });
 
   it("maps nested legacy 'ask' payloads onto the canonical 'query' action", async () => {
@@ -309,6 +353,40 @@ describe('gpt dispatch compatibility', () => {
         gptId
       })
     }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'cli',
+    'arcanos-cli',
+    'ARCANOS:CLI',
+    'local-agent',
+    'arcanos-local-agent',
+    'ARCANOS:LOCAL_AGENT',
+    'productivity',
+    'arcanos-productivity',
+    'ARCANOS:PRODUCTIVITY'
+  ])('keeps protected module identifier %s out of fuzzy public routing', async (gptId) => {
+    const resolved = await resolveGptRouting(
+      gptId,
+      `req_protected_resolve_${gptId}`
+    );
+    const dispatched = await routeGptRequest({
+      gptId,
+      body: {
+        prompt: 'This protected identifier must remain unavailable.'
+      },
+      requestId: `req_protected_dispatch_${gptId}`
+    });
+
+    for (const response of [resolved, dispatched]) {
+      expect(response).toEqual(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'UNKNOWN_GPT'
+        })
+      }));
+    }
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 });

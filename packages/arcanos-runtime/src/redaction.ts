@@ -37,6 +37,12 @@ export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
 ];
 
+const PROTOTYPE_SENSITIVE_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
 export function redactString(value: string): string {
   if (!value) return value;
   if (SENSITIVE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
@@ -62,15 +68,38 @@ export function redactSensitive(
     return data.map((item) => redactSensitive(item, { depth: depth + 1, maxDepth }));
   }
 
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    const keyLower = key.toLowerCase();
-    const isSensitiveKey = SENSITIVE_KEYS.some((k) => keyLower.includes(String(k)));
-    if (isSensitiveKey) {
-      sanitized[key] = '[REDACTED]';
-      continue;
-    }
-    sanitized[key] = redactSensitive(value, { depth: depth + 1, maxDepth });
-  }
-  return sanitized;
+  const entries = Object.entries(data as Record<string, unknown>);
+  // Reserve caller-owned keys first so opaque replacements cannot overwrite data.
+  const reservedKeys = new Set(entries.map(([key]) => key));
+  const projectedKeys = new Set<string>();
+  let redactedKeyIndex = 0;
+
+  return Object.fromEntries(
+    entries.map(([key, value]) => {
+      const keyLower = key.toLowerCase();
+      const isUnsafeKey = PROTOTYPE_SENSITIVE_KEYS.has(key)
+        || redactString(key) !== key;
+      let projectedKey = key;
+
+      if (isUnsafeKey) {
+        do {
+          redactedKeyIndex += 1;
+          projectedKey = `[REDACTED_KEY_${redactedKeyIndex}]`;
+        } while (
+          reservedKeys.has(projectedKey)
+          || projectedKeys.has(projectedKey)
+        );
+      }
+      projectedKeys.add(projectedKey);
+
+      const isSensitiveKey = SENSITIVE_KEYS.some((sensitiveKey) =>
+        keyLower.includes(String(sensitiveKey))
+      );
+      const projectedValue = isSensitiveKey
+        ? '[REDACTED]'
+        : redactSensitive(value, { depth: depth + 1, maxDepth });
+
+      return [projectedKey, projectedValue];
+    })
+  );
 }

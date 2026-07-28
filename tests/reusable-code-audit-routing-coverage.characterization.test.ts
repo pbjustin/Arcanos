@@ -503,23 +503,26 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
       [...collisions.keys()].sort((left, right) => left.localeCompare(right)),
     );
 
-    const reusablePost = collisions.get('POST /api/reusables');
-    const reusableHealth = collisions.get('GET /api/reusables/health');
+    const reusablePost = manifest.filter(
+      (entry) => entry.method === 'POST' && entry.path === '/api/reusables',
+    );
+    const reusableHealth = manifest.filter(
+      (entry) => entry.method === 'GET' && entry.path === '/api/reusables/health',
+    );
     const audit = collisions.get('POST /audit');
-    const update = collisions.get('POST /api/update');
+    const update = manifest.filter((entry) => entry.method === 'POST' && entry.path === '/api/update');
     const health = collisions.get('GET /health');
 
-    expect(reusablePost).toHaveLength(2);
-    expect(reusableHealth).toHaveLength(2);
+    expect(reusablePost).toHaveLength(1);
+    expect(reusableHealth).toHaveLength(1);
     expect(audit).toHaveLength(2);
-    expect(update).toHaveLength(2);
+    expect(update).toHaveLength(1);
     expect(health).toHaveLength(3);
 
-    expect(reusablePost?.map((entry) => entry.source)).toEqual([
-      'src/routes/api-reusable-code.ts',
+    expect(reusablePost.map((entry) => entry.source)).toEqual([
       'src/routes/api-reusable-code.ts',
     ]);
-    expect(reusablePost?.[0]?.mountChain).toEqual(expect.arrayContaining([
+    expect(reusablePost[0]?.mountChain).toEqual(expect.arrayContaining([
       expect.stringMatching(
         /^src\/routes\/register\.ts:\d+->src\/routes\/api\/index\.ts$/u,
       ),
@@ -527,21 +530,14 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
         /^src\/routes\/api\/index\.ts:\d+->src\/routes\/api-reusable-code\.ts$/u,
       ),
     ]));
-    expect(reusablePost?.[0]?.middlewareStack.join('\n')).toContain('memoryConsistencyGate');
-    expect(reusablePost?.[1]?.mountChain).toEqual([
-      expect.stringMatching(
-        /^src\/routes\/register\.ts:\d+->src\/routes\/api-reusable-code\.ts$/u,
-      ),
-    ]);
-    expect(reusablePost?.[1]?.middlewareStack.join('\n')).not.toContain('memoryConsistencyGate');
+    expect(reusablePost[0]?.middlewareStack.join('\n')).toContain('memoryConsistencyGate');
 
     expect(audit?.map((entry) => entry.source)).toEqual([
       'src/routes/ai-endpoints.ts',
       'src/routes/reinforcement.ts',
     ]);
-    expect(update?.map((entry) => entry.source)).toEqual([
+    expect(update.map((entry) => entry.source)).toEqual([
       'src/routes/api-update.ts',
-      'src/routes/api-daemon.ts',
     ]);
     expect(health?.map((entry) => entry.source)).toEqual([
       'src/routes/health.ts',
@@ -550,7 +546,7 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
     ]);
   });
 
-  it('keeps duplicate mount chains and middleware stacks stable across repeated scans', () => {
+  it('keeps canonical mount chains and middleware stacks stable across repeated scans', () => {
     const first = buildRouteManifest()
       .filter((entry) => entry.path === '/api/reusables' || entry.path === '/api/reusables/health');
     const second = buildRouteManifest()
@@ -561,12 +557,11 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
 });
 
 describe('reusable-code audit: actual API/reusable routers without full registerRoutes bootstrap', () => {
-  it('proves the nested API registration terminates before the later direct registration', async () => {
+  it('routes reusable health through the canonical API middleware stack', async () => {
     memoryConsistencyGateMock.mockClear();
     getOpenAIClientOrAdapterMock.mockClear();
     const app = express();
     app.use('/', apiRouter);
-    app.use('/', reusableCodeRouter);
 
     const response = await request(app).get('/api/reusables/health');
 
@@ -576,24 +571,6 @@ describe('reusable-code audit: actual API/reusable routers without full register
     }));
     expect(response.headers['x-reusable-audit-memory-gate']).toBe('observed');
     expect(memoryConsistencyGateMock).toHaveBeenCalledTimes(1);
-    expect(getOpenAIClientOrAdapterMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('proves reversing the same actual routers bypasses the nested middleware stack', async () => {
-    memoryConsistencyGateMock.mockClear();
-    getOpenAIClientOrAdapterMock.mockClear();
-    const app = express();
-    app.use('/', reusableCodeRouter);
-    app.use('/', apiRouter);
-
-    const response = await request(app).get('/api/reusables/health');
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(expect.objectContaining({
-      status: 'ready',
-    }));
-    expect(response.headers['x-reusable-audit-memory-gate']).toBeUndefined();
-    expect(memoryConsistencyGateMock).not.toHaveBeenCalled();
     expect(getOpenAIClientOrAdapterMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,12 +7,35 @@ import {
   resolveLocalAgentExecutorServerBinding,
 } from '../src/services/actionPlanExecution/auth.js';
 import { deriveActionPlanExecutionRealm } from '../src/services/actionPlanExecution/realm.js';
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+  type PurposeBoundCredentialEnvName,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 const requesterToken = 'r'.repeat(40);
 const operatorToken = 'o'.repeat(40);
 const executorToken = 'e'.repeat(40);
 const localAgentToken = 'l'.repeat(40);
 const previousLocalAgentToken = 'p'.repeat(40);
+
+const actionPlanRoleCredentials = [
+  ['requester', 'ACTION_PLAN_REQUEST_TOKEN', requesterToken],
+  ['operator', 'ACTION_PLAN_OPERATOR_TOKEN', operatorToken],
+  ['executor', 'ACTION_PLAN_EXECUTOR_TOKEN', executorToken],
+] as const satisfies ReadonlyArray<
+  readonly [string, PurposeBoundCredentialEnvName, string]
+>;
+
+const actionPlanRolePeerCases = actionPlanRoleCredentials.flatMap(
+  ([role, ownEnvironmentName, credential]) =>
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES
+      .filter(environmentName => environmentName !== ownEnvironmentName)
+      .map(environmentName => [
+        role,
+        environmentName,
+        credential,
+      ] as const),
+);
 
 function requestWithAuthorization(value?: string, duplicate = false): Request {
   const rawHeaders = value
@@ -138,6 +161,23 @@ describe('Phase 2E purpose-bound ActionPlan authentication', () => {
       env,
     )).toBeNull();
   });
+
+  it.each(actionPlanRolePeerCases)(
+    'fails the %s credential closed when it reuses %s',
+    (_role, peerEnvironmentName, credential) => {
+      const env = configuredEnv();
+      env[peerEnvironmentName] = credential;
+
+      expect(resolveActionPlanAuthConfiguration(env)).toEqual({
+        valid: false,
+        principals: [],
+      });
+      expect(authenticateActionPlanRequest(
+        requestWithAuthorization(`Bearer ${credential}`),
+        env,
+      )).toBeNull();
+    },
+  );
 });
 
 describe('dedicated local-agent executor authentication', () => {
@@ -215,6 +255,43 @@ describe('dedicated local-agent executor authentication', () => {
     expect(authenticateLocalAgentExecutorRequest(
       requestWithAuthorization(`Bearer ${localAgentToken}`),
       withoutDevice,
+      now,
+    )).toBeNull();
+  });
+
+  it.each(
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.filter(
+      environmentName => environmentName !== 'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
+    ),
+  )('fails the current local-agent credential closed when it reuses %s', (peerEnvironmentName) => {
+    const env = configuredLocalAgentEnv();
+    env[peerEnvironmentName] = localAgentToken;
+    if (peerEnvironmentName === 'ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN') {
+      env.ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN_EXPIRES_AT =
+        '2026-07-24T13:00:00.000Z';
+    }
+
+    expect(authenticateLocalAgentExecutorRequest(
+      requestWithAuthorization(`Bearer ${localAgentToken}`),
+      env,
+      now,
+    )).toBeNull();
+  });
+
+  it.each(
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.filter(
+      environmentName => environmentName !== 'ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN',
+    ),
+  )('fails the active previous local-agent credential closed when it reuses %s', (peerEnvironmentName) => {
+    const env = configuredLocalAgentEnv();
+    env.ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN = previousLocalAgentToken;
+    env.ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN_EXPIRES_AT =
+      '2026-07-24T13:00:00.000Z';
+    env[peerEnvironmentName] = previousLocalAgentToken;
+
+    expect(authenticateLocalAgentExecutorRequest(
+      requestWithAuthorization(`Bearer ${previousLocalAgentToken}`),
+      env,
       now,
     )).toBeNull();
   });

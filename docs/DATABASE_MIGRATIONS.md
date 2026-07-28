@@ -19,10 +19,33 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 | `contracts/job_result.openapi.v1.json` | Contract for job result reads. |
 
 ## Runtime Behavior
-- The backend calls `initializeDatabaseWithSchema()` during startup and continues with in-memory fallback when the database is unavailable.
+- The backend calls `initializeDatabaseWithSchema()` during startup, reusing
+  an already-connected pool when available, and continues with in-memory
+  fallback when no connected, schema-ready pool can be established. A worker
+  heartbeat is written only after that exact pool is ready.
+- Runtime schema readiness is keyed to the concrete PostgreSQL pool object.
+  Concurrent callers for one pool share one initialization attempt, completed
+  pools do not repeat DDL, and a failed attempt can be retried. Replacing a
+  pool creates independent readiness state; completion from an obsolete or
+  disconnected pool cannot mark the current pool ready.
+- Startup performs one read-only catalog query to compare the database's
+  configured collation version with
+  `pg_database_collation_actual_version(oid)`. A mismatch emits a warning with
+  both versions and requires separately approved operator maintenance; startup
+  never runs `REINDEX`, refreshes the stored version, or otherwise repairs
+  collation state.
 - The dedicated worker process requires database connectivity before it can claim queued jobs.
 - GPT and worker job state is stored in database-backed job tables, not Redis.
 - Redis supports fast shared state and health visibility; it is not the durable job source of truth.
+- Shared database queries execute once by default. A caller may opt into at
+  most three total attempts only with
+  `{ retry: 'transient-read', idempotent: true, auditedQueryId: ... }`; the
+  helper accepts that policy only when the identifier and normalized SQL
+  exactly match an immutable audited-query registry entry, and only retries an
+  explicit transient PostgreSQL SQLSTATE. Pool acquisition failures are
+  single-attempt and remain outside this query-execution retry policy. There is
+  no environment switch that can silently enable retries for writes, dynamic
+  SQL, arbitrary `SELECT` statements, or all reads.
 
 ## Local Configuration
 ```env
@@ -97,6 +120,80 @@ npm run test:local-agent-postgres
 The required flag prevents a missing CI database variable from turning the
 database suite into a silent skip. Never point this test command at production
 or a retained preview database.
+
+### Generic queue claim-generation fencing migration
+
+`migrations/20260727_job_claim_generation_v1.sql` adds the non-negative
+`BIGINT NOT NULL DEFAULT 0` `job_data.claim_generation` token used by generic
+workers. Runtime initialization in `src/core/db/schema.ts` enforces the same
+column and validated check-constraint contract. Both paths fail closed when an
+existing column or named constraint has an incompatible definition.
+
+Each non-local-agent claim atomically increments the generation. Heartbeat,
+retry, provider-deferral, and terminal writes then require the exact worker,
+generation, running status, and unexpired lease. PostgreSQL `BIGINT` values
+remain validated decimal strings in TypeScript to avoid JavaScript number
+precision loss. Local-agent jobs retain their separate assignment protocol.
+
+`migrations/20260727_job_claim_generation_v1.rollback.sql` refuses rollback
+while any running job is not provably `local-agent`, verifies the exact column
+and named constraint before destructive DDL, then removes only that fencing
+contract. Validate this migration only against an explicitly created disposable
+PostgreSQL 18 database by setting
+`JOB_CLAIM_FENCING_TEST_DATABASE_URL`; the guarded test never reads an
+inherited `DATABASE_URL`.
+
+### DAG snapshot-generation fencing migration
+
+`migrations/20260727_dag_run_snapshot_generation_v1.sql` adds the
+non-negative `BIGINT NOT NULL DEFAULT 0`
+`dag_runs.snapshot_generation` fencing token. Runtime initialization enforces
+the same exact type, default, nullability, and validated named-check contract.
+At the TypeScript repository boundary, generations remain canonical decimal
+strings so PostgreSQL `BIGINT` precision is preserved.
+
+The DAG service captures generation `1` before admitting a new run and
+deep-clones the complete persistence envelope before each serialized write.
+An upsert applies only when its generation is higher than the stored
+generation. Initial persistence must apply before execution launches; an
+exception or rejected generation removes only the new local/tracker state.
+Later rejected generations quarantine that run's persistence lane and emit one
+ownership-conflict diagnostic, preventing further stale writes without
+rewriting run lifecycle state.
+
+This change requires a coordinated writer rollout. A pre-fencing binary still
+uses an unconditional conflict update and can overwrite snapshot data without
+advancing `snapshot_generation`, so applying the schema migration alone does
+not fence mixed-version writers. Drain or stop every DAG-writing process,
+apply the migration and compatible code together, and do not allow an older
+binary to run concurrently. Likewise, attempt rollback only after all writers
+are stopped or confirmed compatible with the rolled-back schema.
+
+The repository-level Railway fail-safe for this rollout is the
+`20260727-dag-snapshot-generation-v1` value of
+`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` in
+`.github/workflows/railway-auto-deploy.yml`. With that hold active, successful
+`main` CI cannot automatically start the Railway deployment job. A deliberate
+manual dispatch requires the exact typed attestation
+`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`; the workflow does
+not perform or verify the drain itself and deploys only its one configured
+service.
+
+Keep the hold active until the migration and compatible revision are verified
+on every DAG-writing process, all older replicas are gone, and post-deploy
+health is accepted. Keep it active through any rollback. Then set the marker to
+the exact sentinel `none` in a reviewed follow-up commit to restore normal
+automatic promotion. Deleting, blanking, or malforming the marker fails closed
+instead of silently lifting the hold.
+
+`migrations/20260727_dag_run_snapshot_generation_v1.rollback.sql` verifies
+the complete installed column and validated constraint before destructive
+DDL, and refuses rollback while any row has an unknown or nonterminal status.
+Validate this migration only against the explicitly created disposable
+PostgreSQL 18 database selected through
+`DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`. The guarded integration test
+requires an explicit loopback host and port plus the exact disposable database
+name, rejects URL overrides, and never reads an inherited `DATABASE_URL`.
 
 ### Productivity core migration
 

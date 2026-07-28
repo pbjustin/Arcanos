@@ -3,7 +3,7 @@ import type { RedisLifecycleSnapshot } from '../src/platform/runtime/redisLifecy
 import type { StartupLifecycleSnapshot } from '../src/platform/runtime/startupLifecycle.js';
 
 const request = (await import('supertest')).default;
-const CURRENT_GPT_ROUTER_HASH = '8bf52c870195f165b17397ca16e87361fa401553fa10f86ebdbcc857a4fbba58';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
 
 function redisSnapshot(
   state: RedisLifecycleSnapshot['state'],
@@ -177,6 +177,7 @@ describe('actual Express startup health route ordering', () => {
     const startingHealth = await request(harness.app).get('/health');
     const startingHealthz = await request(harness.app).get('/healthz');
     const startingReady = await request(harness.app).get('/readyz');
+    const startingReadyHead = await request(harness.app).head('/readyz');
 
     expect(startingHealth.status).toBe(200);
     expect(startingHealth.body).toEqual(expect.objectContaining({
@@ -205,10 +206,49 @@ describe('actual Express startup health route ordering', () => {
       ready: false,
       status: 'unhealthy'
     }));
-    expect(startingReady.body.checks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'redis', code: 'REDIS_INITIALIZING', healthy: false }),
-      expect.objectContaining({ name: 'startup', code: 'APPLICATION_STARTING', healthy: false })
-    ]));
+    expect(startingReady.headers['cache-control']).toBe('no-store');
+    expect(Object.keys(startingReady.body).sort()).toEqual([
+      'checks',
+      'duration',
+      'ready',
+      'status',
+      'timestamp'
+    ]);
+    expect(startingReady.body.checks).toEqual([
+      {
+        healthy: true,
+        name: 'openai',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'database',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: false,
+        name: 'redis',
+        code: 'REDIS_INITIALIZING',
+        error: 'Redis initialization is in progress.',
+        metadata: {
+          recoveryCount: 0,
+          readyGeneration: 0,
+          circuitEnabled: true,
+          circuitState: 'HALF_OPEN'
+        },
+        duration: expect.any(Number)
+      },
+      {
+        healthy: false,
+        name: 'startup',
+        code: 'APPLICATION_STARTING',
+        error: 'Application startup is in progress.',
+        duration: expect.any(Number)
+      }
+    ]);
+    expect(startingReadyHead.status).toBe(503);
+    expect(startingReadyHead.headers['cache-control']).toBe('no-store');
+    expect(startingReadyHead.text).toBeUndefined();
 
     harness.setRedisSnapshot(redisSnapshot('DEGRADED'));
     harness.setStartupSnapshot(startupSnapshot('DEGRADED'));
@@ -232,18 +272,39 @@ describe('actual Express startup health route ordering', () => {
     expect(degradedHealthz.status).toBe(200);
     expect(degradedHealthz.body.startup.phase).toBe('DEGRADED');
     expect(degradedReady.status).toBe(503);
-    expect(degradedReady.body.checks).toEqual(expect.arrayContaining([
-      expect.objectContaining({
+    expect(degradedReady.headers['cache-control']).toBe('no-store');
+    expect(degradedReady.body.checks).toEqual([
+      {
+        healthy: true,
+        name: 'openai',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'database',
+        duration: expect.any(Number)
+      },
+      {
         name: 'redis',
         code: 'REDIS_DEPENDENCY_UNAVAILABLE',
-        healthy: false
-      }),
-      expect.objectContaining({
+        error: 'Redis dependency is unavailable.',
+        healthy: false,
+        metadata: {
+          recoveryCount: 0,
+          readyGeneration: 0,
+          circuitEnabled: true,
+          circuitState: 'OPEN'
+        },
+        duration: expect.any(Number)
+      },
+      {
         name: 'startup',
         code: 'APPLICATION_DEGRADED',
-        healthy: false
-      })
-    ]));
+        error: 'Application dependencies are degraded.',
+        healthy: false,
+        duration: expect.any(Number)
+      }
+    ]);
 
     harness.setRedisSnapshot(redisSnapshot('READY', { recoveryCount: 1 }));
     harness.setStartupSnapshot(startupSnapshot('READY'));
@@ -269,6 +330,35 @@ describe('actual Express startup health route ordering', () => {
       ready: true,
       status: 'healthy'
     }));
+    expect(readyResponse.headers['cache-control']).toBe('no-store');
+    expect(readyResponse.body.checks).toEqual([
+      {
+        healthy: true,
+        name: 'openai',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'database',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'redis',
+        metadata: {
+          recoveryCount: 1,
+          readyGeneration: 1,
+          circuitEnabled: true,
+          circuitState: 'CLOSED'
+        },
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'startup',
+        duration: expect.any(Number)
+      }
+    ]);
 
     expect(harness.createClientMock).not.toHaveBeenCalled();
   });

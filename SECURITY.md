@@ -20,6 +20,12 @@ Secret and auth guidance:
 - Keep `DEBUG_SERVER_TOKEN` set when daemon debug server is enabled.
 - Keep `DEBUG_SERVER_ALLOW_UNAUTHENTICATED=false` except isolated local testing.
 - Prefer HTTPS for daemon backend routing (`BACKEND_ALLOW_HTTP=false` except local dev).
+- Keep prompt and AI-routing tracing at the default metadata-only mode or turn
+  it off. Treat `PROMPT_DEBUG_TRACE_MODE=full` and every historical prompt-debug
+  JSONL file as sensitive data.
+- Keep prompt-debug persistence disabled unless an approved diagnostic workflow
+  requires it; configure an explicit byte cap and restrict access to the exact
+  storage path.
 
 ## Run locally
 Recommended checks:
@@ -41,6 +47,9 @@ python -m pip list --outdated
 ## Troubleshooting
 - Suspected leaked key: rotate key, invalidate old token, redeploy, review logs.
 - Unexpected debug endpoint access: rotate `DEBUG_SERVER_TOKEN` and review daemon host/network exposure.
+- Unexpected prompt or AI-routing trace access: rotate the control-plane access
+  token, review `arcanos:read` grants, disable trace capture, and separately
+  assess any configured JSONL file without printing its contents.
 - Repeated confirmation bypass concerns: review `TRUSTED_GPT_IDS`, `ARCANOS_AUTOMATION_SECRET`, and header usage.
 
 ## References

@@ -4,6 +4,8 @@ import {
   callTextResponse,
   callStructuredResponse,
   createSafeResponsesParse,
+  OpenAIResponseIncompleteError,
+  OpenAIResponseLegacyConversionError,
   OpenAIResponseMalformedJsonError,
   OpenAIResponseRefusalError,
 } from '../packages/arcanos-openai/src/responses.ts';
@@ -13,6 +15,7 @@ describe('openai responses helpers', () => {
     const create = jest.fn().mockResolvedValue({
       id: 'resp_1',
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: '{"answer":"ok"}',
       output: [],
     });
@@ -43,6 +46,7 @@ describe('openai responses helpers', () => {
     const create = jest.fn().mockResolvedValue({
       id: 'resp_nested_1',
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output: [
         {
           type: 'message',
@@ -104,6 +108,7 @@ describe('openai responses helpers', () => {
     const create = jest.fn().mockResolvedValue({
       id: 'resp_refusal_1',
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output: [
         {
           type: 'message',
@@ -130,6 +135,7 @@ describe('openai responses helpers', () => {
     const create = jest.fn().mockResolvedValue({
       id: 'resp_bad_json_1',
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: '{"answer":',
       output: [],
     });
@@ -152,6 +158,7 @@ describe('openai responses helpers', () => {
     const create = jest.fn().mockResolvedValue({
       id: 'resp_parse_1',
       model: 'gpt-4.1-mini',
+      status: 'completed',
       output_text: '{"ok":true}',
       output: [],
     });
@@ -174,5 +181,147 @@ describe('openai responses helpers', () => {
     );
 
     expect(result.output_parsed).toEqual({ ok: true });
+  });
+
+  it.each([
+    ['failed', { status: 'failed', error: { code: 'provider_failure' } }, 'terminal_status'],
+    ['cancelled', { status: 'cancelled' }, 'terminal_status'],
+    ['queued', { status: 'queued' }, 'pending_status'],
+    ['in progress', { status: 'in_progress' }, 'pending_status'],
+    ['unknown', { status: 'future_status' }, 'unsupported_status'],
+    ['missing', {}, 'unsupported_status'],
+    ['null', { status: null }, 'unsupported_status'],
+  ])(
+    'rejects %s lifecycle responses before accepting structured JSON',
+    async (_name, responseOverrides, reason) => {
+      const create = jest.fn().mockResolvedValue({
+        id: 'resp_lifecycle_rejection',
+        model: 'gpt-4.1-mini',
+        output_text: '{"answer":"must not be accepted"}',
+        output: [],
+        ...responseOverrides,
+      });
+
+      let rejection: unknown;
+      try {
+        await callStructuredResponse(
+          { responses: { create } } as any,
+          {
+            model: 'gpt-4.1-mini',
+            input: 'hello',
+            text: { format: { type: 'json_object' } },
+          },
+          undefined,
+          { source: 'test lifecycle response' }
+        );
+      } catch (error) {
+        rejection = error;
+      }
+
+      expect(rejection).toBeInstanceOf(OpenAIResponseLegacyConversionError);
+      expect(rejection).toMatchObject({ reason });
+    }
+  );
+
+  it('rejects valid partial JSON from incomplete responses', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_incomplete_structured',
+      model: 'gpt-4.1-mini',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_text: '{"answer":"partial"}',
+      output: [],
+    });
+
+    await expect(
+      callStructuredResponse(
+        { responses: { create } } as any,
+        {
+          model: 'gpt-4.1-mini',
+          input: 'hello',
+          text: { format: { type: 'json_object' } },
+        },
+        undefined,
+        { source: 'test incomplete response' }
+      )
+    ).rejects.toBeInstanceOf(OpenAIResponseIncompleteError);
+  });
+
+  it('rejects provider-parsed output from failed responses', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_failed_preparsed',
+      model: 'gpt-4.1-mini',
+      status: 'failed',
+      error: { code: 'provider_failure' },
+      output_parsed: { answer: 'must not be accepted' },
+      output: [],
+    });
+
+    await expect(
+      callStructuredResponse(
+        { responses: { create } } as any,
+        {
+          model: 'gpt-4.1-mini',
+          input: 'hello',
+          text: { format: { type: 'json_object' } },
+        }
+      )
+    ).rejects.toBeInstanceOf(OpenAIResponseLegacyConversionError);
+  });
+
+  it('rejects provider-parsed output from incomplete responses', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_incomplete_preparsed',
+      model: 'gpt-4.1-mini',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_parsed: { answer: 'partial' },
+      output: [],
+    });
+
+    await expect(
+      callStructuredResponse(
+        { responses: { create } } as any,
+        {
+          model: 'gpt-4.1-mini',
+          input: 'hello',
+          text: { format: { type: 'json_object' } },
+        }
+      )
+    ).rejects.toBeInstanceOf(OpenAIResponseIncompleteError);
+  });
+
+  it('does not disclose provider failure text in structured lifecycle errors', async () => {
+    const providerMessage = 'sensitive provider diagnostic details';
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_failed_structured',
+      model: 'gpt-4.1-mini',
+      status: 'failed',
+      error: {
+        code: 'provider_failure',
+        message: providerMessage,
+      },
+      output_text: '{"answer":"must not be accepted"}',
+      output: [],
+    });
+
+    let rejection: unknown;
+    try {
+      await callStructuredResponse(
+        { responses: { create } } as any,
+        {
+          model: 'gpt-4.1-mini',
+          input: 'hello',
+          text: { format: { type: 'json_object' } },
+        },
+        undefined,
+        { source: 'test failed response' }
+      );
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(rejection).toBeInstanceOf(OpenAIResponseLegacyConversionError);
+    expect((rejection as Error).message).not.toContain(providerMessage);
   });
 });

@@ -48,7 +48,7 @@ This permits a failed Python action to become backend success, one submitted res
 | TypeScript worker | General job worker | No ActionPlan execution consumer found |
 | Python daemon | Only located real ActionPlan executor; supports `terminal.run` | Sends a bearer credential, but the plan route does not verify it |
 | MCP | Authenticated destructive command adapter | No safe external executor identity or result-submission contract |
-| Generic daemon queue | In-memory command transport | Context is hardcoded to `anonymous-daemon`; no ActionPlan producer found |
+| Generic daemon queue | In-memory command transport | Purpose-bound deployment-wide transport authentication; store partition remains non-secret and no ActionPlan producer was found |
 | Postgres | Durable plan and legacy result store | No run, attempt, owner, realm, action digest, or result idempotency identity |
 | Redis | Shared cache/runtime support | Not an authoritative ActionPlan execution ledger |
 
@@ -91,7 +91,7 @@ The caller cannot supply `executorKind`. A future executor mapping requires sepa
 
 The current HTTP and daemon authentication surfaces are not reusable as a complete protocol:
 
-- the daemon context is anonymous;
+- generic daemon transport authority is deployment-wide rather than bound to one executor instance;
 - the GPT Access token has one configuration-wide scope set and is coupled to the GPT gateway;
 - only HTTP MCP has a bearer-authenticated transport; stdio and internal MCP contexts have no authenticated principal;
 - worker-helper authentication is route-local and accepts an unsuitable OR policy;
@@ -124,7 +124,7 @@ The HTTP boundary reuses the Phase 2A opaque-secret equality primitive and the e
 
 The credential-to-principal, executor-kind, instance, assigned-agent, scope, and realm mapping is server configuration. Payload fields cannot change it. The first implementation supports exactly one configured Python executor instance per realm. Multiple physical daemons or realms must not share the credential or instance ID. Credential rotation may overlap old/new token values only when both map to the same stable principal, instance, role, and realm; revocation does not transfer claimed work.
 
-Python uses a dedicated, narrow ActionPlan execution protocol client with its own executor credential provider. Heartbeat, generic daemon queue, and unrelated backend calls retain their current credential and cannot borrow the executor token.
+Python uses a dedicated, narrow ActionPlan execution protocol client with its own executor credential provider. Heartbeat and generic daemon-queue calls use their separate deployment-wide `ARCANOS_DAEMON_ACCESS_TOKEN`; unrelated backend calls retain generic auth and none can borrow the executor token.
 
 ### Operation authority matrix
 
@@ -728,7 +728,7 @@ Legacy generic-queue `action_plan` commands are incompatible with Phase 2E and a
 | Legacy Python + legacy backend | Preserved only by deploying old code; remains unsafe |
 | Unknown MCP command client + Phase 2E | `plans.execute` remains command-only with an explicit idempotency key |
 
-The Python package is distributable, but publication and active installations were not proven. Production rollout must therefore treat legacy clients as unknown. Because the current daemon queue is anonymous, production activation is blocked until old executors are inventoried or disabled and the dedicated credential is configured.
+The Python package is distributable, but publication and active installations were not proven. Production rollout must therefore treat legacy clients as unknown. The generic daemon queue now requires a separate deployment-wide credential but still lacks per-instance identity, so production activation remains blocked until old executors are inventoried or disabled and the dedicated ActionPlan credential is configured.
 
 The protocol is default-off behind separate server controls: `ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED`, `ACTION_PLAN_EXECUTION_ACCEPT_COMMANDS`, `ACTION_PLAN_EXECUTION_ASSIGN_REQUESTED`, and `ACTION_PLAN_EXECUTION_DRAIN_ENABLED`. A disabled protocol rejects result-shaped `/execute` with `ACTION_PLAN_RESULT_ENDPOINT_REQUIRED` and rejects command requests with `ACTION_PLAN_EXECUTION_PROTOCOL_DISABLED`; it never falls back to synthetic success. Command acceptance, new claim-next assignment, and exact-claim/start/result/status recovery can therefore be disabled independently. Rollback first disables commands, keeps assignment on until zero `REQUESTED` runs, then disables assignment while drain remains on until zero `CLAIMED`/`RUNNING` runs. Activation is a breaking HTTP/MCP change and requires explicit operator acceptance.
 

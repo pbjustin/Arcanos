@@ -130,6 +130,9 @@ const DEFAULT_BACKEND_GPT_ID =
   process.env.BACKEND_GPT_ID?.trim() ||
   "arcanos-daemon";
 const GPT_ACCESS_TOKEN_ENV_NAME = "ARCANOS_GPT_ACCESS_TOKEN";
+const CONTROL_PLANE_ACCESS_TOKEN_ENV_NAME = "ARCANOS_CONTROL_PLANE_ACCESS_TOKEN";
+const MIN_CONTROL_PLANE_ACCESS_TOKEN_LENGTH = 32;
+const MAX_CONTROL_PLANE_ACCESS_TOKEN_LENGTH = 4_096;
 
 function resolveDefaultBackendGptId(): string {
   return DEFAULT_BACKEND_GPT_ID;
@@ -259,7 +262,10 @@ export async function fetchRecentLogsSnapshot(options: CliGlobalOptions, limit =
 }
 
 export async function fetchSelfHealInspectionSnapshot(options: CliGlobalOptions): Promise<Record<string, unknown>> {
-  return getJson(options.baseUrl, "/status/safety/self-heal");
+  return getControlPlaneJson(
+    options.baseUrl,
+    "/status/safety/self-heal"
+  );
 }
 
 export function validateStatusResponse(
@@ -667,6 +673,70 @@ function buildGptAccessHeaders(extraHeaders: Record<string, string> = {}): Recor
     ...headers,
     authorization: `Bearer ${token}`
   };
+}
+
+function buildControlPlaneHeaders(): Record<string, string> {
+  const token = process.env[CONTROL_PLANE_ACCESS_TOKEN_ENV_NAME];
+  if (
+    !token
+    || token !== token.trim()
+    || token.length < MIN_CONTROL_PLANE_ACCESS_TOKEN_LENGTH
+    || token.length > MAX_CONTROL_PLANE_ACCESS_TOKEN_LENGTH
+    || !/^[\x21-\x7E]+$/.test(token)
+  ) {
+    throw new Error(
+      `${CONTROL_PLANE_ACCESS_TOKEN_ENV_NAME} must contain the exact visible-ASCII control-plane credential with no whitespace.`
+    );
+  }
+
+  return {
+    authorization: `Bearer ${token}`
+  };
+}
+
+function resolveControlPlaneRequestUrl(baseUrl: string, pathname: string): URL {
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(baseUrl);
+  } catch {
+    throw new Error('Control-plane backend URL must be an explicit HTTPS origin or HTTP loopback origin.');
+  }
+
+  const loopbackHost = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
+    .has(parsedBaseUrl.hostname.toLowerCase());
+  const allowedProtocol = parsedBaseUrl.protocol === 'https:'
+    || (parsedBaseUrl.protocol === 'http:' && loopbackHost);
+  if (
+    !allowedProtocol
+    || parsedBaseUrl.username
+    || parsedBaseUrl.password
+    || (parsedBaseUrl.pathname !== '/' && parsedBaseUrl.pathname !== '')
+    || parsedBaseUrl.search
+    || parsedBaseUrl.hash
+  ) {
+    throw new Error('Control-plane backend URL must be an explicit HTTPS origin or HTTP loopback origin.');
+  }
+
+  return new URL(pathname, parsedBaseUrl);
+}
+
+async function getControlPlaneJson(
+  baseUrl: string,
+  pathname: string,
+  fetchFn: typeof fetch = fetch
+): Promise<Record<string, unknown>> {
+  const response = await fetchFn(resolveControlPlaneRequestUrl(baseUrl, pathname), {
+    headers: buildControlPlaneHeaders(),
+    redirect: 'error'
+  });
+  const payload = await readResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(
+      `Backend ${pathname} failed with HTTP ${response.status}: ${formatResponsePayloadForError(payload)}`
+    );
+  }
+
+  return requireJsonObjectPayload(payload);
 }
 
 async function postJson(

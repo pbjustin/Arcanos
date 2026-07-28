@@ -60,7 +60,15 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
     unknown: z.number().int().nonnegative()
   }),
   recentFailureReasons: z.array(z.object({
-    reason: z.string().min(1),
+    reason: z.enum([
+      'Authentication failure.',
+      'Network failure.',
+      'Provider failure.',
+      'Rate limit failure.',
+      'Timeout failure.',
+      'Validation failure.',
+      'Worker job failure.'
+    ]),
     category: z.enum([
       'authentication',
       'network',

@@ -148,8 +148,7 @@ async function sendSimulationStream(
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
+    'Connection': 'keep-alive'
   });
 
   for await (const chunk of result.stream) {
@@ -194,8 +193,18 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
         error: dispatchEnvelope.error.message
       });
 
-      if (dispatchEnvelope.error.code === 'BAD_REQUEST') {
-        return res.status(400).json(errorPayload);
+      if (
+        dispatchEnvelope.error.code === 'BAD_REQUEST'
+        || dispatchEnvelope.error.code === 'MEMORY_AUTH_REQUIRED'
+      ) {
+        const statusCode = dispatchEnvelope.error.code === 'MEMORY_AUTH_REQUIRED'
+          ? 401
+          : 400;
+        return res.status(statusCode).json(errorPayload);
+      }
+
+      if (dispatchEnvelope.error.code === 'MEMORY_AUTH_UNAVAILABLE') {
+        return res.status(503).json(errorPayload);
       }
 
       sendInternalErrorPayload(res, errorPayload);

@@ -3,7 +3,7 @@
  *
  * Purpose:
  * - Provide a lightweight operator surface for CLI and ChatGPT automation to inspect queue state
- *   and send worker commands without the interactive confirmation workflow or helper-token setup.
+ *   and send authenticated worker commands without duplicating the main execution workflow.
  *
  * Inputs/outputs:
  * - Input: HTTP requests under `/worker-helper/*`.
@@ -14,8 +14,7 @@
  * - Dedicated Railway worker visibility is queue-observed only; there is no cross-process heartbeat here.
  */
 
-import express from 'express';
-import type { NextFunction, Request, Response } from 'express';
+import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
 import {
   asyncHandler,
@@ -29,7 +28,6 @@ import {
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { clientContextSchema } from '@shared/types/dto.js';
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   isRailwayPreviewEnvironment,
   previewAskChaosHookSchema
@@ -45,16 +43,12 @@ import {
   listRecentFailedWorkerJobs,
   queueWorkerAsk
 } from '@services/workerControlService.js';
-import { getEnv } from '@platform/runtime/env.js';
-import { resolveHeader } from '@transport/http/requestHeaders.js';
-import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { requireWorkerHelperPrivilegedAuth } from '@transport/http/middleware/workerHelperPrivilegedAuth.js';
+import { workerHealMutationRateLimit } from '@transport/http/middleware/workerHealRateLimit.js';
 
 const router = express.Router();
 
 const cognitiveDomainSchema = z.enum(['diagnostic', 'code', 'creative', 'natural', 'execution']);
-const workerHelperTokenHeader = 'x-arcanos-worker-helper-token';
-const allowedOperatorRoles = new Set(['admin', 'operator', 'owner']);
-
 const workerHelperJobIdSchema = z.object({
   id: z.string().trim().min(1)
 });
@@ -83,57 +77,19 @@ const dispatchRequestSchema = z.object({
   sourceEndpoint: z.string().trim().min(1).max(64).optional()
 });
 
-function extractBearerToken(req: Request): string | null {
-  const authHeader = resolveHeader(req.headers, 'authorization')?.trim();
-  if (!authHeader) {
-    return null;
-  }
-
-  const match = /^Bearer\s+(.+)$/i.exec(authHeader);
-  return match?.[1]?.trim() || null;
-}
-
-function hasTrustedWorkerHelperToken(req: Request): boolean {
-  const configuredToken = getEnv('ARCANOS_WORKER_HELPER_TOKEN')?.trim();
-  if (!configuredToken) {
-    return false;
-  }
-
-  const providedToken =
-    resolveHeader(req.headers, workerHelperTokenHeader)?.trim()
-    ?? extractBearerToken(req);
-
-  return timingSafeEqualOpaqueSecret(providedToken, configuredToken);
-}
-
-function isOperatorLightRole(role: string | undefined): boolean {
-  return role?.trim().toLowerCase() === 'operator-light';
-}
-
-function requireWorkerHelperPrivilegedAuth(req: Request, res: Response, next: NextFunction): void {
-  const authUserRole = typeof req.authUser?.role === 'string' ? req.authUser.role.trim().toLowerCase() : undefined;
-
-  if (isOperatorLightRole(authUserRole)) {
-    res.status(403).json({
-      error: 'WORKER_HELPER_OPERATOR_FORBIDDEN',
-      message: 'Worker helper privileged routes require full operator privileges.'
-    });
-    return;
-  }
-
-  if (
-    req.daemonToken
-    || hasTrustedWorkerHelperToken(req)
-    || (authUserRole && allowedOperatorRoles.has(authUserRole))
-    || (typeof req.operatorActor === 'string' && req.operatorActor.trim().length > 0)
-  ) {
-    next();
-    return;
-  }
-
-  res.status(401).json({
-    error: 'WORKER_HELPER_AUTH_REQUIRED',
-    message: 'Worker helper privileged routes require authenticated operator or trusted internal access.'
+function sendWorkerHelperFailure(
+  req: Request,
+  res: Response,
+  event: string,
+  error: string,
+  message: string
+): void {
+  req.logger?.error?.(event, {
+    requestId: req.requestId,
+  });
+  sendInternalErrorPayload(res, {
+    error,
+    message
   });
 }
 
@@ -152,14 +108,17 @@ function requireWorkerHelperPrivilegedAuth(req: Request, res: Response, next: Ne
  */
 router.get(
   '/worker-helper/status',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     try {
       res.json(await getWorkerControlStatus());
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_STATUS_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.status.failed',
+        'WORKER_HELPER_STATUS_FAILED',
+        'Worker helper status request failed.'
+      );
     }
   })
 );
@@ -179,14 +138,17 @@ router.get(
  */
 router.get(
   '/worker-helper/health',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     try {
       res.json(await getWorkerControlHealth());
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_HEALTH_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.health.failed',
+        'WORKER_HELPER_HEALTH_FAILED',
+        'Worker helper health request failed.'
+      );
     }
   })
 );
@@ -207,7 +169,7 @@ router.get(
 router.get(
   '/worker-helper/jobs/latest',
   requireWorkerHelperPrivilegedAuth,
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     try {
       const latestJob = await getLatestWorkerJobDetail();
 
@@ -218,11 +180,14 @@ router.get(
       }
 
       res.json(latestJob);
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_JOB_LOOKUP_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.job_lookup.failed',
+        'WORKER_HELPER_JOB_LOOKUP_FAILED',
+        'Worker job lookup failed.'
+      );
     }
   })
 );
@@ -252,11 +217,14 @@ router.get(
         failedCountMode: 'retained_terminal_jobs',
         jobs: await listRecentFailedWorkerJobs(limit)
       });
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_FAILED_JOBS_LOOKUP_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.failed_jobs_lookup.failed',
+        'WORKER_HELPER_FAILED_JOBS_LOOKUP_FAILED',
+        'Worker failed-job lookup failed.'
+      );
     }
   })
 );
@@ -289,11 +257,14 @@ router.get(
       }
 
       res.json(job);
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_JOB_LOOKUP_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.job_lookup.failed',
+        'WORKER_HELPER_JOB_LOOKUP_FAILED',
+        'Worker job lookup failed.'
+      );
     }
   })
 );
@@ -335,11 +306,14 @@ router.post(
         endpointName: body.endpointName || 'worker-helper',
         previewChaosHook: body.previewChaosHook
       }));
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_QUEUE_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.queue.failed',
+        'WORKER_HELPER_QUEUE_FAILED',
+        'Worker queue request failed.'
+      );
     }
   })
 );
@@ -365,11 +339,14 @@ router.post(
     try {
       const body = req.validated!.body as z.infer<typeof dispatchRequestSchema>;
       res.json(await dispatchWorkerInput(body));
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_DISPATCH_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.dispatch.failed',
+        'WORKER_HELPER_DISPATCH_FAILED',
+        'Worker dispatch request failed.'
+      );
     }
   })
 );
@@ -390,6 +367,7 @@ router.post(
 router.post(
   '/worker-helper/heal',
   requireWorkerHelperPrivilegedAuth,
+  workerHealMutationRateLimit,
   asyncHandler(async (req, res) => {
     try {
       const healRequest = parseWorkerHealRequest(req.body, req.query);
@@ -425,11 +403,14 @@ router.post(
       }
 
       res.json(await healWorkerRuntime(healRequest.data.force, 'worker-helper'));
-    } catch (error: unknown) {
-      sendInternalErrorPayload(res, {
-        error: 'WORKER_HELPER_HEAL_FAILED',
-        message: resolveErrorMessage(error)
-      });
+    } catch {
+      sendWorkerHelperFailure(
+        req,
+        res,
+        'worker_helper.heal.failed',
+        'WORKER_HELPER_HEAL_FAILED',
+        'Worker heal request failed.'
+      );
     }
   })
 );

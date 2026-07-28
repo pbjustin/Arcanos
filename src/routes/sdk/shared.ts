@@ -5,6 +5,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { dispatchArcanosTask } from '@platform/runtime/workerConfig.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 import { buildTimestampedPayload } from '@transport/http/responseHelpers.js';
+import { redactSensitive, redactString } from '@shared/redaction.js';
 
 const SDK_ROUTE_METADATA = {
   status: 'active',
@@ -68,7 +69,8 @@ export function sendSdkJson<T extends Record<string, unknown>>(
 /**
  * Purpose: log an SDK failure and return the standardized error response envelope.
  * Inputs/outputs: accepts the response, log message, error object, and optional context; logs the error and sends a JSON failure payload.
- * Edge case behavior: non-Error throwables are normalized through `resolveErrorMessage`.
+ * Edge case behavior: internal details are redacted for audit and never cross
+ * the public HTTP boundary.
  */
 export async function sendSdkFailure(
   res: Response,
@@ -76,16 +78,17 @@ export async function sendSdkFailure(
   error: unknown,
   context: Record<string, unknown> = {},
 ): Promise<void> {
-  const errorMessage = resolveErrorMessage(error);
+  const errorMessage = redactString(resolveErrorMessage(error));
+  const safeContext = redactSensitive(context) as Record<string, unknown>;
   await logExecution('sdk-interface', 'error', logMessage, {
+    ...safeContext,
     error: errorMessage,
-    ...context,
   });
   sendInternalErrorPayload(
     res,
     buildTimestampedPayload({
       success: false,
-      error: errorMessage,
+      error: 'SDK operation failed',
     }),
   );
 }
@@ -215,6 +218,7 @@ export async function createOrMockJobRecord(
       worker_id: workerId,
       job_type: jobType,
       status: 'pending',
+      claim_generation: '0',
       input: JSON.stringify(jobData),
       created_at: new Date().toISOString(),
     };
@@ -275,7 +279,9 @@ export function buildSdkJobExecutionResult(
     success: !workerResult?.error,
     processed: true,
     taskId: `task-${Date.now()}`,
-    aiResponse: workerResult?.result || workerResult?.error || 'No response generated',
+    aiResponse: workerResult?.error
+      ? 'Worker execution failed'
+      : workerResult?.result || 'No response generated',
     processedAt,
     model: workerResult?.activeModel || fallbackModel,
   };

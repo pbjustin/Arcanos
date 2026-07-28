@@ -35,6 +35,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 }));
 
 const {
+  JOB_EVENT_TYPES,
   cleanupJobEvents,
   listJobEventTimeline,
   recordJobEvent,
@@ -85,7 +86,12 @@ describe('jobEventRepository.recordJobEvent', () => {
     })).resolves.toEqual({ inserted: true });
 
     const params = queryMock.mock.calls[0]?.[1] as unknown[];
-    expect(queryMock.mock.calls[0]?.[2]).toBe(1);
+    expect(queryMock.mock.calls[0]?.[2]).toEqual({
+      traceContext: expect.objectContaining({
+        queryName: 'record_job_event',
+        source: 'job-events'
+      })
+    });
     expect(params[1]).toBeNull();
     expect(params[3]).toBeNull();
     expect(params[4]).toBe(0);
@@ -253,7 +259,12 @@ describe('jobEventRepository.cleanupJobEvents', () => {
     expect(queryMock.mock.calls[0]?.[0]).toContain('LIMIT $2');
     expect(queryMock.mock.calls[0]?.[0]).toContain('DELETE FROM job_events');
     expect(queryMock.mock.calls[0]?.[1]).toEqual([90, 1_500]);
-    expect(queryMock.mock.calls[0]?.[3]).toBe(false);
+    expect(queryMock.mock.calls[0]?.[2]).toEqual({
+      traceContext: expect.objectContaining({
+        queryName: 'cleanup_job_events',
+        source: 'job-events'
+      })
+    });
   });
 
   it('handles cleanup query failures without throwing', async () => {
@@ -328,6 +339,10 @@ describe('jobEventRepository.listJobEventTimeline', () => {
       '2026-05-07T13:00:00.000Z',
       1_000
     ]);
+  });
+
+  it('registers cancelled jobs as a supported lifecycle event', () => {
+    expect(JOB_EVENT_TYPES).toContain('job.cancelled');
   });
 
   it('excludes local-agent events when trusted tenant context is unavailable', async () => {

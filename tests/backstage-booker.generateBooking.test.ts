@@ -8,6 +8,8 @@ const mockSaveMemory = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
+const { AUDITED_TRANSIENT_READ_QUERIES } =
+  await import('../src/core/db/transientReadRegistry.js');
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   getGPT5Model: mockGetGPT5Model,
@@ -29,6 +31,7 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
+  AUDITED_TRANSIENT_READ_QUERIES,
   query: mockQuery,
   saveMemory: mockSaveMemory
 }));

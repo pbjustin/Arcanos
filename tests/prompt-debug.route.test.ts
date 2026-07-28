@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,19 @@ const callOpenAIMock = jest.fn();
 const runTrinityWritingPipelineMock = jest.fn();
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
+const controlPlaneAccessToken = 'prompt-debug-route-token-1234567890';
+const controlPlaneEnvironmentNames = [
+  'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+  'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  'ARCANOS_CONTROL_PLANE_SCOPES',
+  'PROMPT_DEBUG_TRACE_MODE',
+  'PROMPT_DEBUG_TRACE_PERSIST',
+] as const;
+const originalControlPlaneEnvironment = new Map(
+  controlPlaneEnvironmentNames.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   callOpenAI: callOpenAIMock,
@@ -114,7 +127,7 @@ function buildApp() {
     next();
   });
   app.use('/api/openai', openaiRouter);
-  app.use(promptDebugRouter);
+  app.use('/api/prompt-debug', promptDebugRouter);
   return app;
 }
 
@@ -126,6 +139,11 @@ describe('prompt debug routes', () => {
     tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'arcanos-prompt-debug-route-'));
     storagePath = path.join(tempDir, 'prompt-debug-events.jsonl');
     process.env.PROMPT_DEBUG_EVENTS_PATH = storagePath;
+    process.env.PROMPT_DEBUG_TRACE_MODE = 'full';
+    process.env.PROMPT_DEBUG_TRACE_PERSIST = 'false';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:prompt-debug-test';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read';
     jest.clearAllMocks();
     await clearPromptDebugTracesForTest();
     validateAIRequestMock.mockReturnValue({
@@ -175,7 +193,9 @@ describe('prompt debug routes', () => {
 
     expect(promptResponse.status).toBe(200);
 
-    const latestResponse = await request(app).get('/api/prompt-debug/latest');
+    const latestResponse = await request(app)
+      .get('/api/prompt-debug/latest')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`);
     expect(latestResponse.status).toBe(200);
     expect(latestResponse.body.latest).toMatchObject({
       requestId: 'req-prompt-debug-1',
@@ -200,9 +220,29 @@ describe('prompt debug routes', () => {
       }),
     });
 
-    const eventsResponse = await request(app).get('/api/prompt-debug/events');
+    const eventsResponse = await request(app)
+      .get('/api/prompt-debug/events')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`);
     expect(eventsResponse.status).toBe(200);
     expect(eventsResponse.body.count).toBe(1);
     expect(eventsResponse.body.events[0].requestId).toBe('req-prompt-debug-1');
   });
+
+  it('rejects unauthenticated prompt trace retrieval', async () => {
+    const response = await request(buildApp()).get('/api/prompt-debug/latest');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
+});
+
+afterAll(() => {
+  for (const [environmentName, value] of originalControlPlaneEnvironment) {
+    if (value === undefined) {
+      delete process.env[environmentName];
+    } else {
+      process.env[environmentName] = value;
+    }
+  }
 });

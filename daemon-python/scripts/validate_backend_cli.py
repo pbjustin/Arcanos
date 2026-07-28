@@ -66,7 +66,8 @@ def test_backend_connectivity() -> bool:
         client = BackendApiClient(
             base_url=Config.BACKEND_URL,
             token_provider=lambda: Config.BACKEND_TOKEN,
-            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
+            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT,
+            daemon_access_token_provider=lambda: Config.DAEMON_ACCESS_TOKEN,
         )
         
         response = client.request_registry()

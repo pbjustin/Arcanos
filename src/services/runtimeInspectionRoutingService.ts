@@ -9,7 +9,10 @@ import {
   runArcanosCLI,
   type ArcanosCliRuntimeCommand,
 } from '@services/arcanosCliRuntimeService.js';
-import { shouldInspectRuntimePrompt } from '@services/promptDebugTraceService.js';
+import {
+  classifyRuntimeInspectionPrompt,
+  type RuntimeInspectionPromptClassification,
+} from '@shared/runtimeInspectionPrompt.js';
 import {
   buildSafetySelfHealSnapshot,
   buildSelfHealEventsSnapshot,
@@ -19,12 +22,10 @@ import {
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { getWorkerControlHealth } from '@services/workerControlService.js';
 
-export interface RuntimeInspectionPromptClassification {
-  detectedIntent: 'RUNTIME_INSPECTION_REQUIRED' | 'STANDARD';
-  matchedKeywords: string[];
-  repoInspectionDisabled: boolean;
-  onlyReturnRuntimeValues: boolean;
-}
+export {
+  classifyRuntimeInspectionPrompt,
+  type RuntimeInspectionPromptClassification,
+};
 
 interface RuntimeInspectionSourceResult {
   sourceType: 'runtime-endpoint' | 'worker-health' | 'cli' | 'metrics';
@@ -56,51 +57,6 @@ export interface RuntimeInspectionExecutionResult {
   cliUsed: boolean;
 }
 
-type RuntimeKeywordRule = {
-  label: string;
-  pattern: RegExp;
-};
-
-const RUNTIME_KEYWORD_RULES: RuntimeKeywordRule[] = [
-  { label: 'live', pattern: /\blive\b/i },
-  { label: 'runtime', pattern: /\bruntime\b/i },
-  { label: 'currently running', pattern: /\bcurrently\s+running\b/i },
-  { label: 'currently active', pattern: /\bcurrently\s+active\b/i },
-  {
-    label: 'active',
-    pattern: /\b(?:runtime|worker|process|deployment|service|queue|loop)\b[^.!?\n]{0,16}\bactive\b|\bactive\b[^.!?\n]{0,16}\b(?:runtime|worker|process|deployment|service|queue|loop)\b/i,
-  },
-  { label: 'status now', pattern: /\bstatus\s+now\b/i },
-  {
-    label: 'diagnostics',
-    pattern: /\b(?:run|show|check|inspect)\s+diagnostics?\b|\bdiagnostics?\s+(?:status|report|summary)\b/i,
-  },
-  {
-    label: 'self-heal',
-    pattern: /\b(?:run|show|check|inspect)\s+self[-\s]?heal\b|\bself[-\s]?heal\s+(?:status|health|runtime|events?)\b/i,
-  },
-  {
-    label: 'workers',
-    pattern: /\b(?:show|check|inspect|list)\s+workers?\b|\bworkers?\s+(?:status|health|queue|runtime)\b/i,
-  },
-  { label: 'queue health', pattern: /\bqueue\s+health\b/i },
-  { label: 'system status', pattern: /\bsystem\s+status\b/i },
-  { label: 'production state', pattern: /\bproduction\s+state\b/i },
-  { label: 'loop running', pattern: /\bloop\s+running\b/i },
-  { label: 'telemetry', pattern: /\btelemetry\b/i },
-  {
-    label: 'events',
-    pattern: /\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b[^.!?\n]{0,20}\bevents?\b|\bevents?\b[^.!?\n]{0,20}\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b/i,
-  },
-];
-
-const REPO_BLOCK_RULES = [
-  /\bdo\s+not\s+use\s+repo(?:\s+inspection)?\b/i,
-  /\bno\s+repo(?:\s+inspection)?\b/i,
-  /\bonly\s+return\s+runtime\s+values\b/i,
-  /\bruntime\s+values\s+only\b/i,
-];
-
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(
     new Set(
@@ -110,10 +66,6 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
         .filter(value => value.length > 0)
     ).values()
   );
-}
-
-function normalizePrompt(prompt: string | null | undefined): string {
-  return typeof prompt === 'string' ? prompt.trim() : '';
 }
 
 function resolveBaseUrl(request?: Request): string {
@@ -208,37 +160,6 @@ async function collectMetricsSnapshot(request?: Request): Promise<Record<string,
       requests_total: diagnostics.requests_total,
       errors_total: diagnostics.errors_total,
     },
-  };
-}
-
-export function classifyRuntimeInspectionPrompt(prompt: string | null | undefined): RuntimeInspectionPromptClassification {
-  const normalized = normalizePrompt(prompt);
-  if (!normalized) {
-    return {
-      detectedIntent: 'STANDARD',
-      matchedKeywords: [],
-      repoInspectionDisabled: false,
-      onlyReturnRuntimeValues: false,
-    };
-  }
-
-  const matchedKeywords = uniqueStrings(
-    RUNTIME_KEYWORD_RULES
-      .filter(rule => rule.pattern.test(normalized))
-      .map(rule => rule.label)
-  );
-  const repoInspectionDisabled = REPO_BLOCK_RULES.some(rule => rule.test(normalized));
-  const onlyReturnRuntimeValues = /\bonly\s+return\s+runtime\s+values\b/i.test(normalized) || /\bruntime\s+values\s+only\b/i.test(normalized);
-  const detectedIntent =
-    shouldInspectRuntimePrompt(normalized)
-      ? 'RUNTIME_INSPECTION_REQUIRED'
-      : 'STANDARD';
-
-  return {
-    detectedIntent,
-    matchedKeywords,
-    repoInspectionDisabled,
-    onlyReturnRuntimeValues,
   };
 }
 

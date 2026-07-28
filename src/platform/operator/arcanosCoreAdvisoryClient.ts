@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 const GPT_ID = 'arcanos-core' as const;
 const JOB_CREATE_PATH = '/gpt-access/jobs/create' as const;
@@ -357,7 +358,17 @@ export function resolveArcanosCoreAdvisoryConfig(
 ): ArcanosCoreAdvisoryConfig {
   const baseUrl = env.ARCANOS_CORE_ADVISORY_BASE_URL?.trim();
   const credential = env.ARCANOS_CORE_ADVISORY_ACCESS_TOKEN?.trim();
-  if (!baseUrl || !credential || credential.length < 16 || credential.length > 4_096) {
+  if (
+    !baseUrl
+    || !credential
+    || credential.length < 16
+    || credential.length > 4_096
+    || hasConfiguredPurposeBoundCredentialCollision({
+      credential,
+      ownEnvironmentName: 'ARCANOS_CORE_ADVISORY_ACCESS_TOKEN',
+      readEnvironmentValue: environmentName => env[environmentName],
+    })
+  ) {
     throw advisoryError('ARCANOS_CORE_ADVISORY_CONFIGURATION_INVALID');
   }
   normalizeOrigin(baseUrl);

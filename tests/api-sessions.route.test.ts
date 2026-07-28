@@ -283,6 +283,7 @@ describe('canonical /api session system routes', () => {
       timestamp: '2026-03-09T12:00:00.000Z'
     });
     expect(queueResponse.body.queueDepth).toBe(0);
+    expect(queueResponse.headers['cache-control']).toBe('no-store');
     expect(queueResponse.body.failureRate).toBe(0);
     expect(queueResponse.body.historicalFailureRate).toBe(0.25);
     expect(queueResponse.body.failureRateWindowMs).toBe(3600000);
@@ -292,6 +293,56 @@ describe('canonical /api session system routes', () => {
       retryExhausted: 0
     }));
     expect(storageResponse.body.sessionCount).toBe(3);
+  });
+
+  it('fails closed if queue diagnostics contain non-public failure text', async () => {
+    const privateFailureSentinel = 'PRIVATE_QUEUE_ROUTE_FAILURE_SENTINEL';
+    mockGetQueueDiagnostics.mockResolvedValue({
+      status: 'degraded',
+      workerRunning: true,
+      queueDepth: 0,
+      failureRate: 1,
+      historicalFailureRate: 1,
+      failureRateWindowMs: 3600000,
+      windowCompletedJobs: 0,
+      windowFailedJobs: 1,
+      windowTerminalJobs: 1,
+      failureBreakdown: {
+        retryable: 0,
+        permanent: 1,
+        retryScheduled: 0,
+        retryExhausted: 1,
+        deadLetter: 0,
+        authentication: 1,
+        network: 0,
+        provider: 0,
+        rateLimited: 0,
+        timeout: 0,
+        validation: 0,
+        unknown: 0
+      },
+      recentFailureReasons: [{
+        reason: `database authentication failed: ${privateFailureSentinel}`,
+        category: 'authentication',
+        retryable: false,
+        count: 1,
+        lastSeenAt: '2026-03-09T12:00:00.000Z'
+      }],
+      lastJobId: 'job-failed',
+      lastJobStatus: 'failed',
+      lastJobFinishedAt: '2026-03-09T12:00:00.000Z',
+      timestamp: '2026-03-09T12:00:00.000Z'
+    });
+
+    const response = await request(app).get('/api/diagnostics/queues');
+
+    expect(response.status).toBe(500);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual(expect.objectContaining({
+      error: 'Internal Server Error',
+      code: 500
+    }));
+    expect(JSON.stringify(response.body)).not.toContain(privateFailureSentinel);
   });
 
   it('returns the mounted canonical route table from GET /api/health/routes', async () => {

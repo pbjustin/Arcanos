@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 
 const writePublicHealthResponseMock = jest.fn();
 const getPoolMock = jest.fn();
@@ -23,6 +24,7 @@ const resolveGptRoutingMock = jest.fn();
 const getModulesForRegistryMock = jest.fn();
 const getModuleMetadataMock = jest.fn();
 const dispatchModuleActionMock = jest.fn();
+const initializeModuleRegistryMock = jest.fn<() => Promise<void>>();
 const hasValidOpenAiKeyMock = jest.fn();
 const responsesCreateMock = jest.fn();
 const fakeOpenAIClient = {
@@ -67,10 +69,11 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: resolveGptRoutingMock
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   getModulesForRegistry: getModulesForRegistryMock,
   getModuleMetadata: getModuleMetadataMock,
   dispatchModuleAction: dispatchModuleActionMock,
+  initializeModuleRegistry: initializeModuleRegistryMock,
   ModuleNotFoundError: MockModuleNotFoundError,
   ModuleActionNotFoundError: MockModuleActionNotFoundError
 }));
@@ -130,6 +133,8 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: getWorkerRuntimeStatusMock
 }));
 
+const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
+const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
 const {
   buildGptAccessHealthPayload,
@@ -263,6 +268,7 @@ describe('/gpt-access gateway', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    initializeModuleRegistryMock.mockResolvedValue(undefined);
     logExecutionMock.mockResolvedValue(undefined);
     responsesCreateMock.mockReset();
     hasValidOpenAiKeyMock.mockReturnValue(false);
@@ -530,26 +536,16 @@ describe('/gpt-access gateway', () => {
     expect(gptAccessResponse.headers['x-ratelimit-remaining']).toBe('119');
   });
 
-  it('fails closed when GPT Access reuses the local-agent executor credential', async () => {
+  it.each(
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.filter(
+      environmentName => environmentName !== 'ARCANOS_GPT_ACCESS_TOKEN',
+    ),
+  )('fails closed when GPT Access reuses %s', async (peerEnvironmentName) => {
     const credential = 'shared-purpose-bound-credential-value'.repeat(2);
-    const localAgentKeys = [
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID'
-    ] as const;
-    const previousValues = Object.fromEntries(
-      localAgentKeys.map((key) => [key, process.env[key]])
-    );
+    const previousPeerCredential = process.env[peerEnvironmentName];
     try {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = credential;
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN = credential;
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID =
-        'local-agent:executor';
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID =
-        'local-agent:instance';
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID =
-        'local-agent:device';
+      process.env[peerEnvironmentName] = credential;
 
       const response = await request(buildApp({ trustProxy: true }))
         .get('/gpt-access/health')
@@ -560,13 +556,10 @@ describe('/gpt-access gateway', () => {
       expect(response.body.error.code).toBe('GPT_ACCESS_INTERNAL_ERROR');
     } finally {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
-      for (const key of localAgentKeys) {
-        const value = previousValues[key];
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
+      if (previousPeerCredential === undefined) {
+        delete process.env[peerEnvironmentName];
+      } else {
+        process.env[peerEnvironmentName] = previousPeerCredential;
       }
     }
   });
@@ -883,6 +876,55 @@ describe('/gpt-access gateway', () => {
         ]
       })
     ]));
+  });
+
+  it('fails closed when the capability registry cannot initialize', async () => {
+    allowCapabilityRead();
+    initializeModuleRegistryMock.mockRejectedValueOnce(
+      new Error('registry unavailable')
+    );
+
+    const response = await authorized(
+      request(buildApp()).get('/gpt-access/capabilities/v1')
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unavailable',
+      service: 'gpt-access',
+      error: {
+        code: 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+        message: 'Capability registry is unavailable.'
+      }
+    });
+    expect(getModulesForRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it('derives the CLI fallback projection from the canonical module definition', async () => {
+    allowCapabilityRead();
+    const catalogEntry = MODULE_CATALOG.find(
+      (entry) => entry.name === ArcanosCli.name
+    );
+
+    const response = await authorized(
+      request(buildApp()).get('/gpt-access/capabilities/v1/ARCANOS%3ACLI')
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.capability).toEqual(
+      expect.objectContaining({
+        id: ArcanosCli.name,
+        name: ArcanosCli.name,
+        description: ArcanosCli.description,
+        route: catalogEntry?.route,
+        actions: Object.keys(ArcanosCli.actions).sort(
+          (left, right) => left.localeCompare(right)
+        ),
+        defaultAction: ArcanosCli.defaultAction,
+        defaultTimeoutMs: ArcanosCli.defaultTimeoutMs
+      })
+    );
   });
 
   it('projects ARCANOS:CLI capabilities without leaking implementation details', async () => {
@@ -1892,6 +1934,53 @@ describe('/gpt-access gateway', () => {
     fetchSpy.mockRestore();
   });
 
+  it('fails a colliding ARCANOS:CLI bridge credential before POSTing to the bridge', async () => {
+    const previousDebugServerToken = process.env.DEBUG_SERVER_TOKEN;
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:proposeCommand,ARCANOS:CLI:runApprovedCommand');
+
+    const proposalResponse = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.25')
+      .send({
+        action: 'proposeCommand',
+        payload: {
+          command: 'git status'
+        }
+      });
+    const proposalId = proposalResponse.body.result?.proposalId;
+    expect(typeof proposalId).toBe('string');
+
+    const credential = 'cli-purpose-bound-collision-token';
+    process.env.ARCANOS_CLI_BRIDGE_TOKEN = credential;
+    process.env.DEBUG_SERVER_TOKEN = credential;
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    try {
+      const response = await confirmed(authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run')))
+        .set('X-Forwarded-For', '203.0.113.25')
+        .send({
+          action: 'runApprovedCommand',
+          payload: {
+            command: 'git status',
+            proposalId
+          }
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'unavailable'
+      }));
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousDebugServerToken === undefined) {
+        delete process.env.DEBUG_SERVER_TOKEN;
+      } else {
+        process.env.DEBUG_SERVER_TOKEN = previousDebugServerToken;
+      }
+    }
+  });
+
   it('accepts IPv6 loopback ARCANOS:CLI bridge URLs', async () => {
     process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
     allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:proposeCommand,ARCANOS:CLI:runApprovedCommand');
@@ -2466,6 +2555,7 @@ describe('/gpt-access gateway', () => {
   it('dry-runs an LLM-sourced natural-language dispatch without executing it', async () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'diagnostics.run',
         payload: {
@@ -2507,6 +2597,7 @@ describe('/gpt-access gateway', () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'workers.recover',
         payload: {},
@@ -2572,6 +2663,7 @@ describe('/gpt-access gateway', () => {
       }
     ]);
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'ARCANOS:CORE.system_state',
         payload: {},
@@ -2630,6 +2722,7 @@ describe('/gpt-access gateway', () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: JSON.stringify({
         action: 'INTENT_CLARIFICATION_REQUIRED',
         payload: {},
@@ -2723,6 +2816,7 @@ describe('/gpt-access gateway', () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
     responsesCreateMock
       .mockResolvedValueOnce({
+        status: 'completed',
         output_text: JSON.stringify({
           action: 'ARCANOS:CORE.query',
           payload: {
@@ -2735,6 +2829,7 @@ describe('/gpt-access gateway', () => {
         })
       })
       .mockResolvedValueOnce({
+        status: 'completed',
         output_text: JSON.stringify({
           action: 'ARCANOS:CORE.query',
           payload: {
@@ -4185,6 +4280,10 @@ describe('/gpt-access gateway', () => {
   });
 
   it('returns sanitized logs from the GPT access log query endpoint', async () => {
+    const secretBearingPropertyKey = [
+      'sk',
+      'propertykeysentinelplaceholder123456',
+    ].join('-');
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
     queryMock.mockResolvedValueOnce({
       rows: [
@@ -4199,6 +4298,7 @@ describe('/gpt-access gateway', () => {
             cookie: 'sessionid=secret-session',
             nested: {
               database_url: 'postgres://user:pass@host/db',
+              [secretBearingPropertyKey]: 'ordinary metadata value',
               providerPayloads: {
                 messages: [{ content: 'SECRET-PROMPT provider message' }],
                 completion_text: 'SECRET-COMPLETION alias'
@@ -4235,6 +4335,12 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('sk-test-placeholder-value');
     expect(rendered).not.toContain('sessionid=secret-session');
     expect(rendered).not.toContain('postgres://user:pass@host/db');
+    expect(rendered).not.toContain(secretBearingPropertyKey);
+    expect(response.body.logs[0].metadata.nested).toEqual(
+      expect.objectContaining({
+        '[REDACTED_KEY_1]': 'ordinary metadata value'
+      })
+    );
   });
 
   it('applies log query limit and explicit time range filters', async () => {

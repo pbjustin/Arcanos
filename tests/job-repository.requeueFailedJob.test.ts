@@ -25,13 +25,20 @@ describe('jobRepository.requeueFailedJob', () => {
           {
             id: 'job-1',
             status: 'failed',
+            claim_generation: '2',
             error_message: 'OpenAI upstream timeout',
             retry_count: 2
           }
         ]
       })
       .mockResolvedValueOnce({
-        rows: [{ id: 'job-1', status: 'pending', error_message: null, retry_count: 0 }]
+        rows: [{
+          id: 'job-1',
+          status: 'pending',
+          claim_generation: '2',
+          error_message: null,
+          retry_count: 0
+        }]
       });
   });
 
@@ -41,6 +48,7 @@ describe('jobRepository.requeueFailedJob', () => {
       rows: [{
         id: 'job-local-agent',
         status: 'failed',
+        claim_generation: '0',
         job_type: 'local-agent',
         retry_count: 0,
         autonomy_state: {

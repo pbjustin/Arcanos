@@ -16,7 +16,10 @@ from .cli_config import CAMERA_INTENT_PATTERN, RUN_COMMAND_PATTERNS, SCREEN_INTE
 from .cli_intents import detect_run_see_intent
 from .completer import install_completion
 from .config import Config
-from .credential_verification import timing_safe_equal_opaque_secret
+from .credential_verification import (
+    has_configured_purpose_bound_credential_collision,
+    timing_safe_equal_opaque_secret,
+)
 from .env import get_env
 from .error_handler import ErrorHandler
 
@@ -98,6 +101,12 @@ def _resolve_debug_token(*, allow_generated: bool) -> tuple[str | None, bool]:
     Edge cases: Empty config generates only when interactive delivery is allowed.
     """
     configured_token = (get_env(DEBUG_MODE_TOKEN_ENV, "") or "").strip()
+    if configured_token and has_configured_purpose_bound_credential_collision(
+        credential=configured_token,
+        own_environment_name=DEBUG_MODE_TOKEN_ENV,
+        read_environment_value=get_env,
+    ):
+        configured_token = ""
     if configured_token:
         return configured_token, True
     if not allow_generated:

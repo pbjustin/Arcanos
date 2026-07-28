@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 const runSelfImproveCycleMock = jest.fn();
 const freezeSelfImproveMock = jest.fn();
@@ -31,6 +35,39 @@ jest.unstable_mockModule('@shared/http/index.js', () => ({
 }));
 
 const selfImproveRouter = (await import('../src/routes/self-improve.js')).default;
+const controlPlaneAccessToken = 'self-improve-control-token-1234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+let principalSequence = 0;
+
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(
+  scopes = 'arcanos:read,self-heal:decide,self-heal:execute,self-improve:control'
+): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+  principalSequence += 1;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID =
+    `operator:self-improve-test:${principalSequence}`;
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
+
+function addAuthorizedControlPlanePrincipal(app: express.Express): void {
+  app.use((req, _res, next) => {
+    req.headers.authorization = `Bearer ${controlPlaneAccessToken}`;
+    next();
+  });
+}
 
 /**
  * Build a test app hosting only the self-improve router.
@@ -39,8 +76,11 @@ const selfImproveRouter = (await import('../src/routes/self-improve.js')).defaul
  * Inputs/outputs: none -> express app with JSON parser and mounted router.
  * Edge cases: N/A.
  */
-function createTestApp(): express.Express {
+function createTestApp(authenticate = true): express.Express {
   const app = express();
+  if (authenticate) {
+    addAuthorizedControlPlanePrincipal(app);
+  }
   app.use(express.json());
   app.use(selfImproveRouter);
   return app;
@@ -69,6 +109,7 @@ function createDependencyAwareTestApp(): express.Express {
 
 describe('routes/self-improve', () => {
   beforeEach(() => {
+    configureControlPlane();
     runSelfImproveCycleMock.mockReset();
     freezeSelfImproveMock.mockReset();
     unfreezeSelfImproveMock.mockReset();
@@ -76,6 +117,29 @@ describe('routes/self-improve', () => {
     getKillSwitchStatusMock.mockReset();
     sendInternalErrorPayloadMock.mockClear();
     getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 1, overrides: { freeze: null, autonomy: null } });
+  });
+
+  it('requires the control-plane bearer before any self-improve dependency runs', async () => {
+    const response = await request(createTestApp(false))
+      .post('/api/self-improve/run')
+      .send({ trigger: 'manual' });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it('requires both decision and execution scopes for manual loop runs', async () => {
+    configureControlPlane('self-heal:decide');
+
+    const response = await request(createTestApp())
+      .post('/api/self-improve/run')
+      .send({ trigger: 'manual' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(response.headers['x-ratelimit-bucket']).toBe('self-heal-decision');
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
   });
 
   it('returns status payload when kill-switch status resolves', async () => {
@@ -111,6 +175,30 @@ describe('routes/self-improve', () => {
 
     expect(response.body.error).toBe('Invalid self-improve payload');
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown mutation fields instead of silently executing defaults', async () => {
+    const app = createTestApp();
+
+    const runResponse = await request(app)
+      .post('/api/self-improve/run')
+      .send({ triggr: 'manual' })
+      .expect(400);
+    const freezeResponse = await request(app)
+      .post('/api/self-improve/freeze')
+      .send({ reasn: 'incident' })
+      .expect(400);
+    const autonomyResponse = await request(app)
+      .post('/api/self-improve/autonomy')
+      .send({ level: 1, reasn: 'incident' })
+      .expect(400);
+
+    expect(runResponse.body.error).toBe('Invalid self-improve payload');
+    expect(freezeResponse.body.error).toBe('Invalid self-improve control payload');
+    expect(autonomyResponse.body.error).toBe('Missing or invalid level');
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(freezeSelfImproveMock).not.toHaveBeenCalled();
+    expect(setAutonomyLevelMock).not.toHaveBeenCalled();
   });
 
   it('runs one self-healing loop iteration for valid payload', async () => {
@@ -169,6 +257,7 @@ describe('routes/self-improve', () => {
 
   it('defaults to an empty payload when request body is unavailable', async () => {
     const app = express();
+    addAuthorizedControlPlanePrincipal(app);
     app.use(selfImproveRouter);
     runSelfImproveCycleMock.mockResolvedValueOnce({
       trigger: 'manual',
@@ -192,6 +281,19 @@ describe('routes/self-improve', () => {
       })
     );
     expect(response.body.result.trigger).toBe('manual');
+  });
+
+  it('rejects coerced or out-of-range autonomy levels', async () => {
+    const app = createTestApp();
+
+    for (const level of [null, false, [], '2', 1.9, -1, 4]) {
+      await request(app)
+        .post('/api/self-improve/autonomy')
+        .send({ level })
+        .expect(400);
+    }
+
+    expect(setAutonomyLevelMock).not.toHaveBeenCalled();
   });
 
   it('handles freeze and unfreeze success flows', async () => {
@@ -307,4 +409,23 @@ describe('routes/self-improve', () => {
       expect.objectContaining({ where: 'self-improve/autonomy' })
     );
   });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

@@ -3,20 +3,20 @@ import getGptModuleMap, {
   validateGptRegistry,
   type GptModuleEntry
 } from "@platform/runtime/gptRouterConfig.js";
+import { isProtectedModuleIdentifier } from "@services/moduleCatalog.js";
 import {
-  buildArcanosCoreTimeoutFallbackEnvelope,
-  resolveArcanosCoreTimeoutPhase
-} from "@services/arcanos-core.js";
-import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
+  dispatchModuleAction,
+  getModuleMetadata,
+  initializeModuleRegistry
+} from "@services/moduleRegistry.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel,
-  hasNaturalLanguageMemoryCue,
-  parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
+import { classifyGptMemoryInterception } from "@services/memoryDispatchInterception.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
   buildRepoInspectionAnswer,
@@ -43,6 +43,7 @@ import {
 } from "@platform/observability/appMetrics.js";
 import {
   recordPromptDebugTrace,
+  suppressPromptDebugTraceContent,
   type PromptDebugStage,
   type PromptDebugTracePatch,
 } from "@services/promptDebugTraceService.js";
@@ -53,7 +54,11 @@ import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
 } from "@shared/gpt/gptDirectAction.js";
-import { extractLastUserMessageText } from "@shared/gpt/messageContentText.js";
+import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
+import {
+  pickGptModuleAction,
+  resolveGptModuleRequestedActionAlias,
+} from "@shared/gpt/gptModuleAction.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -83,24 +88,8 @@ export type RouteGptRequestInput = {
   runtimeExecutionMode?: 'request' | 'background';
   parentAbortSignal?: AbortSignal;
   suppressTimeoutFallback?: boolean;
+  memoryPlaneAuthorized?: true;
 };
-
-function extractPrompt(body: any): string | null {
-  const direct =
-    body?.message ||
-    body?.prompt ||
-    body?.userInput ||
-    body?.content ||
-    body?.text ||
-    body?.query;
-
-  if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
-
-  const messageText = extractLastUserMessageText(body?.messages);
-  if (messageText) return messageText;
-
-  return null;
-}
 
 function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message: "backend operational" } {
   return {
@@ -191,7 +180,7 @@ function buildDispatchPayload(body: unknown): unknown {
     return explicitPayload;
   }
 
-  const prompt = extractPrompt(body);
+  const prompt = extractGptPromptText(body);
 
   //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
   if (isRecord(body)) {
@@ -313,74 +302,6 @@ function resolveMemorySessionId(
   void moduleName;
   void gptId;
   return undefined;
-}
-
-function pickAction(available: string[], requested?: string, defaultAction?: string | null): string | null {
-  if (requested) return available.includes(requested) ? requested : null;
-  //audit Assumption: explicit module defaults should outrank generic `query`/`run` heuristics; failure risk: specialized modules like Backstage Booker remain ambiguous even after declaring their canonical default behavior; expected invariant: configured defaultAction wins when valid; handling strategy: honor metadata defaultAction before implicit fallbacks.
-  if (defaultAction && available.includes(defaultAction)) return defaultAction;
-  if (available.includes("query")) return "query";
-  if (available.includes("run")) return "run";
-  if (available.length === 1) return available[0];
-  return null;
-}
-
-function normalizeRequestedAction(requestedAction: string | undefined): string | undefined {
-  return typeof requestedAction === 'string' && requestedAction.trim().length > 0
-    ? requestedAction.trim()
-    : undefined;
-}
-
-function getLegacyQueryAlias(requestedAction: string | undefined): 'ask' | 'chat' | null {
-  const normalizedRequestedAction = normalizeRequestedAction(requestedAction);
-  if (!normalizedRequestedAction) {
-    return null;
-  }
-
-  const loweredRequestedAction = normalize(normalizedRequestedAction);
-  if (loweredRequestedAction === 'ask' || loweredRequestedAction === 'chat') {
-    return loweredRequestedAction;
-  }
-
-  return null;
-}
-
-/**
- * Purpose: Canonicalize legacy requested actions onto supported module actions.
- * Inputs/Outputs: Accepts an optional caller-provided action plus the module's available actions and returns the canonical action name.
- * Edge cases: Preserves direct matches and blank actions while rewriting legacy `ask`/`chat` requests onto `query` when safe.
- */
-function resolveRequestedActionAlias(
-  requestedAction: string | undefined,
-  availableActions: string[]
-): string | undefined {
-  //audit Assumption: blank action names should behave like absent actions; failure risk: whitespace-only actions forcing false NO_DEFAULT_ACTION errors; expected invariant: blank actions do not override defaults; handling strategy: trim and return undefined for blank values.
-  if (typeof requestedAction !== 'string') {
-    return undefined;
-  }
-
-  const trimmedRequestedAction = requestedAction.trim();
-  if (trimmedRequestedAction.length === 0) {
-    return undefined;
-  }
-
-  const normalizedRequestedAction = trimmedRequestedAction.toLowerCase();
-  const directMatch = availableActions.find(
-    (actionName) => actionName.toLowerCase() === normalizedRequestedAction
-  );
-
-  //audit Assumption: case-only mismatches are safe to normalize onto the module's canonical casing; failure risk: action lookup missing valid handlers due to casing drift; expected invariant: returned actions use registered module casing; handling strategy: prefer the first direct module action match.
-  if (directMatch) {
-    return directMatch;
-  }
-
-  const legacyQueryAlias = getLegacyQueryAlias(trimmedRequestedAction);
-  //audit Assumption: legacy callers still send `ask`/`chat` during migration; failure risk: canonical `query` modules reject compatible legacy traffic; expected invariant: query-capable modules accept legacy aliases via canonical `query`; handling strategy: rewrite only when `query` is actually supported.
-  if (legacyQueryAlias && availableActions.includes('query')) {
-    return 'query';
-  }
-
-  return trimmedRequestedAction;
 }
 
 const DISPATCH_TIMEOUT_ERROR_MARKERS = [
@@ -574,8 +495,6 @@ function inferAutomaticBackstageBookerDispatchIntent(params: {
 const DEFAULT_MODULE_DISPATCH_TIMEOUT_MS = 15000;
 const DEFAULT_BACKGROUND_MODULE_DISPATCH_TIMEOUT_MS = 180000;
 const SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
-const REDACTED_GPT_ACCESS_PROMPT = '[REDACTED_GPT_ACCESS_PROMPT]';
-const REDACTED_GPT_ACCESS_PAYLOAD = '[REDACTED_GPT_ACCESS_PAYLOAD]';
 const INTERNAL_GPT_ID_FIELD = '__arcanosGptId';
 const INTERNAL_SOURCE_ENDPOINT_FIELD = '__arcanosSourceEndpoint';
 const INTERNAL_REQUESTED_ACTION_FIELD = '__arcanosRequestedAction';
@@ -635,50 +554,21 @@ function enrichWritingDispatchPayload(
   };
 }
 
-function sanitizePromptDebugExecutorPayload(value: unknown): unknown {
-  if (!isRecord(value)) {
-    return REDACTED_GPT_ACCESS_PAYLOAD;
-  }
-
-  const sanitizedPayload: Record<string, unknown> = {
-    redacted: true,
-    payload: REDACTED_GPT_ACCESS_PAYLOAD,
-  };
-
-  for (const key of ['executor', 'module', 'action', 'timeoutMs', 'timeoutSource']) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) {
-      sanitizedPayload[key] = value[key];
-    }
-  }
-
-  return sanitizedPayload;
-}
-
-function sanitizePromptDebugPatchForGptAccess(patch: PromptDebugTracePatch): PromptDebugTracePatch {
-  return {
-    ...patch,
-    ...(Object.prototype.hasOwnProperty.call(patch, 'rawPrompt')
-      ? { rawPrompt: REDACTED_GPT_ACCESS_PROMPT }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'normalizedPrompt')
-      ? { normalizedPrompt: REDACTED_GPT_ACCESS_PROMPT }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'finalExecutorPayload')
-      ? { finalExecutorPayload: sanitizePromptDebugExecutorPayload(patch.finalExecutorPayload) }
-      : {}),
-  };
-}
-
 function recordDispatchPromptDebugTrace(
   requestId: string,
   stage: PromptDebugStage,
   patch: PromptDebugTracePatch,
   suppressPromptDebugTrace: boolean
 ) {
+  const canonicalPatch = Object.prototype.hasOwnProperty.call(patch, 'endpoint')
+    ? { ...patch, endpoint: '/gpt/:gptId' }
+    : patch;
   return recordPromptDebugTrace(
     requestId,
     stage,
-    suppressPromptDebugTrace ? sanitizePromptDebugPatchForGptAccess(patch) : patch
+    suppressPromptDebugTrace
+      ? suppressPromptDebugTraceContent(canonicalPatch)
+      : canonicalPatch
   );
 }
 
@@ -828,6 +718,10 @@ function levenshtein(a: string, b: string): number {
 }
 
 function resolveGptEntry(incomingGptId: string, gptModuleMap: Record<string, GptMapEntry>): { entry: GptMapEntry; matchMethod: GptMatchMethod | "normalized"; matchedId: string } | null {
+  if (isProtectedModuleIdentifier(incomingGptId)) {
+    return null;
+  }
+
   const configuredGptIds = Object.keys(gptModuleMap);
 
   // 1) exact match
@@ -956,6 +850,7 @@ export type ResolveEnvelope =
  * Useful for introspection and debugging routing/mapping issues.
  */
 export async function resolveGptRouting(gptId: string, requestId?: string): Promise<ResolveEnvelope> {
+  await initializeModuleRegistry();
   const trimmedGptId = (gptId ?? "").trim();
 
   const baseRoute: RouteMeta = {
@@ -991,7 +886,7 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   const { entry, matchMethod, matchedId } = resolved;
   const meta = getModuleMetadata(entry.module);
   const availableActions = meta?.actions ?? [];
-  const action = pickAction(availableActions, undefined, meta?.defaultAction ?? null);
+  const action = pickGptModuleAction(availableActions, undefined, meta?.defaultAction ?? null);
 
   return {
     ok: true,
@@ -1017,6 +912,7 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   };
 }
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
+  await initializeModuleRegistry();
   const {
     gptId,
     body,
@@ -1027,7 +923,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     bypassIntentRouting,
     runtimeExecutionMode,
     parentAbortSignal,
-    suppressTimeoutFallback: suppressTimeoutFallbackInput
+    suppressTimeoutFallback: suppressTimeoutFallbackInput,
+    memoryPlaneAuthorized,
   } = input;
   const trimmedGptId = (gptId ?? "").trim();
   const traceId = inputTraceId ?? request?.traceId ?? null;
@@ -1040,10 +937,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
   const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
-  const diagnosticTextInput = extractPrompt(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
+  const diagnosticTextInput = extractGptPromptText(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
-  const rawPrompt = extractPrompt(body) ?? diagnosticTextInput ?? '';
-  const normalizedPrompt = extractPrompt(preDispatchPayload) ?? diagnosticTextInput ?? '';
+  const rawPrompt = extractGptPromptText(body) ?? diagnosticTextInput ?? '';
+  const normalizedPrompt = extractGptPromptText(preDispatchPayload) ?? diagnosticTextInput ?? '';
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'ingress', {
     traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
@@ -1221,21 +1118,29 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     sourceEndpoint: dispatchSourceEndpoint,
     requestedAction: rawRequestedAction ?? writePlaneClassification.action
   });
-  const prompt = extractPrompt(payload);
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
-  let requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
+  const fallbackActionCandidate = pickGptModuleAction(
+    availableActions,
+    undefined,
+    moduleMetadata?.defaultAction ?? null
+  );
+  const memoryInterception = classifyGptMemoryInterception({
+    body,
+    availableActions,
+    fallbackActionCandidate,
+    forceDirectModuleRouting,
+  });
+  const prompt = memoryInterception.prompt;
+  let requestedAction = memoryInterception.requestedAction;
   if (writePlaneClassification.plane !== 'writing' && activeEntry.module === 'ARCANOS:CORE') {
     requestedAction = 'query';
   }
 
-  const parsedMemoryCommand =
-    typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
-  const initialActionCandidate = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
-  const hasNoRoutableAction = !initialActionCandidate;
+  const parsedMemoryCommand = { intent: memoryInterception.parsedIntent };
   const sessionId = resolveSessionId(body, payload);
-  const hasMemoryCue = typeof prompt === "string" && hasNaturalLanguageMemoryCue(prompt);
+  const hasMemoryCue = memoryInterception.hasMemoryCue;
   const promptIntentClassification = classifyPromptIntent({
     prompt,
     parsedMemoryCommand,
@@ -1271,14 +1176,34 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     ],
   }, suppressPromptDebugTrace);
 
-  const shouldInterceptMemoryInDispatcher =
-    typeof prompt === "string" &&
-    parsedMemoryCommand.intent !== "unknown" &&
-    (hasMemoryCue || hasNoRoutableAction) &&
-    (!requestedAction || requestedAction === "query");
+  const shouldInterceptMemoryInDispatcher = memoryInterception.intercept;
 
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
-  if (!forceDirectModuleRouting && shouldInterceptMemoryInDispatcher) {
+  if (shouldInterceptMemoryInDispatcher && prompt) {
+    if (memoryPlaneAuthorized !== true) {
+      logger?.warn?.('gpt.dispatch.memory_auth_required', {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+      });
+      return {
+        ok: false,
+        error: {
+          code: 'MEMORY_AUTH_REQUIRED',
+          message: 'A valid memory-plane access token is required.',
+        },
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: requestedAction || 'memory',
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
+
     try {
       const memorySessionId = resolveMemorySessionId(body, payload, activeEntry.module, trimmedGptId, prompt);
       const memoryResult = await executeNaturalLanguageMemoryCommand({
@@ -1399,7 +1324,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     moduleMetadata = getModuleMetadata(activeEntry.module);
     availableActions = moduleMetadata?.actions ?? [];
-    requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
+    requestedAction = resolveGptModuleRequestedActionAlias(rawRequestedAction, availableActions);
     logger?.info?.("gpt.dispatch.booker.auto_selected", {
       requestId,
       gptId: trimmedGptId,
@@ -1414,7 +1339,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   const actionCandidate =
     automaticBackstageBookerDispatch?.action ??
-    pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
+    pickGptModuleAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
 
   //audit Assumption: action alias rewrites must remain visible during the deprecation window; failure risk: silent compatibility behavior masks stale callers; expected invariant: logs show when legacy action names are rewritten; handling strategy: emit structured alias telemetry whenever canonical action differs from caller input.
   if (
@@ -1820,6 +1745,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         typeof prompt === 'string' &&
         prompt.length > 0
       ) {
+        const {
+          buildArcanosCoreTimeoutFallbackEnvelope,
+          resolveArcanosCoreTimeoutPhase
+        } = await import("@services/arcanos-core.js");
         const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'module-dispatch';
         const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
           prompt,

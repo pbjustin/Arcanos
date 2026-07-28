@@ -46,6 +46,7 @@ function restoreEnvValue(key: keyof typeof savedEnv): void {
 
 function mockLlmResponse(response: Record<string, unknown>): void {
   responsesCreateMock.mockResolvedValueOnce({
+    status: 'completed',
     output_text: JSON.stringify(response)
   });
 }
@@ -715,6 +716,7 @@ describe('LLM natural-language dispatch resolver', () => {
   it('fails closed to rules when the LLM returns malformed JSON in hybrid mode', async () => {
     const registry = createGptAccessDispatchRegistry();
     responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
       output_text: 'not-json'
     });
 

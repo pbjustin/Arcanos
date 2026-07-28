@@ -3,14 +3,37 @@ import { z } from 'zod';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { agentExecutionService } from '@services/agentExecutionService.js';
+import type {
+  AgentExecutionPlan,
+  AgentGoalExecutionRequest,
+} from '@services/agentExecutionTypes.js';
+import {
+  buildAgentPlanConfirmationIntent,
+  issueAgentPlanExecutionPermits,
+  prepareAgentExecutionPlan,
+} from '@services/agentExecutionConfirmation.js';
 import { isAgentPlanningValidationError } from '@services/agentPlanningErrors.js';
 import {
   AgentExecutionResponseSchema,
   validateAgentExecutionPayload
 } from '@services/agentExecutionSchemas.js';
+import { cefBodyParser } from '@services/controlPlane/cefBodyParser.js';
+import { cefHttpBoundary } from '@services/controlPlane/cefHttpBoundary.js';
+import {
+  buildCefConfirmationBinding,
+  buildCefDispatchConfirmationState,
+} from '@services/controlPlane/cefConfirmation.js';
 import { auditTrace } from '@transport/http/middleware/auditTrace.js';
+import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 
 const router = express.Router();
+const preparedAgentRequest = Symbol('preparedAgentRequest');
+const preparedAgentPlan = Symbol('preparedAgentPlan');
+
+type PreparedAgentExecutionRequest = Request & {
+  [preparedAgentRequest]?: AgentGoalExecutionRequest;
+  [preparedAgentPlan]?: AgentExecutionPlan;
+};
 
 const executeAgentGoalSchema = z.object({
   goal: z.string().trim().min(1).max(10_000),
@@ -21,6 +44,8 @@ const executeAgentGoalSchema = z.object({
   sessionId: z.string().trim().min(1).max(200).optional()
 });
 
+router.use('/api/agent', cefHttpBoundary);
+router.use('/api/agent', cefBodyParser);
 router.use('/api/agent', auditTrace);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -80,16 +105,72 @@ router.post('/api/agent/execute', asyncHandler(async (req: Request, res: Respons
     return;
   }
 
+  const executionRequest: AgentGoalExecutionRequest = {
+    goal: parsedBody.data.goal,
+    executionMode: parsedBody.data.executionMode,
+    preferredCapabilities: parsedBody.data.preferredCapabilities,
+    payload: parsedBody.data.payload,
+    sharedState: parsedBody.data.sharedState,
+    sessionId: parsedBody.data.sessionId,
+    traceId: resolveAuditTraceId(res) ?? undefined,
+  };
+
   try {
-    const responsePayload = await agentExecutionService.executeGoal({
-      goal: parsedBody.data.goal,
-      executionMode: parsedBody.data.executionMode,
-      preferredCapabilities: parsedBody.data.preferredCapabilities,
-      payload: parsedBody.data.payload,
-      sharedState: parsedBody.data.sharedState,
-      sessionId: parsedBody.data.sessionId,
-      traceId: resolveAuditTraceId(res) ?? undefined
+    const plan = prepareAgentExecutionPlan(executionRequest);
+    const principalId = req.controlPlanePrincipal?.principalId;
+    if (!principalId) {
+      res.status(403).json({
+        ok: false,
+        error: {
+          code: 'CONTROL_PLANE_FORBIDDEN',
+          message: 'Control-plane operation is not permitted.',
+        },
+      });
+      return;
+    }
+
+    const preparedRequest = req as PreparedAgentExecutionRequest;
+    preparedRequest[preparedAgentRequest] = executionRequest;
+    preparedRequest[preparedAgentPlan] = plan;
+
+    let confirmationAccepted = false;
+    confirmGate(req, res, () => {
+      confirmationAccepted = true;
+    }, {
+      challengeBinding: buildCefConfirmationBinding(req, principalId),
+      requestFingerprintBody: {
+        ...buildAgentPlanConfirmationIntent(plan),
+        executionContext: {
+          sessionId: executionRequest.sessionId ?? null,
+          sharedState: executionRequest.sharedState ?? {},
+        },
+        dispatch: buildCefDispatchConfirmationState(req),
+      },
+      requireChallengeToken: true,
     });
+    if (!confirmationAccepted) {
+      return;
+    }
+    if (req.confirmationContext?.usedChallengeToken !== true) {
+      res.status(403).json({
+        error: 'Confirmation required',
+        code: 'CONFIRMATION_REQUIRED',
+      });
+      return;
+    }
+
+    const frozenRequest = preparedRequest[preparedAgentRequest];
+    const frozenPlan = preparedRequest[preparedAgentPlan];
+    if (!frozenRequest || !frozenPlan) {
+      throw new Error('Prepared agent execution state is unavailable.');
+    }
+    const responsePayload = await agentExecutionService.executeGoal(
+      frozenRequest,
+      {
+        plan: frozenPlan,
+        executionPermitsByStepId: issueAgentPlanExecutionPermits(frozenPlan),
+      }
+    );
 
     res.status(200).json(
       validateAgentExecutionPayload(

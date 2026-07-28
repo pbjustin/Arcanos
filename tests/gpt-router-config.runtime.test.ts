@@ -1,21 +1,41 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import {
   loadGptModuleMap,
   resetGptModuleMapCache,
   validateGptRegistry
 } from '../src/platform/runtime/gptRouterConfig.js';
 
-const CURRENT_GPT_ROUTER_HASH = '8bf52c870195f165b17397ca16e87361fa401553fa10f86ebdbcc857a4fbba58';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
+const ROUTING_OVERRIDE_KEYS = [
+  'GPT_MODULE_MAP',
+  'GPTID_ARCANOS_GAMING',
+  'GPTID_ARCANOS_TUTOR',
+  'GPTID_BACKSTAGE_BOOKER'
+] as const;
 
 describe('runtime GPT router wiring', () => {
   const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
+  const originalRoutingOverrides = Object.fromEntries(
+    ROUTING_OVERRIDE_KEYS.map((key) => [key, process.env[key]])
+  ) as Record<(typeof ROUTING_OVERRIDE_KEYS)[number], string | undefined>;
+
+  beforeEach(() => {
+    resetGptModuleMapCache();
+    for (const key of ROUTING_OVERRIDE_KEYS) {
+      Reflect.deleteProperty(process.env, key);
+    }
+  });
 
   afterEach(() => {
     resetGptModuleMapCache();
-    Reflect.deleteProperty(process.env, 'GPT_MODULE_MAP');
-    Reflect.deleteProperty(process.env, 'GPTID_ARCANOS_GAMING');
-    Reflect.deleteProperty(process.env, 'GPTID_ARCANOS_TUTOR');
-    Reflect.deleteProperty(process.env, 'GPTID_BACKSTAGE_BOOKER');
+    for (const key of ROUTING_OVERRIDE_KEYS) {
+      const originalValue = originalRoutingOverrides[key];
+      if (originalValue === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = originalValue;
+      }
+    }
     if (originalGptRouterHash === undefined) {
       Reflect.deleteProperty(process.env, 'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG');
     } else {
@@ -65,6 +85,9 @@ describe('runtime GPT router wiring', () => {
     expect(map['hrc']).toEqual(
       expect.objectContaining({ route: 'hrc', module: 'HRC' })
     );
+    expect(map['cli']).toBeUndefined();
+    expect(map['local-agent']).toBeUndefined();
+    expect(map['productivity']).toBeUndefined();
   });
 
   it('flags missing required GPT IDs when the registry is incomplete', () => {

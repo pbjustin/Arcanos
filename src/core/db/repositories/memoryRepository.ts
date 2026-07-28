@@ -135,9 +135,7 @@ export async function loadMemoryRecordById(recordId: number): Promise<StoredMemo
      WHERE id = $1
        AND (expires_at IS NULL OR expires_at > NOW())
      LIMIT 1`,
-    [recordId],
-    1,
-    false
+    [recordId]
   );
 
   if (result.rows.length === 0) {
@@ -193,11 +191,10 @@ export async function loadMemory(key: string): Promise<unknown | null> {
     throw new Error('Database not configured');
   }
 
+  // Keep canonical memory reads uncached so an immediately preceding write is visible.
   const result = await query(
     'SELECT value FROM memory WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())',
-    [key],
-    1,
-    false // Avoid stale reads after immediate writes.
+    [key]
   );
   
   if (result.rows.length === 0) {
@@ -224,9 +221,7 @@ export async function getMemoryRecordByKey(key: string): Promise<DurableMemoryRe
      FROM memory
      WHERE key = $1
        AND (expires_at IS NULL OR expires_at > NOW())`,
-    [key],
-    1,
-    false
+    [key]
   );
 
   //audit Assumption: exact key retrieval must not invent fallbacks when the row is absent; failure risk: callers silently read unrelated memory; expected invariant: missing exact key returns null; handling strategy: short-circuit on zero rows.
@@ -252,9 +247,7 @@ export async function getMemoryRecordByRecordId(recordId: string): Promise<Durab
      FROM memory
      WHERE value->'metadata'->>'versionId' = $1
        AND (expires_at IS NULL OR expires_at > NOW())`,
-    [recordId],
-    1,
-    false
+    [recordId]
   );
 
   //audit Assumption: durable record-id retrieval should remain exact even when the version id is stale or missing; failure risk: implicit fallback masks missing records; expected invariant: unmatched durable ids return null; handling strategy: short-circuit on zero rows.
@@ -280,9 +273,7 @@ export async function getMemoryRecordByLegacyRowId(rowId: number): Promise<Durab
      FROM memory
      WHERE id = $1
        AND (expires_at IS NULL OR expires_at > NOW())`,
-    [rowId],
-    1,
-    false
+    [rowId]
   );
 
   //audit Assumption: legacy numeric ids are compatibility-only exact locators; failure risk: absent numeric rows degrade into unrelated matches; expected invariant: missing legacy ids return null; handling strategy: return null without fallback.

@@ -408,7 +408,7 @@ jobs:
              daemon-python/tests/test_local_agent_sandbox_container_e2e.py
 
   local-agent-postgres-concurrency:
-    name: Local Agent PostgreSQL Concurrency
+    name: PostgreSQL Fencing & Local Agent Concurrency
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -416,18 +416,22 @@ jobs:
         env:
           POSTGRES_USER: arcanos_ci
           POSTGRES_PASSWORD: local-agent-ci-only
-          POSTGRES_DB: arcanos_local_agent_ci
+          POSTGRES_DB: arcanos_audit_pg18_20260727
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U arcanos_ci -d arcanos_local_agent_ci"
+          --health-cmd "pg_isready -U arcanos_ci -d arcanos_audit_pg18_20260727"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
       LOCAL_AGENT_HARDENING_REQUIRE_DATABASE: '1'
       LOCAL_AGENT_HARDENING_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_local_agent_ci
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      JOB_CLAIM_FENCING_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
@@ -445,10 +449,55 @@ jobs:
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
+      - name: 🧱 Verify PostgreSQL claim and snapshot fencing
+        run: npm run test:postgres-fencing
+
+  runtime-redis-admission:
+    name: Standalone Runtime Redis Admission
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AI_RUNTIME_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      AI_RUNTIME_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 🧰 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🧪 Verify standalone runtime regressions
+        run: npm run test:runtime-integration
+
+      - name: 🧱 Verify Redis admission and BullMQ execution invariants
+        run: npm run test:runtime-redis-integration
+
   all-checks-complete:
     name: All Checks Complete
     runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency]
+    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]
     
     steps:
       - name: ✅ All checks passed
@@ -463,5 +512,6 @@ jobs:
           echo "✅ Convergence gate"
           echo "✅ Local-agent Linux sandbox"
           echo "✅ Local-agent PostgreSQL concurrency"
+          echo "✅ Standalone runtime Redis admission"
           echo ""
           echo "🚀 Repository is ready for production deployment!"

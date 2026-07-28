@@ -53,10 +53,13 @@ Automatic Trinity path adds extra gates before writing:
 Repository: `src/core/db/repositories/selfReflectionRepository.ts`
 
 Write/read bootstrap strategy:
-1. Check active DB connectivity.
+1. Require both active DB connectivity and central schema readiness for the
+   exact current pool.
 2. If disconnected, attempt `initializeDatabase('self-reflections')`.
-3. Ensure required tables/indexes with `initializeTables()`.
-4. After a failed bootstrap, retry attempts are cooldown-throttled for 30 seconds.
+3. Await the shared, pool-keyed `initializeTables()` attempt and verify that
+   the same pool remains connected and centrally ready before persistence.
+4. Concurrent calls share the pending repository bootstrap. After a failed
+   bootstrap, later retry attempts are cooldown-throttled for 30 seconds.
 
 Fail-open behavior:
 - On write path, DB unavailability logs warning and skips persistence.
@@ -96,6 +99,11 @@ Judged-feedback path includes strong sanitization and bounded state:
 
 Endpoint: `GET /reinforcement/metrics`
 
+This operator route requires
+`Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>` and the
+server-owned `arcanos:read` scope. `POST /reinforcement/judge` requires the
+same operator identity with `mcp:invoke`.
+
 Returns:
 - `judgedFeedback` counters (`attempts`, `duplicatesSkipped`, `persistedWrites`, `persistenceFailures`, cache stats).
 - `reinforcement` subsystem health snapshot (`mode`, `window`, `minimumClearScore`, context counts).
@@ -122,10 +130,12 @@ Use this endpoint to verify judged feedback behavior after deploy/restart.
 ## Verification Checklist
 ```bash
 curl -X POST http://localhost:3000/reinforcement/judge \
+  -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"prompt\":\"p\",\"response\":\"r\",\"score\":9.2,\"scoreScale\":\"0-10\",\"feedback\":\"good\"}"
 
-curl http://localhost:3000/reinforcement/metrics
+curl -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \
+  http://localhost:3000/reinforcement/metrics
 ```
 
 Expected checks:

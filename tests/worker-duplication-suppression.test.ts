@@ -60,6 +60,100 @@ describe('worker duplication suppression', () => {
     expect(startResult.message).toContain('suppressed');
   });
 
+  it('does not start the in-process runtime when dedicated worker code imports the module', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.RUN_WORKERS = 'true';
+    process.env.ARCANOS_PROCESS_KIND = 'worker';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    process.env.RAILWAY_SERVICE_NAME = 'ARCANOS Worker';
+
+    jest.resetModules();
+    jest.unstable_mockModule('@services/safety/auditEvents.js', () => ({
+      emitSafetyAuditEvent: jest.fn()
+    }));
+    const acquireExecutionLock = jest.fn(async () => ({
+      release: async () => undefined
+    }));
+    jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
+      acquireExecutionLock
+    }));
+
+    const workerConfig = await import('../src/config/workerConfig.js');
+
+    expect(acquireExecutionLock).not.toHaveBeenCalled();
+    expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
+      enabled: true,
+      started: false,
+      dispatcherStarted: false,
+      activeListeners: 0,
+      workerIds: []
+    }));
+  });
+
+  it('starts the configured local runtime only through the explicit bootstrap', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.RUN_WORKERS = 'true';
+    delete process.env.ARCANOS_PROCESS_KIND;
+
+    jest.resetModules();
+    jest.unstable_mockModule('@services/safety/auditEvents.js', () => ({
+      emitSafetyAuditEvent: jest.fn()
+    }));
+    const acquireExecutionLock = jest.fn(async () => ({
+      release: async () => undefined
+    }));
+    jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
+      acquireExecutionLock
+    }));
+
+    const workerConfig = await import('../src/config/workerConfig.js');
+    expect(acquireExecutionLock).not.toHaveBeenCalled();
+
+    await expect(workerConfig.startConfiguredWorkerRuntime()).resolves.toEqual(
+      expect.objectContaining({
+        started: true,
+        runWorkers: true,
+        workerCount: 4
+      })
+    );
+
+    expect(acquireExecutionLock).toHaveBeenCalledTimes(1);
+    expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
+      started: true,
+      dispatcherStarted: true,
+      activeListeners: 4
+    }));
+  });
+
+  it('keeps the explicit bootstrap inert when the process cannot host workers', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.RUN_WORKERS = 'true';
+    process.env.ARCANOS_PROCESS_KIND = 'web';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    process.env.RAILWAY_SERVICE_NAME = 'ARCANOS V2';
+
+    jest.resetModules();
+    jest.unstable_mockModule('@services/safety/auditEvents.js', () => ({
+      emitSafetyAuditEvent: jest.fn()
+    }));
+    const acquireExecutionLock = jest.fn(async () => ({
+      release: async () => undefined
+    }));
+    jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
+      acquireExecutionLock
+    }));
+
+    const workerConfig = await import('../src/config/workerConfig.js');
+
+    await expect(workerConfig.startConfiguredWorkerRuntime()).resolves.toBeNull();
+    expect(acquireExecutionLock).not.toHaveBeenCalled();
+    expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
+      enabled: false,
+      started: false,
+      activeListeners: 0
+    }));
+  });
+
   it('does not allow force-starting workers on a Railway web runtime', async () => {
     process.env.NODE_ENV = 'production';
     process.env.RUN_WORKERS = 'true';

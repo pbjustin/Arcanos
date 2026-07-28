@@ -1,5 +1,3 @@
-import type { QueuedGptJobInput } from './asyncGptJob.js';
-
 export const GPT_HEALTH_ECHO_ACTION = 'health_echo';
 export const GPT_ECHO_ACTION = 'echo';
 export const BRIDGE_SMOKE_OUTPUT = 'OK';
@@ -14,6 +12,11 @@ export type BridgeSmokeCompletedOutput = Record<string, unknown> & {
   output: typeof BRIDGE_SMOKE_OUTPUT;
 };
 
+export interface QueuedBridgeSmokeInput {
+  bridgeSmoke?: true;
+  bridgeAction?: GptBridgeSmokeAction;
+}
+
 export function isGptBridgeSmokeAction(value: unknown): value is GptBridgeSmokeAction {
   return value === GPT_HEALTH_ECHO_ACTION || value === GPT_ECHO_ACTION;
 }
@@ -27,7 +30,7 @@ export function buildBridgeSmokeCompletedOutput(): BridgeSmokeCompletedOutput {
 }
 
 export function isQueuedBridgeSmokeJobInput(
-  input: Pick<QueuedGptJobInput, 'bridgeSmoke' | 'bridgeAction'>
+  input: QueuedBridgeSmokeInput
 ): boolean {
   return input.bridgeSmoke === true && isGptBridgeSmokeAction(input.bridgeAction);
 }

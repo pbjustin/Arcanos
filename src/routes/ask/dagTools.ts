@@ -679,6 +679,9 @@ function summarizeDagToolExecution(toolName: string, payload: Record<string, unk
       return `DAG lineage for ${payload.runId ?? 'unknown'}: entries=${payload.entryCount ?? 'unknown'}, loopDetected=${payload.loopDetected ?? 'unknown'}.`;
     case 'cancel_dag_run': {
       const cancelledNodes = Array.isArray(payload.cancelledNodes) ? payload.cancelledNodes.length : 0;
+      if (payload.status === 'cancellation_requested') {
+        return `Cancellation requested for DAG run ${payload.runId ?? 'unknown'}; ${cancelledNodes} node(s) are targeted and will settle cooperatively.`;
+      }
       return `Cancelled DAG run ${payload.runId ?? 'unknown'} with ${cancelledNodes} node(s) marked cancelled.`;
     }
     case 'get_dag_verification':
@@ -902,19 +905,31 @@ async function executeDagTool(
     }
     case 'cancel_dag_run': {
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dagRunIdArgsSchema, 'dagTools.cancel_dag_run');
-      const output = arcanosDagRunService.cancelRun(parsedArgs.runId);
-      const normalizedOutput = output
-        ? {
-            runId: output.runId,
-            status: output.status,
-            cancelledNodes: output.cancelledNodes,
-          }
-        : { runId: parsedArgs.runId, status: 'not_found', cancelledNodes: [] };
+      const cancellation = await arcanosDagRunService.cancelRun(parsedArgs.runId);
+      const normalizedOutput =
+        cancellation.outcome === 'cancellation_requested' ||
+        cancellation.outcome === 'already_requested' ||
+        cancellation.outcome === 'already_cancelled'
+          ? cancellation.data
+          : {
+              runId: parsedArgs.runId,
+              status: cancellation.outcome,
+              cancelledNodes: [],
+            };
       return {
         output: normalizedOutput,
-        summary: output
-          ? summarizeDagToolExecution(toolName, normalizedOutput)
-          : `DAG run ${parsedArgs.runId} was not found for cancellation.`,
+        summary:
+          cancellation.outcome === 'cancellation_requested' ||
+          cancellation.outcome === 'already_requested' ||
+          cancellation.outcome === 'already_cancelled'
+            ? summarizeDagToolExecution(toolName, normalizedOutput)
+            : cancellation.outcome === 'not_found'
+              ? `DAG run ${parsedArgs.runId} was not found for cancellation.`
+              : cancellation.outcome === 'not_cancellable'
+                ? `DAG run ${parsedArgs.runId} is ${cancellation.runStatus} and cannot be cancelled.`
+                : cancellation.outcome === 'owned_elsewhere'
+                  ? `DAG run ${parsedArgs.runId} is active on another instance; retry cancellation after ${cancellation.retryAfterSeconds} second(s).`
+                  : `DAG cancellation state for ${parsedArgs.runId} is unavailable; retry after ${cancellation.retryAfterSeconds} second(s).`,
       };
     }
     case 'get_dag_verification': {

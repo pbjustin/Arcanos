@@ -49,15 +49,28 @@ function redirectConsoleLogsToStderr(): void {
 async function loadStdioServerModules(): Promise<{
   createMcpServer: typeof import('./server.js')['createMcpServer'];
   buildMcpStdioContext: typeof import('./context.js')['buildMcpStdioContext'];
+  arcanosMcpService: typeof import('../services/arcanosMcp.js')['arcanosMcpService'];
+  configureDefaultArcanosCoreRuntimeProviders:
+    typeof import('../services/arcanosCoreRuntimeProviders.js')['configureDefaultArcanosCoreRuntimeProviders'];
 }> {
-  const [serverModule, contextModule] = await Promise.all([
+  const [
+    serverModule,
+    contextModule,
+    arcanosMcpModule,
+    arcanosCoreRuntimeProvidersModule,
+  ] = await Promise.all([
     import('./server.js'),
-    import('./context.js')
+    import('./context.js'),
+    import('../services/arcanosMcp.js'),
+    import('../services/arcanosCoreRuntimeProviders.js')
   ]);
 
   return {
     createMcpServer: serverModule.createMcpServer,
-    buildMcpStdioContext: contextModule.buildMcpStdioContext
+    buildMcpStdioContext: contextModule.buildMcpStdioContext,
+    arcanosMcpService: arcanosMcpModule.arcanosMcpService,
+    configureDefaultArcanosCoreRuntimeProviders:
+      arcanosCoreRuntimeProvidersModule.configureDefaultArcanosCoreRuntimeProviders
   };
 }
 
@@ -71,10 +84,18 @@ function parseSessionIdFromArgs(argv: string[]): string | undefined {
 async function main() {
   redirectConsoleLogsToStderr();
 
-  const { createMcpServer, buildMcpStdioContext } = await loadStdioServerModules();
+  const {
+    createMcpServer,
+    buildMcpStdioContext,
+    arcanosMcpService,
+    configureDefaultArcanosCoreRuntimeProviders,
+  } = await loadStdioServerModules();
 
+  configureDefaultArcanosCoreRuntimeProviders();
   const sessionId = parseSessionIdFromArgs(process.argv.slice(2));
-  const ctx = buildMcpStdioContext(sessionId);
+  const ctx = buildMcpStdioContext(sessionId, {
+    arcanosMcp: arcanosMcpService,
+  });
 
   const server = await createMcpServer(ctx);
 

@@ -342,6 +342,14 @@ describe('reusable-code audit: audit-safe policy characterization', () => {
       harness.persistence.setAuditSafeMode('false', rootOverride(credential)),
     ).resolves.toBeUndefined();
 
+    process.env.DEBUG_SERVER_TOKEN = credential;
+    await expect(
+      harness.hierarchy.setAuditSafeMode('false', rootOverride(credential)),
+    ).rejects.toThrow('Unauthorized attempt');
+    await expect(
+      harness.persistence.setAuditSafeMode('false', rootOverride(credential)),
+    ).rejects.toThrow('Unauthorized attempt');
+
     const auditOutput = JSON.stringify([
       harness.coreAuditEvents,
       harness.fileAuditEntries,

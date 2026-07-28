@@ -6,6 +6,7 @@ import type {
   ActionPlanPrincipal,
   LocalAgentExecutorPrincipal,
 } from '../../services/actionPlanExecution/auth.js';
+import type { ControlPlaneHttpPrincipal } from '../../services/controlPlane/types.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -20,8 +21,8 @@ declare global {
   namespace Express {
     interface Request {
       /**
-       * Daemon request token
-       * Set by daemon route middleware
+       * Legacy request-scoped daemon context used by compatibility surfaces.
+       * Dedicated daemon-plane HTTP authentication never assigns this field.
        */
       daemonToken?: string;
       /**
@@ -77,6 +78,8 @@ declare global {
       actionPlanPrincipal?: ActionPlanPrincipal;
       /** Purpose-bound local-agent protocol principal; never contains credential material. */
       localAgentExecutorPrincipal?: LocalAgentExecutorPrincipal;
+      /** Purpose-bound HTTP control-plane principal; never contains credential material. */
+      controlPlanePrincipal?: ControlPlaneHttpPrincipal;
     }
   }
 }

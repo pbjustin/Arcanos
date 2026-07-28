@@ -82,6 +82,125 @@ export interface HealthChecker {
   critical?: boolean;
 }
 
+interface PublicReadinessFailure {
+  code: string;
+  error: string;
+}
+
+interface PublicReadinessCheckResult {
+  healthy: boolean;
+  name: string;
+  code?: string;
+  error?: string;
+  metadata?: Record<string, boolean | number | string>;
+  duration?: number;
+}
+
+const OPENAI_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'OPENAI_DEPENDENCY_UNAVAILABLE',
+  error: 'OpenAI dependency is unavailable.'
+};
+const DATABASE_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'DATABASE_DEPENDENCY_UNAVAILABLE',
+  error: 'Database dependency is unavailable.'
+};
+const REDIS_INITIALIZING_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'REDIS_INITIALIZING',
+  error: 'Redis initialization is in progress.'
+};
+const REDIS_UNAVAILABLE_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+  error: 'Redis dependency is unavailable.'
+};
+const APPLICATION_STARTING_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'APPLICATION_STARTING',
+  error: 'Application startup is in progress.'
+};
+const APPLICATION_DEGRADED_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'APPLICATION_DEGRADED',
+  error: 'Application dependencies are degraded.'
+};
+const DEFAULT_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'READINESS_CHECK_FAILED',
+  error: 'Readiness check failed.'
+};
+const PUBLIC_REDIS_CIRCUIT_STATES = new Set(['CLOSED', 'OPEN', 'HALF_OPEN']);
+const READINESS_UNAVAILABLE_PUBLIC_ERROR = 'Readiness check unavailable.';
+
+function resolvePublicReadinessFailure(result: HealthCheckResult): PublicReadinessFailure {
+  switch (result.name) {
+    case 'openai':
+      return OPENAI_PUBLIC_READINESS_FAILURE;
+    case 'database':
+      return DATABASE_PUBLIC_READINESS_FAILURE;
+    case 'redis':
+      return result.code === 'REDIS_INITIALIZING'
+        ? REDIS_INITIALIZING_PUBLIC_READINESS_FAILURE
+        : REDIS_UNAVAILABLE_PUBLIC_READINESS_FAILURE;
+    case 'startup':
+      return result.code === 'APPLICATION_STARTING'
+        ? APPLICATION_STARTING_PUBLIC_READINESS_FAILURE
+        : APPLICATION_DEGRADED_PUBLIC_READINESS_FAILURE;
+    default:
+      return DEFAULT_PUBLIC_READINESS_FAILURE;
+  }
+}
+
+function projectPublicRedisReadinessMetadata(
+  result: HealthCheckResult
+): Record<string, boolean | number | string> | undefined {
+  if (result.name !== 'redis' || !result.metadata) {
+    return undefined;
+  }
+
+  const projected: Record<string, boolean | number | string> = {};
+  const {
+    recoveryCount,
+    readyGeneration,
+    circuitEnabled,
+    circuitState
+  } = result.metadata;
+
+  if (typeof recoveryCount === 'number' && Number.isSafeInteger(recoveryCount) && recoveryCount >= 0) {
+    projected.recoveryCount = recoveryCount;
+  }
+  if (typeof readyGeneration === 'number' && Number.isSafeInteger(readyGeneration) && readyGeneration >= 0) {
+    projected.readyGeneration = readyGeneration;
+  }
+  if (typeof circuitEnabled === 'boolean') {
+    projected.circuitEnabled = circuitEnabled;
+  }
+  if (typeof circuitState === 'string' && PUBLIC_REDIS_CIRCUIT_STATES.has(circuitState)) {
+    projected.circuitState = circuitState;
+  }
+
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
+function projectPublicReadinessCheck(result: HealthCheckResult): PublicReadinessCheckResult {
+  const projected: PublicReadinessCheckResult = {
+    healthy: result.healthy,
+    name: result.name
+  };
+
+  if (typeof result.duration === 'number' && Number.isFinite(result.duration) && result.duration >= 0) {
+    projected.duration = result.duration;
+  }
+
+  const metadata = projectPublicRedisReadinessMetadata(result);
+  if (metadata) {
+    projected.metadata = metadata;
+  }
+
+  if (!result.healthy) {
+    const failure = resolvePublicReadinessFailure(result);
+    projected.code = failure.code;
+    projected.error = failure.error;
+  }
+
+  return projected;
+}
+
 /**
  * Creates a health check instance
  * 
@@ -320,6 +439,7 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
   
   return async (req: Request, res: Response) => {
     const startTime = Date.now();
+    res.setHeader('Cache-Control', 'no-store');
 
     try {
       const health = await aggregateHealthChecks(criticalChecks);
@@ -331,17 +451,24 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
         ready: health.status === 'healthy',
         status: health.status,
         timestamp: health.timestamp,
-        checks: health.checks,
+        checks: health.checks.map(projectPublicReadinessCheck),
         duration
       });
     } catch (error) {
       const duration = Date.now() - startTime;
-      const errorMessage = resolveErrorMessage(error);
+
+      aiLogger.error('Readiness endpoint error', {
+        module: 'health.unified',
+        operation: 'buildReadinessEndpoint',
+        duration
+      }, undefined, error instanceof Error ? error : undefined);
 
       sendTimestampedStatus(res, 503, {
         ready: false,
         status: 'unhealthy',
-        error: errorMessage,
+        code: DEFAULT_PUBLIC_READINESS_FAILURE.code,
+        error: READINESS_UNAVAILABLE_PUBLIC_ERROR,
+        checks: [],
         duration
       });
     }

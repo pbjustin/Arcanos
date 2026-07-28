@@ -19,6 +19,7 @@ interface UnifiedHealthHarness {
   createClientMock: jest.Mock;
   getRedisLifecycleSnapshotMock: jest.Mock;
   getStartupLifecycleSnapshotMock: jest.Mock;
+  sendTimestampedStatusMock: jest.Mock;
 }
 
 const DEFAULT_REDIS_LIFECYCLE: RedisLifecycleSnapshot = {
@@ -91,6 +92,16 @@ async function loadUnifiedHealthHarness(
     ...startupLifecycle,
     redis: { ...startupLifecycle.redis }
   }));
+  const sendTimestampedStatusMock = jest.fn((
+    res: { status: (statusCode: number) => { json: (payload: unknown) => unknown } },
+    statusCode: number,
+    payload: Record<string, unknown>
+  ) => {
+    res.status(statusCode).json({
+      ...payload,
+      timestamp: '2026-07-21T12:00:00.000Z'
+    });
+  });
 
   jest.unstable_mockModule('redis', () => ({
     createClient: createClientMock
@@ -146,7 +157,7 @@ async function loadUnifiedHealthHarness(
     mapReadinessToHealthStatus: jest.fn()
   }));
   jest.unstable_mockModule('@platform/resilience/serviceUnavailable.js', () => ({
-    sendTimestampedStatus: jest.fn()
+    sendTimestampedStatus: sendTimestampedStatusMock
   }));
 
   const moduleUnderTest = await import('../src/platform/resilience/unifiedHealth.js');
@@ -155,8 +166,17 @@ async function loadUnifiedHealthHarness(
     moduleUnderTest,
     createClientMock,
     getRedisLifecycleSnapshotMock,
-    getStartupLifecycleSnapshotMock
+    getStartupLifecycleSnapshotMock,
+    sendTimestampedStatusMock
   };
+}
+
+function createResponseMock() {
+  const res: any = {};
+  res.setHeader = jest.fn();
+  res.status = jest.fn().mockReturnValue(res);
+  res.json = jest.fn().mockReturnValue(res);
+  return res;
 }
 
 describe('platform/resilience/unifiedHealth Redis lifecycle checks', () => {
@@ -341,5 +361,177 @@ describe('platform/resilience/unifiedHealth startup readiness', () => {
         changedAt: '2026-07-21T12:00:00.000Z'
       }
     });
+  });
+});
+
+describe('platform/resilience/unifiedHealth public readiness projection', () => {
+  it('returns only the allowlisted healthy check contract in original order', async () => {
+    const harness = await loadUnifiedHealthHarness();
+    const privateMetadataSentinel = 'PRIVATE_HEALTHY_METADATA_SENTINEL';
+    const nonCriticalCheckMock = jest.fn(() => ({
+      healthy: false,
+      name: 'non-critical'
+    }));
+    const handler = harness.moduleUnderTest.buildReadinessEndpoint([
+      harness.moduleUnderTest.createHealthCheck('openai', () => ({
+        healthy: true,
+        name: 'ignored-by-checker-contract',
+        error: privateMetadataSentinel,
+        metadata: {
+          apiKeySource: privateMetadataSentinel,
+          defaultModel: 'private-model'
+        }
+      })),
+      harness.moduleUnderTest.createHealthCheck('database', () => ({
+        healthy: true,
+        name: 'ignored-by-checker-contract',
+        metadata: {
+          configured: true,
+          url: privateMetadataSentinel
+        }
+      })),
+      harness.moduleUnderTest.createHealthCheck('non-critical', nonCriticalCheckMock, false)
+    ]);
+    const res = createResponseMock();
+
+    await handler({ path: '/readyz' } as any, res);
+
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      ready: true,
+      status: 'healthy',
+      timestamp: expect.any(String),
+      checks: [
+        {
+          healthy: true,
+          name: 'openai',
+          duration: expect.any(Number)
+        },
+        {
+          healthy: true,
+          name: 'database',
+          duration: expect.any(Number)
+        }
+      ],
+      duration: expect.any(Number)
+    });
+    expect(JSON.stringify(res.json.mock.calls[0]?.[0])).not.toContain(privateMetadataSentinel);
+    expect(nonCriticalCheckMock).not.toHaveBeenCalled();
+  });
+
+  it('replaces raw unhealthy errors and metadata with stable public failures', async () => {
+    const harness = await loadUnifiedHealthHarness();
+    const databaseSentinel = 'PRIVATE_DATABASE_READINESS_SENTINEL';
+    const customSentinel = 'PRIVATE_CUSTOM_READINESS_SENTINEL';
+    const redisSentinel = 'PRIVATE_REDIS_READINESS_SENTINEL';
+    const handler = harness.moduleUnderTest.buildReadinessEndpoint([
+      harness.moduleUnderTest.createHealthCheck('database', () => ({
+        healthy: false,
+        name: 'database',
+        code: 'REDIS_INITIALIZING',
+        error: `database connection failed: ${databaseSentinel}`,
+        metadata: {
+          url: databaseSentinel
+        }
+      })),
+      harness.moduleUnderTest.createHealthCheck('custom-dependency', () => {
+        throw new Error(`custom dependency failed: ${customSentinel}`);
+      }),
+      harness.moduleUnderTest.createHealthCheck('redis', () => ({
+        healthy: false,
+        name: 'redis',
+        code: 'REDIS_INITIALIZING',
+        error: redisSentinel,
+        metadata: {
+          lastError: redisSentinel,
+          recoveryCount: 2,
+          readyGeneration: 3,
+          circuitEnabled: true,
+          circuitState: 'HALF_OPEN'
+        }
+      }))
+    ]);
+    const res = createResponseMock();
+
+    await handler({ path: '/readyz' } as any, res);
+
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith({
+      ready: false,
+      status: 'unhealthy',
+      timestamp: expect.any(String),
+      checks: [
+        {
+          healthy: false,
+          name: 'database',
+          code: 'DATABASE_DEPENDENCY_UNAVAILABLE',
+          error: 'Database dependency is unavailable.',
+          duration: expect.any(Number)
+        },
+        {
+          healthy: false,
+          name: 'custom-dependency',
+          code: 'READINESS_CHECK_FAILED',
+          error: 'Readiness check failed.',
+          duration: expect.any(Number)
+        },
+        {
+          healthy: false,
+          name: 'redis',
+          code: 'REDIS_INITIALIZING',
+          error: 'Redis initialization is in progress.',
+          metadata: {
+            recoveryCount: 2,
+            readyGeneration: 3,
+            circuitEnabled: true,
+            circuitState: 'HALF_OPEN'
+          },
+          duration: expect.any(Number)
+        }
+      ],
+      duration: expect.any(Number)
+    });
+    const serializedPayload = JSON.stringify(res.json.mock.calls[0]?.[0]);
+    expect(serializedPayload).not.toContain(databaseSentinel);
+    expect(serializedPayload).not.toContain(customSentinel);
+    expect(serializedPayload).not.toContain(redisSentinel);
+    expect((res.json.mock.calls[0]?.[0] as any).checks[0]).not.toHaveProperty('metadata');
+    expect((res.json.mock.calls[0]?.[0] as any).checks[1]).not.toHaveProperty('metadata');
+  });
+
+  it('returns a fixed no-store response when readiness aggregation itself fails', async () => {
+    const harness = await loadUnifiedHealthHarness();
+    const privateErrorSentinel = 'PRIVATE_READINESS_AGGREGATION_SENTINEL';
+    const checker = {
+      critical: true,
+      get name(): string {
+        throw new Error(`readiness aggregation failed: ${privateErrorSentinel}`);
+      },
+      check: () => ({
+        healthy: true,
+        name: 'unreachable'
+      })
+    };
+    const handler = harness.moduleUnderTest.buildReadinessEndpoint([checker]);
+    const res = createResponseMock();
+
+    await handler({ path: '/readyz' } as any, res);
+
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(harness.sendTimestampedStatusMock).toHaveBeenCalledWith(
+      res,
+      503,
+      {
+        ready: false,
+        status: 'unhealthy',
+        code: 'READINESS_CHECK_FAILED',
+        error: 'Readiness check unavailable.',
+        checks: [],
+        duration: expect.any(Number)
+      }
+    );
+    expect(JSON.stringify(res.json.mock.calls[0]?.[0])).not.toContain(privateErrorSentinel);
   });
 });

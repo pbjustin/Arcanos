@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-24T00:13:40.854Z",
+  "generatedAt": "2026-07-28T04:07:00.953Z",
   "scopes": [
     {
       "scope": "daemon-python",
@@ -254,6 +254,42 @@
           "relativePath": "daemon-python/arcanos/gpt_client.py"
         },
         {
+          "relativePath": "daemon-python/arcanos/local_agent/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/contracts.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/handlers.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/journal.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/patch_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/process_runner.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/protocol.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/runner.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/sandbox_entrypoint.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/secure_fs.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/test_sandbox.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/local_agent/workspace_registry.py"
+        },
+        {
           "relativePath": "daemon-python/arcanos/media_routing.py"
         },
         {
@@ -476,6 +512,9 @@
           "relativePath": "daemon-python/tests/test_credential_verification.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_daemon_transport_auth.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_debug_logging_formatter.py"
         },
         {
@@ -483,6 +522,18 @@
         },
         {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_agent_handlers.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_agent_protocol_runner.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_agent_sandbox_container_e2e.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_agent_sandbox_security.py"
         },
         {
           "relativePath": "daemon-python/tests/test_local_bridge_security.py"
@@ -504,6 +555,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_protocol_runtime_remote_tools.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
         },
         {
           "relativePath": "daemon-python/tests/test_request_builders.py"

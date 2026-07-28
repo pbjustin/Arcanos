@@ -6,9 +6,14 @@
 
 import crypto from 'crypto';
 import type { PoolClient } from 'pg';
-import { close as closeDatabase, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
+import {
+  closePoolIfCurrent,
+  getPool,
+  initializeDatabase,
+  isDatabaseConnected
+} from '@core/db/client.js';
 import { query, transaction } from '@core/db/query.js';
-import { initializeTables } from '@core/db/schema.js';
+import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 
@@ -16,7 +21,6 @@ const SESSION_REPOSITORY_WORKER_ID = 'session-repository';
 const SESSION_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 
 let pendingBootstrap: Promise<boolean> | null = null;
-let sessionSchemaReady = false;
 let lastBootstrapFailureAtMs = 0;
 
 function shouldRetrySessionBootstrap(error: unknown): boolean {
@@ -43,23 +47,48 @@ async function bootstrapSessionPersistence(): Promise<boolean> {
   const maxBootstrapAttempts = 2;
 
   for (let attempt = 1; attempt <= maxBootstrapAttempts; attempt += 1) {
+    if (isDatabaseConnected() && isDatabaseSchemaReady()) {
+      lastBootstrapFailureAtMs = 0;
+      return true;
+    }
+
     if (!isDatabaseConnected()) {
-      const connected = await initializeDatabase(SESSION_REPOSITORY_WORKER_ID);
-      if (!connected || !isDatabaseConnected()) {
-        return false;
-      }
+      await initializeDatabase(SESSION_REPOSITORY_WORKER_ID);
+    }
+
+    if (!isDatabaseConnected()) {
+      return false;
+    }
+
+    const attemptPool = getPool();
+    if (!attemptPool) {
+      return false;
     }
 
     try {
-      await initializeTables();
-      sessionSchemaReady = true;
-      lastBootstrapFailureAtMs = 0;
-      return true;
+      const tablesInitialized = await initializeTables();
+      const persistenceReady =
+        tablesInitialized &&
+        getPool() === attemptPool &&
+        isDatabaseConnected() &&
+        isDatabaseSchemaReady();
+      if (persistenceReady) {
+        lastBootstrapFailureAtMs = 0;
+        return true;
+      }
+
+      //audit Assumption: a false schema result means the captured pool was replaced or disconnected during DDL; failure risk: retrying against leaked or obsolete pool state; expected invariant: only the captured attempt pool is closed; handling strategy: close by identity and retry within the existing bounded attempt budget.
+      await closePoolIfCurrent(attemptPool);
+      if (attempt < maxBootstrapAttempts) {
+        continue;
+      }
+
+      return false;
     } catch (error: unknown) {
-      sessionSchemaReady = false;
+      //audit Assumption: schema exceptions belong to the pool captured for this attempt; failure risk: a late failure closes a newer replacement pool; expected invariant: cleanup never targets a different pool identity; handling strategy: close only the captured attempt pool.
+      await closePoolIfCurrent(attemptPool);
 
       if (attempt < maxBootstrapAttempts && shouldRetrySessionBootstrap(error)) {
-        await closeDatabase();
         continue;
       }
 
@@ -168,9 +197,14 @@ export interface SessionStorageMetrics {
  * - Repeated bootstrap failures are throttled with a cooldown to avoid request-time retry storms.
  */
 async function ensureSessionPersistenceReady(): Promise<boolean> {
-  //audit Assumption: once the DB is connected and schema initialization has completed, session persistence can proceed without repeated bootstrap work; failure risk: each request re-runs schema DDL and adds latency; expected invariant: a ready repository exits fast; handling strategy: short-circuit on connected + schema-ready state.
-  if (isDatabaseConnected() && sessionSchemaReady) {
+  //audit Assumption: session persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a repository-local flag survives pool replacement; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
+  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
     return true;
+  }
+
+  //audit Assumption: concurrent requests should share one bootstrap attempt even while failure cleanup is in progress; failure risk: followers fail closed during an active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
+  if (pendingBootstrap) {
+    return pendingBootstrap;
   }
 
   const nowMs = Date.now();
@@ -183,19 +217,16 @@ async function ensureSessionPersistenceReady(): Promise<boolean> {
     return false;
   }
 
-  //audit Assumption: concurrent requests should share one bootstrap attempt; failure risk: duplicate pool initialization and DDL races; expected invariant: at most one bootstrap promise is active; handling strategy: reuse the in-flight promise.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
   pendingBootstrap = (async () => {
     try {
-      return await bootstrapSessionPersistence();
+      const persistenceReady = await bootstrapSessionPersistence();
+      if (!persistenceReady) {
+        lastBootstrapFailureAtMs = Date.now();
+      }
+      return persistenceReady;
     } catch (error: unknown) {
       //audit Assumption: bootstrap failures must remain explicit and should not silently downgrade to memory-only state; failure risk: callers believe data is durable when it is not; expected invariant: readiness returns false on failure; handling strategy: warn and fail closed.
-      sessionSchemaReady = false;
       lastBootstrapFailureAtMs = Date.now();
-      await closeDatabase();
       console.warn('[Sessions] Failed to initialize persistent session storage:', resolveErrorMessage(error));
       return false;
     } finally {

@@ -67,6 +67,55 @@ describe('client response guards', () => {
     expect(measureJsonBytes(shaped)).toBeLessThan(1024);
   });
 
+  it('preserves the safe public modules.list projection and strips extra fields', () => {
+    const shaped = shapeClientRouteResult({
+      handledBy: 'mcp-dispatcher',
+      mcp: {
+        action: 'invoke',
+        toolName: 'modules.list',
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_modules',
+        output: {
+          structuredContent: {
+            value: [
+              {
+                name: 'ARCANOS:CORE',
+                description: 'Core public capability',
+                route: 'core',
+                actions: ['query', 'status'],
+                gptIds: ['arcanos-core'],
+                gptAccessOnly: true,
+                secret: 'test-must-not-cross-client-boundary',
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(shaped).toEqual({
+      handledBy: 'mcp-dispatcher',
+      mcp: {
+        action: 'invoke',
+        toolName: 'modules.list',
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_modules',
+        output: {
+          total: 1,
+          modules: [
+            {
+              name: 'ARCANOS:CORE',
+              description: 'Core public capability',
+              route: 'core',
+              actions: ['query', 'status'],
+              gptIds: ['arcanos-core'],
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it('preserves node-level DAG trace output for MCP dispatcher responses', () => {
     const shaped = shapeClientRouteResult({
       handledBy: 'mcp-dispatcher',

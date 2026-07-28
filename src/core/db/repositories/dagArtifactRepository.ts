@@ -4,9 +4,9 @@
  * Persists DAG artifact payloads so API and worker services can share artifact-backed DAG state.
  */
 
-import { initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
+import { getPool, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
-import { initializeTables } from '@core/db/schema.js';
+import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 
@@ -33,9 +33,14 @@ let lastBootstrapFailureAtMs = 0;
  * Edge case behavior: throttles repeated failed initialization attempts with a cooldown.
  */
 async function ensureDagArtifactPersistenceReady(): Promise<boolean> {
-  //audit Assumption: an active database connection means artifact persistence can proceed immediately; failure risk: redundant bootstrap attempts add latency and noise; expected invariant: connected DB returns fast; handling strategy: short-circuit when already connected.
-  if (isDatabaseConnected()) {
+  //audit Assumption: artifact persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a connected replacement pool is mistaken for a schema-ready pool; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
+  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
     return true;
+  }
+
+  //audit Assumption: concurrent persistence calls should share one bootstrap attempt even while a prior failure timestamp is still active; failure risk: followers fail closed instead of awaiting the active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
+  if (pendingBootstrap) {
+    return pendingBootstrap;
   }
 
   const nowMs = Date.now();
@@ -48,20 +53,34 @@ async function ensureDagArtifactPersistenceReady(): Promise<boolean> {
     return false;
   }
 
-  //audit Assumption: concurrent persistence calls should share one bootstrap attempt; failure risk: duplicate pool initialization and table DDL races; expected invariant: at most one bootstrap promise runs at a time; handling strategy: reuse the in-flight promise.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
   pendingBootstrap = (async () => {
     try {
-      const connected = await initializeDatabase(DAG_ARTIFACT_REPOSITORY_WORKER_ID);
-      if (!connected || !isDatabaseConnected()) {
+      if (!isDatabaseConnected()) {
+        await initializeDatabase(DAG_ARTIFACT_REPOSITORY_WORKER_ID);
+      }
+
+      if (!isDatabaseConnected()) {
         lastBootstrapFailureAtMs = Date.now();
         return false;
       }
 
-      await initializeTables();
+      const bootstrapPool = getPool();
+      if (!bootstrapPool) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
+      const tablesInitialized = await initializeTables();
+      const persistenceReady =
+        tablesInitialized &&
+        getPool() === bootstrapPool &&
+        isDatabaseConnected() &&
+        isDatabaseSchemaReady();
+      if (!persistenceReady) {
+        lastBootstrapFailureAtMs = Date.now();
+        return false;
+      }
+
       lastBootstrapFailureAtMs = 0;
       return true;
     } catch (error: unknown) {

@@ -171,8 +171,10 @@ jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
   clearModuleDefinitionCache: jest.fn(),
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: jest.fn(),
+  getPublicModulesForRegistry: jest.fn(() => []),
+  initializeModuleRegistry: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule('../src/services/memoryListing.js', () => ({
