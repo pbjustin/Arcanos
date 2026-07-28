@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 
 const writePublicHealthResponseMock = jest.fn();
 const getPoolMock = jest.fn();
@@ -535,26 +536,16 @@ describe('/gpt-access gateway', () => {
     expect(gptAccessResponse.headers['x-ratelimit-remaining']).toBe('119');
   });
 
-  it('fails closed when GPT Access reuses the local-agent executor credential', async () => {
+  it.each(
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.filter(
+      environmentName => environmentName !== 'ARCANOS_GPT_ACCESS_TOKEN',
+    ),
+  )('fails closed when GPT Access reuses %s', async (peerEnvironmentName) => {
     const credential = 'shared-purpose-bound-credential-value'.repeat(2);
-    const localAgentKeys = [
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID',
-      'ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID'
-    ] as const;
-    const previousValues = Object.fromEntries(
-      localAgentKeys.map((key) => [key, process.env[key]])
-    );
+    const previousPeerCredential = process.env[peerEnvironmentName];
     try {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = credential;
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN = credential;
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID =
-        'local-agent:executor';
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID =
-        'local-agent:instance';
-      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID =
-        'local-agent:device';
+      process.env[peerEnvironmentName] = credential;
 
       const response = await request(buildApp({ trustProxy: true }))
         .get('/gpt-access/health')
@@ -565,13 +556,10 @@ describe('/gpt-access gateway', () => {
       expect(response.body.error.code).toBe('GPT_ACCESS_INTERNAL_ERROR');
     } finally {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
-      for (const key of localAgentKeys) {
-        const value = previousValues[key];
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
+      if (previousPeerCredential === undefined) {
+        delete process.env[peerEnvironmentName];
+      } else {
+        process.env[peerEnvironmentName] = previousPeerCredential;
       }
     }
   });
@@ -1944,6 +1932,53 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it('fails a colliding ARCANOS:CLI bridge credential before POSTing to the bridge', async () => {
+    const previousDebugServerToken = process.env.DEBUG_SERVER_TOKEN;
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:proposeCommand,ARCANOS:CLI:runApprovedCommand');
+
+    const proposalResponse = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.25')
+      .send({
+        action: 'proposeCommand',
+        payload: {
+          command: 'git status'
+        }
+      });
+    const proposalId = proposalResponse.body.result?.proposalId;
+    expect(typeof proposalId).toBe('string');
+
+    const credential = 'cli-purpose-bound-collision-token';
+    process.env.ARCANOS_CLI_BRIDGE_TOKEN = credential;
+    process.env.DEBUG_SERVER_TOKEN = credential;
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    try {
+      const response = await confirmed(authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run')))
+        .set('X-Forwarded-For', '203.0.113.25')
+        .send({
+          action: 'runApprovedCommand',
+          payload: {
+            command: 'git status',
+            proposalId
+          }
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'unavailable'
+      }));
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousDebugServerToken === undefined) {
+        delete process.env.DEBUG_SERVER_TOKEN;
+      } else {
+        process.env.DEBUG_SERVER_TOKEN = previousDebugServerToken;
+      }
+    }
   });
 
   it('accepts IPv6 loopback ARCANOS:CLI bridge URLs', async () => {

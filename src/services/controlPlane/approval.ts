@@ -1,5 +1,6 @@
 import { getEnv } from '@platform/runtime/env.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 import type { ControlPlaneApprovalStatus, ControlPlaneRequest } from './types.js';
 
@@ -10,7 +11,18 @@ export interface ControlPlaneApprovalDecision {
 }
 
 export function readControlPlaneApprovalToken(): string | undefined {
-  return getEnv('ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN');
+  const credential = getEnv('ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN')?.trim();
+  if (
+    !credential
+    || hasConfiguredPurposeBoundCredentialCollision({
+      credential,
+      ownEnvironmentName: 'ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
+  ) {
+    return undefined;
+  }
+  return credential;
 }
 
 export function evaluateControlPlaneApproval(

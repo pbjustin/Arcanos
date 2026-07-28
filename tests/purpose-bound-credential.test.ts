@@ -4,6 +4,7 @@ import {
   MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH,
   MIN_PURPOSE_BOUND_CREDENTIAL_LENGTH,
   PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+  hasConfiguredPurposeBoundCredentialCollision,
   resolveConfiguredPurposeBoundCredential,
   type PurposeBoundCredentialEnvironmentReader,
   type PurposeBoundCredentialEnvName,
@@ -132,5 +133,17 @@ describe('purpose-bound credential configuration', () => {
       [ownEnvironmentName]: credential,
       ARCANOS_AUTOMATION_SECRET: `${' '.repeat(512)}${credential}${' '.repeat(512)}`,
     })).toBeNull();
+  });
+
+  it('detects collisions independently of a boundary-specific credential length grammar', () => {
+    const credential = 'legacy-boundary-token-'.repeat(300);
+    expect(hasConfiguredPurposeBoundCredentialCollision({
+      credential,
+      ownEnvironmentName: 'OPENAI_ACTION_SHARED_SECRET',
+      readEnvironmentValue: environmentReader({
+        OPENAI_ACTION_SHARED_SECRET: credential,
+        ROOT_OVERRIDE_TOKEN: `  ${credential}  `,
+      }),
+    })).toBe(true);
   });
 });

@@ -165,4 +165,27 @@ describe('/metrics route', () => {
         .some((value) => rejectedOutput.includes(value)),
     ).toBe(false);
   });
+
+  it('fails a configured metrics credential closed when it reuses a canonical peer', async () => {
+    const credential = 'metrics-purpose-bound-collision-token';
+    const previousDebugServerToken = process.env.DEBUG_SERVER_TOKEN;
+    try {
+      process.env.METRICS_AUTH_TOKEN = credential;
+      process.env.DEBUG_SERVER_TOKEN = credential;
+      const app = await buildApp();
+
+      const response = await request(app)
+        .get('/metrics')
+        .set('x-metrics-token', credential);
+
+      expect(response.status).toBe(403);
+      expect(JSON.stringify(response.body)).not.toContain(credential);
+    } finally {
+      if (previousDebugServerToken === undefined) {
+        delete process.env.DEBUG_SERVER_TOKEN;
+      } else {
+        process.env.DEBUG_SERVER_TOKEN = previousDebugServerToken;
+      }
+    }
+  });
 });

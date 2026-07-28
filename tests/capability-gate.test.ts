@@ -15,6 +15,7 @@ const { capabilityGate } = await import('../src/middleware/capabilityGate.js');
 
 const originalAutomationSecret = process.env.ARCANOS_AUTOMATION_SECRET;
 const originalAutomationHeader = process.env.ARCANOS_AUTOMATION_HEADER;
+const originalDebugServerToken = process.env.DEBUG_SERVER_TOKEN;
 
 describe('capabilityGate middleware', () => {
   let mockReq: Partial<Request>;
@@ -42,6 +43,11 @@ describe('capabilityGate middleware', () => {
       delete process.env.ARCANOS_AUTOMATION_HEADER;
     } else {
       process.env.ARCANOS_AUTOMATION_HEADER = originalAutomationHeader;
+    }
+    if (originalDebugServerToken === undefined) {
+      delete process.env.DEBUG_SERVER_TOKEN;
+    } else {
+      process.env.DEBUG_SERVER_TOKEN = originalDebugServerToken;
     }
   });
 
@@ -117,5 +123,26 @@ describe('capabilityGate middleware', () => {
     await middleware(mockReq as Request, mockRes as Response, mockNext);
     expect(mockNext).toHaveBeenCalledTimes(1);
     expect(mockValidateCapability).not.toHaveBeenCalled();
+  });
+
+  it('does not grant automation bypass when its credential reuses a canonical peer', async () => {
+    const credential = 'automation-purpose-bound-collision-token';
+    process.env.ARCANOS_AUTOMATION_SECRET = credential;
+    process.env.DEBUG_SERVER_TOKEN = credential;
+    process.env.ARCANOS_AUTOMATION_HEADER = 'x-phase2a-automation';
+    mockReq = {
+      body: { capability: 'terminal.run' },
+      headers: { 'x-phase2a-automation': credential },
+      path: '/phase2a/capability',
+    };
+
+    await capabilityGate('terminal.run')(
+      mockReq as Request,
+      mockRes as Response,
+      mockNext,
+    );
+
+    expect(statusMock).toHaveBeenCalledWith(401);
+    expect(mockNext).not.toHaveBeenCalled();
   });
 });

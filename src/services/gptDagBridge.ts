@@ -14,6 +14,7 @@ import {
 } from '@shared/gpt/gptDagBridgeActions.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const DEFAULT_ALLOWED_GPTS = ['arcanos-core'];
@@ -343,11 +344,21 @@ export function assertGptCanUseDag(
   }
 
   if (parseBooleanEnv('GPT_DAG_BRIDGE_REQUIRE_AUTH', false)) {
-    const expectedToken =
-      process.env.GPT_DAG_BRIDGE_BEARER_TOKEN?.trim() ??
-      process.env.OPENAI_ACTION_SHARED_SECRET?.trim() ??
-      '';
+    const expectedToken = process.env.GPT_DAG_BRIDGE_BEARER_TOKEN?.trim() ?? '';
     if (!expectedToken) {
+      return buildErrorResponse(
+        ctx,
+        503,
+        'GPT_DAG_BRIDGE_AUTH_NOT_CONFIGURED',
+        'DAG bridge bearer authentication is required but not configured.',
+        'dag_bridge_auth_not_configured'
+      );
+    }
+    if (hasConfiguredPurposeBoundCredentialCollision({
+      credential: expectedToken,
+      ownEnvironmentName: 'GPT_DAG_BRIDGE_BEARER_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })) {
       return buildErrorResponse(
         ctx,
         503,

@@ -15,6 +15,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { getEnv } from "@platform/runtime/env.js";
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 // ----------------------
 // Types and State
@@ -60,10 +61,17 @@ const inMemoryStore: Record<string, SaveEntry[]> = {};
  */
 function canEnableRootOverride(userRole: string, token: string): boolean {
   // Use config layer for env access (adapter boundary pattern)
+  const overrideToken = getEnv('ROOT_OVERRIDE_TOKEN');
   return (
     getEnv('ALLOW_ROOT_OVERRIDE') === 'true' &&
     userRole === 'admin' &&
-    timingSafeEqualOpaqueSecret(token, getEnv('ROOT_OVERRIDE_TOKEN'))
+    Boolean(overrideToken) &&
+    !hasConfiguredPurposeBoundCredentialCollision({
+      credential: overrideToken ?? '',
+      ownEnvironmentName: 'ROOT_OVERRIDE_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    }) &&
+    timingSafeEqualOpaqueSecret(token, overrideToken)
   );
 }
 

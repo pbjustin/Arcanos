@@ -9,19 +9,69 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      dag_writer_rollout_confirmation:
+        description: >-
+          While the coordinated DAG writer hold is active, type exactly:
+          DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1
+        required: false
+        type: string
 
-concurrency:
-  group: railway-auto-deploy-production
-  cancel-in-progress: true
+env:
+  # Keep one explicit repository-owned state. "none" restores normal automatic
+  # promotion only after the coordinated rollout is verified in every writer.
+  # Missing, blank, or malformed values fail closed in the policy job.
+  ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: '20260727-dag-snapshot-generation-v1'
 
 permissions:
   contents: read
 
 jobs:
+  rollout-policy:
+    name: Coordinated DAG writer rollout policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    outputs:
+      should_deploy: ${{ steps.rollout_guard.outputs.should_deploy }}
+      hold_active: ${{ steps.rollout_guard.outputs.hold_active }}
+      hold_id: ${{ steps.rollout_guard.outputs.hold_id }}
+      reason: ${{ steps.rollout_guard.outputs.reason }}
+
+    steps:
+      - name: Checkout rollout policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+
+      - name: Enforce coordinated DAG writer rollout policy
+        id: rollout_guard
+        env:
+          ARCANOS_DEPLOY_EVENT_NAME: ${{ github.event_name }}
+          ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: ${{ env.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD }}
+          ARCANOS_DAG_WRITER_ROLLOUT_CONFIRMATION: ${{ github.event.inputs.dag_writer_rollout_confirmation || '' }}
+        run: node scripts/railway-coordinated-rollout-guard.mjs
+
   deploy-production:
     name: Deploy Production (Railway)
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    needs: rollout-policy
+    if: >-
+      needs.rollout-policy.outputs.should_deploy == 'true'
+      && (github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
+    concurrency:
+      group: railway-auto-deploy-production
+      cancel-in-progress: true
     env:
       DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

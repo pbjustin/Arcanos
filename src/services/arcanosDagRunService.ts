@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { generateRequestId } from '../shared/idGenerator.js';
 import {
   getLatestDagRunSnapshot,
@@ -112,9 +113,26 @@ interface PersistedDagRunSnapshot {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  admissionPending: boolean;
   cancellationRequestedAt?: string;
   cancellationReason?: string;
   orchestratorState: TrinityRunRecord;
+}
+
+type DagAdmissionReadbackOutcome =
+  | 'confirmed'
+  | 'not_found'
+  | 'conflict'
+  | 'unavailable';
+
+interface RetainedDagRunAdmission {
+  record: StoredDagRunRecord;
+  request: CreateDagRunRequest;
+  settings: DagWorkerPoolSettings;
+  envelope: DagRunSnapshotRecord;
+  attemptsInCycle: number;
+  timer?: ReturnType<typeof setTimeout>;
+  reconciliationPromise?: Promise<number | null>;
 }
 
 const TRINITY_PIPELINE_NAME = 'trinity' as const;
@@ -127,6 +145,9 @@ export const DEFAULT_DAG_MAX_ACTIVE_RUNS = 4;
 export const DEFAULT_DAG_TERMINAL_RETENTION_MS = 15 * 60 * 1_000;
 export const DEFAULT_DAG_MAX_RETAINED_RUNS = 100;
 export const DEFAULT_DAG_OVERLOAD_RETRY_AFTER_SECONDS = 5;
+export const DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS = 1_000;
+export const DEFAULT_DAG_ADMISSION_RECONCILIATION_MAX_ATTEMPTS = 3;
+export const DEFAULT_DAG_ADMISSION_RECONCILIATION_COOLDOWN_MS = 30_000;
 
 export interface DagRunLifecycleSettings {
   maxActiveRuns: number;
@@ -135,8 +156,15 @@ export interface DagRunLifecycleSettings {
   retryAfterSeconds: number;
 }
 
+export interface DagAdmissionReconciliationSettings {
+  retryDelayMs: number;
+  maxAttemptsPerCycle: number;
+  cooldownMs: number;
+}
+
 export interface ArcanosDagRunServiceOptions {
   lifecycle?: Partial<DagRunLifecycleSettings>;
+  admissionReconciliation?: Partial<DagAdmissionReconciliationSettings>;
 }
 
 export type CancelDagRunResult =
@@ -243,6 +271,30 @@ export function getDagRunLifecycleSettings(
   };
 }
 
+function getDagAdmissionReconciliationSettings(
+  overrides: Partial<DagAdmissionReconciliationSettings> = {}
+): DagAdmissionReconciliationSettings {
+  const normalizeOverride = (value: number | undefined, fallback: number): number =>
+    Number.isSafeInteger(value) && (value ?? 0) > 0
+      ? Math.trunc(value as number)
+      : fallback;
+
+  return {
+    retryDelayMs: normalizeOverride(
+      overrides.retryDelayMs,
+      DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS
+    ),
+    maxAttemptsPerCycle: normalizeOverride(
+      overrides.maxAttemptsPerCycle,
+      DEFAULT_DAG_ADMISSION_RECONCILIATION_MAX_ATTEMPTS
+    ),
+    cooldownMs: normalizeOverride(
+      overrides.cooldownMs,
+      DEFAULT_DAG_ADMISSION_RECONCILIATION_COOLDOWN_MS
+    )
+  };
+}
+
 export class DagRunCapacityExceededError extends Error {
   readonly code = 'DAG_RUN_CAPACITY_EXCEEDED';
   readonly retryAfterSeconds: number;
@@ -263,6 +315,21 @@ export class DagRunSnapshotOwnershipConflictError extends Error {
       `DAG run "${runId}" rejected stale snapshot generation ${snapshotGeneration}.`
     );
     this.name = 'DagRunSnapshotOwnershipConflictError';
+    this.runId = runId;
+    this.snapshotGeneration = snapshotGeneration;
+  }
+}
+
+export class DagRunAdmissionUncertainError extends Error {
+  readonly code = 'DAG_RUN_ADMISSION_UNCERTAIN';
+  readonly runId: string;
+  readonly snapshotGeneration: string;
+
+  constructor(runId: string, snapshotGeneration: string) {
+    super(
+      `DAG run "${runId}" admission could not be confirmed after snapshot generation ${snapshotGeneration}.`
+    );
+    this.name = 'DagRunAdmissionUncertainError';
     this.runId = runId;
     this.snapshotGeneration = snapshotGeneration;
   }
@@ -725,6 +792,7 @@ function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDag
     limits: cloneSerializable(record.limits),
     features: cloneSerializable(record.features),
     loopDetected: record.loopDetected,
+    admissionPending: record.admissionPending,
     ...(record.cancellationRequestedAt
       ? { cancellationRequestedAt: record.cancellationRequestedAt }
       : {}),
@@ -749,6 +817,44 @@ function isNonArrayRecord(
   value: unknown
 ): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function timestampsRepresentSameInstant(left: string, right: string): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  const leftTimestamp = Date.parse(left);
+  const rightTimestamp = Date.parse(right);
+  return (
+    Number.isFinite(leftTimestamp) &&
+    Number.isFinite(rightTimestamp) &&
+    leftTimestamp === rightTimestamp
+  );
+}
+
+function isExactAdmissionSnapshotReadback(
+  persistedRecord: DagRunSnapshotRecord,
+  expectedEnvelope: DagRunSnapshotRecord
+): boolean {
+  return (
+    persistedRecord.runId === expectedEnvelope.runId &&
+    persistedRecord.sessionId === expectedEnvelope.sessionId &&
+    persistedRecord.template === expectedEnvelope.template &&
+    persistedRecord.status === expectedEnvelope.status &&
+    persistedRecord.snapshotGeneration === expectedEnvelope.snapshotGeneration &&
+    persistedRecord.plannerNodeId === expectedEnvelope.plannerNodeId &&
+    persistedRecord.rootNodeId === expectedEnvelope.rootNodeId &&
+    timestampsRepresentSameInstant(
+      persistedRecord.createdAt,
+      expectedEnvelope.createdAt
+    ) &&
+    timestampsRepresentSameInstant(
+      persistedRecord.updatedAt,
+      expectedEnvelope.updatedAt
+    ) &&
+    isDeepStrictEqual(persistedRecord.snapshot, expectedEnvelope.snapshot)
+  );
 }
 
 function normalizePersistedDagRunSnapshotUnsafe(
@@ -908,6 +1014,7 @@ function normalizePersistedDagRunSnapshotUnsafe(
     limits,
     features,
     loopDetected: snapshot.loopDetected === true,
+    admissionPending: snapshot.admissionPending === true,
     ...(typeof snapshot.cancellationRequestedAt === 'string'
       ? { cancellationRequestedAt: snapshot.cancellationRequestedAt }
       : {}),
@@ -1231,11 +1338,16 @@ export class ArcanosDagRunService {
     new Map<string, Promise<DagSnapshotPersistenceOutcome>>();
   private readonly persistenceConflictedRunIds = new Set<string>();
   private readonly activeRunReservations = new Set<string>();
+  private readonly retainedAdmissionsByRunId =
+    new Map<string, RetainedDagRunAdmission>();
   private readonly trinityOrchestrator: TrinityOrchestrator;
   private readonly lifecycleSettings: DagRunLifecycleSettings;
+  private readonly admissionReconciliationSettings: DagAdmissionReconciliationSettings;
 
   constructor(options: ArcanosDagRunServiceOptions = {}) {
     this.lifecycleSettings = getDagRunLifecycleSettings(options.lifecycle);
+    this.admissionReconciliationSettings =
+      getDagAdmissionReconciliationSettings(options.admissionReconciliation);
     this.trinityOrchestrator = new TrinityOrchestrator();
   }
 
@@ -1365,6 +1477,10 @@ export class ArcanosDagRunService {
     let latestUpdatedAtMs = -1;
 
     for (const record of this.runsById.values()) {
+      if (record.admissionPending) {
+        continue;
+      }
+
       if (normalizedSessionId && record.sessionId !== normalizedSessionId) {
         continue;
       }
@@ -1385,7 +1501,20 @@ export class ArcanosDagRunService {
       return null;
     }
 
-    return normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
+    const persistedSnapshot = normalizePersistedDagRunSnapshot(
+      persistedRecord.snapshot
+    );
+    if (
+      persistedSnapshot &&
+      (
+        persistedSnapshot.admissionPending ||
+        this.runsById.get(persistedSnapshot.runId)?.admissionPending
+      )
+    ) {
+      return null;
+    }
+
+    return persistedSnapshot;
   }
 
   async inspectLatestRun(sessionId?: string): Promise<DagLatestRunInspectionResult | null> {
@@ -1609,6 +1738,22 @@ export class ArcanosDagRunService {
     const localStartedAtMs = Date.now();
     const localRecord = this.runsById.get(runId);
     const localLookupMs = Date.now() - localStartedAtMs;
+    if (localRecord?.admissionPending) {
+      const totalMs = Date.now() - startedAtMs;
+      recordDagRunRequest({
+        handler: 'trace',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: totalMs,
+        lookupDurationsMs: {
+          local: localLookupMs,
+          persisted: 0,
+          total: totalMs,
+        },
+      });
+      return null;
+    }
+
     const localSnapshot = localRecord ? createPersistedDagRunSnapshot(localRecord) : null;
 
     let persistedLookupMs = 0;
@@ -1635,7 +1780,7 @@ export class ArcanosDagRunService {
       }
 
       const persistedSnapshot = normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
-      if (!persistedSnapshot) {
+      if (!persistedSnapshot || persistedSnapshot.admissionPending) {
         recordDagRunRequest({
           handler: 'trace',
           outcome: 'not_found',
@@ -1705,6 +1850,9 @@ export class ArcanosDagRunService {
     this.evictRetainedRuns();
     const localRecord = this.runsById.get(runId);
     if (localRecord) {
+      if (localRecord.admissionPending) {
+        return null;
+      }
       return createPersistedDagRunSnapshot(localRecord);
     }
 
@@ -1713,7 +1861,10 @@ export class ArcanosDagRunService {
       return null;
     }
 
-    return normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
+    const persistedSnapshot = normalizePersistedDagRunSnapshot(
+      persistedRecord.snapshot
+    );
+    return persistedSnapshot?.admissionPending ? null : persistedSnapshot;
   }
 
   /**
@@ -1763,9 +1914,293 @@ export class ArcanosDagRunService {
     return capturedEnvelope;
   }
 
-  private async persistRecordNow(record: StoredDagRunRecord): Promise<boolean> {
-    const envelope = this.capturePersistenceEnvelope(record);
-    return upsertDagRunSnapshot(envelope);
+  private trackPersistenceWrite(
+    record: StoredDagRunRecord,
+    nextWrite: Promise<DagSnapshotPersistenceOutcome>
+  ): Promise<DagSnapshotPersistenceOutcome> {
+    this.persistenceByRunId.set(record.runId, nextWrite);
+    void nextWrite
+      .finally(() => {
+        if (this.persistenceByRunId.get(record.runId) === nextWrite) {
+          this.persistenceByRunId.delete(record.runId);
+        }
+        this.evictRetainedRuns();
+      })
+      .catch(() => undefined);
+    return nextWrite;
+  }
+
+  private async inspectInitialAdmissionPersistence(
+    envelope: DagRunSnapshotRecord
+  ): Promise<DagAdmissionReadbackOutcome> {
+    let lookup: Awaited<ReturnType<typeof lookupDagRunSnapshotForControl>>;
+    try {
+      lookup = await lookupDagRunSnapshotForControl(envelope.runId);
+    } catch {
+      return 'unavailable';
+    }
+
+    if (lookup.outcome === 'found') {
+      return isExactAdmissionSnapshotReadback(lookup.record, envelope)
+        ? 'confirmed'
+        : 'conflict';
+    }
+
+    if (lookup.outcome === 'not_found') {
+      return 'not_found';
+    }
+
+    return lookup.outcome === 'invalid' ? 'conflict' : 'unavailable';
+  }
+
+  private async reconcileInitialPersistenceException(
+    envelope: DagRunSnapshotRecord,
+    persistenceError: unknown
+  ): Promise<DagSnapshotPersistenceOutcome> {
+    const readbackOutcome = await this.inspectInitialAdmissionPersistence(
+      envelope
+    );
+    if (readbackOutcome === 'confirmed') {
+      return 'applied';
+    }
+
+    if (readbackOutcome === 'not_found') {
+      throw persistenceError;
+    }
+
+    if (readbackOutcome === 'conflict') {
+      throw new DagRunSnapshotOwnershipConflictError(
+        envelope.runId,
+        envelope.snapshotGeneration
+      );
+    }
+
+    //audit Assumption: an initial write can commit even when PostgreSQL loses the response; failure risk: deleting the local owner after an unavailable readback strands a durable queued run; expected invariant: uncertain admissions remain locally owned, hidden, and capacity-reserved while bounded background reconciliation continues; handling strategy: surface a typed error carrying the stable run id without retaining or exposing the raw database error.
+    throw new DagRunAdmissionUncertainError(
+      envelope.runId,
+      envelope.snapshotGeneration
+    );
+  }
+
+  private queueInitialPersistence(
+    record: StoredDagRunRecord,
+    envelope: DagRunSnapshotRecord
+  ): Promise<DagSnapshotPersistenceOutcome> {
+    const previousWrite =
+      this.persistenceByRunId.get(record.runId) ??
+      Promise.resolve<DagSnapshotPersistenceOutcome>('applied');
+    const nextWrite = previousWrite
+      .catch(() => 'unavailable' as const)
+      .then(async () => {
+        try {
+          const applied = await upsertDagRunSnapshot(envelope);
+          if (!applied) {
+            throw new DagRunSnapshotOwnershipConflictError(
+              record.runId,
+              envelope.snapshotGeneration
+            );
+          }
+          return 'applied' as const;
+        } catch (error: unknown) {
+          if (error instanceof DagRunSnapshotOwnershipConflictError) {
+            throw error;
+          }
+          return this.reconcileInitialPersistenceException(envelope, error);
+        }
+      });
+
+    return this.trackPersistenceWrite(record, nextWrite);
+  }
+
+  private retainUncertainAdmission(
+    record: StoredDagRunRecord,
+    request: CreateDagRunRequest,
+    settings: DagWorkerPoolSettings,
+    envelope: DagRunSnapshotRecord
+  ): void {
+    const existingAdmission = this.retainedAdmissionsByRunId.get(record.runId);
+    if (existingAdmission) {
+      this.scheduleRetainedAdmissionReconciliation(
+        existingAdmission,
+        this.admissionReconciliationSettings.retryDelayMs
+      );
+      return;
+    }
+
+    const retainedAdmission: RetainedDagRunAdmission = {
+      record,
+      request: cloneSerializable(request),
+      settings: { ...settings },
+      envelope: cloneSerializable(envelope),
+      attemptsInCycle: 0
+    };
+    this.retainedAdmissionsByRunId.set(record.runId, retainedAdmission);
+    this.scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      this.admissionReconciliationSettings.retryDelayMs
+    );
+  }
+
+  private clearRetainedAdmissionTimer(
+    retainedAdmission: RetainedDagRunAdmission
+  ): void {
+    if (retainedAdmission.timer === undefined) {
+      return;
+    }
+
+    clearTimeout(retainedAdmission.timer);
+    retainedAdmission.timer = undefined;
+  }
+
+  private scheduleRetainedAdmissionReconciliation(
+    retainedAdmission: RetainedDagRunAdmission,
+    delayMs: number
+  ): void {
+    if (
+      this.retainedAdmissionsByRunId.get(retainedAdmission.record.runId) !==
+        retainedAdmission ||
+      retainedAdmission.timer !== undefined ||
+      retainedAdmission.reconciliationPromise
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (retainedAdmission.timer === timer) {
+        retainedAdmission.timer = undefined;
+      }
+      if (
+        this.retainedAdmissionsByRunId.get(retainedAdmission.record.runId) !==
+          retainedAdmission ||
+        retainedAdmission.reconciliationPromise
+      ) {
+        return;
+      }
+
+      const reconciliationPromise =
+        this.reconcileRetainedAdmission(retainedAdmission);
+      retainedAdmission.reconciliationPromise = reconciliationPromise;
+      void reconciliationPromise.then(
+        nextDelayMs => {
+          if (
+            retainedAdmission.reconciliationPromise === reconciliationPromise
+          ) {
+            retainedAdmission.reconciliationPromise = undefined;
+          }
+          if (nextDelayMs !== null) {
+            this.scheduleRetainedAdmissionReconciliation(
+              retainedAdmission,
+              nextDelayMs
+            );
+          }
+        },
+        () => {
+          if (
+            retainedAdmission.reconciliationPromise === reconciliationPromise
+          ) {
+            retainedAdmission.reconciliationPromise = undefined;
+          }
+          retainedAdmission.attemptsInCycle = 0;
+          this.scheduleRetainedAdmissionReconciliation(
+            retainedAdmission,
+            this.admissionReconciliationSettings.cooldownMs
+          );
+        }
+      );
+    }, delayMs);
+
+    retainedAdmission.timer = timer;
+    const unrefTimer = timer as unknown as { unref?: () => void };
+    unrefTimer.unref?.();
+  }
+
+  private async reconcileRetainedAdmission(
+    retainedAdmission: RetainedDagRunAdmission
+  ): Promise<number | null> {
+    const { record } = retainedAdmission;
+    if (
+      this.retainedAdmissionsByRunId.get(record.runId) !== retainedAdmission ||
+      this.runsById.get(record.runId) !== record ||
+      !record.admissionPending
+    ) {
+      return null;
+    }
+
+    const readbackOutcome = await this.inspectInitialAdmissionPersistence(
+      retainedAdmission.envelope
+    );
+    if (
+      this.retainedAdmissionsByRunId.get(record.runId) !== retainedAdmission ||
+      this.runsById.get(record.runId) !== record ||
+      !record.admissionPending
+    ) {
+      return null;
+    }
+
+    if (readbackOutcome === 'confirmed') {
+      this.retainedAdmissionsByRunId.delete(record.runId);
+      this.clearRetainedAdmissionTimer(retainedAdmission);
+      record.admissionPending = false;
+      this.launchRunExecution(
+        record,
+        retainedAdmission.request,
+        retainedAdmission.settings
+      );
+      return null;
+    }
+
+    if (
+      readbackOutcome === 'not_found' ||
+      readbackOutcome === 'conflict'
+    ) {
+      this.retainedAdmissionsByRunId.delete(record.runId);
+      this.clearRetainedAdmissionTimer(retainedAdmission);
+      this.forgetInitialRun(record);
+      this.releaseRunCapacity(record.runId);
+      return null;
+    }
+
+    retainedAdmission.attemptsInCycle += 1;
+    if (
+      retainedAdmission.attemptsInCycle >=
+      this.admissionReconciliationSettings.maxAttemptsPerCycle
+    ) {
+      retainedAdmission.attemptsInCycle = 0;
+      return this.admissionReconciliationSettings.cooldownMs;
+    }
+
+    return this.admissionReconciliationSettings.retryDelayMs;
+  }
+
+  private launchRunExecution(
+    record: StoredDagRunRecord,
+    request: CreateDagRunRequest,
+    settings: DagWorkerPoolSettings
+  ): void {
+    if (record.executionPromise || record.executionSettled) {
+      return;
+    }
+
+    let executionPromise: Promise<void>;
+    try {
+      executionPromise = this.executeRun(record, request, settings);
+    } catch (error: unknown) {
+      executionPromise = Promise.reject(error);
+    }
+    record.executionPromise = executionPromise;
+    void executionPromise
+      .catch((error: unknown) => {
+        console.error('[DAG Runs] Background execution rejected:', {
+          runId: record.runId,
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        record.executionSettled = true;
+        this.releaseRunCapacity(record.runId);
+        this.evictRetainedRuns();
+      })
+      .catch(() => undefined);
   }
 
   /**
@@ -1840,19 +2275,15 @@ export class ArcanosDagRunService {
         }
       });
 
-    this.persistenceByRunId.set(record.runId, nextWrite);
-    void nextWrite
-      .finally(() => {
-        if (this.persistenceByRunId.get(record.runId) === nextWrite) {
-          this.persistenceByRunId.delete(record.runId);
-        }
-        this.evictRetainedRuns();
-      })
-      .catch(() => undefined);
-    return nextWrite;
+    return this.trackPersistenceWrite(record, nextWrite);
   }
 
   private forgetInitialRun(record: StoredDagRunRecord): void {
+    const retainedAdmission = this.retainedAdmissionsByRunId.get(record.runId);
+    if (retainedAdmission) {
+      this.retainedAdmissionsByRunId.delete(record.runId);
+      this.clearRetainedAdmissionTimer(retainedAdmission);
+    }
     if (this.runsById.get(record.runId) === record) {
       this.runsById.delete(record.runId);
     }
@@ -1958,11 +2389,20 @@ export class ArcanosDagRunService {
     try {
       return await this.createReservedRun(runId, request, templateDefinition);
     } catch (error: unknown) {
-      this.runsById.delete(runId);
-      this.persistenceByRunId.delete(runId);
-      this.persistenceConflictedRunIds.delete(runId);
-      this.trinityOrchestrator.forgetRun(runId);
-      this.releaseRunCapacity(runId);
+      if (
+        !(error instanceof DagRunAdmissionUncertainError) ||
+        error.runId !== runId
+      ) {
+        const record = this.runsById.get(runId);
+        if (record) {
+          this.forgetInitialRun(record);
+        } else {
+          this.persistenceByRunId.delete(runId);
+          this.persistenceConflictedRunIds.delete(runId);
+          this.trinityOrchestrator.forgetRun(runId);
+        }
+        this.releaseRunCapacity(runId);
+      }
       throw error;
     }
   }
@@ -2061,35 +2501,26 @@ export class ArcanosDagRunService {
       sessionId: request.sessionId,
       template: publicTemplateName
     });
+    const initialEnvelope = this.capturePersistenceEnvelope(record);
     try {
-      const initialSnapshotApplied = await this.persistRecordNow(record);
-      if (!initialSnapshotApplied) {
-        throw new DagRunSnapshotOwnershipConflictError(
-          record.runId,
-          record.snapshotGeneration.toString()
+      await this.queueInitialPersistence(record, initialEnvelope);
+    } catch (error: unknown) {
+      if (
+        error instanceof DagRunAdmissionUncertainError &&
+        error.runId === record.runId
+      ) {
+        this.retainUncertainAdmission(
+          record,
+          request,
+          settings,
+          initialEnvelope
         );
       }
-    } catch (error: unknown) {
-      this.forgetInitialRun(record);
       throw error;
     }
 
     record.admissionPending = false;
-    const executionPromise = this.executeRun(record, request, settings);
-    record.executionPromise = executionPromise;
-    void executionPromise
-      .catch((error: unknown) => {
-        console.error('[DAG Runs] Background execution rejected:', {
-          runId: record.runId,
-          errorMessage: error instanceof Error ? error.message : String(error)
-        });
-      })
-      .finally(() => {
-        record.executionSettled = true;
-        this.releaseRunCapacity(record.runId);
-        this.evictRetainedRuns();
-      })
-      .catch(() => undefined);
+    this.launchRunExecution(record, request, settings);
     return record.summary;
   }
 
@@ -2490,6 +2921,14 @@ export class ArcanosDagRunService {
       return this.cancelPersistedRun(runId);
     }
 
+    if (record.admissionPending) {
+      return {
+        outcome: 'unavailable',
+        statusCode: 503,
+        retryAfterSeconds: this.lifecycleSettings.retryAfterSeconds
+      };
+    }
+
     if (record.status === 'cancelled') {
       return {
         outcome: 'already_cancelled',
@@ -2724,6 +3163,7 @@ export class ArcanosDagRunService {
     }
     if (
       !snapshot ||
+      snapshot.admissionPending ||
       snapshot.runId !== runId ||
       snapshot.status !== lookup.record.status
     ) {

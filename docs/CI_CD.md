@@ -99,12 +99,58 @@ the standard standalone runtime regression suite and this two-connection Redis
 and real BullMQ execution-fence suite in the required
 `runtime-redis-admission` service job.
 
+The required `PostgreSQL Fencing & Local Agent Concurrency` job provisions an
+isolated PostgreSQL 18 service with database
+`arcanos_audit_pg18_20260727`. It runs both
+`npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
+their dedicated test-only URL variables. Local runs must likewise use an
+explicit disposable database; neither command should inherit an ambient
+`DATABASE_URL`.
+
 ## Deploy (Railway)
-Deployment workflows are repository-specific; verify current trigger and required secrets in each workflow file before enabling auto-deploy.
+Deployment workflows are repository-specific; verify current trigger and required
+secrets in each workflow file before enabling auto-deploy.
+
+The Railway automatic deployment workflow runs a repository-owned rollout-policy
+job before it creates the concurrent production deployment job. The
+`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` value has two supported states:
+
+- An exact reviewed hold ID blocks `workflow_run` promotion. The policy job
+  succeeds with a bounded skip decision, but the deployment job remains
+  skipped and therefore cannot acquire or cancel production deployment
+  concurrency.
+- The exact sentinel `none` restores normal automatic promotion. Missing, blank,
+  whitespace-padded, or malformed values fail closed.
+
+The active `20260727-dag-snapshot-generation-v1` hold protects the coordinated
+DAG snapshot-generation migration. A deliberate `workflow_dispatch` may pass it
+only when the operator types
+`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1` exactly. That phrase
+is an operator attestation, not a drain command: separately confirm the approved
+revision, project, environment, database, every DAG-writing service, and the
+actual stopped/drained state before dispatch.
+
+This GitHub policy does not control Railway-native GitHub auto-deploy. Keep that
+trigger disabled on every production writer for the entire coordinated rollout;
+for the current topology, independently verify `ARCANOS V2` and
+`ARCANOS Worker`. Re-enable native triggers only after every writer is on the
+accepted revision and the reviewed `none` follow-up has restored normal
+repository promotion.
+
+Keep the hold active during rollout and any rollback decision. After the schema
+and compatible revision are verified on every DAG writer, no old writer can
+still run, and post-deploy health is accepted, change the workflow marker to
+`none` in a reviewed follow-up commit. Do not delete or blank the marker. The
+guard remains in place for future coordinated migrations, while the `none`
+state preserves the workflow's normal automatic deployment behavior.
 
 ## Troubleshooting
 - Workflow fails on missing secret: add the secret in GitHub settings or disable that job.
 - Deployment job fails after build passes: validate Railway auth token and service linkage.
+- Automatic Railway deploy is skipped with
+  `automatic_promotion_blocked`: inspect the active coordinated-writer hold and
+  follow the Railway deployment and database migration runbooks; do not clear
+  the hold merely to make the workflow green.
 - Docs audit fails: run `npm run docs:check` locally.
 - Scheduled link audit fails: run `npm run docs:links`; treat access-restricted
   or transient results as warnings and repair definitive failures.

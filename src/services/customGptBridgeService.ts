@@ -27,6 +27,7 @@ import {
   type GptBridgeSmokeAction,
 } from '@shared/gpt/bridgeSmoke.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 import { planAutonomousWorkerJob } from './workerAutonomyService.js';
 import {
   resolveAsyncGptPollIntervalMs,
@@ -130,7 +131,14 @@ interface BridgeTimingInput {
 
 function readRequiredSecret(env: NodeJS.ProcessEnv = process.env): string | null {
   const value = env.OPENAI_ACTION_SHARED_SECRET?.trim();
-  return value ? value : null;
+  return value
+    && !hasConfiguredPurposeBoundCredentialCollision({
+      credential: value,
+      ownEnvironmentName: 'OPENAI_ACTION_SHARED_SECRET',
+      readEnvironmentValue: environmentName => env[environmentName],
+    })
+    ? value
+    : null;
 }
 
 function extractBearerToken(authorization?: string | null): string | null {

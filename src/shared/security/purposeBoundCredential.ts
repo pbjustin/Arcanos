@@ -60,11 +60,24 @@ function readConfiguredPurposeBoundCredential(
   return value;
 }
 
-function hasPurposeBoundCredentialCollision(options: {
+/**
+ * Detect whether one boundary's effective credential reuses a configured peer.
+ *
+ * Boundary-specific parsing remains owned by the caller. Collision comparison
+ * trims only for the isolation decision so legacy boundaries can preserve their
+ * existing request/configuration grammar while still failing closed when two
+ * purpose-bound environment values resolve to the same secret.
+ */
+export function hasConfiguredPurposeBoundCredentialCollision(options: {
   credential: string;
   ownEnvironmentName: PurposeBoundCredentialEnvName;
   readEnvironmentValue: PurposeBoundCredentialEnvironmentReader;
 }): boolean {
+  const credential = options.credential.trim();
+  if (credential.length === 0) {
+    return false;
+  }
+
   return PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.some((environmentName) => {
     if (environmentName === options.ownEnvironmentName) {
       return false;
@@ -78,8 +91,7 @@ function hasPurposeBoundCredentialCollision(options: {
     const candidate = rawCandidate.trim();
     return (
       candidate.length > 0
-      && candidate.length <= MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH
-      && timingSafeEqualOpaqueSecret(options.credential, candidate)
+      && timingSafeEqualOpaqueSecret(credential, candidate)
     );
   });
 }
@@ -93,7 +105,7 @@ export function resolveConfiguredPurposeBoundCredential(options: {
   );
   if (
     !credential
-    || hasPurposeBoundCredentialCollision({
+    || hasConfiguredPurposeBoundCredentialCollision({
       credential,
       ownEnvironmentName: options.ownEnvironmentName,
       readEnvironmentValue: options.readEnvironmentValue,

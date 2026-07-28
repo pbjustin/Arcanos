@@ -77,6 +77,8 @@ before moving, merging, or renaming them.
 
 Run it after structural source changes. Review all four outputs and do not edit
 generated indexes as substitutes for correcting source organization.
+`npm run reindex:check` verifies all four artifacts without rewriting them, and
+the required `npm run docs:check` workflow includes that drift check.
 
 ## Historical evidence
 

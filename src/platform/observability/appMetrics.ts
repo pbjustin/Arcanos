@@ -7,6 +7,7 @@ import {
 } from 'prom-client';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 const METRICS_SERVICE_NAME = process.env.RAILWAY_SERVICE_NAME?.trim() || 'arcanos-backend';
 const WORKER_METRICS_REFRESH_TTL_MS = 5_000;
@@ -1524,6 +1525,13 @@ function isMetricsRequestAuthorized(req: Request): boolean {
   const expectedToken = process.env.METRICS_AUTH_TOKEN?.trim();
   if (!expectedToken) {
     return true;
+  }
+  if (hasConfiguredPurposeBoundCredentialCollision({
+    credential: expectedToken,
+    ownEnvironmentName: 'METRICS_AUTH_TOKEN',
+    readEnvironmentValue: environmentName => process.env[environmentName],
+  })) {
+    return false;
   }
 
   const bearerToken = req.header('authorization')?.replace(/^Bearer\s+/i, '').trim();

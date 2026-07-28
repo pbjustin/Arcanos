@@ -20,6 +20,9 @@ from .env import (
     get_primary_env_path,
     get_runtime_base_dir,
 )
+from .credential_verification import (
+    has_configured_purpose_bound_credential_collision,
+)
 
 # Note: Removed PyInstaller frozen EXE detection - CLI agent runs as Python application
 bootstrap_runtime_env()
@@ -99,6 +102,12 @@ def get_backend_base_url() -> Optional[str]:
 def get_automation_auth() -> tuple[str, str]:
     header_name = (get_env("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation") or "x-arcanos-automation").lower()
     secret = (get_env("ARCANOS_AUTOMATION_SECRET", "") or "").strip()
+    if secret and has_configured_purpose_bound_credential_collision(
+        credential=secret,
+        own_environment_name="ARCANOS_AUTOMATION_SECRET",
+        read_environment_value=get_env,
+    ):
+        secret = ""
     return header_name, secret
 
 
@@ -154,6 +163,22 @@ def get_daemon_access_token() -> Optional[str]:
     """
     token = get_env("ARCANOS_DAEMON_ACCESS_TOKEN")
     return token if is_valid_daemon_access_token(token) else None
+
+
+def get_debug_server_token() -> Optional[str]:
+    """
+    Purpose: Read the debug-server credential without accepting a configured peer.
+    Inputs/Outputs: Reads DEBUG_SERVER_TOKEN and canonical application peers.
+    Edge cases: Preserves the existing raw-value and optional-setting semantics.
+    """
+    token = get_env("DEBUG_SERVER_TOKEN") or None
+    if token and has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="DEBUG_SERVER_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
 
 
 _DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
@@ -378,7 +403,7 @@ class Config:
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = get_env_int("DEBUG_SERVER_LOG_RETENTION_DAYS", 7)
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    DEBUG_SERVER_TOKEN: Optional[str] = get_env("DEBUG_SERVER_TOKEN") or None
+    DEBUG_SERVER_TOKEN: Optional[str] = get_debug_server_token()
     # Security: Allow unauthenticated access to debug server (default: false, only for development)
     DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = get_env_bool("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", False)
     

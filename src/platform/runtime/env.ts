@@ -12,6 +12,7 @@
 
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
+import { hasConfiguredPurposeBoundCredentialCollision } from "@shared/security/purposeBoundCredential.js";
 import dotenv from "dotenv";
 
 export interface EnvConfig {
@@ -293,7 +294,15 @@ export function getBackendBaseUrl(): URL {
 
 export function getAutomationAuth(): { headerName: string; secret: string } {
   const headerName = (getEnv('ARCANOS_AUTOMATION_HEADER') || 'x-arcanos-automation').toLowerCase();
-  const secret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
+  const configuredSecret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
+  const secret = configuredSecret
+    && !hasConfiguredPurposeBoundCredentialCollision({
+      credential: configuredSecret,
+      ownEnvironmentName: 'ARCANOS_AUTOMATION_SECRET',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
+    ? configuredSecret
+    : '';
   return { headerName, secret };
 }
 

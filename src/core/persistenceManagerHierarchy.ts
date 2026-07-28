@@ -5,6 +5,7 @@
 import { createAuditStore, type AuditStore, type AuditStoreTransaction } from "@core/db/auditStore.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 // ----------------------
 // Database Config
@@ -104,6 +105,17 @@ function canEnableRootOverride(userRole: string, token: string) {
   
   // Fail closed: require admin role
   if (userRole !== 'admin') {
+    return false;
+  }
+
+  if (
+    overrideToken
+    && hasConfiguredPurposeBoundCredentialCollision({
+      credential: overrideToken,
+      ownEnvironmentName: 'ROOT_OVERRIDE_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
+  ) {
     return false;
   }
   

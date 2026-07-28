@@ -414,6 +414,13 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
       authorization: `Bearer ${longToken}`,
       env: { OPENAI_ACTION_SHARED_SECRET: longToken },
     });
+    const colliding = validateCustomGptBridgeSecret({
+      authorization: `Bearer ${secret}`,
+      env: {
+        OPENAI_ACTION_SHARED_SECRET: secret,
+        DEBUG_SERVER_TOKEN: secret,
+      },
+    });
 
     expect(exact.ok).toBe(true);
     expect(normalizedBearer.ok).toBe(true);
@@ -423,6 +430,7 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
     expect(caseMismatch).toMatchObject({ ok: false, statusCode: 401 });
     expect(differentLength).toMatchObject({ ok: false, statusCode: 401 });
     expect(unconfigured).toMatchObject({ ok: false, statusCode: 503 });
+    expect(colliding).toMatchObject({ ok: false, statusCode: 503 });
     expect(() => validateCustomGptBridgeSecret({
       actionSecret: 123 as unknown as string,
       env,
@@ -467,6 +475,28 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
       sameLengthWrongSecret,
       longToken,
     );
+  });
+
+  it('fails MCP, control-plane approval, and root diagnostics closed on canonical collisions', async () => {
+    process.env.DEBUG_SERVER_TOKEN = secret;
+
+    const mcp = await observeMcpAuth(secret, `Bearer ${secret}`);
+    expect(mcp.allowed).toBe(false);
+    expect(mcp.observation.statusCode).toBe(500);
+
+    process.env.ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN = secret;
+    expect(evaluateControlPlaneApproval(
+      { approvalToken: secret } as never,
+      true,
+    )).toMatchObject({
+      ok: false,
+      status: 'unconfigured',
+    });
+
+    expect(observeRootAuth(secret, `Bearer ${secret}`)).toEqual({
+      allowed: false,
+      reason: 'admin_token_missing',
+    });
   });
 
   it('characterizes GPT-access digest comparison, logging redaction, whitespace asymmetry, and the length cap', () => {
@@ -545,6 +575,11 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
       `Bearer ${secret}`,
       secret,
     );
+    const actionSecretAloneDoesNotAuthorize = observeDagAuth(
+      undefined,
+      `Bearer ${secret}`,
+      secret,
+    );
 
     expect(exact.allowed).toBe(true);
     expect(normalizedBearer.allowed).toBe(true);
@@ -555,6 +590,8 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
     }
     expect(whitespacePrimarySuppressesFallback.allowed).toBe(false);
     expect(whitespacePrimarySuppressesFallback.result?.statusCode).toBe(503);
+    expect(actionSecretAloneDoesNotAuthorize.allowed).toBe(false);
+    expect(actionSecretAloneDoesNotAuthorize.result?.statusCode).toBe(503);
     expect(() => observeDagAuth(secret, 123)).toThrow(TypeError);
     expect(wrongSameLength.logs.warn).not.toHaveBeenCalled();
     assertNoCredentialMaterial(

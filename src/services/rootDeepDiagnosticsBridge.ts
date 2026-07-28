@@ -12,6 +12,7 @@ import {
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 
 export const ROOT_DEEP_DIAGNOSTICS_ACTION = 'root.deep_diagnostics';
 export const ROOT_DIAGNOSTICS_FORBIDDEN = 'ROOT_DIAGNOSTICS_FORBIDDEN';
@@ -186,7 +187,15 @@ export function authorizeRootDeepDiagnosticsRequest(req: Request, gptId: string)
   }
 
   const adminToken = process.env.ARCANOS_ADMIN_TOKEN;
-  if (typeof adminToken !== 'string' || adminToken.length === 0) {
+  if (
+    typeof adminToken !== 'string'
+    || adminToken.length === 0
+    || hasConfiguredPurposeBoundCredentialCollision({
+      credential: adminToken,
+      ownEnvironmentName: 'ARCANOS_ADMIN_TOKEN',
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
+  ) {
     return { allowed: false, reason: 'admin_token_missing' };
   }
 

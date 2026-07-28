@@ -23,7 +23,7 @@ import {
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
-import { conflictsWithLocalAgentExecutorCredential } from '@services/actionPlanExecution/auth.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 import {
   LOCAL_AGENT_ACTIONS,
   LOCAL_AGENT_CAPABILITY_CATALOG,
@@ -507,7 +507,11 @@ function readConfiguredAccessToken(): string | null {
   const token = process.env[TOKEN_ENV_NAME];
   return typeof token === 'string'
     && token.trim().length > 0
-    && !conflictsWithLocalAgentExecutorCredential(token)
+    && !hasConfiguredPurposeBoundCredentialCollision({
+      credential: token,
+      ownEnvironmentName: TOKEN_ENV_NAME,
+      readEnvironmentValue: environmentName => process.env[environmentName],
+    })
     ? token
     : null;
 }

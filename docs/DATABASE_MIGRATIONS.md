@@ -169,6 +169,23 @@ apply the migration and compatible code together, and do not allow an older
 binary to run concurrently. Likewise, attempt rollback only after all writers
 are stopped or confirmed compatible with the rolled-back schema.
 
+The repository-level Railway fail-safe for this rollout is the
+`20260727-dag-snapshot-generation-v1` value of
+`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` in
+`.github/workflows/railway-auto-deploy.yml`. With that hold active, successful
+`main` CI cannot automatically start the Railway deployment job. A deliberate
+manual dispatch requires the exact typed attestation
+`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`; the workflow does
+not perform or verify the drain itself and deploys only its one configured
+service.
+
+Keep the hold active until the migration and compatible revision are verified
+on every DAG-writing process, all older replicas are gone, and post-deploy
+health is accepted. Keep it active through any rollback. Then set the marker to
+the exact sentinel `none` in a reviewed follow-up commit to restore normal
+automatic promotion. Deleting, blanking, or malforming the marker fails closed
+instead of silently lifting the hold.
+
 `migrations/20260727_dag_run_snapshot_generation_v1.rollback.sql` verifies
 the complete installed column and validated constraint before destructive
 DDL, and refuses rollback while any row has an unknown or nonterminal status.

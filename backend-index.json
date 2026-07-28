@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T05:59:39.101Z",
+  "generatedAt": "2026-07-28T04:07:00.953Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -386,7 +386,13 @@
           "relativePath": "src/core/afol/logger.ts"
         },
         {
+          "relativePath": "src/core/afol/persistence.ts"
+        },
+        {
           "relativePath": "src/core/afol/policies.ts"
+        },
+        {
+          "relativePath": "src/core/afol/redaction.ts"
         },
         {
           "relativePath": "src/core/afol/routes.ts"
@@ -468,6 +474,9 @@
         },
         {
           "relativePath": "src/core/db/sessionCacheStore.ts"
+        },
+        {
+          "relativePath": "src/core/db/transientReadRegistry.ts"
         },
         {
           "relativePath": "src/core/diagnostics.ts"
@@ -1349,6 +1358,9 @@
           "relativePath": "src/services/agentCapabilityRegistry.ts"
         },
         {
+          "relativePath": "src/services/agentExecutionConfirmation.ts"
+        },
+        {
           "relativePath": "src/services/agentExecutionSchemas.ts"
         },
         {
@@ -1475,6 +1487,9 @@
           "relativePath": "src/services/cef/commandErrors.ts"
         },
         {
+          "relativePath": "src/services/cef/executionPermit.ts"
+        },
+        {
           "relativePath": "src/services/cef/handlerRuntime.ts"
         },
         {
@@ -1517,16 +1532,46 @@
           "relativePath": "src/services/contextualReinforcement.ts"
         },
         {
+          "relativePath": "src/services/controlPlane/afolBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/afolConfirmation.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/afolHttpBoundary.ts"
+        },
+        {
           "relativePath": "src/services/controlPlane/allowlist.ts"
         },
         {
           "relativePath": "src/services/controlPlane/approval.ts"
         },
         {
+          "relativePath": "src/services/controlPlane/assistantRegistryBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/assistantRegistryConfirmation.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/assistantRegistryHttpBoundary.ts"
+        },
+        {
           "relativePath": "src/services/controlPlane/audit.ts"
         },
         {
+          "relativePath": "src/services/controlPlane/cefBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/cefConfirmation.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/cefHttpBoundary.ts"
+        },
+        {
           "relativePath": "src/services/controlPlane/commandRunner.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/dagHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/deepDiagnostics.ts"
@@ -1560,6 +1605,12 @@
         },
         {
           "relativePath": "src/services/controlPlane/ragHttpBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/reinforcementBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/reinforcementHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/routeVerification.ts"
@@ -2743,13 +2794,28 @@
           "relativePath": "tests/action-plan-store.test.ts"
         },
         {
+          "relativePath": "tests/afol-engine-persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/afol-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/afol-persistence.test.ts"
+        },
+        {
           "relativePath": "tests/afol-route-cache-metadata.test.ts"
+        },
+        {
+          "relativePath": "tests/afol-route-security.test.ts"
         },
         {
           "relativePath": "tests/agent-architecture-boundary.test.ts"
         },
         {
           "relativePath": "tests/agent-command-chain-exploit.test.ts"
+        },
+        {
+          "relativePath": "tests/agent-execution-confirmation.test.ts"
         },
         {
           "relativePath": "tests/agent-execution-service.test.ts"
@@ -2779,10 +2845,16 @@
           "relativePath": "tests/ai-runtime-openai-client.test.ts"
         },
         {
+          "relativePath": "tests/api-afol-composition.test.ts"
+        },
+        {
           "relativePath": "tests/api-agent.route.test.ts"
         },
         {
           "relativePath": "tests/api-arcanos-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/api-arcanos-dag-composition.test.ts"
         },
         {
           "relativePath": "tests/api-arcanos-honesty.e2e.test.ts"
@@ -2792,6 +2864,15 @@
         },
         {
           "relativePath": "tests/api-arcanos.route.test.ts"
+        },
+        {
+          "relativePath": "tests/api-assistants-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/api-cef-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/api-commands-confirmation.test.ts"
         },
         {
           "relativePath": "tests/api-control-plane-composition.test.ts"
@@ -2884,6 +2965,9 @@
           "relativePath": "tests/arcanos-core.timeout.test.ts"
         },
         {
+          "relativePath": "tests/arcanos-dag-run-lifecycle.test.ts"
+        },
+        {
           "relativePath": "tests/arcanos-dag-run-persistence.test.ts"
         },
         {
@@ -2911,6 +2995,9 @@
           "relativePath": "tests/arcanos-query.test.ts"
         },
         {
+          "relativePath": "tests/arcanos-release-workflow-safety.test.ts"
+        },
+        {
           "relativePath": "tests/arcanos-sim.module.test.ts"
         },
         {
@@ -2936,6 +3023,15 @@
         },
         {
           "relativePath": "tests/ask-worker-tools-route.test.ts"
+        },
+        {
+          "relativePath": "tests/assistant-registry-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/assistant-registry-route-security.test.ts"
+        },
+        {
+          "relativePath": "tests/assistant-registry-service.test.ts"
         },
         {
           "relativePath": "tests/async-ask-job.test.ts"
@@ -2966,6 +3062,15 @@
         },
         {
           "relativePath": "tests/capability-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/cef-app-cors-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/cef-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/cef-routing-authority.test.ts"
         },
         {
           "relativePath": "tests/check-npm-audit-policy.test.ts"
@@ -3017,6 +3122,9 @@
         },
         {
           "relativePath": "tests/confirmGate-trustedGpt-hardening.test.ts"
+        },
+        {
+          "relativePath": "tests/contextual-reinforcement-prompt-trust.test.ts"
         },
         {
           "relativePath": "tests/control-plane-api.test.ts"
@@ -3073,7 +3181,16 @@
           "relativePath": "tests/dag-agent-registry.test.ts"
         },
         {
+          "relativePath": "tests/dag-http-boundary.test.ts"
+        },
+        {
           "relativePath": "tests/dag-node-prompt-bridge.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-run-repository.snapshot-generation.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-run-snapshot-generation-schema.test.ts"
         },
         {
           "relativePath": "tests/dag-templates.test.ts"
@@ -3086,6 +3203,15 @@
         },
         {
           "relativePath": "tests/dag/orchestrator.test.ts"
+        },
+        {
+          "relativePath": "tests/dagRepository.persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/database-collation-inspection.test.ts"
+        },
+        {
+          "relativePath": "tests/db-client-pool-identity.test.ts"
         },
         {
           "relativePath": "tests/db-client-sanitization.test.ts"
@@ -3101,6 +3227,9 @@
         },
         {
           "relativePath": "tests/db-schema-action-plan-bootstrap.test.ts"
+        },
+        {
+          "relativePath": "tests/db-schema-initialization.test.ts"
         },
         {
           "relativePath": "tests/debug-confirmation.test.ts"
@@ -3406,6 +3535,12 @@
           "relativePath": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
         },
         {
@@ -3421,6 +3556,9 @@
           "relativePath": "tests/introspection-openapi-contract.route.test.ts"
         },
         {
+          "relativePath": "tests/job-claim-generation-schema.test.ts"
+        },
+        {
           "relativePath": "tests/job-event-repository.test.ts"
         },
         {
@@ -3431,6 +3569,9 @@
         },
         {
           "relativePath": "tests/job-queue.test.ts"
+        },
+        {
+          "relativePath": "tests/job-repository.claim-generation-create.test.ts"
         },
         {
           "relativePath": "tests/job-repository.claimNextPendingJob.test.ts"
@@ -3766,6 +3907,12 @@
           "relativePath": "tests/redis-startup-lifecycle.test.ts"
         },
         {
+          "relativePath": "tests/reinforcement-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/reinforcement-legacy-audit-confirmation.test.ts"
+        },
+        {
           "relativePath": "tests/reinforcement.metrics-route.test.ts"
         },
         {
@@ -3833,6 +3980,9 @@
         },
         {
           "relativePath": "tests/runtime-redaction.test.ts"
+        },
+        {
+          "relativePath": "tests/runtime-static-config.test.ts"
         },
         {
           "relativePath": "tests/safety-control-auth-composition.test.ts"
@@ -3905,6 +4055,9 @@
         },
         {
           "relativePath": "tests/self-improve-controller-decisions.test.ts"
+        },
+        {
+          "relativePath": "tests/self-improve-patch-proposal-security.test.ts"
         },
         {
           "relativePath": "tests/self-improve-patch-proposal.test.ts"

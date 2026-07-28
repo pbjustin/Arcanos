@@ -112,7 +112,50 @@ A separately approved local runtime check must use a deliberately isolated effec
 
 ## Deploy (Railway)
 
-The tracked `.github/workflows/railway-auto-deploy.yml` can deploy one configured service after successful CI on `main` or by manual dispatch. It skips automatic CLI deployment when its Railway credentials or identifiers are absent. Repository-connected Railway deployment and current web/worker service coverage are environment-dependent and must be confirmed separately.
+The tracked `.github/workflows/railway-auto-deploy.yml` can deploy one configured
+service after successful CI on `main` or by manual dispatch. It skips automatic
+CLI deployment when its Railway credentials or identifiers are absent.
+Repository-connected Railway deployment and current web/worker service coverage
+are environment-dependent and must be confirmed separately.
+
+The workflow also runs a repository-owned coordinated-writer policy before the
+production deployment job can enter its concurrency group. While
+`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` contains the active
+`20260727-dag-snapshot-generation-v1` ID, automatic `workflow_run` promotion is
+skipped without starting or cancelling a deployment. A manual dispatch fails
+unless the operator types the exact confirmation
+`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`.
+
+The repository policy cannot suppress Railway's separate GitHub-source
+auto-deploy trigger. Before a coordinated migration reaches `main`, disable
+native auto-deploy on every production DAG writer and verify the setting from
+each service. For the current topology, that means both `ARCANOS V2` and
+`ARCANOS Worker` must show **Auto deploy is disabled** while their running
+deployments remain unchanged. Re-enable those triggers only after the
+coordinated revision is accepted on every writer and the reviewed `none`
+follow-up has restored the normal repository policy.
+
+The typed phrase does not stop a process, apply a migration, validate a target,
+or authorize production work. Before using it:
+
+1. Obtain the normal target-specific deployment and database authorization.
+2. Inventory every process capable of writing DAG snapshots, including all web
+   replicas and any separately operated service.
+3. Verify Railway-native auto-deploy remains disabled on every production
+   writer so a source push cannot bypass the repository hold.
+4. Drain or stop every writer and verify that an older binary cannot restart.
+5. Confirm the compatible revision and migration are the approved rollout pair.
+6. Dispatch the workflow only for the approved revision. The workflow deploys
+   one configured `RAILWAY_SERVICE_ID`; coordinate every other writer through
+   its separately approved mechanism.
+7. Verify the installed schema, exact revision on every writer, absence of old
+   replicas, deployment health, and bounded application diagnostics.
+
+Keep the hold active if rollout or verification fails. Rollback also requires
+all writers to remain stopped or compatible with the rolled-back schema. Only
+after the coordinated rollout is accepted should a reviewed follow-up set the
+workflow marker to the exact sentinel `none`. Missing, blank, or malformed
+markers fail closed; `none` restores normal future automatic promotion.
 
 A push or manual workflow dispatch can therefore be deployment-affecting. Before triggering either:
 

@@ -1,5 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import {
+  hasConfiguredPurposeBoundCredentialCollision,
+  type PurposeBoundCredentialEnvName,
+} from '@shared/security/purposeBoundCredential.js';
 
 export const ACTION_PLAN_AUTH_ERROR = {
   code: 'ACTION_PLAN_EXECUTION_AUTH_REQUIRED',
@@ -37,6 +41,14 @@ export const LOCAL_AGENT_EXECUTOR_SCOPES = [
 export type LocalAgentExecutorScope = (typeof LOCAL_AGENT_EXECUTOR_SCOPES)[number];
 
 export type ActionPlanPrincipalRole = 'requester' | 'operator' | 'executor';
+
+const ACTION_PLAN_CREDENTIAL_ENVIRONMENT_NAMES: Readonly<
+  Record<ActionPlanPrincipalRole, PurposeBoundCredentialEnvName>
+> = Object.freeze({
+  requester: 'ACTION_PLAN_REQUEST_TOKEN',
+  operator: 'ACTION_PLAN_OPERATOR_TOKEN',
+  executor: 'ACTION_PLAN_EXECUTOR_TOKEN',
+});
 
 export interface ActionPlanPrincipal {
   role: ActionPlanPrincipalRole;
@@ -184,23 +196,19 @@ function resolveConfiguredLocalAgentExecutor(
     }
   }
 
-  const gptAccessCredential = readBoundedValue(
-    env.ARCANOS_GPT_ACCESS_TOKEN,
-    MAX_BEARER_TOKEN_LENGTH,
-  );
-  const conflictingCredentials = [
-    ...readConfiguredCredentialCandidates(env, [
-      'ACTION_PLAN_REQUEST_TOKEN',
-      'ACTION_PLAN_OPERATOR_TOKEN',
-      'ACTION_PLAN_EXECUTOR_TOKEN',
-    ]),
-    ...(gptAccessCredential ? [gptAccessCredential] : []),
-  ];
   if (
-    conflictsWithAnyCredential(currentCredential, conflictingCredentials)
+    hasConfiguredPurposeBoundCredentialCollision({
+      credential: currentCredential,
+      ownEnvironmentName: 'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
+      readEnvironmentValue: environmentName => env[environmentName],
+    })
     || (
       previousCredential
-      && conflictsWithAnyCredential(previousCredential.credential, conflictingCredentials)
+      && hasConfiguredPurposeBoundCredentialCollision({
+        credential: previousCredential.credential,
+        ownEnvironmentName: 'ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN',
+        readEnvironmentValue: environmentName => env[environmentName],
+      })
     )
   ) {
     return null;
@@ -293,8 +301,12 @@ export function resolveActionPlanAuthConfiguration(
   const principalIds = principals.map(principal => principal.principalId);
   const uniqueCredentials = new Set(credentials).size === credentials.length;
   const uniquePrincipalIds = new Set(principalIds).size === principalIds.length;
-  const localAgentCredentialsIsolated = credentials.every(
-    credential => !conflictsWithLocalAgentExecutorCredential(credential, env),
+  const purposeBoundCredentialsIsolated = principals.every(
+    principal => !hasConfiguredPurposeBoundCredentialCollision({
+      credential: principal.credential,
+      ownEnvironmentName: ACTION_PLAN_CREDENTIAL_ENVIRONMENT_NAMES[principal.role],
+      readEnvironmentValue: environmentName => env[environmentName],
+    }),
   );
 
   return {
@@ -302,12 +314,12 @@ export function resolveActionPlanAuthConfiguration(
       entriesValid
       && uniqueCredentials
       && uniquePrincipalIds
-      && localAgentCredentialsIsolated,
+      && purposeBoundCredentialsIsolated,
     principals:
       entriesValid
       && uniqueCredentials
       && uniquePrincipalIds
-      && localAgentCredentialsIsolated
+      && purposeBoundCredentialsIsolated
         ? principals
         : [],
   };

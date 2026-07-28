@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from arcanos.debug import log_audit_event
-from ..credential_verification import timing_safe_equal_opaque_secret
+from ..credential_verification import (
+    has_configured_purpose_bound_credential_collision,
+    timing_safe_equal_opaque_secret,
+)
 from ..local_agent.patch_handler import (
     apply_authorized_patch,
     issue_patch_execution_authorization,
@@ -113,7 +116,14 @@ class LocalBridge:
         if self.host not in LOOPBACK_HOSTS:
             raise ValueError("Local bridge host must be loopback")
         self.port = int(port)
-        self.bridge_token = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
+        bridge_token = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
+        if bridge_token and has_configured_purpose_bound_credential_collision(
+            credential=bridge_token,
+            own_environment_name=BRIDGE_TOKEN_ENV,
+            read_environment_value=os.environ.get,
+        ):
+            bridge_token = ""
+        self.bridge_token = bridge_token
         if os.environ.get("ARCANOS_CLI_BRIDGE_ENABLED") == "true" and not self.bridge_token:
             raise ValueError("ARCANOS_CLI_BRIDGE_TOKEN is required when the local bridge is enabled")
         self.jobs: queue.Queue[BridgeJob | BridgePatchJob | None] = queue.Queue(maxsize=MAX_PENDING_JOBS)

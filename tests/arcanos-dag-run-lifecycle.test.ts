@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getDagRunSnapshotByIdMock = jest.fn();
 const getLatestDagRunSnapshotMock = jest.fn();
@@ -14,6 +14,7 @@ jest.unstable_mockModule('../src/core/db/repositories/dagRunRepository.js', () =
 
 const {
   ArcanosDagRunService,
+  DagRunAdmissionUncertainError,
   DagRunCapacityExceededError,
   getDagRunLifecycleSettings
 } = await import('../src/services/arcanosDagRunService.js');
@@ -102,6 +103,10 @@ describe('ArcanosDagRunService lifecycle controls', () => {
     upsertDagRunSnapshotMock.mockResolvedValue(true);
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('uses stable defaults when lifecycle environment values are invalid', () => {
     expect(getDagRunLifecycleSettings({}, {
       DAG_MAX_ACTIVE_RUNS: '0',
@@ -187,7 +192,16 @@ describe('ArcanosDagRunService lifecycle controls', () => {
         );
       }
 
-      await expect(service.createRun(createRunRequest())).rejects.toThrow();
+      if (failureMode === 'conflict') {
+        await expect(service.createRun(createRunRequest())).rejects.toMatchObject({
+          name: 'DagRunSnapshotOwnershipConflictError',
+          snapshotGeneration: '1'
+        });
+      } else {
+        await expect(service.createRun(createRunRequest())).rejects.toThrow(
+          'initial persistence unavailable'
+        );
+      }
       const rejectedRunId = upsertDagRunSnapshotMock.mock.calls[0]![0].runId;
       expect((service as any).activeRunReservations.size).toBe(0);
       expect((service as any).runsById.has(rejectedRunId)).toBe(false);
@@ -200,6 +214,371 @@ describe('ArcanosDagRunService lifecycle controls', () => {
       );
     }
   );
+
+  it('hides and gates an admission-pending run until its serialized initial snapshot settles', async () => {
+    const service = new ArcanosDagRunService({
+      lifecycle: {
+        retryAfterSeconds: 8
+      }
+    });
+    const initialWrite = createDeferred<boolean>();
+    const execution = createDeferred();
+    upsertDagRunSnapshotMock.mockImplementationOnce(() => initialWrite.promise);
+    (service as any).executeRun = jest.fn(() => execution.promise);
+
+    const creationPromise = service.createRun(createRunRequest());
+    await flushDetachedWork();
+
+    const initialEnvelope = upsertDagRunSnapshotMock.mock.calls[0]![0];
+    const runId = initialEnvelope.runId;
+    getDagRunSnapshotByIdMock.mockResolvedValue(initialEnvelope);
+    getLatestDagRunSnapshotMock.mockResolvedValue(initialEnvelope);
+
+    await expect(service.getRun(runId)).resolves.toBeNull();
+    await expect(service.getLatestRun(initialEnvelope.sessionId)).resolves.toBeNull();
+    await expect(service.getRunTrace(runId)).resolves.toBeNull();
+    await expect(service.cancelRun(runId)).resolves.toEqual({
+      outcome: 'unavailable',
+      statusCode: 503,
+      retryAfterSeconds: 8
+    });
+    expect(initialEnvelope.snapshot.admissionPending).toBe(true);
+    expect(lookupDagRunSnapshotForControlMock).not.toHaveBeenCalled();
+
+    const remoteService = new ArcanosDagRunService();
+    lookupDagRunSnapshotForControlMock.mockResolvedValueOnce({
+      outcome: 'found',
+      record: initialEnvelope
+    });
+    await expect(remoteService.getRun(runId)).resolves.toBeNull();
+    await expect(
+      remoteService.getLatestRun(initialEnvelope.sessionId)
+    ).resolves.toBeNull();
+    await expect(remoteService.getRunTrace(runId)).resolves.toBeNull();
+    await expect(remoteService.cancelRun(runId)).resolves.toEqual({
+      outcome: 'unavailable',
+      statusCode: 503,
+      retryAfterSeconds: 5
+    });
+
+    expect(upsertDagRunSnapshotMock).toHaveBeenCalledTimes(1);
+    expect((service as any).persistenceByRunId.has(runId)).toBe(true);
+    expect((service as any).runsById.get(runId)).toEqual(
+      expect.objectContaining({
+        admissionPending: true,
+        snapshotGeneration: 1n
+      })
+    );
+
+    initialWrite.resolve(true);
+    await expect(creationPromise).resolves.toEqual(
+      expect.objectContaining({
+        runId,
+        status: 'queued'
+      })
+    );
+    expect((service as any).executeRun).toHaveBeenCalledTimes(1);
+    expect((service as any).runsById.get(runId).admissionPending).toBe(false);
+
+    execution.resolve();
+    await flushDetachedWork();
+  });
+
+  it('accepts an exact generation-one readback after an ambiguous initial commit response', async () => {
+    const service = new ArcanosDagRunService();
+    let committedEnvelope: any;
+    upsertDagRunSnapshotMock.mockImplementationOnce(async envelope => {
+      committedEnvelope = JSON.parse(JSON.stringify(envelope));
+      throw new Error('connection lost after commit');
+    });
+    lookupDagRunSnapshotForControlMock.mockImplementationOnce(async runId => ({
+      outcome: 'found',
+      record: {
+        ...committedEnvelope,
+        runId
+      }
+    }));
+    (service as any).executeRun = jest.fn(async () => undefined);
+
+    const summary = await service.createRun(createRunRequest());
+    expect(summary).toEqual(
+      expect.objectContaining({
+        runId: committedEnvelope.runId,
+        status: 'queued'
+      })
+    );
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledWith(summary.runId);
+    expect(upsertDagRunSnapshotMock).toHaveBeenCalledTimes(1);
+    expect((service as any).executeRun).toHaveBeenCalledTimes(1);
+    expect((service as any).runsById.get(summary.runId)).toEqual(
+      expect.objectContaining({
+        admissionPending: false,
+        snapshotGeneration: 1n
+      })
+    );
+    await flushDetachedWork();
+  });
+
+  it('rejects a mismatched ambiguous readback with the attempted generation', async () => {
+    const service = new ArcanosDagRunService();
+    let attemptedEnvelope: any;
+    upsertDagRunSnapshotMock.mockImplementationOnce(async envelope => {
+      attemptedEnvelope = JSON.parse(JSON.stringify(envelope));
+      throw new Error('connection lost after possible commit');
+    });
+    lookupDagRunSnapshotForControlMock.mockImplementationOnce(async () => ({
+      outcome: 'found',
+      record: {
+        ...attemptedEnvelope,
+        snapshotGeneration: '2'
+      }
+    }));
+    (service as any).executeRun = jest.fn(async () => undefined);
+
+    await expect(service.createRun(createRunRequest())).rejects.toMatchObject({
+      name: 'DagRunSnapshotOwnershipConflictError',
+      runId: expect.any(String),
+      snapshotGeneration: '1'
+    });
+    expect((service as any).runsById.has(attemptedEnvelope.runId)).toBe(false);
+    expect((service as any).activeRunReservations.has(attemptedEnvelope.runId)).toBe(false);
+    expect((service as any).executeRun).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a retained admission to the exact run id and launches one executor', async () => {
+    jest.useFakeTimers();
+    const service = new ArcanosDagRunService({
+      admissionReconciliation: {
+        retryDelayMs: 100,
+        maxAttemptsPerCycle: 2,
+        cooldownMs: 1_000
+      }
+    });
+    const execution = createDeferred();
+    const backgroundReadback = createDeferred<any>();
+    let initialEnvelope: any;
+    upsertDagRunSnapshotMock.mockImplementationOnce(async envelope => {
+      initialEnvelope = JSON.parse(JSON.stringify(envelope));
+      throw new Error('connection lost after possible commit');
+    });
+    lookupDagRunSnapshotForControlMock
+      .mockResolvedValueOnce({ outcome: 'unavailable' })
+      .mockImplementationOnce(() => backgroundReadback.promise);
+    (service as any).executeRun = jest.fn(() => execution.promise);
+
+    const admissionError = await service.createRun(createRunRequest()).then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(admissionError).toBeInstanceOf(DagRunAdmissionUncertainError);
+    expect(admissionError).toMatchObject({
+      code: 'DAG_RUN_ADMISSION_UNCERTAIN',
+      runId: initialEnvelope.runId,
+      snapshotGeneration: '1'
+    });
+
+    const retainedAdmission = (service as any).retainedAdmissionsByRunId.get(
+      initialEnvelope.runId
+    );
+    expect(retainedAdmission).toBeDefined();
+    expect(jest.getTimerCount()).toBe(1);
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    expect(jest.getTimerCount()).toBe(1);
+
+    await jest.advanceTimersByTimeAsync(100);
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(0);
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    expect(jest.getTimerCount()).toBe(0);
+
+    backgroundReadback.resolve({
+      outcome: 'found',
+      record: JSON.parse(JSON.stringify(initialEnvelope))
+    });
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect((service as any).retainedAdmissionsByRunId.has(initialEnvelope.runId))
+      .toBe(false);
+    expect((service as any).runsById.get(initialEnvelope.runId)).toEqual(
+      expect.objectContaining({
+        admissionPending: false,
+        snapshotGeneration: 1n
+      })
+    );
+    expect((service as any).executeRun).toHaveBeenCalledTimes(1);
+    expect((service as any).executeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: initialEnvelope.runId }),
+      createRunRequest(),
+      expect.any(Object)
+    );
+    await expect(service.getRun(initialEnvelope.runId)).resolves.toEqual(
+      expect.objectContaining({ runId: initialEnvelope.runId })
+    );
+    expect(jest.getTimerCount()).toBe(0);
+
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    await jest.advanceTimersByTimeAsync(100);
+    expect((service as any).executeRun).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+
+    execution.resolve();
+    await jest.advanceTimersByTimeAsync(0);
+  });
+
+  it.each(['not_found', 'conflict'] as const)(
+    'releases a retained uncertain admission after confirmed %s readback',
+    async readbackMode => {
+      jest.useFakeTimers();
+      const service = new ArcanosDagRunService({
+        lifecycle: {
+          maxActiveRuns: 1
+        },
+        admissionReconciliation: {
+          retryDelayMs: 100,
+          maxAttemptsPerCycle: 2,
+          cooldownMs: 1_000
+        }
+      });
+      let initialEnvelope: any;
+      upsertDagRunSnapshotMock.mockImplementationOnce(async envelope => {
+        initialEnvelope = JSON.parse(JSON.stringify(envelope));
+        throw new Error('connection lost after possible commit');
+      });
+      lookupDagRunSnapshotForControlMock
+        .mockResolvedValueOnce({ outcome: 'unavailable' })
+        .mockImplementationOnce(async () =>
+          readbackMode === 'not_found'
+            ? { outcome: 'not_found' }
+            : {
+                outcome: 'found',
+                record: {
+                  ...initialEnvelope,
+                  snapshotGeneration: '2'
+                }
+              }
+        );
+      (service as any).executeRun = jest.fn(async () => undefined);
+
+      await expect(service.createRun(createRunRequest())).rejects.toMatchObject({
+        code: 'DAG_RUN_ADMISSION_UNCERTAIN',
+        runId: expect.any(String),
+        snapshotGeneration: '1'
+      });
+      expect(jest.getTimerCount()).toBe(1);
+
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect((service as any).retainedAdmissionsByRunId.has(initialEnvelope.runId))
+        .toBe(false);
+      expect((service as any).runsById.has(initialEnvelope.runId)).toBe(false);
+      expect((service as any).activeRunReservations.has(initialEnvelope.runId))
+        .toBe(false);
+      expect((service as any).trinityOrchestrator.getRun(initialEnvelope.runId))
+        .toBeNull();
+      expect((service as any).executeRun).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('keeps unavailable admission reconciliation bounded, fail-closed, and deduplicated', async () => {
+    jest.useFakeTimers();
+    const service = new ArcanosDagRunService({
+      lifecycle: {
+        maxActiveRuns: 1,
+        retryAfterSeconds: 6
+      },
+      admissionReconciliation: {
+        retryDelayMs: 100,
+        maxAttemptsPerCycle: 2,
+        cooldownMs: 1_000
+      }
+    });
+    upsertDagRunSnapshotMock.mockRejectedValueOnce(
+      new Error('connection lost after possible commit')
+    );
+    lookupDagRunSnapshotForControlMock.mockResolvedValue({
+      outcome: 'unavailable'
+    });
+    (service as any).executeRun = jest.fn(async () => undefined);
+
+    const admissionError = await service.createRun(createRunRequest()).then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    const initialEnvelope = upsertDagRunSnapshotMock.mock.calls[0]![0];
+    const runId = initialEnvelope.runId;
+    expect(admissionError).toMatchObject({
+      code: 'DAG_RUN_ADMISSION_UNCERTAIN',
+      runId,
+      snapshotGeneration: '1'
+    });
+    getDagRunSnapshotByIdMock.mockResolvedValue(initialEnvelope);
+    getLatestDagRunSnapshotMock.mockResolvedValue(initialEnvelope);
+
+    expect((service as any).runsById.get(runId)).toEqual(
+      expect.objectContaining({
+        admissionPending: true,
+        snapshotGeneration: 1n,
+        executionSettled: false
+      })
+    );
+    expect((service as any).activeRunReservations.has(runId)).toBe(true);
+    expect((service as any).executeRun).not.toHaveBeenCalled();
+    const retainedAdmission = (service as any).retainedAdmissionsByRunId.get(runId);
+    expect(retainedAdmission).toBeDefined();
+    expect(jest.getTimerCount()).toBe(1);
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    (service as any).scheduleRetainedAdmissionReconciliation(
+      retainedAdmission,
+      100
+    );
+    expect(jest.getTimerCount()).toBe(1);
+    await expect(service.getRun(runId)).resolves.toBeNull();
+    await expect(service.getLatestRun(initialEnvelope.sessionId)).resolves.toBeNull();
+    await expect(service.getRunTrace(runId)).resolves.toBeNull();
+    await expect(service.cancelRun(runId)).resolves.toEqual({
+      outcome: 'unavailable',
+      statusCode: 503,
+      retryAfterSeconds: 6
+    });
+    expect(upsertDagRunSnapshotMock).toHaveBeenCalledTimes(1);
+    await expect(service.createRun(createRunRequest(2))).rejects.toBeInstanceOf(
+      DagRunCapacityExceededError
+    );
+
+    await jest.advanceTimersByTimeAsync(100);
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(1);
+    await jest.advanceTimersByTimeAsync(100);
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledTimes(3);
+    expect(jest.getTimerCount()).toBe(1);
+    await jest.advanceTimersByTimeAsync(999);
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledTimes(3);
+    expect(jest.getTimerCount()).toBe(1);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(lookupDagRunSnapshotForControlMock).toHaveBeenCalledTimes(4);
+    expect(jest.getTimerCount()).toBe(1);
+    expect((service as any).runsById.get(runId).admissionPending).toBe(true);
+    expect((service as any).activeRunReservations.has(runId)).toBe(true);
+    expect((service as any).executeRun).not.toHaveBeenCalled();
+  });
 
   it('persists local cancellation intent before abort and restores state after a failed CAS', async () => {
     const service = new ArcanosDagRunService({

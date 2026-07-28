@@ -63,6 +63,19 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   indexes, and historical evidence.
 - Replaced the Bash-only documentation audit logic with one cross-platform Node
   check exposed as `npm run docs:check`.
+- Restricted database retries to explicitly audited transient reads, made
+  collation inspection passive, and serialized schema initialization so
+  concurrent startup cannot interleave DDL or retry mutation-shaped work.
+- Added monotonic claim generations to database-backed worker ownership and
+  monotonic snapshot generations to persisted DAG runs, with guarded
+  PostgreSQL 18 migration, rollback, and concurrency coverage.
+- Added per-process DAG admission limits, bounded terminal retention, durable
+  cancellation intent, ownership-conflict quarantine, and exact reconciliation
+  for initial snapshot outcomes before execution begins.
+- Hardened the release path so publication consumes only the validated source
+  revision, production promotion can be held for coordinated writer rollouts,
+  and startup, coverage, PostgreSQL fencing, and deployment-readiness checks
+  remain required CI evidence.
 
 ### Security
 
@@ -237,6 +250,22 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 - Removed free-form self-healing reason/action/component fields from public
   safety status and replaced worker diagnostic failure details with stable
   non-disclosing responses and bounded structured events.
+- Moved direct DAG inspection and mutation behind the control-plane boundary,
+  with scoped reads, confirmation-gated creation/cancellation, bounded bodies,
+  no-store responses, and exact pre-parser route ownership.
+- Removed shell and path injection from self-improvement execution, and
+  hardened CEF ingress with authenticated routing plus principal-, operation-,
+  target-, and payload-bound single-use execution permits.
+- Protected reinforcement and AFOL ingress with control-plane authorization,
+  bounded parsing, prompt-trust isolation, minimized/redacted persistence, and
+  canonical-file containment.
+- Protected assistant-registry reads and synchronization with scoped
+  control-plane authorization, challenge-bound mutation, canonical path
+  validation, and integrity-aware atomic replacement.
+- Enforced the canonical purpose-bound credential collision policy at every
+  listed TypeScript and Python authentication boundary, including ActionPlan
+  roles, local-agent rotation, GPT Access, automation, MCP, metrics, bridge,
+  approval, root/admin, CLI, and debug credentials.
 
 ### Fixed
 
@@ -257,6 +286,14 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   canonical job polling, async Ask/GPT waits, and the Custom GPT bridge;
   affected operations now return sanitized `503` contracts and preserve
   accepted job coordinates where available.
+- Patched the vendored brace-expansion dependency and synchronized its declared
+  pin with the reproducible lockfile.
+- Prevented cancellation from overtaking initial DAG snapshot admission and
+  reconciled PostgreSQL commits whose acknowledgement is lost, avoiding
+  durable queued snapshots with no executing owner.
+- Wired claim-generation and DAG-snapshot PostgreSQL 18 integration suites into
+  the isolated CI database job instead of allowing their database cases to
+  remain skipped.
 
 ### Removed
 

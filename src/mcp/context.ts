@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createRuntimeBudget, type RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { generateRequestId } from '@core/lib/requestId.js';
+import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
 import { createMcpLogger, type McpLogger } from './log.js';
 import {
   conflictsWithActionPlanCredential,
@@ -111,6 +112,11 @@ export function readMcpActionPlanRequesterPrincipalId(
     || mcpCredential.length < 32
     || mcpCredential.length > 4096
     || mcpCredential !== mcpCredential.trim()
+    || hasConfiguredPurposeBoundCredentialCollision({
+      credential: mcpCredential,
+      ownEnvironmentName: 'MCP_BEARER_TOKEN',
+      readEnvironmentValue: environmentName => env[environmentName],
+    })
   ) {
     return null;
   }

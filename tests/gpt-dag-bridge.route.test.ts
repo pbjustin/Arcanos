@@ -411,6 +411,42 @@ describe('GPT DAG bridge route', () => {
     expect(JSON.stringify(invalid.body)).not.toContain(invalidBridgeBearerToken);
   });
 
+  it('does not reuse the OpenAI action secret as a DAG bearer fallback', async () => {
+    process.env.GPT_DAG_BRIDGE_REQUIRE_AUTH = 'true';
+    process.env.OPENAI_ACTION_SHARED_SECRET = bridgeBearerToken;
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('Authorization', ['Bearer', bridgeBearerToken].join(' '))
+      .send({ action: 'dag.capabilities' });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('GPT_DAG_BRIDGE_AUTH_NOT_CONFIGURED');
+  });
+
+  it('fails DAG bearer authentication closed on a purpose-bound credential collision', async () => {
+    const previousControlPlaneToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+    try {
+      process.env.GPT_DAG_BRIDGE_REQUIRE_AUTH = 'true';
+      process.env.GPT_DAG_BRIDGE_BEARER_TOKEN = bridgeBearerToken;
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = bridgeBearerToken;
+
+      const response = await request(buildApp())
+        .post('/gpt/arcanos-core')
+        .set('Authorization', ['Bearer', bridgeBearerToken].join(' '))
+        .send({ action: 'dag.capabilities' });
+
+      expect(response.status).toBe(503);
+      expect(response.body.error.code).toBe('GPT_DAG_BRIDGE_AUTH_NOT_CONFIGURED');
+    } finally {
+      if (previousControlPlaneToken === undefined) {
+        delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+      } else {
+        process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = previousControlPlaneToken;
+      }
+    }
+  });
+
   it('returns a safe disabled response when the feature flag is false', async () => {
     process.env.GPT_DAG_BRIDGE_ENABLED = 'false';
 

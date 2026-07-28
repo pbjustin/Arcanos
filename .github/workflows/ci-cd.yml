@@ -408,7 +408,7 @@ jobs:
              daemon-python/tests/test_local_agent_sandbox_container_e2e.py
 
   local-agent-postgres-concurrency:
-    name: Local Agent PostgreSQL Concurrency
+    name: PostgreSQL Fencing & Local Agent Concurrency
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -416,18 +416,22 @@ jobs:
         env:
           POSTGRES_USER: arcanos_ci
           POSTGRES_PASSWORD: local-agent-ci-only
-          POSTGRES_DB: arcanos_local_agent_ci
+          POSTGRES_DB: arcanos_audit_pg18_20260727
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U arcanos_ci -d arcanos_local_agent_ci"
+          --health-cmd "pg_isready -U arcanos_ci -d arcanos_audit_pg18_20260727"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
       LOCAL_AGENT_HARDENING_REQUIRE_DATABASE: '1'
       LOCAL_AGENT_HARDENING_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_local_agent_ci
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      JOB_CLAIM_FENCING_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
@@ -444,6 +448,9 @@ jobs:
 
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
+
+      - name: 🧱 Verify PostgreSQL claim and snapshot fencing
+        run: npm run test:postgres-fencing
 
   runtime-redis-admission:
     name: Standalone Runtime Redis Admission
