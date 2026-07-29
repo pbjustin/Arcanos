@@ -39,7 +39,7 @@ Tracked Railway config (source: `railway.json`):
 
 Launcher behavior:
 - `node scripts/start-railway-service.mjs` is the canonical normal Railway start command.
-- Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-safe` override. It starts a passive health-only server without importing application, worker, provider, database, Redis, migration, or scheduler modules.
+- Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-safe` override. The launcher accepts only the legacy exact `Arcanos-pr-<positive integer>` name or Railway's exact current `pr-<six hexadecimal characters>-<positive integer>` name, together with non-empty Railway project and environment IDs. It starts a passive health-only server without importing application, worker, provider, database, Redis, migration, or scheduler modules.
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - Database-backed startup passively inspects the configured and actual

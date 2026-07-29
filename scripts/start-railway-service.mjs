@@ -49,7 +49,8 @@ const CLI_BRIDGE_URL_ENV = 'ARCANOS_CLI_BRIDGE_URL';
 const CLI_BRIDGE_TOKEN_ENV = 'ARCANOS_CLI_BRIDGE_TOKEN';
 const PREVIEW_ISOLATION_ENV = 'ARCANOS_PREVIEW_ISOLATION';
 const PASSIVE_PR_PREVIEW_ARGUMENT = '--pr-preview-safe';
-const NATIVE_PR_ENVIRONMENT_PATTERN = /^Arcanos-pr-[1-9]\d*$/iu;
+const NATIVE_PR_ENVIRONMENT_PATTERN =
+  /^(?:Arcanos-pr-[1-9]\d*|pr-[0-9a-f]{6}-[1-9]\d*)$/iu;
 const OPENAI_BASE_URL_ENV_NAMES = [
   'OPENAI_BASE_URL',
   'RAILWAY_OPENAI_BASE_URL',
@@ -111,9 +112,9 @@ function firstConfiguredValue(env, names) {
  * - Output: a stable passive-mode category or the historical disabled result.
  *
  * Edge case behavior:
- * - Exact native ARCANOS PR environments enter passive mode even when the
- *   dedicated argument is absent; non-PR startup remains unchanged.
- * - The dedicated argument fails closed outside an exact native ARCANOS PR environment.
+ * - Exact supported native PR environment names enter passive mode even when
+ *   the dedicated argument is absent; non-PR startup remains unchanged.
+ * - The dedicated argument fails closed outside those exact native PR names.
  */
 export function resolvePassivePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {
   const environmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim() || '';

@@ -15,11 +15,21 @@ import {
 } from '../scripts/start-railway-service.mjs';
 
 describe('start-railway-service launcher helpers', () => {
-  it('recognizes only the exact Railway native PR preview contract', () => {
+  it('recognizes only the exact supported Railway native PR preview contracts', () => {
     expect(resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
       RAILWAY_PROJECT_ID: 'project-id',
       RAILWAY_ENVIRONMENT_ID: 'environment-id',
       RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+    })).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      runtimeMode: 'passive',
+    });
+
+    expect(resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'pr-c1a651-1411',
     })).toEqual({
       enabled: true,
       environmentCategory: 'native-pr',
@@ -39,6 +49,16 @@ describe('start-railway-service launcher helpers', () => {
       environmentCategory: 'native-pr',
       runtimeMode: 'passive',
     });
+
+    expect(resolvePassivePrPreviewOrThrow([], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'pr-c1a651-1411',
+    })).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      runtimeMode: 'passive',
+    });
   });
 
   it.each([
@@ -46,6 +66,13 @@ describe('start-railway-service launcher helpers', () => {
     ['Arcanos-pr-0', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
     ['Arcanos-pr-1395-extra', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
     ['Arcanos-pr-production', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a651-0', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a651-01411', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a65-1411', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a65g-1411', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-production-1411', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a651-production', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['pr-c1a651-1411-extra', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
   ])('rejects passive preview mode outside an exact native PR environment: %s', (environmentName, expectedCode) => {
     expect(() => resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
       RAILWAY_PROJECT_ID: 'project-id',

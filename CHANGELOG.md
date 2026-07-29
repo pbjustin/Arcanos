@@ -76,6 +76,9 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   revision, production promotion can be held for coordinated writer rollouts,
   and startup, coverage, PostgreSQL fencing, and deployment-readiness checks
   remain required CI evidence.
+- Kept native Railway PR environments passive while accepting both the legacy
+  `Arcanos-pr-N` name and Railway's current exact `pr-<six-hex>-N` name under
+  the existing project/environment identity checks.
 
 ### Security
 

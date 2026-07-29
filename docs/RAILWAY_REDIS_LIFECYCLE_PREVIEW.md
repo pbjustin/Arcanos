@@ -11,7 +11,7 @@ The evidence probe is read-only and dry-run by default. It never invokes Railway
 Do not proceed unless an operator has approved creation and later deletion of a billable preview environment.
 
 - Create an **empty** persistent environment for the initial preview. Do not duplicate or fork the production environment. A retained preview may be reused only after its service, volume, credential, domain, and source identities are reverified.
-- Use an environment named `arcanos-redis-lifecycle-preview-YYYYMMDD-N`, `dependency-resilience-preview-YYYYMMDD`, or `dep-resilience-preview-<short-commit>`. Native `Arcanos-pr-N` environments use the repository's passive PR-safe launcher and cannot exercise the application lifecycle.
+- Use an environment named `arcanos-redis-lifecycle-preview-YYYYMMDD-N`, `dependency-resilience-preview-YYYYMMDD`, or `dep-resilience-preview-<short-commit>`. Native `Arcanos-pr-N` and Railway-generated `pr-<six-hex>-N` environments use the repository's passive PR-safe launcher and cannot exercise the application lifecycle.
 - Recreate the production-shaped web, worker, PostgreSQL, and Redis roles with fresh preview-only services and volumes. Do not add an executor, cron, production service, or production volume.
 - Do not copy production variables. In particular, do not provide production OpenAI credentials, GPT Access credentials, database URLs, Railway tokens, cookies, or shared secrets.
 - Keep Redis private-network-only. The Railway Redis template enables a public TCP proxy by default; remove that proxy in the preview service's Networking settings before deploying the web service.
