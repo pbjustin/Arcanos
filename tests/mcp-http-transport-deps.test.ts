@@ -1,6 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import request from 'supertest';
@@ -24,6 +23,9 @@ describe('MCP HTTP transport runtime dependencies', () => {
   });
 
   it('round-trips an initialize request through the Node HTTP adapter', async () => {
+    const { StreamableHTTPServerTransport } = await import(
+      '@modelcontextprotocol/sdk/server/streamableHttp.js'
+    );
     const initializeRequest = {
       jsonrpc: '2.0',
       id: 1,
