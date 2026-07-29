@@ -123,6 +123,7 @@ import {
 import {
   authenticateMemoryPlaneRequest,
   sendMemoryPlaneAuthError,
+  setMemoryPlaneNoStorePolicy,
 } from '@transport/http/middleware/memoryPlaneAuth.js';
 import {
   buildAsyncJobResponseMetadata,
@@ -1600,6 +1601,7 @@ router.post("/:gptId", async (req, res, next) => {
             sendMemoryPlaneAuthError(req, res, memoryAuthentication);
             return;
           }
+          setMemoryPlaneNoStorePolicy(res);
           memoryPlaneAuthorized = true;
         }
 

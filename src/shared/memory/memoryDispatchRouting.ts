@@ -28,9 +28,15 @@ export function extractMemoryDispatcherPrompt(body: unknown): string | null {
   const explicitPayloadHasPromptAlias = DISPATCH_PROMPT_ALIAS_KEYS.some(
     (key) => Object.prototype.hasOwnProperty.call(explicitPayload, key)
   );
-  return explicitPayloadHasPromptAlias
-    ? extractGptPromptText(explicitPayload)
-    : extractGptPromptText(body);
+  if (!explicitPayloadHasPromptAlias) {
+    return extractGptPromptText(body);
+  }
+
+  const ownPayload = Object.assign(
+    Object.create(null) as Record<string, unknown>,
+    explicitPayload
+  );
+  return extractGptPromptText(ownPayload);
 }
 
 export function shouldInterceptMemoryDispatcher(input: {

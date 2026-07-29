@@ -354,9 +354,10 @@ listed below requires the exact `ARCANOS_MEMORY_ACCESS_TOKEN` in
 credential carriers. Missing or invalid server configuration returns
 `503 MEMORY_AUTH_UNAVAILABLE`; missing, malformed, duplicate, or incorrect
 request credentials return `401 MEMORY_AUTH_REQUIRED`. Authentication precedes
-the writing-plane consistency gate and any listed confirmation requirement.
-The credential grants deployment-wide access only; it does not bind
-caller-controlled `sessionId` values to a tenant.
+broad body parsing, the writing-plane consistency gate, and any listed
+confirmation requirement. Authenticated responses and denials use
+`Cache-Control: no-store`. The credential grants deployment-wide access only;
+it does not bind caller-controlled `sessionId` values to a tenant.
 
 - `POST /api/save-conversation`
 - `GET /api/save-conversation/:recordId`

@@ -14,7 +14,7 @@ Implementation rules:
 - `src/routes/_core/gptDispatch.ts` is write-plane only and rejects leaked control requests with a fail-fast `write_guard`.
 - Pure runtime-inspection prompt classification lives in `src/shared/runtimeInspectionPrompt.ts`; writing-plane contracts must not import the operational runtime-inspection service or its worker/self-heal dependencies.
 - Exact GPT memory-interception classification is shared by the HTTP router and dispatcher through `src/services/memoryDispatchInterception.ts`; the router establishes request credential authority, while `gptDispatch.ts` independently requires a server-owned authorization flag at the execution sink.
-- Production `/api/memory/*`, `/api/save-conversation*`, and `/api/sessions*` mounts authenticate through `src/transport/http/middleware/memoryPlaneAuth.ts` before consistency, confirmation, or persistence. Session authentication additionally precedes broad body parsing. This deployment-wide boundary does not provide tenant ownership.
+- Production `/api/memory/*`, `/api/save-conversation*`, and `/api/sessions*` mounts authenticate through `src/transport/http/middleware/memoryPlaneAuth.ts` before broad body parsing, consistency, confirmation, or persistence. This deployment-wide boundary does not provide tenant ownership.
 - `/api/codebase/*`, `/api/prompt-debug/*`, and
   `/api/ai-routing/debug/*` are sensitive read-only
   control-plane surfaces. Their leaf routers apply security/no-store headers,

@@ -6,6 +6,11 @@ MIGRATION AUTHORIZED**
 Prepared from branch `codex/phase2e-pr-preview-hardening`, whose starting
 commit was `366fb9f65e42a7ebfc75f011534a7815f781f148`.
 
+Operational compatibility addendum (2026-07-29): Railway now generates native
+PR environment names in the exact form `pr-<six hexadecimal characters>-<PR
+number>`. The launcher retains the legacy `Arcanos-pr-<PR number>` form and
+accepts the current Railway form under the same passive-only identity checks.
+
 ## Decision
 
 Railway's native pull-request environment may be used as a lower-friction
@@ -19,7 +24,8 @@ node scripts/start-railway-service.mjs --pr-preview-safe
 The launcher accepts that mode only when Railway supplies all of the
 following:
 
-- an environment name matching `Arcanos-pr-<positive integer>` exactly;
+- an environment name matching `Arcanos-pr-<positive integer>` or
+  `pr-<six hexadecimal characters>-<positive integer>` exactly;
 - a non-empty Railway project ID; and
 - a non-empty Railway environment ID.
 
@@ -65,10 +71,10 @@ Railway token or immediate operator action.
 rejects `environments.pr.variables`. No Phase 2E migration command is part of
 the native PR deployment path.
 
-The launcher also recognizes an exact native `Arcanos-pr-<positive integer>`
-environment as passive without relying solely on Railway applying the special
-start-command override. This is a second fail-closed boundary, not an active
-preview escape hatch.
+The launcher also recognizes either supported exact native PR environment name
+as passive without relying solely on Railway applying the special start-command
+override. This is a second fail-closed boundary, not an active preview escape
+hatch.
 
 The repository's complete `railway.json` currently contains pre-existing
 extension fields that Railway's published JSON schema does not recognize.
