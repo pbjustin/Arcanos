@@ -171,11 +171,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   replaced raw mutation-failure disclosure with a stable response.
 - Added a distinct, custom-header-only memory-plane credential for the
   production memory and save-conversation APIs and exact GPT memory
-  interception, with fail-closed configuration, purpose isolation, direct
-  execution, and defensive dispatcher authorization.
+  interception, with fail-closed configuration, purpose isolation,
+  non-storable authenticated responses, direct execution, and defensive
+  dispatcher authorization.
 - Extended that credential boundary to the complete durable `/api/sessions*`
-  prefix before broad body parsing, closing anonymous session creation,
-  catalog, payload-read, and replay access while keeping API health public.
+  prefix and moved all three HTTP memory/session families before broad body
+  parsing, closing parser-first anonymous access while keeping API health
+  public.
 - Made the optional debug watchdog fail closed when its purpose-bound key is
   missing, invalid, or reused, while preserving exact custom-header access and
   request-time credential rotation.

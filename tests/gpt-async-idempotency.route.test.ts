@@ -349,6 +349,7 @@ describe('async /gpt idempotency', () => {
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('memory_dispatch_intercept');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
       gptId: 'arcanos-core',
       memoryPlaneAuthorized: true,

@@ -19,6 +19,10 @@ export type MemoryPlaneAuthenticationResult =
       reason: 'configuration_unavailable' | 'missing_auth' | 'invalid_auth';
     };
 
+export function setMemoryPlaneNoStorePolicy(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store');
+}
+
 function countRawHeaders(req: Request, headerName: string): number {
   const rawHeaders = Array.isArray(req.rawHeaders) ? req.rawHeaders : [];
   let count = 0;
@@ -115,7 +119,7 @@ export function sendMemoryPlaneAuthError(
     reason: result.reason,
     statusCode,
   });
-  res.setHeader('Cache-Control', 'no-store');
+  setMemoryPlaneNoStorePolicy(res);
   res.status(statusCode).json({
     ok: false,
     ...(req.requestId ? { requestId: req.requestId } : {}),
@@ -139,5 +143,6 @@ export function requireMemoryPlaneAuth(
     return;
   }
 
+  setMemoryPlaneNoStorePolicy(res);
   next();
 }

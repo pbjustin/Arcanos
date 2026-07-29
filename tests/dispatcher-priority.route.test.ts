@@ -200,6 +200,37 @@ describe('dispatcher priority routing', () => {
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['MEMORY_AUTH_REQUIRED', 401],
+    ['MEMORY_AUTH_UNAVAILABLE', 503],
+  ] as const)('maps /dispatch %s failures to HTTP %i', async (errorCode, expectedStatus) => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: errorCode,
+        message: 'memory authentication failed',
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'memory',
+        timestamp: '2026-04-25T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: 'arcanos-core',
+        prompt: 'Remember the release marker.',
+      });
+
+    expect(response.status).toBe(expectedStatus);
+    expect(response.body.error.code).toBe(errorCode);
+  });
+
   it('routes /dispatch target=dag to DAG execution', async () => {
     const response = await request(buildApp())
       .post('/dispatch')

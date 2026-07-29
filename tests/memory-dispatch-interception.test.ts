@@ -38,6 +38,21 @@ describe('GPT memory interception classification', () => {
     }));
   });
 
+  it('preserves legacy chat-to-query alias behavior in the interception predicate', () => {
+    expect(classifyGptMemoryInterception({
+      body: {
+        action: 'chat',
+        prompt: 'Recall release marker for audit-42.',
+      },
+      ...queryModule,
+      forceDirectModuleRouting: false,
+    })).toEqual(expect.objectContaining({
+      intercept: true,
+      parsedIntent: 'lookup',
+      requestedAction: 'query',
+    }));
+  });
+
   it.each(['', false, 0, null])(
     'preserves legacy truthy prompt-alias fallback after an earlier %p value',
     (message) => {
@@ -106,6 +121,45 @@ describe('GPT memory interception classification', () => {
       intercept: true,
       prompt: 'Remember the forwarded top-level text.',
       parsedIntent: 'save',
+    }));
+  });
+
+  it('drops inherited prompt aliases when sanitizing an explicit payload', () => {
+    const inheritedPayload = Object.create({
+      message: 'Remember the inherited text.',
+    }) as Record<string, unknown>;
+    inheritedPayload.prompt = 'Explain dependency inversion.';
+
+    expect(classifyGptMemoryInterception({
+      body: {
+        prompt: 'Remember the top-level text.',
+        payload: inheritedPayload,
+      },
+      ...queryModule,
+      forceDirectModuleRouting: false,
+    })).toEqual(expect.objectContaining({
+      intercept: false,
+      prompt: 'Explain dependency inversion.',
+      parsedIntent: 'unknown',
+    }));
+  });
+
+  it.each([
+    ['scalar', 'Remember the scalar payload.'],
+    ['null', null],
+    ['array', ['Remember the array payload.']],
+  ])('does not reinterpret an explicit %s payload as a prompt', (_label, payload) => {
+    expect(classifyGptMemoryInterception({
+      body: {
+        prompt: 'Remember the top-level text.',
+        payload,
+      },
+      ...queryModule,
+      forceDirectModuleRouting: false,
+    })).toEqual(expect.objectContaining({
+      intercept: false,
+      prompt: null,
+      parsedIntent: 'unknown',
     }));
   });
 

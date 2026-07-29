@@ -151,8 +151,10 @@ export function createApp(): Express {
   app.use('/api/assistants', assistantRegistryHttpBoundary);
   app.use('/api/assistants', assistantRegistryBodyParser);
   app.use(cors(config.cors));
-  // Durable session payloads share the memory trust domain. Authenticate the
-  // entire prefix before the broad parsers can allocate or expose stored data.
+  // Memory and durable-session payloads share one trust domain. Authenticate
+  // every HTTP prefix before broad parsers can allocate or expose stored data.
+  app.use('/api/memory', requireMemoryPlaneAuth);
+  app.use('/api/save-conversation', requireMemoryPlaneAuth);
   app.use('/api/sessions', requireMemoryPlaneAuth);
   // Model- and subprocess-backed diagnostics are operator control-plane work.
   // Authenticate, authorize, throttle, and serialize them before body parsing.

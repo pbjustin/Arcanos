@@ -359,12 +359,13 @@ routes, including registry startup reads, fail closed without it.
 
 ### Memory-plane authentication
 
-The production mounts for `/api/memory/*` and `/api/save-conversation*`, plus
-the exact natural-language memory-interception branch of `POST /gpt/:gptId`,
-require one deployment-wide, purpose-bound credential. Authentication occurs
-before writing-plane consistency checks, confirmation gates, persistence,
-fast-path execution, or job creation. Requests that do not enter the GPT memory
-interception branch are unchanged.
+The production mounts for `/api/memory/*`, `/api/save-conversation*`, and
+`/api/sessions*`, plus the exact natural-language memory-interception branch of
+`POST /gpt/:gptId`, require one deployment-wide, purpose-bound credential. The
+three HTTP prefixes authenticate before broad body parsing, writing-plane
+consistency checks, confirmation gates, or persistence. Exact GPT interception
+authenticates after parsing but before fast-path execution, job creation, or
+memory execution. Requests that do not enter that GPT branch are unchanged.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

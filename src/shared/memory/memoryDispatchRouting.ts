@@ -29,7 +29,7 @@ export function extractMemoryDispatcherPrompt(body: unknown): string | null {
     (key) => Object.prototype.hasOwnProperty.call(explicitPayload, key)
   );
   return explicitPayloadHasPromptAlias
-    ? extractGptPromptText(explicitPayload)
+    ? extractGptPromptText({ ...explicitPayload })
     : extractGptPromptText(body);
 }
 

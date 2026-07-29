@@ -381,6 +381,32 @@ describe('routeGptRequest write-plane classification', () => {
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
+  it('fails closed for a background-worker memory job without server-owned authorization', async () => {
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'save' });
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        prompt: 'Remember the queued release marker.',
+        sessionId: 'memory-worker-session',
+      },
+      requestId: 'req-memory-worker-denied',
+      runtimeExecutionMode: 'background',
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'MEMORY_AUTH_REQUIRED',
+        message: 'A valid memory-plane access token is required.',
+      },
+    }));
+    expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
   it('executes the exact memory branch only with the server-owned authorization flag', async () => {
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'save' });
     mockHasNaturalLanguageMemoryCue.mockReturnValue(true);

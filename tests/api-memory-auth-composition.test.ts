@@ -177,6 +177,7 @@ describe('memory API production authentication composition', () => {
       .set('x-arcanos-memory-token', memoryAccessToken);
 
     expect(response.status).toBe(204);
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(memoryConsistencyGateMock).toHaveBeenCalledTimes(1);
     expect(expectedHandler).toHaveBeenCalledTimes(1);
   });

@@ -19,10 +19,18 @@ const sessionCreateHandlerMock = jest.fn((req: Request, res: Response) => {
 const healthHandlerMock = jest.fn((_req: Request, res: Response) => {
   res.status(204).end();
 });
+const memoryHandlerMock = jest.fn((_req: Request, res: Response) => {
+  res.status(204).end();
+});
+const saveConversationHandlerMock = jest.fn((_req: Request, res: Response) => {
+  res.status(204).end();
+});
 
 jest.unstable_mockModule('@routes/register.js', () => ({
   registerRoutes: (app: Express) => {
     app.get('/api/health', healthHandlerMock);
+    app.post('/api/memory/save', memoryHandlerMock);
+    app.post('/api/save-conversation', saveConversationHandlerMock);
     app.get('/api/sessions', sessionListHandlerMock);
     app.post('/api/sessions', sessionCreateHandlerMock);
   },
@@ -114,6 +122,23 @@ describe('/api/sessions production authentication composition', () => {
     expect(sessionCreateHandlerMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['/api/memory/save', memoryHandlerMock],
+    ['/api/save-conversation', saveConversationHandlerMock],
+  ] as const)('authenticates %s before parsing a malformed JSON body', async (
+    path,
+    expectedHandler
+  ) => {
+    const response = await request(createApp())
+      .post(path)
+      .set('Content-Type', 'application/json')
+      .send('{"payload":');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('MEMORY_AUTH_REQUIRED');
+    expect(expectedHandler).not.toHaveBeenCalled();
+  });
+
   it('allows the dedicated memory header and preserves body parsing', async () => {
     const listResponse = await request(createApp())
       .get('/api/sessions')
@@ -124,7 +149,9 @@ describe('/api/sessions production authentication composition', () => {
       .send({ label: 'authorized-session' });
 
     expect(listResponse.status).toBe(204);
+    expect(listResponse.headers['cache-control']).toBe('no-store');
     expect(createResponse.status).toBe(200);
+    expect(createResponse.headers['cache-control']).toBe('no-store');
     expect(createResponse.body).toEqual({
       parsedBody: {
         label: 'authorized-session',

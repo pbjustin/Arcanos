@@ -304,6 +304,7 @@ describe('memory-plane HTTP authentication', () => {
     requireMemoryPlaneAuth(oldRequest, oldResponse.res, firstNext);
     expect(firstNext).toHaveBeenCalledTimes(1);
     expect(oldResponse.status).not.toHaveBeenCalled();
+    expect(oldResponse.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
 
     process.env[memoryEnvironmentName] = rotatedMemoryToken;
     const revokedResponse = responseRecorder();
@@ -321,6 +322,7 @@ describe('memory-plane HTTP authentication', () => {
     requireMemoryPlaneAuth(rotatedRequest, rotatedResponse.res, rotatedNext);
     expect(rotatedNext).toHaveBeenCalledTimes(1);
     expect(rotatedResponse.status).not.toHaveBeenCalled();
+    expect(rotatedResponse.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
   });
 });
 

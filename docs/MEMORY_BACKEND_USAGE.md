@@ -73,14 +73,15 @@ characters with no whitespace, and must not reuse another purpose-bound
 application credential. Configuration is read on every request. Invalid or
 missing server configuration returns `503 MEMORY_AUTH_UNAVAILABLE`; missing,
 malformed, duplicate, or incorrect request credentials return
-`401 MEMORY_AUTH_REQUIRED`. Denials use `Cache-Control: no-store` and do not
-emit a Bearer challenge.
+`401 MEMORY_AUTH_REQUIRED`. Authenticated memory-plane responses and denials
+use `Cache-Control: no-store`; denials do not emit a Bearer challenge.
 
-Authentication runs before consistency, confirmation, database/service access,
-GPT fast-path execution, and queue creation. This token grants deployment-wide
-memory access only. It does not establish a tenant principal, prove ownership
-of `sessionId`, or prevent a token holder from using intentionally global
-listing/search behavior.
+The three HTTP prefixes authenticate before broad body parsing, consistency,
+confirmation, and database/service access. Exact GPT interception authenticates
+after parsing but before fast-path execution, queue creation, or memory access.
+This token grants deployment-wide memory access only. It does not establish a
+tenant principal, prove ownership of `sessionId`, or prevent a token holder from
+using intentionally global listing/search behavior.
 
 The legacy `/brain` compatibility memory shortcut is a separate,
 confirmation-gated path and is not promoted to this credential contract.
