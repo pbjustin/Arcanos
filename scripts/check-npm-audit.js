@@ -14,239 +14,85 @@ if (!reportText) {
 }
 
 const report = JSON.parse(reportText);
-const vulnerabilities = report.vulnerabilities ?? {};
-
-// Temporary exception register. Review by 2026-07-28, or immediately when a
-// supported resolution becomes available.
-// - axios: the ten advisories published 2026-07-20 require axios 1.18.0, which
-//   is not yet published to npm. The affected GET wrappers set an own undefined
-//   data field, and the other affected request modes are not used. Retest and
-//   remove these entries as soon as the patched release is available.
-// - lodash (Knex -> lodash): GHSA-r5fr-rjxr-66jc/CVE-2026-4800 and
-//   GHSA-f23m-r3pf-42rh/CVE-2026-2950 require lodash 4.18.0, which npm marks as
-//   a deprecated bad release. The affected template/unset gadgets are not used
-//   by the repository's query stores. Retest the Knex stores when Knex adopts a
-//   supported patched lodash release or npm publishes a non-deprecated patch.
-// - Hono (MCP SDK -> Hono): the patched @hono/node-server 2.0.5 and Hono
-//   4.12.27 npm builds are not published. Their source tags omit the compiled
-//   package exports, so consuming those archives would break runtime imports.
-//   ARCANOS mounts the SDK's Node/Web Standard streamable transport through
-//   Express and uses only @hono/node-server's root request listener; it does
-//   not use Hono static serving, AWS adapters, JSX, or CSS rendering.
-// Advisory IDs for every exception are deliberately source-scoped below, and
-// affected graphs are constrained where usage assumptions matter, so an
-// unexpected advisory or dependency path remains actionable.
-const IGNORED_AXIOS_SOURCES = new Set([
-  1123882, 1123884, 1123885, 1123957, 1123959, 1123961, 1123967, 1123969, 1123971,
-  1123973,
-]);
-const IGNORED_AXIOS_URLS = new Set([
-  'https://github.com/advisories/GHSA-42h9-826w-cgv3',
-  'https://github.com/advisories/GHSA-xj6q-8x83-jv6g',
-  'https://github.com/advisories/GHSA-pmv8-rq9r-6j72',
-  'https://github.com/advisories/GHSA-jqh4-m9w3-8hp9',
-  'https://github.com/advisories/GHSA-mmx7-hfxf-jppx',
-  'https://github.com/advisories/GHSA-f4gw-2p7v-4548',
-  'https://github.com/advisories/GHSA-gcfj-64vw-6mp9',
-  'https://github.com/advisories/GHSA-hcpx-6fm6-wx23',
-  'https://github.com/advisories/GHSA-7q8q-rj6j-mhjq',
-  'https://github.com/advisories/GHSA-mwf2-3pr3-8698',
-]);
-const IGNORED_AXIOS_NODES = new Set(['node_modules/axios']);
-const IGNORED_LODASH_SOURCES = new Set([1115806, 1115810]);
-const IGNORED_LODASH_URLS = new Set([
-  'https://github.com/advisories/GHSA-r5fr-rjxr-66jc',
-  'https://github.com/advisories/GHSA-f23m-r3pf-42rh',
-]);
-const IGNORED_HONO_NODE_SERVER_SOURCES = new Set([1124006]);
-const IGNORED_HONO_NODE_SERVER_URLS = new Set([
-  'https://github.com/advisories/GHSA-frvp-7c67-39w9',
-]);
-const IGNORED_HONO_SOURCES = new Set([1124005, 1124009, 1124010]);
-const IGNORED_HONO_URLS = new Set([
-  'https://github.com/advisories/GHSA-xgm2-5f3f-mvvc',
-  'https://github.com/advisories/GHSA-hvrm-45r6-mjfj',
-  'https://github.com/advisories/GHSA-w62v-xxxg-mg59',
-]);
-const IGNORED_HONO_NODE_SERVER_NODES = new Set([
-  'node_modules/@hono/node-server',
-]);
-const IGNORED_HONO_NODES = new Set(['node_modules/hono']);
-const IGNORED_MCP_SDK_NODES = new Set(['node_modules/@modelcontextprotocol/sdk']);
-const IGNORED_MCP_SDK_HONO_VIA = new Set(['@hono/node-server', 'hono']);
-
-function isIgnoredAxiosAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object') {
-    return false;
-  }
-
-  if (advisory.name !== 'axios') {
-    return false;
-  }
-
-  if (typeof advisory.source === 'number' && IGNORED_AXIOS_SOURCES.has(advisory.source)) {
-    return true;
-  }
-
-  return typeof advisory.url === 'string' && IGNORED_AXIOS_URLS.has(advisory.url);
-}
-
-function isIgnoredLodashAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object') {
-    return false;
-  }
-
-  if (advisory.name !== 'lodash') {
-    return false;
-  }
-
-  if (typeof advisory.source === 'number' && IGNORED_LODASH_SOURCES.has(advisory.source)) {
-    return true;
-  }
-
-  return typeof advisory.url === 'string' && IGNORED_LODASH_URLS.has(advisory.url);
-}
-
-function isIgnoredHonoNodeServerAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object' || advisory.name !== '@hono/node-server') {
-    return false;
-  }
-
-  if (
-    typeof advisory.source === 'number' &&
-    IGNORED_HONO_NODE_SERVER_SOURCES.has(advisory.source)
-  ) {
-    return true;
-  }
-
-  return (
-    typeof advisory.url === 'string' &&
-    IGNORED_HONO_NODE_SERVER_URLS.has(advisory.url)
+const vulnerabilityCountKeys = [
+  'info',
+  'low',
+  'moderate',
+  'high',
+  'critical',
+  'total',
+];
+const vulnerabilityCounts = report?.metadata?.vulnerabilities;
+const hasCompleteVulnerabilityCounts =
+  vulnerabilityCounts &&
+  typeof vulnerabilityCounts === 'object' &&
+  !Array.isArray(vulnerabilityCounts) &&
+  vulnerabilityCountKeys.every(
+    key =>
+      Number.isInteger(vulnerabilityCounts[key]) &&
+      vulnerabilityCounts[key] >= 0,
   );
+
+if (
+  !report ||
+  typeof report !== 'object' ||
+  Array.isArray(report) ||
+  report.auditReportVersion !== 2 ||
+  !report.vulnerabilities ||
+  typeof report.vulnerabilities !== 'object' ||
+  Array.isArray(report.vulnerabilities) ||
+  !hasCompleteVulnerabilityCounts ||
+  vulnerabilityCounts.total !== Object.keys(report.vulnerabilities).length ||
+  vulnerabilityCounts.total !==
+    vulnerabilityCounts.info +
+      vulnerabilityCounts.low +
+      vulnerabilityCounts.moderate +
+      vulnerabilityCounts.high +
+      vulnerabilityCounts.critical
+) {
+  console.error('npm audit report is not a complete version 2 vulnerability report');
+  process.exit(1);
 }
 
-function isIgnoredHonoAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object' || advisory.name !== 'hono') {
-    return false;
+function projectViaEntry(entry) {
+  if (typeof entry === 'string') {
+    return entry;
   }
 
-  if (typeof advisory.source === 'number' && IGNORED_HONO_SOURCES.has(advisory.source)) {
-    return true;
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return {
+      name: null,
+      source: null,
+      url: null,
+    };
   }
 
-  return typeof advisory.url === 'string' && IGNORED_HONO_URLS.has(advisory.url);
+  return {
+    name: entry.name ?? null,
+    source: entry.source ?? null,
+    url: entry.url ?? null,
+  };
 }
 
-function hasOnlyExpectedNodes(vulnerability, expectedNodes) {
-  const nodes = Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [];
-  return nodes.length > 0 && nodes.every(node => expectedNodes.has(node));
-}
+const actionable = Object.entries(report.vulnerabilities).map(
+  ([name, vulnerability]) => {
+    const record =
+      vulnerability && typeof vulnerability === 'object' && !Array.isArray(vulnerability)
+        ? vulnerability
+        : {};
 
-function isIgnoredVulnerability(name, vulnerability) {
-  if (!vulnerability || typeof vulnerability !== 'object') {
-    return false;
-  }
-
-  const via = Array.isArray(vulnerability.via) ? vulnerability.via : [];
-
-  if (name === 'axios') {
-    const nodes = Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [];
-    return (
-      via.length > 0 &&
-      via.every(isIgnoredAxiosAdvisory) &&
-      nodes.length > 0 &&
-      nodes.every(node => IGNORED_AXIOS_NODES.has(node))
-    );
-  }
-
-  if (name === 'lodash') {
-    return via.length > 0 && via.every(isIgnoredLodashAdvisory);
-  }
-
-  if (name === 'knex') {
-    return via.length > 0 && via.every(entry => entry === 'lodash');
-  }
-
-  // These upstream advisories are source-scoped so new advisories or unrelated
-  // transitive chains still fail the CI audit gate.
-  if (name === '@hono/node-server') {
-    return (
-      via.length > 0 &&
-      via.every(entry => entry === 'hono' || isIgnoredHonoNodeServerAdvisory(entry)) &&
-      hasOnlyExpectedNodes(vulnerability, IGNORED_HONO_NODE_SERVER_NODES)
-    );
-  }
-
-  if (name === 'hono') {
-    return (
-      via.length > 0 &&
-      via.every(isIgnoredHonoAdvisory) &&
-      hasOnlyExpectedNodes(vulnerability, IGNORED_HONO_NODES)
-    );
-  }
-
-  if (name === '@modelcontextprotocol/sdk') {
-    return (
-      via.length > 0 &&
-      via.every(
-        entry => typeof entry === 'string' && IGNORED_MCP_SDK_HONO_VIA.has(entry),
-      ) &&
-      hasOnlyExpectedNodes(vulnerability, IGNORED_MCP_SDK_NODES)
-    );
-  }
-
-  return false;
-}
-
-const ignored = [];
-const actionable = [];
-
-for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
-  if (isIgnoredVulnerability(name, vulnerability)) {
-    ignored.push({
+    return {
       name,
-      severity: vulnerability.severity ?? 'unknown',
-      via: Array.isArray(vulnerability.via)
-        ? vulnerability.via.map(entry => {
-            if (typeof entry === 'string') {
-              return entry;
-            }
-
-            return {
-              name: entry.name ?? null,
-              source: entry.source ?? null,
-              url: entry.url ?? null,
-            };
-          })
-        : [],
-    });
-    continue;
-  }
-
-  actionable.push({
-    name,
-    severity: vulnerability.severity ?? 'unknown',
-    via: Array.isArray(vulnerability.via)
-      ? vulnerability.via.map(entry => {
-          if (typeof entry === 'string') {
-            return entry;
-          }
-
-          return {
-            name: entry.name ?? null,
-            source: entry.source ?? null,
-            url: entry.url ?? null,
-          };
-        })
-      : [],
-    fixAvailable: vulnerability.fixAvailable ?? null,
-    nodes: Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [],
-  });
-}
+      severity: record.severity ?? 'unknown',
+      via: Array.isArray(record.via) ? record.via.map(projectViaEntry) : [],
+      fixAvailable: record.fixAvailable ?? null,
+      nodes: Array.isArray(record.nodes) ? record.nodes : [],
+    };
+  },
+);
 
 const output = {
-  auditReportVersion: report.auditReportVersion ?? null,
-  ignored,
+  auditReportVersion: report.auditReportVersion,
   actionable,
 };
 

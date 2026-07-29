@@ -160,23 +160,15 @@ jobs:
           set -euo pipefail
           audit_exit=0
           npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
+          policy_exit=0
+          node "$AUDIT_POLICY_PATH" npm-audit.json || policy_exit=$?
 
-          node <<'NODE'
-          const fs = require('node:fs');
-          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          if (( audit_exit != 0 || policy_exit != 0 )); then
+            echo "Production npm audit failed (npm=$audit_exit policy=$policy_exit)" >&2
+            exit 1
+          fi
 
-          if (
-            report.auditReportVersion !== 2 ||
-            !report.vulnerabilities ||
-            typeof report.vulnerabilities !== 'object' ||
-            Array.isArray(report.vulnerabilities)
-          ) {
-            throw new Error('npm audit did not return a complete version 2 vulnerability report');
-          }
-          NODE
-
-          node "$AUDIT_POLICY_PATH" npm-audit.json
-          echo "npm audit completed with raw exit code $audit_exit; repository policy accepted the report"
+          echo "Production npm audit and strict repository policy passed"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -189,7 +181,6 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
           python -m pip_audit \
-            --ignore-vuln CVE-2026-4539 \
             --requirement daemon-python/requirements.txt
 
       - name: Install dependencies without lifecycle scripts

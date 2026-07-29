@@ -62,8 +62,12 @@ Release automation boundaries:
   runs only `node node_modules/@prisma/client/scripts/postinstall.js` after
   installation because the audited package requires it to generate the
   TypeScript stubs consumed by type-check and build.
-- The trusted default-branch copy of `scripts/check-npm-audit.js` is the
-  canonical exception policy.
+- The trusted default-branch copy of `scripts/check-npm-audit.js` is the strict
+  zero-production-vulnerability policy. It has no advisory exceptions, rejects
+  incomplete or internally inconsistent audit-v2 reports, and is enforced
+  alongside npm's raw audit exit code.
+- Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
+  Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing
   GitHub release. It never uploads, replaces, or deletes release assets. Full
   releases rely on GitHub's automatically generated source archives.

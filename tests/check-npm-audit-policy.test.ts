@@ -8,7 +8,7 @@ type AuditVulnerability = {
   severity: string;
   via: Array<string | { name: string; source: number; url: string }>;
   nodes: string[];
-  fixAvailable: boolean;
+  fixAvailable: boolean | Record<string, unknown>;
 };
 
 const auditPolicyScriptPath = fileURLToPath(
@@ -16,16 +16,12 @@ const auditPolicyScriptPath = fileURLToPath(
 );
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
-function runAuditPolicy(vulnerabilities: Record<string, AuditVulnerability>) {
+function runAuditReport(report: unknown) {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-policy-'));
   const reportPath = path.join(directory, 'audit.json');
 
   try {
-    writeFileSync(
-      reportPath,
-      JSON.stringify({ auditReportVersion: 2, vulnerabilities }),
-      'utf8',
-    );
+    writeFileSync(reportPath, JSON.stringify(report), 'utf8');
 
     return spawnSync(process.execPath, [auditPolicyScriptPath, reportPath], {
       cwd: process.cwd(),
@@ -34,6 +30,40 @@ function runAuditPolicy(vulnerabilities: Record<string, AuditVulnerability>) {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+function runAuditPolicy(vulnerabilities: Record<string, unknown>) {
+  const counts = {
+    info: 0,
+    low: 0,
+    moderate: 0,
+    high: 0,
+    critical: 0,
+    total: Object.keys(vulnerabilities).length,
+  };
+
+  for (const vulnerability of Object.values(vulnerabilities)) {
+    const severity =
+      vulnerability &&
+      typeof vulnerability === 'object' &&
+      !Array.isArray(vulnerability) &&
+      'severity' in vulnerability &&
+      typeof vulnerability.severity === 'string'
+        ? vulnerability.severity
+        : 'high';
+
+    if (severity in counts && severity !== 'total') {
+      counts[severity as keyof Omit<typeof counts, 'total'>] += 1;
+    } else {
+      counts.high += 1;
+    }
+  }
+
+  return runAuditReport({
+    auditReportVersion: 2,
+    vulnerabilities,
+    metadata: { vulnerabilities: counts },
+  });
 }
 
 function parseStdout(result: { stdout: string; stderr: string }) {
@@ -52,21 +82,18 @@ function parseStdout(result: { stdout: string; stderr: string }) {
 
 function advisory(
   name: string,
-  severity: 'moderate' | 'high' | 'critical',
-  source: number,
-  ghsa: string,
-  nodes = [`node_modules/${name}`],
-) {
+  severity: 'low' | 'moderate' | 'high' | 'critical' = 'high',
+): AuditVulnerability {
   return {
     severity,
     via: [
       {
         name,
-        source,
-        url: `https://github.com/advisories/${ghsa}`,
+        source: 9_999_999,
+        url: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
       },
     ],
-    nodes,
+    nodes: [`node_modules/${name}`],
     fixAvailable: false,
   };
 }
@@ -80,155 +107,173 @@ describe('npm audit policy', () => {
     );
   });
 
-  it.each(['high', 'critical'] as const)(
-    'fails for an unexpected %s advisory',
-    severity => {
-      const result = runAuditPolicy({
-        'unexpected-package': advisory(
-          'unexpected-package',
-          severity,
-          9_999_999,
-          'GHSA-xxxx-yyyy-zzzz',
-        ),
-      });
+  it('accepts only a complete version 2 report with no production vulnerabilities', () => {
+    const result = runAuditPolicy({});
 
-      expect(result.status).toBe(1);
-      expect(parseStdout(result).actionable).toHaveLength(1);
+    expect(result.status).toBe(0);
+    expect(parseStdout(result)).toEqual({
+      auditReportVersion: 2,
+      actionable: [],
+    });
+  });
+
+  it.each([
+    ['axios', 'high'],
+    ['lodash', 'high'],
+    ['knex', 'high'],
+    ['@hono/node-server', 'moderate'],
+    ['hono', 'moderate'],
+    ['@modelcontextprotocol/sdk', 'moderate'],
+    ['unexpected-package', 'low'],
+  ] as const)('fails for a %s vulnerability with no package exceptions', (name, severity) => {
+    const result = runAuditPolicy({ [name]: advisory(name, severity) });
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(1);
+    expect(output.actionable).toHaveLength(1);
+    expect(output.actionable[0].name).toBe(name);
+    expect(output.actionable[0].severity).toBe(severity);
+    expect(output).not.toHaveProperty('ignored');
+  });
+
+  it('preserves dependency paths, fixes, and direct and propagated advisory evidence', () => {
+    const vulnerability = advisory('example-package', 'critical');
+    vulnerability.via.push('propagated-package');
+    vulnerability.nodes.push('node_modules/parent/node_modules/example-package');
+    vulnerability.fixAvailable = {
+      name: 'example-package',
+      version: '2.0.0',
+      isSemVerMajor: true,
+    };
+
+    const result = runAuditPolicy({ 'example-package': vulnerability });
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(1);
+    expect(output.actionable[0]).toEqual({
+      name: 'example-package',
+      severity: 'critical',
+      via: [
+        {
+          name: 'example-package',
+          source: 9_999_999,
+          url: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
+        },
+        'propagated-package',
+      ],
+      fixAvailable: {
+        name: 'example-package',
+        version: '2.0.0',
+        isSemVerMajor: true,
+      },
+      nodes: [
+        'node_modules/example-package',
+        'node_modules/parent/node_modules/example-package',
+      ],
+    });
+  });
+
+  it.each([
+    null,
+    [],
+    {},
+    { auditReportVersion: 1, vulnerabilities: {} },
+    { auditReportVersion: 2 },
+    { auditReportVersion: 2, vulnerabilities: null },
+    { auditReportVersion: 2, vulnerabilities: [] },
+    { auditReportVersion: 2, vulnerabilities: {} },
+    {
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: 1,
+          critical: 0,
+          total: 1,
+        },
+      },
     },
-  );
-
-  it('fails for an unexpected advisory on an otherwise excepted package', () => {
-    const result = runAuditPolicy({
-      axios: advisory('axios', 'high', 9_999_998, 'GHSA-neww-advi-sory'),
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('axios');
-  });
-
-  it.each([
-    ['uuid', 1_116_970, 'GHSA-w5hq-g745-h8pq'],
-    ['qs', 1_119_502, 'GHSA-q8mj-m7cp-5q26'],
-    ['axios', 1_119_667, 'GHSA-pjwm-pj3p-43mv'],
-  ] as const)('no longer suppresses the remediated %s advisory', (name, source, ghsa) => {
-    const result = runAuditPolicy({
-      [name]: advisory(name, 'high', source, ghsa),
-    });
+    {
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: 0,
+          critical: 0,
+          total: 1,
+        },
+      },
+    },
+  ])('fails closed for an incomplete or malformed audit report: %p', report => {
+    const result = runAuditReport(report);
 
     expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe(name);
-  });
-
-  it('retains the source-scoped exception for blocked lodash advisories', () => {
-    const result = runAuditPolicy({
-      lodash: advisory('lodash', 'high', 1_115_806, 'GHSA-r5fr-rjxr-66jc'),
-    });
-
-    expect(result.status).toBe(0);
-    expect(parseStdout(result).ignored[0].name).toBe('lodash');
-  });
-
-  it.each([
-    [1_123_882, 'GHSA-42h9-826w-cgv3'],
-    [1_123_884, 'GHSA-xj6q-8x83-jv6g'],
-    [1_123_885, 'GHSA-pmv8-rq9r-6j72'],
-    [1_123_957, 'GHSA-jqh4-m9w3-8hp9'],
-    [1_123_959, 'GHSA-mmx7-hfxf-jppx'],
-    [1_123_961, 'GHSA-f4gw-2p7v-4548'],
-    [1_123_967, 'GHSA-gcfj-64vw-6mp9'],
-    [1_123_969, 'GHSA-hcpx-6fm6-wx23'],
-    [1_123_971, 'GHSA-7q8q-rj6j-mhjq'],
-    [1_123_973, 'GHSA-mwf2-3pr3-8698'],
-  ] as const)('retains the source-scoped axios exception for %s', (source, ghsa) => {
-    const result = runAuditPolicy({
-      axios: advisory('axios', 'high', source, ghsa),
-    });
-
-    expect(result.status).toBe(0);
-    expect(parseStdout(result).ignored[0].name).toBe('axios');
-  });
-
-  it('does not suppress a mixed known and unexpected axios advisory set', () => {
-    const axiosVulnerability = advisory(
-      'axios',
-      'high',
-      1_123_882,
-      'GHSA-42h9-826w-cgv3',
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain(
+      'npm audit report is not a complete version 2 vulnerability report',
     );
-    axiosVulnerability.via.push({
-      name: 'axios',
-      source: 9_999_996,
-      url: 'https://github.com/advisories/GHSA-neww-mixe-sory',
-    });
-    const result = runAuditPolicy({ axios: axiosVulnerability });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('axios');
   });
 
-  it('does not suppress an approved axios advisory on a new dependency path', () => {
-    const result = runAuditPolicy({
-      axios: advisory('axios', 'high', 1_123_882, 'GHSA-42h9-826w-cgv3', [
-        'node_modules/unexpected-package/node_modules/axios',
-      ]),
-    });
+  it('treats a malformed vulnerability entry as actionable', () => {
+    const result = runAuditPolicy({ 'malformed-package': null });
 
     expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('axios');
+    expect(parseStdout(result).actionable[0]).toEqual({
+      name: 'malformed-package',
+      severity: 'unknown',
+      via: [],
+      fixAvailable: null,
+      nodes: [],
+    });
   });
 
-  it.each([
-    [1_120_311, 'GHSA-jxxr-4gwj-5jf2'],
-    [1_123_898, 'GHSA-3jxr-9vmj-r5cp'],
-    [1_124_334, 'GHSA-mh99-v99m-4gvg'],
-  ] as const)(
-    'does not suppress the remediated brace-expansion advisory %s',
-    (source, ghsa) => {
-      const result = runAuditPolicy({
-        'brace-expansion': advisory('brace-expansion', 'high', source, ghsa, [
-          'vendor/minimatch-9.0.7/node_modules/brace-expansion',
-        ]),
-      });
+  it.each(['.github/workflows/ci-cd.yml', '.github/workflows/arcanos-release.yml'])(
+    'requires both npm and policy success in %s',
+    workflowPath => {
+      const workflow = readFileSync(
+        path.join(repositoryRoot, workflowPath),
+        'utf8',
+      );
 
-      expect(result.status).toBe(1);
-      expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
+      expect(workflow).toContain('audit_exit=0');
+      expect(workflow).toContain('|| audit_exit=$?');
+      expect(workflow).toContain('policy_exit=0');
+      expect(workflow).toContain('|| policy_exit=$?');
+      expect(workflow).toContain('audit_exit != 0 || policy_exit != 0');
+      expect(workflow).not.toMatch(/npm audit[^\n]*\|\|\s*true/);
     },
   );
 
-  it('does not suppress an approved brace-expansion advisory on a production node', () => {
-    const result = runAuditPolicy({
-      'brace-expansion': advisory(
-        'brace-expansion',
-        'high',
-        1_120_311,
-        'GHSA-jxxr-4gwj-5jf2',
-      ),
-    });
+  it.each(['.github/workflows/ci-cd.yml', '.github/workflows/arcanos-release.yml'])(
+    'pins Python audit tooling and has no vulnerability ignores in %s',
+    workflowPath => {
+      const workflow = readFileSync(
+        path.join(repositoryRoot, workflowPath),
+        'utf8',
+      );
 
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
-  });
-
-  it('does not suppress an unexpected brace-expansion advisory on the vendor node', () => {
-    const result = runAuditPolicy({
-      'brace-expansion': advisory(
-        'brace-expansion',
-        'high',
-        9_999_997,
-        'GHSA-neww-brac-sory',
-        ['vendor/minimatch-9.0.7/node_modules/brace-expansion'],
-      ),
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
-  });
+      expect(workflow).toContain('"pip-audit==2.10.1"');
+      expect(workflow).toMatch(
+        /python -m pip_audit(?:\s*\\)?\s+--requirement daemon-python\/requirements\.txt/,
+      );
+      expect(workflow).not.toContain('--ignore-vuln');
+    },
+  );
 
   it('locks the vendored brace-expansion patch to its immutable commit', () => {
     const expectedDependency =
       'git+https://github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59';
     const vendorPackage = JSON.parse(
-      readFileSync(path.join(repositoryRoot, 'vendor/minimatch-9.0.7/package.json'), 'utf8'),
+      readFileSync(
+        path.join(repositoryRoot, 'vendor/minimatch-9.0.7/package.json'),
+        'utf8',
+      ),
     );
     const packageLock = JSON.parse(
       readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
@@ -245,126 +290,5 @@ describe('npm audit policy', () => {
     expect(lockedBraceExpansion.resolved).toContain(
       'github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59',
     );
-  });
-
-  it('retains source- and node-scoped exceptions for the unpublished Hono builds', () => {
-    const hono = advisory('hono', 'moderate', 1_124_005, 'GHSA-xgm2-5f3f-mvvc');
-    hono.via.push(
-      {
-        name: 'hono',
-        source: 1_124_009,
-        url: 'https://github.com/advisories/GHSA-hvrm-45r6-mjfj',
-      },
-      {
-        name: 'hono',
-        source: 1_124_010,
-        url: 'https://github.com/advisories/GHSA-w62v-xxxg-mg59',
-      },
-    );
-
-    const honoNodeServer = advisory(
-      '@hono/node-server',
-      'moderate',
-      1_124_006,
-      'GHSA-frvp-7c67-39w9',
-    );
-    honoNodeServer.via.push('hono');
-
-    const result = runAuditPolicy({
-      '@hono/node-server': honoNodeServer,
-      hono,
-      '@modelcontextprotocol/sdk': {
-        severity: 'moderate',
-        via: ['@hono/node-server', 'hono'],
-        nodes: ['node_modules/@modelcontextprotocol/sdk'],
-        fixAvailable: false,
-      },
-    });
-
-    expect(result.status).toBe(0);
-    expect(parseStdout(result).ignored.map((entry: { name: string }) => entry.name)).toEqual(
-      expect.arrayContaining(['@hono/node-server', 'hono', '@modelcontextprotocol/sdk']),
-    );
-  });
-
-  it('does not suppress an unexpected Hono advisory', () => {
-    const result = runAuditPolicy({
-      hono: advisory('hono', 'moderate', 9_999_995, 'GHSA-neww-hono-sory'),
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('hono');
-  });
-
-  it('does not suppress a mixed known and unexpected node-server advisory set', () => {
-    const nodeServer = advisory(
-      '@hono/node-server',
-      'moderate',
-      1_124_006,
-      'GHSA-frvp-7c67-39w9',
-    );
-    nodeServer.via.push({
-      name: '@hono/node-server',
-      source: 9_999_994,
-      url: 'https://github.com/advisories/GHSA-neww-node-sory',
-    });
-    const result = runAuditPolicy({ '@hono/node-server': nodeServer });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('@hono/node-server');
-  });
-
-  it('does not suppress an approved node-server advisory on a new dependency path', () => {
-    const result = runAuditPolicy({
-      '@hono/node-server': advisory(
-        '@hono/node-server',
-        'moderate',
-        1_124_006,
-        'GHSA-frvp-7c67-39w9',
-        ['node_modules/unexpected-package/node_modules/@hono/node-server'],
-      ),
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('@hono/node-server');
-  });
-
-  it('does not suppress an approved Hono advisory on a new dependency path', () => {
-    const result = runAuditPolicy({
-      hono: advisory('hono', 'moderate', 1_124_005, 'GHSA-xgm2-5f3f-mvvc', [
-        'node_modules/unexpected-package/node_modules/hono',
-      ]),
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('hono');
-  });
-
-  it('does not suppress a new vulnerability propagated through the MCP SDK', () => {
-    const result = runAuditPolicy({
-      '@modelcontextprotocol/sdk': {
-        severity: 'high',
-        via: ['unexpected-package'],
-        nodes: ['node_modules/@modelcontextprotocol/sdk'],
-        fixAvailable: false,
-      },
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('@modelcontextprotocol/sdk');
-  });
-
-  it('does not suppress the approved MCP Hono graph on a new SDK node', () => {
-    const result = runAuditPolicy({
-      '@modelcontextprotocol/sdk': {
-        severity: 'moderate',
-        via: ['@hono/node-server', 'hono'],
-        nodes: ['node_modules/unexpected-package/node_modules/@modelcontextprotocol/sdk'],
-        fixAvailable: false,
-      },
-    });
-
-    expect(result.status).toBe(1);
-    expect(parseStdout(result).actionable[0].name).toBe('@modelcontextprotocol/sdk');
   });
 });
