@@ -174,11 +174,16 @@ describe('ARCANOS release workflow safety', () => {
     expect(resolve.indexOf('cp scripts/check-npm-audit.js')).toBeLessThan(
       resolve.indexOf('git checkout --detach "$commit_sha"'),
     );
-    expect(nodeAudit).toContain('report.auditReportVersion !== 2');
+    expect(nodeAudit).toContain('audit_exit=0');
+    expect(nodeAudit).toContain('|| audit_exit=$?');
+    expect(nodeAudit).toContain('policy_exit=0');
     expect(nodeAudit).toContain('node "$AUDIT_POLICY_PATH" npm-audit.json');
+    expect(nodeAudit).toContain('|| policy_exit=$?');
+    expect(nodeAudit).toContain('audit_exit != 0 || policy_exit != 0');
     expect(nodeAudit).not.toMatch(/npm audit[^\n]*\|\|\s*echo/);
     expect(pythonAudit).toContain('"pip-audit==2.10.1"');
-    expect(pythonAudit).toContain('--ignore-vuln CVE-2026-4539');
+    expect(pythonAudit).toContain('--requirement daemon-python/requirements.txt');
+    expect(pythonAudit).not.toContain('--ignore-vuln');
     expect(install.trim()).toBe('npm ci --ignore-scripts');
     expect(prismaGeneration.trim()).toBe(
       'node node_modules/@prisma/client/scripts/postinstall.js',

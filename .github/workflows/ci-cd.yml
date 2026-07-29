@@ -253,30 +253,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔒 Run npm security audit
+        shell: bash
         run: |
-          # GHSA-r5fr-rjxr-66jc and GHSA-f23m-r3pf-42rh are currently reported
-          # against transitive `lodash` via `knex`, and GHSA-r4q5-vmmm-2653 is
-          # currently reported against transitive `follow-redirects` via `axios`,
-          # but no remediated npm release is available yet on the published
-          # dependency lines. GHSA-8r9q-7v3j-jr4g and GHSA-345p-7cg4-v4c7 are
-          # reported against the MCP SDK, but this service does not expose MCP
-          # resource templates and it builds a fresh HTTP server/transport pair
-          # per request, so those code paths are not in use here.
-          # The 2026-07-21 Hono advisories require npm builds that are not yet
-          # published; their source tags omit required `dist` exports. ARCANOS
-          # uses none of the affected Hono static/AWS/JSX paths, so the policy
-          # script temporarily scopes those findings by advisory id and node.
-          # The high-severity fast-uri advisories are fixed by the pinned 3.1.4
-          # upstream tag rather than suppressed.
-          # GHSA-w5hq-g745-h8pq is currently reported against `uuid` and
-          # transitive `uuid` via `bullmq`; the audit-reported fixed uuid@14.0.0
-          # is not published, this service does not call uuid directly, and
-          # BullMQ's bundled usage is limited to v4() queue/worker ids. Keep the
-          # audit active while suppressing only these known upstream/inapplicable
-          # advisories so CI still fails on any newly actionable production
-          # vulnerability.
-          npm audit --omit=dev --json > npm-audit.json || true
-          node scripts/check-npm-audit.js npm-audit.json
+          set -euo pipefail
+          audit_exit=0
+          npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
+          policy_exit=0
+          node scripts/check-npm-audit.js npm-audit.json || policy_exit=$?
+
+          if (( audit_exit != 0 || policy_exit != 0 )); then
+            echo "Production npm audit failed (npm=$audit_exit policy=$policy_exit)" >&2
+            exit 1
+          fi
 
       - name: 📜 License compliance check
         run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0"
@@ -288,11 +276,8 @@ jobs:
 
       - name: 🔒 Run Python dependency audit
         run: |
-          pip install pip-audit
-          # CVE-2026-4539 is currently reported against transitive `pygments` with no
-          # published fix version. Keep the audit active while suppressing only this
-          # unfixed advisory so CI still catches newly remediable issues.
-          pip-audit --ignore-vuln CVE-2026-4539 -r daemon-python/requirements.txt
+          python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
+          python -m pip_audit --requirement daemon-python/requirements.txt
 
   sdk-compliance-audit:
     name: Convergence Gate

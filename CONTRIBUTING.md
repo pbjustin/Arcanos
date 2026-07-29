@@ -10,7 +10,7 @@ OpenAI integrations are adapter-first and centralized. New runtime code should n
 
 ## Prerequisites
 - Git
-- Node.js 20.19.0 recommended; current dependencies require Node 20.18.1+ despite the older root `engines` floor. npm 8+.
+- Node.js 20.19.0 recommended; supported floor is Node 20.18.1. npm 8+.
 - Optional: Python 3.10+ for daemon changes
 
 ## Quick Start (Full Stack)
