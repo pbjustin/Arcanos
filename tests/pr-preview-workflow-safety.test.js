@@ -39,6 +39,9 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain("OPENAI_API_KEY: 'mock-api-key'");
     expect(workflow).toContain("FORCE_MOCK: 'true'");
     expect(workflow).toContain("OPENAI_BASE_URL: 'http://127.0.0.1:9/v1'");
+    expect(workflow).toContain(
+      'export ARCANOS_JOB_READ_CAPABILITY_SECRET=ci-job-read-capability-key-for-local-workflow-only'
+    );
   });
 
   it('keeps pull-request API endpoint startup isolated from providers', () => {
