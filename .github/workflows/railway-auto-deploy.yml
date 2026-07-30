@@ -42,13 +42,13 @@ jobs:
 
     steps:
       - name: Checkout rollout policy
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ env.DEPLOY_REF }}
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20.19.0'
 
@@ -74,35 +74,62 @@ jobs:
       cancel-in-progress: true
     env:
       DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ env.DEPLOY_REF }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20.19.0'
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - name: Install verified Railway CLI
+        shell: bash
+        env:
+          RAILWAY_CLI_VERSION: '4.30.2'
+          RAILWAY_CLI_ARCHIVE_SHA256: e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000
+        run: |
+          set -euo pipefail
+
+          archive="${RUNNER_TEMP}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          bin_dir="${RUNNER_TEMP}/railway-cli-${RAILWAY_CLI_VERSION}"
+          download_url="https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --tlsv1.2 \
+            "${download_url}" \
+            --output "${archive}"
+
+          printf '%s  %s\n' "${RAILWAY_CLI_ARCHIVE_SHA256}" "${archive}" |
+            sha256sum --check --strict
+
+          mkdir -p "${bin_dir}"
+          tar -xzf "${archive}" -C "${bin_dir}"
+          chmod 0755 "${bin_dir}/railway"
+
+          actual_version="$("${bin_dir}/railway" --version)"
+          expected_version="railway ${RAILWAY_CLI_VERSION}"
+          test "${actual_version}" = "${expected_version}"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
 
       - name: Validate deploy configuration
         id: deploy_config
+        env:
+          RAILWAY_PROJECT_TOKEN_CONFIGURED: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN != '' }}
         run: |
           set -euo pipefail
           missing_fields=()
 
           # //audit Assumption: repo-connected Railway deploys may already handle production promotion; failure risk: this workflow fails red on every main push when optional GitHub-side Railway credentials are intentionally unset; expected invariant: workflow_run auto-deploy only executes when all Railway credentials are configured; handling strategy: record missing configuration and skip auto mode cleanly while preserving manual-dispatch failures.
-          if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            missing_fields+=("RAILWAY_TOKEN")
+          if [ "${RAILWAY_PROJECT_TOKEN_CONFIGURED}" != "true" ]; then
+            missing_fields+=("RAILWAY_PRODUCTION_PROJECT_TOKEN")
           fi
 
           # //audit Assumption: project and service identifiers are required only for GitHub-driven Railway CLI deploys; failure risk: redundant automation path blocks branch protection even though Railway repo deploy already shipped; expected invariant: missing identifiers are surfaced explicitly; handling strategy: aggregate missing identifiers into one decision output.
@@ -146,6 +173,8 @@ jobs:
 
       - name: Verify Railway deploy access
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
           # //audit Assumption: GitHub Actions may use a project-scoped Railway token instead of a user-scoped account token; failure risk: `railway whoami` rejects valid deploy credentials and blocks automated deploys; expected invariant: the configured token can read project-scoped service state before deploy; handling strategy: probe service variables with the target service/environment pair.
@@ -156,6 +185,8 @@ jobs:
 
       - name: Deploy to Railway
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -168,6 +199,8 @@ jobs:
 
       - name: Wait for deployment success
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -200,9 +233,11 @@ jobs:
 
       - name: Post-deploy watchdog/budget regression check
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
-          npm run railway:alert:timeouts -- \
+          node scripts/check-railway-timeout-regressions.js \
             --since 15m \
             --lines 500 \
             --fail-on-budget-abort \

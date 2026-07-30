@@ -25,7 +25,9 @@ Core workflows to review first:
 Common secrets referenced in workflows:
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 - `OPENAI_API_KEY`
-- `RAILWAY_TOKEN` (for workflows that deploy through Railway CLI/actions)
+- `RAILWAY_PRODUCTION_PROJECT_TOKEN` (a Railway project token dedicated to the
+  exact production project/environment used by the automatic deployment
+  workflow; do not substitute an account/workspace API token)
 - `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` (dedicated token scoped only
   to the pinned Railway workspace and used only by the trusted
   disposable-environment cleanup workflow; do not substitute an account-wide
@@ -146,6 +148,29 @@ job before it creates the concurrent production deployment job. The
   concurrency.
 - The exact sentinel `none` restores normal automatic promotion. Missing, blank,
   whitespace-padded, or malformed values fail closed.
+
+Both jobs use reviewed immutable commits for `actions/checkout` and
+`actions/setup-node`. The deployment job downloads the Railway CLI `4.30.2`
+GNU archive directly from its immutable upstream release, verifies SHA-256
+`e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`
+before extraction, and rejects any version output other than
+`railway 4.30.2`.
+
+The workflow maps `RAILWAY_PRODUCTION_PROJECT_TOKEN` to the CLI-standard
+`RAILWAY_TOKEN` only on the access probe, deployment, status polling, and
+post-deploy log-check steps. Checkout, Node setup, CLI acquisition, and
+configuration validation do not receive the credential; validation receives
+only a configured/unconfigured boolean. The post-deploy check invokes its
+checked-in Node entry point directly so npm lifecycle hooks do not inherit the
+token. Before enabling or manually dispatching this workflow, independently
+verify that the stored secret is a project token for the intended production
+project/environment. Source code cannot prove provider-side token scope.
+
+These supply-chain controls do not resolve the deployment checkout's persisted
+read-only GitHub credential or create a protected GitHub production
+environment. Checkout credential persistence and a
+single-maintainer-compatible protected-environment topology remain separate
+defense-in-depth and repository-settings decisions.
 
 The active `20260727-dag-snapshot-generation-v1` hold protects the coordinated
 DAG snapshot-generation migration. A deliberate `workflow_dispatch` may pass it

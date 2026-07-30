@@ -147,6 +147,23 @@ CLI deployment when its Railway credentials or identifiers are absent.
 Repository-connected Railway deployment and current web/worker service coverage
 are environment-dependent and must be confirmed separately.
 
+GitHub must provide `RAILWAY_PRODUCTION_PROJECT_TOKEN` as a Railway project
+token dedicated to the exact production project/environment; an
+account/workspace API token is not an acceptable substitute. The workflow
+exposes that secret as `RAILWAY_TOKEN` only to its access probe, deployment,
+status polling, and post-deploy log-check steps. All reusable Actions are
+commit-pinned. Railway CLI `4.30.2` is downloaded from the exact upstream GNU
+release archive, verified against SHA-256
+`e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`
+before extraction, and checked for exact version output before use.
+
+Provider-side token scope must be verified independently before this path is
+enabled or dispatched; tracked workflow code cannot inspect that scope safely.
+The deploy checkout's persisted read-only GitHub credential and a feasible
+protected GitHub environment/approval topology are separate defense-in-depth
+and repository-settings decisions, not guarantees provided by these workflow
+controls.
+
 The workflow also runs a repository-owned coordinated-writer policy before the
 production deployment job can enter its concurrency group. While
 `ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` contains the active
