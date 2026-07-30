@@ -139,7 +139,10 @@ function projectWorkersPublicHealth(
       active: runtime.workerIds.length,
       observed: payload.totalWorkers,
       stale: null,
-      degraded: overallStatus === 'warning' ? unavailableWorkers : 0,
+      degraded:
+        overallStatus === 'warning' || overallStatus === 'degraded'
+          ? unavailableWorkers
+          : 0,
       unhealthy: overallStatus === 'critical' ? unavailableWorkers : 0,
       lastHeartbeatAt: null
     }

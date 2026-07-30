@@ -1,9 +1,12 @@
 import express from 'express';
+import fs, * as fsModule from 'node:fs';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getWorkerRuntimeStatusMock = jest.fn();
 const summarizeAutoHealMock = jest.fn();
+const existsSyncMock = jest.fn();
+const readdirSyncMock = jest.fn();
 
 const JOB_UUID_SENTINEL = '223e4567-e89b-42d3-a456-426614174000';
 const PROMPT_SENTINEL = 'WORKERS_STATUS_PROMPT_SENTINEL';
@@ -11,6 +14,17 @@ const RESULT_SENTINEL = 'WORKERS_STATUS_RESULT_SENTINEL';
 const ERROR_SENTINEL = 'WORKERS_STATUS_ERROR_SENTINEL';
 const ABSOLUTE_PATH_SENTINEL =
   'C:\\private\\arcanos\\WORKERS_STATUS_ABSOLUTE_PATH_SENTINEL';
+
+jest.unstable_mockModule('fs', () => ({
+  ...fsModule,
+  default: {
+    ...fs,
+    existsSync: existsSyncMock,
+    readdirSync: readdirSyncMock,
+  },
+  existsSync: existsSyncMock,
+  readdirSync: readdirSyncMock,
+}));
 
 jest.unstable_mockModule('@platform/runtime/workerPaths.js', () => ({
   resolveWorkersDirectory: () => ({ path: ABSOLUTE_PATH_SENTINEL }),
@@ -61,6 +75,8 @@ function collectObjectKeys(value: unknown): string[] {
 describe('GET /workers/status public projection', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    existsSyncMock.mockReturnValue(false);
+    readdirSyncMock.mockReturnValue([]);
     getWorkerRuntimeStatusMock.mockReturnValue({
       enabled: true,
       model: 'WORKERS_STATUS_MODEL_SENTINEL',
@@ -132,6 +148,43 @@ describe('GET /workers/status public projection', () => {
         'lastError',
         'workersDirectory',
       ])
+    );
+  });
+
+  it('counts unavailable workers when runtime fallback health is degraded', async () => {
+    existsSyncMock.mockReturnValue(true);
+    readdirSyncMock.mockReturnValue(['unavailable-worker.js']);
+    getWorkerRuntimeStatusMock.mockReturnValue({
+      enabled: true,
+      model: 'WORKERS_STATUS_MODEL_SENTINEL',
+      configuredCount: 1,
+      maxActiveWorkers: 1,
+      surgeWorkerCount: 0,
+      started: false,
+      dispatcherStarted: false,
+      activeListeners: 0,
+      workerIds: [],
+      totalDispatched: 0,
+    });
+    summarizeAutoHealMock.mockReturnValue(undefined);
+
+    const response = await request(buildApp()).get('/workers/status');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        status: 'degraded',
+        overallStatus: 'degraded',
+        totalWorkers: 1,
+        availableWorkers: 0,
+        workers: expect.objectContaining({
+          status: 'degraded',
+          total: 1,
+          available: 0,
+          degraded: 1,
+          unhealthy: 0,
+        }),
+      })
     );
   });
 });
