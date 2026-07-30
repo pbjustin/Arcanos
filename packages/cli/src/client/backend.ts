@@ -93,6 +93,7 @@ export interface InvokeGptJobLookupActionOptions {
   baseUrl: string;
   gptId: string;
   jobId: string;
+  jobReadToken?: string;
   headers?: Record<string, string>;
   fetchFn?: typeof fetch;
 }
@@ -108,6 +109,7 @@ export interface InvokeGptDiagnosticsOptions {
 export interface FetchGptJobResultOptions {
   baseUrl: string;
   jobId: string;
+  jobReadToken?: string;
   headers?: Record<string, string>;
   fetchFn?: typeof fetch;
 }
@@ -115,6 +117,7 @@ export interface FetchGptJobResultOptions {
 export interface FetchGptJobStatusOptions {
   baseUrl: string;
   jobId: string;
+  jobReadToken?: string;
   headers?: Record<string, string>;
   fetchFn?: typeof fetch;
 }
@@ -131,6 +134,9 @@ const DEFAULT_BACKEND_GPT_ID =
   "arcanos-daemon";
 const GPT_ACCESS_TOKEN_ENV_NAME = "ARCANOS_GPT_ACCESS_TOKEN";
 const CONTROL_PLANE_ACCESS_TOKEN_ENV_NAME = "ARCANOS_CONTROL_PLANE_ACCESS_TOKEN";
+const JOB_READ_TOKEN_ENV_NAME = "ARCANOS_JOB_READ_TOKEN";
+const JOB_READ_TOKEN_HEADER_NAME = "x-arcanos-job-read-token";
+const JOB_READ_TOKEN_PATTERN = /^v1\.[A-Za-z0-9_-]{43}$/u;
 const MIN_CONTROL_PLANE_ACCESS_TOKEN_LENGTH = 32;
 const MAX_CONTROL_PLANE_ACCESS_TOKEN_LENGTH = 4_096;
 
@@ -465,6 +471,7 @@ export async function getGptRouteJobStatus(
   return getJobStatus({
     baseUrl: options.baseUrl,
     jobId: options.jobId,
+    jobReadToken: options.jobReadToken,
     headers: options.headers,
     fetchFn: options.fetchFn
   });
@@ -476,6 +483,7 @@ export async function getGptRouteJobResult(
   return getJobResult({
     baseUrl: options.baseUrl,
     jobId: options.jobId,
+    jobReadToken: options.jobReadToken,
     headers: options.headers,
     fetchFn: options.fetchFn
   });
@@ -499,7 +507,13 @@ export async function getJobStatus(
   options: FetchGptJobStatusOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers, options.fetchFn);
+  const payload = await getJson(
+    options.baseUrl,
+    `/jobs/${encodedJobId}`,
+    buildJobReadHeaders(options.headers, options.jobReadToken),
+    options.fetchFn,
+    { redirect: "error" }
+  );
   return normalizeGptAsyncBridgePayload(payload, "get_status");
 }
 
@@ -512,7 +526,13 @@ export async function getJobResult(
   options: FetchGptJobResultOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers, options.fetchFn);
+  const payload = await getJson(
+    options.baseUrl,
+    `/jobs/${encodedJobId}/result`,
+    buildJobReadHeaders(options.headers, options.jobReadToken),
+    options.fetchFn,
+    { redirect: "error" }
+  );
   return normalizeGptAsyncBridgePayload(payload, "get_result");
 }
 
@@ -658,6 +678,29 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
 }
 
+function buildJobReadHeaders(
+  extraHeaders: Record<string, string> = {},
+  explicitToken?: string
+): Record<string, string> {
+  const headers = { ...extraHeaders };
+  if (hasHeader(headers, JOB_READ_TOKEN_HEADER_NAME)) {
+    return headers;
+  }
+
+  const token = explicitToken?.trim()
+    || process.env[JOB_READ_TOKEN_ENV_NAME]?.trim();
+  if (!token || !JOB_READ_TOKEN_PATTERN.test(token)) {
+    throw new Error(
+      `${JOB_READ_TOKEN_ENV_NAME} or an explicit jobReadToken is required for generic job reads.`
+    );
+  }
+
+  return {
+    ...headers,
+    [JOB_READ_TOKEN_HEADER_NAME]: token
+  };
+}
+
 function buildGptAccessHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
   const headers = { ...extraHeaders };
   if (hasHeader(headers, "authorization")) {
@@ -767,10 +810,12 @@ async function getJson(
   baseUrl: string,
   pathname: string,
   extraHeaders: Record<string, string> = {},
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  requestInit: Pick<RequestInit, "redirect"> = {}
 ): Promise<Record<string, unknown>> {
   const response = await fetchFn(new URL(pathname, withTrailingSlash(baseUrl)), {
-    headers: extraHeaders
+    headers: extraHeaders,
+    ...requestInit
   });
   const payload = await readResponsePayload(response);
   if (!response.ok) {

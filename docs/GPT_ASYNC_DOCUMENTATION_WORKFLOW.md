@@ -13,16 +13,54 @@ Canonical async response shape:
   "jobId": "job-id",
   "poll": "/jobs/job-id/result",
   "stream": "/jobs/job-id/stream",
+  "jobReadToken": "v1.<job-specific-signature>",
+  "jobReadTokenHeader": "x-arcanos-job-read-token",
   "timedOut": true
 }
 ```
 
 ## Job Polling Contract
-Poll `GET /jobs/:id/result` until the status is terminal. `completed` is successful only when the result is not degraded. `failed`, `cancelled`, `expired`, and `not_found` are terminal failures.
+Canonical route rule: send the creation response's `jobReadToken` only in
+`x-arcanos-job-read-token` (never in the URL). Poll
+`GET /jobs/:id/result` until the status is terminal, sending exactly one such
+header on every request. The same capability is required by `GET /jobs/:id` and
+`GET /jobs/:id/stream`; it is bound to that job id and is not accepted from a
+query parameter, cookie, or request body. Treat it as a bearer secret.
+`completed` is successful only when the result is not degraded. `failed`,
+`cancelled`, `expired`, and `not_found` are terminal failures.
 
-Clients must bound total polling time and use a capped interval/backoff. Missing `jobId` on a queued, running, or timed-out acknowledgement is a client-visible protocol error because there is no safe canonical job to poll.
+Clients must bound total polling time and use a capped interval/backoff.
+Missing `jobId`, `jobReadToken`, or the fixed `jobReadTokenHeader` on a queued,
+running, or timed-out acknowledgement is a client-visible protocol error
+because there is no safe canonical job to poll. All job-backed creation and
+generic read responses are `no-store`; the SSE stream also uses `no-cache` and
+`no-transform`.
 
-Repository-unavailable HTTP `503` responses are not `not_found`. Retain any accepted `jobId`, `poll`, and `stream` coordinates and retry the same lookup with bounded backoff; do not submit replacement work solely because durable status storage is temporarily unavailable. A post-enqueue GPT wait failure uses `ASYNC_GPT_JOBS_UNAVAILABLE`, while direct job routes use `JOB_REPOSITORY_UNAVAILABLE`.
+Generic reads expose only `gpt` and `ask` job types. Missing, malformed,
+duplicated, incorrect, and cross-job capabilities are concealed like an absent
+job: status and stream return `404`, while result retains its compatible HTTP
+`200` `status: "not_found"` envelope.
+
+Repository-unavailable HTTP `503` responses are not `not_found`. Retain any
+accepted `jobId`, `poll`, `stream`, `jobReadToken`, and
+`jobReadTokenHeader` fields and retry the same lookup with bounded backoff; do
+not submit replacement work solely because durable status storage is
+temporarily unavailable. A post-enqueue GPT wait failure uses
+`ASYNC_GPT_JOBS_UNAVAILABLE`, while direct job routes use
+`JOB_REPOSITORY_UNAVAILABLE`.
+
+Job-backed creation fails with `JOB_READ_AUTH_UNAVAILABLE` when the server's
+current `ARCANOS_JOB_READ_CAPABILITY_SECRET` is absent or invalid. New tokens
+use only that current key. Reads fail with the same code only when neither the
+current key nor the distinct optional
+`ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` is valid for verification.
+Deploy the old key as previous with the new current key, then remove it after
+the retained-job window drains; changing the current key without that overlap
+immediately invalidates outstanding job-read tokens.
+
+`POST /jobs/:id/cancel` accepts the same job-specific capability but also
+requires confirmation and authenticated actor ownership. Never treat a token
+as sufficient mutation authority.
 
 ## Degraded Pipeline Fallback
 ARCANOS core can return a completed job that is degraded fallback output after a pipeline timeout. Documentation generation must not treat that output as usable.

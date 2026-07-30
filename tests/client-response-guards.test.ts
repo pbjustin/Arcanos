@@ -713,6 +713,44 @@ describe('client response guards', () => {
     });
   });
 
+  it('preserves async job read capability metadata when a route envelope is truncated', () => {
+    const jobReadToken = `v1.${'E'.repeat(43)}`;
+    const prepared = prepareBoundedClientJsonPayload({
+      ok: true,
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      jobId: '11111111-1111-4111-8111-111111111111',
+      poll: '/jobs/11111111-1111-4111-8111-111111111111/result',
+      stream: '/jobs/11111111-1111-4111-8111-111111111111/stream',
+      jobReadToken,
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
+      result: 'x'.repeat(10_000),
+      _route: {
+        requestId: 'req-async-truncated',
+        gptId: 'arcanos-core',
+        route: 'core',
+        timestamp: '2026-07-29T00:00:00.000Z',
+      },
+    }, {
+      maxBytes: 2048,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
+    expect(prepared.payload).toMatchObject({
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      jobId: '11111111-1111-4111-8111-111111111111',
+      poll: '/jobs/11111111-1111-4111-8111-111111111111/result',
+      stream: '/jobs/11111111-1111-4111-8111-111111111111/stream',
+      jobReadToken,
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
+      result: expect.stringContaining('[truncated]'),
+    });
+  });
+
   it('preserves a structured Gaming result when a Gaming response is truncated', () => {
     const prepared = prepareBoundedClientJsonPayload({
       ok: true,

@@ -26,8 +26,18 @@ import {
   isGptBridgeSmokeAction,
   type GptBridgeSmokeAction,
 } from '@shared/gpt/bridgeSmoke.js';
-import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
-import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
+import {
+  resolveConfiguredCustomGptBridgeSecret,
+  validateCustomGptBridgeCredential,
+} from '@shared/security/customGptBridgeCredential.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+  JOB_READ_PROVENANCE_UNAVAILABLE_MESSAGE,
+  buildJobReadCapabilityResponseFields,
+  isGenericJobCapabilityEligible,
+  resolveConfiguredJobReadCapabilitySecret,
+  resolveConfiguredPreviousJobReadCapabilitySecret,
+} from '@shared/jobs/jobReadCapability.js';
 import { planAutonomousWorkerJob } from './workerAutonomyService.js';
 import {
   resolveAsyncGptPollIntervalMs,
@@ -99,11 +109,17 @@ export interface BridgeSecretValidationInput {
   env?: NodeJS.ProcessEnv;
 }
 
-export interface BridgeSecretValidationResult {
-  ok: boolean;
-  statusCode: number;
-  body?: Record<string, unknown>;
-}
+export type BridgeSecretValidationResult =
+  | {
+      ok: true;
+      statusCode: 200;
+      actorKey: string;
+    }
+  | {
+      ok: false;
+      statusCode: 401 | 503;
+      body: Record<string, unknown>;
+    };
 
 export interface ExecuteBridgeRequestInput {
   request: CustomGptBridgeRequest;
@@ -127,30 +143,6 @@ interface BridgeTimingInput {
   waitCompletedAtMs?: number;
   job?: JobData | null;
   output?: unknown;
-}
-
-function readRequiredSecret(env: NodeJS.ProcessEnv = process.env): string | null {
-  const value = env.OPENAI_ACTION_SHARED_SECRET?.trim();
-  return value
-    && !hasConfiguredPurposeBoundCredentialCollision({
-      credential: value,
-      ownEnvironmentName: 'OPENAI_ACTION_SHARED_SECRET',
-      readEnvironmentValue: environmentName => env[environmentName],
-    })
-    ? value
-    : null;
-}
-
-function extractBearerToken(authorization?: string | null): string | null {
-  if (!authorization) {
-    return null;
-  }
-  const [scheme, ...rest] = authorization.trim().split(/\s+/u);
-  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {
-    return null;
-  }
-  const token = rest.join(' ').trim();
-  return token ? token : null;
 }
 
 function pollUrl(jobId: string): string {
@@ -512,6 +504,8 @@ function buildPendingPayload(input: {
     }),
     poll: pollUrl(input.job.id),
     stream: pending.stream,
+    jobReadToken: pending.jobReadToken,
+    jobReadTokenHeader: pending.jobReadTokenHeader,
     result: {
       method: 'GET',
       url: resultUrl(input.job.id),
@@ -541,6 +535,7 @@ function buildCompletedPayload(input: {
     jobId: input.job.id,
     poll_url: pollUrl(input.job.id),
     result_url: resultUrl(input.job.id),
+    ...buildJobReadCapabilityResponseFields(input.job.id),
     output: input.output,
     action: input.request.action,
     request_id: input.requestId,
@@ -564,6 +559,8 @@ function buildBridgeErrorPayload(input: {
   message: string;
   requestId?: string;
   jobId?: string;
+  jobReadToken?: string;
+  jobReadTokenHeader?: string;
   timing?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
@@ -575,6 +572,8 @@ function buildBridgeErrorPayload(input: {
     },
     request_id: input.requestId ?? null,
     jobId: input.jobId,
+    jobReadToken: input.jobReadToken,
+    jobReadTokenHeader: input.jobReadTokenHeader,
     timing: input.timing,
   };
 }
@@ -601,8 +600,8 @@ export function getCustomGptBridgeFailureCountersSinceStart(): BridgeFailureCoun
 export function validateCustomGptBridgeSecret(
   input: BridgeSecretValidationInput,
 ): BridgeSecretValidationResult {
-  const expectedSecret = readRequiredSecret(input.env);
-  if (!expectedSecret) {
+  const credentialResult = validateCustomGptBridgeCredential(input);
+  if (!credentialResult.ok && credentialResult.statusCode === 503) {
     return {
       ok: false,
       statusCode: 503,
@@ -613,8 +612,7 @@ export function validateCustomGptBridgeSecret(
       }),
     };
   }
-  const providedSecret = extractBearerToken(input.authorization) ?? input.actionSecret?.trim() ?? null;
-  if (!timingSafeEqualOpaqueSecret(providedSecret, expectedSecret)) {
+  if (!credentialResult.ok) {
     return {
       ok: false,
       statusCode: 401,
@@ -625,7 +623,7 @@ export function validateCustomGptBridgeSecret(
       }),
     };
   }
-  return { ok: true, statusCode: 200 };
+  return credentialResult;
 }
 
 export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeRequestResult {
@@ -681,6 +679,18 @@ export async function executeCustomGptBridgeRequest(
   input: ExecuteBridgeRequestInput,
 ): Promise<ExecuteBridgeRequestResult> {
   const startedAtMs = Date.now();
+  if (!resolveConfiguredJobReadCapabilitySecret()) {
+    return {
+      statusCode: 503,
+      errorSource: 'queue',
+      body: buildBridgeErrorPayload({
+        source: 'queue',
+        status: 'misconfigured',
+        message: JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+        requestId: input.requestId,
+      }),
+    };
+  }
   const internalBody = buildInternalGptBody(input.request);
   const effectiveAction = isGptBridgeSmokeAction(input.request.action)
     ? input.request.action
@@ -694,6 +704,7 @@ export async function executeCustomGptBridgeRequest(
     gptId: input.request.gptId,
     action: idempotencyAction,
     body: buildBridgeIdempotencyBody(internalBody),
+    surface: 'custom-gpt-bridge',
     actorKey: input.actorKey,
     explicitIdempotencyKey,
   });
@@ -730,6 +741,25 @@ export async function executeCustomGptBridgeRequest(
       createOptions: plannedJob,
     });
     const enqueueCompletedAtMs = Date.now();
+    if (!isGenericJobCapabilityEligible(jobResult.job)) {
+      const provenanceError = new Error('Queued GPT job provenance was not public.');
+      logBridgeRequestFailure(input.requestId, 'queue', 503, provenanceError);
+      return {
+        statusCode: 503,
+        errorSource: 'queue',
+        body: buildBridgeErrorPayload({
+          source: 'queue',
+          status: 'queue_error',
+          message: JOB_READ_PROVENANCE_UNAVAILABLE_MESSAGE,
+          requestId: input.requestId,
+          timing: buildBridgeTiming({
+            startedAtMs,
+            enqueueStartedAtMs,
+            enqueueCompletedAtMs,
+          }),
+        }),
+      };
+    }
     const basePendingInput = {
       request: input.request,
       requestId: input.requestId,
@@ -781,7 +811,24 @@ export async function executeCustomGptBridgeRequest(
     } catch (error) {
       input.signal?.throwIfAborted();
       if (!(error instanceof JobRepositoryUnavailableError)) {
-        throw error;
+        const waitCompletedAtMs = Date.now();
+        logBridgeRequestFailure(input.requestId, 'queue', 202, error);
+        return {
+          statusCode: 202,
+          errorSource: 'queue',
+          body: buildPendingPayload({
+            ...basePendingInput,
+            job: jobResult.job,
+            timing: buildBridgeTiming({
+              startedAtMs,
+              enqueueStartedAtMs,
+              enqueueCompletedAtMs,
+              waitStartedAtMs,
+              waitCompletedAtMs,
+              job: jobResult.job,
+            }),
+          }),
+        };
       }
 
       const waitCompletedAtMs = Date.now();
@@ -794,6 +841,7 @@ export async function executeCustomGptBridgeRequest(
           message: DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE,
           requestId: input.requestId,
           jobId: jobResult.job.id,
+          ...buildJobReadCapabilityResponseFields(jobResult.job.id),
           timing: buildBridgeTiming({
             startedAtMs,
             enqueueStartedAtMs,
@@ -858,6 +906,9 @@ export async function executeCustomGptBridgeRequest(
         message: `Queued GPT job ended with state ${completion.state}.`,
         requestId: input.requestId,
         jobId: completion.job?.id ?? jobResult.job.id,
+        ...buildJobReadCapabilityResponseFields(
+          completion.job?.id ?? jobResult.job.id
+        ),
         timing: buildBridgeTiming({
           startedAtMs,
           enqueueStartedAtMs,
@@ -903,7 +954,12 @@ export async function executeCustomGptBridgeRequest(
 export async function buildCustomGptBridgeHealthPayload(requestId: string): Promise<Record<string, unknown>> {
   const defaultGptIdResult = resolveDefaultGptId();
   const defaultGptId = defaultGptIdResult.ok ? defaultGptIdResult.value : null;
-  const bridgeSecretConfigured = Boolean(readRequiredSecret());
+  const bridgeSecretConfigured =
+    Boolean(resolveConfiguredCustomGptBridgeSecret());
+  const jobReadCapabilityConfigured =
+    Boolean(resolveConfiguredJobReadCapabilitySecret());
+  const previousJobReadCapabilityConfigured =
+    Boolean(resolveConfiguredPreviousJobReadCapabilitySecret());
   const failureCounterWindowMs = resolveBridgeFailureCounterWindowMs();
   let databaseHealth: Record<string, unknown>;
   try {
@@ -977,6 +1033,9 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
 
   const missingRequired = [
     bridgeSecretConfigured ? null : 'OPENAI_ACTION_SHARED_SECRET',
+    jobReadCapabilityConfigured
+      ? null
+      : 'ARCANOS_JOB_READ_CAPABILITY_SECRET',
     defaultGptId ? null : 'DEFAULT_GPT_ID',
   ].filter((value): value is string => Boolean(value));
 
@@ -986,6 +1045,12 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
     request_id: requestId,
     env: {
       OPENAI_ACTION_SHARED_SECRET: { configured: bridgeSecretConfigured },
+      ARCANOS_JOB_READ_CAPABILITY_SECRET: {
+        configured: jobReadCapabilityConfigured,
+      },
+      ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET: {
+        configured: previousJobReadCapabilityConfigured,
+      },
       DEFAULT_GPT_ID: {
         configured: process.env.DEFAULT_GPT_ID !== undefined,
         valid: defaultGptIdResult.ok,

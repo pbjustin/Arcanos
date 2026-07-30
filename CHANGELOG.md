@@ -8,6 +8,27 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Changed
 
+- Scoped the trusted worker-diagnostics cleanup credential to the pinned
+  Railway workspace and replaced account-level CLI linking with direct,
+  fail-closed GraphQL environment cleanup.
+- Replaced public worker diagnostics with one allowlist-based aggregate health
+  projection, protected retained failed-job detail with worker operator
+  authentication, and marked worker diagnostics plus generic job streams
+  `no-store`; removed the aggregate queue's reusable last-job locator.
+- Bound generic GPT/Ask job status, result, SSE, and cancellation routes to
+  per-job HMAC capabilities returned at creation, concealed invalid
+  capabilities as missing jobs, retained confirmation plus actor ownership for
+  cancellation, failed creation closed without a current signing key, and
+  added a verification-only previous-key rotation overlap.
+- Isolated GPT idempotency by public, bridge, and protected creation surface,
+  required recognized server-owned provenance before generic capability
+  issuance or reads, validated signing keys at hosted startup, prevented
+  capability-bearing clients from following redirects, and preserved safe
+  `202` continuations after post-persistence failures.
+- Prevented anonymous public GPT retries from reminting an existing job
+  capability by assigning each request a fresh scope; canonicalized Custom GPT
+  bridge and GPT Access ownership to the credential that actually authenticated
+  the request, and made anonymous public GPT jobs non-cancellable.
 - Moved executable module registry ownership out of the legacy route adapter
   into an immutable, single-flight service registry shared by writing dispatch,
   GPT Access, daemon, MCP, introspection, and diagnostics consumers.

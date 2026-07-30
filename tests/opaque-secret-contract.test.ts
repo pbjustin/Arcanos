@@ -19,11 +19,11 @@ const migratedTypeScriptBoundaries = [
   'src/services/bridgeSocket.ts',
   'src/services/controlPlane/approval.ts',
   'src/services/controlPlane/httpAuth.ts',
-  'src/services/customGptBridgeService.ts',
   'src/services/gptAccessGateway.ts',
   'src/services/gptDagBridge.ts',
   'src/services/persistenceManager.ts',
   'src/services/rootDeepDiagnosticsBridge.ts',
+  'src/shared/security/customGptBridgeCredential.ts',
   'src/transport/http/middleware/capabilityGate.ts',
   'src/transport/http/middleware/confirmGate.ts',
 ] as const;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const createJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -11,6 +11,8 @@ const gptFallbackClassifierMock = jest.fn();
 const sleepMock = jest.fn();
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
+const JOB_READ_SECRET = 'ask-route-job-read-capability-secret-1234567890';
+const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
@@ -130,8 +132,14 @@ function buildApp() {
 }
 
 describe('async /brain queue contract', () => {
+  const expectedJobReadFields = {
+    jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+    jobReadTokenHeader: 'x-arcanos-job-read-token'
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.ASK_ROUTE_MODE = 'compat';
     createJobMock.mockResolvedValue({ id: 'job-123' });
     getJobByIdMock.mockResolvedValue(null);
@@ -160,13 +168,15 @@ describe('async /brain queue contract', () => {
     });
 
     expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       ok: true,
       status: 'pending',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
     });
     expect(createJobMock).toHaveBeenCalledWith(
       'api',
@@ -185,6 +195,25 @@ describe('async /brain queue contract', () => {
         priority: 100
       })
     );
+    expect(handleAIErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before async ask persistence when job-read capability configuration is unavailable', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual({
+      error: 'JOB_READ_AUTH_UNAVAILABLE',
+      message: 'Async job reads are temporarily unavailable.'
+    });
+    expect(createJobMock).not.toHaveBeenCalled();
+    expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
 
@@ -270,7 +299,8 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_FAILED',
       message: 'OpenAI upstream timed out',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
     });
   });
 
@@ -293,7 +323,8 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
       message: 'Async ask job completed without a structured output payload.',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
     });
   });
 
@@ -312,7 +343,8 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_MISSING',
       message: 'Async ask job disappeared before completion.',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
     });
   });
 
@@ -333,10 +365,34 @@ describe('async /brain queue contract', () => {
       message:
         'Async ask job status is temporarily unavailable because durable job persistence is unavailable.',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
     });
     expect(JSON.stringify(response.body)).not.toContain('internal ask repository sentinel');
     expect(response.body.error).not.toBe('ASYNC_ASK_JOB_MISSING');
+    expect(createJobMock).toHaveBeenCalledTimes(1);
+    expect(handleAIErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the accepted job continuation after an unexpected polling failure', async () => {
+    const privateWaitSentinel = 'PRIVATE_ASK_WAIT_FAILURE_SENTINEL';
+    getJobByIdMock.mockRejectedValue(new Error(privateWaitSentinel));
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual({
+      ok: true,
+      status: 'pending',
+      jobId: 'job-123',
+      poll: '/jobs/job-123/result',
+      ...expectedJobReadFields
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateWaitSentinel);
     expect(createJobMock).toHaveBeenCalledTimes(1);
     expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
@@ -360,5 +416,13 @@ describe('async /brain queue contract', () => {
     expect(JSON.stringify(response.body)).not.toContain('internal ask create sentinel');
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(handleAIErrorMock).not.toHaveBeenCalled();
+  });
+
+  afterAll(() => {
+    if (originalJobReadSecret === undefined) {
+      delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+    } else {
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = originalJobReadSecret;
+    }
   });
 });

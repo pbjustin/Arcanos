@@ -5,6 +5,9 @@
 
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { buildAuthenticatedCredentialActorKey } from '@shared/security/opaqueSecret.js';
+
+export { buildAuthenticatedCredentialActorKey };
 
 // Input validation schemas
 export interface ValidationRule {
@@ -247,6 +250,37 @@ function fingerprintSecretValue(value: string): string {
 }
 
 /**
+ * Resolve only identity established by trusted middleware or server-owned
+ * request context. Caller-selected sessions, IP addresses, cookies, and raw
+ * Authorization headers are intentionally excluded.
+ */
+export function getRequestEstablishedActorKey(req: Request): string | null {
+  if (isNonEmptyString(req.authenticatedActorKey)) {
+    return req.authenticatedActorKey.trim();
+  }
+
+  if (req.authUser?.id !== undefined) {
+    return `user:${req.authUser.id}`;
+  }
+
+  const operatorActor = isNonEmptyString(req.operatorActor)
+    ? req.operatorActor.trim()
+    : undefined;
+  if (operatorActor) {
+    return `operator:${operatorActor}`;
+  }
+
+  const daemonToken = isNonEmptyString(req.daemonToken)
+    ? req.daemonToken.trim()
+    : undefined;
+  if (daemonToken) {
+    return `daemon:${fingerprintSecretValue(daemonToken)}`;
+  }
+
+  return null;
+}
+
+/**
  * Resolve the best-effort session id carried by the current request.
  * Purpose: allow chat, DAG, and MCP traffic to rate-limit per active session instead of per shared IP.
  * Inputs/outputs: inspects headers, body, and query string for a session identifier and returns it when present.
@@ -336,22 +370,9 @@ export function getRequestActorKey(req: Request): string {
  * authentication rather than to mutable conversational metadata.
  */
 export function getRequestAuthenticatedActorKey(req: Request): string {
-  if (req.authUser?.id !== undefined) {
-    return `user:${req.authUser.id}`;
-  }
-
-  const operatorActor = isNonEmptyString(req.operatorActor)
-    ? req.operatorActor.trim()
-    : undefined;
-  if (operatorActor) {
-    return `operator:${operatorActor}`;
-  }
-
-  const daemonToken = isNonEmptyString(req.daemonToken)
-    ? req.daemonToken.trim()
-    : undefined;
-  if (daemonToken) {
-    return `daemon:${fingerprintSecretValue(daemonToken)}`;
+  const establishedActorKey = getRequestEstablishedActorKey(req);
+  if (establishedActorKey) {
+    return establishedActorKey;
   }
 
   const authorizationHeader = getNormalizedHeader(req, 'authorization');

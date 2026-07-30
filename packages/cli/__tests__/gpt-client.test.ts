@@ -18,6 +18,8 @@ import {
   requestQueryAndWait
 } from "../src/client/backend.js";
 
+const JOB_READ_TOKEN = `v1.${"B".repeat(43)}`;
+
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -260,13 +262,16 @@ describe("GPT route OpenAPI contract and client", () => {
     const payload = await requestGptJobStatus({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "backstage-booker",
-      jobId: "job-123"
+      jobId: "job-123",
+      jobReadToken: JOB_READ_TOKEN
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
     expect(payload).toMatchObject({
@@ -285,13 +290,17 @@ describe("GPT route OpenAPI contract and client", () => {
     const payload = await requestGptJobResult({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "backstage-booker",
-      jobId: "job-123"
+      jobId: "job-123",
+      jobReadToken: JOB_READ_TOKEN
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        },
+        redirect: "error"
       })
     );
     expect(payload).toMatchObject({
@@ -345,12 +354,15 @@ describe("GPT route OpenAPI contract and client", () => {
     const payload = await getJobResult({
       baseUrl: "http://127.0.0.1:3000",
       jobId: "job-123",
+      jobReadToken: JOB_READ_TOKEN,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
     expect(payload).toMatchObject({
@@ -372,12 +384,16 @@ describe("GPT route OpenAPI contract and client", () => {
     const payload = await getJobStatus({
       baseUrl: "http://127.0.0.1:3000",
       jobId: "job-123",
+      jobReadToken: JOB_READ_TOKEN,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        },
+        redirect: "error"
       })
     );
     expect(payload).toMatchObject({
@@ -396,14 +412,74 @@ describe("GPT route OpenAPI contract and client", () => {
     await fetchGptJobResult({
       baseUrl: "http://127.0.0.1:3000",
       jobId: "job-123",
+      jobReadToken: JOB_READ_TOKEN,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
+  });
+
+  it("disables redirect following for generic job result capabilities", async () => {
+    const redirectTarget = "https://untrusted.example/capture";
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location: redirectTarget
+        }
+      })
+    );
+
+    await expect(
+      getJobResult({
+        baseUrl: "https://arcanos.example",
+        jobId: "job-redirect",
+        jobReadToken: JOB_READ_TOKEN,
+        fetchFn: fetchMock
+      })
+    ).rejects.toThrow("HTTP 302");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-redirect/result", "https://arcanos.example/"),
+      expect.objectContaining({
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        },
+        redirect: "error"
+      })
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toBe(redirectTarget);
+  });
+
+  it("rejects generic job reads without a capability before making a request", async () => {
+    const previousToken = process.env.ARCANOS_JOB_READ_TOKEN;
+    delete process.env.ARCANOS_JOB_READ_TOKEN;
+    const fetchMock = jest.spyOn(globalThis, "fetch");
+
+    try {
+      await expect(
+        getJobStatus({
+          baseUrl: "http://127.0.0.1:3000",
+          jobId: "job-123",
+        })
+      ).rejects.toThrow(
+        "ARCANOS_JOB_READ_TOKEN or an explicit jobReadToken is required"
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.ARCANOS_JOB_READ_TOKEN;
+      } else {
+        process.env.ARCANOS_JOB_READ_TOKEN = previousToken;
+      }
+    }
   });
 
   it("rejects blank job ids before any jobs API call is attempted", async () => {

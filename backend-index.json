@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-28T04:07:00.953Z",
+  "generatedAt": "2026-07-30T00:43:05.871Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2405,10 +2405,16 @@
           "relativePath": "src/shared/http/workerHealRequest.ts"
         },
         {
+          "relativePath": "src/shared/http/workerHealthProjection.ts"
+        },
+        {
           "relativePath": "src/shared/idGenerator.ts"
         },
         {
           "relativePath": "src/shared/jobs/jobLinks.ts"
+        },
+        {
+          "relativePath": "src/shared/jobs/jobReadCapability.ts"
         },
         {
           "relativePath": "src/shared/jsonFileUtils.ts"
@@ -2442,6 +2448,9 @@
         },
         {
           "relativePath": "src/shared/runtimeInspectionPrompt.ts"
+        },
+        {
+          "relativePath": "src/shared/security/customGptBridgeCredential.ts"
         },
         {
           "relativePath": "src/shared/security/daemonAccessCredential.ts"
@@ -3571,6 +3580,9 @@
           "relativePath": "tests/job-queue.test.ts"
         },
         {
+          "relativePath": "tests/job-read-capability.test.ts"
+        },
+        {
           "relativePath": "tests/job-repository.claim-generation-create.test.ts"
         },
         {
@@ -3866,6 +3878,9 @@
         },
         {
           "relativePath": "tests/public-gaming-canary.test.ts"
+        },
+        {
+          "relativePath": "tests/public-worker-health-projection.test.ts"
         },
         {
           "relativePath": "tests/purpose-bound-credential.test.ts"
@@ -4298,6 +4313,9 @@
         },
         {
           "relativePath": "tests/workers-route-security.test.ts"
+        },
+        {
+          "relativePath": "tests/workers-status-projection.test.ts"
         }
       ]
     },

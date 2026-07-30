@@ -88,6 +88,20 @@ function buildTruncatedPayloadFromPreview(
       ...(typeof payload.ok === 'boolean' ? { ok: payload.ok } : {}),
       ...(readString(payload.requestId) ? { requestId: readString(payload.requestId) } : {}),
       ...(readString(payload.traceId) ? { traceId: readString(payload.traceId) } : {}),
+      ...(readString(payload.jobId) ? { jobId: readString(payload.jobId) } : {}),
+      ...(readString(payload.status) ? { status: readString(payload.status) } : {}),
+      ...(readString(payload.jobStatus) ? { jobStatus: readString(payload.jobStatus) } : {}),
+      ...(readString(payload.lifecycleStatus)
+        ? { lifecycleStatus: readString(payload.lifecycleStatus) }
+        : {}),
+      ...(readString(payload.poll) ? { poll: readString(payload.poll) } : {}),
+      ...(readString(payload.stream) ? { stream: readString(payload.stream) } : {}),
+      ...(readString(payload.jobReadToken)
+        ? { jobReadToken: readString(payload.jobReadToken) }
+        : {}),
+      ...(readString(payload.jobReadTokenHeader)
+        ? { jobReadTokenHeader: readString(payload.jobReadTokenHeader) }
+        : {}),
       result: preview,
       _route: {
         ...(readString(payload._route.requestId) ? { requestId: readString(payload._route.requestId) } : {}),

@@ -13,6 +13,25 @@ export function extractHumanReadableText(...values: unknown[]): string {
   return "";
 }
 
+export function formatJobReadCapabilityGuidance(jobId: string): string {
+  return (
+    `For follow-up reads of job ${jobId}, run the creating command with \`--json\` to capture ` +
+    "`jobReadToken`, then provide it via a transient `ARCANOS_JOB_READ_TOKEN`; " +
+    "never put the bearer in a URL or logs."
+  );
+}
+
+export function omitJobReadCapabilityForHumanOutput(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    jobReadToken: _jobReadToken,
+    jobReadTokenHeader: _jobReadTokenHeader,
+    ...safePayload
+  } = payload;
+  return safePayload;
+}
+
 function extractTextValue(value: unknown, visited: Set<unknown>): string {
   if (typeof value === "string" && value.trim().length > 0) {
     return value.trim();

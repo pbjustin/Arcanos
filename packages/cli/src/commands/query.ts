@@ -1,6 +1,10 @@
 import { requestQuery } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
-import { extractHumanReadableText } from "./humanOutput.js";
+import {
+  extractHumanReadableText,
+  formatJobReadCapabilityGuidance,
+  omitJobReadCapabilityForHumanOutput
+} from "./humanOutput.js";
 import type { CliCommandResult, QueryCommandInvocation } from "./types.js";
 
 export async function runQueryCommand(
@@ -40,8 +44,11 @@ function extractQueryHumanOutput(payload: Record<string, unknown>): string {
   const status = typeof payload.status === "string" ? payload.status.trim() : "";
   const jobId = typeof payload.jobId === "string" ? payload.jobId.trim() : "";
   if (status && jobId) {
-    return `Queued job ${jobId} (${status}). Use \`arcanos job-status ${jobId}\` or \`arcanos job-result ${jobId}\`.`;
+    return (
+      `Queued job ${jobId} (${status}). Use \`arcanos job-status ${jobId}\` or ` +
+      `\`arcanos job-result ${jobId}\`. ${formatJobReadCapabilityGuidance(jobId)}`
+    );
   }
 
-  return serializeDeterministicJson(payload);
+  return serializeDeterministicJson(omitJobReadCapabilityForHumanOutput(payload));
 }

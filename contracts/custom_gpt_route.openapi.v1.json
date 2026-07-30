@@ -3,7 +3,7 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.4.0",
-    "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp. The fixed /gpt/arcanos-gaming/canary operation verifies only public validation, dispatch, bundled fixture grounding, response construction, and guarding."
+    "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Durable async acknowledgements return a job-specific `jobReadToken` and the fixed `jobReadTokenHeader`; retain both and send the token only in that header when calling the generic jobs API. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp. The fixed /gpt/arcanos-gaming/canary operation verifies only public validation, dispatch, bundled fixture grounding, response construction, and guarding."
   },
   "servers": [
     {
@@ -16,7 +16,7 @@
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed writing request",
-        "description": "POST /gpt/{gptId} is the public writing-plane dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query for canonical module query actions: durable Trinity writing requests are queued, while direct module GPTs such as ARCANOS Gaming execute their module-owned query action inline. Use action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, and the safe DAG bridge actions dag.capabilities, dag.dispatch, dag.status, and dag.trace. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. Control-plane diagnostics, job status/result lookups, runtime inspection prompts, unsupported DAG actions, MCP control requests, root diagnostics, and runtime.inspect/workers.status/queue.inspect/self_heal.status actions are intentionally rejected on this route. Use /jobs/{jobId}, /jobs/{jobId}/result, /gpt-access/*, or POST /mcp for those operations.",
+        "description": "POST /gpt/{gptId} is the public writing-plane dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query for canonical module query actions: durable Trinity writing requests are queued, while direct module GPTs such as ARCANOS Gaming execute their module-owned query action inline. Use action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, and the safe DAG bridge actions dag.capabilities, dag.dispatch, dag.status, and dag.trace. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. Job-backed responses are `no-store` and include `jobReadToken` plus `jobReadTokenHeader`; use that job-specific capability for direct status, result, or stream reads. Control-plane diagnostics, job status/result lookups, runtime inspection prompts, unsupported DAG actions, MCP control requests, root diagnostics, and runtime.inspect/workers.status/queue.inspect/self_heal.status actions are intentionally rejected on this route. Use /jobs/{jobId}, /jobs/{jobId}/result, /gpt-access/*, or POST /mcp for those operations.",
         "parameters": [
           {
             "name": "gptId",
@@ -36,6 +36,17 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry key hashed by the backend. It participates in reusable deduplication only when trusted middleware has established the public caller principal; anonymous public submissions remain isolated even when this value is replayed.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           }
         ],
@@ -151,6 +162,11 @@
         "responses": {
           "200": {
             "description": "Completed fast-path inline response, direct query_and_wait response, async bridge response, safe DAG bridge read response, or generic GPT response.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -160,7 +176,12 @@
             }
           },
           "202": {
-            "description": "Async job accepted or still pending after bounded wait",
+            "description": "Async job accepted or still pending after bounded wait. The response is `no-store`; retain the returned job-read capability with the job id.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -320,6 +341,11 @@
           },
           "409": {
             "description": "Idempotency conflict, optimistic-lock conflict, or terminal cancellation conflict",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -330,6 +356,11 @@
           },
           "410": {
             "description": "Async GPT job expired during bounded wait",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -340,6 +371,11 @@
           },
           "500": {
             "description": "Unexpected GPT route defect returned as bounded JSON",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -349,7 +385,12 @@
             }
           },
           "503": {
-            "description": "Durable async GPT jobs are unavailable during creation or post-enqueue status lookup for canonical bridge operations",
+            "description": "Durable async GPT jobs are unavailable because job-read capability signing is not configured, creation storage is unavailable, or post-enqueue status lookup failed for canonical bridge operations. Missing or invalid signing configuration returns `JOB_READ_AUTH_UNAVAILABLE` before enqueueing.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -382,6 +423,8 @@
                       "jobId": "job_example",
                       "poll": "/jobs/job_example/result",
                       "stream": "/jobs/job_example/stream",
+                      "jobReadToken": "v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                      "jobReadTokenHeader": "x-arcanos-job-read-token",
                       "error": {
                         "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
                         "message": "Async GPT job status is temporarily unavailable because durable job persistence is unavailable."
@@ -394,6 +437,11 @@
           },
           "504": {
             "description": "GPT module or route timeout returned as bounded JSON",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -478,6 +526,15 @@
     }
   },
   "components": {
+    "headers": {
+      "NoStore": {
+        "description": "Present on job-backed responses; clients and intermediary caches must not store the response.",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      }
+    },
     "schemas": {
       "PublicCanaryRequest": {
         "type": "object",
@@ -1728,7 +1785,9 @@
           "status",
           "jobId",
           "poll",
-          "stream"
+          "stream",
+          "jobReadToken",
+          "jobReadTokenHeader"
         ],
         "properties": {
           "ok": {
@@ -1741,7 +1800,11 @@
             ]
           },
           "status": {
-            "const": "pending"
+            "enum": [
+              "queued",
+              "running",
+              "timeout"
+            ]
           },
           "jobId": {
             "type": "string"
@@ -1751,6 +1814,12 @@
           },
           "stream": {
             "type": "string"
+          },
+          "jobReadToken": {
+            "$ref": "#/components/schemas/JobReadToken"
+          },
+          "jobReadTokenHeader": {
+            "$ref": "#/components/schemas/JobReadTokenHeader"
           },
           "jobStatus": {
             "type": "string"
@@ -1787,7 +1856,9 @@
           "action",
           "jobId",
           "status",
-          "result"
+          "result",
+          "jobReadToken",
+          "jobReadTokenHeader"
         ],
         "properties": {
           "ok": {
@@ -1813,6 +1884,12 @@
           },
           "stream": {
             "type": "string"
+          },
+          "jobReadToken": {
+            "$ref": "#/components/schemas/JobReadToken"
+          },
+          "jobReadTokenHeader": {
+            "$ref": "#/components/schemas/JobReadTokenHeader"
           },
           "result": {},
           "idempotencyKey": {
@@ -1971,6 +2048,12 @@
           "jobId": {
             "type": "string"
           },
+          "jobReadToken": {
+            "$ref": "#/components/schemas/JobReadToken"
+          },
+          "jobReadTokenHeader": {
+            "$ref": "#/components/schemas/JobReadTokenHeader"
+          },
           "error": {
             "$ref": "#/components/schemas/GptRouteError"
           },
@@ -2004,6 +2087,15 @@
           },
           "details": {}
         }
+      },
+      "JobReadToken": {
+        "type": "string",
+        "pattern": "^v1\\.[A-Za-z0-9_-]{43}$",
+        "description": "Job-specific bearer capability for the returned job id. Treat it as sensitive and send it only in `x-arcanos-job-read-token`."
+      },
+      "JobReadTokenHeader": {
+        "type": "string",
+        "const": "x-arcanos-job-read-token"
       },
       "GptRouteMeta": {
         "type": "object",

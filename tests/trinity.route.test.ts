@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetTrinityStatus = jest.fn();
+const JOB_UUID_SENTINEL = '523e4567-e89b-42d3-a456-426614174000';
+const PROMPT_SENTINEL = 'TRINITY_STATUS_PROMPT_SENTINEL';
+const RESULT_SENTINEL = 'TRINITY_STATUS_RESULT_SENTINEL';
+const ERROR_SENTINEL = 'TRINITY_STATUS_ERROR_SENTINEL';
 
 jest.unstable_mockModule('../src/services/trinityStatusService.js', () => ({
   getTrinityStatus: mockGetTrinityStatus
@@ -21,7 +25,7 @@ describe('trinity route', () => {
     jest.clearAllMocks();
   });
 
-  it('returns 200 for healthy Trinity status payloads', async () => {
+  it('returns a no-store aggregate projection for healthy Trinity status', async () => {
     mockGetTrinityStatus.mockResolvedValue({
       pipeline: 'trinity',
       version: '1.0',
@@ -41,15 +45,47 @@ describe('trinity route', () => {
       timestamp: '2026-03-07T20:00:08.000Z',
       workerHealth: {
         overallStatus: 'healthy',
-        observedWorkerIds: ['async-queue-slot-1'],
+        observedWorkerIds: [JOB_UUID_SENTINEL],
         queueDepth: 2,
         pendingJobs: 1,
         runningJobs: 1
       },
+      queue: {
+        idle: false,
+        pendingJobs: 1,
+        runningJobs: 1,
+        completedJobs: 3,
+        retainedFailedJobs: 1,
+        delayedJobs: 0,
+        stalledRunningJobs: 0,
+        lastUpdatedAt: '2026-03-07T20:00:05.000Z',
+        semantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription: PROMPT_SENTINEL,
+          activeFailureSignals: [RESULT_SENTINEL]
+        },
+        retryPolicy: {
+          defaultMaxRetries: 2,
+          retryBackoffBaseMs: 2000,
+          retryBackoffMaxMs: 60000,
+          staleAfterMs: 60000,
+          watchdogIdleMs: 120000
+        },
+        recentFailedJobs: [{
+          id: JOB_UUID_SENTINEL,
+          worker_id: 'worker-helper',
+          job_type: 'ask',
+          status: 'failed',
+          error_message: ERROR_SENTINEL,
+          created_at: '2026-03-07T20:00:00.000Z',
+          updated_at: '2026-03-07T20:00:05.000Z',
+          completed_at: '2026-03-07T20:00:05.000Z'
+        }]
+      },
       bindings: {
-        workerMode: 'async_queue',
-        memoryContainer: 'trinity',
-        trinitySession: 'active',
+        workerMode: PROMPT_SENTINEL,
+        memoryContainer: RESULT_SENTINEL,
+        trinitySession: ERROR_SENTINEL,
         databaseConfigured: true
       },
       limits: {
@@ -72,9 +108,57 @@ describe('trinity route', () => {
     const response = await request(buildApp()).get('/trinity/status');
 
     expect(response.status).toBe(200);
-    expect(response.body.pipeline).toBe('trinity');
-    expect(response.body.memorySync.status).toBe('active');
-    expect(response.body.bindings.memoryContainer).toBe('trinity');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual({
+      status: 'healthy',
+      overallStatus: 'healthy',
+      totalWorkers: null,
+      availableWorkers: null,
+      runtime: {
+        status: 'active',
+        totalDispatched: null,
+        startedAt: null,
+        lastDispatchAt: '2026-03-07T20:00:06.000Z'
+      },
+      workers: {
+        status: 'healthy',
+        total: null,
+        available: null,
+        configured: null,
+        active: null,
+        observed: 1,
+        stale: null,
+        degraded: null,
+        unhealthy: null,
+        lastHeartbeatAt: '2026-03-07T20:00:07.000Z'
+      },
+      queue: {
+        status: 'active',
+        total: 6,
+        pending: 1,
+        running: 1,
+        completed: 3,
+        retainedFailed: 1,
+        delayed: 0,
+        stalledRunning: 0,
+        lastUpdatedAt: '2026-03-07T20:00:05.000Z'
+      },
+      memory: {
+        status: 'active',
+        routes: 4,
+        lastUpdatedAt: '2026-03-07T20:00:01.000Z'
+      },
+      timestamp: '2026-03-07T20:00:08.000Z'
+    });
+    const serialized = JSON.stringify(response.body);
+    for (const sentinel of [
+      JOB_UUID_SENTINEL,
+      PROMPT_SENTINEL,
+      RESULT_SENTINEL,
+      ERROR_SENTINEL
+    ]) {
+      expect(serialized).not.toContain(sentinel);
+    }
   });
 
   it('returns 503 when Trinity is offline', async () => {
@@ -102,6 +186,29 @@ describe('trinity route', () => {
         pendingJobs: 0,
         runningJobs: 0
       },
+      queue: {
+        idle: true,
+        pendingJobs: 0,
+        runningJobs: 0,
+        completedJobs: 0,
+        retainedFailedJobs: 0,
+        delayedJobs: 0,
+        stalledRunningJobs: 0,
+        lastUpdatedAt: null,
+        semantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription: 'Retained terminal jobs.',
+          activeFailureSignals: []
+        },
+        retryPolicy: {
+          defaultMaxRetries: 2,
+          retryBackoffBaseMs: 2000,
+          retryBackoffMaxMs: 60000,
+          staleAfterMs: 60000,
+          watchdogIdleMs: 120000
+        },
+        recentFailedJobs: []
+      },
       bindings: {
         workerMode: null,
         memoryContainer: null,
@@ -128,6 +235,40 @@ describe('trinity route', () => {
     const response = await request(buildApp()).get('/trinity/status');
 
     expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.status).toBe('offline');
+    expect(response.body.runtime.status).toBe('offline');
+    expect(response.body.memory.status).toBe('offline');
+  });
+
+  it('returns a fixed no-store error without dependency details', async () => {
+    const absolutePathSentinel =
+      'C:\\private\\workers\\TRINITY_ABSOLUTE_PATH_SENTINEL';
+    mockGetTrinityStatus.mockRejectedValue(new Error([
+      JOB_UUID_SENTINEL,
+      PROMPT_SENTINEL,
+      RESULT_SENTINEL,
+      ERROR_SENTINEL,
+      absolutePathSentinel
+    ].join(' ')));
+
+    const response = await request(buildApp()).get('/trinity/status');
+
+    expect(response.status).toBe(500);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual({
+      error: 'TRINITY_STATUS_FAILED',
+      message: 'Trinity status request failed.'
+    });
+    const serialized = JSON.stringify(response.body);
+    for (const sentinel of [
+      JOB_UUID_SENTINEL,
+      PROMPT_SENTINEL,
+      RESULT_SENTINEL,
+      ERROR_SENTINEL,
+      'TRINITY_ABSOLUTE_PATH_SENTINEL'
+    ]) {
+      expect(serialized).not.toContain(sentinel);
+    }
   });
 });

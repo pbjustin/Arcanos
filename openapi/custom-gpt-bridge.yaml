@@ -6,7 +6,10 @@ info:
     Secure HTTP bridge for Custom GPT Actions. The bridge authenticates inbound
     Custom GPT requests, enqueues them through the existing Arcanos job
     infrastructure, and returns either a completed result or canonical job
-    polling URLs.
+    polling URLs. Job-backed responses also return a job-specific
+    jobReadToken and the fixed x-arcanos-job-read-token header name. Retain
+    that capability with the job id and send it only in the documented header
+    on status, result, or stream reads.
 
     The health_echo and echo actions are deterministic transport smoke checks:
     they verify auth, bridge handling, queueing, worker execution, and
@@ -24,11 +27,15 @@ paths:
         Submit a bridge action to the Arcanos backend. Use health_echo or echo
         for deterministic transport verification. Use query_and_wait when the
         Custom GPT should wait briefly for completed model output before
-        falling back to async polling.
+        falling back to async polling. All bridge responses are private and
+        no-store. A job-backed response includes the capability required by
+        the generic jobs API.
       security:
         - bearerAuth: []
         - openaiActionSecretHeader: []
         - actionSecretHeader: []
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -57,6 +64,9 @@ paths:
       responses:
         "200":
           description: Bridge execution completed within the bounded wait window.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -71,36 +81,72 @@ paths:
                     output: OK
         "202":
           description: Bridge execution is pending; poll the jobs API.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgePendingResponse"
         "400":
           description: Invalid bridge request payload.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "401":
           description: Missing or invalid bridge shared secret.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "409":
           description: Idempotency key conflict.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "404":
+          description: An accepted queued job was no longer present during the bounded wait. The response retains the job id and read capability for a direct follow-up lookup.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "410":
+          description: An accepted queued job expired during the bounded wait. The response retains the job id and read capability for the terminal lookup.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "500":
           description: Routing, worker, or provider failure.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "503":
-          description: Bridge or queue storage is unavailable or misconfigured, including after a job was accepted but its status could not be read.
+          description: Bridge, job-read capability signing, or queue storage is unavailable or misconfigured, including after a job was accepted but its status could not be read.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -116,12 +162,14 @@ paths:
                       message: Durable GPT job persistence is unavailable.
                     request_id: req_example
                     jobId: job_example
+                    jobReadToken: v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                    jobReadTokenHeader: x-arcanos-job-read-token
                     timing: {}
   /api/bridge/health:
     get:
       operationId: getArcanosBridgeHealth
       summary: Check bridge runtime health
-      description: Reports environment sanity, route reachability, database status, worker status, and recent bridge failure counters to callers authenticated with the bridge shared secret.
+      description: Reports environment sanity, including job-read signing readiness, route reachability, database status, worker status, and recent bridge failure counters to callers authenticated with the bridge shared secret.
       security:
         - bearerAuth: []
         - openaiActionSecretHeader: []
@@ -129,18 +177,27 @@ paths:
       responses:
         "200":
           description: Bridge health is OK.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeHealthResponse"
         "401":
           description: Missing or invalid bridge shared secret.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "503":
-          description: Bridge health is degraded or the bridge secret is not configured.
+          description: Bridge health is degraded or a required bridge, job-read signing, routing, database, or worker dependency is not configured or ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -151,21 +208,111 @@ paths:
     get:
       operationId: getBridgeJobStatus
       summary: Poll canonical job status
+      description: |
+        Reads only public gpt and ask jobs; GPT jobs require recognized public
+        route or custom-bridge provenance, and GPT Access-created jobs remain
+        protected. Send the job-specific capability
+        returned by the bridge response. Missing, malformed, duplicated,
+        incorrect, and cross-job capabilities are concealed as not found.
+        Every response is no-store.
       parameters:
         - $ref: "#/components/parameters/jobId"
+        - $ref: "#/components/parameters/jobReadToken"
       responses:
         "200":
           description: Job status payload.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "400":
+          description: Invalid job id.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "404":
+          description: Job or valid job-read capability not found.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "503":
+          description: Job-read capability signing or durable job persistence is unavailable.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
   /jobs/{jobId}/result:
     get:
       operationId: getBridgeJobResult
       summary: Read canonical job result
+      description: |
+        Reads only public gpt and ask jobs with recognized public provenance.
+        Missing jobs, protected GPT Access jobs, non-public job types,
+        and missing, malformed, duplicated, incorrect, or cross-job
+        capabilities return the compatible in-body status not_found. Every
+        response is no-store.
       parameters:
         - $ref: "#/components/parameters/jobId"
+        - $ref: "#/components/parameters/jobReadToken"
       responses:
         "200":
           description: Job result payload.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "400":
+          description: Invalid job id.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "503":
+          description: Job-read capability signing or durable job persistence is unavailable.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+  /jobs/{jobId}/stream:
+    get:
+      operationId: streamBridgeJobStatus
+      summary: Stream canonical job status
+      description: |
+        Streams lifecycle changes for a public gpt or ask job with recognized
+        public provenance. Send the
+        job-specific capability returned by the bridge response. Missing,
+        malformed, duplicated, incorrect, and cross-job capabilities are
+        concealed as not found. The SSE response is no-store, no-cache, and
+        no-transform.
+      parameters:
+        - $ref: "#/components/parameters/jobId"
+        - $ref: "#/components/parameters/jobReadToken"
+      responses:
+        "200":
+          description: Server-sent status and terminal events.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid job id.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "404":
+          description: Job or valid job-read capability not found.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "503":
+          description: Job-read capability signing or durable job persistence is unavailable before the stream opens.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
 components:
+  headers:
+    NoStore:
+      description: Response is marked Cache-Control with a no-store directive.
+      schema:
+        type: string
   securitySchemes:
     bearerAuth:
       type: http
@@ -182,6 +329,15 @@ components:
       name: x-action-secret
       description: Legacy alternative shared-secret header using OPENAI_ACTION_SHARED_SECRET.
   parameters:
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Stable retry key for the same semantic bridge request.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
     jobId:
       name: jobId
       in: path
@@ -189,6 +345,17 @@ components:
       schema:
         type: string
         minLength: 1
+    jobReadToken:
+      name: x-arcanos-job-read-token
+      in: header
+      required: true
+      description: |
+        Job-specific bearer capability returned as jobReadToken by the bridge
+        response. Send exactly one value bound to this path job id. Query
+        parameters, cookies, and request bodies are not accepted carriers.
+      schema:
+        type: string
+        pattern: '^v1\.[A-Za-z0-9_-]{43}$'
   schemas:
     BridgeRequest:
       type: object
@@ -241,6 +408,9 @@ components:
       required:
         - ok
         - status
+        - jobId
+        - jobReadToken
+        - jobReadTokenHeader
         - output
       properties:
         ok:
@@ -255,6 +425,10 @@ components:
           type: string
         result_url:
           type: string
+        jobReadToken:
+          $ref: "#/components/schemas/JobReadToken"
+        jobReadTokenHeader:
+          $ref: "#/components/schemas/JobReadTokenHeader"
         output:
           description: Normalized internal GPT output.
         request_id:
@@ -268,6 +442,8 @@ components:
         - jobId
         - poll_url
         - result_url
+        - jobReadToken
+        - jobReadTokenHeader
       properties:
         ok:
           type: boolean
@@ -288,6 +464,10 @@ components:
           type: string
         result_url:
           type: string
+        jobReadToken:
+          $ref: "#/components/schemas/JobReadToken"
+        jobReadTokenHeader:
+          $ref: "#/components/schemas/JobReadTokenHeader"
         poll:
           type: string
         result:
@@ -332,6 +512,10 @@ components:
             - "null"
         jobId:
           type: string
+        jobReadToken:
+          $ref: "#/components/schemas/JobReadToken"
+        jobReadTokenHeader:
+          $ref: "#/components/schemas/JobReadTokenHeader"
         error:
           type: object
           required:
@@ -371,11 +555,28 @@ components:
           type: object
           required:
             - OPENAI_ACTION_SHARED_SECRET
+            - ARCANOS_JOB_READ_CAPABILITY_SECRET
+            - ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET
             - DEFAULT_GPT_ID
           additionalProperties: true
           properties:
             OPENAI_ACTION_SHARED_SECRET:
               type: object
+              required:
+                - configured
+              properties:
+                configured:
+                  type: boolean
+            ARCANOS_JOB_READ_CAPABILITY_SECRET:
+              type: object
+              required:
+                - configured
+              properties:
+                configured:
+                  type: boolean
+            ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET:
+              type: object
+              description: Optional verification-only prior key used during a bounded rotation overlap.
               required:
                 - configured
               properties:
@@ -419,3 +620,12 @@ components:
           type: object
           additionalProperties:
             type: number
+    JobReadToken:
+      type: string
+      pattern: '^v1\.[A-Za-z0-9_-]{43}$'
+      description: |
+        Job-specific bearer capability. Treat it as sensitive and send it only
+        in x-arcanos-job-read-token for the matching job id.
+    JobReadTokenHeader:
+      type: string
+      const: x-arcanos-job-read-token

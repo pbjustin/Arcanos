@@ -9,6 +9,12 @@ import type { EnvironmentSecuritySummary } from "@platform/runtime/environmentSe
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
+import {
+  JOB_READ_CAPABILITY_PREVIOUS_SECRET_ENV_NAME,
+  JOB_READ_CAPABILITY_SECRET_ENV_NAME,
+  resolveConfiguredJobReadCapabilitySecret,
+  resolveConfiguredPreviousJobReadCapabilitySecret,
+} from "@shared/jobs/jobReadCapability.js";
 
 export interface EnvironmentCheck {
   name: string;
@@ -176,6 +182,30 @@ const environmentChecks: EnvironmentCheck[] = [
     ]
   },
   {
+    name: JOB_READ_CAPABILITY_SECRET_ENV_NAME,
+    required: false,
+    description: 'HMAC signing key for public async-job continuation capabilities',
+    validator: () => resolveConfiguredJobReadCapabilitySecret(
+      environmentName => getEnv(environmentName)
+    ) !== null,
+    suggestions: [
+      'Set a dedicated high-entropy value of 32 to 4096 characters',
+      'Do not include whitespace or reuse any other ARCANOS purpose-bound credential'
+    ]
+  },
+  {
+    name: JOB_READ_CAPABILITY_PREVIOUS_SECRET_ENV_NAME,
+    required: false,
+    description: 'Optional previous async-job continuation signing key for bounded rotation overlap',
+    validator: () => resolveConfiguredPreviousJobReadCapabilitySecret(
+      environmentName => getEnv(environmentName)
+    ) !== null,
+    suggestions: [
+      'Leave unset outside an active rotation overlap',
+      `When set, use a dedicated value distinct from ${JOB_READ_CAPABILITY_SECRET_ENV_NAME} and every other purpose-bound credential`
+    ]
+  },
+  {
     name: 'AI_MODEL',
     required: false,
     description: 'Default AI model to use',
@@ -296,6 +326,29 @@ function isGptAccessTokenRequiredForStartup(): boolean {
   return getConfig().isProduction;
 }
 
+function isJobReadCapabilitySecretRequiredForStartup(): boolean {
+  const config = getConfig();
+  if (config.isTest) {
+    return false;
+  }
+
+  if (config.isProduction) {
+    return true;
+  }
+
+  // The optional RAILWAY_ENVIRONMENT check below installs a local default, so
+  // use Railway-owned runtime identifiers here rather than allowing that
+  // validator-created fallback to turn a later local validation pass into a
+  // hosted deployment.
+  return Boolean(
+    getEnv('RAILWAY_PROJECT_ID')
+    || getEnv('RAILWAY_SERVICE_ID')
+    || getEnv('RAILWAY_SERVICE_NAME')
+    || getEnv('RAILWAY_ENVIRONMENT_ID')
+    || getEnv('RAILWAY_DEPLOYMENT_ID')
+  );
+}
+
 function isCheckRequired(check: EnvironmentCheck): boolean {
   if (check.name === 'OPENAI_API_KEY') {
     return isOpenAIApiKeyRequiredForStartup();
@@ -305,6 +358,9 @@ function isCheckRequired(check: EnvironmentCheck): boolean {
   }
   if (check.name === 'ARCANOS_GPT_ACCESS_BASE_URL' || check.name === 'ARCANOS_GPT_ACCESS_SCOPES') {
     return isGptAccessTokenRequiredForStartup();
+  }
+  if (check.name === JOB_READ_CAPABILITY_SECRET_ENV_NAME) {
+    return isJobReadCapabilitySecretRequiredForStartup();
   }
   return check.required;
 }

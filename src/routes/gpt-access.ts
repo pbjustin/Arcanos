@@ -34,6 +34,7 @@ import ArcanosCli from '@services/arcanos-cli.js';
 import { MODULE_CATALOG } from '@services/moduleCatalog.js';
 import {
   asyncHandler,
+  noStoreResponse,
   sendBadRequestPayload,
   sendInternalErrorPayload
 } from '@shared/http/index.js';
@@ -1127,6 +1128,15 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
 });
 
 router.use('/gpt-access', securityHeaders);
+router.use(
+  [
+    '/gpt-access/workers/status',
+    '/gpt-access/worker-helper/health',
+    '/gpt-access/jobs/create',
+    '/gpt-access/jobs/result',
+  ],
+  noStoreResponse
+);
 router.use('/gpt-access/local-agent', localAgentProtocolRouter);
 router.use('/gpt-access', gptAccessRateLimit);
 
@@ -1252,7 +1262,7 @@ router.post(
     sendGptAccessResult(
       res,
       await createGptAccessAiJob(req.body, {
-        actorKey: getRequestActorKey(req),
+        actorKey: getRequestAuthenticatedActorKey(req),
         requestId: req.requestId,
         traceId: req.traceId,
         idempotencyKey: req.header('idempotency-key') ?? null,
@@ -1269,7 +1279,7 @@ router.post(
     sendGptAccessResult(
       res,
       await getGptAccessJobResult(req.body, {
-        actorKey: getRequestActorKey(req),
+        actorKey: getRequestAuthenticatedActorKey(req),
         principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
         workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID'),
         requestId: req.requestId,

@@ -6,21 +6,39 @@ import {
   JobRepositoryUnavailableError,
   requestJobCancellation
 } from "@core/db/repositories/jobRepository.js";
-import { asyncHandler, validateParams, sendNotFound } from '@shared/http/index.js';
+import {
+  asyncHandler,
+  noStoreResponse,
+  sendNotFound,
+  validateParams
+} from '@shared/http/index.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
-import { getRequestActorKey } from '@platform/runtime/security.js';
+import {
+  getRequestActorKey,
+  getRequestEstablishedActorKey,
+} from '@platform/runtime/security.js';
 import { recordGptJobLookup } from '@platform/observability/appMetrics.js';
 import {
   isGptJobTerminalStatus
 } from '@shared/gpt/gptJobLifecycle.js';
+import { buildGptIdempotencyScopeHash } from '@shared/gpt/gptIdempotency.js';
 import {
   buildGptJobResultLookupPayload,
   buildStoredJobStatusPayload
 } from '@shared/gpt/gptJobResult.js';
 import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_CODE,
+  JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+  JOB_READ_CAPABILITY_HEADER_NAME,
+  isGenericJobCapabilityEligible,
+  resolveGenericJobCapabilitySurface,
+  verifyConfiguredJobReadCapability,
+} from '@shared/jobs/jobReadCapability.js';
+import { validateCustomGptBridgeCredential } from '@shared/security/customGptBridgeCredential.js';
 
 const router = express.Router();
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
@@ -36,8 +54,8 @@ function isTerminalJobStatus(status: JobData['status']): boolean {
   return isGptJobTerminalStatus(status);
 }
 
-function isLocalAgentJob(job: JobData | null): boolean {
-  return job?.job_type === 'local-agent';
+function isPublicReadableJob(job: JobData | null): job is JobData {
+  return isGenericJobCapabilityEligible(job);
 }
 
 function writeSseEvent(
@@ -53,8 +71,35 @@ function hashActorKey(actorKey: string): string {
   return crypto.createHash('sha256').update(actorKey.trim()).digest('hex');
 }
 
-function resolveCancellationActorKey(req: express.Request): string | null {
-  const actorKey = getRequestActorKey(req);
+function countRawHeaders(req: express.Request, headerName: string): number {
+  let count = 0;
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    if (req.rawHeaders[index]?.toLowerCase() === headerName) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function readJobReadCapability(req: express.Request): string | null {
+  if (countRawHeaders(req, JOB_READ_CAPABILITY_HEADER_NAME) !== 1) {
+    return null;
+  }
+
+  const value = req.headers[JOB_READ_CAPABILITY_HEADER_NAME];
+  return typeof value === 'string' ? value : null;
+}
+
+function resolveCancellationActorKey(
+  req: express.Request,
+  capabilitySurface: ReturnType<typeof resolveGenericJobCapabilitySurface>
+): string | null {
+  const actorKey = capabilitySurface === 'public-gpt'
+    ? getRequestEstablishedActorKey(req)
+    : getRequestActorKey(req);
+  if (!actorKey) {
+    return null;
+  }
   return actorKey.startsWith('ip:') ? null : actorKey;
 }
 
@@ -99,6 +144,50 @@ type JobLookupResult =
   | { available: true; job: JobData | null }
   | { available: false };
 
+type JobReadAccessResult =
+  | { available: false; authorized: false }
+  | { available: true; authorized: boolean };
+
+function checkJobReadAccess(
+  req: express.Request,
+  res: express.Response,
+  jobId: string,
+  logEvent: string
+): JobReadAccessResult {
+  const verification = verifyConfiguredJobReadCapability(
+    jobId,
+    readJobReadCapability(req)
+  );
+  if (verification.available) {
+    return verification;
+  }
+
+  sendJobsJsonResponse(
+    req,
+    res,
+    {
+      error: JOB_READ_AUTH_UNAVAILABLE_CODE,
+      message: JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+    },
+    logEvent,
+    503
+  );
+  return { available: false, authorized: false };
+}
+
+function sendJobResultNotFound(
+  req: express.Request,
+  res: express.Response,
+  jobId: string
+): void {
+  sendJobsJsonResponse(
+    req,
+    res,
+    buildGptJobResultLookupPayload(jobId, null),
+    'jobs.result.response'
+  );
+}
+
 async function lookupJobForRoute(
   req: express.Request,
   res: express.Response,
@@ -138,12 +227,54 @@ function validateJobsJsonRouteParams(
   next();
 }
 
+function requireJobReadCapabilityBeforeConfirmation(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
+  const readAccess = checkJobReadAccess(
+    req,
+    res,
+    id,
+    'jobs.cancel.auth_unavailable'
+  );
+  if (!readAccess.available) {
+    return;
+  }
+  if (!readAccess.authorized) {
+    sendJobsJsonResponse(
+      req,
+      res,
+      { error: 'JOB_NOT_FOUND' },
+      'jobs.cancel.not_found',
+      404
+    );
+    return;
+  }
+
+  next();
+}
+
 router.get(
   '/jobs/:id',
   validateJobsJsonRouteParams,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
+    const readAccess = checkJobReadAccess(
+      req,
+      res,
+      id,
+      'jobs.status.auth_unavailable'
+    );
+    if (!readAccess.available) {
+      return;
+    }
+    if (!readAccess.authorized) {
+      sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.status.not_found', 404);
+      return;
+    }
 
     const lookup = await lookupJobForRoute(req, res, id, 'jobs.status.repository_unavailable');
     if (!lookup.available) {
@@ -156,7 +287,7 @@ router.get(
     }
 
     const job = lookup.job;
-    if (!job || isLocalAgentJob(job)) {
+    if (!isPublicReadableJob(job)) {
       req.logger?.warn?.('gpt.job.status_lookup.not_found', {
         endpoint: req.originalUrl,
         jobId: id,
@@ -199,6 +330,19 @@ router.get(
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
+    const readAccess = checkJobReadAccess(
+      req,
+      res,
+      id,
+      'jobs.result.auth_unavailable'
+    );
+    if (!readAccess.available) {
+      return;
+    }
+    if (!readAccess.authorized) {
+      sendJobResultNotFound(req, res, id);
+      return;
+    }
     const lookup = await lookupJobForRoute(req, res, id, 'jobs.result.repository_unavailable');
     if (!lookup.available) {
       recordGptJobLookup({
@@ -210,7 +354,7 @@ router.get(
     }
 
     const job = lookup.job;
-    const publicJob = isLocalAgentJob(job) ? null : job;
+    const publicJob = isPublicReadableJob(job) ? job : null;
     const jobLookup = buildGptJobResultLookupPayload(id, publicJob);
 
     req.logger?.info?.(
@@ -244,25 +388,10 @@ router.get(
 router.post(
   '/jobs/:id/cancel',
   validateJobsJsonRouteParams,
+  requireJobReadCapabilityBeforeConfirmation,
   confirmGate,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
-    const cancellationActorKey = resolveCancellationActorKey(req);
-    if (!cancellationActorKey) {
-      req.logger?.warn?.('gpt.job.cancel.unauthenticated', {
-        endpoint: req.originalUrl,
-        jobId: id
-      });
-      sendJobsJsonResponse(req, res, {
-        ok: false,
-        error: {
-          code: 'JOB_CANCELLATION_AUTH_REQUIRED',
-          message: 'Job cancellation requires an authenticated session or internal actor.'
-        }
-      }, 'jobs.cancel.auth_required', 401);
-      return;
-    }
-
     const reason =
       typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
         ? req.body.reason.trim()
@@ -274,12 +403,70 @@ router.post(
 
     const job = lookup.job;
 
-    if (!job || isLocalAgentJob(job)) {
+    if (!isPublicReadableJob(job)) {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
     }
 
-    const cancellationScopeHash = hashActorKey(cancellationActorKey);
+    const capabilitySurface = resolveGenericJobCapabilitySurface(job);
+    let cancellationActorKey: string | null = null;
+    if (capabilitySurface === 'custom-gpt-bridge') {
+      const bridgeAuth = validateCustomGptBridgeCredential({
+        authorization: req.header('authorization'),
+        actionSecret:
+          req.header('x-openai-action-secret')
+          ?? req.header('x-action-secret'),
+      });
+      if (!bridgeAuth.ok) {
+        const statusCode = bridgeAuth.statusCode;
+        req.logger?.warn?.('gpt.job.cancel.bridge_auth_failed', {
+          endpoint: req.originalUrl,
+          jobId: id,
+          statusCode,
+        });
+        sendJobsJsonResponse(req, res, {
+          ok: false,
+          error: {
+            code: statusCode === 503
+              ? 'JOB_CANCELLATION_AUTH_UNAVAILABLE'
+              : 'JOB_CANCELLATION_AUTH_REQUIRED',
+            message: statusCode === 503
+              ? 'Job cancellation authentication is temporarily unavailable.'
+              : 'Bridge job cancellation requires the authenticated bridge credential.',
+          },
+        }, 'jobs.cancel.bridge_auth_failed', statusCode);
+        return;
+      }
+      cancellationActorKey = bridgeAuth.actorKey;
+    } else {
+      cancellationActorKey = resolveCancellationActorKey(req, capabilitySurface);
+      if (!cancellationActorKey) {
+        req.logger?.warn?.('gpt.job.cancel.unauthenticated', {
+          endpoint: req.originalUrl,
+          jobId: id
+        });
+        sendJobsJsonResponse(req, res, {
+          ok: false,
+          error: {
+            code: 'JOB_CANCELLATION_AUTH_REQUIRED',
+            message: 'Job cancellation requires an established authenticated principal or internal actor.'
+          }
+        }, 'jobs.cancel.auth_required', 401);
+        return;
+      }
+    }
+
+    const cancellationScopeHash =
+      cancellationActorKey
+      && (capabilitySurface === 'public-gpt'
+        || capabilitySurface === 'custom-gpt-bridge')
+        ? buildGptIdempotencyScopeHash({
+            surface: capabilitySurface,
+            actorKey: cancellationActorKey,
+          })
+        : cancellationActorKey
+          ? hashActorKey(cancellationActorKey)
+          : null;
     if (job.idempotency_scope_hash) {
       if (job.idempotency_scope_hash !== cancellationScopeHash) {
         req.logger?.warn?.('gpt.job.cancel.forbidden', {
@@ -295,7 +482,7 @@ router.post(
         }, 'jobs.cancel.forbidden', 403);
         return;
       }
-    } else if (!isInternalCancellationActor(cancellationActorKey)) {
+    } else if (!cancellationActorKey || !isInternalCancellationActor(cancellationActorKey)) {
       req.logger?.warn?.('gpt.job.cancel.unscoped_forbidden', {
         endpoint: req.originalUrl,
         jobId: id
@@ -350,9 +537,23 @@ router.post(
 
 router.get(
   '/jobs/:id/stream',
+  noStoreResponse,
   validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
+    const readAccess = checkJobReadAccess(
+      req,
+      res,
+      id,
+      'jobs.stream.auth_unavailable'
+    );
+    if (!readAccess.available) {
+      return;
+    }
+    if (!readAccess.authorized) {
+      sendNotFound(res, 'JOB_NOT_FOUND');
+      return;
+    }
     const initialLookup = await lookupJobForRoute(
       req,
       res,
@@ -365,14 +566,14 @@ router.get(
 
     const initialJob = initialLookup.job;
 
-    if (!initialJob || isLocalAgentJob(initialJob)) {
+    if (!isPublicReadableJob(initialJob)) {
       sendNotFound(res, 'JOB_NOT_FOUND');
       return;
     }
 
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Cache-Control', 'no-store, no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
@@ -393,7 +594,7 @@ router.get(
         const job = nextObservedJob ?? await getJobById(id);
         nextObservedJob = null;
 
-        if (!job) {
+        if (!isPublicReadableJob(job)) {
           writeSseEvent(res, 'error', {
             code: 'JOB_NOT_FOUND',
             jobId: id

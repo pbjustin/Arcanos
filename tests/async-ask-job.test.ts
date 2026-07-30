@@ -162,7 +162,9 @@ describe('async ask job helpers', () => {
       ok: true,
       status: 'pending',
       jobId: 'job-123',
-      poll: '/jobs/job-123/result'
+      poll: '/jobs/job-123/result',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token'
     });
   });
 });

@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const findOrCreateGptJobMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -13,6 +13,8 @@ const resolveGptRoutingMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
+const JOB_READ_SECRET = 'custom-gpt-bridge-job-read-capability-secret-1234567890';
+const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
@@ -45,7 +47,13 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: bridgeRouter } = await import('../src/routes/bridge.js');
 const { executeCustomGptBridgeRequest } = await import('../src/services/customGptBridgeService.js');
-const { buildGptRequestFingerprintHash } = await import('../src/shared/gpt/gptIdempotency.js');
+const {
+  buildGptIdempotencyScopeHash,
+  buildGptRequestFingerprintHash,
+} = await import('../src/shared/gpt/gptIdempotency.js');
+const { buildAuthenticatedCredentialActorKey } = await import(
+  '../src/shared/security/opaqueSecret.js'
+);
 
 function buildApp() {
   const app = express();
@@ -59,6 +67,10 @@ function buildJob(id: string, status: string, output: unknown = null) {
   return {
     id,
     job_type: 'gpt',
+    input: {
+      requestPath: '/api/bridge/gpt',
+      executionModeReason: 'bridge_query',
+    },
     status,
     created_at: '2026-04-16T12:00:00.000Z',
     started_at: status === 'pending' ? null : '2026-04-16T12:00:01.000Z',
@@ -70,6 +82,7 @@ function buildJob(id: string, status: string, output: unknown = null) {
 describe('Custom GPT bridge route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.OPENAI_ACTION_SHARED_SECRET = 'test-bridge-secret';
     process.env.DEFAULT_GPT_ID = 'arcanos-core';
     delete process.env.OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS;
@@ -171,6 +184,29 @@ describe('Custom GPT bridge route', () => {
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
   });
 
+  it('reports missing job-read capability configuration in authenticated health', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await request(buildApp())
+      .get('/api/bridge/health')
+      .set('Authorization', 'Bearer test-bridge-secret');
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'degraded',
+      env: {
+        ARCANOS_JOB_READ_CAPABILITY_SECRET: {
+          configured: false,
+        },
+      },
+    });
+    expect(response.body.missing_required_env).toContain(
+      'ARCANOS_JOB_READ_CAPABILITY_SECRET'
+    );
+  });
+
   it('sanitizes authenticated bridge dependency health failures', async () => {
     const privateDatabaseSentinel = 'PRIVATE_BRIDGE_DATABASE_HEALTH_SENTINEL';
     const privateWorkerSentinel = 'PRIVATE_BRIDGE_WORKER_HEALTH_SENTINEL';
@@ -251,6 +287,34 @@ describe('Custom GPT bridge route', () => {
       }),
     );
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before bridge planning and persistence when job-read capability configuration is unavailable', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'misconfigured',
+      error: {
+        source: 'queue',
+        message: 'Async job reads are temporarily unavailable.',
+      },
+      request_id: expect.any(String),
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it.each(['/api/bridge/gpt', '/api/openai/gpt-action'])(
@@ -370,6 +434,7 @@ describe('Custom GPT bridge route', () => {
       });
 
     expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: true,
@@ -378,6 +443,8 @@ describe('Custom GPT bridge route', () => {
         poll_url: '/jobs/job-pending-123/result',
         result_url: '/jobs/job-pending-123/result',
         action: 'query',
+        jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+        jobReadTokenHeader: 'x-arcanos-job-read-token',
       }),
     );
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
@@ -411,6 +478,88 @@ describe('Custom GPT bridge route', () => {
     });
     expect(jobOptions?.requestFingerprintHash).toBe(bridgeFingerprintHash);
     expect(jobOptions?.requestFingerprintHash).not.toBe(legacyFingerprintHash);
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('uses one authenticated bridge actor across bearer grammar, action-secret, and session variants', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: buildJob('job-auth-actor-123', 'pending'),
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    const body = {
+      gptId: 'arcanos-core',
+      prompt: 'Analyze this authenticated actor',
+      action: 'query',
+    };
+
+    const bearerResponse = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'bEaReR   test-bridge-secret')
+      .set('X-Session-ID', 'caller-session-one')
+      .send(body);
+    const actionSecretResponse = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Basic attacker-selected-value')
+      .set('x-openai-action-secret', 'test-bridge-secret')
+      .set('X-Session-ID', 'caller-session-two')
+      .send(body);
+
+    expect(bearerResponse.status).toBe(202);
+    expect(actionSecretResponse.status).toBe(202);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(2);
+    const expectedScopeHash = buildGptIdempotencyScopeHash({
+      surface: 'custom-gpt-bridge',
+      actorKey: buildAuthenticatedCredentialActorKey(
+        'custom-gpt-bridge',
+        'test-bridge-secret'
+      ),
+    });
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
+      .toBe(expectedScopeHash);
+    expect(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash)
+      .toBe(expectedScopeHash);
+  });
+
+  it('does not issue a generic capability when persistence returns protected GPT Access provenance', async () => {
+    const protectedResultSentinel = 'PROTECTED_BRIDGE_REUSE_RESULT_SENTINEL';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        ...buildJob('protected-gpt-access-job', 'completed', {
+          result: protectedResultSentinel,
+        }),
+        input: {
+          requestPath: '/gpt-access/jobs/create',
+          executionModeReason: 'gpt_access_create_ai_job',
+        },
+      },
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_completed_result',
+    });
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Attempt protected cross-surface reuse',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        source: 'queue',
+        message: 'Async job continuation is temporarily unavailable.',
+      },
+    });
+    expect(response.body).not.toHaveProperty('jobId');
+    expect(response.body).not.toHaveProperty('jobReadToken');
+    expect(JSON.stringify(response.body)).not.toContain(protectedResultSentinel);
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
@@ -562,6 +711,43 @@ describe('Custom GPT bridge route', () => {
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
   });
 
+  it('returns the accepted continuation after an unexpected polling failure', async () => {
+    const privateWaitSentinel = 'PRIVATE_BRIDGE_WAIT_FAILURE_SENTINEL';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: buildJob('job-wait-recovery-123', 'running'),
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    waitForQueuedGptJobCompletionMock.mockRejectedValue(
+      new Error(privateWaitSentinel),
+    );
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query_and_wait',
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'pending',
+      jobId: 'job-wait-recovery-123',
+      poll_url: '/jobs/job-wait-recovery-123/result',
+      result_url: '/jobs/job-wait-recovery-123/result',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateWaitSentinel);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves enqueueing but rethrows an already-aborted wait signal', async () => {
     const controller = new AbortController();
     const expectedError = new Error('bridge client disconnected');
@@ -601,5 +787,13 @@ describe('Custom GPT bridge route', () => {
         signal: controller.signal,
       }),
     );
+  });
+
+  afterAll(() => {
+    if (originalJobReadSecret === undefined) {
+      delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+    } else {
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = originalJobReadSecret;
+    }
   });
 });

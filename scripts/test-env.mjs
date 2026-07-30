@@ -65,6 +65,8 @@ for (const key of productionOnlyKeys) {
 const testDefaults = {
   AI_MODEL: 'gpt-4o-mini',
   ALLOW_MOCK_OPENAI: 'true',
+  ARCANOS_JOB_READ_CAPABILITY_SECRET:
+    'test-job-read-capability-secret-for-local-workflows-only',
   DISABLE_EXTERNAL_CALLS: 'true',
   LOG_LEVEL: 'info',
   NODE_ENV: 'test',

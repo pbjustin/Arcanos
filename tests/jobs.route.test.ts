@@ -1,7 +1,12 @@
-import crypto from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  JOB_READ_CAPABILITY_HEADER_NAME,
+  issueJobReadCapability,
+} from '../src/shared/jobs/jobReadCapability.js';
+import { buildGptIdempotencyScopeHash } from '../src/shared/gpt/gptIdempotency.js';
+import { buildAuthenticatedCredentialActorKey } from '../src/shared/security/opaqueSecret.js';
 
 const getJobByIdMock = jest.fn();
 const requestJobCancellationMock = jest.fn();
@@ -9,7 +14,18 @@ const sleepMock = jest.fn();
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
-  getJobById: getJobByIdMock,
+  getJobById: async (...args: unknown[]) => {
+    const job = await getJobByIdMock(...args);
+    return job?.job_type === 'gpt' && job.input === undefined
+      ? {
+          ...job,
+          input: {
+            requestPath: '/gpt/arcanos-core',
+            executionModeReason: 'test_public_gpt',
+          },
+        }
+      : job;
+  },
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   requestJobCancellation: requestJobCancellationMock
 }));
@@ -29,22 +45,94 @@ const CANCEL_REQUEST_JOB_ID = '66666666-6666-4666-8666-666666666666';
 const TERMINAL_JOB_ID = '77777777-7777-4777-8777-777777777777';
 const TRUNCATED_JOB_ID = '88888888-8888-4888-8888-888888888888';
 const LOCAL_AGENT_JOB_ID = '99999999-9999-4999-8999-999999999999';
+const DAG_NODE_JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const GPT_ACCESS_JOB_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const BRIDGE_JOB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const JOB_READ_SECRET = 'jobs-route-read-capability-secret-1234567890';
+const BRIDGE_SECRET = 'bridge-cancellation-actor-secret';
+const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+const originalPreviousJobReadSecret =
+  process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+const originalBridgeSecret = process.env.OPENAI_ACTION_SHARED_SECRET;
 
-function buildApp() {
+function buildApp(options: { authenticatedUserId?: number } = {}) {
   const app = express();
   app.use(express.json());
+  if (options.authenticatedUserId !== undefined) {
+    app.use((req, _res, next) => {
+      req.authUser = {
+        id: options.authenticatedUserId!,
+        email: 'actor@example.test',
+        role: 'operator',
+        plan: 'test',
+        profileId: null,
+        source: 'session',
+      };
+      next();
+    });
+  }
   app.use('/', jobsRouter);
   return app;
 }
 
-function hashActorKey(actorKey: string): string {
-  return crypto.createHash('sha256').update(actorKey).digest('hex');
+function hashActorKey(
+  actorKey: string,
+  surface: 'public-gpt' | 'custom-gpt-bridge' = 'public-gpt'
+): string {
+  return buildGptIdempotencyScopeHash({
+    surface,
+    actorKey,
+  });
+}
+
+function getWithJobReadToken(path: string, jobId: string) {
+  return request(buildApp())
+    .get(path)
+    .set(
+      JOB_READ_CAPABILITY_HEADER_NAME,
+      issueJobReadCapability(jobId, JOB_READ_SECRET)
+    );
+}
+
+function postWithJobReadToken(
+  path: string,
+  jobId: string,
+  authenticatedUserId?: number
+) {
+  return request(buildApp({ authenticatedUserId }))
+    .post(path)
+    .set(
+      JOB_READ_CAPABILITY_HEADER_NAME,
+      issueJobReadCapability(jobId, JOB_READ_SECRET)
+    );
 }
 
 describe('/jobs routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     sleepMock.mockResolvedValue(undefined);
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
+    process.env.OPENAI_ACTION_SHARED_SECRET = BRIDGE_SECRET;
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+  });
+
+  afterAll(() => {
+    if (originalJobReadSecret === undefined) {
+      delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+    } else {
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = originalJobReadSecret;
+    }
+    if (originalPreviousJobReadSecret === undefined) {
+      delete process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+    } else {
+      process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET =
+        originalPreviousJobReadSecret;
+    }
+    if (originalBridgeSecret === undefined) {
+      delete process.env.OPENAI_ACTION_SHARED_SECRET;
+    } else {
+      process.env.OPENAI_ACTION_SHARED_SECRET = originalBridgeSecret;
+    }
   });
 
   it('returns the canonical stored-result lookup payload without enqueueing work', async () => {
@@ -69,7 +157,10 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp()).get(`/jobs/${COMPLETED_JOB_ID}/result`);
+    const response = await getWithJobReadToken(
+      `/jobs/${COMPLETED_JOB_ID}/result`,
+      COMPLETED_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -100,7 +191,10 @@ describe('/jobs routes', () => {
   it('returns an explicit not_found payload for the canonical result route', async () => {
     getJobByIdMock.mockResolvedValue(null);
 
-    const response = await request(buildApp()).get(`/jobs/${MISSING_JOB_ID}/result`);
+    const response = await getWithJobReadToken(
+      `/jobs/${MISSING_JOB_ID}/result`,
+      MISSING_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -142,7 +236,10 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/result`);
+    const response = await getWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/result`,
+      RUNNING_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -187,6 +284,88 @@ describe('/jobs routes', () => {
     expect(getJobByIdMock).not.toHaveBeenCalled();
   });
 
+  it('makes missing, malformed, and cross-job read capabilities indistinguishable from missing jobs without repository access', async () => {
+    const missingStatus = await request(buildApp())
+      .get(`/jobs/${COMPLETED_JOB_ID}`);
+    const malformedResult = await request(buildApp())
+      .get(`/jobs/${COMPLETED_JOB_ID}/result`)
+      .set(JOB_READ_CAPABILITY_HEADER_NAME, 'not-a-valid-token');
+    const crossJobStream = await request(buildApp())
+      .get(`/jobs/${COMPLETED_JOB_ID}/stream`)
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(MISSING_JOB_ID, JOB_READ_SECRET)
+      );
+
+    expect(missingStatus.status).toBe(404);
+    expect(missingStatus.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(malformedResult.status).toBe(200);
+    expect(malformedResult.body).toMatchObject({
+      jobId: COMPLETED_JOB_ID,
+      status: 'not_found',
+      result: null,
+      error: {
+        code: 'JOB_NOT_FOUND',
+      },
+    });
+    expect(crossJobStream.status).toBe(404);
+    expect(crossJobStream.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('fails capability-protected routes closed before repository access when configuration is unavailable', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const resultResponse = await request(buildApp())
+      .get(`/jobs/${COMPLETED_JOB_ID}/result`)
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(COMPLETED_JOB_ID, JOB_READ_SECRET)
+      );
+    const cancellationResponse = await request(buildApp())
+      .post(`/jobs/${COMPLETED_JOB_ID}/cancel`)
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1')
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(COMPLETED_JOB_ID, JOB_READ_SECRET)
+      );
+
+    expect(resultResponse.status).toBe(503);
+    expect(resultResponse.body).toEqual({
+      error: 'JOB_READ_AUTH_UNAVAILABLE',
+      message: 'Async job reads are temporarily unavailable.',
+    });
+    expect(cancellationResponse.status).toBe(503);
+    expect(cancellationResponse.body).toEqual({
+      error: 'JOB_READ_AUTH_UNAVAILABLE',
+      message: 'Async job reads are temporarily unavailable.',
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing and cross-job cancellation capabilities before repository access', async () => {
+    const missingCapability = await request(buildApp())
+      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
+      .set('x-session-id', 'owner-1');
+    const crossJobCapability = await request(buildApp())
+      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1')
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(MISSING_JOB_ID, JOB_READ_SECRET)
+      );
+
+    expect(missingCapability.status).toBe(404);
+    expect(missingCapability.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(missingCapability.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(crossJobCapability.status).toBe(404);
+    expect(crossJobCapability.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+  });
+
   it('rejects whitespace-only job identifiers for cancellation through the guarded response path', async () => {
     const response = await request(buildApp())
       .post('/jobs/%20/cancel')
@@ -219,7 +398,10 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp()).get(`/jobs/${EXPIRED_JOB_ID}`);
+    const response = await getWithJobReadToken(
+      `/jobs/${EXPIRED_JOB_ID}`,
+      EXPIRED_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -258,16 +440,154 @@ describe('/jobs routes', () => {
       .mockResolvedValueOnce(localAgentJob)
       .mockResolvedValueOnce(null);
 
-    const localStatus = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}`);
-    const missingStatus = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}`);
-    const localResult = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/result`);
-    const missingResult = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/result`);
+    const localStatus = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}`,
+      LOCAL_AGENT_JOB_ID
+    );
+    const missingStatus = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}`,
+      LOCAL_AGENT_JOB_ID
+    );
+    const localResult = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/result`,
+      LOCAL_AGENT_JOB_ID
+    );
+    const missingResult = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/result`,
+      LOCAL_AGENT_JOB_ID
+    );
 
     expect(localStatus.status).toBe(404);
     expect(localStatus.body).toEqual(missingStatus.body);
     expect(localResult.status).toBe(200);
     expect(localResult.body).toEqual(missingResult.body);
     expect(JSON.stringify(localResult.body)).not.toContain('private local-agent output');
+  });
+
+  it('hides dag-node status and result details before public serialization', async () => {
+    const privateDagNodeOutput = 'PRIVATE_DAG_NODE_OUTPUT_SENTINEL';
+    const dagNodeJob = {
+      id: DAG_NODE_JOB_ID,
+      job_type: 'dag-node',
+      status: 'completed',
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: '2026-07-24T10:01:00.000Z',
+      error_message: 'PRIVATE_DAG_NODE_ERROR_SENTINEL',
+      output: {
+        result: privateDagNodeOutput
+      },
+      cancel_requested_at: null,
+      cancel_reason: null
+    };
+    getJobByIdMock
+      .mockResolvedValueOnce(dagNodeJob)
+      .mockResolvedValueOnce(dagNodeJob)
+      .mockResolvedValueOnce(dagNodeJob);
+
+    const statusResponse = await getWithJobReadToken(
+      `/jobs/${DAG_NODE_JOB_ID}`,
+      DAG_NODE_JOB_ID
+    );
+    const resultResponse = await getWithJobReadToken(
+      `/jobs/${DAG_NODE_JOB_ID}/result`,
+      DAG_NODE_JOB_ID
+    );
+    const cancellationResponse = await postWithJobReadToken(
+      `/jobs/${DAG_NODE_JOB_ID}/cancel`,
+      DAG_NODE_JOB_ID
+    )
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1');
+
+    expect(statusResponse.status).toBe(404);
+    expect(statusResponse.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    expect(resultResponse.status).toBe(200);
+    expect(resultResponse.body).toMatchObject({
+      jobId: DAG_NODE_JOB_ID,
+      status: 'not_found',
+      result: null,
+      error: {
+        code: 'JOB_NOT_FOUND'
+      }
+    });
+    expect(cancellationResponse.status).toBe(404);
+    expect(cancellationResponse.body).toEqual({ error: 'JOB_NOT_FOUND' });
+    const serialized = JSON.stringify({
+      status: statusResponse.body,
+      result: resultResponse.body,
+      cancellation: cancellationResponse.body,
+    });
+    expect(serialized).not.toContain('dag-node');
+    expect(serialized).not.toContain(privateDagNodeOutput);
+    expect(serialized).not.toContain('PRIVATE_DAG_NODE_ERROR_SENTINEL');
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+  });
+
+  it('hides protected GPT Access jobs even with a mathematically valid generic capability', async () => {
+    const protectedResultSentinel = 'PROTECTED_GPT_ACCESS_RESULT_SENTINEL';
+    const protectedErrorSentinel = 'PROTECTED_GPT_ACCESS_ERROR_SENTINEL';
+    const protectedJob = {
+      id: GPT_ACCESS_JOB_ID,
+      job_type: 'gpt',
+      status: 'completed',
+      input: {
+        requestPath: '/gpt-access/jobs/create',
+        executionModeReason: 'gpt_access_create_ai_job',
+      },
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: '2026-07-24T10:01:00.000Z',
+      error_message: protectedErrorSentinel,
+      output: {
+        result: protectedResultSentinel,
+      },
+      cancel_requested_at: null,
+      cancel_reason: null,
+    };
+    getJobByIdMock
+      .mockResolvedValueOnce(protectedJob)
+      .mockResolvedValueOnce(protectedJob)
+      .mockResolvedValueOnce(protectedJob)
+      .mockResolvedValueOnce(protectedJob);
+
+    const statusResponse = await getWithJobReadToken(
+      `/jobs/${GPT_ACCESS_JOB_ID}`,
+      GPT_ACCESS_JOB_ID
+    );
+    const resultResponse = await getWithJobReadToken(
+      `/jobs/${GPT_ACCESS_JOB_ID}/result`,
+      GPT_ACCESS_JOB_ID
+    );
+    const streamResponse = await getWithJobReadToken(
+      `/jobs/${GPT_ACCESS_JOB_ID}/stream`,
+      GPT_ACCESS_JOB_ID
+    );
+    const cancellationResponse = await postWithJobReadToken(
+      `/jobs/${GPT_ACCESS_JOB_ID}/cancel`,
+      GPT_ACCESS_JOB_ID
+    )
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1');
+
+    expect(statusResponse.status).toBe(404);
+    expect(resultResponse.status).toBe(200);
+    expect(resultResponse.body).toMatchObject({
+      jobId: GPT_ACCESS_JOB_ID,
+      status: 'not_found',
+      result: null,
+    });
+    expect(streamResponse.status).toBe(404);
+    expect(cancellationResponse.status).toBe(404);
+    const serialized = JSON.stringify({
+      status: statusResponse.body,
+      result: resultResponse.body,
+      stream: streamResponse.body,
+      cancellation: cancellationResponse.body,
+    });
+    expect(serialized).not.toContain(protectedResultSentinel);
+    expect(serialized).not.toContain(protectedErrorSentinel);
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
   it('hides local-agent streams exactly like missing jobs', async () => {
@@ -289,8 +609,14 @@ describe('/jobs routes', () => {
       .mockResolvedValueOnce(localAgentJob)
       .mockResolvedValueOnce(null);
 
-    const localStream = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/stream`);
-    const missingStream = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/stream`);
+    const localStream = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/stream`,
+      LOCAL_AGENT_JOB_ID
+    );
+    const missingStream = await getWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/stream`,
+      LOCAL_AGENT_JOB_ID
+    );
 
     expect(localStream.status).toBe(404);
     expect(localStream.body).toEqual(missingStream.body);
@@ -315,12 +641,16 @@ describe('/jobs routes', () => {
       .mockResolvedValueOnce(localAgentJob)
       .mockResolvedValueOnce(null);
 
-    const localCancellation = await request(buildApp())
-      .post(`/jobs/${LOCAL_AGENT_JOB_ID}/cancel`)
+    const localCancellation = await postWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/cancel`,
+      LOCAL_AGENT_JOB_ID
+    )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-1');
-    const missingCancellation = await request(buildApp())
-      .post(`/jobs/${LOCAL_AGENT_JOB_ID}/cancel`)
+    const missingCancellation = await postWithJobReadToken(
+      `/jobs/${LOCAL_AGENT_JOB_ID}/cancel`,
+      LOCAL_AGENT_JOB_ID
+    )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-1');
 
@@ -330,8 +660,23 @@ describe('/jobs routes', () => {
   });
 
   it('rejects anonymous cancellation requests', async () => {
-    const response = await request(buildApp())
-      .post(`/jobs/${EXPIRED_JOB_ID}/cancel`)
+    getJobByIdMock.mockResolvedValue({
+      id: EXPIRED_JOB_ID,
+      job_type: 'gpt',
+      status: 'expired',
+      idempotency_scope_hash: hashActorKey('anonymous-request:unrecoverable'),
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:01:00.000Z',
+      completed_at: '2026-04-06T10:01:00.000Z',
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null
+    });
+    const response = await postWithJobReadToken(
+      `/jobs/${EXPIRED_JOB_ID}/cancel`,
+      EXPIRED_JOB_ID
+    )
       .set('x-confirmed', 'yes')
       .send({ reason: 'Stop this job' });
 
@@ -341,19 +686,19 @@ describe('/jobs routes', () => {
       ok: false,
       error: {
         code: 'JOB_CANCELLATION_AUTH_REQUIRED',
-        message: 'Job cancellation requires an authenticated session or internal actor.'
+        message: 'Job cancellation requires an established authenticated principal or internal actor.'
       }
     });
-    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(getJobByIdMock).toHaveBeenCalledTimes(1);
     expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
-  it('rejects cancellation for the wrong session owner', async () => {
+  it('rejects cancellation for the wrong authenticated owner', async () => {
     getJobByIdMock.mockResolvedValue({
       id: RUNNING_JOB_ID,
       job_type: 'gpt',
       status: 'running',
-      idempotency_scope_hash: hashActorKey('session:owner-1'),
+      idempotency_scope_hash: hashActorKey('user:1'),
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:01:00.000Z',
       completed_at: null,
@@ -363,10 +708,13 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp())
-      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
+    const response = await postWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/cancel`,
+      RUNNING_JOB_ID,
+      2
+    )
       .set('x-confirmed', 'yes')
-      .set('x-session-id', 'owner-2')
+      .set('x-session-id', 'caller-selected-session')
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(403);
@@ -380,12 +728,12 @@ describe('/jobs routes', () => {
     expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
-  it('cancels queued jobs immediately for the matching session owner', async () => {
+  it('cancels queued jobs immediately for the matching authenticated owner despite session input', async () => {
     getJobByIdMock.mockResolvedValue({
       id: QUEUED_JOB_ID,
       job_type: 'gpt',
       status: 'pending',
-      idempotency_scope_hash: hashActorKey('session:owner-1'),
+      idempotency_scope_hash: hashActorKey('user:1'),
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:00:00.000Z',
       completed_at: null,
@@ -400,7 +748,7 @@ describe('/jobs routes', () => {
         id: QUEUED_JOB_ID,
         job_type: 'gpt',
         status: 'cancelled',
-        idempotency_scope_hash: hashActorKey('session:owner-1'),
+        idempotency_scope_hash: hashActorKey('user:1'),
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
@@ -411,10 +759,13 @@ describe('/jobs routes', () => {
       }
     });
 
-    const response = await request(buildApp())
-      .post(`/jobs/${QUEUED_JOB_ID}/cancel`)
+    const response = await postWithJobReadToken(
+      `/jobs/${QUEUED_JOB_ID}/cancel`,
+      QUEUED_JOB_ID,
+      1
+    )
       .set('x-confirmed', 'yes')
-      .set('x-session-id', 'owner-1')
+      .set('x-session-id', 'caller-selected-session')
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(200);
@@ -428,12 +779,80 @@ describe('/jobs routes', () => {
     });
   });
 
+  it('validates the action-secret carrier and ignores unrelated auth/session input for bridge cancellation', async () => {
+    const bridgeActorKey = buildAuthenticatedCredentialActorKey(
+      'custom-gpt-bridge',
+      BRIDGE_SECRET
+    );
+    const bridgeInput = {
+      requestPath: '/api/bridge/gpt',
+      executionModeReason: 'bridge_query',
+    };
+    getJobByIdMock.mockResolvedValue({
+      id: BRIDGE_JOB_ID,
+      job_type: 'gpt',
+      input: bridgeInput,
+      status: 'pending',
+      idempotency_scope_hash: hashActorKey(
+        bridgeActorKey,
+        'custom-gpt-bridge'
+      ),
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+    requestJobCancellationMock.mockResolvedValue({
+      outcome: 'cancelled',
+      job: {
+        id: BRIDGE_JOB_ID,
+        job_type: 'gpt',
+        input: bridgeInput,
+        status: 'cancelled',
+        idempotency_scope_hash: hashActorKey(
+          bridgeActorKey,
+          'custom-gpt-bridge'
+        ),
+        created_at: '2026-04-06T10:00:00.000Z',
+        updated_at: '2026-04-06T10:01:00.000Z',
+        completed_at: '2026-04-06T10:01:00.000Z',
+        error_message: 'Job cancellation requested by client.',
+        output: null,
+        cancel_requested_at: '2026-04-06T10:01:00.000Z',
+        cancel_reason: 'Stop this bridge job',
+      },
+    });
+
+    const response = await postWithJobReadToken(
+      `/jobs/${BRIDGE_JOB_ID}/cancel`,
+      BRIDGE_JOB_ID
+    )
+      .set('x-confirmed', 'yes')
+      .set('authorization', 'Basic attacker-selected-value')
+      .set('x-openai-action-secret', BRIDGE_SECRET)
+      .send({ reason: 'Stop this bridge job' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      id: BRIDGE_JOB_ID,
+      status: 'cancelled',
+    });
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      BRIDGE_JOB_ID,
+      'Stop this bridge job'
+    );
+  });
+
   it('returns 202 when cancellation is requested for a running job', async () => {
     getJobByIdMock.mockResolvedValue({
       id: CANCEL_REQUEST_JOB_ID,
       job_type: 'gpt',
       status: 'running',
-      idempotency_scope_hash: hashActorKey('session:owner-2'),
+      idempotency_scope_hash: hashActorKey('user:2'),
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:01:00.000Z',
       completed_at: null,
@@ -448,7 +867,7 @@ describe('/jobs routes', () => {
         id: CANCEL_REQUEST_JOB_ID,
         job_type: 'gpt',
         status: 'running',
-        idempotency_scope_hash: hashActorKey('session:owner-2'),
+        idempotency_scope_hash: hashActorKey('user:2'),
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: null,
@@ -459,10 +878,12 @@ describe('/jobs routes', () => {
       }
     });
 
-    const response = await request(buildApp())
-      .post(`/jobs/${CANCEL_REQUEST_JOB_ID}/cancel`)
+    const response = await postWithJobReadToken(
+      `/jobs/${CANCEL_REQUEST_JOB_ID}/cancel`,
+      CANCEL_REQUEST_JOB_ID,
+      2
+    )
       .set('x-confirmed', 'yes')
-      .set('x-session-id', 'owner-2')
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(202);
@@ -481,7 +902,7 @@ describe('/jobs routes', () => {
       id: TERMINAL_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
-      idempotency_scope_hash: hashActorKey('session:owner-3'),
+      idempotency_scope_hash: hashActorKey('user:3'),
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:01:00.000Z',
       completed_at: '2026-04-06T10:01:00.000Z',
@@ -496,7 +917,7 @@ describe('/jobs routes', () => {
         id: TERMINAL_JOB_ID,
         job_type: 'gpt',
         status: 'completed',
-        idempotency_scope_hash: hashActorKey('session:owner-3'),
+        idempotency_scope_hash: hashActorKey('user:3'),
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
@@ -507,10 +928,13 @@ describe('/jobs routes', () => {
       }
     });
 
-    const response = await request(buildApp())
-      .post(`/jobs/${TERMINAL_JOB_ID}/cancel`)
+    const response = await postWithJobReadToken(
+      `/jobs/${TERMINAL_JOB_ID}/cancel`,
+      TERMINAL_JOB_ID,
+      3
+    )
       .set('x-confirmed', 'yes')
-      .set('x-session-id', 'owner-3');
+      .set('x-session-id', 'caller-selected-session');
 
     expect(response.status).toBe(409);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -548,7 +972,10 @@ describe('/jobs routes', () => {
     });
 
     try {
-      const response = await request(buildApp()).get(`/jobs/${TRUNCATED_JOB_ID}/result`);
+      const response = await getWithJobReadToken(
+        `/jobs/${TRUNCATED_JOB_ID}/result`,
+        TRUNCATED_JOB_ID
+      );
 
       expect(response.status).toBe(200);
       expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -584,11 +1011,10 @@ describe('/jobs routes', () => {
     );
 
     const response = routeKind === 'cancellation'
-      ? await request(buildApp())
-          .post(path)
+      ? await postWithJobReadToken(path, RUNNING_JOB_ID)
           .set('x-confirmed', 'yes')
           .set('x-session-id', 'owner-1')
-      : await request(buildApp()).get(path);
+      : await getWithJobReadToken(path, RUNNING_JOB_ID);
 
     expect(response.status).toBe(503);
     expect(response.headers['x-response-bytes']).toBeTruthy();
@@ -604,7 +1030,7 @@ describe('/jobs routes', () => {
       id: RUNNING_JOB_ID,
       job_type: 'gpt',
       status: 'running',
-      idempotency_scope_hash: hashActorKey('session:owner-1'),
+      idempotency_scope_hash: hashActorKey('user:1'),
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:01:00.000Z',
       completed_at: null,
@@ -617,10 +1043,13 @@ describe('/jobs routes', () => {
       new MockJobRepositoryUnavailableError('internal cancellation sentinel')
     );
 
-    const response = await request(buildApp())
-      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
+    const response = await postWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/cancel`,
+      RUNNING_JOB_ID,
+      1
+    )
       .set('x-confirmed', 'yes')
-      .set('x-session-id', 'owner-1');
+      .set('x-session-id', 'caller-selected-session');
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
@@ -635,9 +1064,13 @@ describe('/jobs routes', () => {
       new MockJobRepositoryUnavailableError('internal stream sentinel')
     );
 
-    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+    const response = await getWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/stream`,
+      RUNNING_JOB_ID
+    );
 
     expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.headers['content-type']).not.toContain('text/event-stream');
     expect(response.body).toEqual({
@@ -664,10 +1097,16 @@ describe('/jobs routes', () => {
         new MockJobRepositoryUnavailableError('internal stream sentinel')
       );
 
-    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+    const response = await getWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/stream`,
+      RUNNING_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['cache-control']).toContain('no-cache');
+    expect(response.headers['cache-control']).toContain('no-transform');
     expect(response.text).toContain('event: status');
     expect(response.text).toContain('event: error');
     expect(response.text).toContain('"code":"JOB_REPOSITORY_UNAVAILABLE"');
@@ -692,7 +1131,10 @@ describe('/jobs routes', () => {
       })
       .mockResolvedValueOnce(null);
 
-    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+    const response = await getWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/stream`,
+      RUNNING_JOB_ID
+    );
 
     expect(response.status).toBe(200);
     expect(response.text).toContain('event: status');

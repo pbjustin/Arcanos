@@ -406,7 +406,7 @@ export function classifyWritingPlaneInput(input: {
         reason: 'prompt_job_lookup_rejected',
         errorCode: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message:
-          'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.',
+          'Job retrieval requests must use the jobs API with the jobReadToken returned by creation in x-arcanos-job-read-token. Do not send result or status lookups through POST /gpt/{gptId}.',
         canonical,
         jobLookup,
       };

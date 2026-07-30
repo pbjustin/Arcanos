@@ -326,4 +326,43 @@ describe('custom GPT route OpenAPI contract', () => {
       });
     }
   });
+
+  it('documents authenticated retry semantics and every job-backed continuation field', () => {
+    const contract = JSON.parse(
+      readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
+    );
+    const operation = contract.paths?.['/gpt/{gptId}']?.post;
+
+    expect(operation?.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'Idempotency-Key',
+        in: 'header',
+        required: false,
+        description: expect.stringContaining('anonymous public submissions remain isolated'),
+      }),
+    ]));
+    expect(contract.components?.schemas?.GptAsyncPendingResponse?.properties?.status?.enum).toEqual([
+      'queued',
+      'running',
+      'timeout',
+    ]);
+
+    for (const status of ['200', '202', '409', '410', '500', '503', '504']) {
+      expect(operation?.responses?.[status]?.headers?.['Cache-Control']).toEqual({
+        $ref: '#/components/headers/NoStore',
+      });
+    }
+    expect(contract.components?.headers?.NoStore?.schema?.const).toBe('no-store');
+
+    const acceptedUnavailable =
+      operation?.responses?.['503']?.content?.['application/json']?.examples
+        ?.acceptedJobStatusUnavailable?.value;
+    expect(acceptedUnavailable).toEqual(expect.objectContaining({
+      jobId: 'job_example',
+      poll: '/jobs/job_example/result',
+      stream: '/jobs/job_example/stream',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/),
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
+    }));
+  });
 });

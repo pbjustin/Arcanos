@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { GptAsyncWriteAction } from './gptJobResult.js';
 import { mapGptJobStatusToClientStatus } from './priorityGpt.js';
+import { buildJobReadCapabilityResponseFields } from '@shared/jobs/jobReadCapability.js';
 import {
   GPT_ECHO_ACTION,
   GPT_HEALTH_ECHO_ACTION,
@@ -55,6 +56,8 @@ export interface QueuedGptPendingResponse {
   result: Record<string, never>;
   poll: string;
   stream: string;
+  jobReadToken: string;
+  jobReadTokenHeader: string;
   timedOut: boolean;
   jobStatus?: string;
   lifecycleStatus?: string;
@@ -212,6 +215,7 @@ export function buildQueuedGptPendingResponse(input: {
     result: {},
     poll: `/jobs/${input.jobId}/result`,
     stream: `/jobs/${input.jobId}/stream`,
+    ...buildJobReadCapabilityResponseFields(input.jobId),
     timedOut: false,
     ...(normalizeOptionalString(input.jobStatus ?? undefined)
       ? { jobStatus: normalizeOptionalString(input.jobStatus ?? undefined)! }

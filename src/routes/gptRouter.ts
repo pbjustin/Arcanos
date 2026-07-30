@@ -79,7 +79,7 @@ import {
   tryAcquirePriorityGptDirectExecutionSlot,
   type PriorityGptDirectExecutionSlot
 } from '@services/priorityGptDirectExecutionService.js';
-import { getRequestActorKey } from '@platform/runtime/security.js';
+import { getRequestEstablishedActorKey } from '@platform/runtime/security.js';
 import {
   GPT_QUERY_ACTION,
   GPT_QUERY_AND_WAIT_ACTION
@@ -135,6 +135,15 @@ import {
   type GptExecutionMode,
   type GptExecutionPlan,
 } from './_core/gptRouteExecutionPolicy.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_CODE,
+  JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+  JOB_READ_PROVENANCE_UNAVAILABLE_CODE,
+  JOB_READ_PROVENANCE_UNAVAILABLE_MESSAGE,
+  buildJobReadCapabilityResponseFields,
+  isGenericJobCapabilityEligible,
+  resolveConfiguredJobReadCapabilitySecret,
+} from '@shared/jobs/jobReadCapability.js';
 
 const router = express.Router();
 const ASYNC_GPT_JOBS_UNAVAILABLE_MESSAGE =
@@ -1821,6 +1830,10 @@ router.post("/:gptId", async (req, res, next) => {
         const explicitIdempotencyKey = normalizeExplicitIdempotencyKey(
           req.header('Idempotency-Key') ?? req.header('idempotency-key')
         );
+        const establishedPublicGptActorKey = getRequestEstablishedActorKey(req);
+        const publicGptIdempotencyActorKey =
+          establishedPublicGptActorKey
+          ?? `anonymous-request:${crypto.randomUUID()}`;
         if (explicitIdempotencyKey) {
           requestLogger?.info?.('gpt.request.idempotency_key_present', {
             endpoint: req.originalUrl,
@@ -1831,7 +1844,8 @@ router.post("/:gptId", async (req, res, next) => {
                 gptId: incomingGptId,
                 action: effectiveRequestedAction,
                 body: effectiveBody,
-                actorKey: getRequestActorKey(req),
+                surface: 'public-gpt',
+                actorKey: publicGptIdempotencyActorKey,
                 explicitIdempotencyKey
               }).idempotencyKeyHash
             )
@@ -2261,6 +2275,21 @@ router.post("/:gptId", async (req, res, next) => {
           );
 
         if (shouldUseJobBackedExecution) {
+          res.setHeader('Cache-Control', 'no-store');
+          if (!resolveConfiguredJobReadCapabilitySecret()) {
+            return sendGuardedGptJsonResponse(req, res, {
+              ok: false,
+              error: {
+                code: JOB_READ_AUTH_UNAVAILABLE_CODE,
+                message: JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+              },
+              _route: {
+                requestId,
+                gptId: incomingGptId,
+                timestamp: new Date().toISOString(),
+              },
+            }, 'gpt.response.job_read_auth_unavailable', 503);
+          }
           applyGptQueueBypassedHeader(res, false);
           recordGptRouteDecision({
             path: fastPathFallbackToOrchestrated ? 'orchestrated_path' : fastPathDecision.path,
@@ -2302,7 +2331,8 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               action: effectiveRequestedAction,
               body: effectiveBody,
-              actorKey: getRequestActorKey(req),
+              surface: 'public-gpt',
+              actorKey: publicGptIdempotencyActorKey,
               explicitIdempotencyKey
             });
             if (!explicitIdempotencyKey) {
@@ -2327,7 +2357,7 @@ router.post("/:gptId", async (req, res, next) => {
               traceId,
               correlationId: traceId,
               routeHint: effectiveRequestedAction ?? 'query',
-              requestPath: req.originalUrl,
+              requestPath: `/gpt/${encodeURIComponent(incomingGptId)}`,
               executionModeReason: executionPlan.reason
             });
             const priorityDirectWorkerId = `${process.env.WORKER_ID || 'api'}:priority-gpt-direct`;
@@ -2447,7 +2477,40 @@ router.post("/:gptId", async (req, res, next) => {
             }
             if (createResult) {
               const job = createResult.job;
+              if (!isGenericJobCapabilityEligible(job)) {
+                releasePriorityDirectSlot();
+                requestLogger?.error?.('gpt.request.job_provenance_unavailable', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  jobId: job.id,
+                  jobType: job.job_type ?? null,
+                });
+                return sendGuardedGptJsonResponse(req, res, {
+                  ok: false,
+                  error: {
+                    code: JOB_READ_PROVENANCE_UNAVAILABLE_CODE,
+                    message: JOB_READ_PROVENANCE_UNAVAILABLE_MESSAGE,
+                  },
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString(),
+                  },
+                }, 'gpt.response.job_provenance_unavailable', 503);
+              }
               queuedJobId = job.id;
+              queuedPendingResponse = buildQueuedGptPendingResponse({
+                action: asyncBridgeAction,
+                jobId: job.id,
+                gptId: incomingGptId,
+                requestId,
+                jobStatus: job.status,
+                lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
+                deduped: createResult.deduped,
+                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                idempotencySource: idempotencyDescriptor.source
+              });
               if (priorityDirectSlot) {
                 if (createResult.created) {
                   const reservedSlot = priorityDirectSlot;
@@ -2476,17 +2539,6 @@ router.post("/:gptId", async (req, res, next) => {
                   releasePriorityDirectSlot();
                 }
               }
-              queuedPendingResponse = buildQueuedGptPendingResponse({
-                action: asyncBridgeAction,
-                jobId: job.id,
-                gptId: incomingGptId,
-                requestId,
-                jobStatus: job.status,
-                lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
-                deduped: createResult.deduped,
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                idempotencySource: idempotencyDescriptor.source
-              });
               requestLogger?.info?.(createResult.deduped ? 'gpt.request.deduped' : 'gpt.request.async_enqueued', {
                 endpoint: req.originalUrl,
                 gptId: incomingGptId,
@@ -2615,6 +2667,7 @@ router.post("/:gptId", async (req, res, next) => {
                     jobId: job.id,
                     poll: `/jobs/${job.id}/result`,
                     stream: `/jobs/${job.id}/stream`,
+                    ...buildJobReadCapabilityResponseFields(job.id),
                     _route: {
                       requestId,
                       gptId: incomingGptId,
@@ -2814,6 +2867,7 @@ router.post("/:gptId", async (req, res, next) => {
                   jobId: job.id,
                   poll: `/jobs/${job.id}/result`,
                   stream: `/jobs/${job.id}/stream`,
+                  ...buildJobReadCapabilityResponseFields(job.id),
                   _route: {
                     requestId,
                     gptId: incomingGptId,
@@ -3333,6 +3387,25 @@ router.post("/:gptId", async (req, res, next) => {
       error: resolveErrorMessage(err)
     });
     const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
+    const recoveryPendingResponse = queuedPendingResponse as
+      | ReturnType<typeof buildQueuedGptPendingResponse>
+      | null;
+    if (responseOpen && recoveryPendingResponse) {
+      req.logger?.warn?.('gpt.request.async_recovery_pending', {
+        endpoint: req.originalUrl,
+        gptId: req.params.gptId,
+        traceId,
+        jobId: queuedJobId ?? recoveryPendingResponse.jobId,
+        error: resolveErrorMessage(err),
+      });
+      return sendGuardedGptJsonResponse(
+        req,
+        res,
+        recoveryPendingResponse,
+        'gpt.response.async_recovery_pending',
+        202
+      );
+    }
     if (responseOpen) {
       const internalMessage = resolveErrorMessage(err);
       const errorPayload = buildGptDispatcherErrorPayload({

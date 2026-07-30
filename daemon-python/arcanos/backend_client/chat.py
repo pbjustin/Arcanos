@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 from urllib.parse import quote
@@ -14,6 +15,11 @@ from ..config import Config
 
 if TYPE_CHECKING:
     from ..backend_client import BackendApiClient
+
+
+JOB_READ_TOKEN_ENV_NAME = "ARCANOS_JOB_READ_TOKEN"
+JOB_READ_TOKEN_HEADER_NAME = "x-arcanos-job-read-token"
+_JOB_READ_TOKEN_PATTERN = re.compile(r"^v1\.[A-Za-z0-9_-]{43}$")
 
 
 def _build_backend_payload(**fields: Any) -> dict[str, Any]:
@@ -64,6 +70,73 @@ def _read_nullable_string(value: Any) -> Optional[str]:
     return _read_string(value)
 
 
+def _read_job_read_capability(
+    payload: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Purpose: Retain a valid job-read capability from one async response.
+    Inputs/Outputs: raw backend payload; returns validated token plus its fixed header name.
+    Edge cases: malformed tokens are left only in `raw` and never promoted into transport metadata.
+    """
+    token = payload.get("jobReadToken")
+    if not isinstance(token, str) or _JOB_READ_TOKEN_PATTERN.fullmatch(token) is None:
+        return None, None
+    return token, JOB_READ_TOKEN_HEADER_NAME
+
+
+def _resolve_job_read_token(
+    job_read_token: Optional[str],
+) -> tuple[Optional[str], Optional[BackendRequestError]]:
+    """
+    Purpose: Resolve and validate the bearer capability for one generic job read.
+    Inputs/Outputs: explicit token or configured fallback; returns token and optional validation error.
+    Edge cases: an explicitly supplied invalid token never falls back to environment configuration.
+    """
+    candidate = (
+        job_read_token
+        if job_read_token is not None
+        else getattr(Config, "ARCANOS_JOB_READ_TOKEN", None)
+    )
+    if candidate is None or candidate == "":
+        return None, BackendRequestError(
+            kind="validation",
+            message=(
+                f"{JOB_READ_TOKEN_ENV_NAME} or an explicit job_read_token "
+                "is required for generic job reads"
+            ),
+        )
+    if (
+        not isinstance(candidate, str)
+        or _JOB_READ_TOKEN_PATTERN.fullmatch(candidate) is None
+    ):
+        return None, BackendRequestError(
+            kind="validation",
+            message="job_read_token must be a valid v1 job-read capability",
+        )
+    return candidate, None
+
+
+def _request_job_read_json(
+    client: "BackendApiClient",
+    path: str,
+    job_read_token: Optional[str],
+) -> BackendResponse[dict[str, Any]]:
+    """
+    Purpose: Send one generic job read with its capability in the fixed request header.
+    Inputs/Outputs: client, canonical route, and optional explicit token; returns raw backend JSON.
+    Edge cases: missing or malformed capabilities fail locally before any transport call.
+    """
+    resolved_token, token_error = _resolve_job_read_token(job_read_token)
+    if token_error is not None or resolved_token is None:
+        return BackendResponse(ok=False, error=token_error)
+    return client._request_json(
+        "get",
+        path,
+        None,
+        job_read_token=resolved_token,
+    )
+
+
 def _normalize_gpt_async_bridge_payload(
     payload: Mapping[str, Any],
     action: str,
@@ -73,6 +146,8 @@ def _normalize_gpt_async_bridge_payload(
     Inputs/Outputs: raw backend JSON mapping plus canonical action; returns typed bridge result.
     Edge cases: `get_result` preserves backend compatibility envelopes under `raw` while exposing the final result under `result`.
     """
+    job_read_token, job_read_token_header = _read_job_read_capability(payload)
+
     if action == "get_status":
         raw_status = payload.get("result") if _is_mapping(payload.get("result")) else payload
         assert isinstance(raw_status, Mapping)
@@ -84,6 +159,8 @@ def _normalize_gpt_async_bridge_payload(
             result=dict(raw_status),
             error=payload.get("error") if _is_mapping(payload.get("error")) else None,
             raw=dict(payload),
+            job_read_token=job_read_token,
+            job_read_token_header=job_read_token_header,
         )
 
     if action == "get_result":
@@ -101,6 +178,8 @@ def _normalize_gpt_async_bridge_payload(
             result=payload.get("output") if "output" in payload else raw_lookup.get("result"),
             error=dict(error_payload) if _is_mapping(error_payload) else None,
             raw=dict(payload),
+            job_read_token=job_read_token,
+            job_read_token_header=job_read_token_header,
         )
 
     return BackendGptAsyncBridgeResult(
@@ -114,6 +193,8 @@ def _normalize_gpt_async_bridge_payload(
         result=payload.get("result"),
         error=dict(payload.get("error")) if _is_mapping(payload.get("error")) else None,
         raw=dict(payload),
+        job_read_token=job_read_token,
+        job_read_token_header=job_read_token_header,
     )
 
 
@@ -379,11 +460,12 @@ def request_gpt_job_status(
     client: "BackendApiClient",
     job_id: str,
     gpt_id: Optional[str] = None,
+    job_read_token: Optional[str] = None,
 ) -> BackendResponse[BackendGptAsyncBridgeResult]:
     """
     Purpose: Read async job status through the canonical jobs API without enqueueing new work.
-    Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge status metadata.
-    Edge cases: blank job ids fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
+    Inputs/Outputs: required job_id, optional gpt_id, and job-read capability; returns typed async bridge status metadata.
+    Edge cases: blank ids or invalid capabilities fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -396,10 +478,10 @@ def request_gpt_job_status(
         )
 
     _ = gpt_id
-    response = client._request_json(
-        "get",
+    response = _request_job_read_json(
+        client,
         f"/jobs/{quote(normalized_job_id, safe='')}",
-        None,
+        job_read_token,
     )
     if not response.ok or not response.value:
         return BackendResponse(ok=False, error=response.error)
@@ -414,11 +496,12 @@ def request_gpt_job_result(
     client: "BackendApiClient",
     job_id: str,
     gpt_id: Optional[str] = None,
+    job_read_token: Optional[str] = None,
 ) -> BackendResponse[BackendGptAsyncBridgeResult]:
     """
     Purpose: Read async job results through the canonical jobs API without enqueueing new work.
-    Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge result metadata.
-    Edge cases: blank job ids fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
+    Inputs/Outputs: required job_id, optional gpt_id, and job-read capability; returns typed async bridge result metadata.
+    Edge cases: blank ids or invalid capabilities fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -431,10 +514,10 @@ def request_gpt_job_result(
         )
 
     _ = gpt_id
-    response = client._request_json(
-        "get",
+    response = _request_job_read_json(
+        client,
         f"/jobs/{quote(normalized_job_id, safe='')}/result",
-        None,
+        job_read_token,
     )
     if not response.ok or not response.value:
         return BackendResponse(ok=False, error=response.error)
@@ -449,11 +532,12 @@ def request_job_result(
     client: "BackendApiClient",
     job_id: str,
     gpt_id: Optional[str] = None,
+    job_read_token: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
     Purpose: Fetch a stored async GPT job result through the canonical jobs API.
-    Inputs/Outputs: required job_id; returns raw job-result JSON from `GET /jobs/:id/result`.
-    Edge cases: blank job ids fail locally so retrieval never degrades into a prompt query.
+    Inputs/Outputs: required job_id and job-read capability; returns raw job-result JSON from `GET /jobs/:id/result`.
+    Edge cases: blank ids or invalid capabilities fail locally so retrieval never degrades into a prompt query.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -469,10 +553,10 @@ def request_job_result(
     # use it for routing. Job lookups are path-bound to `/jobs/:id/...` only.
     _ = gpt_id
 
-    response = client._request_json(
-        "get",
+    response = _request_job_read_json(
+        client,
         f"/jobs/{quote(normalized_job_id, safe='')}/result",
-        None,
+        job_read_token,
     )
     if not response.ok or not response.value:
         return BackendResponse(ok=False, error=response.error)
@@ -483,11 +567,12 @@ def request_job_result(
 def request_job_status(
     client: "BackendApiClient",
     job_id: str,
+    job_read_token: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
     Purpose: Fetch async GPT job status through the canonical jobs API.
-    Inputs/Outputs: required job_id; returns raw job-status JSON from `GET /jobs/:id`.
-    Edge cases: blank job ids fail locally so status polling never degrades into a prompt query.
+    Inputs/Outputs: required job_id and job-read capability; returns raw job-status JSON from `GET /jobs/:id`.
+    Edge cases: blank ids or invalid capabilities fail locally so status polling never degrades into a prompt query.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -499,10 +584,10 @@ def request_job_status(
             ),
         )
 
-    response = client._request_json(
-        "get",
+    response = _request_job_read_json(
+        client,
         f"/jobs/{quote(normalized_job_id, safe='')}",
-        None,
+        job_read_token,
     )
     if not response.ok or not response.value:
         return BackendResponse(ok=False, error=response.error)

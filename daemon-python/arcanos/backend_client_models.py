@@ -101,3 +101,5 @@ class BackendGptAsyncBridgeResult:
     stream: Optional[str] = None
     error: Optional[Mapping[str, Any]] = None
     raw: Optional[Mapping[str, Any]] = None
+    job_read_token: Optional[str] = None
+    job_read_token_header: Optional[str] = None

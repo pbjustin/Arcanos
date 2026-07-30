@@ -19,12 +19,17 @@ Core workflows to review first:
 - [Release](../.github/workflows/arcanos-release.yml)
 - [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
+- [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 
 ## Configuration
 Common secrets referenced in workflows:
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 - `OPENAI_API_KEY`
 - `RAILWAY_TOKEN` (for workflows that deploy through Railway CLI/actions)
+- `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` (dedicated token scoped only
+  to the pinned Railway workspace and used only by the trusted
+  disposable-environment cleanup workflow; do not substitute an account-wide
+  or production environment project token)
 
 Environment separation guidance:
 - Use Railway `production` and `development` variable sets from `railway.json` as baseline.
@@ -115,6 +120,22 @@ explicit disposable database; neither command should inherit an ambient
 Deployment workflows are repository-specific; verify current trigger and required
 secrets in each workflow file before enabling auto-deploy.
 
+The Railway worker-diagnostics cleanup workflow is a trusted
+`pull_request_target: closed` boundary. It never checks out pull-request code.
+It resolves only the exact
+`worker-diagnostics-pr-<PR_NUMBER>-e2e` environment in the fixed Arcanos
+project, rejects ambiguous or foreign-service topology, deletes by the verified
+environment UUID, requires visibility of the pinned production environment
+before treating absence as success, and confirms that the environment
+disappeared. Its deletion step receives only
+`RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` as a step-scoped
+`RAILWAY_API_TOKEN`, requires Railway's account-identity query to be denied,
+then validates exact access to only the pinned workspace and project. It calls
+Railway's GraphQL API directly without CLI linking. The first PR that
+introduces this workflow must still delete its disposable environment manually
+if it is closed without merge, because unmerged workflow code is not present
+on the default branch.
+
 The Railway automatic deployment workflow runs a repository-owned rollout-policy
 job before it creates the concurrent production deployment job. The
 `ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` value has two supported states:
@@ -168,6 +189,7 @@ state preserves the workflow's normal automatic deployment behavior.
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
 - [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
+- [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 - [Railway configuration](../railway.json)
 - [Railway deployment guide](RAILWAY_DEPLOYMENT.md)
 

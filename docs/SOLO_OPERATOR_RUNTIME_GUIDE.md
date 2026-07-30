@@ -89,7 +89,11 @@ Behavior:
 - live `/health` and router-based health handling now agree about Redis status
 
 ### What changed in ask-style routing
-The legacy ask-style implementation now lives behind `/brain` and defaults to `ASK_ROUTE_MODE=gone`. Canonical daemon and GPT traffic should use `/gpt/:gptId`; operator control reads should use direct endpoints such as `/jobs/*`, `/workers/status`, and `/worker-helper/*`.
+The legacy ask-style implementation now lives behind `/brain` and defaults to
+`ASK_ROUTE_MODE=gone`. Canonical daemon and GPT traffic should use
+`/gpt/:gptId`; direct `/jobs/*` reads require the job-specific capability
+returned at creation, public worker routes expose only aggregate health, and
+detailed worker control remains behind the documented operator boundaries.
 
 Relevant code:
 - `src/routes/ask/workerTools.ts`
@@ -115,7 +119,6 @@ Worker privilege requirements are assigned per route, while credential verificat
 These bounded summary routes do not apply the worker-helper privileged-auth middleware:
 - `GET /worker-helper/status`
 - `GET /worker-helper/health`
-- `GET /worker-helper/jobs/failed`
 
 The bundled helper's `status` command intentionally sends no worker-helper
 credential. Configuring `ARCANOS_WORKER_HELPER_TOKEN` does not add it to that
@@ -123,6 +126,7 @@ public request.
 
 These job-detail and mutation routes require authenticated operator or trusted internal access:
 - `GET /worker-helper/jobs/latest`
+- `GET /worker-helper/jobs/failed`
 - `GET /worker-helper/jobs/:id`
 - `POST /worker-helper/queue/ask`
 - `POST /worker-helper/dispatch`
@@ -210,16 +214,22 @@ Read them as:
 Use the bounded status routes for summary inspection:
 - `GET /worker-helper/status`
 - `GET /worker-helper/health`
-- `GET /worker-helper/jobs/failed`
 
 Use an authenticated operator or trusted internal context for:
 - `GET /worker-helper/jobs/latest`
+- `GET /worker-helper/jobs/failed`
 - `GET /worker-helper/jobs/:id`
 - `POST /worker-helper/queue/ask`
 - `POST /worker-helper/dispatch`
 - `POST /worker-helper/heal`
 
-The summary routes intentionally expose bounded runtime and queue health. Job detail and mutation routes do not bypass authentication merely because the deployment has one operator.
+The summary routes return the same `no-store`, allowlist-based worker-health
+projection: normalized states, aggregate counts, and timestamps only. Worker
+and job identifiers, recent prompts/results/errors, and raw worker snapshots
+remain available only through authenticated operator surfaces. Filesystem paths
+are omitted from the public projection. Job detail, failed-job listing, and
+mutation routes do not bypass authentication merely because the deployment has
+one operator.
 
 ### CLI helper
 Use:
@@ -349,7 +359,7 @@ If the queue worker is down:
 - `GET /healthz` returns 200
 - `GET /readyz` includes a Redis check
 - `GET /health` includes `dependencies.redis`
-- `GET /worker-helper/status` returns queue and runtime state
+- `GET /worker-helper/status` returns only aggregate worker-health states, counts, and timestamps
 - canonical GPT/compatibility worker prompts no longer fail with `tools[0].name`
 - queued jobs appear in Postgres-backed worker job inspection routes
 

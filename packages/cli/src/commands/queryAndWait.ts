@@ -1,6 +1,10 @@
 import { requestQueryAndWait } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
-import { extractHumanReadableText } from "./humanOutput.js";
+import {
+  extractHumanReadableText,
+  formatJobReadCapabilityGuidance,
+  omitJobReadCapabilityForHumanOutput
+} from "./humanOutput.js";
 import type { CliCommandResult, QueryAndWaitCommandInvocation } from "./types.js";
 
 const DEFAULT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
@@ -53,13 +57,16 @@ function extractQueryAndWaitHumanOutput(
 
   const pendingStatus = typeof payload.status === "string" ? payload.status : "";
   const jobId = typeof payload.jobId === "string" ? payload.jobId : "";
-  if (pendingStatus === "pending" && jobId) {
+  if (["pending", "queued", "running", "timeout"].includes(pendingStatus) && jobId) {
     const instruction =
       typeof payload.instruction === "string" && payload.instruction.trim().length > 0
         ? payload.instruction
         : `query_and_wait timed out after ${timeoutMs}ms. Use \`arcanos job-result ${jobId}\` to retrieve the final result.`;
-    return `Job ${jobId} is still pending. ${instruction}`;
+    return (
+      `Job ${jobId} is ${pendingStatus}. ${instruction} ` +
+      formatJobReadCapabilityGuidance(jobId)
+    );
   }
 
-  return serializeDeterministicJson(payload);
+  return serializeDeterministicJson(omitJobReadCapabilityForHumanOutput(payload));
 }

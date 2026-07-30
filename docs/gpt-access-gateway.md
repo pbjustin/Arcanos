@@ -257,7 +257,7 @@ Expected signals:
 - `/gpt-access/self-heal/status` returns self-heal status plus self-reflection persistence status; disabled, unavailable, or disconnected subsystems are reported explicitly instead of failing through `/gpt/:gptId`.
 - `/gpt-access/jobs/create` returns `202` with a UUID-like `jobId`.
 - `/gpt-access/jobs/result` reads that job without using `/gpt/:gptId`.
-- `/trinity/status` exposes sanitized worker, queue, memory sync, and limit details.
+- `/trinity/status` exposes only a `no-store` aggregate worker-health projection with normalized states, counts, and timestamps. Detailed worker snapshots and recent failures remain behind the `workers.read` GPT Access routes; Trinity bindings and limits are not part of the public projection.
 - Worker logs for successful jobs include `gpt.job.started`, `gpt.dispatch.plan`, `[core] before trinity.query`, `trinity.entry`, and `gpt.job.completed`.
 
 ## Railway Workflow

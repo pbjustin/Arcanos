@@ -16,6 +16,7 @@ describe('sessionSystemDiagnosticsService.getQueueDiagnostics', () => {
   });
 
   it('uses the rolling terminal-job window for failureRate while preserving historicalFailureRate', async () => {
+    const privateJobIdSentinel = '11111111-1111-4111-8111-111111111111';
     mockGetJobQueueSummary.mockResolvedValue({
       pending: 0,
       running: 0,
@@ -47,7 +48,7 @@ describe('sessionSystemDiagnosticsService.getQueueDiagnostics', () => {
       lastUpdatedAt: '2026-04-05T00:51:45.711Z'
     });
     mockGetLatestJob.mockResolvedValue({
-      id: 'job-live',
+      id: privateJobIdSentinel,
       status: 'completed',
       completed_at: '2026-04-05T00:51:45.711Z'
     });
@@ -61,6 +62,10 @@ describe('sessionSystemDiagnosticsService.getQueueDiagnostics', () => {
     expect(result.windowCompletedJobs).toBe(2);
     expect(result.windowFailedJobs).toBe(0);
     expect(result.windowTerminalJobs).toBe(2);
+    expect(result.lastJobStatus).toBe('completed');
+    expect(result.lastJobFinishedAt).toBe('2026-04-05T00:51:45.711Z');
+    expect(result).not.toHaveProperty('lastJobId');
+    expect(JSON.stringify(result)).not.toContain(privateJobIdSentinel);
   });
 
   it('degrades when the rolling failure window exceeds the health threshold', async () => {

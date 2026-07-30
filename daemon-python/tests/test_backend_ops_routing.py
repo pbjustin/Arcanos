@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from arcanos.backend_client_models import BackendChatResult, BackendResponse
 from arcanos.cli import backend_ops
 
+JOB_READ_TOKEN = f"v1.{'D' * 43}"
+
 
 def _make_cli_stub() -> SimpleNamespace:
     memory_stub = SimpleNamespace(get_recent_conversations=lambda limit: [])
@@ -164,11 +166,15 @@ def test_perform_backend_conversation_uses_backstage_gpt_id_for_backstage_domain
 
 def test_perform_backend_conversation_routes_job_result_lookups_to_jobs_api(monkeypatch) -> None:
     cli_stub = _make_cli_stub()
-    captured_job_ids: list[str] = []
+    captured_lookups: list[tuple[str, str | None]] = []
     chat_called = {"value": False}
 
-    def _request_job_result(job_id: str):
-        captured_job_ids.append(job_id)
+    def _request_job_result(
+        job_id: str,
+        *,
+        job_read_token: str | None = None,
+    ):
+        captured_lookups.append((job_id, job_read_token))
         return BackendResponse(
             ok=True,
             value={
@@ -193,6 +199,11 @@ def test_perform_backend_conversation_routes_job_result_lookups_to_jobs_api(monk
         "request_with_auth_retry",
         lambda cli, request_func, action_label, report_errors=True: request_func(),
     )
+    monkeypatch.setattr(
+        backend_ops.Config,
+        "ARCANOS_JOB_READ_TOKEN",
+        JOB_READ_TOKEN,
+    )
 
     result = backend_ops.perform_backend_conversation(
         cli_stub,
@@ -202,7 +213,7 @@ def test_perform_backend_conversation_routes_job_result_lookups_to_jobs_api(monk
 
     assert result is not None
     assert result.source == "backend"
-    assert captured_job_ids == ["job-123"]
+    assert captured_lookups == [("job-123", JOB_READ_TOKEN)]
     assert chat_called["value"] is False
     payload = json.loads(result.response_text)
     assert payload == {
@@ -222,11 +233,15 @@ def test_perform_backend_conversation_routes_job_result_lookups_to_jobs_api(monk
 
 def test_perform_backend_conversation_routes_job_status_lookups_to_jobs_api(monkeypatch) -> None:
     cli_stub = _make_cli_stub()
-    captured_job_ids: list[str] = []
+    captured_lookups: list[tuple[str, str | None]] = []
     ask_called = {"value": False}
 
-    def _request_job_status(job_id: str):
-        captured_job_ids.append(job_id)
+    def _request_job_status(
+        job_id: str,
+        *,
+        job_read_token: str | None = None,
+    ):
+        captured_lookups.append((job_id, job_read_token))
         return BackendResponse(
             ok=True,
             value={
@@ -248,6 +263,11 @@ def test_perform_backend_conversation_routes_job_status_lookups_to_jobs_api(monk
         "request_with_auth_retry",
         lambda cli, request_func, action_label, report_errors=True: request_func(),
     )
+    monkeypatch.setattr(
+        backend_ops.Config,
+        "ARCANOS_JOB_READ_TOKEN",
+        JOB_READ_TOKEN,
+    )
 
     result = backend_ops.perform_backend_conversation(
         cli_stub,
@@ -257,7 +277,7 @@ def test_perform_backend_conversation_routes_job_status_lookups_to_jobs_api(monk
 
     assert result is not None
     assert result.source == "backend"
-    assert captured_job_ids == ["job-456"]
+    assert captured_lookups == [("job-456", JOB_READ_TOKEN)]
     assert ask_called["value"] is False
     payload = json.loads(result.response_text)
     assert payload == {

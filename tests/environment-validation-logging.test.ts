@@ -28,7 +28,11 @@ describe('environment validation logging', () => {
     RAILWAY_API_TOKEN: process.env.RAILWAY_API_TOKEN,
     DATABASE_URL: process.env.DATABASE_URL,
     AI_MODEL: process.env.AI_MODEL,
-    PORT: process.env.PORT
+    PORT: process.env.PORT,
+    ARCANOS_JOB_READ_CAPABILITY_SECRET:
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET,
+    ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET:
+      process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET
   };
 
   beforeEach(() => {
@@ -42,6 +46,10 @@ describe('environment validation logging', () => {
     process.env.DATABASE_URL = 'postgresql://postgres:super-secret-password@db.example.com:5432/arcanos';
     process.env.AI_MODEL = 'gpt-4.1';
     process.env.PORT = '8080';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
+      'logging-current-job-read-secret-1234567890';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET =
+      'logging-previous-job-read-secret-1234567890';
   });
 
   afterEach(() => {
@@ -89,6 +97,22 @@ describe('environment validation logging', () => {
         valuePreview: 'gpt-4.1...'
       })
     );
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      '✅ ARCANOS_JOB_READ_CAPABILITY_SECRET validation passed',
+      expect.objectContaining({
+        state: 'set',
+        sensitivity: 'sensitive',
+        length: process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET?.length
+      })
+    );
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      '✅ ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET validation passed',
+      expect.objectContaining({
+        state: 'set',
+        sensitivity: 'sensitive',
+        length: process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET?.length
+      })
+    );
 
     const serializedCalls = JSON.stringify(loggerDebugMock.mock.calls);
 
@@ -96,5 +120,7 @@ describe('environment validation logging', () => {
     expect(serializedCalls).not.toContain('sk-test-openai-key-1234567890abcdefghijklmn');
     expect(serializedCalls).not.toContain('railway_token_1234567890abcdefghijkl');
     expect(serializedCalls).not.toContain('postgresql://postgres:super-secret-password@db.example.com:5432/arcanos');
+    expect(serializedCalls).not.toContain('logging-current-job-read-secret-1234567890');
+    expect(serializedCalls).not.toContain('logging-previous-job-read-secret-1234567890');
   });
 });

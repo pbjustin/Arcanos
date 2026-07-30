@@ -40,6 +40,35 @@ Tracked Railway config (source: `railway.json`):
 Launcher behavior:
 - `node scripts/start-railway-service.mjs` is the canonical normal Railway start command.
 - Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-safe` override. The launcher accepts only the legacy exact `Arcanos-pr-<positive integer>` name or Railway's exact current `pr-<six hexadecimal characters>-<positive integer>` name, together with non-empty Railway project and environment IDs. It starts a passive health-only server without importing application, worker, provider, database, Redis, migration, or scheduler modules.
+- A production-shaped worker-diagnostics E2E must not activate or reuse that
+  native environment. Use an empty custom
+  `worker-diagnostics-pr-<PR_NUMBER>-e2e` environment with environment-scoped
+  web, worker, PostgreSQL, and Redis instances; fresh database and Redis
+  volumes; preview-only purpose-bound credentials; `NODE_ENV=production`; and
+  the normal launcher. Set `ARCANOS_PREVIEW_ISOLATION=true`, `FORCE_MOCK=true`,
+  `ALLOW_MOCK_OPENAI=true`, `OPENAI_API_KEY_REQUIRED=false`, and a
+  credential-free loopback `OPENAI_BASE_URL`. Prove every OpenAI key alias is
+  absent before a live dispatch. Deploy web and worker from the connected
+  GitHub branch, then independently attest the exact repository, branch,
+  commit, deployment IDs, service IDs, environment ID, and temporary web
+  domain through Railway before sending any purpose-bound credential. A
+  `railway up` artifact upload is not sufficient for this proof because it does
+  not supply Railway's Git-trigger provenance variables. Keep both data
+  services private, give only the web service a temporary HTTPS domain, and
+  delete the environment immediately after the bounded proof.
+- The trusted
+  [worker-diagnostics cleanup workflow](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
+  is a merge/close backstop for that exact custom name. It never checks out PR
+  code and deletes only after project, environment, and allowed-service
+  validation. Configure its dedicated
+  `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` secret with a token scoped only
+  to the pinned Railway workspace. The workflow calls Railway's GraphQL API
+  directly, requires account identity access to be denied, validates the exact
+  workspace and project, and does not use Railway CLI linking; account-wide
+  tokens and production environment project tokens are rejected. The
+  introducing PR
+  still requires exact-ID manual cleanup if it closes unmerged because its
+  workflow is not yet on the default branch.
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - Database-backed startup passively inspects the configured and actual

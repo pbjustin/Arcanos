@@ -174,6 +174,7 @@ function buildDirectActionEnvelope() {
 }
 
 const GPT_ROUTE_TEST_ENV_KEYS = [
+  'ARCANOS_JOB_READ_CAPABILITY_SECRET',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
   'GPT_ASYNC_HEAVY_MAX_WORDS',
@@ -212,6 +213,8 @@ describe('GPT fast-path route branching', () => {
     for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
     }
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
+      'gpt-fast-path-job-read-capability-secret-v1';
     process.env.PRIORITY_QUEUE_ENABLED = 'false';
     mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
       ok: true,
@@ -250,7 +253,11 @@ describe('GPT fast-path route branching', () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
         id: 'job-orchestrated',
+        job_type: 'gpt',
         status: 'pending',
+        input: {
+          requestPath: '/gpt/arcanos-core',
+        },
       },
       created: true,
       deduped: false,

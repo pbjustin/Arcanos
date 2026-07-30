@@ -85,7 +85,8 @@ arcanos status
 arcanos workers
 ```
 
-- Calls backend routes for worker/runtime health (`/workers/status` and `/worker-helper/health`).
+- Calls the aggregate, `no-store` backend worker-health projections
+  (`/workers/status` and `/worker-helper/health`).
 - Useful for quick operational checks.
 
 ### 6) Inspect GPT diagnostics (`diagnostics`)
@@ -107,6 +108,14 @@ arcanos job-result <job-id>
 
 - Reads `GET /jobs/:id` and `GET /jobs/:id/result` directly.
 - These commands do not route job lookups through `/gpt/{gptId}`.
+- Independent lookups require the matching `jobReadToken` returned when the
+  job was created. Set it transiently as `ARCANOS_JOB_READ_TOKEN`; the client
+  validates it and sends it only as `x-arcanos-job-read-token`.
+- The higher-level query client preserves the returned token automatically
+  while it polls the same job. Do not put a token in the job URL, command
+  history, logs, or a shared backend environment.
+- Generic reads are `no-store` and expose only `gpt` and `ask` jobs. A missing
+  or invalid token is deliberately indistinguishable from a missing job.
 
 ### 8) Read recent self-heal/runtime events (`logs --recent`)
 

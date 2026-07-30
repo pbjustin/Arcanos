@@ -48,6 +48,12 @@ import {
   type CompletedQueuedAskJobOutput
 } from '@shared/ask/asyncAskJob.js';
 import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_CODE,
+  JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+  buildJobReadCapabilityResponseFields,
+  resolveConfiguredJobReadCapabilitySecret,
+} from '@shared/jobs/jobReadCapability.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import {
   getActiveIntentSnapshot,
@@ -511,12 +517,15 @@ function buildAsyncAskFailurePayload(jobId: string, errorMessage?: string | null
   message: string;
   jobId: string;
   poll: string;
+  jobReadToken: string;
+  jobReadTokenHeader: string;
 } {
   return {
     error: 'ASYNC_ASK_JOB_FAILED',
     message: errorMessage?.trim() || 'Async ask job failed.',
     jobId,
-    poll: buildJobResultPollPath(jobId)
+    poll: buildJobResultPollPath(jobId),
+    ...buildJobReadCapabilityResponseFields(jobId),
   };
 }
 
@@ -525,6 +534,8 @@ function buildAsyncAskJobsUnavailablePayload(jobId?: string): {
   message: string;
   jobId?: string;
   poll?: string;
+  jobReadToken?: string;
+  jobReadTokenHeader?: string;
 } {
   return {
     error: 'ASYNC_ASK_JOBS_UNAVAILABLE',
@@ -532,7 +543,8 @@ function buildAsyncAskJobsUnavailablePayload(jobId?: string): {
     ...(jobId
       ? {
           jobId,
-          poll: buildJobResultPollPath(jobId)
+          poll: buildJobResultPollPath(jobId),
+          ...buildJobReadCapabilityResponseFields(jobId),
         }
       : {})
   };
@@ -1168,6 +1180,13 @@ export const handleAIRequest = async (
     // detection and therefore rely on the default TRINITY_STAGE_TEMPERATURE configuration inside
     // the low-level Trinity engine until they adopt equivalent routing hints.
     if (asyncRequested) {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!resolveConfiguredJobReadCapabilitySecret()) {
+        return sendGuardedAskResponse(req, res, {
+          error: JOB_READ_AUTH_UNAVAILABLE_CODE,
+          message: JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+        }, `${endpointName}.job_read_auth_unavailable`, 503);
+      }
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
       let job: Awaited<ReturnType<typeof createJob>>;
@@ -1238,7 +1257,20 @@ export const handleAIRequest = async (
           );
         }
 
-        throw error;
+        req.logger?.error?.('ask.async_wait.unexpected_failure', {
+          endpoint: req.originalUrl,
+          endpointName,
+          jobId: job.id,
+          requestId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        return sendGuardedAskResponse(
+          req,
+          res,
+          buildQueuedAskPendingResponse(job.id),
+          `${endpointName}.async_wait_recovery_pending`,
+          202
+        );
       } finally {
         res.removeListener('close', abortWaitForClosedClient);
       }
@@ -1271,7 +1303,8 @@ export const handleAIRequest = async (
             error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
             message: 'Async ask job completed without a structured output payload.',
             jobId: job.id,
-            poll: buildJobResultPollPath(job.id)
+            poll: buildJobResultPollPath(job.id),
+            ...buildJobReadCapabilityResponseFields(job.id),
           }, `${endpointName}.async_completed_invalid`, 500);
         }
 
@@ -1353,7 +1386,8 @@ export const handleAIRequest = async (
           error: 'ASYNC_ASK_JOB_MISSING',
           message: 'Async ask job disappeared before completion.',
           jobId: job.id,
-          poll: buildJobResultPollPath(job.id)
+          poll: buildJobResultPollPath(job.id),
+          ...buildJobReadCapabilityResponseFields(job.id),
         }, `${endpointName}.async_missing`, 500);
       }
 

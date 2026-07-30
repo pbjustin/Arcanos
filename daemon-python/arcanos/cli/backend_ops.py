@@ -553,9 +553,15 @@ def _perform_backend_job_lookup(
     action_label = "job result" if intent.kind == "result" else "job status"
     request_func: Callable[[], BackendResponse[dict[str, Any]]]
     if intent.kind == "result":
-        request_func = lambda: cli.backend_client.request_job_result(intent.job_id)
+        request_func = lambda: cli.backend_client.request_job_result(
+            intent.job_id,
+            job_read_token=Config.ARCANOS_JOB_READ_TOKEN,
+        )
     else:
-        request_func = lambda: cli.backend_client.request_job_status(intent.job_id)
+        request_func = lambda: cli.backend_client.request_job_status(
+            intent.job_id,
+            job_read_token=Config.ARCANOS_JOB_READ_TOKEN,
+        )
 
     response = request_with_auth_retry(
         cli,
