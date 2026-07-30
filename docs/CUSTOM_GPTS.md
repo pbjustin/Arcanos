@@ -11,7 +11,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 
 ## How Custom GPT Routing Works
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
-2. Async job status/results must be fetched explicitly through `GET /jobs/:id`, `GET /jobs/:id/result`, or the authenticated GPT Access job-result endpoint.
+2. Async job status/results must be fetched explicitly through `GET /jobs/:id`, `GET /jobs/:id/result`, or the authenticated GPT Access job-result endpoint. Generic reads require the job-specific `jobReadToken` returned by the creating response in exactly one `x-arcanos-job-read-token` header.
 3. Prompt-based control requests are rejected: job lookup prompts, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls must use their canonical control-plane endpoints.
 4. Explicit control actions are also rejected before writing dispatch, with guidance to the corresponding direct endpoint.
 5. Simple prompt-generation requests may be handled by the inline GPT fast path. These return directly with `routeDecision.path: "fast_path"` and do not create a job.
@@ -67,7 +67,7 @@ Rules:
 - Use `action: "query"` with a non-empty `prompt` when the caller wants a durable writing job immediately and will poll later.
 - Use `action: "query_and_wait"` with a non-empty `prompt` when the caller wants the core GPT to complete synchronously through the lightweight direct action lane. The route returns a typed error if direct execution fails or times out; it does not synthesize bounded fallback content for latency guard events. Non-core GPT IDs keep the durable job plus bounded wait behavior.
 - Body `action` is canonical. The router also accepts `?action=query_and_wait` and operation-style aliases such as `operationId: "requestQueryAndWait"` for generated GPT Action clients that separate operation metadata from body arguments.
-- Use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result` when you need to fetch canonical async GPT job state without creating new work.
+- Use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result` when you need to fetch canonical async GPT job state without creating new work. For a generic job read, retain `jobReadToken` from creation and send it only in the returned `jobReadTokenHeader` (`x-arcanos-job-read-token`).
 - Use direct control endpoints instead of `/gpt/:gptId` for runtime inspection, DAG tracing/execution, and MCP tool calls.
 - Retrieval by natural-language prompt is intentionally blocked. Do not ask the GPT route to “look up job 123” in `prompt`; use the direct jobs API or the protected GPT Access result operation.
 - Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
@@ -123,11 +123,21 @@ Execute a core GPT action synchronously:
 ```
 
 Canonical response guidance:
-- Queued write: `{ "ok": true, "action": "query", "jobId": "job_123", "status": "queued" }`
-- Completed `query_and_wait`: `{ "ok": true, "action": "query_and_wait", "status": "completed", "result": "..." }`
+- Queued write: `{ "ok": true, "action": "query", "jobId": "job_123", "status": "queued", "jobReadToken": "v1.<job-specific-signature>", "jobReadTokenHeader": "x-arcanos-job-read-token" }`
+- Completed job-backed `query_and_wait`: `{ "ok": true, "action": "query_and_wait", "jobId": "job_123", "status": "completed", "jobReadToken": "v1.<job-specific-signature>", "jobReadTokenHeader": "x-arcanos-job-read-token", "result": "..." }`
+- Completed synchronous core `query_and_wait`: `{ "ok": true, "action": "query_and_wait", "status": "completed", "result": "..." }` (no job or read capability is created).
 - Status/result read: use the canonical direct job endpoints; `/gpt/:gptId` rejects `get_status` and `get_result`.
-- Repository unavailable after job acceptance: HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and canonical `jobId`, `poll`, and `stream` recovery coordinates. Keep the job ID and retry polling; do not submit replacement work.
-- The authenticated `/api/bridge/gpt` surface reports queue-persistence outages as HTTP `503` with `status: "queue_error"`, `error.source: "queue"`, and the stable message `Durable GPT job persistence is unavailable.` A wait-phase failure includes the accepted `jobId`.
+- Generic status, result, and stream reads expose only `gpt` and `ask` jobs, require the matching token header, and are `no-store`. Missing or invalid capabilities are non-disclosing; they appear as not found.
+- Repository unavailable after job acceptance: HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and canonical `jobId`, `poll`, `stream`, `jobReadToken`, and `jobReadTokenHeader` recovery fields. Keep the job ID and token and retry polling; do not submit replacement work.
+- The authenticated `/api/bridge/gpt` surface reports queue-persistence outages as HTTP `503` with `status: "queue_error"`, `error.source: "queue"`, and the stable message `Durable GPT job persistence is unavailable.` A wait-phase failure includes the accepted job id and its read capability.
+- Job-backed creation requires a distinct valid `ARCANOS_JOB_READ_CAPABILITY_SECRET`. Missing or invalid current configuration fails before enqueueing with HTTP `503` and `JOB_READ_AUTH_UNAVAILABLE`. During rotation, new tokens use the current key while verification may also accept the distinct optional `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET`; remove the previous key after the retained-job window drains. Rotating without that overlap invalidates outstanding generic read tokens immediately.
+- Authenticated `/api/bridge/health` reports only whether the current and
+  optional previous signing keys are configured and lists the required current
+  environment name in `missing_required_env` when unavailable; it never
+  returns either key or a derived job token.
+- Treat `jobReadToken` as a bearer secret. Never place it in a URL, prompt, log, or persistent Custom GPT instruction; send it only in the fixed header for the matching job.
+- The token alone cannot cancel work. `POST /jobs/:id/cancel` also requires the
+  route's confirmation and authenticated actor-ownership checks.
 - Error: `{ "ok": false, "action": "...", "error": { "code": "...", "message": "..." } }`
 
 For a full architecture and operations runbook, see [GPT_FAST_PATH.md](GPT_FAST_PATH.md).

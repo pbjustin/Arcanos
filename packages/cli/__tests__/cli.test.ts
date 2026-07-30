@@ -8,6 +8,10 @@ import { buildTaskCreateRequest } from "../src/client/protocol.js";
 import { runProtocolCli } from "../src/protocolCli.js";
 import { parseCliInvocation } from "../src/commands/parse.js";
 
+const JOB_READ_TOKEN = `v1.${"C".repeat(43)}`;
+const RESPONSE_JOB_READ_TOKEN = `v1.${"D".repeat(43)}`;
+const ORIGINAL_JOB_READ_TOKEN = process.env.ARCANOS_JOB_READ_TOKEN;
+
 function createWritableCapture() {
   let buffer = "";
   const stream = new Writable({
@@ -34,6 +38,18 @@ function createJsonResponse(payload: Record<string, unknown>, init?: ResponseIni
 }
 
 describe("Arcanos CLI", () => {
+  beforeAll(() => {
+    process.env.ARCANOS_JOB_READ_TOKEN = JOB_READ_TOKEN;
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_JOB_READ_TOKEN === undefined) {
+      delete process.env.ARCANOS_JOB_READ_TOKEN;
+    } else {
+      process.env.ARCANOS_JOB_READ_TOKEN = ORIGINAL_JOB_READ_TOKEN;
+    }
+  });
+
   beforeEach(() => {
     jest.restoreAllMocks();
   });
@@ -618,9 +634,50 @@ describe("Arcanos CLI", () => {
     );
   });
 
+  it("guides running generate-and-wait users to transport the capability without printing it", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        jobId: "job-generate-pending",
+        status: "running",
+        jobReadToken: RESPONSE_JOB_READ_TOKEN
+      })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a long prompt pack",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    const output = stdout.read();
+    expect(exitCode).toBe(0);
+    expect(output).toContain("Job job-generate-pending is running");
+    expect(output).toContain("`--json`");
+    expect(output).toContain("`ARCANOS_JOB_READ_TOKEN`");
+    expect(output).not.toContain(RESPONSE_JOB_READ_TOKEN);
+    expect(stderr.read()).toBe("");
+  });
+
   it("sends query requests to the canonical backend GPT route with the explicit async bridge action", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
-      createJsonResponse({ ok: true, action: "query", jobId: "job-query-1", status: "pending" })
+      createJsonResponse({
+        ok: true,
+        action: "query",
+        jobId: "job-query-1",
+        status: "queued",
+        jobReadToken: RESPONSE_JOB_READ_TOKEN
+      })
     );
     const stdout = createWritableCapture();
     const stderr = createWritableCapture();
@@ -640,7 +697,11 @@ describe("Arcanos CLI", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(stdout.read()).toContain("Queued job job-query-1 (pending)");
+    const output = stdout.read();
+    expect(output).toContain("Queued job job-query-1 (queued)");
+    expect(output).toContain("`--json`");
+    expect(output).toContain("`ARCANOS_JOB_READ_TOKEN`");
+    expect(output).not.toContain(RESPONSE_JOB_READ_TOKEN);
     expect(stderr.read()).toBe("");
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/gpt/backstage-booker", "http://127.0.0.1:3000/"),
@@ -652,6 +713,42 @@ describe("Arcanos CLI", () => {
         })
       })
     );
+  });
+
+  it("guides timed-out query-and-wait users to transport the capability without printing it", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        action: "query_and_wait",
+        jobId: "job-query-pending",
+        status: "timeout",
+        jobReadToken: RESPONSE_JOB_READ_TOKEN
+      })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "query-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a long promo",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    const output = stdout.read();
+    expect(exitCode).toBe(0);
+    expect(output).toContain("Job job-query-pending is timeout");
+    expect(output).toContain("`--json`");
+    expect(output).toContain("`ARCANOS_JOB_READ_TOKEN`");
+    expect(output).not.toContain(RESPONSE_JOB_READ_TOKEN);
+    expect(stderr.read()).toBe("");
   });
 
   it("sends query-and-wait requests to the canonical backend GPT route with explicit wait controls", async () => {
@@ -735,13 +832,17 @@ describe("Arcanos CLI", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
   });
@@ -774,7 +875,9 @@ describe("Arcanos CLI", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("/jobs/job-456/result", "http://127.0.0.1:3000/"),
       expect.objectContaining({
-        headers: {}
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN
+        }
       })
     );
   });

@@ -21,6 +21,10 @@ from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendResponse
 
 
+JOB_READ_TOKEN = f"v1.{'A' * 43}"
+JOB_READ_TOKEN_HEADER = "x-arcanos-job-read-token"
+
+
 def test_request_chat_completion_uses_daemon_gpt_route_without_body_gpt_id() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
@@ -163,7 +167,16 @@ def test_request_query_uses_canonical_gpt_bridge_action_and_normalizes_response(
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123", "repoIndex": "repo-7"})
     client._request_json = MagicMock(
-        return_value=BackendResponse(ok=True, value={"ok": True, "jobId": "job-query-1", "status": "pending"})
+        return_value=BackendResponse(
+            ok=True,
+            value={
+                "ok": True,
+                "jobId": "job-query-1",
+                "status": "pending",
+                "jobReadToken": JOB_READ_TOKEN,
+                "jobReadTokenHeader": JOB_READ_TOKEN_HEADER,
+            },
+        )
     )
 
     response = request_query(
@@ -184,6 +197,8 @@ def test_request_query_uses_canonical_gpt_bridge_action_and_normalizes_response(
     assert response.value.action == "query"
     assert response.value.job_id == "job-query-1"
     assert response.value.status == "pending"
+    assert response.value.job_read_token == JOB_READ_TOKEN
+    assert response.value.job_read_token_header == JOB_READ_TOKEN_HEADER
 
 
 def test_request_query_and_wait_uses_bridge_wait_controls_and_normalizes_response() -> None:
@@ -242,13 +257,21 @@ def test_request_gpt_job_status_uses_canonical_jobs_route() -> None:
         )
     )
 
-    response = request_gpt_job_status(client, "job-123", gpt_id="backstage-booker")
+    response = request_gpt_job_status(
+        client,
+        "job-123",
+        gpt_id="backstage-booker",
+        job_read_token=JOB_READ_TOKEN,
+    )
 
     assert response.ok is True
     assert response.value is not None
     _, path, payload = client._request_json.call_args.args
     assert path == "/jobs/job-123"
     assert payload is None
+    assert client._request_json.call_args.kwargs == {
+        "job_read_token": JOB_READ_TOKEN,
+    }
     assert response.value.action == "get_status"
     assert response.value.job_id == "job-123"
     assert response.value.status == "running"
@@ -280,13 +303,21 @@ def test_request_gpt_job_result_uses_canonical_jobs_route() -> None:
         )
     )
 
-    response = request_gpt_job_result(client, "job-123", gpt_id="backstage-booker")
+    response = request_gpt_job_result(
+        client,
+        "job-123",
+        gpt_id="backstage-booker",
+        job_read_token=JOB_READ_TOKEN,
+    )
 
     assert response.ok is True
     assert response.value is not None
     _, path, payload = client._request_json.call_args.args
     assert path == "/jobs/job-123/result"
     assert payload is None
+    assert client._request_json.call_args.kwargs == {
+        "job_read_token": JOB_READ_TOKEN,
+    }
     assert response.value.action == "get_result"
     assert response.value.job_id == "job-123"
     assert response.value.status == "completed"
@@ -308,12 +339,19 @@ def test_request_job_result_uses_canonical_jobs_result_route() -> None:
         return_value=BackendResponse(ok=True, value={"ok": True, "result": {"status": "complete"}})
     )
 
-    response = request_job_result(client, "job-123")
+    response = request_job_result(
+        client,
+        "job-123",
+        job_read_token=JOB_READ_TOKEN,
+    )
 
     assert response.ok is True
     _, path, payload = client._request_json.call_args.args
     assert path == "/jobs/job-123/result"
     assert payload is None
+    assert client._request_json.call_args.kwargs == {
+        "job_read_token": JOB_READ_TOKEN,
+    }
 
 
 def test_request_job_result_rejects_blank_job_ids() -> None:
@@ -334,12 +372,155 @@ def test_request_job_status_uses_canonical_jobs_status_route() -> None:
         return_value=BackendResponse(ok=True, value={"id": "job-123", "status": "running"})
     )
 
-    response = request_job_status(client, "job-123")
+    response = request_job_status(
+        client,
+        "job-123",
+        job_read_token=JOB_READ_TOKEN,
+    )
 
     assert response.ok is True
     _, path, payload = client._request_json.call_args.args
     assert path == "/jobs/job-123"
     assert payload is None
+    assert client._request_json.call_args.kwargs == {
+        "job_read_token": JOB_READ_TOKEN,
+    }
+
+
+def test_request_job_status_rejects_missing_or_malformed_capabilities(
+    monkeypatch,
+) -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock()
+    monkeypatch.setattr(
+        "arcanos.backend_client.chat.Config.ARCANOS_JOB_READ_TOKEN",
+        None,
+    )
+
+    missing_response = request_job_status(client, "job-123")
+    malformed_response = request_job_status(
+        client,
+        "job-123",
+        job_read_token="v1.invalid",
+    )
+
+    assert missing_response.ok is False
+    assert missing_response.error is not None
+    assert missing_response.error.kind == "validation"
+    assert "ARCANOS_JOB_READ_TOKEN" in missing_response.error.message
+    assert malformed_response.ok is False
+    assert malformed_response.error is not None
+    assert malformed_response.error.kind == "validation"
+    assert "valid v1 job-read capability" in malformed_response.error.message
+    client._request_json.assert_not_called()
+
+
+def test_request_job_status_uses_configured_capability_fallback(monkeypatch) -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock(
+        return_value=BackendResponse(
+            ok=True,
+            value={"id": "job-123", "status": "running"},
+        )
+    )
+    monkeypatch.setattr(
+        "arcanos.backend_client.chat.Config.ARCANOS_JOB_READ_TOKEN",
+        JOB_READ_TOKEN,
+    )
+
+    response = request_job_status(client, "job-123")
+
+    assert response.ok is True
+    assert client._request_json.call_args.kwargs == {
+        "job_read_token": JOB_READ_TOKEN,
+    }
+
+
+def test_backend_api_client_sends_job_read_capability_in_fixed_header() -> None:
+    captured_request: dict[str, Any] = {}
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["headers"] = dict(kwargs.get("headers", {}))
+        captured_request["allow_redirects"] = kwargs.get("allow_redirects")
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"id": "job-123", "status": "running"},
+            text='{"id": "job-123", "status": "running"}',
+            headers={},
+        )
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "backend-token",
+        request_sender=_request_sender,
+    )
+
+    response = client.request_job_status(
+        "job-123",
+        job_read_token=JOB_READ_TOKEN,
+    )
+
+    assert response.ok is True
+    assert captured_request["method"] == "get"
+    assert captured_request["url"] == "https://backend.example.com/jobs/job-123"
+    assert captured_request["headers"]["Authorization"] == "Bearer backend-token"
+    assert captured_request["headers"][JOB_READ_TOKEN_HEADER] == JOB_READ_TOKEN
+    assert captured_request["allow_redirects"] is False
+
+
+def test_backend_api_client_does_not_forward_job_read_capability_through_redirects() -> None:
+    requested_urls: list[str] = []
+    redirect_target_headers: list[dict[str, str]] = []
+    redirect_target = "https://redirect.example.com/jobs/job-123"
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        requested_urls.append(url)
+        headers = dict(kwargs.get("headers", {}))
+        if url == redirect_target:
+            redirect_target_headers.append(headers)
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"id": "job-123", "status": "running"},
+                text='{"id": "job-123", "status": "running"}',
+                headers={},
+            )
+
+        if kwargs.get("allow_redirects", True):
+            return _request_sender(
+                method,
+                redirect_target,
+                headers=headers,
+                json=kwargs.get("json"),
+                timeout=kwargs.get("timeout"),
+            )
+
+        return SimpleNamespace(
+            status_code=302,
+            json=lambda: {},
+            text="redirect refused",
+            headers={"Location": redirect_target},
+        )
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "backend-token",
+        request_sender=_request_sender,
+    )
+
+    response = client.request_job_status(
+        "job-123",
+        job_read_token=JOB_READ_TOKEN,
+    )
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.kind == "http"
+    assert response.error.status_code == 302
+    assert response.error.message == "Backend job-read request returned redirect"
+    assert requested_urls == ["https://backend.example.com/jobs/job-123"]
+    assert redirect_target_headers == []
 
 
 def test_request_job_status_rejects_blank_job_ids() -> None:

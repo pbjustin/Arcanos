@@ -21,6 +21,7 @@ from .chat import request_job_status as _request_job_status
 from .chat import request_query as _request_query
 from .chat import request_query_and_wait as _request_query_and_wait
 from .chat import request_system_state as _request_system_state
+from .chat import JOB_READ_TOKEN_HEADER_NAME
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
 from .plans import fetch_plan as _fetch_plan
 from .plans import approve_plan as _approve_plan
@@ -263,10 +264,11 @@ class BackendApiClient:
         method: str,
         path: str,
         payload: Optional[Mapping[str, Any]],
+        job_read_token: Optional[str] = None,
     ) -> BackendRequestContext:
         """
         Purpose: Resolve routing, auth headers, and diagnostics for one backend request.
-        Inputs/Outputs: method/path/payload -> immutable request context used by raw and JSON helpers.
+        Inputs/Outputs: method/path/payload plus optional job capability -> immutable request context used by raw and JSON helpers.
         Edge cases: GPT-id auth is allowed when configured and either the request or daemon config provides the GPT identity.
         """
         if not self._base_url:
@@ -334,6 +336,8 @@ class BackendApiClient:
             headers["Authorization"] = f"Bearer {auth_value}"
         if allow_gpt_id_auth and effective_gpt_id:
             headers["x-gpt-id"] = effective_gpt_id
+        if job_read_token is not None:
+            headers[JOB_READ_TOKEN_HEADER_NAME] = job_read_token
 
         return BackendRequestContext(
             original_path=normalized_path,
@@ -601,48 +605,52 @@ class BackendApiClient:
         self,
         job_id: str,
         gpt_id: Optional[str] = None,
+        job_read_token: Optional[str] = None,
     ) -> BackendResponse[BackendGptAsyncBridgeResult]:
         """
         Purpose: Read async job status through the canonical jobs API without enqueueing new work.
-        Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge status metadata.
-        Edge cases: blank ids fail fast as validation errors.
+        Inputs/Outputs: required job_id, optional gpt_id, and job-read capability; returns typed async bridge status metadata.
+        Edge cases: blank ids or invalid capabilities fail fast as validation errors.
         """
-        return _request_gpt_job_status(self, job_id, gpt_id)
+        return _request_gpt_job_status(self, job_id, gpt_id, job_read_token)
 
     def request_gpt_job_result(
         self,
         job_id: str,
         gpt_id: Optional[str] = None,
+        job_read_token: Optional[str] = None,
     ) -> BackendResponse[BackendGptAsyncBridgeResult]:
         """
         Purpose: Read async job results through the canonical jobs API without enqueueing new work.
-        Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge result metadata.
-        Edge cases: blank ids fail fast as validation errors.
+        Inputs/Outputs: required job_id, optional gpt_id, and job-read capability; returns typed async bridge result metadata.
+        Edge cases: blank ids or invalid capabilities fail fast as validation errors.
         """
-        return _request_gpt_job_result(self, job_id, gpt_id)
+        return _request_gpt_job_result(self, job_id, gpt_id, job_read_token)
 
     def request_job_result(
         self,
         job_id: str,
         gpt_id: Optional[str] = None,
+        job_read_token: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
         Purpose: Fetch one stored async GPT job result through the canonical jobs API.
-        Inputs/Outputs: required job_id; returns raw job-result payload.
-        Edge cases: blank ids fail fast as validation errors.
+        Inputs/Outputs: required job_id and job-read capability; returns raw job-result payload.
+        Edge cases: blank ids or invalid capabilities fail fast as validation errors.
         """
-        return _request_job_result(self, job_id, gpt_id)
+        return _request_job_result(self, job_id, gpt_id, job_read_token)
 
     def request_job_status(
         self,
         job_id: str,
+        job_read_token: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
         Purpose: Fetch async GPT job status through the canonical jobs API.
-        Inputs/Outputs: required job_id; returns raw job-status payload.
-        Edge cases: blank ids fail fast as validation errors.
+        Inputs/Outputs: required job_id and job-read capability; returns raw job-status payload.
+        Edge cases: blank ids or invalid capabilities fail fast as validation errors.
         """
-        return _request_job_status(self, job_id)
+        return _request_job_status(self, job_id, job_read_token)
 
     def request_vision_analysis(
         self,
@@ -713,22 +721,34 @@ class BackendApiClient:
         self,
         method: str,
         path: str,
-        payload: Optional[Mapping[str, Any]]
+        payload: Optional[Mapping[str, Any]],
+        *,
+        job_read_token: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         try:
-            context = self._build_request_context(method, path, payload)
+            context = self._build_request_context(
+                method,
+                path,
+                payload,
+                job_read_token=job_read_token,
+            )
         except BackendRequestError as error:
             return BackendResponse(ok=False, error=error)
 
         self._log_outbound_request(method, context)
 
         try:
+            request_options: dict[str, Any] = {
+                "headers": context.headers,
+                "json": context.payload,
+                "timeout": self._timeout_seconds,
+            }
+            if job_read_token is not None:
+                request_options["allow_redirects"] = False
             response = self._request_sender(
                 method,
                 context.url,
-                headers=context.headers,
-                json=context.payload,
-                timeout=self._timeout_seconds
+                **request_options,
             )
         except requests.Timeout as exc:
             return self._build_logged_error_response(
@@ -743,6 +763,23 @@ class BackendApiClient:
                 context,
                 BackendRequestError(kind="network", message="Backend request failed", details=str(exc)),
                 error_kind="network",
+            )
+
+        if (
+            job_read_token is not None
+            and 300 <= response.status_code < 400
+        ):
+            return self._build_logged_error_response(
+                method,
+                context,
+                BackendRequestError(
+                    kind="http",
+                    message="Backend job-read request returned redirect",
+                    status_code=response.status_code,
+                    details=response.text,
+                ),
+                status_code=response.status_code,
+                error_kind="http",
             )
 
         if response.status_code == 401:

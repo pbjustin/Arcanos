@@ -94,14 +94,15 @@ export async function getSessionSystemDiagnostics(app: Application): Promise<{
  * Build queue diagnostics for the canonical session system.
  *
  * Purpose:
- * - Surface worker state and last-job facts in machine-verifiable JSON.
+ * - Surface worker state and aggregate last-job facts in machine-verifiable JSON.
  *
  * Inputs/outputs:
  * - Input: none.
  * - Output: queue health snapshot for `/api/diagnostics/queues`.
  *
  * Edge case behavior:
- * - Returns zeroed counters and `null` job fields when the queue database is unavailable.
+ * - Returns zeroed counters and nullable last-job state/timing when the queue database is unavailable.
+ * - Does not return a reusable job identifier or lookup locator.
  */
 export async function getQueueDiagnostics(): Promise<{
   status: DiagnosticStatus;
@@ -115,7 +116,6 @@ export async function getQueueDiagnostics(): Promise<{
   windowTerminalJobs: number;
   failureBreakdown: JobFailureBreakdown;
   recentFailureReasons: JobFailureReasonSummary[];
-  lastJobId: string | null;
   lastJobStatus: string | null;
   lastJobFinishedAt: string | null;
   timestamp: string;
@@ -174,7 +174,6 @@ export async function getQueueDiagnostics(): Promise<{
       unknown: 0
     },
     recentFailureReasons: (queueSummary?.recentFailureReasons ?? []).map(projectPublicFailureReason),
-    lastJobId: latestJob?.id ?? null,
     lastJobStatus: latestJob?.status ?? null,
     lastJobFinishedAt: finishedAt,
     timestamp: new Date().toISOString()

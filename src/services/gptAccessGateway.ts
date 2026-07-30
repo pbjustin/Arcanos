@@ -40,6 +40,7 @@ import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getJobEventTimeline } from '@services/jobEventTimelineService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { buildAuthenticatedCredentialActorKey } from '@platform/runtime/security.js';
 import { getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
 import { getStartupLifecycleSnapshot } from '@platform/runtime/startupLifecycle.js';
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
@@ -598,6 +599,10 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
     return;
   }
 
+  req.authenticatedActorKey = buildAuthenticatedCredentialActorKey(
+    'gpt-access',
+    providedToken.bearerValue
+  );
   next();
 }
 
@@ -1425,6 +1430,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     gptId: canonicalGptId,
     action: GPT_QUERY_ACTION,
     body: aiJobBody,
+    surface: 'gpt-access',
     actorKey: context.actorKey,
     explicitIdempotencyKey
   });
@@ -2213,6 +2219,11 @@ export function buildGptAccessCapabilityCatalogExtension() {
 export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = {}) {
   const serverUrl = normalizeOpenApiServerUrl(options.serverUrl) ?? resolveGptAccessOpenApiServerUrl();
   const protectedSecurity = [{ bearerAuth: [] }];
+  const noStoreResponseHeaders = {
+    'Cache-Control': {
+      '$ref': '#/components/headers/NoStore'
+    }
+  };
 
   return {
     openapi: '3.1.0',
@@ -2234,6 +2245,15 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'opaque'
+        }
+      },
+      headers: {
+        NoStore: {
+          description: 'The response must not be stored by clients or intermediary caches.',
+          schema: {
+            type: 'string',
+            const: 'no-store'
+          }
         }
       },
       schemas: {
@@ -2998,6 +3018,19 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           summary: 'Create an async backend AI generation job.',
           description: 'Use for backend AI generation, advice, explanation, planning, review, architecture, summarization, writing, and how-should prompts. Send canonical gptId arcanos-core and the complete user request in task. Poll getJobResult with the returned jobId until terminal.',
           security: protectedSecurity,
+          parameters: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: false,
+              description: 'Stable key for safe retries of the same semantic AI job request. Equivalent to the idempotencyKey body field.',
+              schema: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 256
+              }
+            }
+          ],
           requestBody: {
             required: true,
             content: {
@@ -3013,17 +3046,18 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           responses: {
             '202': {
               description: 'AI job queued.',
+              headers: noStoreResponseHeaders,
               content: {
                 'application/json': {
                   schema: { '$ref': '#/components/schemas/CreateAiJobResponse' }
                 }
               }
             },
-            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '409': { description: 'Idempotency conflict.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '503': { description: 'Jobs backend unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+            '400': { description: 'Invalid request.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '409': { description: 'Idempotency conflict.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Jobs backend unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },
@@ -3044,16 +3078,17 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           responses: {
             '200': {
               description: 'Job result lookup payload.',
+              headers: noStoreResponseHeaders,
               content: {
                 'application/json': {
                   schema: { '$ref': '#/components/schemas/JobResultResponse' }
                 }
               }
             },
-            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '503': { description: 'Jobs backend unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+            '400': { description: 'Invalid request.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Jobs backend unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },

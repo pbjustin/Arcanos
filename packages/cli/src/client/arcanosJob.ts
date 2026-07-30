@@ -9,6 +9,8 @@ const DEFAULT_TOTAL_TIMEOUT_MS = 120_000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_MAX_POLL_INTERVAL_MS = 5_000;
 const MAX_ERROR_BODY_CHARS = 1_000;
+const JOB_READ_TOKEN_HEADER_NAME = "x-arcanos-job-read-token";
+const JOB_READ_TOKEN_PATTERN = /^v1\.[A-Za-z0-9_-]{43}$/u;
 
 export type ArcanosJobStatus =
   | "completed"
@@ -41,6 +43,7 @@ export interface PollArcanosJobOptions {
   baseUrl: string;
   pollUrl?: string;
   streamUrl?: string;
+  jobReadToken?: string;
   timeoutMs?: number;
   intervalMs?: number;
   maxIntervalMs?: number;
@@ -58,6 +61,8 @@ export interface ArcanosJobResult {
   jobId?: string;
   poll?: string;
   stream?: string;
+  jobReadToken?: string;
+  jobReadTokenHeader?: string;
   timedOut: boolean;
   degraded: boolean;
   result?: unknown;
@@ -69,6 +74,7 @@ interface NormalizeMetadata {
   jobId?: string;
   poll?: string;
   stream?: string;
+  jobReadToken?: string;
 }
 
 /**
@@ -114,6 +120,7 @@ export async function runArcanosJob(
       baseUrl: options.baseUrl,
       pollUrl: initialResult.poll,
       streamUrl: initialResult.stream,
+      jobReadToken: initialResult.jobReadToken,
       timeoutMs: options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS,
       intervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       maxIntervalMs: options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS,
@@ -125,6 +132,8 @@ export async function runArcanosJob(
     });
     return {
       ...finalResult,
+      jobReadToken: initialResult.jobReadToken,
+      jobReadTokenHeader: initialResult.jobReadTokenHeader,
       timedOut: finalResult.timedOut || initialResult.timedOut,
     };
   }
@@ -139,7 +148,7 @@ export async function runArcanosJob(
 /**
  * Polls `/jobs/{id}/result` until the job reaches a terminal status or the bounded timeout expires.
  * Inputs/Outputs: job id + poll settings -> normalized terminal result.
- * Edge cases: relative and absolute poll URLs are accepted, but polling never routes through `/gpt/{gptId}`.
+ * Edge cases: relative and same-origin absolute poll URLs are accepted, but polling never routes through `/gpt/{gptId}`.
  */
 export async function pollArcanosJob(
   jobId: string,
@@ -161,13 +170,17 @@ export async function pollArcanosJob(
     maxIntervalMs
   );
   const resultUrl = buildJobResultPollUrl(options.baseUrl, options.pollUrl, normalizedJobId);
+  const requestHeaders = buildJobReadHeaders(
+    options.headers,
+    options.jobReadToken
+  );
   const deadlineMs = nowFn() + timeoutMs;
   let lastStatus: string | undefined;
 
   while (nowFn() <= deadlineMs) {
     let rawPayload: Record<string, unknown>;
     try {
-      rawPayload = await getJson(fetchFn, resultUrl, options.headers, nowFn);
+      rawPayload = await getJson(fetchFn, resultUrl, requestHeaders, nowFn);
     } catch (error) {
       if (!isRateLimitError(error)) {
         throw error;
@@ -189,6 +202,7 @@ export async function pollArcanosJob(
       jobId: normalizedJobId,
       poll: resultUrl,
       stream: options.streamUrl,
+      jobReadToken: options.jobReadToken,
     });
     lastStatus = result.jobStatus ?? result.status;
 
@@ -226,6 +240,7 @@ export function normalizeArcanosResult(
   const jobId = readString(raw.jobId) ?? readString(raw.id) ?? metadata.jobId;
   const poll = normalizeOptionalPollUrl(metadata.poll ?? readString(raw.poll), jobId);
   const stream = metadata.stream ?? readString(raw.stream) ?? (jobId ? `/jobs/${encodeURIComponent(jobId)}/stream` : undefined);
+  const jobReadToken = metadata.jobReadToken ?? readString(raw.jobReadToken);
   const resolvedStatus = resolveStatus(raw, jobId);
   const resultPayload = extractResultPayload(raw);
   const degraded = isPipelineFallback(raw) || isPipelineFallback(resultPayload);
@@ -238,6 +253,10 @@ export function normalizeArcanosResult(
     jobId,
     poll,
     stream,
+    jobReadToken,
+    jobReadTokenHeader: jobReadToken
+      ? JOB_READ_TOKEN_HEADER_NAME
+      : undefined,
     timedOut: Boolean(raw.timedOut) || resolvedStatus === "timeout",
     degraded,
     result: resultPayload,
@@ -274,7 +293,11 @@ export function isPipelineFallback(result: unknown): boolean {
 
 export function buildJobResultPollUrl(baseUrl: string, pollUrl: string | undefined, jobId: string): string {
   const fallbackPollPath = `/jobs/${encodeURIComponent(jobId)}/result`;
-  const absolutePollUrl = new URL(pollUrl?.trim() || fallbackPollPath, withTrailingSlash(baseUrl));
+  const absoluteBaseUrl = new URL(withTrailingSlash(baseUrl));
+  const absolutePollUrl = new URL(pollUrl?.trim() || fallbackPollPath, absoluteBaseUrl);
+  if (absolutePollUrl.origin !== absoluteBaseUrl.origin) {
+    throw new Error("ARCANOS job poll URL must use the same origin as the configured base URL.");
+  }
   const trimmedPathname = absolutePollUrl.pathname.replace(/\/+$/, "");
 
   absolutePollUrl.pathname = trimmedPathname.endsWith("/result")
@@ -404,6 +427,34 @@ function normalizeOptionalPollUrl(pollUrl: string | undefined, jobId: string | u
   return jobId ? `/jobs/${encodeURIComponent(jobId)}/result` : undefined;
 }
 
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const normalizedName = name.toLowerCase();
+  return Object.keys(headers).some(
+    (headerName) => headerName.toLowerCase() === normalizedName
+  );
+}
+
+function buildJobReadHeaders(
+  inputHeaders: Record<string, string> | undefined,
+  jobReadToken: string | undefined
+): Record<string, string> {
+  const headers = { ...(inputHeaders ?? {}) };
+  if (hasHeader(headers, JOB_READ_TOKEN_HEADER_NAME)) {
+    return headers;
+  }
+
+  if (!jobReadToken || !JOB_READ_TOKEN_PATTERN.test(jobReadToken)) {
+    throw new Error(
+      `ARCANOS async response is missing a valid jobReadToken for ${JOB_READ_TOKEN_HEADER_NAME}.`
+    );
+  }
+
+  return {
+    ...headers,
+    [JOB_READ_TOKEN_HEADER_NAME]: jobReadToken,
+  };
+}
+
 async function getJson(
   fetchFn: typeof fetch,
   url: string,
@@ -413,6 +464,7 @@ async function getJson(
   const response = await fetchFn(url, {
     method: "GET",
     headers,
+    redirect: "error",
   });
   const rawText = await response.text();
   let parsed: unknown;

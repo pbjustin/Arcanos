@@ -79,7 +79,7 @@ See `docs/RUN_LOCAL.md` for daemon setup, the dedicated worker, focused validati
 
 ## Custom GPT + GPT ID API Bridge
 Custom GPT Actions should call the HTTP bridge, not Railway CLI. The runtime path is:
-`Custom GPT Action -> POST /api/bridge/gpt -> direct or queued GPT execution -> /jobs/* for async polling`.
+`Custom GPT Action -> POST /api/bridge/gpt -> direct or queued GPT execution -> capability-bound /jobs/* async polling`.
 
 `POST /gpt/:gptId` remains the writing plane for module-bound generative work. Job-result lookups, runtime diagnostics, queue inspection, worker status, and MCP diagnostics must use direct control endpoints or `/gpt-access/*`, not prompt-shaped requests through `/gpt/:gptId`.
 
@@ -87,14 +87,29 @@ See `docs/gpt-access-gateway.md` for protected gateway auth/scopes, natural-lang
 
 Required environment:
 - `OPENAI_ACTION_SHARED_SECRET` for inbound bridge auth.
+- `ARCANOS_JOB_READ_CAPABILITY_SECRET` as the distinct server-side HMAC key
+  used to issue job-specific generic read capabilities.
+- Optional `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` only during a
+  bounded rotation overlap; it verifies old tokens but never issues new ones.
 - `DEFAULT_GPT_ID` as the fallback GPT ID when callers omit `gptId`.
 
 Bridge endpoints:
 - `POST /api/bridge/gpt` accepts `{ "gptId": "arcanos-core", "prompt": "...", "action": "query" | "query_and_wait", "metadata": {} }`.
 - `GET /api/bridge/health` requires the same bridge shared secret and reports
-  no-store bridge env sanity, default GPT route reachability, database state,
-  worker health when available, and bridge failure counters.
-- Async job retrieval stays on `GET /jobs/{id}` and `GET /jobs/{id}/result`.
+  no-store bridge env sanity (including whether job-read signing is
+  configured), default GPT route reachability, database state, worker health
+  when available, and bridge failure counters.
+- Job-backed bridge responses return `jobReadToken` and
+  `jobReadTokenHeader`. Async status, result, and stream retrieval stays on
+  `GET /jobs/{id}`, `GET /jobs/{id}/result`, and
+  `GET /jobs/{id}/stream`, with the token sent in exactly one
+  `x-arcanos-job-read-token` header.
+- Generic reads expose only `gpt` and `ask` jobs and are `no-store`; invalid
+  capabilities are concealed as missing jobs.
+- `POST /jobs/{id}/cancel` requires the same job-specific capability plus
+  confirmation and the creation surface's authenticated owner. Bridge jobs
+  revalidate the bridge credential; anonymous public GPT jobs are intentionally
+  non-cancellable. The read capability alone is not cancellation authority.
 
 The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.
 
@@ -131,7 +146,12 @@ Canonical boundaries / pipelines:
 - Detailed dependency view: `GET /health` (Railway healthcheck path; includes Redis and other dependency state)
 
 ## Custom GPT bridge smoke test
-Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth, request handling, queueing, worker execution, and canonical `/jobs/{id}/result` retrieval without invoking the Trinity reasoning pipeline. Use `action: "query"` or `action: "query_and_wait"` when the request must exercise real model behavior.
+Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth,
+request handling, queueing, worker execution, and canonical
+`/jobs/{id}/result` retrieval without invoking the Trinity reasoning pipeline.
+Retain the returned job-read capability for that retrieval. Use
+`action: "query"` or `action: "query_and_wait"` when the request must exercise
+real model behavior.
 
 ## OpenAI data retention
 Responses requests default to **stateless** (`store: false`). You can enable storage via:

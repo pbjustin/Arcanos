@@ -7,7 +7,7 @@ Arcanos is split into a TypeScript backend and an optional Python daemon client.
 ARCANOS now enforces two planes before any module dispatch occurs:
 
 - Writing plane: `POST /gpt/:gptId` for generative work only. This lane is limited to prompt generation, assistant responses, and other true write/query actions.
-- Control plane: direct handlers and explicit control endpoints for system operations. This includes `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, protected DevOps/PR verification execution, `POST /system-state`, `POST /rag/*`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
+- Control plane: direct handlers and explicit control endpoints for system operations. This includes capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, public aggregate `GET /workers/status` and `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, protected DevOps/PR verification execution, `POST /system-state`, `POST /rag/*`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
 
 Implementation rules:
 - `src/routes/gptRouter.ts` runs pre-dispatch classification through `src/routes/_core/gptPlaneClassification.ts`.
@@ -81,6 +81,7 @@ Implementation rules:
   response.
 - `POST /gpt/:gptId` has no public control actions; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, and MCP calls are rejected before write dispatch.
 - Canonical durable write actions are `query` and non-core `query_and_wait`. Core `query_and_wait` is synchronous direct action. Canonical async reads use `GET /jobs/:id` and `GET /jobs/:id/result`.
+- Before a public `gpt` or `ask` job is enqueued, the backend requires the dedicated current `ARCANOS_JOB_READ_CAPABILITY_SECRET`. The creating response derives and returns a deterministic job-specific HMAC bearer capability without persisting bearer material. New tokens use only the current key; verification can temporarily accept the distinct `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` during a bounded rotation overlap. Generic status, result, stream, and cancellation routes accept exactly one `x-arcanos-job-read-token`, verify it before storage access, expose only `gpt` and `ask` rows, and conceal invalid capabilities as not found. Cancellation additionally retains confirmation plus authenticated actor ownership, so the capability alone cannot mutate a job. These responses are `no-store`.
 - Prompt-shaped control requests for job lookup, DAG execution/tracing, runtime inspection, or MCP tool calls are rejected with canonical control endpoints.
 
 ## Prerequisites
@@ -248,11 +249,11 @@ Long-running GPT requests are handled through the DB-backed `job_data` queue ins
 
 Execution model:
 1. `POST /gpt/:gptId` classifies the request as writing-plane or control-plane before dispatch.
-2. Control-plane reads and RAG operations use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `POST /gpt-access/diagnostics/deep`, `GET /system-state`, `POST /system-state`, `POST /rag/*`) and never create GPT jobs.
-3. Writing-plane durable requests (`query`, non-core `query_and_wait`, or prompt-first async compatibility mode) persist a canonical GPT job row with hashed idempotency metadata.
+2. Control-plane reads and RAG operations use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `POST /gpt-access/diagnostics/deep`, `GET /system-state`, `POST /system-state`, `POST /rag/*`) and never create GPT jobs. Generic job reads require the job-specific header capability returned at creation.
+3. Writing-plane durable requests (`query`, non-core `query_and_wait`, or prompt-first async compatibility mode) verify job-read signing configuration before enqueueing, persist a canonical GPT job row with hashed idempotency metadata, and return `jobReadToken` plus `jobReadTokenHeader` alongside the job coordinates.
 4. `query` returns the canonical `jobId` without inline waiting. On core GPT IDs, `query_and_wait` uses the lightweight synchronous direct action lane and returns the final result inline.
 5. `src/workers/jobRunner.ts` claims `job_type='gpt'` rows and executes them in background mode.
-6. `GET /jobs/:id` and `GET /jobs/:id/stream` expose the canonical job lifecycle and terminal result.
+6. Capability-bound `GET /jobs/:id`, `GET /jobs/:id/result`, and `GET /jobs/:id/stream` expose the canonical lifecycle and terminal result for public `gpt` and `ask` job types only.
 
 The optional Ask and GPT hybrid inline waits share
 `services/queuedJobCompletionPolling.ts` for deadline, abort, sleep, and hard
@@ -268,7 +269,7 @@ only execution-mode precedence to the pure
 persistence, logging, and response emission remain in the router.
 
 Agent-safe retrieval rules:
-- Retrieval must remain structured-only through direct `/jobs/*` endpoints.
+- Retrieval must remain structured-only through direct `/jobs/*` endpoints and include the job-specific `x-arcanos-job-read-token` bearer capability. Tokens are path-bound, never accepted from URLs or bodies, and must not be logged.
 - Natural-language job retrieval through `prompt` text remains blocked on `/gpt/:gptId`.
 - MCP follows the same lane split: writing tools create work, while `jobs.status` and `jobs.result` stay on the control plane.
 

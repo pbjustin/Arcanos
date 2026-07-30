@@ -242,6 +242,9 @@ class Config:
     BACKEND_URL: Optional[str] = get_backend_base_url()
     BACKEND_TOKEN: Optional[str] = get_backend_token()
     DAEMON_ACCESS_TOKEN: Optional[str] = get_daemon_access_token()
+    ARCANOS_JOB_READ_TOKEN: Optional[str] = (
+        get_env("ARCANOS_JOB_READ_TOKEN") or None
+    )
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
     BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
 

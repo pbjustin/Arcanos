@@ -130,6 +130,12 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}/result']);
     expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.operationId).toBe('getJobResult');
+    expect(response.body.components?.schemas?.JobResultLookup?.required).toEqual(
+      expect.arrayContaining(['jobId', 'poll', 'stream'])
+    );
+    expect(response.body.components?.schemas?.RouteError?.properties?.error?.oneOf).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'string' })])
+    );
   });
 
   it('serves the canonical job-status contract with no-store caching', async () => {
@@ -141,6 +147,12 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}']);
     expect(response.body.paths?.['/jobs/{jobId}']?.get?.operationId).toBe('getJobStatus');
+    expect(response.body.components?.schemas?.JobStatus?.required).toEqual(
+      expect.arrayContaining(['id', 'jobId', 'poll', 'stream'])
+    );
+    expect(response.body.components?.schemas?.RouteError?.properties?.error?.oneOf).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'string' })])
+    );
   });
 
   it('serves the authenticated ActionPlan execution contract with no-store caching', async () => {
@@ -195,6 +207,11 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(pendingSchema).toContain('result:');
     expect(pendingSchema).toContain('job_status:');
     expect(pendingSchema).not.toContain('stream:');
+    const createOperation =
+      response.text.split('/api/bridge/gpt:')[1]?.split('/api/bridge/health:')[0] ?? '';
+    expect(createOperation).toContain('#/components/parameters/idempotencyKey');
+    expect(createOperation).toContain('"404":');
+    expect(createOperation).toContain('"410":');
   });
 
   it('excludes protected catalog modules from public GPT introspection', async () => {

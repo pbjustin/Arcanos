@@ -2988,6 +2988,7 @@ describe('/gpt-access gateway', () => {
       });
 
     expect(response.status).toBe(401);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -3034,6 +3035,7 @@ describe('/gpt-access gateway', () => {
       });
 
     expect(response.status).toBe(401);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(getJobByIdMock).not.toHaveBeenCalled();
   });
@@ -3053,16 +3055,34 @@ describe('/gpt-access gateway', () => {
 
   it('sanitizes worker status payloads returned through GPT Access', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.read';
+    const jobUuidSentinel = '623e4567-e89b-42d3-a456-426614174000';
+    const promptSentinel = 'GPT_ACCESS_OPERATOR_PROMPT_SENTINEL';
+    const resultSentinel = 'GPT_ACCESS_OPERATOR_RESULT_SENTINEL';
+    const errorSentinel = 'GPT_ACCESS_OPERATOR_ERROR_SENTINEL';
     getWorkerControlStatusMock.mockResolvedValueOnce({
+      mainApp: {
+        runtime: {
+          workerIds: ['worker-1'],
+          lastInputPreview: promptSentinel,
+          lastResult: { result: resultSentinel },
+          lastError: errorSentinel
+        }
+      },
       workerService: {
         health: {
           workers: [{
             workerId: 'worker-1',
+            activeJobs: [jobUuidSentinel],
+            currentJobId: jobUuidSentinel,
             lastError: 'Authorization: Bearer abcdefghijklmnop DATABASE_URL=postgres://user:pass@host/db'
           }]
         },
+        latestJob: {
+          id: jobUuidSentinel,
+          error_message: errorSentinel
+        },
         recentFailedJobs: [{
-          id: 'job-1',
+          id: jobUuidSentinel,
           error_message: 'OPENAI_API_KEY=sk-test-placeholder-value'
         }]
       }
@@ -3077,6 +3097,17 @@ describe('/gpt-access gateway', () => {
 
     expect(statusResponse.status).toBe(200);
     expect(healthResponse.status).toBe(200);
+    expect(statusResponse.headers['cache-control']).toContain('no-store');
+    expect(healthResponse.headers['cache-control']).toContain('no-store');
+    expect(statusResponse.body.mainApp.runtime.workerIds).toEqual(['worker-1']);
+    expect(statusResponse.body.mainApp.runtime.lastInputPreview).toBe(promptSentinel);
+    expect(statusResponse.body.mainApp.runtime.lastResult.result).toBe(resultSentinel);
+    expect(statusResponse.body.mainApp.runtime.lastError).toBe(errorSentinel);
+    expect(statusResponse.body.workerService.latestJob.id).toBe(jobUuidSentinel);
+    expect(statusResponse.body.workerService.latestJob.error_message).toBe(errorSentinel);
+    expect(statusResponse.body.workerService.recentFailedJobs[0].id).toBe(jobUuidSentinel);
+    expect(statusResponse.body.workerService.health.workers[0].activeJobs).toEqual([jobUuidSentinel]);
+    expect(statusResponse.body.workerService.health.workers[0].currentJobId).toBe(jobUuidSentinel);
     const rendered = JSON.stringify({
       status: statusResponse.body,
       health: healthResponse.body
@@ -3457,6 +3488,7 @@ describe('/gpt-access gateway', () => {
       });
 
     expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual({
       ok: true,
       jobId: CREATED_JOB_ID,
@@ -3583,7 +3615,9 @@ describe('/gpt-access gateway', () => {
       });
 
     expect(createResponse.status).toBe(202);
+    expect(createResponse.headers['cache-control']).toContain('no-store');
     expect(resultResponse.status).toBe(200);
+    expect(resultResponse.headers['cache-control']).toContain('no-store');
     expect(resultResponse.body).toEqual(expect.objectContaining({
       ok: true,
       traceId: createResponse.body.traceId,
@@ -3593,7 +3627,7 @@ describe('/gpt-access gateway', () => {
     }));
   });
 
-  it('returns the same UUID jobId and deduped true for duplicate create requests', async () => {
+  it('keeps duplicate create scope stable across bearer grammar and caller-selected sessions', async () => {
     allowCreateJobs();
     findOrCreateGptJobMock
       .mockResolvedValueOnce({
@@ -3616,12 +3650,15 @@ describe('/gpt-access gateway', () => {
       });
 
     const firstResponse = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+      .set('X-Session-ID', 'caller-selected-session-one')
       .send({
         gptId: 'arcanos-core',
         task: 'Generate a Codex IDE prompt.',
         idempotencyKey: 'client-retry-key'
       });
-    const secondResponse = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+    const secondResponse = await request(buildApp()).post('/gpt-access/jobs/create')
+      .set('Authorization', `bEaReR    ${TEST_TOKEN}`)
+      .set('X-Session-ID', 'caller-selected-session-two')
       .send({
         gptId: 'arcanos-core',
         task: 'Generate a Codex IDE prompt.',
@@ -3645,6 +3682,9 @@ describe('/gpt-access gateway', () => {
       idempotencyOrigin: 'explicit',
       idempotencyKeyHash: expect.any(String)
     }));
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash).toBe(
+      findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash
+    );
   });
 
   it('returns 409 for explicit idempotency key conflicts', async () => {
@@ -4645,6 +4685,24 @@ describe('/gpt-access gateway', () => {
     const createAiJobOperation = response.body.paths['/gpt-access/jobs/create'].post;
     expect(createAiJobOperation.description).toContain('how-should prompts');
     expect(createAiJobOperation.description).toContain('canonical gptId arcanos-core');
+    expect(createAiJobOperation.parameters).toEqual([
+      expect.objectContaining({
+        name: 'Idempotency-Key',
+        in: 'header',
+        required: false,
+        schema: expect.objectContaining({
+          minLength: 1,
+          maxLength: 256
+        })
+      })
+    ]);
+    for (const createResponse of Object.values(
+      createAiJobOperation.responses as Record<string, { headers?: unknown }>
+    )) {
+      expect(createResponse.headers).toEqual({
+        'Cache-Control': { '$ref': '#/components/headers/NoStore' }
+      });
+    }
     expect(createAiJobOperation.requestBody.content['application/json'].example).toEqual({
       gptId: 'arcanos-core',
       task: 'How should I find reusable code throughout the codebase? Provide a practical, systematic approach for identifying, evaluating, and cataloging reusable modules, utilities, components, services, and patterns across a repository.'
@@ -4778,6 +4836,17 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/jobs/result'].post.responses['200'].content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/JobResultResponse'
     });
+    for (const resultResponse of Object.values(
+      response.body.paths['/gpt-access/jobs/result'].post.responses as Record<
+        string,
+        { headers?: unknown }
+      >
+    )) {
+      expect(resultResponse.headers).toEqual({
+        'Cache-Control': { '$ref': '#/components/headers/NoStore' }
+      });
+    }
+    expect(response.body.components.headers.NoStore.schema.const).toBe('no-store');
     expect(response.body.components.schemas.JobResultResponse.properties.resultEndpoint).toEqual({
       type: 'string',
       const: '/gpt-access/jobs/result'

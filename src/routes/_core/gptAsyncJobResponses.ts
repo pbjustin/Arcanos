@@ -5,6 +5,7 @@ import {
   GPT_QUERY_AND_WAIT_ACTION,
 } from '@shared/gpt/gptJobResult.js';
 import { mapGptJobStatusToClientStatus } from '@shared/gpt/priorityGpt.js';
+import { buildJobReadCapabilityResponseFields } from '@shared/jobs/jobReadCapability.js';
 
 export interface CompletedAsyncGptResponse {
   ok: true;
@@ -90,6 +91,7 @@ export function buildAsyncJobResponseMetadata(input: {
     lifecycleStatus: resolveGptJobLifecycleStatus(input.jobStatus),
     poll: `/jobs/${input.jobId}/result`,
     stream: `/jobs/${input.jobId}/stream`,
+    ...buildJobReadCapabilityResponseFields(input.jobId),
     timedOut: false,
     ...(input.deduped ? { deduped: true } : {}),
     idempotencyKey: input.idempotencyKey,

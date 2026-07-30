@@ -171,6 +171,96 @@ export interface GptIdempotencyDescriptor {
   idempotencyKeyHash: string;
 }
 
+export type GptJobCreationSurface =
+  | 'public-gpt'
+  | 'custom-gpt-bridge'
+  | 'gpt-access';
+
+export type PublicGptJobCreationSurface = Exclude<
+  GptJobCreationSurface,
+  'gpt-access'
+>;
+
+const PUBLIC_GPT_REQUEST_PATH_PATTERN =
+  /^\/gpt\/[^/?#]+\/?(?:[?#]|$)/iu;
+const CUSTOM_GPT_BRIDGE_REQUEST_PATH = '/api/bridge/gpt';
+const GPT_ACCESS_JOB_CREATE_REQUEST_PATH = '/gpt-access/jobs/create';
+const CUSTOM_GPT_BRIDGE_EXECUTION_REASONS = new Set([
+  'bridge_query',
+  'bridge_query_and_wait',
+  'bridge_echo',
+  'bridge_health_echo',
+]);
+
+function readJobRequestPath(input: unknown): string | null {
+  if (!isPlainObject(input) || typeof input.requestPath !== 'string') {
+    return null;
+  }
+
+  const requestPath = input.requestPath.trim();
+  return requestPath.length > 0 ? requestPath : null;
+}
+
+function readJobExecutionModeReason(input: unknown): string | null {
+  if (!isPlainObject(input) || typeof input.executionModeReason !== 'string') {
+    return null;
+  }
+
+  const executionModeReason = input.executionModeReason.trim();
+  return executionModeReason.length > 0 ? executionModeReason : null;
+}
+
+/**
+ * Recover the trusted server-side creation surface stored with a GPT job.
+ *
+ * Public callers cannot choose these values: the three enqueue paths persist
+ * them after request parsing. Unknown or legacy provenance remains unclassified.
+ */
+export function resolveGptJobCreationSurface(
+  input: unknown
+): GptJobCreationSurface | null {
+  const requestPath = readJobRequestPath(input);
+  if (!requestPath) {
+    return null;
+  }
+
+  if (PUBLIC_GPT_REQUEST_PATH_PATTERN.test(requestPath)) {
+    return 'public-gpt';
+  }
+
+  if (requestPath === CUSTOM_GPT_BRIDGE_REQUEST_PATH) {
+    return CUSTOM_GPT_BRIDGE_EXECUTION_REASONS.has(
+      readJobExecutionModeReason(input) ?? ''
+    )
+      ? 'custom-gpt-bridge'
+      : null;
+  }
+
+  if (requestPath === GPT_ACCESS_JOB_CREATE_REQUEST_PATH) {
+    return readJobExecutionModeReason(input) === 'gpt_access_create_ai_job'
+      ? 'gpt-access'
+      : null;
+  }
+
+  return null;
+}
+
+export function resolvePublicGptJobCreationSurface(
+  input: unknown
+): PublicGptJobCreationSurface | null {
+  const surface = resolveGptJobCreationSurface(input);
+  return surface === 'public-gpt' || surface === 'custom-gpt-bridge'
+    ? surface
+    : null;
+}
+
+export function buildGptIdempotencyScopeHash(input: {
+  surface: GptJobCreationSurface;
+  actorKey: string;
+}): string {
+  return sha256(`${input.surface}\n${input.actorKey.trim()}`);
+}
+
 export function normalizeExplicitIdempotencyKey(rawValue: string | undefined | null): string | null {
   if (typeof rawValue !== 'string') {
     return null;
@@ -205,6 +295,7 @@ export function buildGptIdempotencyDescriptor(input: {
   gptId: string;
   action?: string | null;
   body: unknown;
+  surface: GptJobCreationSurface;
   actorKey: string;
   explicitIdempotencyKey?: string | null;
 }): GptIdempotencyDescriptor {
@@ -214,7 +305,10 @@ export function buildGptIdempotencyDescriptor(input: {
     action: input.action,
     body: input.body
   });
-  const scopeHash = sha256(input.actorKey.trim());
+  const scopeHash = buildGptIdempotencyScopeHash({
+    surface: input.surface,
+    actorKey: input.actorKey,
+  });
 
   if (explicitIdempotencyKey) {
     return {

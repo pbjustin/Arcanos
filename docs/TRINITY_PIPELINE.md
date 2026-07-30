@@ -143,7 +143,7 @@ Expected signals:
 - `/gpt-access/jobs/create` returns `202` with a UUID-like `jobId`.
 - Worker logs show `gpt.job.started`, `gpt.dispatch.plan`, `[core] before trinity.query`, `trinity.entry`, and eventually `gpt.job.completed` for successful jobs.
 - `/gpt-access/jobs/result` returns queued/running state until the worker stores a terminal result.
-- `/trinity/status` reports queue, worker, memory sync, and effective timeout limits without exposing secrets.
+- `/trinity/status` returns a `no-store` aggregate worker-health projection with normalized runtime, worker, queue, and memory states, counts, and timestamps. It does not publish worker/job identifiers, recent failures, bindings, or effective timeout limits.
 
 ## Tiering and Guardrails
 Tier detection is implemented in `src/core/logic/trinityTier.ts`.
@@ -230,11 +230,14 @@ Raw SDK calls are allowed only at these boundaries:
 ## Related Routes
 - `POST /gpt-access/jobs/create`: protected async Trinity/GPT job creation.
 - `POST /gpt-access/jobs/result`: protected job result lookup.
-- `GET /gpt-access/workers/status`: protected worker status.
-- `GET /gpt-access/worker-helper/health`: protected worker helper health.
-- `GET /trinity/status`: public sanitized Trinity pipeline status.
+- `GET /gpt-access/workers/status`: protected, detailed worker status.
+- `GET /gpt-access/worker-helper/health`: protected, detailed worker helper health.
+- `GET /trinity/status`: public `no-store` aggregate worker-health projection.
 - `POST /gpt/:gptId`: canonical writing plane.
-- `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /jobs/:id/stream`: canonical non-protected job APIs.
+- `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /jobs/:id/stream`:
+  canonical capability-bound, `no-store` reads for public `gpt` and `ask`
+  jobs. Send the creation response's `jobReadToken` only as
+  `x-arcanos-job-read-token`.
 
 ## Legacy Notes
 - `GET|POST /brain` is a legacy ask-compatible route and returns `410 Gone` unless `ASK_ROUTE_MODE=compat`.

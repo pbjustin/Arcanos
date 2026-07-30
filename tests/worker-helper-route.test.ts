@@ -73,7 +73,9 @@ const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const workerHelperRouter = (await import('../src/routes/worker-helper.js')).default;
 const workerHelperToken = 'worker-helper-test-token-1234567890';
+const jobReadSecret = 'worker-helper-job-read-capability-secret-1234567890';
 const originalWorkerHelperToken = process.env.ARCANOS_WORKER_HELPER_TOKEN;
+const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 
 function buildApp(options: { authUser?: any; daemonToken?: string; operatorActor?: string } = {}) {
   const app = express();
@@ -100,6 +102,20 @@ function withWorkerHelperToken(requestBuilder: any): any {
   return requestBuilder.set('x-arcanos-worker-helper-token', workerHelperToken);
 }
 
+function collectObjectKeys(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectObjectKeys);
+  }
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  return Object.entries(value).flatMap(([key, nestedValue]) => [
+    key,
+    ...collectObjectKeys(nestedValue),
+  ]);
+}
+
 describe('/worker-helper routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -109,6 +125,7 @@ describe('/worker-helper routes', () => {
     delete process.env.RAILWAY_ENVIRONMENT;
     delete process.env.RAILWAY_ENVIRONMENT_NAME;
     process.env.ARCANOS_WORKER_HELPER_TOKEN = workerHelperToken;
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = jobReadSecret;
 
     getDatabaseStatusMock.mockReturnValue({
       connected: true,
@@ -313,16 +330,30 @@ describe('/worker-helper routes', () => {
     recordSelfHealEventMock.mockReset();
   });
 
-  it('returns combined status without helper auth', async () => {
+  it('returns aggregate no-store status without helper auth', async () => {
     const response = await request(buildApp()).get('/worker-helper/status');
 
     expect(response.status).toBe(200);
-    expect(response.body.mainApp.runtime).toEqual(
-      expect.objectContaining({
-        started: true,
-        activeListeners: 2
-      })
-    );
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual(expect.objectContaining({
+      status: 'healthy',
+      runtime: expect.objectContaining({
+        status: 'active',
+        totalDispatched: 5
+      }),
+      workers: expect.objectContaining({
+        configured: 2,
+        active: 2,
+        observed: 1
+      }),
+      queue: expect.objectContaining({
+        status: 'active',
+        total: 5,
+        pending: 1,
+        running: 0
+      }),
+      timestamp: '2026-03-06T10:00:30.000Z'
+    }));
   });
 
   it.each([
@@ -339,13 +370,6 @@ describe('/worker-helper routes', () => {
       () => getWorkerControlHealthMock.mockRejectedValueOnce(new Error('sentinel-worker-helper-secret')),
       'WORKER_HELPER_HEALTH_FAILED',
       'Worker helper health request failed.'
-    ],
-    [
-      'failed jobs',
-      '/worker-helper/jobs/failed',
-      () => listFailedJobsMock.mockRejectedValueOnce(new Error('sentinel-worker-helper-secret')),
-      'WORKER_HELPER_FAILED_JOBS_LOOKUP_FAILED',
-      'Worker failed-job lookup failed.'
     ]
   ])('does not disclose dependency errors from public %s diagnostics', async (
     _name,
@@ -359,191 +383,104 @@ describe('/worker-helper routes', () => {
     const response = await request(buildApp()).get(path);
 
     expect(response.status).toBe(500);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual({ error, message });
     expect(JSON.stringify(response.body)).not.toContain('sentinel-worker-helper-secret');
   });
 
-  it('returns combined status with queue visibility', async () => {
+  it('omits known job, prompt, result, and error sentinels from public status', async () => {
+    const jobUuidSentinel = '323e4567-e89b-42d3-a456-426614174000';
+    const promptSentinel = 'WORKER_HELPER_PROMPT_SENTINEL';
+    const resultSentinel = 'WORKER_HELPER_RESULT_SENTINEL';
+    const errorSentinel = 'WORKER_HELPER_ERROR_SENTINEL';
+    getWorkerRuntimeStatusMock.mockReturnValueOnce({
+      enabled: true,
+      model: 'gpt-5.1',
+      configuredCount: 2,
+      started: true,
+      startedAt: '2026-03-06T09:50:00.000Z',
+      activeListeners: 1,
+      workerIds: [jobUuidSentinel],
+      totalDispatched: 5,
+      lastDispatchAt: '2026-03-06T09:59:00.000Z',
+      lastInputPreview: promptSentinel,
+      lastResult: { output: resultSentinel },
+      lastError: errorSentinel
+    });
+    getLatestJobMock.mockResolvedValueOnce({
+      id: jobUuidSentinel,
+      worker_id: 'worker-helper',
+      job_type: 'ask',
+      status: 'failed',
+      created_at: '2026-03-06T09:59:00.000Z',
+      updated_at: '2026-03-06T10:00:00.000Z',
+      completed_at: '2026-03-06T10:00:00.000Z',
+      error_message: errorSentinel,
+      output: { result: resultSentinel }
+    });
+    listFailedJobsMock.mockResolvedValueOnce([{
+      id: jobUuidSentinel,
+      worker_id: 'worker-helper',
+      last_worker_id: 'async-queue-slot-1',
+      job_type: 'ask',
+      status: 'failed',
+      error_message: errorSentinel,
+      retry_count: 2,
+      max_retries: 2,
+      created_at: '2026-03-06T09:55:00.000Z',
+      updated_at: '2026-03-06T09:58:00.000Z',
+      completed_at: '2026-03-06T09:58:00.000Z'
+    }]);
+
     const response = await request(buildApp()).get('/worker-helper/status');
 
     expect(response.status).toBe(200);
-    expect(response.body.mainApp).toEqual({
-      connected: true,
-      workerId: 'worker-helper',
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual(expect.objectContaining({
+      status: 'healthy',
       runtime: expect.objectContaining({
-        enabled: true,
-        workerIds: ['worker-1', 'worker-2']
-      })
-    });
-    expect(response.body.workerService).toEqual(expect.objectContaining({
-      observationMode: 'queue-observed',
-      database: {
-        connected: true,
-        hasPool: true,
-        error: null
-      },
-      queueSummary: {
-        pending: 1,
-        running: 0,
-        completed: 3,
-        failed: 1,
+        status: 'active',
+        totalDispatched: 5,
+        startedAt: '2026-03-06T09:50:00.000Z',
+        lastDispatchAt: '2026-03-06T09:59:00.000Z'
+      }),
+      workers: expect.objectContaining({
+        configured: 2,
+        active: 1,
+        observed: 1
+      }),
+      queue: expect.objectContaining({
         total: 5,
-        delayed: 0,
-        stalledRunning: 0,
-        oldestPendingJobAgeMs: 0,
-        recentFailed: 0,
-        recentCompleted: 0,
-        recentTotalTerminal: 0,
-        recentTerminalWindowMs: 3600000,
-        failureBreakdown: {
-          retryable: 0,
-          permanent: 1,
-          retryScheduled: 0,
-          retryExhausted: 1,
-          authentication: 0,
-          network: 0,
-          provider: 0,
-          rateLimited: 0,
-          timeout: 1,
-          validation: 0,
-          unknown: 0
-        },
-        recentFailureReasons: [
-          {
-            reason: 'OpenAI upstream timeout',
-            category: 'timeout',
-            retryable: false,
-            count: 1,
-            lastSeenAt: '2026-03-06T09:58:00.000Z'
-          }
-        ],
+        retainedFailed: 1,
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
-      },
-      queueSemantics: {
-        failedCountMode: 'retained_terminal_jobs',
-        failedCountDescription:
-          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-        activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'workerHeartbeatAgeMs']
-      },
-      retryPolicy: {
-        defaultMaxRetries: 2,
-        retryBackoffBaseMs: 2000,
-        retryBackoffMaxMs: 60000,
-        staleAfterMs: 60000,
-        watchdogIdleMs: 120000
-      },
-      recentFailedJobs: [
-        {
-          id: 'job-failed-1',
-          worker_id: 'worker-helper',
-          last_worker_id: 'async-queue-slot-1',
-          job_type: 'ask',
-          status: 'failed',
-          error_message: 'OpenAI upstream timeout',
-          retry_count: 2,
-          max_retries: 2,
-          created_at: '2026-03-06T09:55:00.000Z',
-          updated_at: '2026-03-06T09:58:00.000Z',
-          completed_at: '2026-03-06T09:58:00.000Z'
-        }
-      ],
-      latestJob: {
-        id: 'job-latest',
-        worker_id: 'worker-helper',
-        job_type: 'ask',
-        status: 'completed',
-        created_at: '2026-03-06T09:59:00.000Z',
-        updated_at: '2026-03-06T10:00:00.000Z',
-        completed_at: '2026-03-06T10:00:00.000Z',
-        error_message: null
-      },
-      health: {
-        overallStatus: 'healthy',
-        alerts: [],
-        diagnosticAlerts: [],
-        operationalHealth: {
-          overallStatus: 'healthy',
-          alerts: [],
-          pending: 1,
-          running: 0,
-          delayed: 0,
-          stalledRunning: 0,
-          staleWorkers: 0,
-          staleWorkerIds: [],
-          stalledJobs: 0,
-          recoveryActions: 0,
-          oldestPendingJobAgeMs: 0,
-          recentFailed: 0,
-          recentCompleted: 0,
-          recentTotalTerminal: 0,
-          recentTerminalWindowMs: 3600000,
-          workerHeartbeatAgeMs: expect.any(Number),
-          degradedWorkerIds: [],
-          unhealthyWorkerIds: []
-        },
-        historicalDebt: {
-          retainedFailedJobs: 1,
-          retryExhaustedJobs: 1,
-          deadLetterJobs: 0,
-          recentFailureReasons: [
-            {
-              reason: 'OpenAI upstream timeout',
-              category: 'timeout',
-              retryable: false,
-              count: 1,
-              lastSeenAt: '2026-03-06T09:58:00.000Z'
-            }
-          ],
-          failureWindowMs: 3600000,
-          inspectionEndpoint: '/worker-helper/jobs/failed',
-          currentRiskExcluded: true
-        },
-        workers: [
-          {
-            workerId: 'async-queue',
-            workerType: 'async_queue',
-            healthStatus: 'healthy',
-            operationalStatus: 'healthy',
-            activeJobs: [],
-            dispatcherStarted: true,
-            activeListeners: 2,
-            lastPollAt: null,
-            lastClaimAttemptAt: null,
-            lastClaimResult: null,
-            disabledReason: null,
-            currentJobId: null,
-            lastError: null,
-            lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
-            lastActivityAt: '2026-03-06T10:00:00.000Z',
-            lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
-            heartbeatAgeMs: expect.any(Number),
-            stale: false,
-            inactivityMs: expect.any(Number),
-            processedJobs: 0,
-            scheduledRetries: 0,
-            terminalFailures: 0,
-            recoveredJobs: 0,
-            staleWorkersDetected: 0,
-            stalledJobsDetected: 0,
-            deadLetterJobs: 0,
-            cancelledJobs: 0,
-            recoveryActions: 0,
-            lastRecoveryActionAt: null,
-            lastWatchdogRunAt: null,
-            updatedAt: '2026-03-06T10:00:00.000Z',
-            watchdog: {
-              triggered: false,
-              reason: null,
-              restartRecommended: false,
-              idleThresholdMs: 120000
-            }
-          }
-        ]
-      }
+      })
     }));
+
+    const serialized = JSON.stringify(response.body);
+    for (const sentinel of [
+      jobUuidSentinel,
+      promptSentinel,
+      resultSentinel,
+      errorSentinel
+    ]) {
+      expect(serialized).not.toContain(sentinel);
+    }
+    expect(collectObjectKeys(response.body)).toEqual(
+      expect.not.arrayContaining([
+        'latestJob',
+        'recentFailedJobs',
+        'activeJobs',
+        'currentJobId',
+        'lastError',
+        'workerIds',
+        'lastInputPreview',
+        'lastResult',
+        'workersDirectory'
+      ])
+    );
   });
 
-  it('redacts sensitive diagnostic strings from worker helper status and failed-job payloads', async () => {
+  it('omits sensitive public diagnostics while retaining sanitized authenticated failed-job detail', async () => {
     const privateSdkMember = ['_then', 'Unwrap'].join('');
     const privateSdkFailure = `this._client.responses.create(...).${privateSdkMember} is not a function`;
     const sensitiveFailure =
@@ -639,7 +576,9 @@ describe('/worker-helper routes', () => {
       .mockResolvedValueOnce([sensitiveFailedJob]);
 
     const statusResponse = await request(buildApp()).get('/worker-helper/status');
-    const failedJobsResponse = await request(buildApp()).get('/worker-helper/jobs/failed?limit=1');
+    const failedJobsResponse = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/failed?limit=1')
+    );
     const rendered = JSON.stringify({
       status: statusResponse.body,
       failedJobs: failedJobsResponse.body
@@ -647,16 +586,13 @@ describe('/worker-helper routes', () => {
 
     expect(statusResponse.status).toBe(200);
     expect(failedJobsResponse.status).toBe(200);
-    expect(statusResponse.body.workerService.queueSummary.recentFailureReasons[0].reason).toBe('[REDACTED]');
-    expect(statusResponse.body.workerService.latestJob.error_message).toBe('[REDACTED]');
-    expect(statusResponse.body.workerService.recentFailedJobs[0].error_message).toBe('[REDACTED]');
+    expect(statusResponse.headers['cache-control']).toContain('no-store');
+    expect(failedJobsResponse.headers['cache-control']).toContain('no-store');
     expect(failedJobsResponse.body.jobs[0].error_message).toBe('[REDACTED]');
     expect(rendered).not.toContain('sk-svcac');
     expect(rendered).not.toContain('ZygA');
     expect(rendered).not.toContain('Bearer abcdefghijklmnop');
     expect(rendered).not.toContain(privateSdkMember);
-    expect(statusResponse.body.workerService.queueSummary.recentFailureReasons[1].reason)
-      .toBe('OpenAI Responses SDK compatibility failure.');
   });
 
   it('ignores legacy auth headers and still serves worker helper requests', async () => {
@@ -665,12 +601,10 @@ describe('/worker-helper routes', () => {
       .set('Authorization', 'Bearer test-helper-key');
 
     expect(response.status).toBe(200);
-    expect(response.body.mainApp.runtime).toEqual(
-      expect.objectContaining({
-        started: true,
-        activeListeners: 2
-      })
-    );
+    expect(response.body.runtime).toEqual(expect.objectContaining({
+      status: 'active',
+      totalDispatched: 5
+    }));
   });
 
   it('rejects unauthenticated worker mutation requests while preserving read-only status', async () => {
@@ -791,6 +725,23 @@ describe('/worker-helper routes', () => {
     expect(createJobMock).toHaveBeenCalledTimes(1);
   });
 
+  it('fails closed before worker-helper queue persistence when job-read capability configuration is unavailable', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await withWorkerHelperToken(
+      request(buildApp()).post('/worker-helper/queue/ask')
+    ).send({ prompt: 'Explain this stack trace.' });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual({
+      error: 'JOB_READ_AUTH_UNAVAILABLE',
+      message: 'Async job reads are temporarily unavailable.'
+    });
+    expect(createJobMock).not.toHaveBeenCalled();
+    expect(detectCognitiveDomainMock).not.toHaveBeenCalled();
+  });
+
   it('queues ask work with detected domain metadata', async () => {
     const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/queue/ask')
@@ -804,11 +755,14 @@ describe('/worker-helper routes', () => {
       });
 
     expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual({
       ok: true,
       status: 'pending',
       jobId: 'job-123',
       poll: '/jobs/job-123/result',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
       endpoint: 'worker-helper',
       cognitiveDomain: 'code',
       cognitiveDomainSource: 'detected'
@@ -887,20 +841,47 @@ describe('/worker-helper routes', () => {
     );
   });
 
-  it('lists recently retained failed jobs without helper auth', async () => {
-    const response = await request(buildApp()).get('/worker-helper/jobs/failed?limit=1');
+  it('authenticates before failed-job query parsing and retains operator detail', async () => {
+    const jobUuidSentinel = '423e4567-e89b-42d3-a456-426614174000';
+    const errorSentinel = 'AUTHENTICATED_FAILED_JOB_ERROR_SENTINEL';
+    listFailedJobsMock.mockResolvedValueOnce([{
+      id: jobUuidSentinel,
+      worker_id: 'worker-helper',
+      last_worker_id: 'async-queue-slot-1',
+      job_type: 'ask',
+      status: 'failed',
+      error_message: errorSentinel,
+      retry_count: 2,
+      max_retries: 2,
+      created_at: '2026-03-06T09:55:00.000Z',
+      updated_at: '2026-03-06T09:58:00.000Z',
+      completed_at: '2026-03-06T09:58:00.000Z'
+    }]);
+
+    const unauthenticated = await request(buildApp())
+      .get('/worker-helper/jobs/failed?limit=not-a-number');
+
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers['cache-control']).toContain('no-store');
+    expect(unauthenticated.body.error).toBe('WORKER_HELPER_AUTH_REQUIRED');
+    expect(listFailedJobsMock).not.toHaveBeenCalled();
+
+    const response = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/failed?limit=1')
+    );
 
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual({
       failedCountMode: 'retained_terminal_jobs',
       jobs: [
         {
-          id: 'job-failed-1',
+          id: jobUuidSentinel,
           worker_id: 'worker-helper',
           last_worker_id: 'async-queue-slot-1',
           job_type: 'ask',
           status: 'failed',
-          error_message: 'OpenAI upstream timeout',
+          error_message: errorSentinel,
           retry_count: 2,
           max_retries: 2,
           created_at: '2026-03-06T09:55:00.000Z',
@@ -942,34 +923,87 @@ describe('/worker-helper routes', () => {
     expect(specificResponse.body).toEqual(expect.objectContaining({ id: 'job-latest' }));
   });
 
-  it('returns autonomous worker health', async () => {
+  it('omits known job, prompt, result, and error sentinels from public health', async () => {
+    const jobUuidSentinel = '723e4567-e89b-42d3-a456-426614174000';
+    const promptSentinel = 'WORKER_HELPER_HEALTH_PROMPT_SENTINEL';
+    const resultSentinel = 'WORKER_HELPER_HEALTH_RESULT_SENTINEL';
+    const errorSentinel = 'WORKER_HELPER_HEALTH_ERROR_SENTINEL';
+    const healthSource = await getWorkerControlHealthMock();
+    getWorkerControlHealthMock.mockResolvedValueOnce({
+      ...healthSource,
+      alerts: [promptSentinel, resultSentinel],
+      workers: healthSource.workers.map((worker: Record<string, unknown> & {
+        snapshot?: Record<string, unknown>;
+      }) => ({
+        ...worker,
+        workerId: jobUuidSentinel,
+        currentJobId: jobUuidSentinel,
+        lastError: errorSentinel,
+        snapshot: {
+          ...worker.snapshot,
+          activeJobs: [jobUuidSentinel],
+          disabledReason: promptSentinel,
+        },
+      })),
+    });
+    listFailedJobsMock.mockResolvedValueOnce([{
+      id: jobUuidSentinel,
+      worker_id: 'worker-helper',
+      last_worker_id: 'async-queue-slot-1',
+      job_type: 'ask',
+      status: 'failed',
+      error_message: errorSentinel,
+      retry_count: 2,
+      max_retries: 2,
+      created_at: '2026-03-06T09:55:00.000Z',
+      updated_at: '2026-03-06T09:58:00.000Z',
+      completed_at: '2026-03-06T09:58:00.000Z'
+    }]);
+
     const response = await request(buildApp()).get('/worker-helper/health');
 
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual(expect.objectContaining({
+      status: 'healthy',
       overallStatus: 'healthy',
-      alerts: [],
-      operationalHealth: expect.objectContaining({
-        overallStatus: 'healthy',
-        staleWorkers: 0,
-        stalledJobs: 0,
-        recoveryActions: 0
+      workers: expect.objectContaining({
+        status: 'healthy',
+        active: 1,
+        observed: 1,
+        stale: 0,
+        degraded: 0,
+        unhealthy: 0,
+        lastHeartbeatAt: '2026-03-06T10:00:00.000Z'
       }),
-      historicalDebt: expect.objectContaining({
-        retainedFailedJobs: 1,
-        retryExhaustedJobs: 1
-      }),
-      workers: [
-        expect.objectContaining({
-          workerId: 'async-queue',
-          healthStatus: 'healthy',
-          operationalStatus: 'healthy',
-          activeJobs: [],
-          stale: false,
-          heartbeatAgeMs: expect.any(Number)
-        })
-      ]
+      queue: expect.objectContaining({
+        status: 'active',
+        total: 5,
+        retainedFailed: 1
+      })
     }));
+    const serialized = JSON.stringify(response.body);
+    for (const sentinel of [
+      jobUuidSentinel,
+      promptSentinel,
+      resultSentinel,
+      errorSentinel
+    ]) {
+      expect(serialized).not.toContain(sentinel);
+    }
+    expect(collectObjectKeys(response.body)).toEqual(
+      expect.not.arrayContaining([
+        'latestJob',
+        'recentFailedJobs',
+        'activeJobs',
+        'currentJobId',
+        'lastError',
+        'workerIds',
+        'lastInputPreview',
+        'lastResult',
+        'workersDirectory'
+      ])
+    );
   });
 
   afterEach(() => {
@@ -1064,27 +1098,22 @@ describe('/worker-helper routes', () => {
     const response = await request(buildApp()).get('/worker-helper/health');
 
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body).toEqual(expect.objectContaining({
-      overallStatus: 'healthy',
-      alerts: [],
-      diagnosticAlerts: ['Retry exhaustion is elevated (56 terminal failure(s)).'],
-      operationalHealth: expect.objectContaining({
-        overallStatus: 'healthy',
-        workerHeartbeatAgeMs: expect.any(Number)
+      status: 'healthy',
+      workers: expect.objectContaining({
+        status: 'healthy',
+        observed: 1,
+        degraded: 1
       }),
-      historicalDebt: expect.objectContaining({
-        retainedFailedJobs: 56,
-        retryExhaustedJobs: 56
-      }),
-      workers: expect.arrayContaining([
-        expect.objectContaining({
-          workerId: 'async-queue',
-          healthStatus: 'degraded',
-          operationalStatus: 'healthy',
-          inactivityMs: expect.any(Number)
-        })
-      ])
+      queue: expect.objectContaining({
+        status: 'idle',
+        total: 59,
+        retainedFailed: 56
+      })
     }));
+    expect(JSON.stringify(response.body)).not.toContain('OpenAI upstream timeout');
+    expect(JSON.stringify(response.body)).not.toContain('Retry exhaustion is elevated');
   });
 
   it('dispatches direct commands through the in-process worker runtime', async () => {
@@ -1215,6 +1244,11 @@ describe('/worker-helper routes', () => {
       delete process.env.ARCANOS_WORKER_HELPER_TOKEN;
     } else {
       process.env.ARCANOS_WORKER_HELPER_TOKEN = originalWorkerHelperToken;
+    }
+    if (originalJobReadSecret === undefined) {
+      delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+    } else {
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = originalJobReadSecret;
     }
   });
 });

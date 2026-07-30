@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import express from 'express';
 import { createAbortError } from '@arcanos/runtime';
-import { createRateLimitMiddleware, getRequestActorKey, securityHeaders } from "@platform/runtime/security.js";
+import {
+  createRateLimitMiddleware,
+  securityHeaders,
+} from "@platform/runtime/security.js";
 import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
 import { asyncHandler } from '@shared/http/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
@@ -54,6 +57,7 @@ router.all(BRIDGE_PATHS, (_req, res) => {
 });
 
 router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (req, res) => {
+  setPrivateBridgeResponseHeaders(res);
   const requestId = req.requestId ?? req.traceId ?? buildFallbackRequestId('bridge');
   const auth = validateBridgeRequestSecret(req);
 
@@ -90,7 +94,7 @@ router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (r
     result = await executeCustomGptBridgeRequest({
       request: parsedRequest.request,
       requestId,
-      actorKey: getRequestActorKey(req),
+      actorKey: auth.actorKey,
       explicitIdempotencyKey: req.header('idempotency-key'),
       signal: clientAbortController.signal,
     });

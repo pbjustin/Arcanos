@@ -30,6 +30,11 @@ declare global {
        */
       operatorActor?: string;
       /**
+       * Canonical opaque actor key assigned only after route authentication
+       * succeeds. Never contains the presented credential.
+       */
+      authenticatedActorKey?: string;
+      /**
        * Dispatch governance decision for request lifecycle.
        * Set by memoryConsistencyGate middleware.
        */

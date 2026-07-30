@@ -52,26 +52,38 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
-- Send `Idempotency-Key` when the client may retry the same GPT submission. The backend hashes the key before storage.
-- If `Idempotency-Key` is absent and the request is routed onto the GPT job path, the backend derives a stable semantic fingerprint from `gptId`, `action`, normalized prompt/input fields, and caller scope.
+- Authenticated bridge, GPT Access, and server-established public GPT principals
+  may send `Idempotency-Key` when retrying the same submission. The backend
+  hashes the key before storage.
+- Anonymous public GPT requests receive a fresh server-random scope for every
+  submission. Replaying a caller-selected session, raw authorization header,
+  request body, or `Idempotency-Key` cannot reuse a prior job or remint its read
+  capability.
+- If `Idempotency-Key` is absent on a reusable authenticated scope, the backend
+  derives a stable semantic fingerprint from `gptId`, `action`, normalized
+  prompt/input fields, and that established principal.
 - Prompt/result contents are not stored in the idempotency mapping. Only hashed scope, key, and fingerprint values are persisted.
 
 Deduplication rules:
-- Reuses in-flight GPT jobs for the same caller scope and semantic request.
-- Reuses recently completed GPT jobs for the same caller scope and semantic request.
-- Reuses failed or cancelled GPT jobs only when the client supplied the same explicit `Idempotency-Key`.
+- Reuses in-flight GPT jobs for the same authenticated caller scope and semantic request.
+- Reuses recently completed GPT jobs for the same authenticated caller scope and semantic request.
+- Reuses failed or cancelled GPT jobs only when an authenticated caller supplied the same explicit `Idempotency-Key`.
 - Transport-only retry hints such as `async`, `executionMode`, `responseMode`, `waitForResultMs`, and polling intervals do not create a new GPT job.
-- Reusing an explicit `Idempotency-Key` for a different semantic GPT request returns `409 IDEMPOTENCY_KEY_CONFLICT`.
+- Reusing an explicit `Idempotency-Key` for a different semantic GPT request
+  within the same reusable authenticated scope returns
+  `409 IDEMPOTENCY_KEY_CONFLICT`.
 
 Canonical GPT bridge:
-- `query`: `POST /gpt/:gptId` with `{ "action": "query", "prompt": "..." }` creates or reuses one durable GPT writing job and returns the canonical `jobId` without inline waiting.
+- `query`: `POST /gpt/:gptId` with `{ "action": "query", "prompt": "..." }`
+  creates one durable GPT writing job and returns its `jobId` without inline
+  waiting; reuse is limited to a server-established authenticated principal.
 - `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000 }` executes core GPT requests synchronously through the lightweight direct action lane and returns the final result inline. If direct execution fails or times out, the route returns a typed error instead of synthetic bounded fallback content. Non-core GPTs keep the durable job path.
-- Job status: `GET /jobs/:id` returns structured status from the control plane without creating GPT work.
-- Job result: `GET /jobs/:id/result` returns structured job result state from the control plane without creating GPT work.
+- Job status: capability-bound `GET /jobs/:id` returns structured status from the control plane without creating GPT work.
+- Job result: capability-bound `GET /jobs/:id/result` returns structured job result state from the control plane without creating GPT work.
 - Generated-client compatibility: body `action` is authoritative, but the router also accepts `?action=query_and_wait` and operation-style aliases such as `{ "operationId": "requestQueryAndWait" }` for clients that place GPT Action metadata outside the canonical body field.
 
 Legacy compatibility:
@@ -81,12 +93,15 @@ Legacy compatibility:
 - Direct-return timeouts never enqueue a second job; they return the same canonical `jobId` and point callers to `GET /jobs/:id/result`.
 
 Job-backed `POST /gpt/:gptId` response shapes:
-- `202 Accepted` pending write: `{ ok:true, action:"query", jobId, status:"queued"|"running"|"timeout", poll:"/jobs/:id/result", stream:"/jobs/:id/stream", timedOut?, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `202 Accepted` pending write: `{ ok:true, action:"query", jobId, status:"queued"|"running"|"timeout", poll:"/jobs/:id/result", stream:"/jobs/:id/stream", jobReadToken, jobReadTokenHeader:"x-arcanos-job-read-token", timedOut?, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` completed direct action: `{ ok:true, action:"query_and_wait", status:"completed", result:"...", directAction:{ inline:true, queueBypassed:true }, _route }`
-- `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobReadToken, jobReadTokenHeader:"x-arcanos-job-read-token", jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - Error shape: `{ ok:false, action, error:{ code, message } }`
-- A repository outage after a job is accepted returns HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and the stable message `Async GPT job status is temporarily unavailable because durable job persistence is unavailable.` The response keeps the accepted `jobId`, `poll`, and `stream` coordinates; creation-stage outages cannot include job coordinates.
-- Duplicate submissions set `deduped: true` and return the canonical `jobId`.
+- A repository outage after a job is accepted returns HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and the stable message `Async GPT job status is temporarily unavailable because durable job persistence is unavailable.` The response keeps the accepted `jobId`, `poll`, `stream`, `jobReadToken`, and `jobReadTokenHeader`; creation-stage outages cannot include job coordinates.
+- If the dedicated current job-read signing key is absent or invalid, job-backed creation fails before enqueueing with HTTP `503`, `error.code: "JOB_READ_AUTH_UNAVAILABLE"`, and `Async job reads are temporarily unavailable.`
+- Duplicate submissions on reusable authenticated scopes set `deduped: true`
+  and return the canonical `jobId`; anonymous public submissions never do.
+- Job-backed creation responses use `Cache-Control: no-store`.
 - `200 OK` system-state retrieval/update: authenticated `POST /system-state`
   with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is
   handled directly on the control plane and never enters the GPT writing
@@ -102,6 +117,8 @@ Canonical client-facing async acknowledgement:
   "jobId": "job-id",
   "poll": "/jobs/job-id/result",
   "stream": "/jobs/job-id/stream",
+  "jobReadToken": "v1.<job-specific-signature>",
+  "jobReadTokenHeader": "x-arcanos-job-read-token",
   "timedOut": true
 }
 ```
@@ -114,13 +131,44 @@ Pipeline timeout fallback detection:
 - Documentation clients must retry with a narrower section prompt once, then fail with: `ARCANOS completed in degraded fallback mode; documentation generation must be split into smaller tasks.`
 
 Job status routes:
-- `GET /jobs/:id`: returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`
-- `GET /jobs/:id/result`: returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
-- `GET /jobs/:id/stream`: SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
-- `POST /jobs/:id/cancel`: cancels a queued GPT job immediately or requests best-effort cancellation for a running GPT job.
+- `GET /jobs/:id`: requires `x-arcanos-job-read-token` and returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`.
+- `GET /jobs/:id/result`: requires `x-arcanos-job-read-token` and returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
+- `GET /jobs/:id/stream`: requires `x-arcanos-job-read-token` and emits an SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
+- `POST /jobs/:id/cancel`: requires the matching
+  `x-arcanos-job-read-token`, confirmation, and the creation surface's
+  authenticated owner. Public GPT jobs require the same server-established
+  principal, bridge jobs revalidate the configured bridge credential, and Ask
+  jobs retain their existing session/internal actor check. Anonymous public GPT
+  jobs are intentionally non-cancellable. The read capability is verified
+  before storage work but is not cancellation authority by itself.
+  A queued `gpt` or `ask` job cancels immediately; a running one receives a
+  best-effort cancellation request. Other job types are concealed as missing.
+- The three generic reads and cancellation accept exactly one header value. The bearer capability is bound to the path job id and is never accepted from a query parameter, cookie, or request body.
+- A missing, malformed, duplicated, incorrect, or cross-job token is concealed like a missing job: status, stream, and cancellation return HTTP `404`, while result returns HTTP `200` with `status: "not_found"`.
+- If neither the current `ARCANOS_JOB_READ_CAPABILITY_SECRET` nor the optional
+  previous verification key resolves validly, these routes return HTTP `503`
+  with `JOB_READ_AUTH_UNAVAILABLE` and a fixed public message, without querying
+  job storage. Job-backed creation always requires the valid current key.
+- New tokens are issued from the current key only. During rotation, configure
+  the old key as `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` for verification
+  until retained jobs drain, then remove it.
 - When job persistence is unavailable, the status, result, and cancellation routes return HTTP `503` with `{ "error": "JOB_REPOSITORY_UNAVAILABLE" }`. This is distinct from a successful missing-job lookup.
 - If persistence is unavailable before an SSE stream opens, `/jobs/:id/stream` returns the same JSON `503`. If it becomes unavailable after streaming begins, the route emits `event: error` with `{ "code": "JOB_REPOSITORY_UNAVAILABLE", "jobId": "..." }` and closes.
-- These generic routes expose GPT jobs only. A `local-agent` job is returned exactly like a missing job and its output is available only through the authenticated, tenant-bound `POST /gpt-access/jobs/result` operation.
+- These generic reads and cancellation expose `ask` jobs plus only those `gpt`
+  jobs whose persisted server-owned provenance identifies `/gpt/:gptId` or the
+  custom GPT bridge. GPT Access-created jobs and every other job type are
+  returned exactly like missing jobs, even if a caller presents a
+  mathematically valid generic capability; intended operator detail remains
+  available through authenticated, protected deployment surfaces such as
+  `POST /gpt-access/jobs/result`.
+- GPT idempotency scopes are creation-surface namespaced. Public GPT, custom
+  bridge, and GPT Access requests cannot dedupe onto one another. The first
+  deployment of this isolation intentionally does not reuse pre-deployment
+  unnamespaced rows, so one bounded retry window may create replacement work.
+- Within the public GPT namespace, requests without a server-established
+  principal receive non-reusable random scopes. Caller-selected sessions, IPs,
+  cookies, and raw authorization headers are not ownership identities.
+- Generic job JSON responses and the SSE stream use `Cache-Control: no-store`; the SSE response also preserves `no-transform`.
 
 GPT job lifecycle:
 - Storage states: `pending`, `running`, `completed`, `failed`, `cancelled`, `expired`
@@ -137,14 +185,19 @@ Retention defaults:
 - Pending GPT jobs that sit unclaimed for too long are expired by lifecycle maintenance
 
 Client retry guidance:
-- Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
-- Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
+- Reuse the same `Idempotency-Key` only on authenticated bridge, GPT Access, or
+  server-established public GPT requests. An anonymous public GPT retry creates
+  independent work; retain and continue the first returned job instead.
+- Retain the `jobReadToken` returned with the `jobId`; poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202` with that token in exactly one `x-arcanos-job-read-token` header.
 - Use the canonical direct jobs API or the protected GPT Access result operation for job reads; `/gpt/:gptId` does not provide a job-read compatibility action.
-- ARCANOS CLI follows the same split: `arcanos query` and `arcanos query-and-wait` use the writing plane, while `arcanos job-status` and `arcanos job-result` call the canonical jobs API.
+- ARCANOS CLI follows the same split: `arcanos query` and `arcanos query-and-wait` use the writing plane and preserve the returned capability for automatic polling, while independent `arcanos job-status` and `arcanos job-result` calls require the matching token through `ARCANOS_JOB_READ_TOKEN`.
 - Natural-language retrieval through `prompt` text is intentionally blocked. Retrieval must use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result`.
 - Do not send prompts that ask the GPT route to inspect runtime state, trigger DAGs, or call MCP tools. Use the direct control endpoints instead.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
-- Treat repository-unavailable `503` responses as temporary: retain any returned `jobId` and retry the same result lookup with bounded backoff. Never reinterpret `503` as `not_found` or create replacement work solely because status storage is temporarily unavailable.
+- Treat repository-unavailable `503` responses as temporary: retain any returned `jobId` and `jobReadToken`, then retry the same result lookup with bounded backoff. Never reinterpret `503` as `not_found` or create replacement work solely because status storage is temporarily unavailable.
+- Unexpected failures after persistence return a safe `202` continuation when
+  the response is still open, so clients retain the accepted job ID and bearer
+  instead of submitting duplicate work.
 
 ## Primary Supported Surfaces and Notable Endpoint Groups
 
@@ -162,7 +215,9 @@ The groups below highlight stable public routes, operator/control routes, compat
   every downstream dependency of that module is ready)
 - `GET /api/diagnostics/queues` (credential-free, no-store aggregate queue
   summary; recent failure entries retain category, retryability, count, and
-  timestamp but replace persisted failure text with fixed category labels)
+  timestamp but replace persisted failure text with fixed category labels;
+  aggregate last-job status/completion time remain available without a job ID
+  or reusable lookup locator)
 - `GET /status` (deprecated no-store alias for the public health response;
   unexpected failures retain the deprecation headers and return a fixed
   `500` message without exception text)
@@ -200,7 +255,7 @@ correlation. Railway deployments should continue probing `GET /health`.
   branch failures return the stable `500 DISPATCH_FAILED` envelope without
   internal exception text)
 - `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
-- `GET /trinity/status`
+- `GET /trinity/status` (public aggregate worker-health projection; `no-store`)
 - `POST /arcanos` (confirmation required)
 - `POST /arcanos-pipeline`
 - `POST /siri` (confirmation required)
@@ -403,24 +458,28 @@ hints are present. Explicit `query` and `query_and_wait` requests already bypass
 intent interception and retain their existing behavior.
 
 ### Workers, orchestration, and DevOps
-- `GET /workers/status`
+- `GET /workers/status` (public aggregate worker-health projection; `no-store`)
 - `POST /workers/heal` (strict privileged worker authentication, shared
   worker-heal rate limit, and confirmation required)
 - `POST /workers/run/:workerId` (privileged worker authentication and confirmation required)
   - File-backed `workerId` values are limited to 1–128 ASCII letters, digits, dots, underscores, or hyphens, beginning with a letter or digit. The resolved regular `.js` file must remain canonically inside the selected workers directory; path separators, absolute paths, traversal, escaping symlinks, the executable job runner, and shared helper modules are rejected before import.
-- `GET /worker-helper/status`
-- `GET /worker-helper/health`
+- `GET /worker-helper/status` (public aggregate worker-health projection; `no-store`)
+- `GET /worker-helper/health` (public aggregate worker-health projection; `no-store`)
 - `GET /worker-helper/jobs/latest` (privileged auth required)
-- `GET /worker-helper/jobs/failed`
+- `GET /worker-helper/jobs/failed` (privileged auth required; `no-store`)
 - `GET /worker-helper/jobs/:id` (privileged auth required)
-- `POST /worker-helper/queue/ask` (privileged auth required)
+- `POST /worker-helper/queue/ask` (privileged auth required; successful
+  `no-store` acknowledgement includes `jobReadToken` and
+  `jobReadTokenHeader` for later generic reads)
 - `POST /worker-helper/dispatch` (privileged auth required)
 - `POST /worker-helper/heal` (privileged auth and shared worker-heal rate limit
   required)
-- `GET /jobs/:id`
-- `GET /jobs/:id/result`
-- `GET /jobs/:id/stream`
-- `POST /jobs/:id/cancel`
+- `GET /jobs/:id` (job-specific capability required; `no-store`)
+- `GET /jobs/:id/result` (job-specific capability required; `no-store`)
+- `GET /jobs/:id/stream` (job-specific capability required; `no-store`,
+  `no-cache`, and `no-transform`)
+- `POST /jobs/:id/cancel` (job-specific capability, confirmation, and
+  authenticated actor ownership required; `no-store`)
 - `POST /orchestration/reset` (control-plane operator, `mcp:invoke`, and
   confirmation required)
 - `GET /orchestration/status` (control-plane operator and `arcanos:read`
@@ -431,6 +490,16 @@ intent interception and retain their existing behavior.
   `diagnostics:execute` required)
 - `POST /devops/daily-summary` (control-plane operator and
   `diagnostics:execute` required)
+
+The public worker-health projection used by `/workers/status`,
+`/worker-helper/status`, `/worker-helper/health`, and `/trinity/status`
+contains only normalized `status` values, aggregate `runtime`, `workers`,
+`queue`, and `memory` counts/states/timestamps, the response timestamp, and the
+safe `overallStatus`, `totalWorkers`, and `availableWorkers` compatibility
+aliases consumed by the CLI.
+It does not serialize worker or job identifiers, worker inventories, job
+snapshots, prompts, results, errors, alerts, runtime bindings, model names, or
+filesystem paths. Unavailable aggregate values are represented as `null`.
 
 Both DevOps execution routes accept only an absent body or `{}`. The self-test
 target and both routes' attribution are server-owned; callers cannot select a
@@ -631,6 +700,10 @@ never persisted to the daemon token file.
 - Privileged `ARCANOS:LOCAL_AGENT` actions `tests.run` and `patch.apply` require a consumed one-time confirmation challenge bound to the authenticated actor, principal, workspace, exact action, and exact payload. Manual, trusted-GPT, automation-secret, or allow-all confirmation modes do not satisfy this stricter execution condition.
 - `GET /gpt-access/modules` and `GET /gpt-access/modules/:id` (capability compatibility aliases)
 - `POST /gpt-access/dispatch/run`
+
+The two protected worker-diagnostics reads require `workers.read`, use
+`Cache-Control: no-store`, and retain the sanitized operator detail removed
+from the credential-free worker-health projection.
 
 ### ActionPlan, CLEAR, and agent execution
 - `POST|GET /plans`

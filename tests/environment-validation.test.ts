@@ -53,7 +53,17 @@ describe('environment validation', () => {
     OPENAI_API_KEY_REQUIRED: process.env.OPENAI_API_KEY_REQUIRED,
     ARCANOS_GPT_ACCESS_TOKEN: process.env.ARCANOS_GPT_ACCESS_TOKEN,
     ARCANOS_GPT_ACCESS_BASE_URL: process.env.ARCANOS_GPT_ACCESS_BASE_URL,
-    ARCANOS_GPT_ACCESS_SCOPES: process.env.ARCANOS_GPT_ACCESS_SCOPES
+    ARCANOS_GPT_ACCESS_SCOPES: process.env.ARCANOS_GPT_ACCESS_SCOPES,
+    ARCANOS_JOB_READ_CAPABILITY_SECRET:
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET,
+    ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET:
+      process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET,
+    ARCANOS_WORKER_HELPER_TOKEN: process.env.ARCANOS_WORKER_HELPER_TOKEN,
+    RAILWAY_PROJECT_ID: process.env.RAILWAY_PROJECT_ID,
+    RAILWAY_SERVICE_ID: process.env.RAILWAY_SERVICE_ID,
+    RAILWAY_SERVICE_NAME: process.env.RAILWAY_SERVICE_NAME,
+    RAILWAY_ENVIRONMENT_ID: process.env.RAILWAY_ENVIRONMENT_ID,
+    RAILWAY_DEPLOYMENT_ID: process.env.RAILWAY_DEPLOYMENT_ID
   };
 
   beforeEach(() => {
@@ -71,6 +81,15 @@ describe('environment validation', () => {
     process.env.ARCANOS_GPT_ACCESS_TOKEN = 'test-gpt-access-token-1234567890';
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test';
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
+      'test-job-read-capability-secret-1234567890';
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+    delete process.env.ARCANOS_WORKER_HELPER_TOKEN;
+    delete process.env.RAILWAY_PROJECT_ID;
+    delete process.env.RAILWAY_SERVICE_ID;
+    delete process.env.RAILWAY_SERVICE_NAME;
+    delete process.env.RAILWAY_ENVIRONMENT_ID;
+    delete process.env.RAILWAY_DEPLOYMENT_ID;
     delete process.env.OPENAI_API_KEY_REQUIRED;
     delete process.env.ALLOW_MOCK_OPENAI;
     delete process.env.FORCE_MOCK;
@@ -112,6 +131,7 @@ describe('environment validation', () => {
     process.env.ARCANOS_GPT_ACCESS_TOKEN = '';
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = '';
     process.env.ARCANOS_GPT_ACCESS_SCOPES = '';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = '';
 
     const result = validateEnvironment();
 
@@ -121,9 +141,100 @@ describe('environment validation', () => {
         '❌ Required environment variable OPENAI_API_KEY is not set',
         '❌ Required environment variable ARCANOS_GPT_ACCESS_TOKEN is not set',
         '❌ Required environment variable ARCANOS_GPT_ACCESS_BASE_URL is not set',
-        '❌ Required environment variable ARCANOS_GPT_ACCESS_SCOPES is not set'
+        '❌ Required environment variable ARCANOS_GPT_ACCESS_SCOPES is not set',
+        '❌ Required environment variable ARCANOS_JOB_READ_CAPABILITY_SECRET is not set'
       ])
     );
+  });
+
+  it('requires the current job-read signing key on Railway outside test mode', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.RAILWAY_PROJECT_ID = 'railway-project-test';
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain(
+      '❌ Required environment variable ARCANOS_JOB_READ_CAPABILITY_SECRET is not set'
+    );
+  });
+
+  it('keeps local and test validation friendly when the current key is absent', () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const localResult = validateEnvironment();
+
+    expect(localResult.isValid).toBe(true);
+    expect(localResult.errors).not.toContain(
+      '❌ Required environment variable ARCANOS_JOB_READ_CAPABILITY_SECRET is not set'
+    );
+
+    process.env.NODE_ENV = 'test';
+    process.env.RAILWAY_PROJECT_ID = 'railway-project-test';
+
+    const testResult = validateEnvironment();
+
+    expect(testResult.isValid).toBe(true);
+    expect(testResult.errors).not.toContain(
+      '❌ Required environment variable ARCANOS_JOB_READ_CAPABILITY_SECRET is not set'
+    );
+  });
+
+  it.each([
+    ['too short', 'too-short'],
+    ['whitespace', 'job-read-capability-secret-with internal-whitespace-1234'],
+    ['purpose-bound collision', 'test-gpt-access-token-1234567890']
+  ])('rejects a %s current job-read signing key through the shared resolver', (_caseName, secret) => {
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = secret;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain(
+      `❌ Invalid value for ARCANOS_JOB_READ_CAPABILITY_SECRET: set but invalid (${secret.length} characters)`
+    );
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('accepts a distinct previous signing key and rejects reuse or peer collisions', () => {
+    const previousSecret =
+      'previous-job-read-capability-secret-1234567890';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET = previousSecret;
+
+    const validResult = validateEnvironment();
+
+    expect(validResult.isValid).toBe(true);
+
+    process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET =
+      process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const reusedResult = validateEnvironment();
+
+    expect(reusedResult.isValid).toBe(false);
+    expect(reusedResult.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        '❌ Invalid value for ARCANOS_JOB_READ_CAPABILITY_SECRET: set but invalid'
+      ),
+      expect.stringContaining(
+        '❌ Invalid value for ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET: set but invalid'
+      )
+    ]));
+
+    process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET =
+      'worker-helper-purpose-bound-collision-1234567890';
+    process.env.ARCANOS_WORKER_HELPER_TOKEN =
+      process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+
+    const collisionResult = validateEnvironment();
+
+    expect(collisionResult.isValid).toBe(false);
+    expect(collisionResult.errors).toEqual([
+      expect.stringContaining(
+        '❌ Invalid value for ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET: set but invalid'
+      )
+    ]);
   });
 
   it('rejects invalid GPT access OpenAPI origin and scope config', () => {
@@ -158,6 +269,8 @@ describe('environment validation', () => {
     process.env.ARCANOS_GPT_ACCESS_TOKEN = 'ci-gpt-access-token-for-local-workflow-only';
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = CI_GPT_ACCESS_BASE_URL;
     process.env.ARCANOS_GPT_ACCESS_SCOPES = CI_GPT_ACCESS_SCOPES;
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
+      'ci-job-read-capability-secret-for-local-workflow';
 
     const result = validateEnvironment();
 

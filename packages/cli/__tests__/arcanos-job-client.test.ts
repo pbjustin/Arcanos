@@ -8,6 +8,8 @@ import {
   runArcanosJob,
 } from "../src/client/arcanosJob.js";
 
+const JOB_READ_TOKEN = `v1.${"A".repeat(43)}`;
+
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -84,6 +86,8 @@ describe("ARCANOS async job client", () => {
         jobId: "job-timeout",
         poll: "/jobs/job-timeout",
         stream: "/jobs/job-timeout/stream",
+        jobReadToken: JOB_READ_TOKEN,
+        jobReadTokenHeader: "x-arcanos-job-read-token",
       }))
       .mockResolvedValueOnce(createJsonResponse({
         jobId: "job-timeout",
@@ -107,11 +111,48 @@ describe("ARCANOS async job client", () => {
       jobId: "job-timeout",
       poll: "http://127.0.0.1:3000/jobs/job-timeout/result",
       stream: "/jobs/job-timeout/stream",
+      jobReadToken: JOB_READ_TOKEN,
+      jobReadTokenHeader: "x-arcanos-job-read-token",
       timedOut: true,
       result: { text: "final" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:3000/jobs/job-timeout/result");
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN,
+        },
+        redirect: "error",
+      })
+    );
+  });
+
+  it("rejects a cross-origin creation response poll URL before sending the capability", async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValueOnce(
+      createJsonResponse({
+        ok: true,
+        status: "queued",
+        jobId: "job-cross-origin",
+        poll: "https://untrusted.example/jobs/job-cross-origin",
+        jobReadToken: JOB_READ_TOKEN,
+      })
+    );
+
+    await expect(
+      runArcanosJob("Write one section.", {
+        baseUrl: "https://arcanos.example",
+        fetchFn: fetchMock,
+      })
+    ).rejects.toThrow("job poll URL must use the same origin");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://arcanos.example/gpt/arcanos-core"
+    );
+    expect(JSON.stringify(fetchMock.mock.calls[0]?.[1])).not.toContain(
+      JOB_READ_TOKEN
+    );
   });
 
   it("normalizes poll URLs that already point to result endpoints with trailing slashes", () => {
@@ -136,6 +177,8 @@ describe("ARCANOS async job client", () => {
         ok: true,
         status: "queued",
         jobId: "job-queued",
+        jobReadToken: JOB_READ_TOKEN,
+        jobReadTokenHeader: "x-arcanos-job-read-token",
       }))
       .mockResolvedValueOnce(createJsonResponse({
         jobId: "job-queued",
@@ -163,6 +206,8 @@ describe("ARCANOS async job client", () => {
         ok: true,
         status: "queued",
         jobId: "job-failed",
+        jobReadToken: JOB_READ_TOKEN,
+        jobReadTokenHeader: "x-arcanos-job-read-token",
       }))
       .mockResolvedValueOnce(createJsonResponse({
         jobId: "job-failed",
@@ -191,6 +236,7 @@ describe("ARCANOS async job client", () => {
     await expect(
       pollArcanosJob("job-slow", {
         baseUrl: "http://127.0.0.1:3000",
+        jobReadToken: JOB_READ_TOKEN,
         timeoutMs: 1_000,
         intervalMs: 100,
         fetchFn: fetchMock,
@@ -202,6 +248,53 @@ describe("ARCANOS async job client", () => {
         },
       })
     ).rejects.toThrow("polling timed out after 1000ms");
+  });
+
+  it("rejects polling without a capability before making a request", async () => {
+    const fetchMock = jest.fn<typeof fetch>();
+
+    await expect(
+      pollArcanosJob("job-without-capability", {
+        baseUrl: "http://127.0.0.1:3000",
+        fetchFn: fetchMock,
+      })
+    ).rejects.toThrow(
+      "ARCANOS async response is missing a valid jobReadToken"
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("disables redirect following for capability-bearing poll requests", async () => {
+    const redirectTarget = "https://untrusted.example/capture";
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location: redirectTarget,
+        },
+      })
+    );
+
+    await expect(
+      pollArcanosJob("job-redirect", {
+        baseUrl: "https://arcanos.example",
+        jobReadToken: JOB_READ_TOKEN,
+        fetchFn: fetchMock,
+      })
+    ).rejects.toThrow("HTTP 302");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://arcanos.example/jobs/job-redirect/result",
+      expect.objectContaining({
+        headers: {
+          "x-arcanos-job-read-token": JOB_READ_TOKEN,
+        },
+        redirect: "error",
+      })
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toBe(redirectTarget);
   });
 
   it("jitters poll backoff delays", async () => {
@@ -223,6 +316,7 @@ describe("ARCANOS async job client", () => {
 
     const result = await pollArcanosJob("job-jitter", {
       baseUrl: "http://127.0.0.1:3000",
+      jobReadToken: JOB_READ_TOKEN,
       timeoutMs: 10_000,
       intervalMs: 100,
       maxIntervalMs: 1_000,
@@ -256,6 +350,7 @@ describe("ARCANOS async job client", () => {
 
     const result = await pollArcanosJob("job-rate-limited", {
       baseUrl: "http://127.0.0.1:3000",
+      jobReadToken: JOB_READ_TOKEN,
       timeoutMs: 10_000,
       intervalMs: 100,
       fetchFn: fetchMock,
@@ -295,6 +390,7 @@ describe("ARCANOS async job client", () => {
 
     const result = await pollArcanosJob("job-rate-limited-date", {
       baseUrl: "http://127.0.0.1:3000",
+      jobReadToken: JOB_READ_TOKEN,
       timeoutMs: 10_000,
       intervalMs: 100,
       fetchFn: fetchMock,

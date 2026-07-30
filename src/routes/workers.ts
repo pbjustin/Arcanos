@@ -1,4 +1,8 @@
-import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/index.js';
+import {
+  noStoreResponse,
+  sendBadRequestPayload,
+  sendInternalErrorPayload
+} from '@shared/http/index.js';
 /**
  * Workers Route - Simplified worker management
  * Provides endpoints for running and monitoring workers
@@ -28,6 +32,10 @@ import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import { healWorkerRuntime } from '@services/workerControlService.js';
+import {
+  projectPublicWorkerHealth,
+  type PublicWorkerHealthProjection
+} from '@shared/http/workerHealthProjection.js';
 
 const router = Router();
 
@@ -106,15 +114,51 @@ async function buildStatusPayload(): Promise<WorkerStatusResponseDTO> {
   return payload;
 }
 
+function projectWorkersPublicHealth(
+  payload: WorkerStatusResponseDTO
+): PublicWorkerHealthProjection {
+  const runtime = payload.arcanosWorkers.runtime;
+  const overallStatus = payload.autoHeal?.status
+    ?? (runtime.started ? 'healthy' : runtime.enabled ? 'degraded' : 'offline');
+  const unavailableWorkers = Math.max(0, payload.totalWorkers - payload.availableWorkers);
+
+  return projectPublicWorkerHealth({
+    timestamp: payload.timestamp,
+    status: overallStatus,
+    runtime: {
+      status: runtime.started ? 'active' : runtime.enabled ? 'pending' : 'disabled',
+      totalDispatched: runtime.totalDispatched,
+      startedAt: runtime.startedAt,
+      lastDispatchAt: runtime.lastDispatchAt
+    },
+    workers: {
+      status: overallStatus,
+      total: payload.totalWorkers,
+      available: payload.availableWorkers,
+      configured: runtime.configuredCount,
+      active: runtime.workerIds.length,
+      observed: payload.totalWorkers,
+      stale: null,
+      degraded: overallStatus === 'warning' ? unavailableWorkers : 0,
+      unhealthy: overallStatus === 'critical' ? unavailableWorkers : 0,
+      lastHeartbeatAt: null
+    }
+  });
+}
+
 /**
- * GET /workers/status - Get available workers
+ * GET /workers/status - Get aggregate worker health without internal inventory.
  */
 router.get(
   '/workers/status',
-  async (req: Request, res: Response<WorkerStatusResponseDTO | { error: string; message: string }>) => {
+  noStoreResponse,
+  async (
+    req: Request,
+    res: Response<PublicWorkerHealthProjection | { error: string; message: string }>
+  ) => {
   try {
     const payload = await buildStatusPayload();
-    res.json(payload);
+    res.json(projectWorkersPublicHealth(payload));
   } catch {
     req.logger?.error?.('workers.status.failed', {
       requestId: req.requestId,

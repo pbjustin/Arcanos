@@ -111,7 +111,7 @@ function selectLatestIso(...values: Array<string | Date | null | undefined>): st
  *
  * Inputs/outputs:
  * - Input: process environment via the shared runtime env helper.
- * - Output: sanitized binding summary for `/trinity/status`.
+ * - Output: sanitized binding summary for the detailed internal status source.
  *
  * Edge case behavior:
  * - Missing env values are normalized to `null` instead of empty strings.
@@ -133,7 +133,7 @@ function buildTrinityRuntimeBindings(): TrinityRuntimeBindings {
  *
  * Inputs/outputs:
  * - Input: environment-backed worker execution settings and Trinity session guardrails.
- * - Output: sanitized runtime limit summary for `/trinity/status`.
+ * - Output: normalized runtime limit summary for the detailed internal status source.
  *
  * Edge case behavior:
  * - Invalid environment overrides have already fallen back before this payload is assembled.
@@ -196,7 +196,7 @@ async function getTrinityMemorySyncStatus(): Promise<TrinityMemorySyncStatus> {
  * Load the combined worker-control status with an offline fallback.
  *
  * Purpose:
- * - Keep `/trinity/status` available even when worker-control telemetry is temporarily unavailable.
+ * - Keep Trinity status collection available even when worker-control telemetry is temporarily unavailable.
  *
  * Inputs/outputs:
  * - Input: none.
@@ -217,7 +217,7 @@ async function getWorkerControlStatusSafe(): Promise<WorkerControlStatusResponse
  * Build fallback queue semantics when worker-control telemetry is unavailable.
  *
  * Purpose:
- * - Keep `/trinity/status` self-describing even if the worker-control layer cannot be read.
+ * - Keep the detailed internal status source self-describing when worker-control data is unavailable.
  *
  * Inputs/outputs:
  * - Input: none.
@@ -251,7 +251,7 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
  * Build fallback retry policy values when worker-control telemetry is unavailable.
  *
  * Purpose:
- * - Preserve retry-policy observability for `/trinity/status` even during degraded worker-control reads.
+ * - Preserve retry-policy observability for authenticated and internal consumers during degraded worker-control reads.
  *
  * Inputs/outputs:
  * - Input: process env through the shared runtime helper.
@@ -325,10 +325,10 @@ function resolveTrinityHealthStatus(
 }
 
 /**
- * Build the public Trinity status payload.
+ * Build the internal Trinity status source.
  *
  * Purpose:
- * - Expose one stable health and binding view for the Trinity pipeline across API, workers, and the route-memory snapshot layer.
+ * - Provide one detailed health and binding view for internal consumers and the public route projector.
  *
  * Inputs/outputs:
  * - Input: live worker-control status plus snapshot-backed memory sync state.

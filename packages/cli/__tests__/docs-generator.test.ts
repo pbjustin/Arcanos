@@ -210,6 +210,7 @@ describe("docs generator", () => {
     });
 
     expect(result.updates[0]?.content).toContain("/jobs/:id/result");
+    expect(result.updates[0]?.content).toContain("x-arcanos-job-read-token");
     expect(result.updates[0]?.content).toContain("/gpt/:gptId");
     expect(result.updates[0]?.content).toContain("/api/arcanos/dag/runs/{runId}/trace");
   });

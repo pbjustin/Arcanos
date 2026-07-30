@@ -15,6 +15,7 @@ import {
   type TrinityUserVisibleResponse
 } from './trinityResponseSerializer.js';
 import { buildJobResultPollPath } from '../jobs/jobLinks.js';
+import { buildJobReadCapabilityResponseFields } from '../jobs/jobReadCapability.js';
 
 const ASYNC_ASK_ENDPOINT_FALLBACK = 'ask';
 
@@ -108,6 +109,8 @@ export interface QueuedAskPendingResponse {
   status: 'pending';
   jobId: string;
   poll: string;
+  jobReadToken: string;
+  jobReadTokenHeader: string;
 }
 
 /**
@@ -275,7 +278,8 @@ export function buildQueuedAskPendingResponse(jobId: string): QueuedAskPendingRe
     ok: true,
     status: 'pending',
     jobId,
-    poll: buildJobResultPollPath(jobId)
+    poll: buildJobResultPollPath(jobId),
+    ...buildJobReadCapabilityResponseFields(jobId),
   };
 }
 

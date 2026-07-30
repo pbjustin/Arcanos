@@ -31,6 +31,10 @@ import type { ClientContextDTO } from '@shared/types/dto.js';
 import { redactSensitive, redactString } from '@shared/redaction.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_CODE,
+  resolveConfiguredJobReadCapabilitySecret,
+} from '@shared/jobs/jobReadCapability.js';
 import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import {
   getWorkerAutonomyHealthReport,
@@ -1104,6 +1108,9 @@ export async function listRecentFailedWorkerJobs(
 export async function queueWorkerAsk(
   request: QueueWorkerAskRequest
 ): Promise<QueueWorkerAskResponse> {
+  if (!resolveConfiguredJobReadCapabilitySecret()) {
+    throw new Error(JOB_READ_AUTH_UNAVAILABLE_CODE);
+  }
   const resolvedDomain = resolveWorkerControlDomain(request.prompt, request.cognitiveDomain);
   const queuedAskJobInput = buildQueuedAskJobInput({
     prompt: request.prompt,

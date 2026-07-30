@@ -205,7 +205,8 @@ router.get('/api/diagnostics/session-system', asyncHandler(async (req, res) => {
  * - Output: queue status snapshot.
  *
  * Edge case behavior:
- * - Returns explicit null job fields when no queue history is available.
+ * - Returns nullable aggregate last-job state/timing when no queue history is available.
+ * - Never returns a reusable job identifier or lookup locator.
  * - Never returns persisted worker failure text.
  */
 router.get('/api/diagnostics/queues', asyncHandler(async (_req, res) => {

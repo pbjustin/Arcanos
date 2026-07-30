@@ -23,28 +23,32 @@
       "method": "GET",
       "plane": "control",
       "canonicalAction": "get_status",
-      "preferredClientSurface": "Compatibility method name over the direct canonical job-status endpoint. Never route job-status reads through /gpt/{gptId}."
+      "requiredHeader": "x-arcanos-job-read-token",
+      "preferredClientSurface": "Compatibility method name over the direct canonical job-status endpoint. Supply the job-specific `jobReadToken` returned by creation, or the transient `ARCANOS_JOB_READ_TOKEN` client environment value. Never route job-status reads through /gpt/{gptId}."
     },
     "request_gpt_job_result": {
       "endpoint": "/jobs/{id}/result",
       "method": "GET",
       "plane": "control",
       "canonicalAction": "get_result",
-      "preferredClientSurface": "Compatibility method name over the direct canonical job-result endpoint. Never route job-result reads through /gpt/{gptId}."
+      "requiredHeader": "x-arcanos-job-read-token",
+      "preferredClientSurface": "Compatibility method name over the direct canonical job-result endpoint. Supply the job-specific `jobReadToken` returned by creation, or the transient `ARCANOS_JOB_READ_TOKEN` client environment value. Never route job-result reads through /gpt/{gptId}."
     },
     "request_job_status": {
       "endpoint": "/jobs/{id}",
       "method": "GET",
       "plane": "control",
       "canonicalAction": "get_status",
-      "preferredClientSurface": "Direct canonical job-status endpoint for agent and tool clients."
+      "requiredHeader": "x-arcanos-job-read-token",
+      "preferredClientSurface": "Direct canonical capability-bound job-status endpoint for agent and tool clients."
     },
     "request_job_result": {
       "endpoint": "/jobs/{id}/result",
       "method": "GET",
       "plane": "control",
       "canonicalAction": "get_result",
-      "preferredClientSurface": "Direct canonical job-result endpoint for agent and tool clients."
+      "requiredHeader": "x-arcanos-job-read-token",
+      "preferredClientSurface": "Direct canonical capability-bound job-result endpoint for agent and tool clients."
     },
     "request_system_state": {
       "endpoint": "/system-state",
@@ -78,6 +82,13 @@
         "timeoutMs",
         "waitForResultMs",
         "payload"
+      ],
+      "asyncResponseFields": [
+        "jobId",
+        "jobReadToken",
+        "jobReadTokenHeader",
+        "poll",
+        "stream"
       ]
     },
     "/system-state": {
@@ -102,8 +113,19 @@
         "request_job_status"
       ],
       "requestFields": [
-        "id(path)"
-      ]
+        "id(path)",
+        "jobReadToken(header:x-arcanos-job-read-token)"
+      ],
+      "requiredHeaders": [
+        "x-arcanos-job-read-token"
+      ],
+      "clientEnvironmentFallback": "ARCANOS_JOB_READ_TOKEN",
+      "publicJobEligibility": {
+        "ask": "eligible",
+        "gpt": "eligible only with recognized public GPT-route or custom-bridge provenance",
+        "gptAccess": "concealed; use the authenticated GPT Access result operation"
+      },
+      "cacheControl": "no-store"
     },
     "/jobs/{id}/result": {
       "method": "GET",
@@ -113,8 +135,19 @@
         "request_job_result"
       ],
       "requestFields": [
-        "id(path)"
-      ]
+        "id(path)",
+        "jobReadToken(header:x-arcanos-job-read-token)"
+      ],
+      "requiredHeaders": [
+        "x-arcanos-job-read-token"
+      ],
+      "clientEnvironmentFallback": "ARCANOS_JOB_READ_TOKEN",
+      "publicJobEligibility": {
+        "ask": "eligible",
+        "gpt": "eligible only with recognized public GPT-route or custom-bridge provenance",
+        "gptAccess": "concealed; use the authenticated GPT Access result operation"
+      },
+      "cacheControl": "no-store"
     },
     "/api/vision": {
       "method": "POST",

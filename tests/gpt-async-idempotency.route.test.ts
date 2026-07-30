@@ -41,7 +41,22 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
     workerId,
     claimGeneration
   })),
-  findOrCreateGptJob: findOrCreateGptJobMock,
+  findOrCreateGptJob: async (...args: unknown[]) => {
+    const result = await findOrCreateGptJobMock(...args);
+    if (!result?.job) {
+      return result;
+    }
+
+    const options = args[0] as { input?: unknown } | undefined;
+    return {
+      ...result,
+      job: {
+        job_type: 'gpt',
+        input: options?.input,
+        ...result.job,
+      },
+    };
+  },
   getJobById: getJobByIdMock,
   normalizeJobClaimGeneration: jest.fn((claimGeneration: string) => claimGeneration),
   createJob: jest.fn(),
@@ -134,10 +149,23 @@ function restoreEnv(snapshot: ReadonlyMap<string, string | undefined>): void {
   }
 }
 
-function buildApp() {
+function buildApp(options: { authenticatedUserId?: number } = {}) {
   const app = express();
   app.use(express.json());
   app.use(requestContext);
+  if (options.authenticatedUserId !== undefined) {
+    app.use((req, _res, next) => {
+      req.authUser = {
+        id: options.authenticatedUserId!,
+        email: 'actor@example.test',
+        role: 'operator',
+        plan: 'test',
+        profileId: null,
+        source: 'session',
+      };
+      next();
+    });
+  }
   app.use('/gpt', gptRouter);
   return app;
 }
@@ -206,6 +234,8 @@ describe('async /gpt idempotency', () => {
     for (const key of ASYNC_IDEMPOTENCY_ENV_KEYS) {
       delete process.env[key];
     }
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
+      'gpt-async-job-read-capability-secret-1234567890';
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
     process.env.PRIORITY_QUEUE_ENABLED = 'false';
     executeDirectGptActionMock.mockResolvedValue(buildDirectActionEnvelope());
@@ -275,6 +305,33 @@ describe('async /gpt idempotency', () => {
       },
       _route: {
         gptId: 'invalid-id'
+      }
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before async GPT planning and persistence when job-read capability configuration is unavailable', async () => {
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Analyze this deployment timeout'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_READ_AUTH_UNAVAILABLE',
+        message: 'Async job reads are temporarily unavailable.'
+      },
+      _route: {
+        gptId: 'arcanos-core'
       }
     });
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -399,7 +456,7 @@ describe('async /gpt idempotency', () => {
       }
     });
 
-    const response = await request(buildApp())
+    const response = await request(buildApp({ authenticatedUserId: 42 }))
       .post('/gpt/arcanos-core')
       .send({
         prompt: 'Analyze   this deployment timeout'
@@ -414,6 +471,8 @@ describe('async /gpt idempotency', () => {
       result: {},
       poll: '/jobs/job-123/result',
       stream: '/jobs/job-123/stream',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
       timedOut: false,
       jobStatus: 'running',
       lifecycleStatus: 'running',
@@ -427,6 +486,48 @@ describe('async /gpt idempotency', () => {
     });
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.headers['cache-control']).toContain('no-store');
+  });
+
+  it('never mints a generic capability when repository reuse returns protected GPT Access provenance', async () => {
+    const protectedResultSentinel = 'PROTECTED_REUSED_GPT_ACCESS_RESULT_SENTINEL';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'protected-gpt-access-job',
+        job_type: 'gpt',
+        status: 'completed',
+        input: {
+          requestPath: '/gpt-access/jobs/create',
+          executionModeReason: 'gpt_access_create_ai_job',
+        },
+        output: {
+          result: protectedResultSentinel,
+        },
+      },
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_completed_result',
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Attempt cross-surface reuse',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_READ_PROVENANCE_UNAVAILABLE',
+        message: 'Async job continuation is temporarily unavailable.',
+      },
+    });
+    expect(response.body).not.toHaveProperty('jobId');
+    expect(response.body).not.toHaveProperty('jobReadToken');
+    expect(JSON.stringify(response.body)).not.toContain(protectedResultSentinel);
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   describe('deprecated GPT-route job lookup compatibility', () => {
@@ -875,6 +976,33 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('canonicalizes case and trailing-slash route variants before persisting provenance', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-canonical-public-path',
+        status: 'pending'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+
+    const response = await request(buildApp())
+      .post('/GPT/arcanos-core/')
+      .send({
+        action: 'query',
+        prompt: 'Persist canonical public provenance.'
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body.jobId).toBe('job-canonical-public-path');
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        requestPath: '/gpt/arcanos-core'
+      }
+    });
+  });
+
   it('hands the persisted generation to reserved priority direct execution', async () => {
     process.env.PRIORITY_QUEUE_ENABLED = 'true';
     const slot = { release: jest.fn() };
@@ -906,6 +1034,47 @@ describe('async /gpt idempotency', () => {
         slot
       })
     );
+  });
+
+  it('returns the persisted continuation when priority direct handoff fails', async () => {
+    process.env.PRIORITY_QUEUE_ENABLED = 'true';
+    const privateStartSentinel = 'PRIVATE_PRIORITY_START_FAILURE_SENTINEL';
+    const slot = { release: jest.fn() };
+    tryAcquirePriorityGptDirectExecutionSlotMock.mockReturnValueOnce(slot);
+    findOrCreateGptJobMock.mockResolvedValueOnce({
+      job: {
+        id: 'job-priority-start-recovery',
+        status: 'running',
+        claim_generation: '1'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    startReservedPriorityGptDirectExecutionMock.mockImplementationOnce(() => {
+      throw new Error(privateStartSentinel);
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Recover this persisted priority request.'
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: true,
+      jobId: 'job-priority-start-recovery',
+      poll: '/jobs/job-priority-start-recovery/result',
+      stream: '/jobs/job-priority-start-recovery/stream',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token'
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateStartSentinel);
+    expect(slot.release).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it('releases a reserved priority slot when autonomous job planning rejects', async () => {
@@ -1210,6 +1379,46 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('returns the accepted continuation after an unexpected polling failure', async () => {
+    const privateWaitSentinel = 'PRIVATE_GPT_WAIT_FAILURE_SENTINEL';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-wait-recovery',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockRejectedValue(
+      new Error(privateWaitSentinel)
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt'
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query_and_wait',
+      status: 'running',
+      jobId: 'job-wait-recovery',
+      poll: '/jobs/job-wait-recovery/result',
+      stream: '/jobs/job-wait-recovery/stream',
+      jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/u),
+      jobReadTokenHeader: 'x-arcanos-job-read-token'
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateWaitSentinel);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('fails query clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
     findOrCreateGptJobMock.mockRejectedValue(
       new MockJobRepositoryUnavailableError('jobs backend unavailable')
@@ -1292,48 +1501,85 @@ describe('async /gpt idempotency', () => {
     });
   });
 
-  it('collapses concurrent identical submissions onto one canonical job id', async () => {
+  it('isolates anonymous identical submissions even when session and idempotency values are replayed', async () => {
     let callCount = 0;
     findOrCreateGptJobMock.mockImplementation(async () => {
       callCount += 1;
-      return callCount === 1
-        ? {
-            job: {
-              id: 'job-777',
-              status: 'pending'
-            },
-            created: true,
-            deduped: false,
-            dedupeReason: 'new_job'
-          }
-        : {
-            job: {
-              id: 'job-777',
-              status: 'pending'
-            },
-            created: false,
-            deduped: true,
-            dedupeReason: 'reused_inflight_job'
-          };
+      return {
+        job: {
+          id: `job-anonymous-${callCount}`,
+          status: 'pending'
+        },
+        created: true,
+        deduped: false,
+        dedupeReason: 'new_job'
+      };
     });
-    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+    waitForQueuedGptJobCompletionMock.mockImplementation(async (jobId: string) => ({
       state: 'pending',
       job: {
-        id: 'job-777',
+        id: jobId,
         status: 'pending'
       }
-    });
+    }));
 
     const [firstResponse, secondResponse] = await Promise.all([
-      request(buildApp()).post('/gpt/arcanos-core').send({ prompt: 'Collapse duplicates safely' }),
-      request(buildApp()).post('/gpt/arcanos-core').send({ prompt: 'Collapse duplicates safely' })
+      request(buildApp())
+        .post('/gpt/arcanos-core')
+        .set('X-Session-ID', 'replayed-session')
+        .set('Idempotency-Key', 'replayed-idempotency-key')
+        .send({ prompt: 'Isolate anonymous retries safely' }),
+      request(buildApp())
+        .post('/gpt/arcanos-core')
+        .set('X-Session-ID', 'replayed-session')
+        .set('Idempotency-Key', 'replayed-idempotency-key')
+        .send({ prompt: 'Isolate anonymous retries safely' })
     ]);
 
     expect(firstResponse.status).toBe(202);
     expect(secondResponse.status).toBe(202);
-    expect(firstResponse.body.jobId).toBe('job-777');
-    expect(secondResponse.body.jobId).toBe('job-777');
+    expect(firstResponse.body.jobId).not.toBe(secondResponse.body.jobId);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(2);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
+      .not.toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
+  });
+
+  it('keeps a stable public idempotency scope for an established authenticated principal', async () => {
+    let callCount = 0;
+    findOrCreateGptJobMock.mockImplementation(async () => {
+      callCount += 1;
+      return {
+        job: {
+          id: callCount === 1 ? 'job-authenticated-1' : 'job-authenticated-1',
+          status: 'pending'
+        },
+        created: callCount === 1,
+        deduped: callCount > 1,
+        dedupeReason: callCount === 1 ? 'new_job' : 'reused_inflight_job'
+      };
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-authenticated-1',
+        status: 'pending'
+      }
+    });
+
+    const firstResponse = await request(buildApp({ authenticatedUserId: 42 }))
+      .post('/gpt/arcanos-core')
+      .set('X-Session-ID', 'session-one')
+      .send({ prompt: 'Authenticated retry scope' });
+    const secondResponse = await request(buildApp({ authenticatedUserId: 42 }))
+      .post('/gpt/arcanos-core')
+      .set('X-Session-ID', 'session-two')
+      .send({ prompt: 'Authenticated retry scope' });
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
     expect(secondResponse.body.deduped).toBe(true);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
+      .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
   });
 
   it('rejects explicit idempotency key reuse for a different semantic request', async () => {

@@ -135,7 +135,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
-        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+        message: 'Job retrieval requests must use the jobs API with the jobReadToken returned by creation in x-arcanos-job-read-token. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
         poll: '/jobs/job-123/result',
@@ -171,7 +171,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
-        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+        message: 'Job retrieval requests must use the jobs API with the jobReadToken returned by creation in x-arcanos-job-read-token. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
         poll: '/jobs/job-123/result',
@@ -207,7 +207,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
-        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+        message: 'Job retrieval requests must use the jobs API with the jobReadToken returned by creation in x-arcanos-job-read-token. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
         poll: '/jobs/job-456/result',
@@ -243,7 +243,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
-        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+        message: 'Job retrieval requests must use the jobs API with the jobReadToken returned by creation in x-arcanos-job-read-token. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
         poll: '/jobs/job-789/result',

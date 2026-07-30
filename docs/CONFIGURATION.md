@@ -31,6 +31,9 @@ cp .env.example .env
 | `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
 | `REDIS_URL` | No | none | Preferred `redis://` or TLS `rediss://` connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. Without a valid discrete fallback, a malformed non-empty value is treated as configured but unavailable. |
+| `ARCANOS_JOB_READ_CAPABILITY_SECRET` | Yes for generic async job creation and reads | none | Dedicated 32–4096 character HMAC signing secret for job-specific read capabilities. It must contain no whitespace or placeholder text and must remain distinct from every other purpose-bound application credential. |
+| `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | No; rotation overlap only | none | Optional prior signing key accepted only for capability verification. It must satisfy the current-key credential rules and differ from the current key and every other purpose-bound credential. New tokens are never issued from it. |
+| `ARCANOS_JOB_READ_TOKEN` | Client-only for standalone generic job lookups | none | Optional transient CLI/daemon fallback containing the `jobReadToken` returned by one job-creation response. The backend does not use this as a signing secret; do not put it in shared server configuration. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for protected `/gpt-access/*` operations | none | Bearer token for the protected GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or GPT Action auth. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | configured public base URL variables, local request origin, then `http://localhost:3000` | Public HTTPS origin advertised by `/gpt-access/openapi.json`; set this in Railway so public metadata is deterministic and never derived from spoofable request headers. Railway PR previews prefer Railway preview URL variables before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
@@ -45,6 +48,74 @@ cp .env.example .env
 | `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
 Explicit local/test mock paths can run without a real OpenAI credential. Normal production startup fails validation when the resolved key is missing, empty, or a placeholder; live AI behavior and the dedicated worker also require a valid key.
+
+### Generic async job-read capabilities
+
+The root backend's generic `GET /jobs/:id`, `GET /jobs/:id/result`, and
+`GET /jobs/:id/stream` routes, plus `POST /jobs/:id/cancel`, expose only `gpt`
+and `ask` job types. Every request must send exactly one
+`x-arcanos-job-read-token` header containing the job-specific `jobReadToken`
+returned by the creating async response. The token is bound to the path job
+id; query parameters, cookies, and request-body values do not carry this
+authority. Treat the token as a bearer secret. Cancellation also requires
+confirmation and the creation surface's authenticated owner; possessing the
+read capability alone cannot mutate a job. Public GPT jobs created without a
+server-established principal are intentionally non-cancellable.
+
+`ARCANOS_JOB_READ_CAPABILITY_SECRET` is a server-side signing key, not a client
+token. The backend derives deterministic `v1` HMAC capabilities so idempotent
+creation responses can return the same token without storing bearer material
+in `job_data`. Startup validation requires a valid current key in production
+and Railway runtimes; local and test processes may omit it, but job-backed
+creation then remains route-locally unavailable. Missing, malformed,
+duplicated, incorrect, and cross-job tokens
+are non-disclosing: status, stream, and cancellation return the same `404` as
+an absent job, while the compatibility result route returns HTTP `200` with
+`status: "not_found"`. If the current signing key is absent, malformed, or
+collides with another purpose-bound credential, creation fails before
+enqueueing. Reads and cancellation return HTTP `503` with
+`JOB_READ_AUTH_UNAVAILABLE` only when neither the current nor optional previous
+verification key is valid. All affected JSON responses are `no-store`; the SSE
+response is also `no-cache` and `no-transform`.
+
+The TypeScript query client preserves `jobReadToken` for its automatic polling,
+and the Python daemon response model retains it for an explicit subsequent
+read. For an independent `job-status`/`job-result` invocation, pass the token
+through the client API or set `ARCANOS_JOB_READ_TOKEN` only for that
+invocation. Never place a job token in a URL, log, committed file, or
+long-lived shared server environment.
+
+New tokens are issued only with `ARCANOS_JOB_READ_CAPABILITY_SECRET`, while
+verification accepts the valid current key and the optional valid
+`ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET`. For a rotation, deploy the new
+key as current and the old key as previous in one coordinated configuration
+change. Keep the previous key only through the maximum retained-job window,
+then remove it after those jobs drain or expire. Rotating the current key
+without that overlap immediately invalidates outstanding generic tokens.
+Setting the two variables to the same value, reusing either value for another
+purpose-bound credential, or leaving only an invalid current key makes new
+job-backed creation unavailable.
+
+GPT idempotency scopes are separately namespaced for the public GPT route, the
+custom GPT bridge, and GPT Access. This prevents cross-surface reuse from
+turning a protected job into a generic continuation. The first deployment of
+the namespace change deliberately stops deduping against older unnamespaced
+rows; allow one idempotency/retention window for those rows to drain.
+Anonymous public GPT submissions also receive a fresh server-random scope per
+request, so caller-selected sessions, IPs, raw authorization headers, bodies,
+and idempotency keys cannot remint a prior job's read capability. Reusable
+public deduplication and cancellation require a principal already established
+by trusted server middleware. Custom bridge and GPT Access scopes use canonical
+fingerprints of the credential that actually passed their route authentication,
+independent of bearer casing/spacing or caller session values.
+
+Treat this actor/provenance change as a coordinated web-process cutover, not a
+mixed-version rolling state: drain or replace every older web instance before
+relying on the containment boundary. Older instances can still create legacy
+unnamespaced or caller-derived ownership rows. Rotating the Custom GPT bridge or
+GPT Access credential also changes that surface's actor fingerprint; if retry
+deduplication or cancellation continuity matters for retained jobs, let those
+jobs drain before rotating the authenticating credential.
 
 ### Standalone BullMQ/Redis AI runtime
 
@@ -673,6 +744,9 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`, its compatibility alias, and `/api/bridge/health`. |
+| `ARCANOS_JOB_READ_CAPABILITY_SECRET` | commented empty | Required current server-side HMAC key for job-specific generic read capabilities; new tokens use only this key. |
+| `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | commented empty | Optional verification-only old key for a bounded retained-job rotation overlap. |
+| `ARCANOS_JOB_READ_TOKEN` | commented empty | Client-only transient token for one standalone generic job lookup; never a shared backend signing key. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be explicit before they enqueue, discover, execute capability work, or recover workers. |

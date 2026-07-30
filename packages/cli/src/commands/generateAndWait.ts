@@ -1,6 +1,10 @@
 import { generatePromptAndWait } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
-import { extractHumanReadableText } from "./humanOutput.js";
+import {
+  extractHumanReadableText,
+  formatJobReadCapabilityGuidance,
+  omitJobReadCapabilityForHumanOutput
+} from "./humanOutput.js";
 import type { CliCommandResult, GenerateAndWaitCommandInvocation } from "./types.js";
 
 const DEFAULT_GENERATE_AND_WAIT_TIMEOUT_MS = 20_000;
@@ -54,7 +58,7 @@ function extractGenerateAndWaitHumanOutput(
 
   const pendingStatus = typeof payload.status === "string" ? payload.status : "";
   const jobId = typeof payload.jobId === "string" ? payload.jobId : "";
-  if (pendingStatus === "pending" && jobId) {
+  if (["pending", "queued", "running", "timeout"].includes(pendingStatus) && jobId) {
     const jobStatus =
       typeof payload.jobStatus === "string" && payload.jobStatus.trim().length > 0
         ? payload.jobStatus
@@ -63,8 +67,11 @@ function extractGenerateAndWaitHumanOutput(
       typeof payload.instruction === "string" && payload.instruction.trim().length > 0
         ? payload.instruction
         : `Direct wait timed out after ${timeoutMs}ms. Use GET /jobs/${jobId}/result to retrieve the final result.`;
-    return `Timed out waiting for a direct result. Job ${jobId} is ${jobStatus}. ${instruction}`;
+    return (
+      `Timed out waiting for a direct result. Job ${jobId} is ${jobStatus}. ${instruction} ` +
+      formatJobReadCapabilityGuidance(jobId)
+    );
   }
 
-  return serializeDeterministicJson(payload);
+  return serializeDeterministicJson(omitJobReadCapabilityForHumanOutput(payload));
 }

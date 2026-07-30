@@ -3,7 +3,9 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildGptIdempotencyDescriptor,
   buildGptRequestFingerprintHash,
-  normalizeExplicitIdempotencyKey
+  normalizeExplicitIdempotencyKey,
+  resolveGptJobCreationSurface,
+  resolvePublicGptJobCreationSurface,
 } from '../src/shared/gpt/gptIdempotency.js';
 
 describe('gpt idempotency fingerprinting', () => {
@@ -86,6 +88,7 @@ describe('gpt idempotency fingerprinting', () => {
       body: {
         prompt: 'Trace the Railway timeout fallback'
       },
+      surface: 'public-gpt',
       actorKey: 'user:42',
       explicitIdempotencyKey: 'retry-123'
     });
@@ -95,6 +98,7 @@ describe('gpt idempotency fingerprinting', () => {
       body: {
         prompt: 'Trace the Railway timeout fallback'
       },
+      surface: 'public-gpt',
       actorKey: 'user:42'
     });
 
@@ -104,6 +108,53 @@ describe('gpt idempotency fingerprinting', () => {
     expect(derivedDescriptor.source).toBe('derived');
     expect(derivedDescriptor.publicIdempotencyKey).toMatch(/^derived:/);
     expect(derivedDescriptor.fingerprintHash).toHaveLength(64);
+  });
+
+  it('isolates otherwise identical idempotency scopes by creation surface', () => {
+    const surfaces = [
+      'public-gpt',
+      'custom-gpt-bridge',
+      'gpt-access',
+    ] as const;
+    const scopeHashes = surfaces.map((surface) =>
+      buildGptIdempotencyDescriptor({
+        gptId: 'arcanos-core',
+        action: 'query',
+        body: { prompt: 'same request' },
+        surface,
+        actorKey: 'auth:shared-actor',
+      }).scopeHash
+    );
+
+    expect(new Set(scopeHashes).size).toBe(surfaces.length);
+  });
+
+  it('classifies only server-owned public GPT provenance as public', () => {
+    expect(resolveGptJobCreationSurface({
+      requestPath: '/gpt/arcanos-core?mode=async',
+      executionModeReason: 'explicit_async',
+    })).toBe('public-gpt');
+    expect(resolveGptJobCreationSurface({
+      requestPath: '/GPT/arcanos-core/',
+      executionModeReason: 'explicit_async',
+    })).toBe('public-gpt');
+    expect(resolveGptJobCreationSurface({
+      requestPath: '/api/bridge/gpt',
+      executionModeReason: 'bridge_query',
+    })).toBe('custom-gpt-bridge');
+    expect(resolveGptJobCreationSurface({
+      requestPath: '/gpt-access/jobs/create',
+      executionModeReason: 'gpt_access_create_ai_job',
+    })).toBe('gpt-access');
+    expect(resolvePublicGptJobCreationSurface({
+      requestPath: '/gpt-access/jobs/create',
+      executionModeReason: 'gpt_access_create_ai_job',
+    })).toBeNull();
+    expect(resolveGptJobCreationSurface({
+      requestPath: '/api/bridge/gpt',
+      executionModeReason: 'gpt_access_create_ai_job',
+    })).toBeNull();
+    expect(resolveGptJobCreationSurface({ requestPath: '/internal/gpt' })).toBeNull();
   });
 
   it('normalizes explicit idempotency key headers', () => {

@@ -82,7 +82,6 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
     count: z.number().int().nonnegative(),
     lastSeenAt: z.string().datetime()
   })),
-  lastJobId: z.string().nullable(),
   lastJobStatus: z.string().nullable(),
   lastJobFinishedAt: z.string().datetime().nullable(),
   timestamp: z.string().datetime()

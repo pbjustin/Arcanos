@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  JOB_READ_CAPABILITY_HEADER_NAME,
+  issueJobReadCapability,
+} from '../src/shared/jobs/jobReadCapability.js';
 
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -16,8 +20,33 @@ class MockJobRepositoryUnavailableError extends Error {}
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
-  findOrCreateGptJob: findOrCreateGptJobMock,
-  getJobById: getJobByIdMock,
+  findOrCreateGptJob: async (...args: unknown[]) => {
+    const result = await findOrCreateGptJobMock(...args);
+    if (!result?.job) {
+      return result;
+    }
+    const options = args[0] as { input?: unknown } | undefined;
+    return {
+      ...result,
+      job: {
+        job_type: 'gpt',
+        input: options?.input,
+        ...result.job,
+      },
+    };
+  },
+  getJobById: async (...args: unknown[]) => {
+    const job = await getJobByIdMock(...args);
+    return job?.job_type === 'gpt' && job.input === undefined
+      ? {
+          ...job,
+          input: {
+            requestPath: '/api/bridge/gpt',
+            executionModeReason: 'bridge_health_echo',
+          },
+        }
+      : job;
+  },
   requestJobCancellation: requestJobCancellationMock,
 }));
 
@@ -39,6 +68,7 @@ const SMOKE_COMPLETE_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const SMOKE_PENDING_JOB_ID = '22222222-2222-4222-8222-222222222222';
 const ECHO_PENDING_JOB_ID = '44444444-4444-4444-8444-444444444444';
 const MODEL_PENDING_JOB_ID = '33333333-3333-4333-8333-333333333333';
+const JOB_READ_SECRET = 'bridge-smoke-job-read-capability-secret-1234567890';
 
 function buildApp() {
   const app = express();
@@ -53,6 +83,7 @@ describe('Custom GPT bridge smoke action', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.OPENAI_ACTION_SHARED_SECRET = 'test-shared-secret';
+    process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.DEFAULT_GPT_ID = 'arcanos-core';
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
@@ -319,7 +350,12 @@ describe('Custom GPT bridge smoke action', () => {
       cancel_reason: null,
     });
 
-    const response = await request(buildApp()).get(`/jobs/${SMOKE_PENDING_JOB_ID}/result`);
+    const response = await request(buildApp())
+      .get(`/jobs/${SMOKE_PENDING_JOB_ID}/result`)
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(SMOKE_PENDING_JOB_ID, JOB_READ_SECRET)
+      );
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({

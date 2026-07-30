@@ -211,6 +211,7 @@ describe('canonical /api session system routes', () => {
   });
 
   it('returns machine-verifiable diagnostics JSON only', async () => {
+    const privateJobIdSentinel = '22222222-2222-4222-8222-222222222222';
     mockGetSessionSystemDiagnostics.mockResolvedValue({
       status: 'live',
       storage: 'postgres',
@@ -248,7 +249,7 @@ describe('canonical /api session system routes', () => {
         unknown: 0
       },
       recentFailureReasons: [],
-      lastJobId: 'job-1',
+      lastJobId: privateJobIdSentinel,
       lastJobStatus: 'completed',
       lastJobFinishedAt: '2026-03-09T12:00:00.000Z',
       timestamp: '2026-03-09T12:00:00.000Z'
@@ -288,6 +289,10 @@ describe('canonical /api session system routes', () => {
     expect(queueResponse.body.historicalFailureRate).toBe(0.25);
     expect(queueResponse.body.failureRateWindowMs).toBe(3600000);
     expect(queueResponse.body.windowTerminalJobs).toBe(3);
+    expect(queueResponse.body.lastJobStatus).toBe('completed');
+    expect(queueResponse.body.lastJobFinishedAt).toBe('2026-03-09T12:00:00.000Z');
+    expect(queueResponse.body).not.toHaveProperty('lastJobId');
+    expect(JSON.stringify(queueResponse.body)).not.toContain(privateJobIdSentinel);
     expect(queueResponse.body.failureBreakdown).toEqual(expect.objectContaining({
       retryable: 0,
       retryExhausted: 0
@@ -328,7 +333,6 @@ describe('canonical /api session system routes', () => {
         count: 1,
         lastSeenAt: '2026-03-09T12:00:00.000Z'
       }],
-      lastJobId: 'job-failed',
       lastJobStatus: 'failed',
       lastJobFinishedAt: '2026-03-09T12:00:00.000Z',
       timestamp: '2026-03-09T12:00:00.000Z'

@@ -390,6 +390,7 @@ function renderDocsUpdateMarkdown(input: {
     "- Writing route: `POST /gpt/:gptId`",
     "- Job result polling: `GET /jobs/:id/result`",
     "- Job stream: `GET /jobs/:id/stream`",
+    "- Job read capability: send the creation response's `jobReadToken` only in `x-arcanos-job-read-token` (never in the URL)",
     "- Queue and worker health: `GET /workers/status`, `GET /worker-helper/health`",
     "- DAG trace: `GET /api/arcanos/dag/runs/{runId}/trace`",
     "",

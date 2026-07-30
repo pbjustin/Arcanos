@@ -21,10 +21,15 @@ import {
   sendBadRequestPayload,
   sendInternalErrorPayload,
   sendNotFound,
+  noStoreResponse,
   validateBody,
   validateParams,
   validateQuery
 } from '@shared/http/index.js';
+import {
+  projectPublicWorkerHealth,
+  selectLatestPublicWorkerTimestamp
+} from '@shared/http/workerHealthProjection.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { clientContextSchema } from '@shared/types/dto.js';
@@ -41,10 +46,18 @@ import {
   getWorkerJobDetailById,
   healWorkerRuntime,
   listRecentFailedWorkerJobs,
-  queueWorkerAsk
+  queueWorkerAsk,
+  type WorkerControlHealthResponse,
+  type WorkerControlStatusResponse,
+  type WorkerControlWorkerSnapshot
 } from '@services/workerControlService.js';
 import { requireWorkerHelperPrivilegedAuth } from '@transport/http/middleware/workerHelperPrivilegedAuth.js';
 import { workerHealMutationRateLimit } from '@transport/http/middleware/workerHealRateLimit.js';
+import {
+  JOB_READ_AUTH_UNAVAILABLE_CODE,
+  JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
+  resolveConfiguredJobReadCapabilitySecret,
+} from '@shared/jobs/jobReadCapability.js';
 
 const router = express.Router();
 
@@ -77,6 +90,84 @@ const dispatchRequestSchema = z.object({
   sourceEndpoint: z.string().trim().min(1).max(64).optional()
 });
 
+type WorkerControlQueueSummary =
+  WorkerControlStatusResponse['workerService']['queueSummary'];
+type WorkerControlRuntime = WorkerControlStatusResponse['mainApp']['runtime'];
+
+function countWorkersMatching(
+  workers: WorkerControlWorkerSnapshot[],
+  predicate: (worker: WorkerControlWorkerSnapshot) => boolean
+): number {
+  return workers.reduce(
+    (count, worker) => count + (predicate(worker) ? 1 : 0),
+    0
+  );
+}
+
+function projectWorkerControlPublicHealth(input: {
+  timestamp: string;
+  overallStatus: WorkerControlHealthResponse['overallStatus'];
+  queueSummary: WorkerControlQueueSummary;
+  workers: WorkerControlWorkerSnapshot[];
+  runtime?: WorkerControlRuntime;
+}) {
+  const { runtime, workers } = input;
+  const runtimeStatus = runtime
+    ? runtime.started
+      ? 'active'
+      : runtime.enabled
+        ? 'pending'
+        : 'disabled'
+    : 'unknown';
+
+  return projectPublicWorkerHealth({
+    timestamp: input.timestamp,
+    status: input.overallStatus,
+    runtime: {
+      status: runtimeStatus,
+      totalDispatched: runtime?.totalDispatched,
+      startedAt: runtime?.startedAt,
+      lastDispatchAt: runtime?.lastDispatchAt
+    },
+    workers: {
+      status: input.overallStatus,
+      configured: runtime?.configuredCount,
+      active: runtime
+        ? runtime.workerIds.length
+        : countWorkersMatching(
+          workers,
+          worker =>
+            worker.dispatcherStarted
+            && worker.activeListeners > 0
+            && worker.operationalStatus !== 'offline'
+        ),
+      observed: workers.length,
+      stale: countWorkersMatching(workers, worker => worker.stale),
+      degraded: countWorkersMatching(
+        workers,
+        worker => worker.healthStatus === 'degraded' || worker.operationalStatus === 'degraded'
+      ),
+      unhealthy: countWorkersMatching(
+        workers,
+        worker => worker.healthStatus === 'unhealthy' || worker.operationalStatus === 'unhealthy'
+      ),
+      lastHeartbeatAt: selectLatestPublicWorkerTimestamp(
+        ...workers.map(worker => worker.lastHeartbeatAt)
+      )
+    },
+    queue: {
+      total: input.queueSummary?.total,
+      pending: input.queueSummary?.pending,
+      running: input.queueSummary?.running,
+      completed: input.queueSummary?.completed,
+      retainedFailed: input.queueSummary?.failed,
+      delayed: input.queueSummary?.delayed,
+      stalledRunning: input.queueSummary?.stalledRunning,
+      lastUpdatedAt: input.queueSummary?.lastUpdatedAt
+    }
+  });
+}
+
 function sendWorkerHelperFailure(
   req: Request,
   res: Response,
@@ -101,16 +192,24 @@ function sendWorkerHelperFailure(
  *
  * Inputs/outputs:
  * - Input: request path only.
- * - Output: combined main-app runtime and DB queue summary JSON.
+ * - Output: aggregate worker health, normalized states, counts, and timestamps.
  *
  * Edge case behavior:
- * - Queue summary and latest job become `null` when the database is unavailable.
+ * - Unavailable aggregate values become `null`; internal diagnostics are never serialized.
  */
 router.get(
   '/worker-helper/status',
+  noStoreResponse,
   asyncHandler(async (req, res) => {
     try {
-      res.json(await getWorkerControlStatus());
+      const status = await getWorkerControlStatus();
+      res.json(projectWorkerControlPublicHealth({
+        timestamp: status.timestamp,
+        overallStatus: status.workerService.health.overallStatus,
+        queueSummary: status.workerService.queueSummary,
+        workers: status.workerService.health.workers,
+        runtime: status.mainApp.runtime
+      }));
     } catch {
       sendWorkerHelperFailure(
         req,
@@ -131,16 +230,23 @@ router.get(
  *
  * Inputs/outputs:
  * - Input: request path only.
- * - Output: JSON health report with alerts, budgets, queue summary, and worker snapshots.
+ * - Output: aggregate worker health, normalized states, counts, and timestamps.
  *
  * Edge case behavior:
- * - Returns `offline` when no queue-worker snapshot has been persisted yet.
+ * - Returns `offline` when no queue-worker snapshot has been persisted yet; raw alerts stay private.
  */
 router.get(
   '/worker-helper/health',
+  noStoreResponse,
   asyncHandler(async (req, res) => {
     try {
-      res.json(await getWorkerControlHealth());
+      const health = await getWorkerControlHealth();
+      res.json(projectWorkerControlPublicHealth({
+        timestamp: health.timestamp,
+        overallStatus: health.overallStatus,
+        queueSummary: health.queueSummary,
+        workers: health.workers
+      }));
     } catch {
       sendWorkerHelperFailure(
         req,
@@ -207,6 +313,8 @@ router.get(
  */
 router.get(
   '/worker-helper/jobs/failed',
+  noStoreResponse,
+  requireWorkerHelperPrivilegedAuth,
   validateQuery(workerHelperFailedJobsQuerySchema, { errorCode: 'FAILED_JOB_QUERY_INVALID' }),
   asyncHandler(async (req, res) => {
     try {
@@ -284,6 +392,7 @@ router.get(
  */
 router.post(
   '/worker-helper/queue/ask',
+  noStoreResponse,
   requireWorkerHelperPrivilegedAuth,
   validateBody(queueAskRequestSchema),
   asyncHandler(async (req, res) => {
@@ -293,6 +402,13 @@ router.post(
         sendBadRequestPayload(res, {
           error: 'PREVIEW_CHAOS_HOOK_UNAVAILABLE',
           message: 'previewChaosHook is only allowed in Railway PR preview environments.'
+        });
+        return;
+      }
+      if (!resolveConfiguredJobReadCapabilitySecret()) {
+        res.status(503).json({
+          error: JOB_READ_AUTH_UNAVAILABLE_CODE,
+          message: JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
         });
         return;
       }

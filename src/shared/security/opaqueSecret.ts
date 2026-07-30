@@ -5,6 +5,22 @@ function digestOpaqueSecret(value: string): Buffer {
 }
 
 /**
+ * Build a stable, purpose-namespaced actor identifier after a route has
+ * authenticated an opaque credential. The credential itself is never retained.
+ */
+export function buildAuthenticatedCredentialActorKey(
+  namespace: string,
+  credential: string
+): string {
+  const normalizedNamespace = namespace.trim().toLowerCase();
+  if (!normalizedNamespace || !credential) {
+    throw new Error('Authenticated credential actor keys require a namespace and credential.');
+  }
+
+  return `${normalizedNamespace}:${createHash('sha256').update(credential).digest('hex')}`;
+}
+
+/**
  * Compare already-extracted opaque credential values without applying
  * protocol-specific parsing or normalization.
  *

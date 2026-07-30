@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos Async Job Status API",
     "version": "1.0.0",
-    "description": "Canonical read contract for retrieving async GPT job status without enqueueing new work."
+    "description": "Canonical capability-bound read contract for retrieving public async GPT or Ask job status without enqueueing new work. GPT jobs must carry recognized public-route or custom-bridge provenance; GPT Access-created jobs remain protected."
   },
   "paths": {
     "/jobs/{jobId}": {
       "get": {
         "operationId": "getJobStatus",
         "summary": "Retrieve canonical async GPT job status",
-        "description": "Returns the stored async job status payload for a job id. This route is read-only and never enqueues work.",
+        "description": "Returns the stored async job status payload for a public `gpt` or `ask` job id. GPT jobs require recognized public-route or custom-bridge provenance; GPT Access-created jobs are concealed. This route is read-only, never enqueues work, requires the job-specific capability returned by the creating response, and always uses `Cache-Control: no-store`.",
         "parameters": [
           {
             "name": "jobId",
@@ -21,11 +21,19 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          {
+            "$ref": "#/components/parameters/JobReadToken"
           }
         ],
         "responses": {
           "200": {
             "description": "Stored async job status payload.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -36,6 +44,11 @@
           },
           "400": {
             "description": "Invalid job id",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -45,11 +58,31 @@
             }
           },
           "404": {
-            "description": "Job not found",
+            "description": "Job not found, job type is not publicly readable, or the job-read capability is missing, malformed, duplicated, incorrect, or bound to another job id.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RouteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Job reads are unavailable because neither the current `ARCANOS_JOB_READ_CAPABILITY_SECRET` nor the optional previous verification key is valid, or durable job persistence is unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReadUnavailable"
                 }
               }
             }
@@ -59,7 +92,48 @@
     }
   },
   "components": {
+    "parameters": {
+      "JobReadToken": {
+        "name": "x-arcanos-job-read-token",
+        "in": "header",
+        "required": true,
+        "description": "Job-specific bearer capability returned as `jobReadToken` by the creating async response. Send exactly one header whose value is bound to this path job id; query-string, cookie, and body carriers are not accepted.",
+        "schema": {
+          "type": "string",
+          "pattern": "^v1\\.[A-Za-z0-9_-]{43}$"
+        }
+      }
+    },
+    "headers": {
+      "NoStore": {
+        "description": "The response must not be stored by clients or intermediary caches.",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      }
+    },
     "schemas": {
+      "JobReadUnavailable": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "JOB_READ_AUTH_UNAVAILABLE",
+              "JOB_REPOSITORY_UNAVAILABLE"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Present for `JOB_READ_AUTH_UNAVAILABLE` and fixed to `Async job reads are temporarily unavailable.`"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
       "RouteError": {
         "type": "object",
         "properties": {
@@ -68,25 +142,31 @@
             "const": false
           },
           "error": {
-            "type": "object",
-            "properties": {
-              "code": {
+            "oneOf": [
+              {
                 "type": "string"
               },
-              "message": {
-                "type": "string"
-              },
-              "details": {}
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "additionalProperties": true
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "details": {}
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "additionalProperties": true
+              }
+            ]
           }
         },
         "required": [
-          "ok",
           "error"
         ],
         "additionalProperties": true
@@ -95,6 +175,9 @@
         "type": "object",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "jobId": {
             "type": "string"
           },
           "job_type": {
@@ -161,6 +244,12 @@
             ],
             "format": "date-time"
           },
+          "poll": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
           "error_message": {
             "type": [
               "string",
@@ -172,6 +261,7 @@
         },
         "required": [
           "id",
+          "jobId",
           "job_type",
           "status",
           "lifecycle_status",
@@ -183,6 +273,8 @@
           "retention_until",
           "idempotency_until",
           "expires_at",
+          "poll",
+          "stream",
           "error_message",
           "output",
           "result"
