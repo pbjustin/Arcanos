@@ -41,6 +41,8 @@ import {
 import { validateCustomGptBridgeCredential } from '@shared/security/customGptBridgeCredential.js';
 
 const router = express.Router();
+router.use('/jobs', noStoreResponse);
+
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
 const DEFAULT_JOB_STREAM_MAX_DURATION_MS = 60_000;
 const UUID_JOB_ID_PATTERN =

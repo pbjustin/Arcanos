@@ -1385,11 +1385,17 @@ async function runLiveProbe(
     fixture.absolutePathSentinel,
     'JOB_STATUS_ABSOLUTE_PATH_MISSING',
   );
+  requireCacheDirectives(
+    jobStatus,
+    ['no-store'],
+    'JOB_STATUS_CACHE_POLICY_INVALID',
+  );
   recordCheck(checks, {
     caseId: 'generic-job-status',
     method: 'GET',
     pathTemplate: '/jobs/:id',
     result: jobStatus,
+    cacheDirectivesChecked: ['no-store'],
   });
 
   const jobResult = await invoke({
@@ -1413,11 +1419,17 @@ async function runLiveProbe(
     fixture.absolutePathSentinel,
     'JOB_RESULT_ABSOLUTE_PATH_MISSING',
   );
+  requireCacheDirectives(
+    jobResult,
+    ['no-store'],
+    'JOB_RESULT_CACHE_POLICY_INVALID',
+  );
   recordCheck(checks, {
     caseId: 'generic-job-result',
     method: 'GET',
     pathTemplate: '/jobs/:id/result',
     result: jobResult,
+    cacheDirectivesChecked: ['no-store'],
   });
 
   const jobStream = await invoke({
