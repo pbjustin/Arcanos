@@ -10,8 +10,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 - Replaced public worker diagnostics with one allowlist-based aggregate health
   projection, protected retained failed-job detail with worker operator
-  authentication, and marked worker diagnostics plus generic job reads and
-  streams `no-store`; removed the aggregate queue's reusable last-job locator.
+  authentication, and marked worker diagnostics plus generic job streams
+  `no-store`; removed the aggregate queue's reusable last-job locator.
 - Bound generic GPT/Ask job status, result, SSE, and cancellation routes to
   per-job HMAC capabilities returned at creation, concealed invalid
   capabilities as missing jobs, retained confirmation plus actor ownership for

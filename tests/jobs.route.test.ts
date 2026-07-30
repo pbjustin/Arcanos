@@ -163,7 +163,6 @@ describe('/jobs routes', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
@@ -333,13 +332,11 @@ describe('/jobs routes', () => {
       );
 
     expect(resultResponse.status).toBe(503);
-    expect(resultResponse.headers['cache-control']).toContain('no-store');
     expect(resultResponse.body).toEqual({
       error: 'JOB_READ_AUTH_UNAVAILABLE',
       message: 'Async job reads are temporarily unavailable.',
     });
     expect(cancellationResponse.status).toBe(503);
-    expect(cancellationResponse.headers['cache-control']).toContain('no-store');
     expect(cancellationResponse.body).toEqual({
       error: 'JOB_READ_AUTH_UNAVAILABLE',
       message: 'Async job reads are temporarily unavailable.',
@@ -1020,7 +1017,6 @@ describe('/jobs routes', () => {
       : await getWithJobReadToken(path, RUNNING_JOB_ID);
 
     expect(response.status).toBe(503);
-    expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       error: 'JOB_REPOSITORY_UNAVAILABLE'

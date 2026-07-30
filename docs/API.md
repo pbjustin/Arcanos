@@ -168,7 +168,8 @@ Job status routes:
 - Within the public GPT namespace, requests without a server-established
   principal receive non-reusable random scopes. Caller-selected sessions, IPs,
   cookies, and raw authorization headers are not ownership identities.
-- Generic job JSON responses and the SSE stream use `Cache-Control: no-store`; the SSE response also preserves `no-transform`.
+- The generic job SSE route uses `Cache-Control: no-store, no-cache, no-transform`,
+  including JSON failures returned before a stream opens.
 
 GPT job lifecycle:
 - Storage states: `pending`, `running`, `completed`, `failed`, `cancelled`, `expired`

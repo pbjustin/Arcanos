@@ -1,0 +1,197 @@
+name: Railway Worker Diagnostics Preview Cleanup
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: railway-worker-diagnostics-preview-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete worker-diagnostics E2E environment
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_RAILWAY_PROJECT_ID: 7faf44e5-519c-4e73-8d7a-da9f389e6187
+      EXPECTED_PRODUCTION_ENVIRONMENT_ID: fb583147-6c39-4343-9267-500f357d25ab
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+
+    steps:
+      # This trusted workflow intentionally never checks out or executes PR code.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+
+      - name: Install pinned Railway CLI
+        run: npm install --global @railway/cli@4.30.2
+
+      - name: Validate cleanup authority
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid pull request number."
+            exit 1
+          fi
+
+          if [[ "${RAILWAY_PROJECT_ID}" != "${EXPECTED_RAILWAY_PROJECT_ID}" ]]; then
+            echo "Railway project identity does not match the repository-owned project."
+            exit 1
+          fi
+
+          if [[ -z "${RAILWAY_API_TOKEN:-}" ]]; then
+            echo "A dedicated account/workspace Railway cleanup token is required."
+            exit 1
+          fi
+
+      - name: Link the ephemeral runner to the verified project
+        shell: bash
+        run: |
+          set -euo pipefail
+          railway link \
+            --project "${EXPECTED_RAILWAY_PROJECT_ID}" \
+            --environment production \
+            --json > /dev/null
+
+      - name: Resolve the exact disposable environment
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          railway status --json > "${RUNNER_TEMP}/railway-status-before.json"
+
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const status = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/railway-status-before.json`,
+              'utf8'
+            )
+          );
+          const prNumber = process.env.PR_NUMBER;
+          const expectedName = `worker-diagnostics-pr-${prNumber}-e2e`;
+          const expectedProjectId = process.env.EXPECTED_RAILWAY_PROJECT_ID;
+          const expectedProductionEnvironmentId =
+            process.env.EXPECTED_PRODUCTION_ENVIRONMENT_ID;
+          const allowedServiceIds = new Set([
+            'c4ade025-3f13-4fca-9309-5d0dd81396fe',
+            '1765befb-b805-4051-9af9-28634e986886',
+            '6647b5b1-d796-4783-b5f0-b8e356019ca6',
+            '81e4a1cf-7ae4-48bf-8321-23641bb23c0e',
+          ]);
+
+          if (status.id !== expectedProjectId) {
+            throw new Error('Railway project changed after link.');
+          }
+
+          const environments = status.environments?.edges?.map(
+            (edge) => edge.node
+          ) ?? [];
+          if (
+            !environments.some(
+              (environment) =>
+                environment.id === expectedProductionEnvironmentId
+            )
+          ) {
+            throw new Error(
+              'Railway token visibility is insufficient to prove the target is absent.'
+            );
+          }
+          const matches = environments.filter(
+            (environment) => environment.name === expectedName
+          );
+          if (matches.length > 1) {
+            throw new Error('Disposable environment identity is ambiguous.');
+          }
+
+          const output = process.env.GITHUB_OUTPUT;
+          if (matches.length === 0) {
+            fs.appendFileSync(output, 'found=false\n');
+            process.stdout.write(
+              `No disposable Railway environment exists for PR ${prNumber}.\n`
+            );
+            process.exit(0);
+          }
+
+          const target = matches[0];
+          if (
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+              .test(target.id)
+          ) {
+            throw new Error('Disposable environment ID is invalid.');
+          }
+
+          if (target.id === expectedProductionEnvironmentId) {
+            throw new Error('Production environment deletion is forbidden.');
+          }
+
+          const serviceIds = target.serviceInstances?.edges?.map(
+            (edge) => edge.node.serviceId
+          ) ?? [];
+          if (serviceIds.some((serviceId) => !allowedServiceIds.has(serviceId))) {
+            throw new Error(
+              'Disposable environment contains a service outside the approved topology.'
+            );
+          }
+
+          fs.appendFileSync(output, `found=true\nenvironment_id=${target.id}\n`);
+          process.stdout.write(
+            `Verified disposable environment ${expectedName} (${target.id}).\n`
+          );
+          NODE
+
+      - name: Delete the exact disposable environment
+        if: steps.target.outputs.found == 'true'
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+        run: |
+          set -euo pipefail
+          railway environment delete "${TARGET_ENVIRONMENT_ID}" --yes --json
+
+      - name: Verify deletion
+        if: steps.target.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_name="worker-diagnostics-pr-${PR_NUMBER}-e2e"
+
+          for attempt in $(seq 1 12); do
+            railway status --json > "${RUNNER_TEMP}/railway-status-after.json"
+            if node - "${RUNNER_TEMP}/railway-status-after.json" "${expected_name}" <<'NODE'
+          const fs = require('node:fs');
+          const [statusPath, expectedName] = process.argv.slice(2);
+          const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+          const environments = status.environments?.edges?.map(
+            (edge) => edge.node
+          ) ?? [];
+          process.exit(
+            environments.some((environment) => environment.name === expectedName)
+              ? 1
+              : 0
+          );
+          NODE
+            then
+              echo "Disposable Railway environment deletion verified."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Disposable Railway environment remained visible after deletion."
+          exit 1
