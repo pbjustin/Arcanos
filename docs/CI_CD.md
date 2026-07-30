@@ -26,9 +26,10 @@ Common secrets referenced in workflows:
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 - `OPENAI_API_KEY`
 - `RAILWAY_TOKEN` (for workflows that deploy through Railway CLI/actions)
-- `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` (dedicated account- or
-  workspace-scoped token used only by the trusted disposable-environment
-  cleanup workflow; do not substitute a production environment project token)
+- `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` (dedicated token scoped only
+  to the pinned Railway workspace and used only by the trusted
+  disposable-environment cleanup workflow; do not substitute an account-wide
+  or production environment project token)
 
 Environment separation guidance:
 - Use Railway `production` and `development` variable sets from `railway.json` as baseline.
@@ -126,12 +127,14 @@ It resolves only the exact
 project, rejects ambiguous or foreign-service topology, deletes by the verified
 environment UUID, requires visibility of the pinned production environment
 before treating absence as success, and confirms that the environment
-disappeared. It receives only
-`RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` as `RAILWAY_API_TOKEN`; Railway
-CLI authentication must not set both Railway token variables. The first PR
-that introduces this workflow must still delete its disposable environment
-manually if it is closed without merge, because unmerged workflow code is not
-present on the default branch.
+disappeared. Its deletion step receives only
+`RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` as a step-scoped
+`RAILWAY_API_TOKEN`, requires Railway's account-identity query to be denied,
+then validates exact access to only the pinned workspace and project. It calls
+Railway's GraphQL API directly without CLI linking. The first PR that
+introduces this workflow must still delete its disposable environment manually
+if it is closed without merge, because unmerged workflow code is not present
+on the default branch.
 
 The Railway automatic deployment workflow runs a repository-owned rollout-policy
 job before it creates the concurrent production deployment job. The

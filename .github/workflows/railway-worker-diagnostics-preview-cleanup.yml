@@ -23,9 +23,9 @@ jobs:
     timeout-minutes: 10
     env:
       EXPECTED_RAILWAY_PROJECT_ID: 7faf44e5-519c-4e73-8d7a-da9f389e6187
+      EXPECTED_RAILWAY_WORKSPACE_ID: 1c9265a3-986f-4304-ad3e-5a874caab039
       EXPECTED_PRODUCTION_ENVIRONMENT_ID: fb583147-6c39-4343-9267-500f357d25ab
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
 
     steps:
@@ -34,9 +34,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.19.0'
-
-      - name: Install pinned Railway CLI
-        run: npm install --global @railway/cli@4.30.2
 
       - name: Validate cleanup authority
         shell: bash
@@ -53,39 +50,22 @@ jobs:
             exit 1
           fi
 
-          if [[ -z "${RAILWAY_API_TOKEN:-}" ]]; then
-            echo "A dedicated account/workspace Railway cleanup token is required."
-            exit 1
-          fi
-
-      - name: Link the ephemeral runner to the verified project
+      - name: Delete the exact disposable environment through Railway API
         shell: bash
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN }}
         run: |
           set -euo pipefail
-          railway link \
-            --project "${EXPECTED_RAILWAY_PROJECT_ID}" \
-            --environment production \
-            --json > /dev/null
 
-      - name: Resolve the exact disposable environment
-        id: target
-        shell: bash
-        run: |
-          set -euo pipefail
-          railway status --json > "${RUNNER_TEMP}/railway-status-before.json"
-
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const status = JSON.parse(
-            fs.readFileSync(
-              `${process.env.RUNNER_TEMP}/railway-status-before.json`,
-              'utf8'
-            )
-          );
+          node --input-type=module <<'NODE'
+          const railwayApiUrl =
+            'https://backboard.railway.com/graphql/v2';
+          const token = process.env.RAILWAY_API_TOKEN;
           const prNumber = process.env.PR_NUMBER;
           const expectedName = `worker-diagnostics-pr-${prNumber}-e2e`;
           const expectedProjectId = process.env.EXPECTED_RAILWAY_PROJECT_ID;
+          const expectedWorkspaceId =
+            process.env.EXPECTED_RAILWAY_WORKSPACE_ID;
           const expectedProductionEnvironmentId =
             process.env.EXPECTED_PRODUCTION_ENVIRONMENT_ID;
           const allowedServiceIds = new Set([
@@ -94,104 +74,374 @@ jobs:
             '6647b5b1-d796-4783-b5f0-b8e356019ca6',
             '81e4a1cf-7ae4-48bf-8321-23641bb23c0e',
           ]);
+          const allowedVolumeMounts = new Map([
+            [
+              '6647b5b1-d796-4783-b5f0-b8e356019ca6',
+              '/var/lib/postgresql/data',
+            ],
+            ['81e4a1cf-7ae4-48bf-8321-23641bb23c0e', '/data'],
+          ]);
+          const tokenTypeQuery = `
+            query CleanupTokenType {
+              me {
+                id
+              }
+            }
+          `;
+          const environmentsQuery = `
+            query CleanupContext(
+              $projectId: String!
+              $after: String
+            ) {
+              apiToken {
+                workspaces {
+                  id
+                }
+              }
+              project(id: $projectId) {
+                id
+                workspaceId
+              }
+              environments(
+                projectId: $projectId
+                first: 100
+                after: $after
+              ) {
+                edges {
+                  cursor
+                  node {
+                    id
+                    name
+                    projectId
+                    sourceEnvironment {
+                      id
+                    }
+                  }
+                }
+                pageInfo {
+                  endCursor
+                  hasNextPage
+                }
+              }
+            }
+          `;
+          const targetQuery = `
+            query CleanupTarget(
+              $projectId: String!
+              $targetId: String!
+            ) {
+              apiToken {
+                workspaces {
+                  id
+                }
+              }
+              project(id: $projectId) {
+                id
+                workspaceId
+              }
+              environment(
+                id: $targetId
+                projectId: $projectId
+              ) {
+                id
+                name
+                projectId
+                sourceEnvironment {
+                  id
+                }
+                serviceInstances(first: 100) {
+                  edges {
+                    node {
+                      serviceId
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+                volumeInstances(first: 100) {
+                  edges {
+                    node {
+                      id
+                      serviceId
+                      mountPath
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                  }
+                }
+              }
+            }
+          `;
 
-          if (status.id !== expectedProjectId) {
-            throw new Error('Railway project changed after link.');
-          }
-
-          const environments = status.environments?.edges?.map(
-            (edge) => edge.node
-          ) ?? [];
           if (
-            !environments.some(
-              (environment) =>
-                environment.id === expectedProductionEnvironmentId
-            )
+            typeof token !== 'string'
+            || token.length < 20
+            || token.trim() !== token
           ) {
             throw new Error(
-              'Railway token visibility is insufficient to prove the target is absent.'
+              'A dedicated workspace-scoped Railway cleanup token is required.'
             );
           }
+
+          async function validateWorkspaceTokenType() {
+            const response = await fetch(railwayApiUrl, {
+              method: 'POST',
+              redirect: 'error',
+              signal: AbortSignal.timeout(10_000),
+              headers: {
+                authorization: `Bearer ${token}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({
+                query: tokenTypeQuery,
+                variables: {},
+              }),
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok || !body) {
+              throw new Error(
+                `Railway token-type probe failed (HTTP ${response.status}).`
+              );
+            }
+            if (body.data?.me?.id) {
+              throw new Error(
+                'Account-wide Railway cleanup tokens are forbidden.'
+              );
+            }
+            if ((body.errors?.length ?? 0) === 0) {
+              throw new Error(
+                'Railway cleanup token type could not be proven workspace-scoped.'
+              );
+            }
+          }
+
+          async function railwayGraphql(query, variables) {
+            const response = await fetch(railwayApiUrl, {
+              method: 'POST',
+              redirect: 'error',
+              signal: AbortSignal.timeout(10_000),
+              headers: {
+                authorization: `Bearer ${token}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({ query, variables }),
+            });
+            const body = await response.json().catch(() => null);
+            if (
+              !response.ok
+              || (body?.errors?.length ?? 0) > 0
+              || !body?.data
+            ) {
+              throw new Error(
+                `Railway API request failed (HTTP ${response.status}; errors ${body?.errors?.length ?? 0}).`
+              );
+            }
+            return body.data;
+          }
+
+          function validateAuthority(data) {
+            const workspaces = data.apiToken?.workspaces ?? [];
+            if (
+              workspaces.length !== 1
+              || workspaces[0].id !== expectedWorkspaceId
+            ) {
+              throw new Error(
+                'Railway cleanup token is not scoped only to the expected workspace.'
+              );
+            }
+            if (
+              data.project?.id !== expectedProjectId
+              || data.project?.workspaceId !== expectedWorkspaceId
+            ) {
+              throw new Error(
+                'Railway project is outside the expected workspace.'
+              );
+            }
+          }
+
+          async function readTarget(targetId) {
+            const data = await railwayGraphql(
+              targetQuery,
+              {
+                projectId: expectedProjectId,
+                targetId,
+              }
+            );
+            validateAuthority(data);
+            return data.environment;
+          }
+
+          async function readEnvironments() {
+            const environments = [];
+            let after = null;
+
+            for (let page = 0; page < 20; page += 1) {
+              const data = await railwayGraphql(
+                environmentsQuery,
+                { projectId: expectedProjectId, after }
+              );
+              validateAuthority(data);
+              const connection = data.environments;
+              environments.push(
+                ...connection.edges.map((edge) => edge.node)
+              );
+              if (!connection.pageInfo.hasNextPage) {
+                if (
+                  !environments.some(
+                    (environment) =>
+                      environment.id
+                      === expectedProductionEnvironmentId
+                  )
+                ) {
+                  throw new Error(
+                    'Railway token visibility is insufficient to prove the target is absent.'
+                  );
+                }
+                return environments;
+              }
+              after = connection.pageInfo.endCursor;
+              if (!after) {
+                throw new Error(
+                  'Railway environment pagination cursor is missing.'
+                );
+              }
+            }
+
+            throw new Error(
+              'Railway environment pagination exceeded the safety limit.'
+            );
+          }
+
+          function validateTarget(target) {
+            if (
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+                .test(target.id)
+            ) {
+              throw new Error('Disposable environment ID is invalid.');
+            }
+            if (target.id === expectedProductionEnvironmentId) {
+              throw new Error(
+                'Production environment deletion is forbidden.'
+              );
+            }
+            if (
+              target.name !== expectedName
+              || target.projectId !== expectedProjectId
+              || target.sourceEnvironment !== null
+            ) {
+              throw new Error(
+                'Disposable environment ownership markers are invalid.'
+              );
+            }
+            if (
+              target.serviceInstances?.pageInfo?.hasNextPage
+              || target.volumeInstances?.pageInfo?.hasNextPage
+            ) {
+              throw new Error(
+                'Disposable environment topology exceeds the inspection limit.'
+              );
+            }
+
+            const serviceIds =
+              target.serviceInstances?.edges?.map(
+                (edge) => edge.node.serviceId
+              ) ?? [];
+            if (
+              new Set(serviceIds).size !== serviceIds.length
+              || serviceIds.some(
+                (serviceId) => !allowedServiceIds.has(serviceId)
+              )
+            ) {
+              throw new Error(
+                'Disposable environment contains a service outside the approved topology.'
+              );
+            }
+
+            const volumeServiceIds = new Set();
+            const volumes =
+              target.volumeInstances?.edges?.map(
+                (edge) => edge.node
+              ) ?? [];
+            for (const volume of volumes) {
+              const expectedMount =
+                allowedVolumeMounts.get(volume.serviceId);
+              if (
+                !expectedMount
+                || volume.mountPath !== expectedMount
+                || volumeServiceIds.has(volume.serviceId)
+              ) {
+                throw new Error(
+                  'Disposable environment contains a volume outside the approved topology.'
+                );
+              }
+              volumeServiceIds.add(volume.serviceId);
+            }
+          }
+
+          await validateWorkspaceTokenType();
+          const environments = await readEnvironments();
           const matches = environments.filter(
             (environment) => environment.name === expectedName
           );
           if (matches.length > 1) {
-            throw new Error('Disposable environment identity is ambiguous.');
+            throw new Error(
+              'Disposable environment identity is ambiguous.'
+            );
           }
-
-          const output = process.env.GITHUB_OUTPUT;
           if (matches.length === 0) {
-            fs.appendFileSync(output, 'found=false\n');
             process.stdout.write(
               `No disposable Railway environment exists for PR ${prNumber}.\n`
             );
             process.exit(0);
           }
 
-          const target = matches[0];
-          if (
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
-              .test(target.id)
-          ) {
-            throw new Error('Disposable environment ID is invalid.');
-          }
-
-          if (target.id === expectedProductionEnvironmentId) {
-            throw new Error('Production environment deletion is forbidden.');
-          }
-
-          const serviceIds = target.serviceInstances?.edges?.map(
-            (edge) => edge.node.serviceId
-          ) ?? [];
-          if (serviceIds.some((serviceId) => !allowedServiceIds.has(serviceId))) {
+          const target = await readTarget(matches[0].id);
+          validateTarget(target);
+          const deleteData = await railwayGraphql(
+            `
+              mutation DeleteEnvironment($id: String!) {
+                environmentDelete(id: $id)
+              }
+            `,
+            { id: target.id }
+          );
+          if (deleteData.environmentDelete !== true) {
             throw new Error(
-              'Disposable environment contains a service outside the approved topology.'
+              'Railway did not acknowledge environment deletion.'
             );
           }
 
-          fs.appendFileSync(output, `found=true\nenvironment_id=${target.id}\n`);
-          process.stdout.write(
-            `Verified disposable environment ${expectedName} (${target.id}).\n`
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            const remaining = await readEnvironments();
+            const sameId = remaining.some(
+              (environment) => environment.id === target.id
+            );
+            const sameName = remaining.filter(
+              (environment) => environment.name === expectedName
+            );
+            if (!sameId && sameName.length === 0) {
+              process.stdout.write(
+                'Disposable Railway environment deletion verified.\n'
+              );
+              process.exit(0);
+            }
+            if (
+              sameName.some(
+                (environment) => environment.id !== target.id
+              )
+            ) {
+              throw new Error(
+                'Disposable environment identity changed after deletion.'
+              );
+            }
+            await new Promise(
+              (resolve) => setTimeout(resolve, 5_000)
+            );
+          }
+
+          throw new Error(
+            'Disposable Railway environment remained visible after deletion.'
           );
           NODE
-
-      - name: Delete the exact disposable environment
-        if: steps.target.outputs.found == 'true'
-        shell: bash
-        env:
-          TARGET_ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
-        run: |
-          set -euo pipefail
-          railway environment delete "${TARGET_ENVIRONMENT_ID}" --yes --json
-
-      - name: Verify deletion
-        if: steps.target.outputs.found == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected_name="worker-diagnostics-pr-${PR_NUMBER}-e2e"
-
-          for attempt in $(seq 1 12); do
-            railway status --json > "${RUNNER_TEMP}/railway-status-after.json"
-            if node - "${RUNNER_TEMP}/railway-status-after.json" "${expected_name}" <<'NODE'
-          const fs = require('node:fs');
-          const [statusPath, expectedName] = process.argv.slice(2);
-          const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
-          const environments = status.environments?.edges?.map(
-            (edge) => edge.node
-          ) ?? [];
-          process.exit(
-            environments.some((environment) => environment.name === expectedName)
-              ? 1
-              : 0
-          );
-          NODE
-            then
-              echo "Disposable Railway environment deletion verified."
-              exit 0
-            fi
-            sleep 5
-          done
-
-          echo "Disposable Railway environment remained visible after deletion."
-          exit 1

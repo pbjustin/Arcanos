@@ -61,9 +61,12 @@ Launcher behavior:
   is a merge/close backstop for that exact custom name. It never checks out PR
   code and deletes only after project, environment, and allowed-service
   validation. Configure its dedicated
-  `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` secret with an account- or
-  workspace-scoped token capable of enumerating and deleting environments; a
-  production environment project token is insufficient. The introducing PR
+  `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` secret with a token scoped only
+  to the pinned Railway workspace. The workflow calls Railway's GraphQL API
+  directly, requires account identity access to be denied, validates the exact
+  workspace and project, and does not use Railway CLI linking; account-wide
+  tokens and production environment project tokens are rejected. The
+  introducing PR
   still requires exact-ID manual cleanup if it closes unmerged because its
   workflow is not yet on the default branch.
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.

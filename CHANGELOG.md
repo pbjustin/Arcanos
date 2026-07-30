@@ -8,6 +8,9 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Changed
 
+- Scoped the trusted worker-diagnostics cleanup credential to the pinned
+  Railway workspace and replaced account-level CLI linking with direct,
+  fail-closed GraphQL environment cleanup.
 - Replaced public worker diagnostics with one allowlist-based aggregate health
   projection, protected retained failed-job detail with worker operator
   authentication, and marked worker diagnostics plus generic job streams
