@@ -4,15 +4,22 @@ import { EventEmitter } from 'node:events';
 import {
   buildWorkerReadinessResponse,
   createPassivePrPreviewServer,
+  createWorkerHealthServer,
   createWorkerReadinessState,
   mirrorAndObserveWorkerOutput,
+  recordWorkerShutdown,
   recordWorkerExit,
   recordWorkerOutput,
   assertPreviewIsolationOrThrow,
   resolvePassivePrPreviewOrThrow,
   resolveCliBridgeListenerConfig,
   resolveHealthListenerConfig,
+  waitForExit,
+  WORKER_BOOTSTRAP_READY_SENTINEL,
 } from '../scripts/start-railway-service.mjs';
+import {
+  WORKER_BOOTSTRAP_READY_SENTINEL as JOB_RUNNER_BOOTSTRAP_READY_SENTINEL,
+} from '../src/workers/jobRunnerRuntime.js';
 
 describe('start-railway-service launcher helpers', () => {
   it('recognizes only the exact supported Railway native PR preview contracts', () => {
@@ -408,10 +415,10 @@ describe('start-railway-service launcher helpers', () => {
       },
     });
 
-    recordWorkerOutput(readiness, 'worker-runtime polling loop started');
+    recordWorkerOutput(readiness, 'worker-runtime polling loop started\n');
     expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
 
-    recordWorkerOutput(readiness, '{"msg":"worker.bootstrap.completed"}');
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 200,
       body: {
@@ -426,13 +433,84 @@ describe('start-railway-service launcher helpers', () => {
     });
   });
 
+  it('serves no-store worker readiness across bootstrap, success, and child exit', async () => {
+    const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    const server = createWorkerHealthServer(readiness);
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+
+    try {
+      const address = server.address();
+      expect(address && typeof address === 'object').toBe(true);
+      const origin = `http://127.0.0.1:${address.port}`;
+
+      const pending = await fetch(`${origin}/readyz`);
+      expect(pending.status).toBe(503);
+      expect(pending.headers.get('cache-control')).toBe('no-store');
+      expect(await pending.json()).toMatchObject({
+        ready: false,
+        reason: 'worker_bootstrap_pending',
+      });
+
+      const pendingHead = await fetch(`${origin}/readyz`, { method: 'HEAD' });
+      expect(pendingHead.status).toBe(503);
+      expect(pendingHead.headers.get('cache-control')).toBe('no-store');
+      expect(await pendingHead.text()).toBe('');
+
+      const liveness = await fetch(`${origin}/health`);
+      expect(liveness.status).toBe(200);
+      expect(await liveness.text()).toBe('ok');
+
+      recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+      const ready = await fetch(`${origin}/readyz`);
+      expect(ready.status).toBe(200);
+      expect(ready.headers.get('cache-control')).toBe('no-store');
+      expect(await ready.json()).toMatchObject({
+        ready: true,
+        status: 'ready',
+        reason: null,
+      });
+
+      recordWorkerShutdown(readiness, 'SIGTERM');
+      const draining = await fetch(`${origin}/readyz`);
+      expect(draining.status).toBe(503);
+      expect(draining.headers.get('cache-control')).toBe('no-store');
+      expect(await draining.json()).toMatchObject({
+        ready: false,
+        child: 'draining',
+        reason: 'worker_shutdown_requested',
+      });
+
+      recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+      expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
+
+      recordWorkerExit(readiness, 1, null);
+      const exited = await fetch(`${origin}/readyz`);
+      expect(exited.status).toBe(503);
+      expect(exited.headers.get('cache-control')).toBe('no-store');
+      expect(await exited.json()).toMatchObject({
+        ready: false,
+        child: 'exited',
+        reason: 'worker_exited_code_1',
+      });
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   it('detects worker readiness markers split across output chunks', () => {
     const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    const splitIndex = Math.floor(WORKER_BOOTSTRAP_READY_SENTINEL.length / 2);
 
-    recordWorkerOutput(readiness, 'worker.boot');
+    recordWorkerOutput(readiness, WORKER_BOOTSTRAP_READY_SENTINEL.slice(0, splitIndex));
     expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
 
-    recordWorkerOutput(readiness, 'strap.completed');
+    recordWorkerOutput(readiness, WORKER_BOOTSTRAP_READY_SENTINEL.slice(splitIndex));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
+
+    recordWorkerOutput(readiness, '\r\n');
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 200,
       body: {
@@ -445,12 +523,36 @@ describe('start-railway-service launcher helpers', () => {
         },
       },
     });
+  });
+
+  it('accepts only the exact stdout readiness protocol line', () => {
+    expect(WORKER_BOOTSTRAP_READY_SENTINEL).toBe(JOB_RUNNER_BOOTSTRAP_READY_SENTINEL);
+
+    const embeddedMarkerReadiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    recordWorkerOutput(
+      embeddedMarkerReadiness,
+      `worker startup failed while discussing ${WORKER_BOOTSTRAP_READY_SENTINEL}\n`,
+    );
+    expect(buildWorkerReadinessResponse(embeddedMarkerReadiness).statusCode).toBe(503);
+
+    const stderrReadiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    const stderr = new EventEmitter();
+    const destination = new EventEmitter();
+    destination.write = jest.fn().mockReturnValue(true);
+    mirrorAndObserveWorkerOutput(stderr, destination, stderrReadiness, {
+      observeReadiness: false,
+    });
+
+    stderr.emit('data', Buffer.from(`${WORKER_BOOTSTRAP_READY_SENTINEL}\n`));
+
+    expect(destination.write).toHaveBeenCalled();
+    expect(buildWorkerReadinessResponse(stderrReadiness).statusCode).toBe(503);
   });
 
   it('does not mark worker ready when provider configuration is missing', () => {
     const readiness = createWorkerReadinessState({});
 
-    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 503,
@@ -469,7 +571,7 @@ describe('start-railway-service launcher helpers', () => {
   it('accepts supported OpenAI key aliases for worker provider readiness', () => {
     const readiness = createWorkerReadinessState({ RAILWAY_OPENAI_API_KEY: 'sk-railway-test' });
 
-    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 200,
@@ -485,7 +587,7 @@ describe('start-railway-service launcher helpers', () => {
 
   it('marks readiness unavailable after worker exit', () => {
     const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
-    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     recordWorkerExit(readiness, 1, null);
 
@@ -503,7 +605,7 @@ describe('start-railway-service launcher helpers', () => {
     const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
 
     recordWorkerExit(readiness, 1, null);
-    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 503,
@@ -533,5 +635,15 @@ describe('start-railway-service launcher helpers', () => {
 
     destination.emit('drain');
     expect(source.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves an already-exited child instead of waiting for a replayed exit event', async () => {
+    const childProcess = new EventEmitter();
+    childProcess.exitCode = 17;
+    childProcess.signalCode = null;
+
+    await expect(waitForExit(childProcess)).resolves.toBe(17);
+    expect(childProcess.listenerCount('exit')).toBe(0);
+    expect(childProcess.listenerCount('error')).toBe(0);
   });
 });

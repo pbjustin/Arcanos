@@ -44,8 +44,10 @@ import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification
 import {
   advanceClaimedJobAbortState,
   buildJobRunnerSlotDefinitions,
+  commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  emitWorkerBootstrapReadySignal,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerIdleBackoffDelayMs,
@@ -1179,13 +1181,14 @@ async function pauseClaimIfBudgetDisallowed(
 /**
  * Run one queue-consumer slot inside the Railway worker process.
  * Purpose: allow one deployed worker container to claim and execute multiple queue jobs concurrently.
- * Inputs/outputs: accepts one slot definition, the shared runtime settings, and an optional prebuilt autonomy service; does not resolve during normal operation.
+ * Inputs/outputs: accepts one slot definition, the shared runtime settings, an optional prebuilt autonomy service, and a dispatcher-ready callback; does not resolve during normal operation.
  * Edge case behavior: unsupported or invalid job payloads fail deterministically per slot without stopping sibling slots.
  */
 async function runWorkerConsumerSlot(
   slotDefinition: JobRunnerSlotDefinition,
   runtimeSettings: JobRunnerRuntimeSettings,
-  autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition)
+  autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition),
+  onDispatcherReady: () => void = () => undefined
 ): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
@@ -1212,6 +1215,7 @@ async function runWorkerConsumerSlot(
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
+    onDispatcherReady();
     while (!isWorkerProcessShutdownRequested()) {
       try {
         if (await pauseClaimIfBudgetDisallowed(autonomyService, slotDefinition)) {
@@ -1997,16 +2001,6 @@ async function run(): Promise<void> {
     moduleCount: moduleRegistry.listRegisteredModules().length,
     durationMs: Date.now() - moduleRegistryStartedAtMs
   });
-  logger.info('worker.bootstrap.completed', {
-    module: 'job-runner',
-    workerId: inspectorAutonomyService.getWorkerId(),
-    healthStatus: bootstrapResult.healthStatus,
-    slots: slotDefinitions.length,
-    recovered: bootstrapResult.recovered.recoveredJobs.length,
-    failed: bootstrapResult.recovered.failedJobs.length,
-    cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0
-  });
-
   if (isWorkerProcessShutdownRequested()) {
     logger.info('worker.shutdown.before_slot_start', {
       module: 'job-runner',
@@ -2021,18 +2015,71 @@ async function run(): Promise<void> {
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
 
   try {
-    //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: slot startup regression leaves the process effectively single-threaded; expected invariant: every resolved slot starts a long-lived claim loop with a distinct worker id; handling strategy: start all slots together and fail the process if any slot exits unexpectedly.
-    await Promise.all(
-      slotDefinitions.map(slotDefinition =>
-        runWorkerConsumerSlot(
-          slotDefinition,
-          runtimeSettings,
-          slotDefinition.isInspectorSlot
-            ? inspectorAutonomyService
-            : buildAutonomyServiceForSlot(slotDefinition)
-        )
-      )
-    );
+    const slotReadinessPromises: Promise<void>[] = [];
+    //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: an early readiness marker activates a revision after one slot fails while a sibling still starts; expected invariant: every slot completes synchronous dispatcher setup and remains running until the all-slot readiness barrier wins; handling strategy: race all-ready against the first runtime settlement, then keep failing the process if any long-lived slot exits unexpectedly.
+    const slotRuntimePromises = slotDefinitions.map(slotDefinition => {
+      let resolveSlotReadiness!: () => void;
+      const slotReadinessPromise = new Promise<void>((resolve) => {
+        resolveSlotReadiness = resolve;
+      });
+      slotReadinessPromises.push(slotReadinessPromise);
+
+      const slotRuntimePromise = runWorkerConsumerSlot(
+        slotDefinition,
+        runtimeSettings,
+        slotDefinition.isInspectorSlot
+          ? inspectorAutonomyService
+          : buildAutonomyServiceForSlot(slotDefinition),
+        resolveSlotReadiness
+      );
+      return slotRuntimePromise;
+    });
+
+    const finishShutdownDuringSlotStart = async (): Promise<void> => {
+      logger.info('worker.shutdown.during_slot_start', {
+        module: 'job-runner',
+        workerId: inspectorAutonomyService.getWorkerId(),
+        signal: workerProcessShutdownSignal ?? 'unknown'
+      });
+      await Promise.all(slotRuntimePromises);
+    };
+
+    try {
+      await commitAllWorkerSlotsReadyOrThrow(
+        slotReadinessPromises,
+        slotRuntimePromises,
+        () => {
+          if (isWorkerProcessShutdownRequested()) {
+            throw new Error('WORKER_SHUTDOWN_BEFORE_READINESS_COMMIT');
+          }
+
+          logger.info('worker.bootstrap.completed', {
+            module: 'job-runner',
+            workerId: inspectorAutonomyService.getWorkerId(),
+            healthStatus: bootstrapResult.healthStatus,
+            slots: slotDefinitions.length,
+            recovered: bootstrapResult.recovered.recoveredJobs.length,
+            failed: bootstrapResult.recovered.failedJobs.length,
+            cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0
+          });
+          emitWorkerBootstrapReadySignal();
+        }
+      );
+    } catch (error: unknown) {
+      if (!isWorkerProcessShutdownRequested()) {
+        throw error;
+      }
+
+      await finishShutdownDuringSlotStart();
+      return;
+    }
+
+    if (isWorkerProcessShutdownRequested()) {
+      await finishShutdownDuringSlotStart();
+      return;
+    }
+
+    await Promise.all(slotRuntimePromises);
   } finally {
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);

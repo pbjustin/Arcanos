@@ -33,8 +33,9 @@ Apply the operational approval gate below before changing project or repository 
 Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
 - Start: `node scripts/start-railway-service.mjs`
-- Deploy health check path: `/health`
+- Deploy activation path: `/readyz`
 - Health check timeout: `300`
+- SIGTERM-to-SIGKILL drain ceiling: `60` seconds
 - Restart policy: `ON_FAILURE` (`restartPolicyMaxRetries=10`)
 
 Launcher behavior:
@@ -77,8 +78,10 @@ Launcher behavior:
   any required maintenance separately against an explicitly confirmed
   database target under the operational approval gate.
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
-- The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
-- The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, while `/readyz` returns `503` until Redis reconnects; see `STARTUP_RESILIENCE.md`.
+- The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation, `/healthz` remains liveness, and `/health` remains dependency diagnostics. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
+- The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, while `/readyz` returns `503` until Redis reconnects; a new revision therefore cannot activate during that outage. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
+- Worker `/readyz` remains `503` until database/autonomy/module-registry bootstrap and every configured consumer slot's dispatcher-start write complete, and a supported OpenAI key setting is present. The child communicates that transition through an exact newline-delimited protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text cannot activate readiness. It does not perform a paid provider request; transient provider failure after activation is handled through the worker's probe/backoff and job-deferral path.
+- Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
 Environment variables:
@@ -164,6 +167,17 @@ protected GitHub environment/approval topology are separate defense-in-depth
 and repository-settings decisions, not guarantees provided by these workflow
 controls.
 
+The workflow captures the exact deployment ID returned by its own detached
+upload and polls deployment history for that ID only. After that deployment
+reaches Railway `SUCCESS`, the workflow reruns the static Railway validator and
+rereads the same service/environment status, requiring that exact deployment
+to remain the active successful deployment. It also reads the exact target's
+resolved identity, rejects identity or live drain-variable drift, and makes a
+bounded, no-redirect `/readyz` request when that role has a public domain. A
+private worker retains Railway's first-200 activation result instead of being
+exposed solely for the workflow. This is one-time activation evidence, not
+continuous health monitoring or effective provider-setting readback.
+
 The workflow also runs a repository-owned coordinated-writer policy before the
 production deployment job can enter its concurrency group. While
 `ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` contains the active
@@ -208,11 +222,41 @@ A push or manual workflow dispatch can therefore be deployment-affecting. Before
 1. Confirm the approved release mechanism, exact revision, project, environment, and every web/worker service in scope.
 2. Review the expected deployment effect and rollback.
 3. Obtain explicit operator approval.
-4. After deployment, confirm the targeted deployment status and the configured `/health` endpoint. A manual health request is read-only but still requires a confirmed target:
+4. Before deployment, read the exact web and worker service settings or
+   deployment details. Each role must resolve `healthcheckPath=/readyz`,
+   `healthcheckTimeout=300`, and `drainingSeconds=60`. Config-as-code overrides
+   dashboard settings for a deployment without rewriting the dashboard value,
+   so use the effective deployment details rather than assuming an old
+   dashboard value is authoritative.
+5. After deployment, confirm the fresh targeted deployment ID and `SUCCESS`
+   status. For a confirmed public web target, make the bounded readiness
+   request below. A manual request is read-only but still requires a confirmed
+   target:
 
 ```bash
-curl https://<your-service>.up.railway.app/health
+curl --fail --max-time 15 https://<your-service>.up.railway.app/readyz
 ```
+
+The production smoke helper uses this same fixed path and rejects the
+non-readiness `/health` dependency-diagnostic response schema:
+
+```bash
+npm run railway:smoke:production -- --app-url https://<confirmed-web-service>.up.railway.app
+```
+
+That helper reads Railway topology, variables, and logs and makes a live network
+request. It is not routine local validation; run it only with exact-target
+read-only authorization after confirming the checkout's linked Railway project.
+The explicit `--app-url` is required and must match a Railway-owned domain from
+the selected app service. The helper does not change the locally selected
+environment; it selects the named environment explicitly for service-scoped
+reads. The automatic workflow separately invokes
+`scripts/verify-railway-readiness-activation.mjs` with the exact target's
+resolved Railway variable projection. It rejects a conflicting
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` value when present. A private worker needs
+no public domain solely for this check, but its exact Railway `SUCCESS` and the
+tracked contract do not replace the effective `/readyz`/timeout/drain readback
+required above.
 
 ### Railway command safety
 

@@ -172,6 +172,23 @@ environment. Checkout credential persistence and a
 single-maintainer-compatible protected-environment topology remain separate
 defense-in-depth and repository-settings decisions.
 
+The deployment job captures the exact deployment ID returned by its own
+detached upload and polls deployment history for that ID only. That exact
+deployment must reach Railway `SUCCESS`, after which the job runs
+`node scripts/validate-railway-compatibility.js`, confirms the same deployment
+remains the active successful deployment, and reads the exact service's
+resolved Railway identity and role.
+For a public web or worker role it then makes a bounded, no-redirect
+`GET /readyz` request and requires the exact role response plus
+`Cache-Control: no-store`. A private worker retains Railway's platform
+activation result rather than acquiring a public domain solely for CI. The
+validator fixes the tracked activation contract at `/readyz`, timeout `300`,
+and numeric `drainingSeconds=60`; the resolved-variable verifier also rejects a
+conflicting live provider-native drain override when one is present. These are
+one-time activation checks; they do not replace continuous monitoring, exact
+web/worker effective-settings readback, or a measured drain rehearsal before
+production promotion.
+
 The active `20260727-dag-snapshot-generation-v1` hold protects the coordinated
 DAG snapshot-generation migration. A deliberate `workflow_dispatch` may pass it
 only when the operator types

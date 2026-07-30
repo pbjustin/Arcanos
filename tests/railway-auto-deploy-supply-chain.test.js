@@ -26,9 +26,9 @@ const TOKEN_STEP_RUN_SHA256 = {
   'Verify Railway deploy access':
     '3b23fc90193f745b9fb062c90635b62ab6362c5ae36f0f14b76d6f421617ed3b',
   'Deploy to Railway':
-    'e5ac25e95c7e7c6d4cdcebfd70071bd2f18b3cc993f12bcc92e20391561c45f7',
+    'b87d0d732ea80d54eb2625ce21a795b2becf0aedf0cf54d5520b1b486aace0a5',
   'Wait for deployment success':
-    'e2cf63fe565ca4184a40fdd313214a55e6d2684036af809a92bd7106932b0b2a',
+    '7b57b212736f4293b252ae3f579ec05b68753cbdcafc1b9ed366553cc36e4b76',
   'Post-deploy watchdog/budget regression check':
     '74c9d80317bdfa3de7c1cb5e4083013a0f116646388fe5d1c8455142f81ed674',
 };
@@ -194,6 +194,7 @@ describe('Railway auto-deploy supply-chain containment', () => {
         RAILWAY_TOKEN: RAILWAY_PROJECT_TOKEN_SECRET,
       });
       expect(step.run).toContain(TOKEN_STEP_REQUIRED_COMMAND[step.name]);
+      expect(step.run).not.toMatch(/(^|\s)npm(?:\s|$)/u);
       expect(sha256(step.run ?? '')).toBe(TOKEN_STEP_RUN_SHA256[step.name]);
     }
 

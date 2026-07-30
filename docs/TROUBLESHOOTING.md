@@ -53,7 +53,7 @@ If failing, inspect Railway build/deploy logs first.
 - `ARCANOS_PROCESS_KIND is required`: set `ARCANOS_PROCESS_KIND=web` on the API service or `ARCANOS_PROCESS_KIND=worker` on the worker service, then redeploy.
 - Web service starts as the wrong role: run `railway variable list --service <service> --environment production` and verify `ARCANOS_PROCESS_KIND`.
 - Worker health is green but jobs stay queued: confirm `DATABASE_URL`, `OPENAI_API_KEY`, worker logs, and `GET /worker-helper/health`.
-- Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/health`.
+- Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/readyz` during deployment activation.
 - Production startup fails OpenAI configuration validation: verify that a real `OPENAI_API_KEY` is present without printing its value. Mock fallback is for explicit non-production/test paths and is not the normal production behavior.
 - Control-plane 401: send the dedicated `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` bearer credential; confirmation and approval values are not authentication.
 - Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.

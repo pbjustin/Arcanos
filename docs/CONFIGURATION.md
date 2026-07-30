@@ -483,6 +483,30 @@ validates but discards target-controlled message text and generates a local
 
 If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
 
+The tracked Railway deployment gate is `/readyz` for both roles. Web readiness
+requires its critical configured dependencies and completed startup. Worker
+readiness remains `503` until database/autonomy/module-registry bootstrap and
+every configured consumer slot's dispatcher-start write have completed, and a
+supported OpenAI key setting is present. Provider readiness here means
+configured, not a paid upstream request; provider outages are handled by the
+worker's bounded probe/backoff and job-deferral path after activation. The
+worker child reports this transition through an exact, newline-delimited
+launcher protocol that is independent of `LOG_LEVEL`; arbitrary log text and
+filtered info logs cannot satisfy or suppress the readiness transition.
+
+`railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
+repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its
+shorter 10-second internal graceful-shutdown deadline; the worker cooperatively
+aborts provider work, leaves active claims for lease recovery, and flushes
+runtime snapshots before exit. The 60-second platform ceiling prevents
+Railway's zero-second default from bypassing those handlers, but it is not a
+claim that stalled external I/O has been measured in production.
+The local Railway validator rejects
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` in `deploy.env` or any tracked
+environment-variable map so the provider-native string setting cannot compete
+with the canonical numeric field. Independently configured live service
+variables still require effective-setting readback before promotion.
+
 ### GPT access and Trinity async execution
 Protected GPT Action and operator calls must use `/gpt-access/*` for backend operations. Do not ask `/gpt/:gptId` to inspect runtime state, read queue/job results, call MCP tools, or proxy protected backend actions.
 

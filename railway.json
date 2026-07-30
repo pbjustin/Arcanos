@@ -14,8 +14,9 @@
   },
   "deploy": {
     "startCommand": "node scripts/start-railway-service.mjs",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/readyz",
     "healthcheckTimeout": 300,
+    "drainingSeconds": 60,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "env": {
@@ -29,7 +30,7 @@
       "deploy": {
         "startCommand": "node scripts/start-railway-service.mjs --pr-preview-safe",
         "preDeployCommand": null,
-        "healthcheckPath": "/health",
+        "healthcheckPath": "/readyz",
         "healthcheckTimeout": 300,
         "cronSchedule": null,
         "restartPolicyType": "NEVER",

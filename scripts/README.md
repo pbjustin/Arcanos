@@ -43,6 +43,8 @@ explicit authorization and exact database-target confirmation.
 
 Post-deploy behavior:
 - `scripts/deploy-backend.ps1` now runs `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort` automatically after `railway up`.
+- `npm run railway:smoke:production -- --app-url https://<confirmed-web-service>.up.railway.app` requires the independently confirmed app origin, requests its fixed `/readyz` path, and rejects non-readiness `/health` payloads. It performs live Railway reads and an external request, so it requires exact-target read-only authorization plus a previously confirmed Railway project link. The helper does not change the locally selected environment; it selects the named environment explicitly for service-scoped reads and rejects an app origin that is not owned by the selected service.
+- `scripts/verify-railway-readiness-activation.mjs` is the automatic deploy workflow's bounded exact-target verifier. It consumes the selected service's resolved Railway variables on standard input, requires matching project/environment/service identity, rejects a conflicting live `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` override, and directly requests `/readyz` for public roles. A private worker preserves Railway's exact-deployment activation evidence without being exposed solely for the check; effective provider-setting readback remains a separate promotion gate.
 
 ## Deploy (Railway)
 - `scripts/deploy-backend.ps1` is available for manual PowerShell deployment workflows.

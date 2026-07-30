@@ -39,8 +39,7 @@ const HEALTH_NOT_FOUND_BODY = 'not found';
 const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
-const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
-const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
+export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
 const DEFAULT_CLI_BRIDGE_HOST = '127.0.0.1';
 const DEFAULT_CLI_BRIDGE_PORT = 8765;
 const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -483,12 +482,31 @@ function maybeStartCliBridgeDaemon() {
  * - Expected shutdown signals can be mapped to success.
  * - Unexpected signal terminations return `1` as conservative failure code.
  */
-function waitForExit(childProcess, options = {}) {
+export function waitForExit(childProcess, options = {}) {
   const isExpectedShutdownSignal = options.isExpectedShutdownSignal ?? (() => false);
 
   return new Promise((resolve, reject) => {
-    childProcess.once('error', reject);
-    childProcess.once('exit', (code, signal) => {
+    let settled = false;
+    const removeListeners = () => {
+      childProcess.removeListener('error', handleError);
+      childProcess.removeListener('exit', handleExit);
+    };
+    const handleError = (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      removeListeners();
+      reject(error);
+    };
+    const handleExit = (code, signal) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      removeListeners();
       if (signal) {
         if (isExpectedShutdownSignal(signal)) {
           resolve(0);
@@ -501,7 +519,18 @@ function waitForExit(childProcess, options = {}) {
       }
 
       resolve(typeof code === 'number' ? code : 1);
-    });
+    };
+
+    childProcess.once('error', handleError);
+    childProcess.once('exit', handleExit);
+
+    //audit Assumption: a worker child can exit while the launcher binds its health listener; failure risk: subscribing after that one-shot event leaves the launcher alive forever at 503; expected invariant: already-set exitCode/signalCode resolves immediately; handling strategy: subscribe first, then inspect terminal child state to close both sides of the race.
+    if (
+      typeof childProcess.exitCode === 'number' ||
+      typeof childProcess.signalCode === 'string'
+    ) {
+      handleExit(childProcess.exitCode, childProcess.signalCode);
+    }
   });
 }
 
@@ -568,28 +597,68 @@ export function createWorkerReadinessState(env = process.env) {
     provider: providerConfigured ? 'configured' : 'missing',
     ready: false,
     reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing',
-    outputOverlap: ''
+    readinessProtocolBuffer: '',
+    readinessProtocolDiscardingLine: false
   };
 }
 
 export function recordWorkerOutput(readinessState, chunk) {
-  if (readinessState.child === 'exited') {
+  if (readinessState.child === 'draining' || readinessState.child === 'exited') {
     return readinessState;
   }
 
   const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-  const searchableText = `${readinessState.outputOverlap ?? ''}${text}`;
-  readinessState.outputOverlap = searchableText.slice(-WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH);
+  for (const character of text) {
+    if (character === '\n') {
+      if (!readinessState.readinessProtocolDiscardingLine) {
+        const bufferedLine = readinessState.readinessProtocolBuffer ?? '';
+        const normalizedLine = bufferedLine.endsWith('\r')
+          ? bufferedLine.slice(0, -1)
+          : bufferedLine;
+        if (normalizedLine === WORKER_BOOTSTRAP_READY_SENTINEL) {
+          readinessState.child = 'running';
+          readinessState.bootstrap = 'ready';
+          readinessState.database = 'ready';
+          readinessState.ready = readinessState.provider === 'configured';
+          readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
+          readinessState.readinessProtocolBuffer = '';
+          return readinessState;
+        }
+      }
 
-  if (!searchableText.includes(WORKER_BOOTSTRAP_READY_MARKER)) {
+      readinessState.readinessProtocolBuffer = '';
+      readinessState.readinessProtocolDiscardingLine = false;
+      continue;
+    }
+
+    if (readinessState.readinessProtocolDiscardingLine) {
+      continue;
+    }
+
+    readinessState.readinessProtocolBuffer =
+      `${readinessState.readinessProtocolBuffer ?? ''}${character}`;
+    if (
+      readinessState.readinessProtocolBuffer.length >
+      WORKER_BOOTSTRAP_READY_SENTINEL.length + 1
+    ) {
+      readinessState.readinessProtocolBuffer = '';
+      readinessState.readinessProtocolDiscardingLine = true;
+    }
+  }
+
+  return readinessState;
+}
+
+export function recordWorkerShutdown(readinessState, _signal) {
+  if (readinessState.child === 'exited') {
     return readinessState;
   }
 
-  readinessState.child = 'running';
-  readinessState.bootstrap = 'ready';
-  readinessState.database = 'ready';
-  readinessState.ready = readinessState.provider === 'configured';
-  readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
+  readinessState.child = 'draining';
+  readinessState.ready = false;
+  readinessState.reason = 'worker_shutdown_requested';
+  readinessState.readinessProtocolBuffer = '';
+  readinessState.readinessProtocolDiscardingLine = false;
   return readinessState;
 }
 
@@ -621,15 +690,61 @@ export function buildWorkerReadinessResponse(readinessState) {
   };
 }
 
-export function mirrorAndObserveWorkerOutput(stream, destination, readinessState) {
+export function mirrorAndObserveWorkerOutput(
+  stream,
+  destination,
+  readinessState,
+  options = {}
+) {
+  const observeReadiness = options.observeReadiness !== false;
   stream?.on('data', chunk => {
-    recordWorkerOutput(readinessState, chunk);
+    if (observeReadiness) {
+      recordWorkerOutput(readinessState, chunk);
+    }
     if (!destination.write(chunk)) {
       stream.pause?.();
       destination.once('drain', () => {
         stream.resume?.();
       });
     }
+  });
+}
+
+/**
+ * Create the worker liveness/readiness listener used by Railway.
+ *
+ * Inputs/outputs:
+ * - Input: mutable worker readiness state observed from child output.
+ * - Output: an unbound Node HTTP server.
+ *
+ * Edge case behavior:
+ * - Liveness remains independent from dependency bootstrap.
+ * - Readiness is always no-store and returns 503 until the worker is ready.
+ */
+export function createWorkerHealthServer(readinessState) {
+  return createServer((request, response) => {
+    const requestPath = request.url ?? '';
+
+    //audit Assumption: Railway supervision and external monitors may still call the liveness paths; risk: strict dependency readiness causes restarts during worker bootstrap; invariant: /health and /healthz only prove the launcher is alive; handling: keep liveness independent from readiness while deployment activation uses /readyz.
+    if (LIVENESS_PATHS.has(requestPath)) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/plain; charset=utf-8');
+      response.end(HEALTH_OK_BODY);
+      return;
+    }
+
+    if (requestPath === READINESS_PATH) {
+      const readiness = buildWorkerReadinessResponse(readinessState);
+      response.statusCode = readiness.statusCode;
+      response.setHeader('cache-control', 'no-store');
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify(readiness.body));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.setHeader('content-type', 'text/plain; charset=utf-8');
+    response.end(HEALTH_NOT_FOUND_BODY);
   });
 }
 
@@ -655,6 +770,7 @@ async function runWorkerRuntimeWithHealthServer() {
   const healthListenerConfig = resolveHealthListenerConfig();
   await repairDistAliases('worker');
   const readinessState = createWorkerReadinessState();
+  let shutdownRequested = false;
   const workerProcess = spawnProcess('node', [
     '--import',
     './scripts/register-esm-loader.mjs',
@@ -662,37 +778,28 @@ async function runWorkerRuntimeWithHealthServer() {
   ], 'worker', {
     stdio: ['inherit', 'pipe', 'pipe']
   });
-  let shutdownRequested = false;
+  const workerExitPromise = waitForExit(workerProcess, {
+    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
+  });
+  void workerExitPromise.catch(() => undefined);
 
-  mirrorAndObserveWorkerOutput(workerProcess.stdout, process.stdout, readinessState);
-  mirrorAndObserveWorkerOutput(workerProcess.stderr, process.stderr, readinessState);
+  mirrorAndObserveWorkerOutput(
+    workerProcess.stdout,
+    process.stdout,
+    readinessState,
+    { observeReadiness: true }
+  );
+  mirrorAndObserveWorkerOutput(
+    workerProcess.stderr,
+    process.stderr,
+    readinessState,
+    { observeReadiness: false }
+  );
   workerProcess.once('exit', (code, signal) => {
     recordWorkerExit(readinessState, code, signal);
   });
 
-  const healthServer = createServer((request, response) => {
-    const requestPath = request.url ?? '';
-
-    //audit Assumption: Railway probes the liveness path for process supervision; risk: strict dependency readiness causes restarts during worker bootstrap; invariant: /health and /healthz only prove the launcher is alive; handling: keep liveness independent from readiness.
-    if (LIVENESS_PATHS.has(requestPath)) {
-      response.statusCode = 200;
-      response.setHeader('content-type', 'text/plain; charset=utf-8');
-      response.end(HEALTH_OK_BODY);
-      return;
-    }
-
-    if (requestPath === READINESS_PATH) {
-      const readiness = buildWorkerReadinessResponse(readinessState);
-      response.statusCode = readiness.statusCode;
-      response.setHeader('content-type', 'application/json; charset=utf-8');
-      response.end(JSON.stringify(readiness.body));
-      return;
-    }
-
-    response.statusCode = 404;
-    response.setHeader('content-type', 'text/plain; charset=utf-8');
-    response.end(HEALTH_NOT_FOUND_BODY);
-  });
+  const healthServer = createWorkerHealthServer(readinessState);
 
   const shutdownWorker = (signal) => {
     if (shutdownRequested) {
@@ -700,6 +807,7 @@ async function runWorkerRuntimeWithHealthServer() {
     }
 
     shutdownRequested = true;
+    recordWorkerShutdown(readinessState, signal);
     console.log(`[railway-launcher] received ${signal}; forwarding shutdown to worker runtime`);
     //audit Assumption: forwarding platform signals avoids orphan worker process; risk: stuck shutdown/redeploy hangs; invariant: worker receives termination signal before launcher exits; handling: forward SIGTERM/SIGINT directly.
     workerProcess.kill(signal);
@@ -725,9 +833,7 @@ async function runWorkerRuntimeWithHealthServer() {
     throw error;
   }
 
-  const exitCode = await waitForExit(workerProcess, {
-    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
-  });
+  const exitCode = await workerExitPromise;
 
   await new Promise((resolve) => {
     healthServer.close(() => resolve());

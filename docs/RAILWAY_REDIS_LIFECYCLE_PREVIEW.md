@@ -15,7 +15,7 @@ Do not proceed unless an operator has approved creation and later deletion of a 
 - Recreate the production-shaped web, worker, PostgreSQL, and Redis roles with fresh preview-only services and volumes. Do not add an executor, cron, production service, or production volume.
 - Do not copy production variables. In particular, do not provide production OpenAI credentials, GPT Access credentials, database URLs, Railway tokens, cookies, or shared secrets.
 - Keep Redis private-network-only. The Railway Redis template enables a public TCP proxy by default; remove that proxy in the preview service's Networking settings before deploying the web service.
-- Use `/health` as the Railway deployment healthcheck. `/readyz` is intentionally unavailable during the Redis outage and therefore must not be the deployment startup gate for this experiment.
+- Use `/readyz` as the Railway deployment healthcheck. Let the preview activate while Redis is healthy, then induce the Redis outage; Railway uses this check for deployment activation and does not continuously monitor it after activation.
 - All Railway mutations below are separate operator gates. The evidence probe cannot perform them.
 
 Railway environments and private networking are environment-scoped, but that isolation does not replace the identity checks in this runbook. Railway healthchecks gate deployment startup; they are not continuous monitoring, which is why the recovery proof uses the continuous local probe.
@@ -82,7 +82,7 @@ This gate is a Railway mutation and is **not authorized or executed by preparati
 4. Remove the Redis public TCP proxy in Networking. Confirm Redis has no public domain or TCP proxy before continuing.
 5. Add one empty web service sourced from the exact reviewed repository commit.
 6. Set only the variables listed above. Use a private Railway reference for `REDIS_URL`; never paste a Redis URL into the shell or evidence file.
-7. Confirm the web deploy settings resolve to `node scripts/start-railway-service.mjs` and `/health`, as declared in `railway.json`.
+7. Confirm the web deploy settings resolve to `node scripts/start-railway-service.mjs` and `/readyz`, as declared in `railway.json`.
 8. Generate one temporary Railway HTTPS domain for the web service. Record only its origin, with no path, query, credentials, or fragment.
 
 If CLI is preferred after the empty environment has been approved and created, use explicit IDs on every command and inspect `--help` for the installed CLI version first. The examples assume the current CLI's global project/environment selectors. If the installed command does not support every required selector, stop and use the dashboard against the recorded IDs; do not drop an identity flag or rely on the currently linked environment. Example command shapes, intentionally unexecuted:

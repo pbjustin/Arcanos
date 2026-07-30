@@ -190,12 +190,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          railway up \
+          deploy_result_json="$(railway up \
             --ci \
+            --detach \
+            --json \
             --project "${RAILWAY_PROJECT_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}" \
             --service "${RAILWAY_SERVICE_ID}" \
-            --message "GitHub auto deploy ${GITHUB_SHA}"
+            --message "GitHub auto deploy ${DEPLOY_REF}")"
+          deployment_id="$(node -e "
+            const payload = JSON.parse(process.argv[1]);
+            const deploymentId = payload.deploymentId;
+            if (
+              typeof deploymentId !== 'string'
+              || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(deploymentId)
+            ) {
+              throw new Error('RAILWAY_DEPLOYMENT_ID_INVALID');
+            }
+            process.stdout.write(deploymentId);
+          " "${deploy_result_json}")"
+
+          echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+          echo "Queued exact Railway deployment ${deployment_id} for ${DEPLOY_REF}."
 
       - name: Wait for deployment success
         if: steps.deploy_config.outputs.should_deploy == 'true'
@@ -205,16 +221,49 @@ jobs:
           set -euo pipefail
 
           final_status=""
-          deployment_id=""
+          exact_deployment_succeeded="false"
           for attempt in $(seq 1 30); do
-            status_json="$(railway service status --service "${RAILWAY_SERVICE_ID}" --environment "${RAILWAY_ENVIRONMENT_NAME}" --json)"
-            final_status="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.status || 'UNKNOWN'));" "${status_json}")"
-            deployment_id="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.deploymentId || 'unknown'));" "${status_json}")"
+            final_status="$(railway deployment list \
+              --service "${RAILWAY_SERVICE_ID}" \
+              --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+              --limit 100 \
+              --json \
+              | node -e "
+              const { readFileSync } = require('node:fs');
+              const deployments = JSON.parse(readFileSync(0, 'utf8'));
+              const expectedDeploymentId = process.env.DEPLOYMENT_ID;
+              if (
+                typeof expectedDeploymentId !== 'string'
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(expectedDeploymentId)
+              ) {
+                throw new Error('RAILWAY_DEPLOYMENT_ID_INVALID');
+              }
+              if (!Array.isArray(deployments)) {
+                throw new Error('RAILWAY_DEPLOYMENT_LIST_INVALID');
+              }
+              const deployment = deployments.find(
+                candidate => candidate?.id === expectedDeploymentId,
+              );
+              if (deployment === undefined) {
+                process.stdout.write('NOT_FOUND');
+                process.exit(0);
+              }
+              const status = deployment.status;
+              if (typeof status !== 'string' || !/^[A-Z][A-Z_]{0,31}$/u.test(status)) {
+                throw new Error('RAILWAY_DEPLOYMENT_STATUS_INVALID');
+              }
+              process.stdout.write(status);
+            ")"
 
-            echo "attempt=${attempt} deployment_id=${deployment_id} status=${final_status}"
+            echo "attempt=${attempt} deployment_id=${DEPLOYMENT_ID} status=${final_status}"
+
+            if [ "${final_status}" = "NOT_FOUND" ]; then
+              sleep 10
+              continue
+            fi
 
             if [ "${final_status}" = "SUCCESS" ]; then
-              echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+              exact_deployment_succeeded="true"
               break
             fi
 
@@ -226,10 +275,54 @@ jobs:
             sleep 10
           done
 
-          if [ "${final_status}" != "SUCCESS" ]; then
-            echo "Deployment did not reach SUCCESS within polling window."
+          if [ "${exact_deployment_succeeded}" != "true" ]; then
+            echo "Exact deployment did not reach SUCCESS within polling window."
             exit 1
           fi
+
+          # Railway reports SUCCESS only after the configured deployment
+          # healthcheck returns 200. Static validation binds that platform
+          # observation to the repository-owned /readyz and 60-second drain
+          # contract. Public roles receive an immediate bounded direct request;
+          # a private worker retains the platform activation result rather than
+          # acquiring a public domain solely for this check.
+          node scripts/validate-railway-compatibility.js
+
+          activation_status_before_json="$(railway service status \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --json)"
+          node -e "
+            const payload = JSON.parse(process.argv[1]);
+            if (
+              payload.deploymentId !== process.env.DEPLOYMENT_ID
+              || payload.status !== 'SUCCESS'
+            ) {
+              throw new Error('RAILWAY_READINESS_ACTIVATION_EVIDENCE_MISMATCH');
+            }
+          " "${activation_status_before_json}"
+
+          railway variable list \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --json \
+            | node scripts/verify-railway-readiness-activation.mjs
+
+          activation_status_after_json="$(railway service status \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --json)"
+          node -e "
+            const payload = JSON.parse(process.argv[1]);
+            if (
+              payload.deploymentId !== process.env.DEPLOYMENT_ID
+              || payload.status !== 'SUCCESS'
+            ) {
+              throw new Error('RAILWAY_READINESS_ACTIVATION_EVIDENCE_MISMATCH');
+            }
+          " "${activation_status_after_json}"
+
+          echo "deployment_id=${DEPLOYMENT_ID} status=SUCCESS tracked_healthcheck=/readyz tracked_drainingSeconds=60 effective_settings_readback=required"
 
       - name: Post-deploy watchdog/budget regression check
         if: steps.deploy_config.outputs.should_deploy == 'true'
