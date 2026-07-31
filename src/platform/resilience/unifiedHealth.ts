@@ -87,6 +87,7 @@ export interface HealthChecker {
 
 interface DependencyHealthOptions {
   requireConfigured?: boolean;
+  requireSchemaReady?: boolean;
 }
 
 interface PublicReadinessFailure {
@@ -539,16 +540,22 @@ export async function checkDatabaseHealth(
 
   // Check database connectivity using db client
   try {
-    const { getStatus } = await import("@core/db/index.js");
+    const { getStatus, isDatabaseSchemaReady } = await import("@core/db/index.js");
     const dbStatus = getStatus();
-    
+    const requireSchemaReady = options.requireSchemaReady === true;
+    const schemaReady = !requireSchemaReady || isDatabaseSchemaReady();
+
     return {
-      healthy: dbStatus.connected,
+      healthy: dbStatus.connected && schemaReady,
       name: 'database',
-      error: dbStatus.error || undefined,
+      error: dbStatus.error
+        || (dbStatus.connected && !schemaReady
+          ? 'Database schema is unavailable.'
+          : undefined),
       metadata: {
         configured: true,
         connected: dbStatus.connected,
+        ...(requireSchemaReady ? { schemaReady } : {}),
         url: config.databaseUrl ? 'configured' : 'not configured'
       }
     };
@@ -662,12 +669,15 @@ function requiresProductionWebDependencies(): boolean {
 
 /**
  * Database readiness policy for the public application route.
- * Production web activation requires configuration; local/test and non-web
- * roles retain the optional dependency behavior used by diagnostics.
+ * Production web activation requires configuration, connectivity, and schema
+ * initialization; local/test and non-web roles retain the optional dependency
+ * behavior used by diagnostics.
  */
 export async function checkDatabaseReadiness(): Promise<HealthCheckResult> {
+  const requireDurableBackends = requiresProductionWebDependencies();
   return checkDatabaseHealth({
-    requireConfigured: requiresProductionWebDependencies()
+    requireConfigured: requireDurableBackends,
+    requireSchemaReady: requireDurableBackends
   });
 }
 

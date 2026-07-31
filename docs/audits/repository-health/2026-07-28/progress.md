@@ -4074,6 +4074,31 @@ release state was read or mutated. Any GitHub push for this slice only invokes
 the repository's existing PR automation; production rollout and Railway-native
 auto-deploy-setting confirmation remain external operator gates.
 
+#### Published-head follow-up — database schema readiness
+
+Fresh exact-head security review then found that a connected PostgreSQL pool
+could remain schema-incomplete after table initialization failed while the
+best-effort startup coordinator continued. The database readiness check looked
+only at connection state, so production web `/readyz` could return `200` after
+the remaining startup and Redis state became ready.
+
+A route characterization first failed with expected `503`, actual `200` for a
+connected pool whose `isDatabaseSchemaReady()` result was false. The narrow
+correction adds schema readiness only to the production-web database readiness
+policy. `/health` remains a connectivity diagnostic and does not invoke the
+schema predicate; public `/readyz` still emits only the fixed sanitized
+`DATABASE_DEPENDENCY_UNAVAILABLE` failure, and `GET`/`HEAD` retain no-store
+`503` behavior.
+
+Node `v20.19.0` validation **passed**: the focused readiness matrix passed 4
+suites and 78 tests; `npm run type-check`, `npm run build`,
+`npm run validate:railway`, and `npm run docs:check` passed; full lint passed
+with 0 errors and 76 pre-existing warnings; and `git diff --check` passed.
+Adversarial security and regression re-review found no remaining issue in this
+schema-specific diff. The separately reported complete-`PG*` recognition and
+tracked Redis-variable validation gaps remain isolated follow-up concerns, so
+this checkpoint does not yet declare the PR merge-ready.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits

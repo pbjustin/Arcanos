@@ -14,6 +14,7 @@ interface UnifiedHealthHarnessOptions {
     connected: boolean;
     error: string | null;
   };
+  databaseSchemaReady?: boolean;
   processKind?: 'web' | 'worker' | 'unknown';
   redisResolution?: {
     configured: boolean;
@@ -27,6 +28,7 @@ interface UnifiedHealthHarnessOptions {
 interface UnifiedHealthHarness {
   moduleUnderTest: UnifiedHealthModule;
   createClientMock: jest.Mock;
+  getDatabaseSchemaReadyMock: jest.Mock;
   getDatabaseStatusMock: jest.Mock;
   getRedisLifecycleSnapshotMock: jest.Mock;
   getStartupLifecycleSnapshotMock: jest.Mock;
@@ -104,6 +106,9 @@ async function loadUnifiedHealthHarness(
       error: null
     }
   ));
+  const getDatabaseSchemaReadyMock = jest.fn(
+    () => options.databaseSchemaReady ?? true
+  );
   const getRedisLifecycleSnapshotMock = jest.fn(() => ({ ...redisLifecycle }));
   const getStartupLifecycleSnapshotMock = jest.fn(() => ({
     ...startupLifecycle,
@@ -162,7 +167,8 @@ async function loadUnifiedHealthHarness(
     isOpenAIAdapterInitialized: jest.fn(() => true)
   }));
   jest.unstable_mockModule('@core/db/index.js', () => ({
-    getStatus: getDatabaseStatusMock
+    getStatus: getDatabaseStatusMock,
+    isDatabaseSchemaReady: getDatabaseSchemaReadyMock
   }));
   jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     getConfig: jest.fn(() => ({
@@ -197,6 +203,7 @@ async function loadUnifiedHealthHarness(
   return {
     moduleUnderTest,
     createClientMock,
+    getDatabaseSchemaReadyMock,
     getDatabaseStatusMock,
     getRedisLifecycleSnapshotMock,
     getStartupLifecycleSnapshotMock,
@@ -514,6 +521,81 @@ describe('production web readiness dependency admission', () => {
       expect.objectContaining({ name: 'database', healthy: true }),
       expect.objectContaining({ name: 'redis', healthy: true })
     ]));
+    expect(harness.createClientMock).not.toHaveBeenCalled();
+  });
+
+  it('fails only readiness when the production database is connected but its schema is not ready', async () => {
+    const harness = await loadUnifiedHealthHarness({
+      config: {
+        databaseUrl: 'postgresql://configured.invalid/arcanos',
+        isProduction: true,
+        nodeEnv: 'production'
+      },
+      databaseStatus: {
+        connected: true,
+        error: null
+      },
+      databaseSchemaReady: false,
+      processKind: 'web',
+      redisResolution: {
+        configured: true,
+        source: 'REDIS_URL',
+        url: 'redis://configured.invalid:6379'
+      },
+      redisLifecycle: {
+        state: 'READY',
+        configured: true,
+        connected: true,
+        attemptInFlight: false,
+        readyGeneration: 1,
+        circuitEnabled: true,
+        circuitState: 'CLOSED'
+      },
+      startupLifecycle: {
+        phase: 'READY',
+        ready: true,
+        listenerBound: true,
+        runtimeInitialized: true,
+        redis: {
+          configured: true,
+          status: 'ready',
+          attempt: 0,
+          lastErrorCode: null
+        }
+      }
+    });
+    const express = (await import('express')).default;
+    const request = (await import('supertest')).default;
+    const healthRouter = (await import('../src/routes/health.js')).default;
+    const app = express();
+    app.use(healthRouter);
+
+    const diagnostics = await request(app).get('/health');
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.body.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'database', healthy: true })
+    ]));
+    expect(harness.getDatabaseSchemaReadyMock).not.toHaveBeenCalled();
+
+    const readiness = await request(app).get('/readyz');
+    const readinessHead = await request(app).head('/readyz');
+
+    expect(readiness.status).toBe(503);
+    expect(readiness.headers['cache-control']).toBe('no-store');
+    expect(readiness.body.checks.find(
+      (check: { name?: unknown }) => check.name === 'database'
+    )).toEqual({
+      healthy: false,
+      name: 'database',
+      code: 'DATABASE_DEPENDENCY_UNAVAILABLE',
+      error: 'Database dependency is unavailable.',
+      duration: expect.any(Number)
+    });
+    expect(readinessHead.status).toBe(503);
+    expect(readinessHead.headers['cache-control']).toBe('no-store');
+    expect(readinessHead.text).toBeUndefined();
+    expect(harness.getDatabaseStatusMock).toHaveBeenCalled();
+    expect(harness.getDatabaseSchemaReadyMock).toHaveBeenCalled();
     expect(harness.createClientMock).not.toHaveBeenCalled();
   });
 });

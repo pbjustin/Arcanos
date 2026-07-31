@@ -36,9 +36,10 @@ startup checks; it does not create a Redis probe client or issue a Redis
 command. Both `GET` and `HEAD /readyz` are credential-free and return
 `Cache-Control: no-store` on `200` and `503`; `HEAD` has no response body.
 When `NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, readiness requires
-both database and Redis configuration as well as connectivity. Missing
-configuration uses the same bounded dependency-unavailable projection as an
-outage; liveness and diagnostic endpoints remain available.
+database configuration, connectivity, and completed schema initialization, plus
+Redis configuration and connectivity. Missing configuration or an
+uninitialized database schema uses the same bounded dependency-unavailable
+projection as an outage; liveness and diagnostic endpoints remain available.
 
 The `GET /readyz` check projection allowlists `name`, `healthy`, `duration`,
 and fixed public `code`/`error` values for failures. Only the Redis check may
