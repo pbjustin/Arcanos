@@ -9,6 +9,14 @@ const smokeHelperSource = readFileSync(
   'scripts/railway-production-smoke-check.js',
   'utf8',
 );
+const deploymentObserverSource = readFileSync(
+  'scripts/railway-auto-deploy-observer.mjs',
+  'utf8',
+);
+const timeoutRegressionSource = readFileSync(
+  'scripts/check-railway-timeout-regressions.js',
+  'utf8',
+);
 
 function deploymentSteps() {
   const steps = workflow.jobs?.['deploy-production']?.steps;
@@ -34,25 +42,33 @@ describe('Railway role-aware deployment evidence', () => {
     expect(names).not.toContain('Verify role-aware readiness activation');
 
     const deploy = namedStep('Deploy to Railway').run;
-    expect(deploy).toContain('railway up');
-    expect(deploy).toContain('--detach');
-    expect(deploy).toContain('--json');
-    expect(deploy).toContain('deploy_result_json');
-    expect(deploy).toContain('payload.deploymentId');
+    expect(deploy).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs enqueue',
+    );
     expect(deploy).toContain('DEPLOYMENT_ID');
-    expect(deploy).toContain('RAILWAY_DEPLOYMENT_ID_INVALID');
-    expect(deploy).toContain('--message "GitHub auto deploy ${DEPLOY_REF}"');
+    expect(deploy).toContain('--deploy-ref "${DEPLOY_REF}"');
 
     const wait = namedStep('Wait for deployment success').run;
-    expect(wait).toContain('railway deployment list');
-    expect(wait).toContain('process.env.DEPLOYMENT_ID');
-    expect(wait).toContain('candidate?.id === expectedDeploymentId');
-    expect(wait).toContain('final_status');
-    expect(wait).toContain('SUCCESS');
-    expect(wait).toContain('RAILWAY_DEPLOYMENT_ID_INVALID');
-    expect(wait).toContain('RAILWAY_DEPLOYMENT_STATUS_INVALID');
-    expect(wait).toContain("readFileSync(0, 'utf8')");
+    expect(wait).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs wait',
+    );
+    expect(wait).toContain('--deployment-id "${DEPLOYMENT_ID}"');
+    expect(wait).not.toContain('railway deployment list');
+    expect(wait).not.toContain('seq ');
+    expect(wait).not.toContain("readFileSync(0, 'utf8')");
     expect(wait).not.toMatch(/echo "DEPLOYMENT_ID=.*GITHUB_ENV/u);
+
+    expect(deploymentObserverSource).toContain("'--detach'");
+    expect(deploymentObserverSource).toContain(
+      'DEPLOYMENT_OBSERVATION_TIMEOUT_MS = 45 * 60_000',
+    );
+    expect(deploymentObserverSource).toContain("from 'node:perf_hooks'");
+    expect(deploymentObserverSource).toContain(
+      'now = () => performance.now()',
+    );
+    expect(deploymentObserverSource).not.toContain('now = Date.now');
+    expect(deploymentObserverSource).toContain('maxBuffer');
+    expect(deploymentObserverSource).not.toContain('shell: true');
   });
 
   it('binds post-deploy evidence to an exact-target readiness request and drain contract', () => {
@@ -66,22 +82,64 @@ describe('Railway role-aware deployment evidence', () => {
 
     const evidence = namedStep(evidenceName).run;
     expect(evidence).toContain(
-      'node scripts/validate-railway-compatibility.js',
+      'env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js',
     );
-    expect(evidence).toContain('railway deployment list');
-    expect(evidence).toContain('railway service status');
-    expect(evidence).toContain('railway variable list');
+    expect(evidence).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs verify-active',
+    );
+    expect(evidence).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs variables',
+    );
     expect(evidence).toContain('DEPLOYMENT_ID');
-    expect(evidence).toContain('RAILWAY_READINESS_ACTIVATION_EVIDENCE_MISMATCH');
     expect(evidence).toContain('verify-railway-readiness-activation.mjs');
-    expect(evidence).toMatch(/variable.+list.+verify-railway-readiness-activation\.mjs/su);
+    expect(evidence).toMatch(
+      /railway-auto-deploy-observer\.mjs variables.+env -u RAILWAY_TOKEN node scripts\/verify-railway-readiness-activation\.mjs/su,
+    );
     expect(evidence).not.toContain('variables_json=');
     expect(evidence).toMatch(
-      /deployment list.+activation_status_before_json.+variable list.+verify-railway-readiness-activation\.mjs.+activation_status_after_json/su,
+      /railway-auto-deploy-observer\.mjs wait.+railway-auto-deploy-observer\.mjs verify-active.+railway-auto-deploy-observer\.mjs variables.+verify-railway-readiness-activation\.mjs.+railway-auto-deploy-observer\.mjs verify-active/su,
     );
     expect(evidence).toContain('tracked_healthcheck=/readyz');
     expect(evidence).toContain('tracked_drainingSeconds=60');
     expect(evidence).toContain('effective_settings_readback=required');
+  });
+
+  it('serializes production observers and bounds every remote read', () => {
+    const deployJob = workflow.jobs?.['deploy-production'] ?? {};
+    const access = namedStep('Verify Railway deploy access').run ?? '';
+    const deploy = namedStep('Deploy to Railway').run ?? '';
+    const wait = namedStep('Wait for deployment success').run ?? '';
+
+    expect(deployJob.concurrency).toEqual({
+      group: 'railway-auto-deploy-production',
+      'cancel-in-progress': false,
+    });
+    expect(deployJob['timeout-minutes']).toBe(60);
+    expect(access).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs variables',
+    );
+    expect(`${access}\n${deploy}\n${wait}`).not.toMatch(
+      /^\s*railway\s+/mu,
+    );
+    expect(deploymentObserverSource).toContain('timeout: limits.timeoutMs');
+    expect(deploymentObserverSource).toContain(
+      'maxBuffer: limits.maxBufferBytes',
+    );
+  });
+
+  it('bounds the post-deploy watchdog Railway log query', () => {
+    expect(timeoutRegressionSource).toContain(
+      'const RAILWAY_LOG_QUERY_TIMEOUT_MS = 30_000',
+    );
+    expect(timeoutRegressionSource).toContain(
+      'const RAILWAY_LOG_QUERY_MAX_BUFFER_BYTES = 4 * 1024 * 1024',
+    );
+    expect(timeoutRegressionSource).toContain(
+      'timeout: RAILWAY_LOG_QUERY_TIMEOUT_MS',
+    );
+    expect(timeoutRegressionSource).toContain(
+      'maxBuffer: RAILWAY_LOG_QUERY_MAX_BUFFER_BYTES',
+    );
   });
 
   it('keeps the manual smoke helper read-only and explicitly scopes environment-aware reads', () => {

@@ -3919,6 +3919,60 @@ final exact-ref guard with no remaining finding in this slice. No Railway,
 production, deployment, variable, provider, database, memory, or release state
 was read or mutated.
 
+### PR #1413 merge-readiness remediation — detached deployment lifecycle
+
+The release review then found two coupled production-gate defects. The
+workflow used `railway up --detach --json` but observed the exact deployment
+for only thirty ten-second attempts, no longer than the tracked five-minute
+healthcheck allowance. It also configured
+`cancel-in-progress: true`, so a newer GitHub run could terminate the observer
+and post-deploy checks while Railway continued the already-created remote
+deployment.
+
+The isolated correction preserves detached upload because pinned Railway CLI
+`4.30.2` returns the exact deployment ID in that mode. The production job is
+now serialized without cancelling an active run and has a 60-minute job
+limit. A fixed-purpose Node helper bounds upload to 10 minutes, observes the
+exact ID against a monotonic 45-minute elapsed budget, limits every Railway
+subprocess by time and output size, rejects duplicate IDs and unknown or
+terminal statuses, and requires the exact active deployment to be
+`SUCCESS` with `stopped === false` before and after readiness evidence. The
+post-deploy log query is bounded to 30 seconds and 4 MiB. Its former Windows
+`shell: true` fallback was removed.
+
+The project token remains confined to the four reviewed Railway steps. Within
+the combined observation/evidence step, token-independent validators run
+under `env -u RAILWAY_TOKEN`; the observer, watchdog, variable-bearing
+readiness verifier, and complete token-step bodies are normalized-SHA frozen
+for explicit review. The helper uses only Node `20` built-ins and preserves
+provider-compatible non-control environment names.
+
+Characterization first failed on the missing helper, cancellable concurrency,
+fixed-attempt loop, and absent watchdog bounds. The finalized Node `v20.19.0`
+focused set **passed**, 5 suites and 77 tests. `npm run build`,
+`npm run validate:railway`, focused ESLint, and `git diff --check` **passed**.
+`npm run lint` **passed with 0 errors and 76 pre-existing warnings**.
+`npm run docs:check` **passed** after this checkpoint with all 311 checks. Two
+independent adversarial
+reviewers reproduced the stale supply-chain contract, backward-clock,
+environment-name, stopped-deployment, Windows-shell, and token-inheritance
+gaps; all were reconciled, and both reviewers approved the final slice with no
+remaining finding.
+
+Detached remote work can still outlive an upload timeout before an ID is
+returned, manual workflow cancellation, runner loss, or the 45-minute
+observer budget. No safe exact-ID cancellation covers every Railway deployment
+state, and `railway down` can target the wrong successful deployment, so those
+cases remain documented operator-reconciliation obligations rather than an
+unsafe cleanup mutation. No Railway, production, deployment, variable,
+provider, database, memory, or release state was read or mutated.
+
+At the start of this slice GitHub reported PR #1413 open, non-draft, and
+mergeable at published head `a0c43cf6`; this supersedes earlier current-state
+wording that still called the PR a draft. Other historical “draft-publication”
+statements remain accurate for the time they describe. The remaining
+merge-readiness findings are handled as separate corrections.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits

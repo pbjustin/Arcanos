@@ -18,24 +18,33 @@ const RAILWAY_TOKEN_STEPS = [
   'Wait for deployment success',
   'Post-deploy watchdog/budget regression check',
 ];
-// Freeze the complete security-critical bodies so an appended download or
-// command cannot inherit trust or the project token without explicit review.
+// Freeze the complete security-critical step bodies and checked-in executors
+// so appended behavior cannot inherit the project token without review.
 const INSTALL_STEP_RUN_SHA256 =
   '6eab131a43da49cf62f45780558cb138190c5e3566cd430d36a0713abef6c509';
+const DEPLOYMENT_OBSERVER_SOURCE_SHA256 =
+  '6a75386ce311ff2ef340ccab1fa1528ed1ad676de5172fd9fa34cde8d40fe626';
+const TIMEOUT_WATCHDOG_SOURCE_SHA256 =
+  '717a6cda82721d2eb53d6099f462c8738212785e288fbebc3d6855d222bd11e4';
+const READINESS_VERIFIER_SOURCE_SHA256 =
+  '1903ba5c67543006093051aa8e17f71dcfbf36995f97aff8b6827b094ac76e7d';
 const TOKEN_STEP_RUN_SHA256 = {
   'Verify Railway deploy access':
-    '3b23fc90193f745b9fb062c90635b62ab6362c5ae36f0f14b76d6f421617ed3b',
+    '5594ef732d5aa25c48c5eee8f15c83e1aa2fdad33058074a301cb0cba2668868',
   'Deploy to Railway':
-    'b87d0d732ea80d54eb2625ce21a795b2becf0aedf0cf54d5520b1b486aace0a5',
+    '1a65dde7985f4786070584891d58f29a2280dd139fe81e2b4b36828cf3403c2d',
   'Wait for deployment success':
-    '7b57b212736f4293b252ae3f579ec05b68753cbdcafc1b9ed366553cc36e4b76',
+    '24996df67931a7a165387514cd6bc1f6d527ab108815b028ec2bcbb982e79dce',
   'Post-deploy watchdog/budget regression check':
     '74c9d80317bdfa3de7c1cb5e4083013a0f116646388fe5d1c8455142f81ed674',
 };
 const TOKEN_STEP_REQUIRED_COMMAND = {
-  'Verify Railway deploy access': 'railway variable list',
-  'Deploy to Railway': 'railway up',
-  'Wait for deployment success': 'railway service status',
+  'Verify Railway deploy access':
+    'node scripts/railway-auto-deploy-observer.mjs variables',
+  'Deploy to Railway':
+    'node scripts/railway-auto-deploy-observer.mjs enqueue',
+  'Wait for deployment success':
+    'node scripts/railway-auto-deploy-observer.mjs wait',
   'Post-deploy watchdog/budget regression check':
     'node scripts/check-railway-timeout-regressions.js',
 };
@@ -45,6 +54,18 @@ const workflowText = readFileSync(
   'utf8',
 ).replaceAll('\r\n', '\n');
 const workflow = yaml.load(workflowText);
+const deploymentObserverSource = readFileSync(
+  'scripts/railway-auto-deploy-observer.mjs',
+  'utf8',
+).replaceAll('\r\n', '\n');
+const timeoutWatchdogSource = readFileSync(
+  'scripts/check-railway-timeout-regressions.js',
+  'utf8',
+).replaceAll('\r\n', '\n');
+const readinessVerifierSource = readFileSync(
+  'scripts/verify-railway-readiness-activation.mjs',
+  'utf8',
+).replaceAll('\r\n', '\n');
 
 function job(name) {
   const value = workflow.jobs?.[name];
@@ -163,6 +184,18 @@ describe('Railway auto-deploy supply-chain containment', () => {
     expect(sha256(script)).toBe(INSTALL_STEP_RUN_SHA256);
   });
 
+  it('freezes the repository-owned executors that receive the project token', () => {
+    expect(sha256(deploymentObserverSource)).toBe(
+      DEPLOYMENT_OBSERVER_SOURCE_SHA256,
+    );
+    expect(sha256(timeoutWatchdogSource)).toBe(
+      TIMEOUT_WATCHDOG_SOURCE_SHA256,
+    );
+    expect(sha256(readinessVerifierSource)).toBe(
+      READINESS_VERIFIER_SOURCE_SHA256,
+    );
+  });
+
   it('exposes one project token only to the four Railway CLI steps', () => {
     const deployJob = job('deploy-production');
     const deploySteps = deployJob.steps ?? [];
@@ -219,5 +252,16 @@ describe('Railway auto-deploy supply-chain containment', () => {
         'Post-deploy watchdog/budget regression check',
       ).run,
     ).not.toContain('npm run');
+
+    const waitScript = namedStep(
+      'deploy-production',
+      'Wait for deployment success',
+    ).run;
+    expect(waitScript).toContain(
+      'env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js',
+    );
+    expect(waitScript).toContain(
+      '| env -u RAILWAY_TOKEN node scripts/verify-railway-readiness-activation.mjs',
+    );
   });
 });

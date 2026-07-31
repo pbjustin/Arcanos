@@ -7,8 +7,12 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve, win32 } from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
+
+export const RAILWAY_LOG_QUERY_TIMEOUT_MS = 30_000;
+export const RAILWAY_LOG_QUERY_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 
 const DEFAULTS = {
   since: '30m',
@@ -112,25 +116,43 @@ function buildRailwayArgs(config) {
  * Inputs/Outputs: config -> raw newline-delimited JSON logs string.
  * Edge cases: Throws on Railway CLI failures so alert jobs fail loudly.
  */
-function queryRailwayLogs(config) {
-  const args = buildRailwayArgs(config);
-  const execOptions = {
+export function buildRailwayExecOptions() {
+  return {
     encoding: 'utf8',
+    killSignal: 'SIGKILL',
+    maxBuffer: RAILWAY_LOG_QUERY_MAX_BUFFER_BYTES,
+    timeout: RAILWAY_LOG_QUERY_TIMEOUT_MS,
     stdio: ['ignore', 'pipe', 'pipe']
   };
+}
 
-  const candidates = process.platform === 'win32'
+export function queryRailwayLogs(
+  config,
+  {
+    execFileImplementation = execFileSync,
+    existsImplementation = existsSync,
+    platform = process.platform,
+    appData = process.env.APPDATA || ''
+  } = {}
+) {
+  const args = buildRailwayArgs(config);
+  const execOptions = buildRailwayExecOptions();
+
+  const candidates = platform === 'win32'
     ? [
         { file: 'railway', args, options: execOptions },
-        { file: 'railway.exe', args, options: execOptions },
-        { file: 'railway', args, options: { ...execOptions, shell: true } }
+        { file: 'railway.exe', args, options: execOptions }
       ]
     : [{ file: 'railway', args, options: execOptions }];
 
   let lastError = null;
   for (const candidate of candidates) {
     try {
-      return execFileSync(candidate.file, candidate.args, candidate.options);
+      return execFileImplementation(
+        candidate.file,
+        candidate.args,
+        candidate.options
+      );
     } catch (error) {
       lastError = error;
       //audit assumption: missing executable can be retried with alternate launch strategy; failure risk: false failure on Windows PATH aliasing; expected invariant: non-ENOENT errors should surface immediately; handling strategy: continue only on ENOENT.
@@ -141,11 +163,10 @@ function queryRailwayLogs(config) {
   }
 
   //audit assumption: npm-installed Railway CLI often resolves to a PowerShell shim on Windows; failure risk: command not found from Node spawn; expected invariant: shim path exists under %APPDATA%\\npm; handling strategy: invoke shim with -File and positional args.
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || '';
-    const railwayPs1 = join(appData, 'npm', 'railway.ps1');
-    if (existsSync(railwayPs1)) {
-      return execFileSync(
+  if (platform === 'win32') {
+    const railwayPs1 = win32.join(appData, 'npm', 'railway.ps1');
+    if (existsImplementation(railwayPs1)) {
+      return execFileImplementation(
         'powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', railwayPs1, ...args],
         execOptions
@@ -321,19 +342,9 @@ function main() {
   let rawLogs = '';
   try {
     rawLogs = queryRailwayLogs(config);
-  } catch (error) {
-    const stderr = error && typeof error === 'object' && 'stderr' in error
-      ? String(error.stderr || '')
-      : '';
+  } catch {
     //audit assumption: monitoring failures must fail closed; failure risk: false green state; expected invariant: alert check non-zero on query failure; handling strategy: print diagnostic and exit 1.
     console.error('railway-timeout-alert: failed to query Railway logs.');
-    if (stderr.trim().length > 0) {
-      console.error(stderr.trim());
-    } else if (error instanceof Error) {
-      console.error(error.message);
-    } else {
-      console.error(String(error));
-    }
     process.exit(1);
   }
 
@@ -356,4 +367,9 @@ function main() {
   process.exit(2);
 }
 
-main();
+if (
+  typeof process.argv[1] === 'string'
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  main();
+}

@@ -190,12 +190,21 @@ environment. Checkout credential persistence and a
 single-maintainer-compatible protected-environment topology remain separate
 defense-in-depth and repository-settings decisions.
 
+The production deployment job has a 60-minute GitHub Actions timeout and uses
+the `railway-auto-deploy-production` concurrency group without cancelling a
+run that has already started. A newer run therefore waits while the active run
+continues observing any remote deployment it created. GitHub may still
+coalesce older runs that have not started.
+
 The deployment job captures the exact deployment ID returned by its own
-detached upload and polls deployment history for that ID only. That exact
-deployment must reach Railway `SUCCESS`, after which the job runs
+detached upload and observes deployment history for that ID only. The upload
+has a 10-minute command timeout; observation uses a 45-minute elapsed-time
+budget with ten-second polling. Each Railway status or variable read also has
+an explicit timeout and output cap. That exact deployment must reach Railway
+`SUCCESS`, after which the job runs
 `node scripts/validate-railway-compatibility.js`, confirms the same deployment
-remains the active successful deployment, and reads the exact service's
-resolved Railway identity and role.
+remains the active successful and non-stopped deployment, and reads the exact
+service's resolved Railway identity and role.
 For a public web or worker role it then makes a bounded, no-redirect
 `GET /readyz` request and requires the exact role response plus
 `Cache-Control: no-store`. A private worker retains Railway's platform
@@ -206,6 +215,15 @@ conflicting live provider-native drain override when one is present. These are
 one-time activation checks; they do not replace continuous monitoring, exact
 web/worker effective-settings readback, or a measured drain rehearsal before
 production promotion.
+
+The detached upload is a remote mutation that can outlive the GitHub runner.
+An upload timeout before an ID is returned, a manual workflow cancellation,
+runner loss, or a deployment that remains nonterminal beyond the 45-minute
+observer budget requires operator reconciliation against the exact project,
+environment, service, and revision. The workflow does not call `railway down`
+because that command does not safely target the captured in-flight deployment.
+Post-deploy log retrieval is limited to 30 seconds and 4 MiB and fails closed
+if either bound is exceeded.
 
 The active `20260727-dag-snapshot-generation-v1` hold protects the coordinated
 DAG snapshot-generation migration. A deliberate `workflow_dispatch` may pass it

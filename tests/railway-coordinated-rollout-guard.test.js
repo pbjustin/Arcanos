@@ -186,8 +186,9 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     );
     expect(deployJob.concurrency).toEqual({
       group: 'railway-auto-deploy-production',
-      'cancel-in-progress': true,
+      'cancel-in-progress': false,
     });
+    expect(deployJob['timeout-minutes']).toBe(60);
   });
 
   it('runs privileged promotion only from trusted default-branch push provenance', () => {

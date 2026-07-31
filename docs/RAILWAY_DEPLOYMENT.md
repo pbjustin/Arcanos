@@ -171,16 +171,33 @@ protected GitHub environment/approval topology are separate defense-in-depth
 and repository-settings decisions, not guarantees provided by these workflow
 controls.
 
+The production job is limited to 60 minutes and serializes through the
+`railway-auto-deploy-production` concurrency group without cancelling a run
+that has already started. A newer run waits while the active observer finishes;
+GitHub may still coalesce older runs that remain pending.
+
 The workflow captures the exact deployment ID returned by its own detached
-upload and polls deployment history for that ID only. After that deployment
-reaches Railway `SUCCESS`, the workflow reruns the static Railway validator and
-rereads the same service/environment status, requiring that exact deployment
-to remain the active successful deployment. It also reads the exact target's
+upload and observes deployment history for that ID only. Upload is bounded to
+10 minutes, exact-deployment observation to 45 elapsed minutes with ten-second
+polling, and every Railway status or variable subprocess has an explicit
+timeout and output cap. After that deployment reaches Railway `SUCCESS`, the
+workflow reruns the static Railway validator and rereads the same
+service/environment status, requiring that exact deployment to remain the
+active successful and non-stopped deployment. It also reads the exact target's
 resolved identity, rejects identity or live drain-variable drift, and makes a
 bounded, no-redirect `/readyz` request when that role has a public domain. A
 private worker retains Railway's first-200 activation result instead of being
-exposed solely for the workflow. This is one-time activation evidence, not
-continuous health monitoring or effective provider-setting readback.
+exposed solely for the workflow. Post-deploy log retrieval is limited to 30
+seconds and 4 MiB. This is one-time activation evidence, not continuous health
+monitoring or effective provider-setting readback.
+
+The detached upload remains a remote mutation. If upload times out before an ID
+is returned, the workflow is manually cancelled, the runner is lost, or an
+exact deployment remains nonterminal past the observer budget, it may continue
+remotely without the remaining activation checks. Reconcile that residual
+manually against the exact project, environment, service, and revision. The
+workflow intentionally does not call `railway down`, which cannot safely
+contain the captured in-flight deployment by exact ID.
 
 The workflow also runs a repository-owned coordinated-writer policy before the
 production deployment job can enter its concurrency group. While
