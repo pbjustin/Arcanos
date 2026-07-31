@@ -29,11 +29,18 @@ permissions:
 jobs:
   rollout-policy:
     name: Coordinated DAG writer rollout policy
+    if: >-
+      (github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == github.event.repository.default_branch
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     outputs:
       should_deploy: ${{ steps.rollout_guard.outputs.should_deploy }}
       hold_active: ${{ steps.rollout_guard.outputs.hold_active }}
@@ -44,7 +51,7 @@ jobs:
       - name: Checkout rollout policy
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          ref: ${{ env.DEPLOY_REF }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -65,15 +72,21 @@ jobs:
     needs: rollout-policy
     if: >-
       needs.rollout-policy.outputs.should_deploy == 'true'
-      && (github.event_name == 'workflow_dispatch'
-      || (github.event.workflow_run.conclusion == 'success'
-      && github.event.workflow_run.head_branch == 'main'))
+      && ((github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == github.event.repository.default_branch
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.head_sha == github.sha))
     runs-on: ubuntu-latest
     concurrency:
       group: railway-auto-deploy-production
       cancel-in-progress: true
     env:
-      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_REF: ${{ github.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME }}
@@ -83,6 +96,33 @@ jobs:
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ env.DEPLOY_REF }}
+
+      - name: Verify deploy ref is current default tip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          live_default_record="$(
+            git ls-remote --exit-code --refs origin "refs/heads/${DEFAULT_BRANCH}"
+          )"
+          if [[ "${live_default_record}" == *$'\n'* ]]; then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_AMBIGUOUS"
+            exit 1
+          fi
+
+          IFS=$'\t' read -r live_default_sha live_default_ref live_default_extra <<< "${live_default_record}"
+          if (
+            [[ ! "${live_default_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+            [ "${live_default_ref}" != "refs/heads/${DEFAULT_BRANCH}" ] ||
+            [ -n "${live_default_extra:-}" ]
+          ); then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_INVALID"
+            exit 1
+          fi
+          if [ "${live_default_sha}" != "${DEPLOY_REF}" ]; then
+            echo "RAILWAY_DEPLOY_REF_NOT_CURRENT_DEFAULT_TIP"
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

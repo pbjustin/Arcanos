@@ -3892,6 +3892,33 @@ CEF/routing boundaries, type-check, native-preview import gate, and lint also
 passed. This follow-up changes source ownership metadata and tests only; it
 does not change a public contract shape or runtime behavior.
 
+### PR #1413 merge-readiness remediation — workflow provenance
+
+The post-publication merge-readiness review found that the privileged
+`workflow_run` path trusted `head_branch == main` without proving a same-repo
+push, checked out and executed the triggering head as rollout policy, and let
+manual dispatch select another branch or tag. A fork PR whose source branch was
+named `main` could therefore make untrusted policy code emit
+`should_deploy=true`; an old queued or rerun event could also redeploy an
+obsolete main commit.
+
+The isolated correction now requires either an exact default-branch manual
+dispatch or a successful same-repository push whose head SHA equals the
+workflow's default-branch SHA. Policy code and the deploy ref are pinned to
+that immutable SHA. After the deployment job acquires concurrency, but before
+any Railway-token step, it reads the one exact live default-branch ref and
+fails closed unless the live 40-hex SHA still equals the deploy ref. Fork,
+pull-request, non-push, branch/tag dispatch, stale queued, and old rerun paths
+are therefore rejected before production credentials or upload.
+
+Characterization first failed on the untrusted policy checkout. The finalized
+Node `v20.19.0` workflow suites **passed**, 3 suites and 22 tests; the new shell
+body also passed `bash -n`. An independent adversarial review found the manual
+ref and stale-event gaps, then the post-concurrency race, and approved the
+final exact-ref guard with no remaining finding in this slice. No Railway,
+production, deployment, variable, provider, database, memory, or release state
+was read or mutated.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits
