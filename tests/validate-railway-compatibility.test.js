@@ -29,6 +29,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
           NODE_ENV: 'production',
           PORT: '$PORT',
           DATABASE_URL: '$DATABASE_URL',
+          REDIS_URL: '$REDIS_URL',
           OPENAI_API_KEY: '$OPENAI_API_KEY',
           ARCANOS_GPT_ACCESS_TOKEN: '$ARCANOS_GPT_ACCESS_TOKEN',
           ARCANOS_GPT_ACCESS_BASE_URL: '$ARCANOS_GPT_ACCESS_BASE_URL',
@@ -60,6 +61,17 @@ describe('validate-railway-compatibility', () => {
     expect(validationErrors).toEqual([]);
   });
 
+  it('requires the canonical Redis connection variable in production settings', () => {
+    const config = buildMinimalRailwayConfig();
+    delete config.environments.production.variables.REDIS_URL;
+
+    const validationErrors = validateConfig(config);
+
+    expect(validationErrors).toEqual([
+      'environments.production.variables missing required keys: REDIS_URL',
+    ]);
+  });
+
   it('rejects malformed ARCANOS_PROCESS_KIND values in deploy and production env settings', () => {
     const validationErrors = validateConfig(
       buildMinimalRailwayConfig({
@@ -79,6 +91,7 @@ describe('validate-railway-compatibility', () => {
               NODE_ENV: 'production',
               PORT: '$PORT',
               DATABASE_URL: '$DATABASE_URL',
+              REDIS_URL: '$REDIS_URL',
               OPENAI_API_KEY: '$OPENAI_API_KEY',
               ARCANOS_GPT_ACCESS_TOKEN: '$ARCANOS_GPT_ACCESS_TOKEN',
               ARCANOS_GPT_ACCESS_BASE_URL: '$ARCANOS_GPT_ACCESS_BASE_URL',
@@ -287,6 +300,7 @@ describe('validate-railway-compatibility', () => {
 # NODE_ENV=production
 # PORT=$PORT
 # DATABASE_URL=$DATABASE_URL
+# REDIS_URL=$REDIS_URL
 # OPENAI_API_KEY=$OPENAI_API_KEY
 # ARCANOS_GPT_ACCESS_TOKEN=$ARCANOS_GPT_ACCESS_TOKEN
 # ARCANOS_GPT_ACCESS_BASE_URL=$ARCANOS_GPT_ACCESS_BASE_URL

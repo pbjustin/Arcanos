@@ -4139,6 +4139,46 @@ found no blocker in the discrete-PostgreSQL diff. The tracked Redis-variable
 validation gap remains a separate follow-up, so this checkpoint does not yet
 declare the PR merge-ready.
 
+#### Published-head follow-up — tracked Redis production contract
+
+Release and regression review found that production-web readiness requires a
+configured Redis backend, but the repository's tracked production-variable
+map and `validate:railway` required-key list omitted `REDIS_URL`. The static
+validator therefore passed a manifest that did not even declare the canonical
+Redis connection variable.
+
+A focused characterization first failed after deleting `REDIS_URL` from an
+otherwise valid fixture. The isolated correction adds the canonical
+`REDIS_URL` pass-through to the tracked production map and required-key list.
+The validator now reports the exact missing key, while the runtime and
+activation verifier retain their broader support for the documented discrete
+Redis alternatives.
+
+This is deliberately a repository-local manifest and CI invariant, not proof
+that Railway injected or currently exposes a live variable. Current Railway
+Config-as-Code documentation scopes the file to build and deploy settings, and
+the repository's environment-variable map is not a substitute for exact live
+service readback. No Railway variable or other provider setting was read or
+mutated; effective production Redis configuration remains an external
+pre-promotion gate.
+
+Node `v20.19.0` validation **passed**: the focused validator suite passed 11/11
+tests; `npm run validate:railway`, `npm run build`, focused ESLint, and
+`git diff --check` passed. Initial adversarial review confirmed that activation
+still fails closed and identified two test fixtures that needed the new
+required key to preserve their original isolation; both fixtures were
+corrected. Final re-review returned a go verdict for the explicitly scoped
+repository-local contract with no remaining finding.
+
+The combined final local sweep on the three unpublished follow-ups also
+**passed**: 8 focused readiness, activation, production-smoke, manifest, and
+supply-chain suites passed 112/112 tests; `npm run type-check`,
+`npm run build`, and `npm run validate:railway` passed; full
+`npm run lint` passed with 0 errors and 76 pre-existing warnings; and
+`npm run docs:check` passed all 311 checks with current generated indexes.
+This checkpoint remains unpublished pending the exact-head GitHub and native
+preview validation cycle.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits

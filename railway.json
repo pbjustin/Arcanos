@@ -42,6 +42,7 @@
         "NODE_ENV": "production",
         "PORT": "$PORT",
         "DATABASE_URL": "$DATABASE_URL",
+        "REDIS_URL": "$REDIS_URL",
         "OPENAI_API_KEY": "$OPENAI_API_KEY",
         "OPENAI_API_KEY_REQUIRED": "true",
         "OPENAI_ACTION_SHARED_SECRET": "$OPENAI_ACTION_SHARED_SECRET",
