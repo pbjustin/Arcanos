@@ -3255,7 +3255,7 @@ to the held deployment.
 #### A. PR #1412 and production-promotion blockers/dependencies
 
 1. **A.1 is committed and published in open PR #1413; unmerged and
-   undeployed.** The draft restores `no-store` across every generic job status,
+   undeployed.** The PR restores `no-store` across every generic job status,
    result, cancellation, validation, authorization, and repository-error
    response, with success, failure, and live-harness assertions. The
    dedicated-worktree and integrated-publication evidence is recorded below.
@@ -3271,7 +3271,7 @@ to the held deployment.
    validator, exact-deployment workflow evidence, bounded live harnesses, and
    runbooks now agree on role-aware `/readyz` activation, timeout `300`, and a
    `60`-second drain ceiling. A.2/A.3 workflow composition is complete in the
-   draft. Read-only live inspection still found `/health` and disabled teardown
+   PR. Read-only live inspection still found `/health` and disabled teardown
    drain on both production roles, so promotion remains blocked pending an
    authorized deployment, exact effective web/worker setting readback, and a
    measured real drain rehearsal.
@@ -3709,7 +3709,7 @@ numeric `60`-second drain contract all remained intact.
 Integrated validation used the repository-required Node `v20.19.0`:
 
 - `npm ci`: **passed** without changing repository status; npm reported 16 high
-  audit findings in the installed dependency graph, and this draft does not
+  audit findings in the installed dependency graph, and this PR does not
   change dependencies;
 - the first combined focused run, before shared packages had been built in the
   fresh worktree, passed 13 suites and 239 tests but failed one suite because
@@ -4018,6 +4018,61 @@ transient native-preview automation; no Railway control-plane command, manual
 deployment/redeployment, setting or variable change, production action,
 provider, database, memory, or release mutation was performed. Subsequent
 GitHub review/thread and check observations were read-only.
+
+### PR #1413 merge-readiness remediation — production web backend readiness
+
+The release review found one remaining activation false-green: production web
+readiness treated an unconfigured database or Redis dependency as healthy, and
+the automatic activation verifier accepted that projection. Characterization
+first reproduced `GET` and `HEAD /readyz` returning `200` instead of `503` for
+each missing backend and proved that missing live dependency variables did not
+stop the verifier before its request.
+
+The isolated correction keeps ordinary diagnostics compatible while making
+activation fail closed:
+
+- `checkDatabaseHealth` and `checkRedisHealth` retain their optional,
+  healthy-unconfigured behavior for `/health`, local, test, development, and
+  non-web callers;
+- production web `/readyz` alone requires configured PostgreSQL and Redis,
+  returning fixed, sanitized dependency-unavailable failures without opening a
+  Redis client or querying database status when configuration is absent;
+- `/healthz` and `/health` remain `200`, while both `GET` and `HEAD /readyz`
+  return `503` with `Cache-Control: no-store`;
+- the automatic exact-target verifier requires `NODE_ENV=production` and
+  runtime-supported database and Redis configuration evidence before any
+  readiness request, then still requires every named dependency check to be
+  healthy; and
+- the production smoke verifier now explicitly rejects top-level-ready
+  responses whose database or Redis check is unhealthy. Maintained guidance
+  distinguishes runtime activation alternatives from the intentionally
+  stricter manual topology audit.
+
+Final local validation used Node `v20.19.0`: the four focused route,
+readiness-policy, activation-verifier, and production-smoke suites **passed**,
+77/77 tests; the token-adjacent supply-chain digest suite **passed**, 4/4 tests;
+focused ESLint, `npm run type-check`, `npm run build`, and
+`npm run validate:railway` **passed**; full `npm run lint` passed with 0 errors
+and 76 pre-existing warnings. The first `npm run docs:check` passed all 311
+documentation checks but correctly failed because the new test path made the
+generated backend index stale. `npm run reindex` regenerated all four coupled
+index artifacts, and the final `npm run docs:check` **passed** with 311/311
+checks and current indexes. `git diff --check` also **passed**.
+
+Three independent adversarial reviewers returned no blockers after checking
+the production-web predicate, optional-mode compatibility, no-probe-I/O
+boundary, response sanitization, environment matrix, and downstream verifier
+contracts. They recorded three nonblocking follow-ups rather than activation
+escapes: database private/public URL-only resolution is already rejected by
+both the current runtime and verifier despite broader historical documentation;
+the manual topology helper treats literal `null`/`undefined` strings as present
+but the live readiness and automatic verifier still prevent a full false-green;
+and expected service-role pinning remains a separate topology invariant.
+
+No Railway, production, deployment, variable, provider, database, memory, or
+release state was read or mutated. Any GitHub push for this slice only invokes
+the repository's existing PR automation; production rollout and Railway-native
+auto-deploy-setting confirmation remain external operator gates.
 
 ## Commit appendix
 

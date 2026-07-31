@@ -14,6 +14,17 @@ const WEB_READINESS_CHECK_NAMES = Object.freeze([
   'redis',
   'startup',
 ]);
+const DATABASE_DISCRETE_VARIABLE_NAMES = Object.freeze([
+  'PGUSER',
+  'PGPASSWORD',
+  'PGHOST',
+  'PGPORT',
+  'PGDATABASE',
+]);
+const REDIS_HOST_VARIABLE_NAMES = Object.freeze([
+  'REDISHOST',
+  'REDIS_HOST',
+]);
 
 function fail(code) {
   throw new Error(code);
@@ -35,6 +46,43 @@ function hasNoStoreDirective(headers) {
       .split(',')
       .some(directive => directive.trim().toLowerCase() === 'no-store')
   );
+}
+
+function hasConfiguredVariable(variables, name) {
+  const value = variables[name];
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim();
+  return (
+    normalized.length > 0
+    && normalized.toLowerCase() !== 'undefined'
+    && normalized.toLowerCase() !== 'null'
+  );
+}
+
+function requireProductionWebDependencyConfiguration(variables) {
+  if (variables.NODE_ENV !== 'production') {
+    fail('RAILWAY_WEB_RUNTIME_ENVIRONMENT_INVALID');
+  }
+
+  const databaseConfigured = (
+    hasConfiguredVariable(variables, 'DATABASE_URL')
+    || DATABASE_DISCRETE_VARIABLE_NAMES.every(name => (
+      hasConfiguredVariable(variables, name)
+    ))
+  );
+  const redisConfigured = (
+    hasConfiguredVariable(variables, 'REDIS_URL')
+    || REDIS_HOST_VARIABLE_NAMES.some(name => (
+      hasConfiguredVariable(variables, name)
+    ))
+  );
+
+  if (!databaseConfigured || !redisConfigured) {
+    fail('RAILWAY_WEB_DEPENDENCY_CONFIGURATION_MISSING');
+  }
 }
 
 function requireExactIdentity(variables, expectedIdentity) {
@@ -106,6 +154,9 @@ export function resolveReadinessTarget(variables, expectedIdentity) {
   const role = variables.ARCANOS_PROCESS_KIND;
   if (role !== 'web' && role !== 'worker') {
     fail('RAILWAY_READINESS_ROLE_INVALID');
+  }
+  if (role === 'web') {
+    requireProductionWebDependencyConfiguration(variables);
   }
 
   const rawDomain = variables.RAILWAY_PUBLIC_DOMAIN;

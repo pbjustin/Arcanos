@@ -83,7 +83,7 @@ Launcher behavior:
   database target under the operational approval gate.
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation, `/healthz` remains liveness, and `/health` remains dependency diagnostics. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
-- The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, while `/readyz` returns `503` until Redis reconnects; a new revision therefore cannot activate during that outage. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
+- The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage or missing backend configuration, while production web `/readyz` returns `503` unless PostgreSQL and Redis are both configured and connected; a new revision therefore cannot activate in an in-memory/no-Redis fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
 - Worker `/readyz` remains `503` until database/autonomy/module-registry bootstrap and every configured consumer slot's dispatcher-start write complete, and a supported OpenAI key setting is present. The child communicates that transition through an exact newline-delimited protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text cannot activate readiness. It does not perform a paid provider request; transient provider failure after activation is handled through the worker's probe/backoff and job-deferral path.
 - Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
@@ -98,7 +98,8 @@ Environment variables:
 | `ALLOWED_ORIGINS` | Optional | Comma-separated exact HTTP(S) browser origins permitted to call the web service. Inventory every browser API and SSE caller before rollout. Omit to disable cross-origin browser access; same-origin and server-to-server requests remain available. |
 | `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
 | `RUN_WORKERS` | Launcher-managed | Set by `scripts/start-railway-service.mjs` from `ARCANOS_PROCESS_KIND`. |
-| `DATABASE_URL` | Required for async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. |
+| `DATABASE_URL` or complete `PG*` set | Required for production web activation and async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. The complete fallback is `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE`. |
+| `REDIS_URL`, `REDISHOST`, or `REDIS_HOST` | Required for production web activation | Configure the shared Redis lifecycle. The URL is preferred; either host name enables the runtime-supported discrete form. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Required for protected `/gpt-access/*` routes | Strong bearer token stored only in Railway Variables and GPT Action auth. `/gpt-access/openapi.json` is public. |
 | `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Required on the web service when HTTP control-plane, AFOL decision/inspection, reinforcement feedback/inspection, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, or CLI self-heal inspection is used | Exact purpose-bound bearer credential stored only in Railway Variables. It must remain distinct from approval, GPT Access, daemon, memory, worker-helper, automation, and other application credentials. Missing or invalid control-plane configuration fails closed with 503. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | Required with the control-plane access token | Server-owned operator identifier used for HTTP control-plane attribution. Do not derive it from request fields. |
@@ -268,13 +269,20 @@ npm run railway:smoke:production -- --app-url https://<confirmed-web-service>.up
 That helper reads Railway topology, variables, and logs and makes a live network
 request. It is not routine local validation; run it only with exact-target
 read-only authorization after confirming the checkout's linked Railway project.
+Its topology audit is intentionally stricter than runtime admission: it expects
+both resolved URL variables and discrete PostgreSQL/Redis host projections so
+it can compare the web and worker services' private-network targets.
 The explicit `--app-url` is required and must match a Railway-owned domain from
 the selected app service. The helper does not change the locally selected
 environment; it selects the named environment explicitly for service-scoped
 reads. The automatic workflow separately invokes
 `scripts/verify-railway-readiness-activation.mjs` with the exact target's
 resolved Railway variable projection. It rejects a conflicting
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` value when present. A private worker needs
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` value when present. Before requesting web
+readiness it also requires `NODE_ENV=production` plus the runtime-supported
+database and Redis configuration alternatives, preventing a production
+identity from bypassing the application policy through a non-production
+runtime mode or missing backend reference. A private worker needs
 no public domain solely for this check, but its exact Railway `SUCCESS` and the
 tracked contract do not replace the effective `/readyz`/timeout/drain readback
 required above.

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-31T01:25:24.123Z",
+  "generatedAt": "2026-07-31T07:50:44.263Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3860,6 +3860,9 @@
         },
         {
           "relativePath": "tests/priorityGptDirectExecutionService.test.ts"
+        },
+        {
+          "relativePath": "tests/production-web-readiness-policy.test.ts"
         },
         {
           "relativePath": "tests/productivity-module-contract.test.ts"

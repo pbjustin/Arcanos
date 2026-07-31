@@ -435,6 +435,34 @@ describe('railway-production-smoke-check', () => {
     }
   });
 
+  it.each([
+    'database',
+    'redis',
+  ])('rejects top-level-ready production evidence when %s is unhealthy', async (dependencyName) => {
+    const originalFetch = global.fetch;
+    const checks = productionReadinessPayload().checks.map(check => (
+      check.name === dependencyName ? { ...check, healthy: false } : check
+    ));
+    global.fetch = jest.fn(async () => readinessFetchResponse(
+      productionReadinessPayload(checks),
+    ));
+
+    try {
+      const result = await requestHealthCheck(
+        'https://acranos-production.up.railway.app/readyz',
+        buildSmokeConfig(),
+        'production'
+      );
+
+      expect(result.status).toBe(RESULT_STATUS.FAIL);
+      expect(result.detail).toBe(
+        'Readiness response failed contract validation (status=200).'
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('keeps preview and production readiness contracts mutually exclusive', async () => {
     const originalFetch = global.fetch;
 

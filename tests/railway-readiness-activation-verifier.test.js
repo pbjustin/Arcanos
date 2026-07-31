@@ -17,7 +17,10 @@ function buildVariables(overrides = {}) {
     RAILWAY_ENVIRONMENT_NAME: EXPECTED_IDENTITY.environmentName,
     RAILWAY_SERVICE_ID: EXPECTED_IDENTITY.serviceId,
     ARCANOS_PROCESS_KIND: 'web',
+    NODE_ENV: 'production',
     RAILWAY_PUBLIC_DOMAIN: 'arcanos-production.up.railway.app',
+    DATABASE_URL: 'postgresql://database.invalid/arcanos',
+    REDIS_URL: 'redis://redis.invalid:6379',
     ...overrides,
   };
 }
@@ -151,6 +154,95 @@ describe('Railway readiness activation verifier', () => {
     }), EXPECTED_IDENTITY)).toThrow('RAILWAY_WEB_READINESS_TARGET_MISSING');
   });
 
+  it.each([
+    ['DATABASE_URL', undefined],
+    ['DATABASE_URL', ''],
+    ['DATABASE_URL', 'undefined'],
+    ['DATABASE_URL', 42],
+    ['REDIS_URL', undefined],
+    ['REDIS_URL', '   '],
+    ['REDIS_URL', 'null'],
+  ])('rejects missing production web dependency configuration for %s', async (name, value) => {
+    const variables = buildVariables({ [name]: value });
+    if (value === undefined) {
+      delete variables[name];
+    }
+    const fetchImpl = jest.fn();
+
+    await expect(verifyReadinessActivation({
+      variables,
+      expectedIdentity: EXPECTED_IDENTITY,
+      fetchImpl,
+      requestTimeoutMs: 500,
+    })).rejects.toThrow('RAILWAY_WEB_DEPENDENCY_CONFIGURATION_MISSING');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an incomplete discrete database configuration before requesting readiness', async () => {
+    const variables = buildVariables({
+      DATABASE_URL: undefined,
+      PGUSER: 'arcanos',
+      PGPASSWORD: 'test-password',
+      PGHOST: 'postgres.railway.internal',
+      PGPORT: '5432',
+    });
+    delete variables.DATABASE_URL;
+    const fetchImpl = jest.fn();
+
+    await expect(verifyReadinessActivation({
+      variables,
+      expectedIdentity: EXPECTED_IDENTITY,
+      fetchImpl,
+      requestTimeoutMs: 500,
+    })).rejects.toThrow('RAILWAY_WEB_DEPENDENCY_CONFIGURATION_MISSING');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined],
+    ['test'],
+    ['development'],
+    [' production '],
+  ])('rejects a non-production web runtime environment before requesting readiness: %s', async (nodeEnv) => {
+    const variables = buildVariables({ NODE_ENV: nodeEnv });
+    if (nodeEnv === undefined) {
+      delete variables.NODE_ENV;
+    }
+    const fetchImpl = jest.fn();
+
+    await expect(verifyReadinessActivation({
+      variables,
+      expectedIdentity: EXPECTED_IDENTITY,
+      fetchImpl,
+      requestTimeoutMs: 500,
+    })).rejects.toThrow('RAILWAY_WEB_RUNTIME_ENVIRONMENT_INVALID');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'REDISHOST',
+    'REDIS_HOST',
+  ])('accepts the runtime-supported discrete database and %s configuration', (redisHostName) => {
+    const variables = buildVariables({
+      DATABASE_URL: undefined,
+      REDIS_URL: undefined,
+      PGUSER: 'arcanos',
+      PGPASSWORD: 'test-password',
+      PGHOST: 'postgres.railway.internal',
+      PGPORT: '5432',
+      PGDATABASE: 'railway',
+      [redisHostName]: 'redis.railway.internal',
+    });
+    delete variables.DATABASE_URL;
+    delete variables.REDIS_URL;
+
+    expect(resolveReadinessTarget(variables, EXPECTED_IDENTITY)).toEqual({
+      mode: 'direct',
+      role: 'web',
+      url: 'https://arcanos-production.up.railway.app/readyz',
+    });
+  });
+
   it('rejects Railway identity drift before making a request', async () => {
     const fetchImpl = jest.fn();
 
@@ -183,6 +275,16 @@ describe('Railway readiness activation verifier', () => {
     [204, webReadyResponse()],
     [200, { ready: true, status: 'healthy', checks: [{ name: 'lookalike', healthy: true }] }],
     [200, webReadyResponse({ ready: false })],
+    [200, webReadyResponse({
+      checks: webReadyResponse().checks.map(check => (
+        check.name === 'database' ? { ...check, healthy: false } : check
+      )),
+    })],
+    [200, webReadyResponse({
+      checks: webReadyResponse().checks.map(check => (
+        check.name === 'redis' ? { ...check, healthy: false } : check
+      )),
+    })],
     [200, '{not-json'],
   ])('rejects weak readiness evidence with status %s', async (status, body) => {
     await expect(verifyReadinessActivation({

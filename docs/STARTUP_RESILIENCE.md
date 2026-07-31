@@ -28,12 +28,17 @@ dependency state and are retried in-process.
 | `STARTING` | Bound | Initializing | `200` | `503` |
 | `DEGRADED` | Bound | Unavailable | `200` | `503` |
 | `READY` | Bound | Connected and verified | `200` | `200` |
+| Production web runtime initialized without configured database or Redis | Bound | Unconfigured | `200` | `503` |
 
 Liveness responses contain only sanitized lifecycle metadata. Root-backend
 readiness aggregates OpenAI, database, process-local Redis lifecycle, and
 startup checks; it does not create a Redis probe client or issue a Redis
 command. Both `GET` and `HEAD /readyz` are credential-free and return
 `Cache-Control: no-store` on `200` and `503`; `HEAD` has no response body.
+When `NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, readiness requires
+both database and Redis configuration as well as connectivity. Missing
+configuration uses the same bounded dependency-unavailable projection as an
+outage; liveness and diagnostic endpoints remain available.
 
 The `GET /readyz` check projection allowlists `name`, `healthy`, `duration`,
 and fixed public `code`/`error` values for failures. Only the Redis check may
@@ -90,10 +95,11 @@ fallback, a non-empty malformed `REDIS_URL` remains explicitly configured but
 degraded with `REDIS_CONFIGURATION_INVALID`; it is never silently treated as
 an optional, unconfigured dependency.
 
-Redis is optional in configurations where no Redis endpoint is present. In
-that case the Redis lifecycle reaches ready in unconfigured mode and does not
-open a client. Production configuration validation remains responsible for
-requiring the intended service reference.
+Redis is optional in local, test, development, and non-web configurations where
+no Redis endpoint is present. In that case the Redis lifecycle reaches ready in
+unconfigured mode and does not open a client. Production web `/readyz` adds the
+configuration requirement without opening a probe client or terminating the
+listener.
 
 ## Telemetry and runtime behavior
 

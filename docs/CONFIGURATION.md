@@ -486,8 +486,13 @@ validates but discards target-controlled message text and generates a local
 
 If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
 
-The tracked Railway deployment gate is `/readyz` for both roles. Web readiness
-requires its critical configured dependencies and completed startup. Worker
+The tracked Railway deployment gate is `/readyz` for both roles. When
+`NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, web readiness requires
+configured and connected PostgreSQL and Redis dependencies plus completed
+startup. Database configuration may use `DATABASE_URL` or the complete
+`PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
+`REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
+`503` without changing `/healthz` liveness or `/health` diagnostics. Worker
 readiness remains `503` until database/autonomy/module-registry bootstrap and
 every configured consumer slot's dispatcher-start write have completed, and a
 supported OpenAI key setting is present. Provider readiness here means
