@@ -3254,19 +3254,19 @@ to the held deployment.
 
 #### A. PR #1412 and production-promotion blockers/dependencies
 
-1. **A.1 is committed and published in draft PR #1413; unmerged and
+1. **A.1 is committed and published in open PR #1413; unmerged and
    undeployed.** The draft restores `no-store` across every generic job status,
    result, cancellation, validation, authorization, and repository-error
    response, with success, failure, and live-harness assertions. The
    dedicated-worktree and integrated-publication evidence is recorded below.
-2. **A.2 is committed and published in draft PR #1413; unmerged and
+2. **A.2 is committed and published in open PR #1413; unmerged and
    undeployed.** The deploy workflow now commit-pins its Actions, pins and
    verifies the Railway CLI artifact, and step-scopes a dedicated project-token
    secret. The dedicated-worktree, integrated-publication, and still-external
    prerequisite evidence is recorded below. Checkout-credential persistence
    and a feasible protected-environment topology remain separate
    defense-in-depth/settings decisions.
-3. **A.3 is committed and published in draft PR #1413; unmerged and
+3. **A.3 is committed and published in open PR #1413; unmerged and
    undeployed.** Tracked config, web and worker launchers, job-runner bootstrap,
    validator, exact-deployment workflow evidence, bounded live harnesses, and
    runbooks now agree on role-aware `/readyz` activation, timeout `300`, and a
@@ -3687,9 +3687,10 @@ isolated corrections were integrated in the clean
 2. `26161339` — `ci(railway): contain deploy supply chain`
 3. `5e4fb282` — `fix(railway): gate role readiness and drain`
 
-The branch was pushed and opened as draft PR
+The branch was pushed and initially opened as draft PR
 [#1413](https://github.com/pbjustin/Arcanos/pull/1413), titled
-“Harden job cache policy and Railway promotion gates.” Before this report and
+“Harden job cache policy and Railway promotion gates”; it is now non-draft.
+Before this report and
 its documentation index were added, the clean integration diff contained
 exactly those three commits and 32 implementation, configuration, test, and
 maintained-documentation files, with no dependency-manifest or lockfile change.
@@ -3857,7 +3858,7 @@ final reviews found no launch blocker.
 The implementation was committed in the isolated worktree as
 `dad3c00c836b72188843eb5cbebf82e2c7f30875` and cherry-picked onto the draft
 PR branch as `8bbda94bb038a80612ed3adb7d44246ae893f9d2`, following audit-checkpoint
-commit `a2813f2c`. The authorized push advanced draft PR #1413 to that exact
+commit `a2813f2c`. The authorized push advanced the then-draft PR #1413 to that exact
 head. GitHub deployment record `5685309669` then reached success for the
 existing transient `Arcanos / Arcanos-pr-1413` environment. Exact commit
 statuses identified successful web deployment
@@ -3972,6 +3973,47 @@ mergeable at published head `a0c43cf6`; this supersedes earlier current-state
 wording that still called the PR a draft. Other historical “draft-publication”
 statements remain accurate for the time they describe. The remaining
 merge-readiness findings are handled as separate corrections.
+
+### PR #1413 merge-readiness remediation — reusable preview import/effect containment
+
+Adversarial review of the reusable native-PR application-import gate found
+that future otherwise-trusted changes could bypass its original syntactic
+checks through capability aliases, mutable process carriers, rewritten spawn
+inputs, transitive helper or constant drift, pre-validation import edges,
+duplicated listeners, or output/readiness helper substitution. The issue was
+in the reusable repository guard rather than an observed credential escape in
+the current contained application.
+
+The isolated correction now starts the compiled contained child directly,
+without a loader hook, under the exact nine-name child environment. It
+conservatively tracks mutable environment and argument values through aliases,
+defaults, parameters, carriers, calls, iteration targets, legacy mutators, and
+callback mutation paths. Reviewed process calls, listener owners, spawn inputs,
+repository-root derivation, environment construction, readiness sources, and
+output mirroring have exact declaration, occurrence, binding, argument, or
+normalized AST/body contracts. The complete launcher and contained-child entry
+files are additionally pinned by comment/format-normalized semantic digests,
+so a semantic edit anywhere in either privileged entry requires a reviewed
+digest and focused mutation-test update; harmless comments, formatting, and
+line-ending changes remain accepted.
+
+Final Node `v20.19.0` validation **passed**: the import-boundary suite passed
+265/265; the three focused Jest suites passed 344/344; the credential-free,
+no-network E2E harness passed 7/7; the real import/effect checker, focused
+ESLint, `npm run type-check`, `npm run build`, `npm run validate:railway`,
+`npm run docs:check` (311/311), and `git diff --check` all passed. Full
+`npm run lint` passed with 0 errors and 76 pre-existing warnings. A local
+loader-free compiled child first rejected the intentionally invalid
+`HOST=127.0.0.1` setup and then passed with the exact `HOST=0.0.0.0` contract:
+`/readyz` returned `200`, `Cache-Control: no-store`, `ready: true`, and the
+expected contained mode before clean shutdown.
+
+Three independent final reviewers reported no blockers. Their additional
+adversarial matrices rejected all 42 tested child-import/listener,
+launcher-root, and worker-output mutations while accepting seven harmless
+comment/format controls. No live Railway, production, deployment, variable,
+provider, database, memory, release, or other external state was read or
+mutated in this correction.
 
 ## Commit appendix
 

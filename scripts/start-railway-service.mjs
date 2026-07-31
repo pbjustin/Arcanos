@@ -555,8 +555,6 @@ export function buildNativePrApplicationSpawnSpec(env = process.env) {
   return {
     args: [
       '--max-old-space-size=512',
-      '--import',
-      './scripts/register-esm-loader.mjs',
       'dist/start-native-pr-preview.js'
     ],
     command: process.execPath,

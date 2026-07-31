@@ -127,8 +127,36 @@ Railway-native PR deployments use the tracked
 credential-empty, deny-by-default synthetic generic-jobs application; the worker
 role stays passive. `npm run check:native-pr-preview-imports` is part of both
 type-check and build, and `npm run test:native-pr-preview-e2e` validates the
-credential-free runner without network access. Both required PR workflows run
-that contract suite. A live run requires both
+credential-free runner without network access. The import gate fails closed on
+ambient namespace and capability aliases, dynamic/rest access, listener
+aliasing, unreviewed external bindings, and launcher declaration or spawn-spec
+drift. The contained child does not register runtime loader hooks; mutable
+`process` state and effectful members are limited to exact reviewed uses.
+Whole-object aliases, defaults, helper parameters, carriers, returns, spreads,
+constructors, tagged templates, storage, and exports fail closed. Reviewed
+whole-object calls are bound to unique top-level declarations, containing
+functions, exact occurrence counts, and full-call AST digests. Direct mutable
+environment/argument receiver calls are limited to reviewed non-mutating
+methods; `valueOf` results remain tainted, including argument-bearing and
+tagged calls, and writes to scalar `process` members fail closed. Sensitive
+helpers cannot be aliased, carried, reassigned, or exported; the child
+validator also permits the global `Object` identifier only as the exact
+reviewed `Object.keys` receiver. The child entry has no runtime local static
+import or re-export and performs its one exact application import only after
+environment validation. The analysis is intentionally conservative across
+repeated identifier spellings, so an unrelated shadow can require renaming
+rather than weakening the gate. The launcher resolver, immutable
+launcher-relative repository root, credential-empty child-environment builder,
+contained child resolver/listener, passive and worker listener owners, worker
+output source/mirror, and sole normal-runtime environment-spread helper are
+pinned by exact structure or comment/format-normalized body digests; an
+intentional semantic edit must update the focused mutation tests and reviewed
+contract in the same PR. The complete launcher and contained-child entry files
+are also pinned by comment/format-normalized semantic digests: every semantic
+edit anywhere in either privileged entry requires the reviewed digest and
+focused contract tests to be updated in the same PR, while comment-only and
+format-only edits do not. Both
+required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
