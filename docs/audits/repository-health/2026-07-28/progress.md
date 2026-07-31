@@ -3854,14 +3854,31 @@ proof, fail-open import growth, pre-entry loader coverage, CI wiring, Date
 serialization, and launcher effect drift were reproduced and corrected. The
 final reviews found no launch blocker.
 
-The contained implementation has not yet been pushed or exercised at the
-Railway edge in this checkpoint. The next authorized steps are to commit it,
-integrate it into draft PR #1413, wait for both native preview roles to report
-the new exact head, perform the runner's no-network dry run from the clean
-published tree, and then execute its 50 credential-free live requests. No
-Railway setting, variable, service, environment, database, provider, memory,
-production, deployment, or release mutation occurred during this
-implementation checkpoint.
+The implementation was committed in the isolated worktree as
+`dad3c00c836b72188843eb5cbebf82e2c7f30875` and cherry-picked onto the draft
+PR branch as `8bbda94bb038a80612ed3adb7d44246ae893f9d2`, following audit-checkpoint
+commit `a2813f2c`. The authorized push advanced draft PR #1413 to that exact
+head. GitHub deployment record `5685309669` then reached success for the
+existing transient `Arcanos / Arcanos-pr-1413` environment. Exact commit
+statuses identified successful web deployment
+`53de1f9a-4846-4632-826c-f2001c45106a` and successful worker deployment
+`dd4038c4-450e-4824-bb22-28c2a1a8b388`.
+
+Both public readiness responses subsequently identified PR `1413` and source
+commit `8bbda94bb038a80612ed3adb7d44246ae893f9d2`; the web reported
+`native-pr-application-e2e-v1` with imported, sealed fixtures and protected
+effects disabled, while the worker reported the expected passive role. The
+runner's clean-exact-head no-network dry run **passed** with 50 requests
+planned and zero attempted. The explicitly enabled live run then **passed
+50/50** credential-free requests with 10,648 aggregate response bytes and
+stable initial/final identity hashes. Its attestation remained honestly scoped
+to served public identity and did not claim Railway control-plane provenance.
+
+No Railway setting, variable, service, environment, database, provider,
+memory, production, release, or manual deploy/redeploy control was mutated.
+The authorized PR push triggered the repository's already-configured native
+preview automation; all subsequent Railway and GitHub operations were
+read-only observation plus the bounded public E2E requests.
 
 ## Commit appendix
 
