@@ -3752,6 +3752,117 @@ dedicated token-scope check, exact effective web/worker readback of `/readyz`,
 promotion gates. Correction A.4 and every unrelated audit item remain
 untouched.
 
+#### Native PR contained-application E2E checkpoint — 2026-07-30
+
+At the user's explicit request, the already-published draft PR was first
+validated against its existing Railway-native preview without changing
+Railway configuration. GitHub deployment evidence attributed both public
+preview roles to exact PR head
+`6c3cb52b21a3541357acea5265cbf4401e5de9f0` in environment
+`Arcanos-pr-1413` (`73e443b6-a678-4315-8016-97f76825a432`):
+
+- web deployment `1ba334c8-c6d6-4a54-9762-02ae6bf9db06` at
+  `https://arcanos-v2-arcanos-pr-1413.up.railway.app`; and
+- worker deployment `9132708a-d083-455d-9aa5-28365b1e24be` at
+  `https://arcanos-worker-arcanos-pr-1413.up.railway.app`.
+
+Twelve credential-free, read-only requests across liveness, readiness, and
+unlisted routes **passed** with the expected passive-role bodies, status codes,
+and `Cache-Control: no-store`. No redirect, cookie, authentication challenge,
+or response-body disclosure was observed. This evidence proved the public
+services serving that commit; it did not assert Railway control-plane
+provenance beyond the independently checked GitHub deployment record.
+
+That passive result was intentionally insufficient for application behavior.
+The follow-up implementation therefore remains an isolated native-PR preview
+slice in
+`C:\pbjustin\Arcanos-pr-preview-application-containment` on
+`codex/pr-preview-application-containment`, based on the exact published head
+above. It replaces the native PR start override with the versioned
+`--pr-preview-app-safe-v1` contract:
+
+- the web launcher validates exact native-PR project, environment, service,
+  deployment, source-commit, role, and public-domain identity before selecting
+  a fixed `dist/start-native-pr-preview.js` child;
+- that child receives an exact nine-name Linux environment rather than the
+  parent environment, so database, Redis, provider, Railway, GPT-access,
+  package-hook, proxy, and `NODE_OPTIONS` values do not cross the process
+  boundary;
+- the worker role remains passive;
+- the contained web application imports the real generic status/result/cancel
+  handlers through a dependency-injected router, but supplies only sealed,
+  stateless synthetic fixtures and exposes an exact route/method allowlist;
+- credential carriers, query strings, encoded paths, streams, bodies on reads,
+  chunked/non-JSON/oversized cancellation bodies, and every unlisted
+  application, memory, provider, diagnostic, control-plane, and worker route
+  fail before routing;
+- production `src/routes/jobs.ts` remains a thin adapter over the same router
+  with the real repository, confirmation, actor, capability, metrics, and
+  sleep dependencies; the pre-existing production route suite characterizes
+  behavior parity;
+- the build-blocking import checker uses an exact reviewed graph, binding-level
+  high-impact built-in imports, listener ownership, a fixed preview-spawn AST
+  contract, and mutation tests for unexpected modules, global network/timer
+  effects, full-environment child spawn, extra listeners, and unsafe preview
+  entrypoints; and
+- the reusable E2E runner is dry-run by default, requires paired
+  `--execute --allow-network`, exact independently confirmed PR hosts, the
+  canonical repository root and `origin`, a completely clean tracked/untracked
+  worktree, and local HEAD equality. It sends no credentials, follows no
+  redirects, makes at most 50 sequential requests, and enforces request,
+  response, aggregate-byte, and total-time limits.
+
+The fixed 50-case contract covers both roles' health/readiness, denied surface,
+exact success and failure payloads, pending and terminal states, result
+lookups, repeat stateless cancellation, malformed-ID validation on status,
+result, and cancellation, missing and unauthorized jobs, authorization
+unavailability, lookup and cancellation repository failures, exact media
+types, bounded-response declarations, `no-store`, and initial/final identity
+stability. Readiness states the honest boundary:
+`trustScope: trusted-pr-accidental-effects`,
+`protectsMaliciousPr: false`, and
+`requiresPlatformSecretIsolationForUntrustedCode: true`. Repository code cannot
+protect inherited secrets from malicious PR code that can alter its own
+launcher; fork or otherwise untrusted previews still require Railway/provider
+secret isolation before code starts.
+
+Final local validation used Node `v20.19.0`:
+
+- focused production/preview Jest: **passed**, 5 suites and 131 tests;
+- reusable runner contract: **passed**, 7 tests, with no network;
+- `npm run type-check`: **passed**, including all boundary checks, the exact
+  preview import gate, shared packages, and root TypeScript;
+- `npm run lint`: **passed with 0 errors and 76 pre-existing warnings**;
+- `npm run build`: **passed** after final hardening, including packages,
+  workers, root TypeScript, aliases, and assets;
+- `npm run validate:railway`: **passed** without Railway access or mutation;
+- `npm run docs:check`: **passed**, 311 checks, and generated indexes were
+  current;
+- `git diff --check` and Node syntax checks: **passed**;
+- an actual child-process sentinel tripwire plus six local launcher HTTP checks:
+  **passed**; no parent secret or `NODE_OPTIONS` value reached or appeared from
+  the contained child; and
+- the complete runner against the actual compiled contained Express app and
+  passive worker on loopback: **passed**, 50/50 checks and 10,648 aggregate
+  response bytes.
+
+Three adversarial reviewers examined the deployment/production adapter, the
+runner/attestation contract, and import/runtime containment. Their findings
+about partial payload checks, missing result/cancel validation, response media
+types, dirty-worktree false attestation, ambient Git overrides, mutable fixture
+proof, fail-open import growth, pre-entry loader coverage, CI wiring, Date
+serialization, and launcher effect drift were reproduced and corrected. The
+final reviews found no launch blocker.
+
+The contained implementation has not yet been pushed or exercised at the
+Railway edge in this checkpoint. The next authorized steps are to commit it,
+integrate it into draft PR #1413, wait for both native preview roles to report
+the new exact head, perform the runner's no-network dry run from the clean
+published tree, and then execute its 50 credential-free live requests. No
+Railway setting, variable, service, environment, database, provider, memory,
+production, deployment, or release mutation occurred during this
+implementation checkpoint.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits
