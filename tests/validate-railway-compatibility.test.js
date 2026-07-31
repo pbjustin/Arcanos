@@ -39,7 +39,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
       },
       pr: {
         deploy: {
-          startCommand: 'node scripts/start-railway-service.mjs --pr-preview-safe',
+          startCommand: 'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1',
           preDeployCommand: null,
           healthcheckPath: '/readyz',
           healthcheckTimeout: 300,
@@ -89,7 +89,7 @@ describe('validate-railway-compatibility', () => {
           },
           pr: {
             deploy: {
-              startCommand: 'node scripts/start-railway-service.mjs --pr-preview-safe',
+              startCommand: 'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1',
               preDeployCommand: null,
               healthcheckPath: '/readyz',
               healthcheckTimeout: 300,
@@ -273,7 +273,7 @@ describe('validate-railway-compatibility', () => {
 
     expect(weakenedPreviewErrors).toEqual(expect.arrayContaining([
       expect.stringContaining('environments.pr.variables'),
-      expect.stringContaining('--pr-preview-safe'),
+      expect.stringContaining('--pr-preview-app-safe-v1'),
       expect.stringContaining('preDeployCommand'),
       expect.stringContaining('healthcheckPath'),
       expect.stringContaining('cronSchedule'),

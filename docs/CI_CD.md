@@ -122,6 +122,24 @@ explicit disposable database; neither command should inherit an ambient
 Deployment workflows are repository-specific; verify current trigger and required
 secrets in each workflow file before enabling auto-deploy.
 
+Railway-native PR deployments use the tracked
+`--pr-preview-app-safe-v1` launcher contract. The web role imports only a
+credential-empty, deny-by-default synthetic generic-jobs application; the worker
+role stays passive. `npm run check:native-pr-preview-imports` is part of both
+type-check and build, and `npm run test:native-pr-preview-e2e` validates the
+credential-free runner without network access. Both required PR workflows run
+that contract suite. A live run requires both
+`--execute --allow-network`, exact independently confirmed web/worker preview
+origins, the PR number, a clean tracked/untracked worktree, the canonical
+Arcanos `origin`, and the local HEAD commit. Its result is served-identity
+evidence, not Railway control-plane provenance.
+
+This repository containment is for trusted same-repository PRs and accidental
+effects only. A PR controls its own launcher code, so untrusted or forked code
+must not receive inherited production secrets or copied production data.
+Provider-level secret isolation or a trusted-source deployment policy is a
+prerequisite for those previews.
+
 The Railway worker-diagnostics cleanup workflow is a trusted
 `pull_request_target: closed` boundary. It never checks out pull-request code.
 It resolves only the exact

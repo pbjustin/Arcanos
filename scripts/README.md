@@ -27,11 +27,30 @@ Common scripts:
 - `npm run docs:links` (bounded external-link audit; network access required)
 - `./scripts/doc_audit.sh` (Bash compatibility wrapper)
 - `node scripts/validate-railway-compatibility.js`
+- `npm run check:native-pr-preview-imports` (build-blocking contained-preview import graph)
+- `npm run test:native-pr-preview-e2e` (mocked, no-network runner contract)
+- `npm run railway:probe:native-pr -- --pr-number <N> --commit-sha <LOCAL_HEAD_SHA> --web-base-url "https://<confirmed-web-pr-host>.up.railway.app" --worker-base-url "https://<confirmed-worker-pr-host>.up.railway.app"` (dry run)
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
 - `npm run validate:gpt:job-hardening` (safe dry run; reports `executed: false` and never reads ambient URL variables)
 - `ARCANOS_GPT_ACCESS_TOKEN=<token> npm run validate:gpt:job-hardening -- --execute --allow-network --target preview --base-url "https://<service>-arcanos-pr-<N>.up.railway.app" --environment "Arcanos-pr-<N>" --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
 
 The live GPT job hardening validator requires both network flags and an explicit target triple. Preview environment and hostname PR numbers must match. Production additionally requires `--target production`, `--environment production`, `--allow-production`, and the repository-known production origin; never use that opt-in during PR validation.
+
+The native PR probe is credential-free and never reads target URLs, tokens, or
+fixture IDs from environment variables. Its dry run validates local HEAD, exact
+HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
+untracked worktree, limits, and the fixed 50-request plan without network access.
+For an authorized live preview, append both `--execute --allow-network`. The
+runner performs sequential no-redirect requests with per-response, aggregate,
+request-count, and time limits; it sends no bearer, capability, confirmation,
+cookie, or session credential. Its attestation scope is the identity served by
+the two pre-confirmed public hosts. It does not independently prove Railway
+project/service/deployment ownership.
+
+Native contained application previews protect trusted PRs against accidental
+effects. They do not protect inherited secrets from malicious PR code; untrusted
+or forked PR execution requires Railway-side secret isolation or trusted-source
+gating before deployment.
 
 `npm run job-events:timeline` invokes the shared database initializer before
 querying. It can apply built-in schema DDL and write an initialization

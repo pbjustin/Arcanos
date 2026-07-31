@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import {
   buildWorkerReadinessResponse,
   createPassivePrPreviewServer,
@@ -11,7 +12,10 @@ import {
   recordWorkerExit,
   recordWorkerOutput,
   assertPreviewIsolationOrThrow,
+  buildNativePrApplicationChildEnvironment,
+  buildNativePrApplicationSpawnSpec,
   resolvePassivePrPreviewOrThrow,
+  resolveNativePrPreviewOrThrow,
   resolveCliBridgeListenerConfig,
   resolveHealthListenerConfig,
   waitForExit,
@@ -22,6 +26,144 @@ import {
 } from '../src/workers/jobRunnerRuntime.js';
 
 describe('start-railway-service launcher helpers', () => {
+  const nativeApplicationPreviewEnvironment = {
+    ARCANOS_PROCESS_KIND: 'web',
+    PORT: '8080',
+    RAILWAY_PROJECT_ID: '7faf44e5-519c-4e73-8d7a-da9f389e6187',
+    RAILWAY_ENVIRONMENT_ID: '73e443b6-a678-4315-8016-97f76825a432',
+    RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1413',
+    RAILWAY_SERVICE_ID: 'c4ade025-3f13-4fca-9309-5d0dd81396fe',
+    RAILWAY_DEPLOYMENT_ID: '1ba334c8-c6d6-4a54-9762-02ae6bf9db06',
+    RAILWAY_GIT_COMMIT_SHA: 'a'.repeat(40),
+    RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-arcanos-pr-1413.up.railway.app',
+  };
+
+  it('selects the contained application only for the native PR web role', () => {
+    expect(resolveNativePrPreviewOrThrow(
+      ['--pr-preview-app-safe-v1'],
+      nativeApplicationPreviewEnvironment,
+    )).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      processKind: 'web',
+      prNumber: 1413,
+      runtimeMode: 'application',
+      sourceCommit: 'a'.repeat(40),
+    });
+
+    expect(resolveNativePrPreviewOrThrow(
+      ['--pr-preview-app-safe-v1'],
+      {
+        ...nativeApplicationPreviewEnvironment,
+        ARCANOS_PROCESS_KIND: 'worker',
+        RAILWAY_SERVICE_ID: '1765befb-b805-4051-9af9-28634e986886',
+        RAILWAY_PUBLIC_DOMAIN: 'arcanos-worker-arcanos-pr-1413.up.railway.app',
+      },
+    )).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      processKind: 'worker',
+      prNumber: 1413,
+      runtimeMode: 'passive',
+      sourceCommit: 'a'.repeat(40),
+    });
+
+    expect(resolveNativePrPreviewOrThrow(
+      ['--pr-preview-app-safe-v1'],
+      {
+        ...nativeApplicationPreviewEnvironment,
+        RAILWAY_ENVIRONMENT_NAME: 'pr-c1a651-1411',
+        RAILWAY_PUBLIC_DOMAIN:
+          'arcanos-v2-pr-c1a651-1411.up.railway.app',
+      },
+    )).toMatchObject({
+      prNumber: 1411,
+      runtimeMode: 'application',
+    });
+  });
+
+  it.each([
+    [{ RAILWAY_ENVIRONMENT_NAME: 'production' }, 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    [{ RAILWAY_SERVICE_ID: '' }, 'PREVIEW_APPLICATION_SERVICE_REQUIRED'],
+    [{ RAILWAY_DEPLOYMENT_ID: '' }, 'PREVIEW_APPLICATION_DEPLOYMENT_REQUIRED'],
+    [{ RAILWAY_GIT_COMMIT_SHA: '' }, 'PREVIEW_APPLICATION_SOURCE_COMMIT_REQUIRED'],
+    [{ RAILWAY_GIT_COMMIT_SHA: 'not-a-commit' }, 'PREVIEW_APPLICATION_SOURCE_COMMIT_INVALID'],
+    [{ RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-production.up.railway.app' }, 'PREVIEW_APPLICATION_DOMAIN_MISMATCH'],
+  ])('fails closed before application import for invalid native PR identity %#', (override, expectedCode) => {
+    expect(() => resolveNativePrPreviewOrThrow(
+      ['--pr-preview-app-safe-v1'],
+      { ...nativeApplicationPreviewEnvironment, ...override },
+    )).toThrow(expectedCode);
+  });
+
+  it('constructs an exact child allowlist without inherited credentials or code injection settings', () => {
+    const childEnvironment = buildNativePrApplicationChildEnvironment({
+      ...nativeApplicationPreviewEnvironment,
+      DATABASE_URL: 'postgresql://sentinel.invalid/db',
+      REDIS_URL: 'redis://sentinel.invalid',
+      OPENAI_API_KEY: 'test-openai-key',
+      RAILWAY_TOKEN: 'sentinel-railway-token',
+      NODE_OPTIONS: '--import=./sentinel-loader.mjs',
+      ARCANOS_GPT_ACCESS_TOKEN: 'sentinel-gpt-token',
+    });
+
+    expect(childEnvironment).toEqual({
+      ARCANOS_NATIVE_PR_APPLICATION_PREVIEW: 'v1',
+      ARCANOS_PREVIEW_PR_NUMBER: '1413',
+      ARCANOS_PREVIEW_SOURCE_COMMIT: nativeApplicationPreviewEnvironment.RAILWAY_GIT_COMMIT_SHA,
+      ARCANOS_PROCESS_KIND: 'web',
+      HOST: '0.0.0.0',
+      NODE_ENV: 'production',
+      PORT: '8080',
+      RUN_WORKERS: 'false',
+      TZ: 'UTC',
+    });
+
+    const spawnSpec = buildNativePrApplicationSpawnSpec({
+      ...nativeApplicationPreviewEnvironment,
+      DATABASE_URL: 'postgresql://sentinel.invalid/db',
+      NODE_OPTIONS: '--import=./sentinel-loader.mjs',
+    });
+    expect(spawnSpec).toEqual({
+      args: [
+        '--max-old-space-size=512',
+        '--import',
+        './scripts/register-esm-loader.mjs',
+        'dist/start-native-pr-preview.js',
+      ],
+      command: process.execPath,
+      cwd: expect.any(String),
+      env: childEnvironment,
+    });
+    expect(path.resolve(spawnSpec.cwd)).toBe(path.resolve(process.cwd()));
+
+    const childProbe = spawnSync(
+      spawnSpec.command,
+      [
+        '-e',
+        'process.stdout.write(JSON.stringify(process.env))',
+      ],
+      {
+        cwd: spawnSpec.cwd,
+        encoding: 'utf8',
+        env: spawnSpec.env,
+      }
+    );
+    expect(childProbe.status).toBe(0);
+    const observedChildEnvironment = JSON.parse(childProbe.stdout);
+    expect(observedChildEnvironment).toMatchObject(childEnvironment);
+    for (const forbiddenName of [
+      'ARCANOS_GPT_ACCESS_TOKEN',
+      'DATABASE_URL',
+      'NODE_OPTIONS',
+      'OPENAI_API_KEY',
+      'RAILWAY_TOKEN',
+      'REDIS_URL',
+    ]) {
+      expect(observedChildEnvironment[forbiddenName]).toBeUndefined();
+    }
+  });
+
   it('recognizes only the exact supported Railway native PR preview contracts', () => {
     expect(resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
       RAILWAY_PROJECT_ID: 'project-id',

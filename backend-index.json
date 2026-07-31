@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-30T00:43:05.871Z",
+  "generatedAt": "2026-07-31T01:25:24.123Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -770,6 +770,12 @@
           "relativePath": "src/modules/arcanos-gaming.ts"
         },
         {
+          "relativePath": "src/nativePrPreviewApplication.ts"
+        },
+        {
+          "relativePath": "src/nativePrPreviewContract.ts"
+        },
+        {
           "relativePath": "src/platform/index.ts"
         },
         {
@@ -1206,6 +1212,9 @@
         },
         {
           "relativePath": "src/routes/dispatch.ts"
+        },
+        {
+          "relativePath": "src/routes/genericJobsRouter.ts"
         },
         {
           "relativePath": "src/routes/gpt-access-local-agent.ts"
@@ -2522,6 +2531,9 @@
           "relativePath": "src/shared/webFetcher.ts"
         },
         {
+          "relativePath": "src/start-native-pr-preview.ts"
+        },
+        {
           "relativePath": "src/start-server.ts"
         },
         {
@@ -3725,6 +3737,9 @@
         },
         {
           "relativePath": "tests/modules.productivity-legacy-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/native-pr-preview-application.test.ts"
         },
         {
           "relativePath": "tests/naturalLanguageMemory.session.test.ts"

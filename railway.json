@@ -28,7 +28,7 @@
   "environments": {
     "pr": {
       "deploy": {
-        "startCommand": "node scripts/start-railway-service.mjs --pr-preview-safe",
+        "startCommand": "node scripts/start-railway-service.mjs --pr-preview-app-safe-v1",
         "preDeployCommand": null,
         "healthcheckPath": "/readyz",
         "healthcheckTimeout": 300,
