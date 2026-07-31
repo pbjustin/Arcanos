@@ -51,8 +51,18 @@ describe('production web readiness policy', () => {
     const createClientMock = jest.fn(() => {
       throw new Error('Readiness must not create a Redis client.');
     });
+    const getDatabaseStatusMock = jest.fn(() => ({
+      connected: true,
+      hasPool: true,
+      error: null
+    }));
+    const getDatabaseSchemaReadyMock = jest.fn(() => true);
     jest.unstable_mockModule('redis', () => ({
       createClient: createClientMock
+    }));
+    jest.unstable_mockModule('@core/db/index.js', () => ({
+      getStatus: getDatabaseStatusMock,
+      isDatabaseSchemaReady: getDatabaseSchemaReadyMock
     }));
     jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
       RedisLifecycleManager: class {},
@@ -196,5 +206,42 @@ describe('production web readiness policy', () => {
     expect(readinessHead.headers['cache-control']).toBe('no-store');
     expect(readinessHead.text).toBeUndefined();
     expect(createClientMock).not.toHaveBeenCalled();
+    expect(getDatabaseStatusMock).not.toHaveBeenCalled();
+    expect(getDatabaseSchemaReadyMock).not.toHaveBeenCalled();
+
+    process.env.PGUSER = 'arcanos';
+    process.env.PGPASSWORD = 'test-password';
+    process.env.PGHOST = 'postgres.railway.internal';
+    process.env.PGPORT = '5432';
+    process.env.PGDATABASE = 'railway';
+
+    const discreteDatabaseDiagnostics = await request(app).get('/health');
+
+    expect(discreteDatabaseDiagnostics.status).toBe(200);
+    expect(discreteDatabaseDiagnostics.body.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'database',
+        healthy: true,
+        metadata: expect.objectContaining({ configured: false })
+      })
+    ]));
+    expect(getDatabaseStatusMock).not.toHaveBeenCalled();
+    expect(getDatabaseSchemaReadyMock).not.toHaveBeenCalled();
+
+    const discreteDatabaseReadiness = await request(app).get('/readyz');
+
+    expect(discreteDatabaseReadiness.status).toBe(503);
+    expect(discreteDatabaseReadiness.body.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'database',
+        healthy: true
+      }),
+      expect.objectContaining({
+        name: 'redis',
+        healthy: false
+      })
+    ]));
+    expect(getDatabaseStatusMock).toHaveBeenCalled();
+    expect(getDatabaseSchemaReadyMock).toHaveBeenCalled();
   });
 });

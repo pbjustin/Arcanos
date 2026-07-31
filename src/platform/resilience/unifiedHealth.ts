@@ -519,9 +519,12 @@ export async function checkDatabaseHealth(
   options: DependencyHealthOptions = {}
 ): Promise<HealthCheckResult> {
   const config = getConfig();
+  const requireConfigured = options.requireConfigured === true;
+  const databaseConfigured = requireConfigured
+    ? (config.databaseConfigured ?? Boolean(config.databaseUrl))
+    : Boolean(config.databaseUrl);
   
-  if (!config.databaseUrl) {
-    const requireConfigured = options.requireConfigured === true;
+  if (!databaseConfigured) {
     return {
       healthy: !requireConfigured,
       name: 'database',
@@ -556,7 +559,7 @@ export async function checkDatabaseHealth(
         configured: true,
         connected: dbStatus.connected,
         ...(requireSchemaReady ? { schemaReady } : {}),
-        url: config.databaseUrl ? 'configured' : 'not configured'
+        url: config.databaseUrl ? 'configured' : 'synthesized'
       }
     };
   } catch (error) {

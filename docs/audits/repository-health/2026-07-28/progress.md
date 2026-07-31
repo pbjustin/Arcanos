@@ -4099,6 +4099,46 @@ schema-specific diff. The separately reported complete-`PG*` recognition and
 tracked Redis-variable validation gaps remain isolated follow-up concerns, so
 this checkpoint does not yet declare the PR merge-ready.
 
+#### Published-head follow-up — complete discrete PostgreSQL configuration
+
+Regression review found that the database client accepts either `DATABASE_URL`
+or the complete `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set, while
+unified configuration and dependency readiness recognized only
+`DATABASE_URL`. Successful normal startup already synthesizes `DATABASE_URL`
+from the complete discrete set, so this was a robustness and contract-alignment
+gap rather than a demonstrated activation false-green; direct readiness and
+configuration callers could nevertheless reject a supported configuration.
+
+Characterization first proved that production readiness left the database
+check unhealthy with a complete discrete set and that production
+configuration validation retained its missing-database warning. The isolated
+correction records database configuration when either a normalized
+`DATABASE_URL` or all five normalized discrete values are present. Blank and
+literal `null`/`undefined` values remain absent, every incomplete discrete set
+still fails closed, and production readiness still requires connection and
+schema health after configuration admission. No credential values are added
+to health responses or logs.
+
+Pre-commit adversarial review caught that applying the composite predicate to
+optional diagnostics could newly expose a failed discrete-PostgreSQL client's
+raw error through `/health`. A post-`PG*` `/health` characterization reproduced
+the scope regression. The final correction therefore admits the composite
+configuration only when a caller requires configuration; optional `/health`
+preserves its prior URL-only admission and does not query database or schema
+status in that case. The adversarial re-review returned a final go verdict
+with no remaining finding.
+
+Node `v20.19.0` validation **passed**: the focused configuration,
+production-readiness, and unified-health matrix passed 3 suites and 32 tests;
+`npm run type-check` passed, including boundary checks and shared-package
+builds; full `npm run lint` passed with 0 errors and 76 pre-existing warnings;
+`npm run docs:check` passed all 311 documentation checks with current generated
+indexes; exact post-review focused ESLint and `npm run type-check` re-passed;
+and `git diff --check` passed. Independent release and adversarial re-review
+found no blocker in the discrete-PostgreSQL diff. The tracked Redis-variable
+validation gap remains a separate follow-up, so this checkpoint does not yet
+declare the PR merge-ready.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits

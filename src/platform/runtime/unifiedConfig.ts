@@ -43,6 +43,7 @@ export interface AppConfig {
 
   // Database Configuration
   databaseUrl: string | undefined;
+  databaseConfigured: boolean;
   pgHost: string;
 
   // Worker Configuration
@@ -131,6 +132,37 @@ export interface WorkerRuntimeModeResolution {
 
 const SHOULD_BYPASS_WORKER_RUNTIME_CACHE = getEnv('NODE_ENV') === 'test';
 let cachedWorkerRuntimeMode: WorkerRuntimeModeResolution | null = null;
+const DISCRETE_DATABASE_ENV_NAMES = [
+  'PGUSER',
+  'PGPASSWORD',
+  'PGHOST',
+  'PGPORT',
+  'PGDATABASE'
+] as const;
+
+function hasConfiguredEnvironmentValue(value: string | undefined): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length > 0
+    && normalized !== 'undefined'
+    && normalized !== 'null'
+  );
+}
+
+function hasConfiguredDatabaseConnection(
+  databaseUrl: string | undefined
+): boolean {
+  return (
+    hasConfiguredEnvironmentValue(databaseUrl)
+    || DISCRETE_DATABASE_ENV_NAMES.every(name => (
+      hasConfiguredEnvironmentValue(getEnv(name))
+    ))
+  );
+}
 
 function parseSelfImproveEnvironment(raw: string | undefined): AppConfig['selfImproveEnvironment'] {
   const normalized = (raw || '').trim().toLowerCase();
@@ -307,6 +339,7 @@ export function isWorkerRuntimeSuppressedForServiceRole(
  */
 export function getConfig(): AppConfig {
   const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const databaseUrl = getEnvVar('DATABASE_URL');
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),
@@ -344,7 +377,8 @@ export function getConfig(): AppConfig {
     openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration
-    databaseUrl: getEnvVar('DATABASE_URL'),
+    databaseUrl,
+    databaseConfigured: hasConfiguredDatabaseConnection(databaseUrl),
     pgHost: getEnv('PGHOST', 'localhost'),
 
     // Worker Configuration
@@ -433,7 +467,7 @@ export function validateConfig(): ValidationResult {
     warnings.push('OPENAI_API_KEY not set - AI endpoints will return mock responses');
   }
 
-  if (config.isProduction && !config.databaseUrl) {
+  if (config.isProduction && !config.databaseConfigured) {
     warnings.push('DATABASE_URL not set - database features will be unavailable');
   }
 
