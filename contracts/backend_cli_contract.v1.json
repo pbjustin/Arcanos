@@ -107,7 +107,7 @@
     },
     "/jobs/{id}": {
       "method": "GET",
-      "tsRouteFile": "src/routes/jobs.ts",
+      "tsRouteFile": "src/routes/genericJobsRouter.ts",
       "pythonClientMethods": [
         "request_gpt_job_status",
         "request_job_status"
@@ -129,7 +129,7 @@
     },
     "/jobs/{id}/result": {
       "method": "GET",
-      "tsRouteFile": "src/routes/jobs.ts",
+      "tsRouteFile": "src/routes/genericJobsRouter.ts",
       "pythonClientMethods": [
         "request_gpt_job_result",
         "request_job_result"

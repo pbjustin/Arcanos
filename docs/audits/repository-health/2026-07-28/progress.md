@@ -3880,6 +3880,18 @@ The authorized PR push triggered the repository's already-configured native
 preview automation; all subsequent Railway and GitHub operations were
 read-only observation plus the bounded public E2E requests.
 
+Publication exposed one stale source-ownership pointer in the authoritative
+GitHub `Lint & Type Check` job: `validate:backend-cli:contract` correctly
+rejected the two generic job endpoints because
+`contracts/backend_cli_contract.v1.json` still named the now-thin production
+adapter instead of `src/routes/genericJobsRouter.ts`, where the route literals
+and reusable handlers now live. A focused ownership test first reproduced that
+failure. Updating only those two `tsRouteFile` fields made the focused test and
+the real contract validator pass; the Python offline validator, sync check,
+CEF/routing boundaries, type-check, native-preview import gate, and lint also
+passed. This follow-up changes source ownership metadata and tests only; it
+does not change a public contract shape or runtime behavior.
+
 ## Commit appendix
 
 ### PR #1408 — 17 commits
