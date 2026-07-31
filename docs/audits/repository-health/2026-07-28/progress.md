@@ -4011,9 +4011,13 @@ expected contained mode before clean shutdown.
 Three independent final reviewers reported no blockers. Their additional
 adversarial matrices rejected all 42 tested child-import/listener,
 launcher-root, and worker-output mutations while accepting seven harmless
-comment/format controls. No live Railway, production, deployment, variable,
-provider, database, memory, release, or other external state was read or
-mutated in this correction.
+comment/format controls. The implementation and audit checkpoint were
+committed as `0b35bb16cc89f23a7c1b889213ad9240fc1cc5c5` and published to
+PR #1413. That authorized GitHub push started the repository's existing
+transient native-preview automation; no Railway control-plane command, manual
+deployment/redeployment, setting or variable change, production action,
+provider, database, memory, or release mutation was performed. Subsequent
+GitHub review/thread and check observations were read-only.
 
 ## Commit appendix
 
