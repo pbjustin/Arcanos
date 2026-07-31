@@ -139,4 +139,16 @@ describe('Phase 2E production parser seam', () => {
     expect(structuredLogs).not.toContain('JSON.parse');
     expect(structuredLogs).not.toContain('node_modules');
   });
+
+  it('keeps malformed generic job cancellation JSON no-store before route dispatch', async () => {
+    const sentinel = 'private-job-cancellation-parser-sentinel';
+    const response = await request(createApp())
+      .post('/jobs/44444444-4444-4444-8444-444444444444/cancel')
+      .set('Content-Type', 'application/json')
+      .send(`{"reason":"${sentinel}"`);
+
+    expect(response.status).toBe(400);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(JSON.stringify(response.body)).not.toContain(sentinel);
+  });
 });

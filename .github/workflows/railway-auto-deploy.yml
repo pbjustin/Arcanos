@@ -29,11 +29,18 @@ permissions:
 jobs:
   rollout-policy:
     name: Coordinated DAG writer rollout policy
+    if: >-
+      (github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == github.event.repository.default_branch
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     outputs:
       should_deploy: ${{ steps.rollout_guard.outputs.should_deploy }}
       hold_active: ${{ steps.rollout_guard.outputs.hold_active }}
@@ -42,13 +49,13 @@ jobs:
 
     steps:
       - name: Checkout rollout policy
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          ref: ${{ env.DEPLOY_REF }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20.19.0'
 
@@ -65,44 +72,105 @@ jobs:
     needs: rollout-policy
     if: >-
       needs.rollout-policy.outputs.should_deploy == 'true'
-      && (github.event_name == 'workflow_dispatch'
-      || (github.event.workflow_run.conclusion == 'success'
-      && github.event.workflow_run.head_branch == 'main'))
+      && ((github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == github.event.repository.default_branch
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.head_sha == github.sha))
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     concurrency:
       group: railway-auto-deploy-production
-      cancel-in-progress: true
+      cancel-in-progress: false
     env:
-      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      DEPLOY_REF: ${{ github.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ env.DEPLOY_REF }}
 
+      - name: Verify deploy ref is current default tip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          live_default_record="$(
+            git ls-remote --exit-code --refs origin "refs/heads/${DEFAULT_BRANCH}"
+          )"
+          if [[ "${live_default_record}" == *$'\n'* ]]; then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_AMBIGUOUS"
+            exit 1
+          fi
+
+          IFS=$'\t' read -r live_default_sha live_default_ref live_default_extra <<< "${live_default_record}"
+          if (
+            [[ ! "${live_default_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+            [ "${live_default_ref}" != "refs/heads/${DEFAULT_BRANCH}" ] ||
+            [ -n "${live_default_extra:-}" ]
+          ); then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_INVALID"
+            exit 1
+          fi
+          if [ "${live_default_sha}" != "${DEPLOY_REF}" ]; then
+            echo "RAILWAY_DEPLOY_REF_NOT_CURRENT_DEFAULT_TIP"
+            exit 1
+          fi
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20.19.0'
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - name: Install verified Railway CLI
+        shell: bash
+        env:
+          RAILWAY_CLI_VERSION: '4.30.2'
+          RAILWAY_CLI_ARCHIVE_SHA256: e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000
+        run: |
+          set -euo pipefail
+
+          archive="${RUNNER_TEMP}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          bin_dir="${RUNNER_TEMP}/railway-cli-${RAILWAY_CLI_VERSION}"
+          download_url="https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --tlsv1.2 \
+            "${download_url}" \
+            --output "${archive}"
+
+          printf '%s  %s\n' "${RAILWAY_CLI_ARCHIVE_SHA256}" "${archive}" |
+            sha256sum --check --strict
+
+          mkdir -p "${bin_dir}"
+          tar -xzf "${archive}" -C "${bin_dir}"
+          chmod 0755 "${bin_dir}/railway"
+
+          actual_version="$("${bin_dir}/railway" --version)"
+          expected_version="railway ${RAILWAY_CLI_VERSION}"
+          test "${actual_version}" = "${expected_version}"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
 
       - name: Validate deploy configuration
         id: deploy_config
+        env:
+          RAILWAY_PROJECT_TOKEN_CONFIGURED: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN != '' }}
         run: |
           set -euo pipefail
           missing_fields=()
 
           # //audit Assumption: repo-connected Railway deploys may already handle production promotion; failure risk: this workflow fails red on every main push when optional GitHub-side Railway credentials are intentionally unset; expected invariant: workflow_run auto-deploy only executes when all Railway credentials are configured; handling strategy: record missing configuration and skip auto mode cleanly while preserving manual-dispatch failures.
-          if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            missing_fields+=("RAILWAY_TOKEN")
+          if [ "${RAILWAY_PROJECT_TOKEN_CONFIGURED}" != "true" ]; then
+            missing_fields+=("RAILWAY_PRODUCTION_PROJECT_TOKEN")
           fi
 
           # //audit Assumption: project and service identifiers are required only for GitHub-driven Railway CLI deploys; failure risk: redundant automation path blocks branch protection even though Railway repo deploy already shipped; expected invariant: missing identifiers are surfaced explicitly; handling strategy: aggregate missing identifiers into one decision output.
@@ -146,63 +214,75 @@ jobs:
 
       - name: Verify Railway deploy access
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
           # //audit Assumption: GitHub Actions may use a project-scoped Railway token instead of a user-scoped account token; failure risk: `railway whoami` rejects valid deploy credentials and blocks automated deploys; expected invariant: the configured token can read project-scoped service state before deploy; handling strategy: probe service variables with the target service/environment pair.
-          railway variable list \
-            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+          node scripts/railway-auto-deploy-observer.mjs variables \
             --service "${RAILWAY_SERVICE_ID}" \
-            --json > /dev/null
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" > /dev/null
 
       - name: Deploy to Railway
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
-          railway up \
-            --ci \
+          deployment_id="$(node scripts/railway-auto-deploy-observer.mjs enqueue \
             --project "${RAILWAY_PROJECT_ID}" \
-            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
             --service "${RAILWAY_SERVICE_ID}" \
-            --message "GitHub auto deploy ${GITHUB_SHA}"
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --deploy-ref "${DEPLOY_REF}")"
+
+          echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+          echo "Queued exact Railway deployment ${deployment_id} for ${DEPLOY_REF}."
 
       - name: Wait for deployment success
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
-          final_status=""
-          deployment_id=""
-          for attempt in $(seq 1 30); do
-            status_json="$(railway service status --service "${RAILWAY_SERVICE_ID}" --environment "${RAILWAY_ENVIRONMENT_NAME}" --json)"
-            final_status="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.status || 'UNKNOWN'));" "${status_json}")"
-            deployment_id="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.deploymentId || 'unknown'));" "${status_json}")"
+          node scripts/railway-auto-deploy-observer.mjs wait \
+            --deployment-id "${DEPLOYMENT_ID}" \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
 
-            echo "attempt=${attempt} deployment_id=${deployment_id} status=${final_status}"
+          # Railway reports SUCCESS only after the configured deployment
+          # healthcheck returns 200. Static validation binds that platform
+          # observation to the repository-owned /readyz and 60-second drain
+          # contract. Public roles receive an immediate bounded direct request;
+          # a private worker retains the platform activation result rather than
+          # acquiring a public domain solely for this check.
+          env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js
 
-            if [ "${final_status}" = "SUCCESS" ]; then
-              echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
-              break
-            fi
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${DEPLOYMENT_ID}" \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
 
-            if [ "${final_status}" = "FAILED" ] || [ "${final_status}" = "REMOVED" ] || [ "${final_status}" = "CRASHED" ] || [ "${final_status}" = "STOPPED" ]; then
-              echo "Deployment reached terminal failure state: ${final_status}"
-              exit 1
-            fi
+          node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN node scripts/verify-railway-readiness-activation.mjs
 
-            sleep 10
-          done
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${DEPLOYMENT_ID}" \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
 
-          if [ "${final_status}" != "SUCCESS" ]; then
-            echo "Deployment did not reach SUCCESS within polling window."
-            exit 1
-          fi
+          echo "deployment_id=${DEPLOYMENT_ID} status=SUCCESS tracked_healthcheck=/readyz tracked_drainingSeconds=60 effective_settings_readback=required"
 
       - name: Post-deploy watchdog/budget regression check
         if: steps.deploy_config.outputs.should_deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
-          npm run railway:alert:timeouts -- \
+          node scripts/check-railway-timeout-regressions.js \
             --since 15m \
             --lines 500 \
             --fail-on-budget-abort \

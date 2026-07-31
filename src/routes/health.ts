@@ -17,7 +17,9 @@ import {
   createHealthCheck,
   checkOpenAIHealth,
   checkDatabaseHealth,
+  checkDatabaseReadiness,
   checkRedisHealth,
+  checkRedisReadiness,
   checkStartupReadiness,
   checkApplicationHealth
 } from "@platform/resilience/unifiedHealth.js";
@@ -33,13 +35,14 @@ router.get('/healthz', buildLivenessEndpoint());
 
 /**
  * GET /readyz - Readiness probe
- * Returns 200 if the application is ready to serve traffic (OpenAI, DB, and Redis available when configured)
+ * Returns 200 if the application is ready to serve traffic. Production web
+ * activation requires configured and available database and Redis backends.
  * Railway-compatible readiness check
  */
 router.get('/readyz', buildReadinessEndpoint([
   createHealthCheck('openai', checkOpenAIHealth, true),
-  createHealthCheck('database', checkDatabaseHealth, true),
-  createHealthCheck('redis', checkRedisHealth, true),
+  createHealthCheck('database', checkDatabaseReadiness, true),
+  createHealthCheck('redis', checkRedisReadiness, true),
   createHealthCheck('startup', checkStartupReadiness, true)
 ]));
 

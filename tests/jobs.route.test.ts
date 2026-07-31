@@ -13,6 +13,11 @@ const requestJobCancellationMock = jest.fn();
 const sleepMock = jest.fn();
 class MockJobRepositoryUnavailableError extends Error {}
 
+const originalAllowAllGpts = process.env.ALLOW_ALL_GPTS;
+const originalTrustedGptIds = process.env.TRUSTED_GPT_IDS;
+process.env.ALLOW_ALL_GPTS = 'false';
+process.env.TRUSTED_GPT_IDS = '';
+
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   getJobById: async (...args: unknown[]) => {
     const job = await getJobByIdMock(...args);
@@ -107,6 +112,14 @@ function postWithJobReadToken(
     );
 }
 
+function expectNoStore(
+  ...responses: Array<{ headers: Record<string, string | undefined> }>
+): void {
+  for (const response of responses) {
+    expect(response.headers['cache-control']).toContain('no-store');
+  }
+}
+
 describe('/jobs routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -132,6 +145,16 @@ describe('/jobs routes', () => {
       delete process.env.OPENAI_ACTION_SHARED_SECRET;
     } else {
       process.env.OPENAI_ACTION_SHARED_SECRET = originalBridgeSecret;
+    }
+    if (originalAllowAllGpts === undefined) {
+      delete process.env.ALLOW_ALL_GPTS;
+    } else {
+      process.env.ALLOW_ALL_GPTS = originalAllowAllGpts;
+    }
+    if (originalTrustedGptIds === undefined) {
+      delete process.env.TRUSTED_GPT_IDS;
+    } else {
+      process.env.TRUSTED_GPT_IDS = originalTrustedGptIds;
     }
   });
 
@@ -163,6 +186,7 @@ describe('/jobs routes', () => {
     );
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
@@ -197,6 +221,7 @@ describe('/jobs routes', () => {
     );
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       jobId: MISSING_JOB_ID,
@@ -242,6 +267,7 @@ describe('/jobs routes', () => {
     );
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       jobId: RUNNING_JOB_ID,
@@ -265,6 +291,7 @@ describe('/jobs routes', () => {
     const response = await request(buildApp()).get('/jobs/%20/result');
 
     expect(response.status).toBe(400);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
@@ -273,10 +300,14 @@ describe('/jobs routes', () => {
     expect(getJobByIdMock).not.toHaveBeenCalled();
   });
 
-  it('rejects malformed job identifiers before hitting the repository', async () => {
-    const response = await request(buildApp()).get('/jobs/abc123/result');
+  it.each([
+    ['status', '/jobs/abc123'],
+    ['result', '/jobs/abc123/result'],
+  ])('rejects malformed job identifiers on the %s route before hitting the repository', async (_routeKind, path) => {
+    const response = await request(buildApp()).get(path);
 
     expect(response.status).toBe(400);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       error: 'JOB_ID_INVALID'
@@ -297,6 +328,7 @@ describe('/jobs routes', () => {
         issueJobReadCapability(MISSING_JOB_ID, JOB_READ_SECRET)
       );
 
+    expectNoStore(missingStatus, malformedResult, crossJobStream);
     expect(missingStatus.status).toBe(404);
     expect(missingStatus.body).toEqual({ error: 'JOB_NOT_FOUND' });
     expect(malformedResult.status).toBe(200);
@@ -316,6 +348,12 @@ describe('/jobs routes', () => {
   it('fails capability-protected routes closed before repository access when configuration is unavailable', async () => {
     delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 
+    const statusResponse = await request(buildApp())
+      .get(`/jobs/${COMPLETED_JOB_ID}`)
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(COMPLETED_JOB_ID, JOB_READ_SECRET)
+      );
     const resultResponse = await request(buildApp())
       .get(`/jobs/${COMPLETED_JOB_ID}/result`)
       .set(
@@ -331,6 +369,12 @@ describe('/jobs routes', () => {
         issueJobReadCapability(COMPLETED_JOB_ID, JOB_READ_SECRET)
       );
 
+    expectNoStore(statusResponse, resultResponse, cancellationResponse);
+    expect(statusResponse.status).toBe(503);
+    expect(statusResponse.body).toEqual({
+      error: 'JOB_READ_AUTH_UNAVAILABLE',
+      message: 'Async job reads are temporarily unavailable.',
+    });
     expect(resultResponse.status).toBe(503);
     expect(resultResponse.body).toEqual({
       error: 'JOB_READ_AUTH_UNAVAILABLE',
@@ -357,6 +401,7 @@ describe('/jobs routes', () => {
         issueJobReadCapability(MISSING_JOB_ID, JOB_READ_SECRET)
       );
 
+    expectNoStore(missingCapability, crossJobCapability);
     expect(missingCapability.status).toBe(404);
     expect(missingCapability.body).toEqual({ error: 'JOB_NOT_FOUND' });
     expect(missingCapability.body).toEqual({ error: 'JOB_NOT_FOUND' });
@@ -372,10 +417,26 @@ describe('/jobs routes', () => {
       .set('x-confirmed', 'yes');
 
     expect(response.status).toBe(400);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       error: 'JOB_ID_INVALID'
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps confirmation failures no-store before cancellation repository access', async () => {
+    const response = await postWithJobReadToken(
+      `/jobs/${RUNNING_JOB_ID}/cancel`,
+      RUNNING_JOB_ID
+    );
+
+    expect(response.status).toBe(403);
+    expectNoStore(response);
+    expect(response.body).toMatchObject({
+      code: 'CONFIRMATION_REQUIRED'
     });
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(requestJobCancellationMock).not.toHaveBeenCalled();
@@ -404,6 +465,7 @@ describe('/jobs routes', () => {
     );
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       id: EXPIRED_JOB_ID,
@@ -681,6 +743,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(401);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
@@ -718,6 +781,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(403);
+    expectNoStore(response);
     expect(response.body).toEqual({
       ok: false,
       error: {
@@ -769,6 +833,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
@@ -836,6 +901,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this bridge job' });
 
     expect(response.status).toBe(200);
+    expectNoStore(response);
     expect(response.body).toMatchObject({
       ok: true,
       id: BRIDGE_JOB_ID,
@@ -887,6 +953,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(202);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
@@ -937,6 +1004,7 @@ describe('/jobs routes', () => {
       .set('x-session-id', 'caller-selected-session');
 
     expect(response.status).toBe(409);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
@@ -978,6 +1046,7 @@ describe('/jobs routes', () => {
       );
 
       expect(response.status).toBe(200);
+      expectNoStore(response);
       expect(response.headers['x-response-bytes']).toBeTruthy();
       expect(response.headers['x-response-truncated']).toBe('true');
       expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(2048);
@@ -1017,6 +1086,7 @@ describe('/jobs routes', () => {
       : await getWithJobReadToken(path, RUNNING_JOB_ID);
 
     expect(response.status).toBe(503);
+    expectNoStore(response);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       error: 'JOB_REPOSITORY_UNAVAILABLE'
@@ -1052,6 +1122,7 @@ describe('/jobs routes', () => {
       .set('x-session-id', 'caller-selected-session');
 
     expect(response.status).toBe(503);
+    expectNoStore(response);
     expect(response.body).toEqual({
       error: 'JOB_REPOSITORY_UNAVAILABLE'
     });

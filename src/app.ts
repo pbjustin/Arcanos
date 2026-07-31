@@ -7,7 +7,7 @@ import { initOpenAI } from "@core/init-openai.js";
 import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
 import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
-import { requestContext, sendNotFound } from '@shared/http/index.js';
+import { noStoreResponse, requestContext, sendNotFound } from '@shared/http/index.js';
 import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
@@ -122,6 +122,7 @@ export function createApp(): Express {
   });
 
   app.use(requestContext);
+  app.use('/jobs', noStoreResponse);
   // CORS answers preflight requests without calling later middleware. Establish
   // the exact CEF trust boundary first so OPTIONS cannot bypass authentication;
   // authorized, supported requests continue through the shared CORS policy.

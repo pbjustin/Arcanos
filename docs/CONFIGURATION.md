@@ -40,6 +40,9 @@ cp .env.example .env
 | `ARCANOS_GPT_ACCESS_PRINCIPAL_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled principal for capabilities such as `ARCANOS:PRODUCTIVITY`; never source it from action payloads. |
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
+| `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
+| `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
+| `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
 | `RUN_WORKERS` | No | `true` (non-test) | Local/direct in-process worker toggle. The explicit API startup lifecycle boots it when enabled; importing worker configuration never starts execution. Railway role selection remains authoritative when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
 | `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path. |
@@ -482,6 +485,36 @@ validates but discards target-controlled message text and generates a local
 | `ARCANOS_PROCESS_KIND=worker` | Railway worker service | Starts `dist/workers/jobRunner.js` and exposes a minimal health server on `/health`, `/healthz`, and `/readyz`. |
 
 If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
+
+The tracked Railway deployment gate is `/readyz` for both roles. When
+`NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, web readiness requires
+configured and connected PostgreSQL and Redis dependencies plus completed
+startup; PostgreSQL schema initialization must also be complete. Database
+configuration may use `DATABASE_URL` or the complete
+`PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
+`REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
+`503` without changing `/healthz` liveness or `/health` diagnostics. Worker
+readiness remains `503` until database/autonomy/module-registry bootstrap and
+every configured consumer slot's dispatcher-start write have completed, and a
+supported OpenAI key setting is present. Provider readiness here means
+configured, not a paid upstream request; provider outages are handled by the
+worker's bounded probe/backoff and job-deferral path after activation. The
+worker child reports this transition through an exact, newline-delimited
+launcher protocol that is independent of `LOG_LEVEL`; arbitrary log text and
+filtered info logs cannot satisfy or suppress the readiness transition.
+
+`railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
+repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its
+shorter 10-second internal graceful-shutdown deadline; the worker cooperatively
+aborts provider work, leaves active claims for lease recovery, and flushes
+runtime snapshots before exit. The 60-second platform ceiling prevents
+Railway's zero-second default from bypassing those handlers, but it is not a
+claim that stalled external I/O has been measured in production.
+The local Railway validator rejects
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` in `deploy.env` or any tracked
+environment-variable map so the provider-native string setting cannot compete
+with the canonical numeric field. Independently configured live service
+variables still require effective-setting readback before promotion.
 
 ### GPT access and Trinity async execution
 Protected GPT Action and operator calls must use `/gpt-access/*` for backend operations. Do not ask `/gpt/:gptId` to inspect runtime state, read queue/job results, call MCP tools, or proxy protected backend actions.

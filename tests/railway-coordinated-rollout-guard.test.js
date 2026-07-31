@@ -14,6 +14,35 @@ const workflowText = readFileSync(
   'utf8',
 ).replaceAll('\r\n', '\n');
 const workflow = yaml.load(workflowText);
+const TRUSTED_PROMOTION_PROVENANCE =
+  "(github.event_name == 'workflow_dispatch' "
+  + "&& github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) "
+  + "|| (github.event_name == 'workflow_run' "
+  + "&& github.event.workflow_run.event == 'push' "
+  + "&& github.event.workflow_run.conclusion == 'success' "
+  + '&& github.event.workflow_run.head_branch == github.event.repository.default_branch '
+  + '&& github.event.workflow_run.head_repository.full_name == github.repository '
+  + '&& github.event.workflow_run.head_sha == github.sha)';
+
+function isTrustedPromotionProvenance({
+  eventName,
+  ref,
+  repository = 'pbjustin/Arcanos',
+  defaultBranch = 'main',
+  workflowRun,
+}) {
+  if (eventName === 'workflow_dispatch') {
+    return ref === `refs/heads/${defaultBranch}`;
+  }
+  return Boolean(
+    eventName === 'workflow_run'
+    && workflowRun?.event === 'push'
+    && workflowRun?.conclusion === 'success'
+    && workflowRun?.headBranch === defaultBranch
+    && workflowRun?.headRepository === repository
+    && workflowRun?.headSha === workflowRun?.workflowSha
+  );
+}
 
 function job(name) {
   const value = workflow.jobs?.[name];
@@ -157,8 +186,141 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     );
     expect(deployJob.concurrency).toEqual({
       group: 'railway-auto-deploy-production',
-      'cancel-in-progress': true,
+      'cancel-in-progress': false,
     });
+    expect(deployJob['timeout-minutes']).toBe(60);
+  });
+
+  it('runs privileged promotion only from trusted default-branch push provenance', () => {
+    const policyJob = job('rollout-policy');
+    const deployJob = job('deploy-production');
+    const policyCheckout = namedStep(
+      'rollout-policy',
+      'Checkout rollout policy',
+    );
+
+    expect(policyJob.env?.DEPLOY_REF).toBeUndefined();
+    expect(policyCheckout.with).toEqual({
+      ref: '${{ github.sha }}',
+      'persist-credentials': false,
+    });
+    expect(policyJob.if).toBe(TRUSTED_PROMOTION_PROVENANCE);
+    expect(deployJob.env?.DEPLOY_REF).toBe('${{ github.sha }}');
+    expect(deployJob.if).toBe(
+      "needs.rollout-policy.outputs.should_deploy == 'true' "
+      + `&& (${TRUSTED_PROMOTION_PROVENANCE})`,
+    );
+  });
+
+  it('rechecks the live default tip after concurrency and before Railway credentials', () => {
+    const deployJob = job('deploy-production');
+    const steps = deployJob.steps ?? [];
+    const liveTipStep = namedStep(
+      'deploy-production',
+      'Verify deploy ref is current default tip',
+    );
+    const firstRailwayTokenIndex = steps.findIndex(step =>
+      Object.hasOwn(step.env ?? {}, 'RAILWAY_TOKEN'),
+    );
+    const liveTipIndex = steps.indexOf(liveTipStep);
+
+    expect(deployJob.env?.DEFAULT_BRANCH).toBe(
+      '${{ github.event.repository.default_branch }}',
+    );
+    expect(liveTipIndex).toBeGreaterThan(
+      steps.findIndex(step => step.name === 'Checkout'),
+    );
+    expect(firstRailwayTokenIndex).toBeGreaterThan(liveTipIndex);
+    expect(liveTipStep.env).toBeUndefined();
+    expect(liveTipStep.run).toContain(
+      'git ls-remote --exit-code --refs origin "refs/heads/${DEFAULT_BRANCH}"',
+    );
+    expect(liveTipStep.run).toContain(
+      'if [ "${live_default_sha}" != "${DEPLOY_REF}" ]; then',
+    );
+    expect(liveTipStep.run).toContain(
+      'RAILWAY_DEPLOY_REF_NOT_CURRENT_DEFAULT_TIP',
+    );
+  });
+
+  it.each([
+    [
+      'fork source branch named main',
+      {
+        eventName: 'workflow_run',
+        workflowRun: {
+          event: 'pull_request',
+          conclusion: 'success',
+          headBranch: 'main',
+          headRepository: 'attacker/Arcanos',
+          headSha: 'a',
+          workflowSha: 'b',
+        },
+      },
+      false,
+    ],
+    [
+      'same-repository non-push run',
+      {
+        eventName: 'workflow_run',
+        workflowRun: {
+          event: 'pull_request',
+          conclusion: 'success',
+          headBranch: 'main',
+          headRepository: 'pbjustin/Arcanos',
+          headSha: 'a',
+          workflowSha: 'a',
+        },
+      },
+      false,
+    ],
+    [
+      'stale main push',
+      {
+        eventName: 'workflow_run',
+        workflowRun: {
+          event: 'push',
+          conclusion: 'success',
+          headBranch: 'main',
+          headRepository: 'pbjustin/Arcanos',
+          headSha: 'a',
+          workflowSha: 'b',
+        },
+      },
+      false,
+    ],
+    [
+      'current main push',
+      {
+        eventName: 'workflow_run',
+        workflowRun: {
+          event: 'push',
+          conclusion: 'success',
+          headBranch: 'main',
+          headRepository: 'pbjustin/Arcanos',
+          headSha: 'a',
+          workflowSha: 'a',
+        },
+      },
+      true,
+    ],
+    [
+      'manual feature branch',
+      { eventName: 'workflow_dispatch', ref: 'refs/heads/feature' },
+      false,
+    ],
+    [
+      'manual tag',
+      { eventName: 'workflow_dispatch', ref: 'refs/tags/v1.0.0' },
+      false,
+    ],
+    [
+      'manual default branch',
+      { eventName: 'workflow_dispatch', ref: 'refs/heads/main' },
+      true,
+    ],
+  ])('classifies %s provenance', (_name, event, expected) => {
+    expect(isTrustedPromotionProvenance(event)).toBe(expected);
   });
 
   it('keeps the conditional manual input and every Railway action behind the job gate', () => {

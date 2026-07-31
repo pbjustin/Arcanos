@@ -115,7 +115,7 @@ The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.
 
 ## Troubleshooting
 - `docs/TROUBLESHOOTING.md`
-- Health checks: `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /health` (dependency summary and Railway probe)
+- Health checks: `GET /healthz` (liveness), `GET /health` (dependency diagnostics), and `GET /readyz` (readiness and the Railway deployment activation probe)
 
 ## References
 - API catalog: `docs/API.md`
@@ -143,7 +143,7 @@ Canonical boundaries / pipelines:
 ## Health endpoints
 - Liveness: `GET /healthz`
 - Readiness: `GET /readyz` (critical dependencies ready for traffic)
-- Detailed dependency view: `GET /health` (Railway healthcheck path; includes Redis and other dependency state)
+- Detailed dependency view: `GET /health` (not the Railway activation gate)
 
 ## Custom GPT bridge smoke test
 Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth,

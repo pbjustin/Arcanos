@@ -35,7 +35,9 @@ curl -X POST http://localhost:3000/gpt/arcanos-core -H "Content-Type: applicatio
 ```
 
 ## Deploy (Railway)
-No API path changes are required for Railway. Validate liveness (`/healthz`), readiness (`/readyz`), the Railway health probe (`/health`), and confirmation-gated flows after deploy.
+No API path changes are required for Railway. Validate liveness (`/healthz`),
+dependency diagnostics (`/health`), the Railway activation probe (`/readyz`),
+and confirmation-gated flows after deploy.
 
 ## Troubleshooting
 - 403 with `CONFIRMATION_REQUIRED`: use confirmation flow headers.
@@ -248,7 +250,8 @@ fixed summary, worker booleans and file count, normalized aggregate memory
 values, and a timestamp. Internal worker filenames, checked filesystem paths,
 free-form reasons, and exception messages are not returned. Unexpected
 failures are logged only by stable code and error type with request
-correlation. Railway deployments should continue probing `GET /health`.
+correlation. Railway deployments use `GET /readyz` for activation; retain
+`GET /healthz` for liveness and `GET /health` for dependency diagnostics.
 
 ### Core AI interaction
 - `POST /gpt/:gptId` (canonical GPT writing plane)

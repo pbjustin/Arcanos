@@ -30,6 +30,81 @@ export interface JobRunnerEntrypointRuntimeMode {
   reason: string;
 }
 
+export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
+
+export interface WorkerBootstrapReadyDestination {
+  write(chunk: string): unknown;
+}
+
+/**
+ * Emit the exact launcher-facing worker readiness protocol.
+ * Purpose: keep deployment activation independent from configurable log filtering.
+ * Inputs/outputs: writes one newline-terminated sentinel to stdout by default.
+ * Edge case behavior: write failures remain fatal so the worker cannot run without communicating readiness.
+ */
+export function emitWorkerBootstrapReadySignal(
+  destination: WorkerBootstrapReadyDestination = process.stdout
+): void {
+  destination.write(`${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+}
+
+/**
+ * Commit readiness only after every consumer slot is ready and no runtime has settled.
+ * Purpose: prevent ready-then-failed slots and final-readiness microtask ties from producing a false activation signal.
+ * Inputs/outputs: accepts paired readiness/runtime promises plus one synchronous commit callback.
+ * Edge case behavior: mismatched or empty slot sets fail closed; runtime rejection identity is preserved.
+ */
+export async function commitAllWorkerSlotsReadyOrThrow(
+  slotReadinessPromises: readonly Promise<void>[],
+  slotRuntimePromises: readonly Promise<void>[],
+  commitReadiness: () => void
+): Promise<void> {
+  if (
+    slotReadinessPromises.length === 0 ||
+    slotReadinessPromises.length !== slotRuntimePromises.length
+  ) {
+    throw new Error('WORKER_SLOT_READINESS_CONFIGURATION_INVALID');
+  }
+
+  let runtimeSettled = false;
+  let firstRuntimeSettlementError: unknown;
+  let rejectFirstRuntimeSettlement!: (reason?: unknown) => void;
+  const firstRuntimeSettlement = new Promise<never>((_resolve, reject) => {
+    rejectFirstRuntimeSettlement = reject;
+  });
+
+  const recordRuntimeSettlement = (error: unknown): void => {
+    if (runtimeSettled) {
+      return;
+    }
+
+    runtimeSettled = true;
+    firstRuntimeSettlementError = error;
+    rejectFirstRuntimeSettlement(error);
+  };
+
+  slotRuntimePromises.forEach((slotRuntimePromise, slotIndex) => {
+    void slotRuntimePromise.then(
+      () => recordRuntimeSettlement(
+        new Error(`WORKER_SLOT_RUNTIME_SETTLED_BEFORE_READINESS:slot=${slotIndex + 1}`)
+      ),
+      (error: unknown) => recordRuntimeSettlement(error)
+    );
+  });
+
+  await Promise.race([
+    Promise.all(slotReadinessPromises).then(() => undefined),
+    firstRuntimeSettlement
+  ]);
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  if (runtimeSettled) {
+    throw firstRuntimeSettlementError;
+  }
+
+  commitReadiness();
+}
+
 export interface NonOverlappingTaskSkipEvent {
   taskName: string;
   skippedCount: number;

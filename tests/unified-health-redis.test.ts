@@ -5,6 +5,17 @@ type RedisLifecycleSnapshot = import('../src/platform/runtime/redisLifecycle.js'
 type StartupLifecycleSnapshot = import('../src/platform/runtime/startupLifecycle.js').StartupLifecycleSnapshot;
 
 interface UnifiedHealthHarnessOptions {
+  config?: {
+    databaseUrl?: string;
+    isProduction?: boolean;
+    nodeEnv?: string;
+  };
+  databaseStatus?: {
+    connected: boolean;
+    error: string | null;
+  };
+  databaseSchemaReady?: boolean;
+  processKind?: 'web' | 'worker' | 'unknown';
   redisResolution?: {
     configured: boolean;
     source: 'REDIS_URL' | 'discrete' | 'none';
@@ -17,6 +28,8 @@ interface UnifiedHealthHarnessOptions {
 interface UnifiedHealthHarness {
   moduleUnderTest: UnifiedHealthModule;
   createClientMock: jest.Mock;
+  getDatabaseSchemaReadyMock: jest.Mock;
+  getDatabaseStatusMock: jest.Mock;
   getRedisLifecycleSnapshotMock: jest.Mock;
   getStartupLifecycleSnapshotMock: jest.Mock;
   sendTimestampedStatusMock: jest.Mock;
@@ -87,6 +100,15 @@ async function loadUnifiedHealthHarness(
   const createClientMock = jest.fn(() => {
     throw new Error('Health checks must not create Redis clients.');
   });
+  const getDatabaseStatusMock = jest.fn(() => (
+    options.databaseStatus ?? {
+      connected: true,
+      error: null
+    }
+  ));
+  const getDatabaseSchemaReadyMock = jest.fn(
+    () => options.databaseSchemaReady ?? true
+  );
   const getRedisLifecycleSnapshotMock = jest.fn(() => ({ ...redisLifecycle }));
   const getStartupLifecycleSnapshotMock = jest.fn(() => ({
     ...startupLifecycle,
@@ -144,12 +166,28 @@ async function loadUnifiedHealthHarness(
   jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
     isOpenAIAdapterInitialized: jest.fn(() => true)
   }));
+  jest.unstable_mockModule('@core/db/index.js', () => ({
+    getStatus: getDatabaseStatusMock,
+    isDatabaseSchemaReady: getDatabaseSchemaReadyMock
+  }));
   jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     getConfig: jest.fn(() => ({
-      databaseUrl: undefined,
-      nodeEnv: 'test',
+      databaseUrl: options.config?.databaseUrl,
+      nodeEnv: options.config?.nodeEnv ?? 'test',
+      isProduction: options.config?.isProduction ?? false,
       isRailway: false,
       railwayEnvironment: undefined
+    })),
+    getStableWorkerRuntimeMode: jest.fn(() => ({
+      requestedRunWorkers: options.processKind === 'worker',
+      resolvedRunWorkers: options.processKind === 'worker',
+      processKind: options.processKind ?? 'unknown',
+      railwayServiceName: null,
+      reason: options.processKind === 'web'
+        ? 'process_kind_web'
+        : options.processKind === 'worker'
+          ? 'process_kind_worker'
+          : 'requested'
     }))
   }));
   jest.unstable_mockModule('@platform/resilience/healthChecks.js', () => ({
@@ -165,6 +203,8 @@ async function loadUnifiedHealthHarness(
   return {
     moduleUnderTest,
     createClientMock,
+    getDatabaseSchemaReadyMock,
+    getDatabaseStatusMock,
     getRedisLifecycleSnapshotMock,
     getStartupLifecycleSnapshotMock,
     sendTimestampedStatusMock
@@ -307,6 +347,255 @@ describe('platform/resilience/unifiedHealth Redis lifecycle checks', () => {
     expect(serialized).not.toContain('WRONGPASS');
     expect(serialized).not.toContain('REDIS_AUTH_FAILED');
     expect(serialized).not.toContain('configured.invalid');
+    expect(harness.createClientMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('production web readiness dependency admission', () => {
+  it.each([
+    {
+      missingDependency: 'database',
+      config: {
+        databaseUrl: undefined,
+        isProduction: true,
+        nodeEnv: 'production'
+      },
+      redisResolution: {
+        configured: true,
+        source: 'REDIS_URL' as const,
+        url: 'redis://configured.invalid:6379'
+      },
+      redisLifecycle: {
+        state: 'READY' as const,
+        configured: true,
+        connected: true,
+        attemptInFlight: false,
+        readyGeneration: 1,
+        circuitEnabled: true,
+        circuitState: 'CLOSED' as const
+      }
+    },
+    {
+      missingDependency: 'redis',
+      config: {
+        databaseUrl: 'postgresql://configured.invalid/arcanos',
+        isProduction: true,
+        nodeEnv: 'production'
+      },
+      redisResolution: {
+        configured: false,
+        source: 'none' as const
+      },
+      redisLifecycle: {
+        state: 'READY' as const,
+        configured: false,
+        connected: false,
+        attemptInFlight: false,
+        readyGeneration: 0,
+        circuitEnabled: false,
+        circuitState: 'CLOSED' as const
+      }
+    }
+  ])('fails /readyz closed when production web $missingDependency configuration is absent', async ({
+    missingDependency,
+    config,
+    redisResolution,
+    redisLifecycle
+  }) => {
+    const harness = await loadUnifiedHealthHarness({
+      config,
+      processKind: 'web',
+      redisResolution,
+      redisLifecycle,
+      startupLifecycle: {
+        phase: 'READY',
+        ready: true,
+        listenerBound: true,
+        runtimeInitialized: true,
+        redis: {
+          configured: redisResolution.configured,
+          status: 'ready',
+          attempt: 0,
+          lastErrorCode: null
+        }
+      }
+    });
+    const express = (await import('express')).default;
+    const request = (await import('supertest')).default;
+    const healthRouter = (await import('../src/routes/health.js')).default;
+    const app = express();
+    app.use(healthRouter);
+
+    const liveness = await request(app).get('/healthz');
+    const readiness = await request(app).get('/readyz');
+    const readinessHead = await request(app).head('/readyz');
+
+    expect(liveness.status).toBe(200);
+    expect(readiness.status).toBe(503);
+    expect(readiness.headers['cache-control']).toBe('no-store');
+    expect(readiness.body).toEqual(expect.objectContaining({
+      ready: false,
+      status: 'unhealthy'
+    }));
+    expect(readiness.body.checks.find(
+      (check: { name?: unknown }) => check.name === missingDependency
+    )).toEqual({
+      healthy: false,
+      name: missingDependency,
+      code: missingDependency === 'database'
+        ? 'DATABASE_DEPENDENCY_UNAVAILABLE'
+        : 'REDIS_DEPENDENCY_UNAVAILABLE',
+      error: missingDependency === 'database'
+        ? 'Database dependency is unavailable.'
+        : 'Redis dependency is unavailable.',
+      duration: expect.any(Number)
+    });
+    expect(JSON.stringify(readiness.body)).not.toContain('not configured');
+    expect(readinessHead.status).toBe(503);
+    expect(readinessHead.headers['cache-control']).toBe('no-store');
+    expect(readinessHead.text).toBeUndefined();
+    expect(harness.createClientMock).not.toHaveBeenCalled();
+    if (missingDependency === 'database') {
+      expect(harness.getDatabaseStatusMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ['test web', false, 'web', 'test'],
+    ['development web', false, 'web', 'development'],
+    ['production worker', true, 'worker', 'production'],
+    ['production unknown role', true, 'unknown', 'production']
+  ] as const)('preserves optional unconfigured backends for %s', async (
+    _label,
+    isProduction,
+    processKind,
+    nodeEnv
+  ) => {
+    const harness = await loadUnifiedHealthHarness({
+      config: {
+        databaseUrl: undefined,
+        isProduction,
+        nodeEnv
+      },
+      processKind,
+      redisResolution: {
+        configured: false,
+        source: 'none'
+      },
+      redisLifecycle: {
+        state: 'READY',
+        configured: false,
+        connected: false,
+        attemptInFlight: false,
+        readyGeneration: 0,
+        circuitEnabled: false,
+        circuitState: 'CLOSED'
+      },
+      startupLifecycle: {
+        phase: 'READY',
+        ready: true,
+        listenerBound: true,
+        runtimeInitialized: true,
+        redis: {
+          configured: false,
+          status: 'ready',
+          attempt: 0,
+          lastErrorCode: null
+        }
+      }
+    });
+    const express = (await import('express')).default;
+    const request = (await import('supertest')).default;
+    const healthRouter = (await import('../src/routes/health.js')).default;
+    const app = express();
+    app.use(healthRouter);
+
+    const readiness = await request(app).get('/readyz');
+
+    expect(readiness.status).toBe(200);
+    expect(readiness.body).toEqual(expect.objectContaining({
+      ready: true,
+      status: 'healthy'
+    }));
+    expect(readiness.body.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'database', healthy: true }),
+      expect.objectContaining({ name: 'redis', healthy: true })
+    ]));
+    expect(harness.createClientMock).not.toHaveBeenCalled();
+  });
+
+  it('fails only readiness when the production database is connected but its schema is not ready', async () => {
+    const harness = await loadUnifiedHealthHarness({
+      config: {
+        databaseUrl: 'postgresql://configured.invalid/arcanos',
+        isProduction: true,
+        nodeEnv: 'production'
+      },
+      databaseStatus: {
+        connected: true,
+        error: null
+      },
+      databaseSchemaReady: false,
+      processKind: 'web',
+      redisResolution: {
+        configured: true,
+        source: 'REDIS_URL',
+        url: 'redis://configured.invalid:6379'
+      },
+      redisLifecycle: {
+        state: 'READY',
+        configured: true,
+        connected: true,
+        attemptInFlight: false,
+        readyGeneration: 1,
+        circuitEnabled: true,
+        circuitState: 'CLOSED'
+      },
+      startupLifecycle: {
+        phase: 'READY',
+        ready: true,
+        listenerBound: true,
+        runtimeInitialized: true,
+        redis: {
+          configured: true,
+          status: 'ready',
+          attempt: 0,
+          lastErrorCode: null
+        }
+      }
+    });
+    const express = (await import('express')).default;
+    const request = (await import('supertest')).default;
+    const healthRouter = (await import('../src/routes/health.js')).default;
+    const app = express();
+    app.use(healthRouter);
+
+    const diagnostics = await request(app).get('/health');
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.body.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'database', healthy: true })
+    ]));
+    expect(harness.getDatabaseSchemaReadyMock).not.toHaveBeenCalled();
+
+    const readiness = await request(app).get('/readyz');
+    const readinessHead = await request(app).head('/readyz');
+
+    expect(readiness.status).toBe(503);
+    expect(readiness.headers['cache-control']).toBe('no-store');
+    expect(readiness.body.checks.find(
+      (check: { name?: unknown }) => check.name === 'database'
+    )).toEqual({
+      healthy: false,
+      name: 'database',
+      code: 'DATABASE_DEPENDENCY_UNAVAILABLE',
+      error: 'Database dependency is unavailable.',
+      duration: expect.any(Number)
+    });
+    expect(readinessHead.status).toBe(503);
+    expect(readinessHead.headers['cache-control']).toBe('no-store');
+    expect(readinessHead.text).toBeUndefined();
+    expect(harness.getDatabaseStatusMock).toHaveBeenCalled();
+    expect(harness.getDatabaseSchemaReadyMock).toHaveBeenCalled();
     expect(harness.createClientMock).not.toHaveBeenCalled();
   });
 });

@@ -14,8 +14,9 @@
   },
   "deploy": {
     "startCommand": "node scripts/start-railway-service.mjs",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/readyz",
     "healthcheckTimeout": 300,
+    "drainingSeconds": 60,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "env": {
@@ -27,9 +28,9 @@
   "environments": {
     "pr": {
       "deploy": {
-        "startCommand": "node scripts/start-railway-service.mjs --pr-preview-safe",
+        "startCommand": "node scripts/start-railway-service.mjs --pr-preview-app-safe-v1",
         "preDeployCommand": null,
-        "healthcheckPath": "/health",
+        "healthcheckPath": "/readyz",
         "healthcheckTimeout": 300,
         "cronSchedule": null,
         "restartPolicyType": "NEVER",
@@ -41,6 +42,7 @@
         "NODE_ENV": "production",
         "PORT": "$PORT",
         "DATABASE_URL": "$DATABASE_URL",
+        "REDIS_URL": "$REDIS_URL",
         "OPENAI_API_KEY": "$OPENAI_API_KEY",
         "OPENAI_API_KEY_REQUIRED": "true",
         "OPENAI_ACTION_SHARED_SECRET": "$OPENAI_ACTION_SHARED_SECRET",

@@ -18,7 +18,7 @@ Railway is the preferred deployment target because it offers a low-friction path
 - This matches Arcanos runtime expectations and reduces custom bootstrapping logic.
 
 ### 3) Health checks and observability
-- Railway's configured deployment probe uses Arcanos `GET /health`; `GET /healthz` remains the liveness endpoint and `GET /readyz` reports readiness.
+- Railway's configured deployment activation probe uses Arcanos `GET /readyz`; `GET /healthz` remains process liveness and `GET /health` remains bounded dependency diagnostics.
 - Centralized logs streamline incident response and reduce the need for bespoke log aggregation in early stages.
 
 ### 4) Operational simplicity

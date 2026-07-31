@@ -25,7 +25,9 @@ Core workflows to review first:
 Common secrets referenced in workflows:
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 - `OPENAI_API_KEY`
-- `RAILWAY_TOKEN` (for workflows that deploy through Railway CLI/actions)
+- `RAILWAY_PRODUCTION_PROJECT_TOKEN` (a Railway project token dedicated to the
+  exact production project/environment used by the automatic deployment
+  workflow; do not substitute an account/workspace API token)
 - `RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN` (dedicated token scoped only
   to the pinned Railway workspace and used only by the trusted
   disposable-environment cleanup workflow; do not substitute an account-wide
@@ -120,6 +122,52 @@ explicit disposable database; neither command should inherit an ambient
 Deployment workflows are repository-specific; verify current trigger and required
 secrets in each workflow file before enabling auto-deploy.
 
+Railway-native PR deployments use the tracked
+`--pr-preview-app-safe-v1` launcher contract. The web role imports only a
+credential-empty, deny-by-default synthetic generic-jobs application; the worker
+role stays passive. `npm run check:native-pr-preview-imports` is part of both
+type-check and build, and `npm run test:native-pr-preview-e2e` validates the
+credential-free runner without network access. The import gate fails closed on
+ambient namespace and capability aliases, dynamic/rest access, listener
+aliasing, unreviewed external bindings, and launcher declaration or spawn-spec
+drift. The contained child does not register runtime loader hooks; mutable
+`process` state and effectful members are limited to exact reviewed uses.
+Whole-object aliases, defaults, helper parameters, carriers, returns, spreads,
+constructors, tagged templates, storage, and exports fail closed. Reviewed
+whole-object calls are bound to unique top-level declarations, containing
+functions, exact occurrence counts, and full-call AST digests. Direct mutable
+environment/argument receiver calls are limited to reviewed non-mutating
+methods; `valueOf` results remain tainted, including argument-bearing and
+tagged calls, and writes to scalar `process` members fail closed. Sensitive
+helpers cannot be aliased, carried, reassigned, or exported; the child
+validator also permits the global `Object` identifier only as the exact
+reviewed `Object.keys` receiver. The child entry has no runtime local static
+import or re-export and performs its one exact application import only after
+environment validation. The analysis is intentionally conservative across
+repeated identifier spellings, so an unrelated shadow can require renaming
+rather than weakening the gate. The launcher resolver, immutable
+launcher-relative repository root, credential-empty child-environment builder,
+contained child resolver/listener, passive and worker listener owners, worker
+output source/mirror, and sole normal-runtime environment-spread helper are
+pinned by exact structure or comment/format-normalized body digests; an
+intentional semantic edit must update the focused mutation tests and reviewed
+contract in the same PR. The complete launcher and contained-child entry files
+are also pinned by comment/format-normalized semantic digests: every semantic
+edit anywhere in either privileged entry requires the reviewed digest and
+focused contract tests to be updated in the same PR, while comment-only and
+format-only edits do not. Both
+required PR workflows run that contract suite. A live run requires both
+`--execute --allow-network`, exact independently confirmed web/worker preview
+origins, the PR number, a clean tracked/untracked worktree, the canonical
+Arcanos `origin`, and the local HEAD commit. Its result is served-identity
+evidence, not Railway control-plane provenance.
+
+This repository containment is for trusted same-repository PRs and accidental
+effects only. A PR controls its own launcher code, so untrusted or forked code
+must not receive inherited production secrets or copied production data.
+Provider-level secret isolation or a trusted-source deployment policy is a
+prerequisite for those previews.
+
 The Railway worker-diagnostics cleanup workflow is a trusted
 `pull_request_target: closed` boundary. It never checks out pull-request code.
 It resolves only the exact
@@ -146,6 +194,64 @@ job before it creates the concurrent production deployment job. The
   concurrency.
 - The exact sentinel `none` restores normal automatic promotion. Missing, blank,
   whitespace-padded, or malformed values fail closed.
+
+Both jobs use reviewed immutable commits for `actions/checkout` and
+`actions/setup-node`. The deployment job downloads the Railway CLI `4.30.2`
+GNU archive directly from its immutable upstream release, verifies SHA-256
+`e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`
+before extraction, and rejects any version output other than
+`railway 4.30.2`.
+
+The workflow maps `RAILWAY_PRODUCTION_PROJECT_TOKEN` to the CLI-standard
+`RAILWAY_TOKEN` only on the access probe, deployment, status polling, and
+post-deploy log-check steps. Checkout, Node setup, CLI acquisition, and
+configuration validation do not receive the credential; validation receives
+only a configured/unconfigured boolean. The post-deploy check invokes its
+checked-in Node entry point directly so npm lifecycle hooks do not inherit the
+token. Before enabling or manually dispatching this workflow, independently
+verify that the stored secret is a project token for the intended production
+project/environment. Source code cannot prove provider-side token scope.
+
+These supply-chain controls do not resolve the deployment checkout's persisted
+read-only GitHub credential or create a protected GitHub production
+environment. Checkout credential persistence and a
+single-maintainer-compatible protected-environment topology remain separate
+defense-in-depth and repository-settings decisions.
+
+The production deployment job has a 60-minute GitHub Actions timeout and uses
+the `railway-auto-deploy-production` concurrency group without cancelling a
+run that has already started. A newer run therefore waits while the active run
+continues observing any remote deployment it created. GitHub may still
+coalesce older runs that have not started.
+
+The deployment job captures the exact deployment ID returned by its own
+detached upload and observes deployment history for that ID only. The upload
+has a 10-minute command timeout; observation uses a 45-minute elapsed-time
+budget with ten-second polling. Each Railway status or variable read also has
+an explicit timeout and output cap. That exact deployment must reach Railway
+`SUCCESS`, after which the job runs
+`node scripts/validate-railway-compatibility.js`, confirms the same deployment
+remains the active successful and non-stopped deployment, and reads the exact
+service's resolved Railway identity and role.
+For a public web or worker role it then makes a bounded, no-redirect
+`GET /readyz` request and requires the exact role response plus
+`Cache-Control: no-store`. A private worker retains Railway's platform
+activation result rather than acquiring a public domain solely for CI. The
+validator fixes the tracked activation contract at `/readyz`, timeout `300`,
+and numeric `drainingSeconds=60`; the resolved-variable verifier also rejects a
+conflicting live provider-native drain override when one is present. These are
+one-time activation checks; they do not replace continuous monitoring, exact
+web/worker effective-settings readback, or a measured drain rehearsal before
+production promotion.
+
+The detached upload is a remote mutation that can outlive the GitHub runner.
+An upload timeout before an ID is returned, a manual workflow cancellation,
+runner loss, or a deployment that remains nonterminal beyond the 45-minute
+observer budget requires operator reconciliation against the exact project,
+environment, service, and revision. The workflow does not call `railway down`
+because that command does not safely target the captured in-flight deployment.
+Post-deploy log retrieval is limited to 30 seconds and 4 MiB and fails closed
+if either bound is exceeded.
 
 The active `20260727-dag-snapshot-generation-v1` hold protects the coordinated
 DAG snapshot-generation migration. A deliberate `workflow_dispatch` may pass it

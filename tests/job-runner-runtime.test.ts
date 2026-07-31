@@ -6,8 +6,10 @@ import { pathToFileURL } from 'url';
 import {
   advanceClaimedJobAbortState,
   buildJobRunnerSlotDefinitions,
+  commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  emitWorkerBootstrapReadySignal,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerEntrypointRuntimeMode,
@@ -16,8 +18,20 @@ import {
   resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent,
-  shouldPersistClaimedJobCancellation
+  shouldPersistClaimedJobCancellation,
+  WORKER_BOOTSTRAP_READY_SENTINEL
 } from '../src/workers/jobRunnerRuntime.js';
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
+}
 
 describe('jobRunnerRuntime', () => {
   it.each(['ask', 'dag-node', 'gpt'])(
@@ -86,6 +100,123 @@ describe('jobRunnerRuntime', () => {
     expect(slotDefinitions[0]?.isInspectorSlot).toBe(true);
     expect(slotDefinitions[1]?.isInspectorSlot).toBe(false);
     expect(slotDefinitions.every(slot => slot.statsWorkerId === 'railway-worker')).toBe(true);
+  });
+
+  it.each(['warn', 'error'])(
+    'emits the exact worker readiness protocol independently of LOG_LEVEL=%s',
+    (logLevel) => {
+      const previousLogLevel = process.env.LOG_LEVEL;
+      const output: string[] = [];
+      process.env.LOG_LEVEL = logLevel;
+
+      try {
+        emitWorkerBootstrapReadySignal({
+          write(chunk: string) {
+            output.push(chunk);
+            return true;
+          }
+        });
+      } finally {
+        if (previousLogLevel === undefined) {
+          delete process.env.LOG_LEVEL;
+        } else {
+          process.env.LOG_LEVEL = previousLogLevel;
+        }
+      }
+
+      expect(output).toEqual([`${WORKER_BOOTSTRAP_READY_SENTINEL}\n`]);
+    }
+  );
+
+  it('fails the all-slot readiness barrier when a ready slot rejects before its sibling is ready', async () => {
+    const firstReadiness = createDeferred<void>();
+    const secondReadiness = createDeferred<void>();
+    const firstRuntime = createDeferred<void>();
+    const secondRuntime = createDeferred<void>();
+    const startupFailure = new Error('slot failed after its dispatcher-start write');
+    let readinessCommitted = false;
+    const readinessBarrier = commitAllWorkerSlotsReadyOrThrow(
+      [firstReadiness.promise, secondReadiness.promise],
+      [firstRuntime.promise, secondRuntime.promise],
+      () => {
+        readinessCommitted = true;
+      }
+    );
+
+    firstReadiness.resolve();
+    firstRuntime.reject(startupFailure);
+
+    await expect(readinessBarrier).rejects.toBe(startupFailure);
+    expect(readinessCommitted).toBe(false);
+  });
+
+  it('fails the all-slot readiness barrier when a slot settles before every sibling is ready', async () => {
+    const firstReadiness = createDeferred<void>();
+    const secondReadiness = createDeferred<void>();
+    const firstRuntime = createDeferred<void>();
+    const secondRuntime = createDeferred<void>();
+    let readinessCommitted = false;
+    const readinessBarrier = commitAllWorkerSlotsReadyOrThrow(
+      [firstReadiness.promise, secondReadiness.promise],
+      [firstRuntime.promise, secondRuntime.promise],
+      () => {
+        readinessCommitted = true;
+      }
+    );
+
+    firstReadiness.resolve();
+    firstRuntime.resolve();
+
+    await expect(readinessBarrier).rejects.toThrow(
+      'WORKER_SLOT_RUNTIME_SETTLED_BEFORE_READINESS:slot=1'
+    );
+    expect(readinessCommitted).toBe(false);
+  });
+
+  it('does not commit readiness when the final slot and a runtime rejection settle in the same turn', async () => {
+    const firstReadiness = createDeferred<void>();
+    const secondReadiness = createDeferred<void>();
+    const firstRuntime = createDeferred<void>();
+    const secondRuntime = createDeferred<void>();
+    const startupFailure = new Error('slot failed during final readiness commit');
+    let readinessCommitted = false;
+    const readinessBarrier = commitAllWorkerSlotsReadyOrThrow(
+      [firstReadiness.promise, secondReadiness.promise],
+      [firstRuntime.promise, secondRuntime.promise],
+      () => {
+        readinessCommitted = true;
+      }
+    );
+
+    firstReadiness.resolve();
+    secondReadiness.resolve();
+    firstRuntime.reject(startupFailure);
+
+    await expect(readinessBarrier).rejects.toBe(startupFailure);
+    expect(readinessCommitted).toBe(false);
+  });
+
+  it('resolves the all-slot readiness barrier only after every slot is ready', async () => {
+    const firstReadiness = createDeferred<void>();
+    const secondReadiness = createDeferred<void>();
+    const firstRuntime = createDeferred<void>();
+    const secondRuntime = createDeferred<void>();
+    let barrierResolved = false;
+    const readinessBarrier = commitAllWorkerSlotsReadyOrThrow(
+      [firstReadiness.promise, secondReadiness.promise],
+      [firstRuntime.promise, secondRuntime.promise],
+      () => {
+        barrierResolved = true;
+      }
+    );
+
+    firstReadiness.resolve();
+    await Promise.resolve();
+    expect(barrierResolved).toBe(false);
+
+    secondReadiness.resolve();
+    await readinessBarrier;
+    expect(barrierResolved).toBe(true);
   });
 
   it('keeps the base worker id unchanged for a single-slot runtime', () => {
@@ -480,7 +611,9 @@ describe('jobRunnerRuntime', () => {
   });
 
   it('starts cancellation control before provider initialization and never terminalizes shutdown as cancelled', () => {
-    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const source = fs
+      .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
+      .replace(/\r\n/gu, '\n');
     const claimedJobControllerIndex = source.indexOf(
       'const jobCancellationController = new AbortController()'
     );
@@ -514,7 +647,7 @@ describe('jobRunnerRuntime', () => {
     ).toHaveLength(1);
   });
 
-  it('preloads the module registry before declaring the worker ready or claiming jobs', () => {
+  it('declares the worker ready only after every consumer slot starts its dispatcher', () => {
     const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
     const enabledGuardIndex = source.indexOf('if (!entrypointRuntimeMode.enabled)');
     const operatorDispatchProviderIndex = source.indexOf(
@@ -531,13 +664,36 @@ describe('jobRunnerRuntime', () => {
       'await initializeModuleRegistry()',
       autonomyBootstrapIndex
     );
-    const readinessMarkerIndex = source.indexOf(
-      "logger.info('worker.bootstrap.completed'",
-      moduleRegistryPreloadIndex
+    const dispatcherStartIndex = source.indexOf(
+      'await autonomyService.markDispatcherStarted(runtimeSettings.concurrency)'
+    );
+    const heartbeatSetupIndex = source.indexOf(
+      'const workerHeartbeatHandle = startWorkerHeartbeatLoop(',
+      dispatcherStartIndex
+    );
+    const dispatcherReadySignalIndex = source.indexOf(
+      'onDispatcherReady()',
+      heartbeatSetupIndex
     );
     const consumerStartIndex = source.indexOf(
-      'await Promise.all(',
-      readinessMarkerIndex
+      'const slotReadinessPromises',
+      moduleRegistryPreloadIndex
+    );
+    const consumerReadinessBarrierIndex = source.indexOf(
+      'await commitAllWorkerSlotsReadyOrThrow(',
+      consumerStartIndex
+    );
+    const readinessLogIndex = source.indexOf(
+      "logger.info('worker.bootstrap.completed'",
+      consumerReadinessBarrierIndex
+    );
+    const readinessProtocolIndex = source.indexOf(
+      'emitWorkerBootstrapReadySignal()',
+      readinessLogIndex
+    );
+    const consumerRuntimeBarrierIndex = source.indexOf(
+      'await Promise.all(slotRuntimePromises)',
+      readinessProtocolIndex
     );
 
     expect([
@@ -546,15 +702,27 @@ describe('jobRunnerRuntime', () => {
       databaseBootstrapIndex,
       autonomyBootstrapIndex,
       moduleRegistryPreloadIndex,
-      readinessMarkerIndex,
-      consumerStartIndex
+      dispatcherStartIndex,
+      heartbeatSetupIndex,
+      dispatcherReadySignalIndex,
+      consumerStartIndex,
+      consumerReadinessBarrierIndex,
+      readinessLogIndex,
+      readinessProtocolIndex,
+      consumerRuntimeBarrierIndex
     ]).not.toContain(-1);
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
     expect(databaseBootstrapIndex).toBeLessThan(autonomyBootstrapIndex);
     expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
-    expect(moduleRegistryPreloadIndex).toBeLessThan(readinessMarkerIndex);
-    expect(readinessMarkerIndex).toBeLessThan(consumerStartIndex);
+    expect(dispatcherStartIndex).toBeLessThan(heartbeatSetupIndex);
+    expect(heartbeatSetupIndex).toBeLessThan(dispatcherReadySignalIndex);
+    expect(moduleRegistryPreloadIndex).toBeLessThan(consumerStartIndex);
+    expect(consumerStartIndex).toBeLessThan(consumerReadinessBarrierIndex);
+    expect(consumerReadinessBarrierIndex).toBeLessThan(readinessLogIndex);
+    expect(readinessLogIndex).toBeLessThan(readinessProtocolIndex);
+    expect(readinessProtocolIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(source).not.toContain('slotRuntimePromise.catch(rejectSlotReadiness)');
   });
 
   it('caps delayed worker interval work at one active task per slot and source', async () => {

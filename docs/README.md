@@ -166,6 +166,9 @@ Migration-local implementation notes live beside their artifacts under
   and approval records; not the active operational path.
 - [2026-04-29 refactor audit](audits/reusable-code/2026-04-29/refactor-audit.md)
   — relocated baseline snapshot retained only as historical evidence.
+- [2026-07-28 repository-health audit](audits/repository-health/2026-07-28/progress.md)
+  — merged work through PR #1412, the residual audit, and A.1–A.3 correction
+  evidence.
 - [Governance](../governance/README.md) — consolidated self-improvement
   versioning, branch-protection, rollback, and evidence policy.
 - [Deprecation register](../DEPRECATION.md) — compatibility and removal

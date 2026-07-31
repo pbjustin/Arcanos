@@ -1,0 +1,2390 @@
+import { describe, expect, it } from '@jest/globals';
+import { readFile } from 'node:fs/promises';
+import {
+  NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES,
+  findNativePrPreviewImportViolations,
+  findUnsafeRuntimeSyntax,
+} from '../scripts/check-native-pr-preview-imports.mjs';
+
+const RAILWAY_LAUNCHER_URL =
+  new URL('../scripts/start-railway-service.mjs', import.meta.url);
+const NATIVE_PREVIEW_CHILD_URL =
+  new URL('../src/start-native-pr-preview.ts', import.meta.url);
+
+async function readRailwayLauncherSource() {
+  return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readNativePreviewChildSource() {
+  return (await readFile(NATIVE_PREVIEW_CHILD_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+function replaceRequired(sourceText, expected, replacement) {
+  expect(sourceText).toContain(expected);
+  return sourceText.replace(expected, replacement);
+}
+
+describe('native PR preview import boundary', () => {
+  it('keeps the contained application outside production side-effect modules', async () => {
+    await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
+  });
+
+  it('fails closed when the runtime graph gains an unreviewed module', async () => {
+    const graphFiles = [
+      ...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES,
+      'src/config/openai.ts',
+    ];
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        graphFiles.map((graphFile) => [graphFile, []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+
+    await expect(findNativePrPreviewImportViolations({
+      analyzeDependencies,
+    })).resolves.toContain(
+      'unreviewed preview import: src/config/openai.ts'
+    );
+  });
+
+  it('keeps runtime loader hooks outside the contained child command graph', () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'scripts/esm-alias-loader.mjs',
+        'scripts/register-esm-loader.mjs',
+      ])
+    );
+  });
+
+  it.each([
+    ['fetch("https://example.invalid")', 'forbidden fetch call'],
+    ['globalThis.fetch("https://example.invalid")', 'forbidden runtime effect call'],
+    ['setImmediate(() => undefined)', 'forbidden setImmediate call'],
+    ['setInterval(() => undefined, 1000)', 'forbidden setInterval call'],
+    ['queueMicrotask(() => undefined)', 'forbidden queueMicrotask call'],
+    ['process.getBuiltinModule("node:fs")', 'forbidden runtime effect call'],
+    ['process.exit(1)', 'forbidden process effect capability'],
+    ['process.stdout.write("oops")', 'forbidden process effect capability'],
+    ['express().listen(8080)', 'forbidden runtime effect call'],
+    ['app[`listen`](8080)', 'forbidden runtime effect call'],
+    ['new globalThis.Function("return 1")()', 'forbidden runtime effect constructor'],
+    ['new setInterval(() => undefined, 10)', 'forbidden runtime effect constructor'],
+    ['new setTimeout(() => undefined, 10)', 'forbidden runtime effect constructor'],
+    [
+      'new globalThis.WebSocket("wss://example.invalid")',
+      'forbidden runtime effect constructor',
+    ],
+    [
+      'new globalThis.EventSource("https://example.invalid")',
+      'forbidden runtime effect constructor',
+    ],
+    [
+      'class Preview extends (fetch("https://example.invalid") as any) {}',
+      'forbidden fetch call',
+    ],
+    [
+      'class Preview extends globalThis.Function {}',
+      'forbidden runtime capability reference',
+    ],
+    [
+      'new app.listen(8080)',
+      'forbidden runtime effect constructor',
+    ],
+  ])('rejects an ambient runtime effect: %s', (sourceText, expectedViolation) => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(expectedViolation),
+    ]));
+  });
+
+  it.each([
+    [
+      [
+        'const send = globalThis.fetch;',
+        'send("https://example.invalid");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const { setTimeout: delay } = globalThis;',
+        'delay(() => undefined, 1);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const load = process.getBuiltinModule;',
+        'load("node:fs");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const { getBuiltinModule: load } = process;',
+        'load("node:fs");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const runtime = process;',
+        'const load = runtime.getBuiltinModule;',
+        'load("node:fs");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const runtime = globalThis.process;',
+        'const load = runtime.getBuiltinModule;',
+        'load("node:fs");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const runtime = globalThis.valueOf();',
+        'runtime.fetch("https://example.invalid");',
+      ].join('\n'),
+      'forbidden runtime effect call',
+    ],
+    [
+      [
+        'const runtime = process.valueOf();',
+        'runtime.getBuiltinModule("node:fs");',
+      ].join('\n'),
+      'forbidden runtime effect call',
+    ],
+    [
+      [
+        'const { fetch: send } = global;',
+        'send("https://example.invalid");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const capabilityName = "fetch";',
+        'const send = globalThis[capabilityName];',
+        'send("https://example.invalid");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const { ...ambient } = globalThis;',
+        'ambient.fetch("https://example.invalid");',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const listen = express().listen;',
+        'listen(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const start = app.listen.bind(app);',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const { listen: start } = app;',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const start = app[`listen`];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const { [`listen`]: start } = app;',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const listenerName = "listen";',
+        'app[listenerName](8080);',
+      ].join('\n'),
+      'forbidden dynamic runtime effect call',
+    ],
+    [
+      [
+        'const listenerName = "lis" + "ten";',
+        'const start = app[listenerName];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const start = Reflect.get(app, "listen");',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const httpApp = express();',
+        'const key = "listen";',
+        'const start = httpApp[key];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const httpd = createServer(() => undefined);',
+        'const alias = httpd;',
+        'const key = "listen";',
+        'const start = alias[key];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const createListener = createServer;',
+        'const httpd = createListener(() => undefined);',
+      ].join('\n'),
+      'forbidden listener factory capability reference',
+    ],
+    [
+      [
+        'const stop = process.exit;',
+        'stop(1);',
+      ].join('\n'),
+      'forbidden process effect capability',
+    ],
+    [
+      [
+        'const { exit: stop } = process;',
+        'stop(1);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const holder = { api: express() };',
+        'const key = "listen";',
+        'const start = holder.api[key];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'function makeApplication() { return express(); }',
+        'const key = "listen";',
+        'const start = makeApplication()[key];',
+        'start(8080);',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const merge = Object.assign;',
+        'merge(process.env, { OPENAI_API_KEY: "restored" });',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+    [
+      'Object.assign.call(null, process.env, { OPENAI_API_KEY: "restored" });',
+      'forbidden runtime capability reference',
+    ],
+    [
+      [
+        'const define = Object.defineProperty;',
+        'define(process.env, "OPENAI_API_KEY", { value: "restored" });',
+      ].join('\n'),
+      'forbidden runtime capability reference',
+    ],
+  ])('rejects an aliased ambient capability: %s', (
+    sourceText,
+    expectedViolation
+  ) => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(expectedViolation),
+    ]));
+  });
+
+  it.each([
+    'client.fetch("contained-value");',
+    'process.env; process.argv; process.execPath; process.platform;',
+    'const { execPath, platform } = process; void execPath; void platform;',
+    '(process as typeof process).env;',
+    'process.env.toString(); process.argv.slice();',
+    'type Fetch = typeof globalThis.fetch;',
+    'declare class Preview extends globalThis.Function {}',
+    'declare class Preview extends (fetch("https://example.invalid") as any) {}',
+  ])('allows a non-ambient capability spelling: %s', sourceText => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual([]);
+  });
+
+  it.each([
+    'process.exitCode = 1;',
+    'process.env.OPENAI_API_KEY = "restored";',
+    'Object.assign(process.env, { OPENAI_API_KEY: "restored" });',
+    'Object.freeze(process.env);',
+    'Object.preventExtensions(process.env);',
+    'Object.seal(process.env);',
+    "process.env.__defineGetter__('OPENAI_API_KEY', () => 'restored');",
+    "process.env['__defineSetter__']('OPENAI_API_KEY', () => {});",
+    "process.argv.__defineGetter__('0', () => '--evil');",
+    "process.argv['__defineSetter__']('0', () => {});",
+    "process.argv.forEach((_value, _index, args) => args.push('--evil'));",
+    [
+      'process.argv.map((_value, _index, args) => {',
+      "  args[0] = '--evil';",
+      "  return '';",
+      '});',
+    ].join('\n'),
+    [
+      'process.argv.reduce((_result, _value, _index, args) => {',
+      '  args.splice(0);',
+      '  return 0;',
+      '}, 0);',
+    ].join('\n'),
+    'for (process.env.OPENAI_API_KEY in { restored: true }) {}',
+    "for (process.argv[0] of ['--evil']) {}",
+    [
+      'const inheritedEnvironment = process.env;',
+      'for (inheritedEnvironment.OPENAI_API_KEY in { restored: true }) {}',
+    ].join('\n'),
+    [
+      "for ({ value: process.env.OPENAI_API_KEY } of [{ value: 'restored' }]) {}",
+    ].join('\n'),
+    "for ([process.argv[0]] of [['--evil']]) {}",
+    '({ value: process.env.NODE_ENV } = { value: "development" });',
+    [
+      'const inheritedEnvironment = process.env;',
+      'inheritedEnvironment.NODE_OPTIONS = "--import=./sentinel.mjs";',
+    ].join('\n'),
+    [
+      'const inheritedArguments = process.argv;',
+      'inheritedArguments.splice(1, 1, "sentinel");',
+    ].join('\n'),
+    [
+      'const { value: inherited = process.env } = {};',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const [inherited = process.env] = [];',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'function mutate({ target = process.env } = {}) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '}',
+    ].join('\n'),
+    [
+      'function mutate([target = process.env] = []) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '}',
+    ].join('\n'),
+    [
+      'const inherited = true ? process.env : {};',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = undefined ?? process.env;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = false || process.env;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = (undefined, process.env);',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'let inherited;',
+      'inherited ||= process.env;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'let inherited;',
+      'inherited ??= process.env;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'let inherited = process.env;',
+      'inherited &&= process.env;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'export let inherited;',
+      'inherited ??= process.env;',
+    ].join('\n'),
+    [
+      'const inherited = process.env.valueOf();',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = process.argv.valueOf();',
+      'inherited.splice(0, 1);',
+    ].join('\n'),
+    [
+      'const inherited = process.env.valueOf(undefined);',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = process.argv.valueOf(1, 2);',
+      'inherited.push("--evil");',
+    ].join('\n'),
+    [
+      "const inherited = process.env['valueOf'](null);",
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = process.env.valueOf``;',
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const inherited = process.argv.valueOf`ignored`;',
+      'inherited.push("--evil");',
+    ].join('\n'),
+    [
+      "const inherited = process.env['valueOf']``;",
+      'inherited.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'const first = process.env;',
+      'const second = first.valueOf();',
+      'second.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+  ])('rejects process state mutation: %s', sourceText => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden process'),
+    ]));
+  });
+
+  it.each([
+    [
+      'function mutate(target) { target.OPENAI_API_KEY = "restored"; }',
+      'mutate(process.env);',
+    ].join('\n'),
+    [
+      'function mutate(target) { target.OPENAI_API_KEY = "restored"; }',
+      'const inheritedEnvironment = process.env;',
+      'mutate(inheritedEnvironment);',
+    ].join('\n'),
+    [
+      'class Mutator {',
+      '  constructor(target) { target.OPENAI_API_KEY = "restored"; }',
+      '}',
+      'new Mutator(process.env);',
+    ].join('\n'),
+    [
+      'function mutate(target) { target.env.OPENAI_API_KEY = "restored"; }',
+      'mutate({ env: process.env });',
+    ].join('\n'),
+    [
+      'function mutate([target]) { target.OPENAI_API_KEY = "restored"; }',
+      'mutate([process.env]);',
+    ].join('\n'),
+    [
+      'function mutate(target) { target.OPENAI_API_KEY = "restored"; }',
+      'mutate(...[process.env]);',
+    ].join('\n'),
+    [
+      'function mutate(target) { target.OPENAI_API_KEY = "restored"; }',
+      'mutate(process.env.valueOf());',
+    ].join('\n'),
+  ])('rejects a mutable process object passed to an unreviewed call: %s', (
+    sourceText
+  ) => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'mutable process object escapes to an unreviewed call'
+      ),
+    ]));
+  });
+
+  it.each([
+    'function expose() { return process.env; }',
+    'const expose = () => process.env;',
+    'function* expose() { yield process.env; }',
+    'function expose() { return process.env.valueOf(); }',
+    'throw process.env;',
+    'const holder = { env: process.env };',
+    'const holder = [process.env];',
+    'const copiedEnvironment = { ...process.env };',
+    'const { ...copiedEnvironment } = process.env;',
+    '({ ...copiedEnvironment } = process.env);',
+    'const copiedArguments = [...process.argv];',
+    'class Holder { env = process.env; }',
+    [
+      'class Holder {',
+      '  constructor(public env = process.env) {}',
+      '}',
+      'new Holder();',
+    ].join('\n'),
+    'tag`${process.env}`;',
+    'export const inheritedEnvironment = process.env;',
+  ])('rejects a mutable process reference escape: %s', sourceText => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'mutable process object escapes containment'
+      ),
+    ]));
+  });
+
+  it.each([
+    'env.OPENAI_API_KEY = "restored";',
+    [
+      'function mutate(target) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '}',
+      'mutate(env);',
+    ].join('\n'),
+    'Object.freeze(env);',
+    'return env;',
+    '(arguments[0] as NodeJS.ProcessEnv).OPENAI_API_KEY = "restored";',
+    [
+      'const actual = arguments[0] as NodeJS.ProcessEnv;',
+      'actual.OPENAI_API_KEY = "restored";',
+    ].join('\n'),
+    [
+      'function mutate(input) {',
+      '  input.environment.OPENAI_API_KEY = "restored";',
+      '}',
+      'mutate({ environment: arguments[0] });',
+    ].join('\n'),
+    [
+      'if (Date.now() < 0) {',
+      '  return arguments[0] as NodeJS.ProcessEnv;',
+      '}',
+    ].join('\n'),
+  ])(
+    'rejects mutable environment drift inside the contained child resolver: %s',
+    async (insertion) => {
+      const sourceText = await readNativePreviewChildSource();
+      const marker = [
+        '): NativePrPreviewIdentity & { host: string; port: number } {',
+        '  if (',
+      ].join('\n');
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        [
+          '): NativePrPreviewIdentity & { host: string; port: number } {',
+          `  ${insertion}`,
+          '  if (',
+        ].join('\n')
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringMatching(
+          /forbidden process|forbidden runtime capability|mutable process object/u
+        ),
+      ]));
+    }
+  );
+
+  it('rejects a shadowed Object.keys environment reader', async () => {
+    const sourceText = await readNativePreviewChildSource();
+    const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+    const shadow = [
+      'const Object = {',
+      '  keys(target) {',
+      '    target.OPENAI_API_KEY = "restored";',
+      '    return [];',
+      '  },',
+      '};',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n${shadow}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/start-native-pr-preview.ts',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringMatching(
+        /forbidden process|mutable process object/u
+      ),
+    ]));
+  });
+
+  it('rejects reassignment of the reviewed Object.keys reader', async () => {
+    const sourceText = await readNativePreviewChildSource();
+    const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+    const replacement = [
+      marker,
+      'Object.keys = (target) => {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '  return [];',
+      '};',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      replacement
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/start-native-pr-preview.ts',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringMatching(
+        /mutable process object|reviewed mutable process call/u
+      ),
+    ]));
+  });
+
+  it('rejects destructuring reassignment of the reviewed Object.keys reader', async () => {
+    const sourceText = await readNativePreviewChildSource();
+    const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+    const replacement = [
+      marker,
+      '({ keys: Object.keys } = {',
+      '  keys(target) {',
+      '    target.OPENAI_API_KEY = "restored";',
+      '    return [];',
+      '  },',
+      '});',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      replacement
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/start-native-pr-preview.ts',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringMatching(
+        /mutable process object|reviewed mutable process call/u
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      'const ObjectAlias = Object;',
+      'ObjectAlias.keys = () => [];',
+    ].join('\n'),
+    [
+      'const ObjectAlias = Object;',
+      "ObjectAlias['keys'] = () => [];",
+    ].join('\n'),
+    [
+      'const ObjectAlias = Object;',
+      '({ keys: ObjectAlias.keys } = { keys: () => [] });',
+    ].join('\n'),
+  ])(
+    'rejects alias mutation of the reviewed global Object receiver: %s',
+    async (insertion) => {
+      const sourceText = await readNativePreviewChildSource();
+      const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'forbidden reviewed global Object capability reference'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    "process.execPath = 'C:/tmp/other-node.exe';",
+    "process.cwd = () => 'C:/tmp';",
+  ])(
+    'rejects launcher scalar process-member mutation: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker =
+        "import { fileURLToPath, pathToFileURL } from 'node:url';";
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('forbidden process state mutation'),
+      ]));
+    }
+  );
+
+  it.each([
+    "const LAUNCHER_REPOSITORY_ROOT = 'C:/tmp/alternate-runtime';",
+    [
+      'const LAUNCHER_REPOSITORY_ROOT =',
+      "  fileURLToPath(new URL('../../other', import.meta.url));",
+    ].join('\n'),
+  ])(
+    'rejects launcher repository-root drift: %s',
+    async (replacement) => {
+      const sourceText = await readRailwayLauncherSource();
+      const original = [
+        'const LAUNCHER_REPOSITORY_ROOT =',
+        "  fileURLToPath(new URL('../', import.meta.url));",
+      ].join('\n');
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'native preview repository root must match the exact immutable launcher-relative contract'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    "LAUNCHER_REPOSITORY_ROOT = 'C:/tmp/alternate-runtime';",
+    'const URL = class AlternateUrl {};',
+  ])(
+    'rejects mutation or shadowing of launcher repository-root dependencies: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'native preview repository root must match the exact immutable launcher-relative contract'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    "delete process.platform;",
+    "process.platform = 'win32';",
+  ])(
+    'rejects mutation of a scalar process member in the contained child: %s',
+    async (insertion) => {
+      const sourceText = await readNativePreviewChildSource();
+      const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('forbidden process state mutation'),
+      ]));
+    }
+  );
+
+  it.each([
+    "import './nativePrPreviewApplication.js';",
+    "void import('./nativePrPreviewApplication.js');",
+    "export * from './nativePrPreviewApplication.js';",
+    [
+      'export {',
+      '  createNativePrPreviewApplication,',
+      "} from './nativePrPreviewApplication.js';",
+    ].join('\n'),
+  ])(
+    'rejects application evaluation before contained-child validation: %s',
+    async (insertion) => {
+      const sourceText = await readNativePreviewChildSource();
+      const marker = "import { pathToFileURL } from 'node:url';";
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringMatching(
+          /application import|local runtime import|local runtime re-export/u
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    '  server.listen(port, host);\n  server.listen(port + 1, host);',
+    [
+      '  server.listen(port, host);',
+      '  (() => server.listen(port + 1, host))();',
+    ].join('\n'),
+  ])(
+    'rejects an extra contained-child listener effect: %s',
+    async (replacement) => {
+      const sourceText = await readNativePreviewChildSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        '  server.listen(port, host);',
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical runtime function "listen" body digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    "  await listen(server, 1, '127.0.0.1');",
+    [
+      '  const startListener = listen;',
+      "  await startListener(server, 1, '127.0.0.1');",
+      '  await listen(server, identity.port, identity.host);',
+    ].join('\n'),
+    [
+      '  await listen(server, identity.port, identity.host);',
+      "  await listen(server, 1, '127.0.0.1');",
+    ].join('\n'),
+  ])(
+    'rejects drift in the contained-child listener call site: %s',
+    async (replacement) => {
+      const sourceText = await readNativePreviewChildSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        '  await listen(server, identity.port, identity.host);',
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringMatching(
+          /contained child listener call|listener helper reference/u
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    [
+      [
+        'function requireExactEnvironmentValue(',
+        '  env: NodeJS.ProcessEnv,',
+        '  name: string,',
+        '  expected: string',
+        '): void {',
+        '  if (env[name] !== expected) {',
+        "    throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');",
+        '  }',
+        '}',
+      ].join('\n'),
+      [
+        'function requireExactEnvironmentValue(',
+        '  _env: NodeJS.ProcessEnv,',
+        '  _name: string,',
+        '  _expected: string',
+        '): void {}',
+      ].join('\n'),
+    ],
+    [
+      'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;',
+      'const COMMIT_PATTERN = /^.*$/u;',
+    ],
+    [
+      'const CHILD_ENVIRONMENT_NAMES = new Set([',
+      [
+        'const CHILD_ENVIRONMENT_NAMES = new Set([',
+        "  'OPENAI_API_KEY',",
+      ].join('\n'),
+    ],
+    [
+      'const WINDOWS_RUNTIME_ENVIRONMENT_NAMES = new Set([',
+      [
+        'const WINDOWS_RUNTIME_ENVIRONMENT_NAMES = new Set([',
+        "  'OPENAI_API_KEY',",
+      ].join('\n'),
+    ],
+  ])(
+    'rejects drift in a transitive contained-child environment contract: %s',
+    async (original, replacement) => {
+      const sourceText = await readNativePreviewChildSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical entry file semantic digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    "CHILD_ENVIRONMENT_NAMES.add('OPENAI_API_KEY');",
+    "WINDOWS_RUNTIME_ENVIRONMENT_NAMES.add('OPENAI_API_KEY');",
+    'COMMIT_PATTERN.compile(/^.*$/u);',
+  ])(
+    'rejects post-declaration mutation of a child environment contract: %s',
+    async (insertion) => {
+      const sourceText = await readNativePreviewChildSource();
+      const marker = 'const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'src/start-native-pr-preview.ts',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical entry file semantic digest'
+        ),
+      ]));
+    }
+  );
+
+  it('requires environment validation to remain the first child-main statement', async () => {
+    const sourceText = await readNativePreviewChildSource();
+    const marker = [
+      'async function main(): Promise<void> {',
+      '  const identity = resolveNativePrPreviewChildEnvironment(process.env);',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      [
+        'async function main(): Promise<void> {',
+        '  void 0;',
+        '  const identity = resolveNativePrPreviewChildEnvironment(process.env);',
+      ].join('\n')
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/start-native-pr-preview.ts',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'reviewed mutable process call contract'
+      ),
+    ]));
+  });
+
+  it('rejects moving child validation into a nested closure', async () => {
+    const sourceText = await readNativePreviewChildSource();
+    const validation = [
+      '  requireExactEnvironmentValue(',
+      '    env,',
+      "    'ARCANOS_NATIVE_PR_APPLICATION_PREVIEW',",
+      "    'v1'",
+      '  );',
+    ].join('\n');
+    const replacement = [
+      '  function deferredValidation() {',
+      validation.replace(/^/gmu, '  '),
+      '  }',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      validation,
+      replacement
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/start-native-pr-preview.ts',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringMatching(
+        /critical runtime function|reviewed mutable process call/u
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      'import fs = require("node:fs");',
+      'runtime import-equals declaration',
+    ],
+    [
+      'import {} from "node:fs";',
+      'external runtime import',
+    ],
+    [
+      'export {} from "node:fs";',
+      'external runtime import',
+    ],
+  ])('rejects an empty or legacy runtime edge: %s', (
+    sourceText,
+    expectedViolation
+  ) => {
+    expect(findUnsafeRuntimeSyntax(
+      'src/nativePrPreviewApplication.ts',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(expectedViolation),
+    ]));
+  });
+
+  it.each([
+    'export * from "node:child_process";',
+    'export * as childProcessRaw from "node:child_process";',
+    'export { exec as launchRaw } from "node:child_process";',
+  ])('rejects an external capability re-export: %s', sourceText => {
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('external runtime re-export'),
+    ]));
+  });
+
+  it.each([
+    [
+      [
+        "import { spawn } from 'node:child_process';",
+        "spawn(process.execPath, ['dist/start-server.js'], { env: process.env });",
+      ].join('\n'),
+      'forbidden child process spawn call',
+    ],
+    [
+      "import { get } from 'node:http';",
+      'forbidden runtime import binding "get:get"',
+    ],
+    [
+      'express().listen(8080);',
+      'forbidden runtime effect call',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        "  spawnProcess(process.execPath, ['dist/start-server.js'], 'web', { env: process.env });",
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn call',
+    ],
+    [
+      [
+        'const spawnSpec = {',
+        '  command: process.execPath,',
+        '  args: ["evil.js"],',
+        '  cwd: process.cwd(),',
+        '  env: process.env',
+        '};',
+        'function runNativePrApplicationPreview() {',
+        '  buildNativePrApplicationSpawnSpec();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn specification use',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  const launch = spawnProcess;',
+        '  launch(process.execPath, ["evil.js"], "web", { env: process.env });',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'forbidden spawnProcess capability reference',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  Reflect.apply(spawnProcess, null, [',
+        '    process.execPath,',
+        '    ["evil.js"],',
+        '    "web",',
+        '    { env: process.env }',
+        '  ]);',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'forbidden spawnProcess capability reference',
+    ],
+    [
+      [
+        "import { spawn } from 'node:child_process';",
+        'spawn.call(undefined, process.execPath, ["evil.js"], { env: process.env });',
+      ].join('\n'),
+      'forbidden spawn capability reference',
+    ],
+    [
+      [
+        "import { spawn } from 'node:child_process';",
+        'function buildNativePrApplicationSpawnSpec() {',
+        '  return { command: process.execPath, args: [], cwd: process.cwd(), env: process.env };',
+        '}',
+        'function spawnProcess(command, args, processKind, options = {}) {',
+        '  return spawn(command, args, options);',
+        '}',
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  const launch = spawn;',
+        '  launch(process.execPath, ["evil.js"], { env: process.env });',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'forbidden spawn capability reference',
+    ],
+    [
+      [
+        'function buildNativePrApplicationSpawnSpec() {',
+        '  return { command: process.execPath, args: [], cwd: process.cwd(), env: process.env };',
+        '}',
+        'function runNativePrApplicationPreview() {',
+        '  function buildNativePrApplicationSpawnSpec() {',
+        '    return { command: process.execPath, args: ["evil.js"], cwd: process.cwd(), env: process.env };',
+        '  }',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview builder declaration',
+    ],
+    [
+      [
+        "import { spawn } from 'node:child_process';",
+        'function buildNativePrApplicationSpawnSpec() {',
+        '  return { command: process.execPath, args: [], cwd: process.cwd(), env: process.env };',
+        '}',
+        'function spawnProcess(command, args, processKind, options = {}) {',
+        '  return spawn(command, args, options);',
+        '}',
+        'function runNativePrApplicationPreview() {',
+        '  function spawnProcess(command, args, processKind, options = {}) {',
+        '    return spawn(command, args, options);',
+        '  }',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe spawnProcess declaration',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  function launchUnapprovedChild() {',
+        '    spawnProcess(process.execPath, ["evil.js"], "web", { env: process.env });',
+        '  }',
+        '  launchUnapprovedChild();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn call',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  spawnSpec.env = process.env;',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn specification use',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  spawnSpec.args.push("--inspect");',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn specification use',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  Object.assign(spawnSpec, { env: process.env });',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn specification use',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  function mutateSpawnSpec() {',
+        '    spawnSpec.env = process.env;',
+        '  }',
+        '  mutateSpawnSpec();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    { cwd: spawnSpec.cwd, env: spawnSpec.env }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn specification use',
+    ],
+    [
+      [
+        'function runNativePrApplicationPreview() {',
+        '  const spawnSpec = buildNativePrApplicationSpawnSpec();',
+        '  spawnProcess(',
+        '    spawnSpec.command,',
+        '    spawnSpec.args,',
+        "    'web',",
+        '    {',
+        '      cwd: process.cwd(),',
+        '      cwd: spawnSpec.cwd,',
+        '      env: spawnSpec.env',
+        '    }',
+        '  );',
+        '}',
+      ].join('\n'),
+      'unsafe native preview spawn call',
+    ],
+  ])('rejects Railway launcher effect drift: %s', (
+    sourceText,
+    expectedViolation
+  ) => {
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(expectedViolation),
+    ]));
+  });
+
+  it.each([
+    [
+      'src/nativePrPreviewApplication.ts',
+      "import { static as serveFiles } from 'express';",
+      'forbidden runtime import binding "static:serveFiles"',
+    ],
+    [
+      'src/nativePrPreviewApplication.ts',
+      "import web from 'express';",
+      'forbidden runtime import binding "default:web"',
+    ],
+    [
+      'src/shared/jobs/jobReadCapability.ts',
+      "import { randomBytes } from 'node:crypto';",
+      'forbidden runtime import binding "randomBytes:randomBytes"',
+    ],
+    [
+      'src/shared/gpt/gptJobResult.ts',
+      "import { ZodError } from 'zod';",
+      'forbidden runtime import binding "ZodError:ZodError"',
+    ],
+    [
+      'src/shared/http/clientJsonPayload.ts',
+      "import { static as serveFiles } from 'express';",
+      'unreviewed external runtime import binding surface for "express"',
+    ],
+    [
+      'src/nativePrPreviewApplication.ts',
+      "import * as schemas from 'zod';",
+      'unreviewed external runtime import binding surface for "zod"',
+    ],
+    [
+      'src/nativePrPreviewApplication.ts',
+      "import * as crypto from 'node:crypto';",
+      'unreviewed external runtime import binding surface for "node:crypto"',
+    ],
+  ])('rejects unreviewed external runtime binding: %s', (
+    filePath,
+    sourceText,
+    expectedViolation
+  ) => {
+    expect(findUnsafeRuntimeSyntax(
+      filePath,
+      sourceText
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(expectedViolation),
+    ]));
+  });
+
+  it.each([
+    'await runWebRuntime();',
+    'maybeStartCliBridgeDaemon();',
+    'await runWorkerRuntimeWithHealthServer();',
+    'const launchProduction = runWebRuntime; await launchProduction();',
+  ])(
+    'rejects a production call from the complete native launcher: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function runNativePrApplicationPreview() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n  ${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('forbidden native preview launch call'),
+      ]));
+    }
+  );
+
+  it('rejects a complete launcher that hides the exact spawn in control flow', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const original = [
+      '  const previewProcess = spawnProcess(',
+      '    spawnSpec.command,',
+      '    spawnSpec.args,',
+      "    'web',",
+      '    {',
+      '      cwd: spawnSpec.cwd,',
+      '      env: spawnSpec.env',
+      '    }',
+      '  );',
+    ].join('\n');
+    const replacement = [
+      '  for (;;) {',
+      ...original.split('\n').map((line) => `  ${line}`),
+      '    break;',
+      '  }',
+    ].join('\n');
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      replaceRequired(sourceText, original, replacement)
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('unsafe native preview spawn call'),
+    ]));
+  });
+
+  it('rejects a second main entrypoint invocation', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const mutatedSource = `${sourceText}\nawait main();\n`;
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it('rejects removal of the guarded main entrypoint', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const original = [
+      "if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {",
+      '  await main();',
+      '}',
+    ].join('\n');
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      replaceRequired(sourceText, original, 'await main();')
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it('rejects relocation of the sole production web call into the native branch', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const withoutProductionCall = replaceRequired(
+      sourceText,
+      '\n    await runWebRuntime();\n',
+      '\n'
+    );
+    const marker = '      if (nativePrPreview.runtimeMode === \'application\') {';
+    const mutatedSource = replaceRequired(
+      withoutProductionCall,
+      marker,
+      `${marker}\n        await runWebRuntime();`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it('rejects reassignment of the credential-empty child environment builder', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      'export function buildNativePrApplicationSpawnSpec(env = process.env) {';
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      [
+        'buildNativePrApplicationChildEnvironment = buildChildEnvironment;',
+        '',
+        marker,
+      ].join('\n')
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      'export function resolveNativePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {',
+      [
+        'export function resolveNativePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {',
+        '  if (arguments.length === 0) return { enabled: false };',
+      ].join('\n'),
+      'resolveNativePrPreviewOrThrow',
+    ],
+    [
+      'export function resolveNativePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {',
+      [
+        'export function resolveNativePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {',
+        '  if (env === process.env) return { enabled: false };',
+      ].join('\n'),
+      'resolveNativePrPreviewOrThrow',
+    ],
+    [
+      '  return childEnvironment;',
+      '  return env;',
+      'buildNativePrApplicationChildEnvironment',
+    ],
+    [
+      '  const childEnvironment = {',
+      [
+        '  const childEnvironment = {',
+        '    ...env,',
+      ].join('\n'),
+      'buildNativePrApplicationChildEnvironment',
+    ],
+    [
+      '  const listener = resolveHealthListenerConfig(env);',
+      [
+        '  if (env === process.env) return { ...process.env };',
+        '  const listener = resolveHealthListenerConfig(env);',
+      ].join('\n'),
+      'buildNativePrApplicationChildEnvironment',
+    ],
+  ])(
+    'rejects safety-critical launcher function body drift in %s',
+    async (original, replacement, functionName) => {
+      const sourceText = await readRailwayLauncherSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          `critical launcher function "${functionName}" body digest`
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    [
+      'export function buildNativePrApplicationSpawnSpec(env = process.env) {',
+      'export async function buildNativePrApplicationSpawnSpec(env = process.env) {',
+      'unsafe native preview spawn specification builder',
+    ],
+    [
+      'export function buildNativePrApplicationSpawnSpec(env = process.env) {',
+      'export function* buildNativePrApplicationSpawnSpec(env = process.env) {',
+      'unsafe native preview spawn specification builder',
+    ],
+    [
+      'function spawnProcess(command, args, processKind, options = {}) {',
+      'async function spawnProcess(command, args, processKind, options = {}) {',
+      'unsafe spawnProcess wrapper',
+    ],
+    [
+      'function spawnProcess(command, args, processKind, options = {}) {',
+      'function* spawnProcess(command, args, processKind, options = {}) {',
+      'unsafe spawnProcess wrapper',
+    ],
+  ])(
+    'rejects async or generator drift in exact launcher helpers: %s',
+    async (original, replacement, expectedViolation) => {
+      const sourceText = await readRailwayLauncherSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(expectedViolation),
+      ]));
+    }
+  );
+
+  it.each([
+    'nativePrPreview.enabled = false;',
+    'delete nativePrPreview.enabled;',
+    "Object.defineProperty(nativePrPreview, 'enabled', { value: false });",
+  ])(
+    'rejects mutation of native preview selection before its branch: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = '    if (nativePrPreview.enabled) {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `    ${insertion}\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'launcher helper call surface must match the reviewed contract'
+        ),
+      ]));
+    }
+  );
+
+  it('rejects reassignment of the native preview resolver before selection', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      '    const nativePrPreview = resolveNativePrPreviewOrThrow();';
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      [
+        '    resolveNativePrPreviewOrThrow = () => ({ enabled: false });',
+        marker,
+      ].join('\n')
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it.each([
+    'process.argv[1] = fileURLToPath(import.meta.url);',
+    [
+      'const launcherArgv = process.argv;',
+      'launcherArgv[1] = fileURLToPath(import.meta.url);',
+    ].join('\n'),
+    "process.argv.splice(1, 1, fileURLToPath(import.meta.url));",
+    'const { argv: launcherArgv } = process;',
+  ])(
+    'rejects mutation or extraction of process.argv before the main guard: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker =
+        "if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {";
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'launcher process.argv use must match the reviewed read-only contract'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    [
+      'async function runWebRuntime() {',
+      'export async function runWebRuntime() {',
+    ],
+    [
+      'async function main() {',
+      'export async function main() {',
+    ],
+    [
+      'function spawnProcess(command, args, processKind, options = {}) {',
+      'export function spawnProcess(command, args, processKind, options = {}) {',
+    ],
+    [
+      'async function runNativePrApplicationPreview() {',
+      'export async function runNativePrApplicationPreview() {',
+    ],
+  ])(
+    'rejects direct export of a privileged launcher helper: %s',
+    async (original, replacement) => {
+      const sourceText = await readRailwayLauncherSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'forbidden privileged launcher helper export'
+        ),
+      ]));
+    }
+  );
+
+  it('rejects a complete launcher that reaches a new spawn helper', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker = 'async function runNativePrApplicationPreview() {';
+    const helper = [
+      'function launchUnapprovedChild() {',
+      '  return spawnProcess(',
+      '    process.execPath,',
+      '    ["evil.js"],',
+      '    "web",',
+      '    { env: process.env }',
+      '  );',
+      '}',
+      '',
+      marker,
+      '  launchUnapprovedChild();',
+    ].join('\n');
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      replaceRequired(sourceText, marker, helper)
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden native preview launch call'),
+    ]));
+  });
+
+  it('rejects a complete launcher that passes process.env to a new helper', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      "import { fileURLToPath, pathToFileURL } from 'node:url';";
+    const insertion = [
+      'function mutate(target) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '}',
+      'mutate(process.env);',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n${insertion}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'mutable process object escapes to an unreviewed call'
+      ),
+    ]));
+  });
+
+  it('rejects a shadowed reviewed environment helper in the complete launcher', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      'export function buildNativePrApplicationChildEnvironment(env = process.env) {';
+    const insertion = [
+      marker,
+      '  function resolveHealthListenerConfig(target) {',
+      '    target.OPENAI_API_KEY = "restored";',
+      '    return { host: "0.0.0.0", port: 3000 };',
+      '  }',
+      '  resolveHealthListenerConfig(process.env);',
+    ].join('\n');
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      insertion
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringMatching(
+        /forbidden process|mutable process object/u
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      '({ resolveHealthListenerConfig } = {',
+      '  resolveHealthListenerConfig(target) {',
+      '    target.OPENAI_API_KEY = "restored";',
+      '    return { host: "0.0.0.0", port: 3000 };',
+      '  },',
+      '});',
+    ].join('\n'),
+    [
+      '[resolveHealthListenerConfig] = [function replacement(target) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '  return { host: "0.0.0.0", port: 3000 };',
+      '}];',
+    ].join('\n'),
+    [
+      'for (resolveHealthListenerConfig of [function replacement(target) {',
+      '  target.OPENAI_API_KEY = "restored";',
+      '  return { host: "0.0.0.0", port: 3000 };',
+      '}]) {}',
+    ].join('\n'),
+  ])(
+    'rejects indirect reassignment of a reviewed environment helper: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'reviewed mutable process call contract'
+        ),
+      ]));
+    }
+  );
+
+  it('rejects an extra reviewed environment call in the complete launcher', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      'export function buildNativePrApplicationChildEnvironment(env = process.env) {';
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n  resolveHealthListenerConfig(env);`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'reviewed mutable process call contract'
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      "    'RAILWAY_SERVICE_ID',",
+      "    'RAILWAY_ENVIRONMENT_ID',",
+    ],
+    [
+      'const providerBaseUrl = firstConfiguredValue(env, OPENAI_BASE_URL_ENV_NAMES);',
+      'const providerBaseUrl = firstConfiguredValue(env, OPENAI_API_KEY_ENV_NAMES);',
+    ],
+  ])(
+    'rejects drift in non-environment arguments of a reviewed call: %s',
+    async (original, replacement) => {
+      const sourceText = await readRailwayLauncherSource();
+      const mutatedSource = replaceRequired(
+        sourceText,
+        original,
+        replacement
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'reviewed mutable process call contract'
+        ),
+        expect.stringContaining(
+          'full-call digest mismatch'
+        ),
+      ]));
+    }
+  );
+
+  it('rejects drift in the reviewed production environment spread', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const mutatedSource = replaceRequired(
+      sourceText,
+      "RUN_WORKERS: processKind === 'worker' ? 'true' : 'false',",
+      "RUN_WORKERS: processKind === 'worker' ? '1' : '0',"
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'reviewed mutable process spread function'
+      ),
+    ]));
+  });
+
+  it('rejects another call to the reviewed production environment builder', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      "import { fileURLToPath, pathToFileURL } from 'node:url';";
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\nbuildChildEnvironment('web');`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'reviewed mutable process spread function'
+      ),
+    ]));
+  });
+
+  it.each([
+    [
+      'const copyProductionEnvironment = buildChildEnvironment;',
+      "const inheritedEnvironment = copyProductionEnvironment('web');",
+      'console.log(inheritedEnvironment.OPENAI_API_KEY);',
+    ].join('\n'),
+    [
+      'const helpers = { buildChildEnvironment };',
+      "const inheritedEnvironment = helpers.buildChildEnvironment('web');",
+      'console.log(inheritedEnvironment.OPENAI_API_KEY);',
+    ].join('\n'),
+    'export { buildChildEnvironment };',
+    'export { buildChildEnvironment as copyProductionEnvironment };',
+  ])(
+    'rejects extraction or export of the production environment builder: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'forbidden launcher helper capability reference'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'buildChildEnvironment = isCliBridgeEnabled;',
+    [
+      '({ buildChildEnvironment } = {',
+      '  buildChildEnvironment: isCliBridgeEnabled,',
+      '});',
+    ].join('\n'),
+  ])(
+    'rejects reassignment of the reviewed production environment builder: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'reviewed mutable process spread function'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'destination.end();',
+    'mutate(destination);',
+    'options.leakedDestination = destination;',
+  ])(
+    'rejects drift in the reviewed worker output mirror: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker =
+        '  const observeReadiness = options.observeReadiness !== false;';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical launcher function "mirrorAndObserveWorkerOutput" body digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    '  workerProcess.stdout = workerProcess.stderr;',
+    "  workerProcess.stdout?.removeAllListeners('data');",
+  ])(
+    'rejects mutation of the reviewed worker output source: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = [
+        '  mirrorAndObserveWorkerOutput(',
+        '    workerProcess.stdout,',
+      ].join('\n');
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical launcher function "runWorkerRuntimeWithHealthServer" body digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'recordWorkerOutput = () => undefined;',
+    'recordWorkerExit = (state) => state;',
+    'createWorkerReadinessState = () => ({ ready: true });',
+    [
+      'buildWorkerReadinessResponse = () => ({',
+      '  statusCode: 200,',
+      '  body: { ready: true },',
+      '});',
+    ].join('\n'),
+  ])(
+    'rejects replacement of a transitive worker readiness helper: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical entry file semantic digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    '  childProcess.stdout = childProcess.stderr;',
+    "  childProcess.stdout?.removeAllListeners('data');",
+  ])(
+    'rejects output mutation inside the child-exit observer: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker =
+        'export function waitForExit(childProcess, options = {}) {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${marker}\n${insertion}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical entry file semantic digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'waitForExit = isCliBridgeEnabled;',
+    [
+      '({ waitForExit } = {',
+      '  waitForExit: isCliBridgeEnabled,',
+      '});',
+    ].join('\n'),
+  ])(
+    'rejects reassignment of the child-exit observer: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'critical entry file semantic digest'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'mirrorAndObserveWorkerOutput = (_stream, destination) => destination.end();',
+    [
+      '({ mirrorAndObserveWorkerOutput } = {',
+      '  mirrorAndObserveWorkerOutput: (_stream, destination) => destination.end(),',
+      '});',
+    ].join('\n'),
+  ])(
+    'rejects reassignment of the reviewed worker output mirror: %s',
+    async (insertion) => {
+      const sourceText = await readRailwayLauncherSource();
+      const marker = 'async function main() {';
+      const mutatedSource = replaceRequired(
+        sourceText,
+        marker,
+        `${insertion}\n\n${marker}`
+      );
+
+      expect(findUnsafeRuntimeSyntax(
+        'scripts/start-railway-service.mjs',
+        mutatedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'forbidden launcher helper capability reference'
+        ),
+      ]));
+    }
+  );
+
+  it.each([
+    'spawnProcess(process.execPath, ["evil.js"], "web", { env: process.env });',
+    '(() => spawnProcess(process.execPath, ["evil.js"], "web", { env: process.env }))();',
+  ])('rejects a module-evaluation spawn path: %s', async (insertion) => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      "import { fileURLToPath, pathToFileURL } from 'node:url';";
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n${insertion}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden spawnProcess capability reference'),
+    ]));
+  });
+
+  it.each([
+    'void runWebRuntime();',
+    'const launchProduction = runWebRuntime; void launchProduction();',
+  ])('rejects a module-evaluation production helper path: %s', async (insertion) => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker =
+      "import { fileURLToPath, pathToFileURL } from 'node:url';";
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n${insertion}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it.each([
+    'await runWebRuntime();',
+    'const launchProduction = runWebRuntime; await launchProduction();',
+  ])('rejects a production helper path in the main native branch: %s', async (insertion) => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker = '    if (nativePrPreview.enabled) {';
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n      ${insertion}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden launcher helper capability reference'
+      ),
+    ]));
+  });
+
+  it('rejects a complete launcher whose spawn wrapper ignores the checked specification', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const original = [
+      'function spawnProcess(command, args, processKind, options = {}) {',
+      '  return spawn(command, args, {',
+      "    stdio: options.stdio ?? 'inherit',",
+      '    env: options.env ?? buildChildEnvironment(processKind),',
+      '    cwd: options.cwd',
+      '  });',
+      '}',
+    ].join('\n');
+    const replacement = [
+      'function spawnProcess(command, args, processKind, options = {}) {',
+      '  return spawn(process.execPath, ["dist/start-server.js"], {',
+      '    env: process.env,',
+      '    cwd: process.cwd()',
+      '  });',
+      '}',
+    ].join('\n');
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      replaceRequired(sourceText, original, replacement)
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('unsafe spawnProcess wrapper'),
+    ]));
+  });
+
+  it('rejects a complete launcher whose spawn-spec builder restores inherited credentials', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const original = [
+      'export function buildNativePrApplicationSpawnSpec(env = process.env) {',
+      '  return {',
+      '    args: [',
+      "      '--max-old-space-size=512',",
+      "      'dist/start-native-pr-preview.js'",
+      '    ],',
+      '    command: process.execPath,',
+      '    cwd: LAUNCHER_REPOSITORY_ROOT,',
+      '    env: buildNativePrApplicationChildEnvironment(env)',
+      '  };',
+      '}',
+    ].join('\n');
+    const replacement = original.replace(
+      'env: buildNativePrApplicationChildEnvironment(env)',
+      'env: process.env'
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      replaceRequired(sourceText, original, replacement)
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'unsafe native preview spawn specification builder'
+      ),
+    ]));
+  });
+
+  it('rejects a shared spawn-spec alias mutated by the complete native launcher', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    const withSharedAlias = replaceRequired(
+      sourceText,
+      'export function buildNativePrApplicationSpawnSpec(env = process.env) {\n  return {',
+      'let leakedPreviewSpec;\n\nexport function buildNativePrApplicationSpawnSpec(env = process.env) {\n  return leakedPreviewSpec = {'
+    );
+    const marker = 'async function runNativePrApplicationPreview() {';
+    const mutatedSource = replaceRequired(
+      withSharedAlias,
+      marker,
+      `${marker}\n  leakedPreviewSpec.env = process.env;`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'unsafe native preview spawn specification builder'
+      ),
+    ]));
+  });
+
+  it.each([
+    'export { spawn as launchRaw };',
+    'export { spawnProcess as launchRaw };',
+  ])('rejects an exported launcher effect alias: %s', async (exportText) => {
+    const sourceText = await readRailwayLauncherSource();
+    const marker = "import { spawn } from 'node:child_process';";
+    const mutatedSource = replaceRequired(
+      sourceText,
+      marker,
+      `${marker}\n${exportText}`
+    );
+
+    expect(findUnsafeRuntimeSyntax(
+      'scripts/start-railway-service.mjs',
+      mutatedSource
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('capability reference'),
+    ]));
+  });
+});

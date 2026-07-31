@@ -28,7 +28,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const VALID_PROCESS_KINDS = new Set(['web', 'worker']);
@@ -39,8 +39,7 @@ const HEALTH_NOT_FOUND_BODY = 'not found';
 const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
-const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
-const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
+export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
 const DEFAULT_CLI_BRIDGE_HOST = '127.0.0.1';
 const DEFAULT_CLI_BRIDGE_PORT = 8765;
 const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -49,8 +48,15 @@ const CLI_BRIDGE_URL_ENV = 'ARCANOS_CLI_BRIDGE_URL';
 const CLI_BRIDGE_TOKEN_ENV = 'ARCANOS_CLI_BRIDGE_TOKEN';
 const PREVIEW_ISOLATION_ENV = 'ARCANOS_PREVIEW_ISOLATION';
 const PASSIVE_PR_PREVIEW_ARGUMENT = '--pr-preview-safe';
+const APPLICATION_PR_PREVIEW_ARGUMENT = '--pr-preview-app-safe-v1';
+const APPLICATION_PR_PREVIEW_MARKER_ENV = 'ARCANOS_NATIVE_PR_APPLICATION_PREVIEW';
+const LAUNCHER_REPOSITORY_ROOT =
+  fileURLToPath(new URL('../', import.meta.url));
 const NATIVE_PR_ENVIRONMENT_PATTERN =
   /^(?:Arcanos-pr-[1-9]\d*|pr-[0-9a-f]{6}-[1-9]\d*)$/iu;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/iu;
 const OPENAI_BASE_URL_ENV_NAMES = [
   'OPENAI_BASE_URL',
   'RAILWAY_OPENAI_BASE_URL',
@@ -144,6 +150,136 @@ export function resolvePassivePrPreviewOrThrow(args = process.argv.slice(2), env
   };
 }
 
+function extractNativePrNumberOrThrow(environmentName) {
+  const match = /-([1-9]\d*)$/u.exec(environmentName);
+  if (!match) {
+    throw new Error('PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED');
+  }
+  return Number.parseInt(match[1], 10);
+}
+
+function requirePreviewIdentityValue(env, environmentName, missingCode, invalidCode) {
+  const value = env[environmentName]?.trim() || '';
+  if (!value) {
+    throw new Error(missingCode);
+  }
+  if (!UUID_PATTERN.test(value)) {
+    throw new Error(invalidCode);
+  }
+  return value;
+}
+
+function normalizeRailwayPublicDomain(env) {
+  const rawValue =
+    env.RAILWAY_PUBLIC_DOMAIN?.trim()
+    || env.RAILWAY_STATIC_URL?.trim()
+    || '';
+  if (!rawValue) {
+    return '';
+  }
+
+  try {
+    const parsedUrl = rawValue.includes('://')
+      ? new URL(rawValue)
+      : new URL(`https://${rawValue}`);
+    return parsedUrl.hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function assertNativePrApplicationIdentityOrThrow(env, environmentName, prNumber) {
+  requirePreviewIdentityValue(
+    env,
+    'RAILWAY_SERVICE_ID',
+    'PREVIEW_APPLICATION_SERVICE_REQUIRED',
+    'PREVIEW_APPLICATION_SERVICE_INVALID'
+  );
+  requirePreviewIdentityValue(
+    env,
+    'RAILWAY_DEPLOYMENT_ID',
+    'PREVIEW_APPLICATION_DEPLOYMENT_REQUIRED',
+    'PREVIEW_APPLICATION_DEPLOYMENT_INVALID'
+  );
+
+  const sourceCommit = env.RAILWAY_GIT_COMMIT_SHA?.trim() || '';
+  if (!sourceCommit) {
+    throw new Error('PREVIEW_APPLICATION_SOURCE_COMMIT_REQUIRED');
+  }
+  if (!GIT_COMMIT_PATTERN.test(sourceCommit)) {
+    throw new Error('PREVIEW_APPLICATION_SOURCE_COMMIT_INVALID');
+  }
+
+  const publicDomain = normalizeRailwayPublicDomain(env);
+  const prDomainMarker = new RegExp(
+    `(?:^|[.-])pr-(?:[0-9a-f]{6}-)?${prNumber}(?:[.-]|$)`,
+    'iu'
+  );
+  if (
+    !publicDomain.endsWith('.up.railway.app')
+    || !prDomainMarker.test(publicDomain)
+  ) {
+    throw new Error('PREVIEW_APPLICATION_DOMAIN_MISMATCH');
+  }
+
+  return {
+    environmentName,
+    prNumber,
+    publicDomain,
+    sourceCommit: sourceCommit.toLowerCase()
+  };
+}
+
+/**
+ * Resolve the versioned native PR preview contract.
+ *
+ * The existing passive flag remains supported. The application flag selects a
+ * bounded web application while keeping the worker health-only.
+ */
+export function resolveNativePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {
+  const applicationArgumentPresent = args.includes(APPLICATION_PR_PREVIEW_ARGUMENT);
+  if (!applicationArgumentPresent) {
+    return resolvePassivePrPreviewOrThrow(args, env);
+  }
+  if (args.length !== 1 || args[0] !== APPLICATION_PR_PREVIEW_ARGUMENT) {
+    throw new Error('PREVIEW_ISOLATION_ARGUMENT_INVALID');
+  }
+
+  const environmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim() || '';
+  if (!NATIVE_PR_ENVIRONMENT_PATTERN.test(environmentName)) {
+    throw new Error('PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED');
+  }
+  requirePreviewIdentityValue(
+    env,
+    'RAILWAY_PROJECT_ID',
+    'PREVIEW_ISOLATION_PROJECT_REQUIRED',
+    'PREVIEW_ISOLATION_PROJECT_INVALID'
+  );
+  requirePreviewIdentityValue(
+    env,
+    'RAILWAY_ENVIRONMENT_ID',
+    'PREVIEW_ISOLATION_ENVIRONMENT_ID_REQUIRED',
+    'PREVIEW_ISOLATION_ENVIRONMENT_ID_INVALID'
+  );
+
+  const processKind = resolvePassivePrProcessKindOrThrow(env);
+  const prNumber = extractNativePrNumberOrThrow(environmentName);
+  const identity = assertNativePrApplicationIdentityOrThrow(
+    env,
+    environmentName,
+    prNumber
+  );
+
+  return {
+    enabled: true,
+    environmentCategory: 'native-pr',
+    processKind,
+    prNumber,
+    runtimeMode: processKind === 'web' ? 'application' : 'passive',
+    sourceCommit: identity.sourceCommit
+  };
+}
+
 function resolvePassivePrProcessKindOrThrow(env = process.env) {
   const processKind = String(env[PROCESS_KIND_ENV] ?? '').trim().toLowerCase();
   if (!VALID_PROCESS_KINDS.has(processKind)) {
@@ -158,7 +294,7 @@ function resolvePassivePrProcessKindOrThrow(env = process.env) {
  * The passive server intentionally imports no application, worker, provider, bridge,
  * database, Redis, migration, or scheduler module.
  */
-export function createPassivePrPreviewServer(processKind) {
+export function createPassivePrPreviewServer(processKind, identity = undefined) {
   if (!VALID_PROCESS_KINDS.has(processKind)) {
     throw new Error('PREVIEW_ISOLATION_PROCESS_KIND_INVALID');
   }
@@ -182,7 +318,9 @@ export function createPassivePrPreviewServer(processKind) {
       response.end(requestMethod === 'HEAD' ? undefined : JSON.stringify({
         ready: true,
         mode: 'passive-pr-preview',
-        processKind
+        processKind,
+        ...(identity?.prNumber ? { prNumber: identity.prNumber } : {}),
+        ...(identity?.sourceCommit ? { sourceCommit: identity.sourceCommit } : {})
       }));
       return;
     }
@@ -193,14 +331,14 @@ export function createPassivePrPreviewServer(processKind) {
   });
 }
 
-async function runPassivePrPreview(processKind) {
+async function runPassivePrPreview(processKind, identity = undefined) {
   let listenerConfig;
   try {
     listenerConfig = resolveHealthListenerConfig();
   } catch {
     throw new Error('PREVIEW_ISOLATION_LISTENER_INVALID');
   }
-  const server = createPassivePrPreviewServer(processKind);
+  const server = createPassivePrPreviewServer(processKind, identity);
 
   await new Promise((resolve, reject) => {
     const handleListenError = () => reject(new Error('PREVIEW_ISOLATION_LISTENER_START_FAILED'));
@@ -381,10 +519,54 @@ function buildChildEnvironment(processKind) {
   };
 }
 
+/**
+ * Construct the only environment visible to the contained preview application.
+ *
+ * Do not spread the launcher environment here. In particular, credentials,
+ * database/provider URLs, NODE_OPTIONS, and package-manager hooks must never
+ * cross this process boundary.
+ */
+export function buildNativePrApplicationChildEnvironment(env = process.env) {
+  const preview = resolveNativePrPreviewOrThrow(
+    [APPLICATION_PR_PREVIEW_ARGUMENT],
+    env
+  );
+  if (!preview.enabled || preview.runtimeMode !== 'application') {
+    throw new Error('PREVIEW_APPLICATION_WEB_ROLE_REQUIRED');
+  }
+
+  const listener = resolveHealthListenerConfig(env);
+  const childEnvironment = {
+    [APPLICATION_PR_PREVIEW_MARKER_ENV]: 'v1',
+    ARCANOS_PREVIEW_PR_NUMBER: String(preview.prNumber),
+    ARCANOS_PREVIEW_SOURCE_COMMIT: preview.sourceCommit,
+    [PROCESS_KIND_ENV]: 'web',
+    HOST: DEFAULT_HEALTH_HOST,
+    NODE_ENV: 'production',
+    PORT: String(listener.port),
+    RUN_WORKERS: 'false',
+    TZ: 'UTC'
+  };
+
+  return childEnvironment;
+}
+
+export function buildNativePrApplicationSpawnSpec(env = process.env) {
+  return {
+    args: [
+      '--max-old-space-size=512',
+      'dist/start-native-pr-preview.js'
+    ],
+    command: process.execPath,
+    cwd: LAUNCHER_REPOSITORY_ROOT,
+    env: buildNativePrApplicationChildEnvironment(env)
+  };
+}
+
 function spawnProcess(command, args, processKind, options = {}) {
   return spawn(command, args, {
     stdio: options.stdio ?? 'inherit',
-    env: buildChildEnvironment(processKind),
+    env: options.env ?? buildChildEnvironment(processKind),
     cwd: options.cwd
   });
 }
@@ -483,12 +665,31 @@ function maybeStartCliBridgeDaemon() {
  * - Expected shutdown signals can be mapped to success.
  * - Unexpected signal terminations return `1` as conservative failure code.
  */
-function waitForExit(childProcess, options = {}) {
+export function waitForExit(childProcess, options = {}) {
   const isExpectedShutdownSignal = options.isExpectedShutdownSignal ?? (() => false);
 
   return new Promise((resolve, reject) => {
-    childProcess.once('error', reject);
-    childProcess.once('exit', (code, signal) => {
+    let settled = false;
+    const removeListeners = () => {
+      childProcess.removeListener('error', handleError);
+      childProcess.removeListener('exit', handleExit);
+    };
+    const handleError = (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      removeListeners();
+      reject(error);
+    };
+    const handleExit = (code, signal) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      removeListeners();
       if (signal) {
         if (isExpectedShutdownSignal(signal)) {
           resolve(0);
@@ -501,7 +702,18 @@ function waitForExit(childProcess, options = {}) {
       }
 
       resolve(typeof code === 'number' ? code : 1);
-    });
+    };
+
+    childProcess.once('error', handleError);
+    childProcess.once('exit', handleExit);
+
+    //audit Assumption: a worker child can exit while the launcher binds its health listener; failure risk: subscribing after that one-shot event leaves the launcher alive forever at 503; expected invariant: already-set exitCode/signalCode resolves immediately; handling strategy: subscribe first, then inspect terminal child state to close both sides of the race.
+    if (
+      typeof childProcess.exitCode === 'number' ||
+      typeof childProcess.signalCode === 'string'
+    ) {
+      handleExit(childProcess.exitCode, childProcess.signalCode);
+    }
   });
 }
 
@@ -558,6 +770,44 @@ async function runWebRuntime() {
   process.exit(exitCode);
 }
 
+async function runNativePrApplicationPreview() {
+  console.log('[railway-launcher] preview.application.starting', JSON.stringify({
+    module: 'railway-launcher',
+    environmentCategory: 'native-pr',
+    processKind: 'web',
+    protectedEffectsEnabled: false,
+    runtimeContract: 'v1'
+  }));
+
+  const spawnSpec = buildNativePrApplicationSpawnSpec();
+  const previewProcess = spawnProcess(
+    spawnSpec.command,
+    spawnSpec.args,
+    'web',
+    {
+      cwd: spawnSpec.cwd,
+      env: spawnSpec.env
+    }
+  );
+  let shutdownRequested = false;
+  const shutdownPreview = (signal) => {
+    if (shutdownRequested) {
+      return;
+    }
+    shutdownRequested = true;
+    previewProcess.kill(signal);
+  };
+
+  process.once('SIGTERM', () => shutdownPreview('SIGTERM'));
+  process.once('SIGINT', () => shutdownPreview('SIGINT'));
+
+  const exitCode = await waitForExit(previewProcess, {
+    isExpectedShutdownSignal: (signal) =>
+      shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
+  });
+  process.exit(exitCode);
+}
+
 export function createWorkerReadinessState(env = process.env) {
   const providerConfigured = OPENAI_API_KEY_ENV_NAMES.some((envName) => Boolean(env[envName]?.trim()));
 
@@ -568,28 +818,68 @@ export function createWorkerReadinessState(env = process.env) {
     provider: providerConfigured ? 'configured' : 'missing',
     ready: false,
     reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing',
-    outputOverlap: ''
+    readinessProtocolBuffer: '',
+    readinessProtocolDiscardingLine: false
   };
 }
 
 export function recordWorkerOutput(readinessState, chunk) {
-  if (readinessState.child === 'exited') {
+  if (readinessState.child === 'draining' || readinessState.child === 'exited') {
     return readinessState;
   }
 
   const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-  const searchableText = `${readinessState.outputOverlap ?? ''}${text}`;
-  readinessState.outputOverlap = searchableText.slice(-WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH);
+  for (const character of text) {
+    if (character === '\n') {
+      if (!readinessState.readinessProtocolDiscardingLine) {
+        const bufferedLine = readinessState.readinessProtocolBuffer ?? '';
+        const normalizedLine = bufferedLine.endsWith('\r')
+          ? bufferedLine.slice(0, -1)
+          : bufferedLine;
+        if (normalizedLine === WORKER_BOOTSTRAP_READY_SENTINEL) {
+          readinessState.child = 'running';
+          readinessState.bootstrap = 'ready';
+          readinessState.database = 'ready';
+          readinessState.ready = readinessState.provider === 'configured';
+          readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
+          readinessState.readinessProtocolBuffer = '';
+          return readinessState;
+        }
+      }
 
-  if (!searchableText.includes(WORKER_BOOTSTRAP_READY_MARKER)) {
+      readinessState.readinessProtocolBuffer = '';
+      readinessState.readinessProtocolDiscardingLine = false;
+      continue;
+    }
+
+    if (readinessState.readinessProtocolDiscardingLine) {
+      continue;
+    }
+
+    readinessState.readinessProtocolBuffer =
+      `${readinessState.readinessProtocolBuffer ?? ''}${character}`;
+    if (
+      readinessState.readinessProtocolBuffer.length >
+      WORKER_BOOTSTRAP_READY_SENTINEL.length + 1
+    ) {
+      readinessState.readinessProtocolBuffer = '';
+      readinessState.readinessProtocolDiscardingLine = true;
+    }
+  }
+
+  return readinessState;
+}
+
+export function recordWorkerShutdown(readinessState, _signal) {
+  if (readinessState.child === 'exited') {
     return readinessState;
   }
 
-  readinessState.child = 'running';
-  readinessState.bootstrap = 'ready';
-  readinessState.database = 'ready';
-  readinessState.ready = readinessState.provider === 'configured';
-  readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
+  readinessState.child = 'draining';
+  readinessState.ready = false;
+  readinessState.reason = 'worker_shutdown_requested';
+  readinessState.readinessProtocolBuffer = '';
+  readinessState.readinessProtocolDiscardingLine = false;
   return readinessState;
 }
 
@@ -621,15 +911,61 @@ export function buildWorkerReadinessResponse(readinessState) {
   };
 }
 
-export function mirrorAndObserveWorkerOutput(stream, destination, readinessState) {
+export function mirrorAndObserveWorkerOutput(
+  stream,
+  destination,
+  readinessState,
+  options = {}
+) {
+  const observeReadiness = options.observeReadiness !== false;
   stream?.on('data', chunk => {
-    recordWorkerOutput(readinessState, chunk);
+    if (observeReadiness) {
+      recordWorkerOutput(readinessState, chunk);
+    }
     if (!destination.write(chunk)) {
       stream.pause?.();
       destination.once('drain', () => {
         stream.resume?.();
       });
     }
+  });
+}
+
+/**
+ * Create the worker liveness/readiness listener used by Railway.
+ *
+ * Inputs/outputs:
+ * - Input: mutable worker readiness state observed from child output.
+ * - Output: an unbound Node HTTP server.
+ *
+ * Edge case behavior:
+ * - Liveness remains independent from dependency bootstrap.
+ * - Readiness is always no-store and returns 503 until the worker is ready.
+ */
+export function createWorkerHealthServer(readinessState) {
+  return createServer((request, response) => {
+    const requestPath = request.url ?? '';
+
+    //audit Assumption: Railway supervision and external monitors may still call the liveness paths; risk: strict dependency readiness causes restarts during worker bootstrap; invariant: /health and /healthz only prove the launcher is alive; handling: keep liveness independent from readiness while deployment activation uses /readyz.
+    if (LIVENESS_PATHS.has(requestPath)) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/plain; charset=utf-8');
+      response.end(HEALTH_OK_BODY);
+      return;
+    }
+
+    if (requestPath === READINESS_PATH) {
+      const readiness = buildWorkerReadinessResponse(readinessState);
+      response.statusCode = readiness.statusCode;
+      response.setHeader('cache-control', 'no-store');
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify(readiness.body));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.setHeader('content-type', 'text/plain; charset=utf-8');
+    response.end(HEALTH_NOT_FOUND_BODY);
   });
 }
 
@@ -655,6 +991,7 @@ async function runWorkerRuntimeWithHealthServer() {
   const healthListenerConfig = resolveHealthListenerConfig();
   await repairDistAliases('worker');
   const readinessState = createWorkerReadinessState();
+  let shutdownRequested = false;
   const workerProcess = spawnProcess('node', [
     '--import',
     './scripts/register-esm-loader.mjs',
@@ -662,37 +999,28 @@ async function runWorkerRuntimeWithHealthServer() {
   ], 'worker', {
     stdio: ['inherit', 'pipe', 'pipe']
   });
-  let shutdownRequested = false;
+  const workerExitPromise = waitForExit(workerProcess, {
+    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
+  });
+  void workerExitPromise.catch(() => undefined);
 
-  mirrorAndObserveWorkerOutput(workerProcess.stdout, process.stdout, readinessState);
-  mirrorAndObserveWorkerOutput(workerProcess.stderr, process.stderr, readinessState);
+  mirrorAndObserveWorkerOutput(
+    workerProcess.stdout,
+    process.stdout,
+    readinessState,
+    { observeReadiness: true }
+  );
+  mirrorAndObserveWorkerOutput(
+    workerProcess.stderr,
+    process.stderr,
+    readinessState,
+    { observeReadiness: false }
+  );
   workerProcess.once('exit', (code, signal) => {
     recordWorkerExit(readinessState, code, signal);
   });
 
-  const healthServer = createServer((request, response) => {
-    const requestPath = request.url ?? '';
-
-    //audit Assumption: Railway probes the liveness path for process supervision; risk: strict dependency readiness causes restarts during worker bootstrap; invariant: /health and /healthz only prove the launcher is alive; handling: keep liveness independent from readiness.
-    if (LIVENESS_PATHS.has(requestPath)) {
-      response.statusCode = 200;
-      response.setHeader('content-type', 'text/plain; charset=utf-8');
-      response.end(HEALTH_OK_BODY);
-      return;
-    }
-
-    if (requestPath === READINESS_PATH) {
-      const readiness = buildWorkerReadinessResponse(readinessState);
-      response.statusCode = readiness.statusCode;
-      response.setHeader('content-type', 'application/json; charset=utf-8');
-      response.end(JSON.stringify(readiness.body));
-      return;
-    }
-
-    response.statusCode = 404;
-    response.setHeader('content-type', 'text/plain; charset=utf-8');
-    response.end(HEALTH_NOT_FOUND_BODY);
-  });
+  const healthServer = createWorkerHealthServer(readinessState);
 
   const shutdownWorker = (signal) => {
     if (shutdownRequested) {
@@ -700,6 +1028,7 @@ async function runWorkerRuntimeWithHealthServer() {
     }
 
     shutdownRequested = true;
+    recordWorkerShutdown(readinessState, signal);
     console.log(`[railway-launcher] received ${signal}; forwarding shutdown to worker runtime`);
     //audit Assumption: forwarding platform signals avoids orphan worker process; risk: stuck shutdown/redeploy hangs; invariant: worker receives termination signal before launcher exits; handling: forward SIGTERM/SIGINT directly.
     workerProcess.kill(signal);
@@ -725,9 +1054,7 @@ async function runWorkerRuntimeWithHealthServer() {
     throw error;
   }
 
-  const exitCode = await waitForExit(workerProcess, {
-    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
-  });
+  const exitCode = await workerExitPromise;
 
   await new Promise((resolve) => {
     healthServer.close(() => resolve());
@@ -748,10 +1075,19 @@ async function runWorkerRuntimeWithHealthServer() {
  */
 async function main() {
   try {
-    const passivePrPreview = resolvePassivePrPreviewOrThrow();
-    if (passivePrPreview.enabled) {
-      const processKind = resolvePassivePrProcessKindOrThrow();
-      await runPassivePrPreview(processKind);
+    const nativePrPreview = resolveNativePrPreviewOrThrow();
+    if (nativePrPreview.enabled) {
+      const processKind =
+        nativePrPreview.processKind
+        ?? resolvePassivePrProcessKindOrThrow();
+      if (nativePrPreview.runtimeMode === 'application') {
+        await runNativePrApplicationPreview();
+        return;
+      }
+      await runPassivePrPreview(processKind, {
+        prNumber: nativePrPreview.prNumber,
+        sourceCommit: nativePrPreview.sourceCommit
+      });
       return;
     }
 
@@ -777,7 +1113,10 @@ async function main() {
   } catch (error) {
     //audit Assumption: launcher failures must be visible for incident triage; risk: silent boot failure with endless restart loops; invariant: fatal errors are logged and non-zero exit code returned; handling: structured stderr logging + exit(1).
     const isPreviewIsolationFailure = error instanceof Error
-      && error.message.startsWith('PREVIEW_ISOLATION_');
+      && (
+        error.message.startsWith('PREVIEW_ISOLATION_')
+        || error.message.startsWith('PREVIEW_APPLICATION_')
+      );
     const message = error instanceof Error
       ? isPreviewIsolationFailure
         ? error.message

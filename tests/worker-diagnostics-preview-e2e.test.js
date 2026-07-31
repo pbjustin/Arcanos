@@ -394,7 +394,7 @@ function buildSuccessfulFetch(calls) {
           result: FIXTURE.resultSentinel,
           workersDirectory: FIXTURE.absolutePathSentinel,
         },
-      });
+      }, noStore);
     }
 
     if (parsedUrl.pathname === `/jobs/${FIXTURE.jobId}/result`) {
@@ -409,7 +409,7 @@ function buildSuccessfulFetch(calls) {
           code: 'JOB_FAILED',
           message: FIXTURE.errorSentinel,
         },
-      });
+      }, noStore);
     }
 
     if (parsedUrl.pathname === `/jobs/${FIXTURE.jobId}/stream`) {
@@ -781,6 +781,16 @@ describe('worker diagnostics preview E2E live acceptance', () => {
     });
     expect(report.fixture.jobIdSha256).toHaveLength(64);
     expect(report.fixture.workerIdSha256).toHaveLength(64);
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        caseId: 'generic-job-status',
+        cacheDirectivesChecked: ['no-store'],
+      }),
+      expect.objectContaining({
+        caseId: 'generic-job-result',
+        cacheDirectivesChecked: ['no-store'],
+      }),
+    ]));
     expect(JSON.stringify(report)).not.toContain(FIXTURE.jobId);
     for (const value of [
       ...Object.values(TOKENS),
@@ -825,6 +835,43 @@ describe('worker diagnostics preview E2E live acceptance', () => {
     expect(jobCalls.every((call) =>
       /^v1\.[A-Za-z0-9_-]{43}$/u.test(call.jobToken))).toBe(true);
     expect(jobCalls.every((call) => call.authorization === undefined)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: 'status',
+      path: `/jobs/${FIXTURE.jobId}`,
+      code: 'JOB_STATUS_CACHE_POLICY_INVALID',
+    },
+    {
+      name: 'result',
+      path: `/jobs/${FIXTURE.jobId}/result`,
+      code: 'JOB_RESULT_CACHE_POLICY_INVALID',
+    },
+  ])('fails when the generic job $name JSON response is cacheable', async ({
+    path: targetPath,
+    code,
+  }) => {
+    const successfulFetch = buildSuccessfulFetch([]);
+    const fetchFn = async (url, options) => {
+      const result = await successfulFetch(url, options);
+      const parsedUrl = new URL(String(url));
+      if (parsedUrl.pathname !== targetPath) {
+        return result;
+      }
+      return {
+        ...result,
+        headers: headers({
+          'content-type': 'application/json; charset=utf-8',
+        }),
+      };
+    };
+
+    await expect(runProbe(liveConfig(), {
+      env: probeEnvironment(),
+      railwayStatusFn: async () => railwayStatus(),
+      fetchFn,
+    })).rejects.toMatchObject({ code });
   });
 
   it('fails when a public response adds a forbidden diagnostic key', async () => {

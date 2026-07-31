@@ -21,7 +21,10 @@ import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { validateClientHealth } from '@arcanos/openai/unifiedClient';
 import { isOpenAIAdapterInitialized } from "@core/adapters/openai.adapter.js";
-import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import {
+  getConfig,
+  getStableWorkerRuntimeMode
+} from "@platform/runtime/unifiedConfig.js";
 import { resolveConfiguredRedisConnection } from "@platform/runtime/redis.js";
 import { getRedisLifecycleSnapshot } from "@platform/runtime/redisLifecycle.js";
 import { getStartupLifecycleSnapshot } from "@platform/runtime/startupLifecycle.js";
@@ -80,6 +83,11 @@ export interface HealthChecker {
   check: HealthCheckFn;
   /** Whether this check is critical (fails overall health if unhealthy) */
   critical?: boolean;
+}
+
+interface DependencyHealthOptions {
+  requireConfigured?: boolean;
+  requireSchemaReady?: boolean;
 }
 
 interface PublicReadinessFailure {
@@ -502,35 +510,56 @@ export async function checkOpenAIHealth(): Promise<HealthCheckResult> {
 }
 
 /**
- * Database health check (if database is configured)
+ * Database health check (if database is configured).
+ *
+ * Missing configuration remains healthy for optional diagnostics unless the
+ * caller explicitly requires a configured dependency.
  */
-export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
+export async function checkDatabaseHealth(
+  options: DependencyHealthOptions = {}
+): Promise<HealthCheckResult> {
   const config = getConfig();
+  const requireConfigured = options.requireConfigured === true;
+  const databaseConfigured = requireConfigured
+    ? (config.databaseConfigured ?? Boolean(config.databaseUrl))
+    : Boolean(config.databaseUrl);
   
-  if (!config.databaseUrl) {
+  if (!databaseConfigured) {
     return {
-      healthy: true,
+      healthy: !requireConfigured,
       name: 'database',
+      ...(requireConfigured ? {
+        code: 'DATABASE_DEPENDENCY_UNAVAILABLE',
+        error: 'Database dependency is unavailable.'
+      } : {}),
       metadata: {
         configured: false,
-        reason: 'Database not configured (optional)'
+        reason: requireConfigured
+          ? 'Database configuration is required for production web readiness.'
+          : 'Database not configured (optional)'
       }
     };
   }
 
   // Check database connectivity using db client
   try {
-    const { getStatus } = await import("@core/db/index.js");
+    const { getStatus, isDatabaseSchemaReady } = await import("@core/db/index.js");
     const dbStatus = getStatus();
-    
+    const requireSchemaReady = options.requireSchemaReady === true;
+    const schemaReady = !requireSchemaReady || isDatabaseSchemaReady();
+
     return {
-      healthy: dbStatus.connected,
+      healthy: dbStatus.connected && schemaReady,
       name: 'database',
-      error: dbStatus.error || undefined,
+      error: dbStatus.error
+        || (dbStatus.connected && !schemaReady
+          ? 'Database schema is unavailable.'
+          : undefined),
       metadata: {
         configured: true,
         connected: dbStatus.connected,
-        url: config.databaseUrl ? 'configured' : 'not configured'
+        ...(requireSchemaReady ? { schemaReady } : {}),
+        url: config.databaseUrl ? 'configured' : 'synthesized'
       }
     };
   } catch (error) {
@@ -557,23 +586,33 @@ export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
  * - Output: health result with configuration and connectivity metadata.
  *
  * Edge case behavior:
- * - Returns healthy with `configured: false` when Redis is not configured for the deployment.
+ * - Returns healthy with `configured: false` when Redis is optional and not
+ *   configured for the deployment.
  * - Never opens a Redis connection or exposes an underlying connection error.
  */
-export async function checkRedisHealth(): Promise<HealthCheckResult> {
+export async function checkRedisHealth(
+  options: DependencyHealthOptions = {}
+): Promise<HealthCheckResult> {
   const redisConnection = resolveConfiguredRedisConnection();
   const redisLifecycle = getRedisLifecycleSnapshot();
   const configured = redisConnection.configured || redisLifecycle.configured;
 
-  //audit Assumption: Redis is optional for some deployments, so missing configuration should not fail health by itself; failure risk: stateless or reduced-feature environments flap unhealthy without using Redis; expected invariant: unconfigured Redis reports healthy with explicit metadata; handling strategy: short-circuit with `configured: false`.
+  //audit Assumption: Redis is optional for some deployments but mandatory for production web activation; failure risk: stateless or reduced-feature environments flap unhealthy, or production activates without its durable backend; expected invariant: caller policy determines whether unconfigured Redis is healthy; handling strategy: preserve optional diagnostics and fail closed only for the readiness wrapper.
   if (!configured) {
+    const requireConfigured = options.requireConfigured === true;
     return {
-      healthy: true,
+      healthy: !requireConfigured,
       name: 'redis',
+      ...(requireConfigured ? {
+        code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+        error: 'Redis dependency is unavailable.'
+      } : {}),
       metadata: {
         configured: false,
         source: redisConnection.source,
-        reason: 'Redis not configured (optional)'
+        reason: requireConfigured
+          ? 'Redis configuration is required for production web readiness.'
+          : 'Redis not configured (optional)'
       }
     };
   }
@@ -622,6 +661,38 @@ export async function checkRedisHealth(): Promise<HealthCheckResult> {
       code
     }
   };
+}
+
+function requiresProductionWebDependencies(): boolean {
+  return (
+    getConfig().isProduction
+    && getStableWorkerRuntimeMode().processKind === 'web'
+  );
+}
+
+/**
+ * Database readiness policy for the public application route.
+ * Production web activation requires configuration, connectivity, and schema
+ * initialization; local/test and non-web roles retain the optional dependency
+ * behavior used by diagnostics.
+ */
+export async function checkDatabaseReadiness(): Promise<HealthCheckResult> {
+  const requireDurableBackends = requiresProductionWebDependencies();
+  return checkDatabaseHealth({
+    requireConfigured: requireDurableBackends,
+    requireSchemaReady: requireDurableBackends
+  });
+}
+
+/**
+ * Redis readiness policy for the public application route.
+ * Production web activation requires configuration without opening a new
+ * connection from the probe.
+ */
+export async function checkRedisReadiness(): Promise<HealthCheckResult> {
+  return checkRedisHealth({
+    requireConfigured: requiresProductionWebDependencies()
+  });
 }
 
 /**

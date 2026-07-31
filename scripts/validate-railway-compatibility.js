@@ -24,8 +24,11 @@ const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
 const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
 const RAILWAYIGNORE_PATH = path.join(PROJECT_ROOT, '.railwayignore');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
-const EXPECTED_PR_START_COMMAND = `${EXPECTED_START_COMMAND} --pr-preview-safe`;
-const EXPECTED_HEALTHCHECK_PATH = '/health';
+const EXPECTED_PR_START_COMMAND = `${EXPECTED_START_COMMAND} --pr-preview-app-safe-v1`;
+const EXPECTED_HEALTHCHECK_PATH = '/readyz';
+const EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS = 300;
+const EXPECTED_DRAINING_SECONDS = 60;
+const RAILWAY_DRAINING_SECONDS_VARIABLE = 'RAILWAY_DEPLOYMENT_DRAINING_SECONDS';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_VENDOR_COPY = 'COPY vendor/ ./vendor/';
@@ -39,6 +42,7 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
   'PORT',
   'DATABASE_URL',
+  'REDIS_URL',
   'OPENAI_API_KEY',
   'ARCANOS_GPT_ACCESS_TOKEN',
   'ARCANOS_GPT_ACCESS_BASE_URL',
@@ -180,9 +184,93 @@ export function validateConfig(config) {
     errors.push(`Expected deploy.startCommand to be "${EXPECTED_START_COMMAND}" but found "${String(deploy.startCommand ?? '')}"`);
   }
 
-  //audit Assumption: Railway should probe the stable service-availability endpoint; risk: probing stricter diagnostics like /healthz can fail healthy deployments on non-critical readiness drift; invariant: deploy health checks use /health; handling: fail on drift.
+  //audit Assumption: Railway activation must establish role readiness rather than launcher/process liveness; risk: /health or /healthz can activate a worker before database/dispatcher bootstrap or a web process before critical dependencies are ready; invariant: the deployment gate uses /readyz; handling: fail on drift while preserving liveness endpoints for supervision.
   if (deploy.healthcheckPath !== EXPECTED_HEALTHCHECK_PATH) {
     errors.push(`Expected deploy.healthcheckPath to be "${EXPECTED_HEALTHCHECK_PATH}" but found "${String(deploy.healthcheckPath ?? '')}"`);
+  }
+
+  if (deploy.healthcheckTimeout !== EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS) {
+    errors.push(`Expected deploy.healthcheckTimeout to be ${EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS} but found "${String(deploy.healthcheckTimeout ?? '')}"`);
+  }
+
+  //audit Assumption: Railway otherwise defaults the SIGTERM-to-SIGKILL interval to zero; risk: platform teardown can kill web request cancellation or worker claim/snapshot cleanup before cooperative shutdown completes; invariant: config-as-code provides the reviewed shared 60-second outer ceiling as the numeric type required by Railway's live schema; handling: reject missing, zero, string-backed, or drifted values.
+  if (deploy.drainingSeconds !== EXPECTED_DRAINING_SECONDS) {
+    errors.push(`Expected deploy.drainingSeconds to be the number ${EXPECTED_DRAINING_SECONDS} but found "${String(deploy.drainingSeconds ?? '')}"`);
+  }
+
+  //audit Assumption: Railway also accepts a provider-native service variable for the drain interval; risk: a tracked variable silently supersedes or conflicts with the canonical numeric deploy field; invariant: railway.json owns this setting only through deploy.drainingSeconds; handling: reject the provider-native variable in every tracked runtime-variable map, even when its string value appears equivalent.
+  if (
+    deploy.env
+    && typeof deploy.env === 'object'
+    && !Array.isArray(deploy.env)
+    && Object.hasOwn(deploy.env, RAILWAY_DRAINING_SECONDS_VARIABLE)
+  ) {
+    errors.push(
+      `deploy.env.${RAILWAY_DRAINING_SECONDS_VARIABLE} must be omitted; use deploy.drainingSeconds`,
+    );
+  }
+  if (environments && typeof environments === 'object' && !Array.isArray(environments)) {
+    for (const [environmentName, environmentConfig] of Object.entries(environments)) {
+      const variables = (
+        environmentConfig
+        && typeof environmentConfig === 'object'
+        && !Array.isArray(environmentConfig)
+      )
+        ? environmentConfig.variables
+        : undefined;
+      if (
+        variables
+        && typeof variables === 'object'
+        && !Array.isArray(variables)
+        && Object.hasOwn(variables, RAILWAY_DRAINING_SECONDS_VARIABLE)
+      ) {
+        errors.push(
+          `environments.${environmentName}.variables.${RAILWAY_DRAINING_SECONDS_VARIABLE} must be omitted; use deploy.drainingSeconds`,
+        );
+      }
+    }
+  }
+
+  //audit Assumption: every exact-named Railway environment takes precedence over root config; risk: a workflow target other than literal production can silently restore liveness activation or zero-second teardown while the root validator remains green; invariant: every non-PR environment inherits the root readiness path, timeout, and drain budget without redeclaring them; handling: reject those fields and the provider-native drain variable in every named environment deploy override.
+  if (environments && typeof environments === 'object' && !Array.isArray(environments)) {
+    for (const [environmentName, environmentConfig] of Object.entries(environments)) {
+      if (environmentName === 'pr') {
+        continue;
+      }
+      const environmentDeploy = (
+        environmentConfig
+        && typeof environmentConfig === 'object'
+        && !Array.isArray(environmentConfig)
+      )
+        ? environmentConfig.deploy
+        : undefined;
+      if (environmentDeploy === undefined) {
+        continue;
+      }
+      if (
+        !environmentDeploy
+        || typeof environmentDeploy !== 'object'
+        || Array.isArray(environmentDeploy)
+      ) {
+        errors.push(`environments.${environmentName}.deploy must be an object when defined`);
+        continue;
+      }
+      for (const field of ['healthcheckPath', 'healthcheckTimeout', 'drainingSeconds']) {
+        if (Object.hasOwn(environmentDeploy, field)) {
+          errors.push(`environments.${environmentName}.deploy.${field} must be omitted so ${environmentName} inherits deploy.${field}`);
+        }
+      }
+      if (
+        environmentDeploy.env
+        && typeof environmentDeploy.env === 'object'
+        && !Array.isArray(environmentDeploy.env)
+        && Object.hasOwn(environmentDeploy.env, RAILWAY_DRAINING_SECONDS_VARIABLE)
+      ) {
+        errors.push(
+          `environments.${environmentName}.deploy.env.${RAILWAY_DRAINING_SECONDS_VARIABLE} must be omitted; use deploy.drainingSeconds`,
+        );
+      }
+    }
   }
 
   //audit Assumption: explicit restart policy is required for stable recovery behavior; risk: unbounded crash loops or no restart; invariant: ON_FAILURE policy present; handling: fail on mismatch.
@@ -226,6 +314,23 @@ export function validateConfig(config) {
     }
     if (prDeploy.healthcheckPath !== EXPECTED_HEALTHCHECK_PATH) {
       errors.push(`Expected environments.pr.deploy.healthcheckPath to be "${EXPECTED_HEALTHCHECK_PATH}" but found "${String(prDeploy.healthcheckPath ?? '')}"`);
+    }
+    if (prDeploy.healthcheckTimeout !== EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS) {
+      errors.push(`Expected environments.pr.deploy.healthcheckTimeout to be ${EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS} but found "${String(prDeploy.healthcheckTimeout ?? '')}"`);
+    }
+    //audit Assumption: the PR override inherits the reviewed root drain budget; risk: an environment-local zero or string value bypasses cooperative preview teardown while root validation stays green; invariant: environments.pr.deploy never redeclares drainingSeconds; handling: reject the field even when it duplicates the root value.
+    if (Object.hasOwn(prDeploy, 'drainingSeconds')) {
+      errors.push('environments.pr.deploy.drainingSeconds must be omitted so PR deployments inherit deploy.drainingSeconds');
+    }
+    if (
+      prDeploy.env
+      && typeof prDeploy.env === 'object'
+      && !Array.isArray(prDeploy.env)
+      && Object.hasOwn(prDeploy.env, RAILWAY_DRAINING_SECONDS_VARIABLE)
+    ) {
+      errors.push(
+        `environments.pr.deploy.env.${RAILWAY_DRAINING_SECONDS_VARIABLE} must be omitted; use deploy.drainingSeconds`,
+      );
     }
     if (prDeploy.cronSchedule !== null) {
       errors.push('environments.pr.deploy.cronSchedule must be null');

@@ -199,6 +199,9 @@ jobs:
       - name: 🧪 Verify preview E2E safety harness
         run: npm run test:preview-e2e
 
+      - name: 🧪 Verify native PR preview containment contract
+        run: npm run test:native-pr-preview-e2e
+
       - name: 📥 Download build artifacts
         uses: actions/download-artifact@v4
         with:

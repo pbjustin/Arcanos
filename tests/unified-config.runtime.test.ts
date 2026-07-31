@@ -30,6 +30,11 @@ const TRACKED_ENV_KEYS = [
   'OPENAI_KEY',
   'NODE_ENV',
   'DATABASE_URL',
+  'PGUSER',
+  'PGPASSWORD',
+  'PGHOST',
+  'PGPORT',
+  'PGDATABASE',
   'RAILWAY_ENVIRONMENT',
   'RAILWAY_PROJECT_ID',
   'RAILWAY_SERVICE_NAME',
@@ -126,6 +131,47 @@ describe('unified runtime config', () => {
     setEnvValue('ENABLE_ACTION_PLANS', 'true');
 
     expect(getConfigValue('enableActionPlans')).toBe(true);
+  });
+
+  it('recognizes a complete discrete PostgreSQL configuration in production', () => {
+    setEnvValue('OPENAI_API_KEY', 'sk-test');
+    setEnvValue('NODE_ENV', 'production');
+    setEnvValue('DATABASE_URL', undefined);
+    setEnvValue('PGUSER', 'arcanos');
+    setEnvValue('PGPASSWORD', 'test-password');
+    setEnvValue('PGHOST', 'postgres.railway.internal');
+    setEnvValue('PGPORT', '5432');
+    setEnvValue('PGDATABASE', 'railway');
+
+    const result = validateConfig();
+
+    expect(result.warnings).not.toContain(
+      'DATABASE_URL not set - database features will be unavailable'
+    );
+  });
+
+  it.each([
+    'PGUSER',
+    'PGPASSWORD',
+    'PGHOST',
+    'PGPORT',
+    'PGDATABASE'
+  ])('does not recognize an incomplete discrete PostgreSQL configuration missing %s', (missingKey) => {
+    setEnvValue('OPENAI_API_KEY', 'sk-test');
+    setEnvValue('NODE_ENV', 'production');
+    setEnvValue('DATABASE_URL', undefined);
+    setEnvValue('PGUSER', 'arcanos');
+    setEnvValue('PGPASSWORD', 'test-password');
+    setEnvValue('PGHOST', 'postgres.railway.internal');
+    setEnvValue('PGPORT', '5432');
+    setEnvValue('PGDATABASE', 'railway');
+    setEnvValue(missingKey, undefined);
+
+    const result = validateConfig();
+
+    expect(result.warnings).toContain(
+      'DATABASE_URL not set - database features will be unavailable'
+    );
   });
 
   it('emits validation warnings and trace event when important values are missing', () => {

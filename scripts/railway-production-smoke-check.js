@@ -17,6 +17,15 @@ export const RESULT_STATUS = Object.freeze({
   FAIL: 'FAIL'
 });
 
+const READINESS_PATH = '/readyz';
+const MAX_READINESS_RESPONSE_BYTES = 64 * 1024;
+const PRODUCTION_READINESS_CHECK_NAMES = Object.freeze([
+  'openai',
+  'database',
+  'redis',
+  'startup'
+]);
+
 const DEFAULTS = Object.freeze({
   environment: 'production',
   appService: 'ARCANOS V2',
@@ -24,7 +33,7 @@ const DEFAULTS = Object.freeze({
   databaseService: '',
   redisService: '',
   appUrl: '',
-  healthPath: '/health',
+  healthPath: READINESS_PATH,
   appLogLines: 300,
   workerLogLines: 300,
   databaseLogLines: 500,
@@ -85,7 +94,10 @@ export function parseArgs(argv) {
     }
 
     if (argFlag === '--health-path' && typeof next === 'string' && next.trim().length > 0) {
-      config.healthPath = next.trim();
+      //audit assumption: this smoke check is post-deploy readiness evidence, not a configurable liveness probe; failure risk: overriding the path to /health recreates the activation false-green; expected invariant: every invocation requests /readyz; handling strategy: retain the compatibility flag but accept only the canonical readiness value.
+      if (next.trim() === DEFAULTS.healthPath) {
+        config.healthPath = DEFAULTS.healthPath;
+      }
       index += 1;
       continue;
     }
@@ -437,10 +449,14 @@ export function evaluateAppLogEntries(entries) {
       errorMessages.push(message || `${event || 'event'} ${path || 'path'}`.trim());
     }
 
-    //audit assumption: recent successful probes may hit either /health or /healthz depending on deploy generation; failure risk: false-negative smoke checks during an intentional probe migration; expected invariant: a 200 on either canonical health path counts as a positive health signal; handling strategy: accept both paths.
+    //audit assumption: recent successful probes may include liveness monitors as well as the deployment readiness gate; failure risk: false-negative smoke checks during the reviewed /readyz migration; expected invariant: a 200 on any canonical health path counts as a positive log signal while the direct smoke request below still requires readiness; handling strategy: accept all three paths only for this supplemental log check.
     if (
       message.includes('ARCANOS:HEALTH')
-      || (event === 'request.completed' && (path === '/health' || path === '/healthz') && statusCode === 200)
+      || (
+        event === 'request.completed'
+        && (path === '/health' || path === '/healthz' || path === '/readyz')
+        && statusCode === 200
+      )
     ) {
       hasHealthSignal = true;
     }
@@ -696,19 +712,23 @@ export async function runSmokeCheck(config) {
   /** @type {Array<{ name: string; status: 'PASS'|'WARN'|'FAIL'; detail: string }>} */
   const results = [];
 
+  //audit assumption: `railway status --json` reads the checkout's ambient linked project; failure risk: an omitted target can silently turn a manual production check into evidence about a different linked project; expected invariant: the operator supplies an independently confirmed public app origin, which must later match the selected service's Railway-owned domains; handling strategy: fail before any Railway CLI access when `--app-url` is absent.
+  if (!isNonEmptyString(config.appUrl)) {
+    results.push(
+      createResult(
+        'Smoke-check target',
+        RESULT_STATUS.FAIL,
+        'An explicit confirmed --app-url HTTPS root origin is required.'
+      )
+    );
+    return results;
+  }
+
   try {
     const railwayVersion = executeRailwayCommand(['--version']).trim();
     results.push(createResult('Railway CLI', RESULT_STATUS.PASS, railwayVersion));
   } catch (error) {
     results.push(createResult('Railway CLI', RESULT_STATUS.FAIL, formatCommandError(error)));
-    return results;
-  }
-
-  try {
-    const activationMessage = executeRailwayCommand(['environment', config.environment]).trim();
-    results.push(createResult('Railway environment activation', RESULT_STATUS.PASS, activationMessage || `Activated ${config.environment}.`));
-  } catch (error) {
-    results.push(createResult('Railway environment activation', RESULT_STATUS.FAIL, formatCommandError(error)));
     return results;
   }
 
@@ -754,8 +774,8 @@ export async function runSmokeCheck(config) {
   let appVariables;
   let workerVariables;
   try {
-    appVariables = readJsonCommand(['variables', '--service', roleServices.app.name, '--json']);
-    workerVariables = readJsonCommand(['variables', '--service', roleServices.worker.name, '--json']);
+    appVariables = readJsonCommand(['variables', '--service', roleServices.app.name, '--environment', config.environment, '--json']);
+    workerVariables = readJsonCommand(['variables', '--service', roleServices.worker.name, '--environment', config.environment, '--json']);
     results.push(...evaluateRuntimeWiring(appVariables, workerVariables, config.environment));
   } catch (error) {
     results.push(createResult('Runtime wiring', RESULT_STATUS.FAIL, formatCommandError(error)));
@@ -837,14 +857,14 @@ function readAndEvaluateLogs(serviceName, environmentName, lineLimit, evaluator)
 /**
  * Purpose: Resolve the public health-check URL for the app service.
  * Inputs/Outputs: App variable map + normalized app service object + config -> absolute URL string.
- * Edge cases: Missing public domains throw because the smoke check cannot validate app ingress without one.
+ * Edge cases: Missing or non-canonical public origins throw because the smoke check cannot validate app ingress against an ambiguous target.
  *
  * @param {Record<string, string>} appVariables - Parsed app variables.
  * @param {{ serviceDomains: string[]; customDomains: string[] }} appService - Normalized app service.
  * @param {typeof DEFAULTS} config - Smoke-check configuration.
  * @returns {string}
  */
-function resolveHealthUrl(appVariables, appService, config) {
+export function resolveHealthUrl(appVariables, appService, config) {
   const rawDomain = config.appUrl
     || normalizeString(appVariables.RAILWAY_STATIC_URL)
     || appService.customDomains[0]
@@ -855,8 +875,201 @@ function resolveHealthUrl(appVariables, appService, config) {
     throw new Error('Unable to resolve a public app URL for the health check.');
   }
 
-  const normalizedBase = /^https?:\/\//i.test(rawDomain) ? rawDomain : `https://${rawDomain}`;
-  return `${normalizedBase.replace(/\/+$/, '')}${config.healthPath.startsWith('/') ? config.healthPath : `/${config.healthPath}`}`;
+  const normalizedInput = rawDomain.trim();
+  const urlInput = /^[a-z][a-z0-9+.-]*:\/\//iu.test(normalizedInput)
+    ? normalizedInput
+    : `https://${normalizedInput}`;
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(urlInput);
+  } catch {
+    throw new Error('App readiness target must be a credential-free HTTPS root origin.');
+  }
+
+  //audit assumption: post-deploy evidence must remain bound to the exact confirmed ingress origin; failure risk: credentials, alternate paths, or redirect-oriented query data target a different resource while appearing healthy; expected invariant: one credential-free HTTPS root origin plus the fixed /readyz path; handling strategy: reject every non-root URL component before constructing the request.
+  if (
+    parsedUrl.protocol !== 'https:'
+    || parsedUrl.username.length > 0
+    || parsedUrl.password.length > 0
+    || parsedUrl.pathname !== '/'
+    || parsedUrl.search.length > 0
+    || parsedUrl.hash.length > 0
+  ) {
+    throw new Error('App readiness target must be a credential-free HTTPS root origin.');
+  }
+
+  const ownedOrigins = new Set(
+    [
+      normalizeString(appVariables.RAILWAY_STATIC_URL),
+      ...appService.customDomains,
+      ...appService.serviceDomains
+    ]
+      .filter(isNonEmptyString)
+      .flatMap((candidate) => {
+        const normalizedCandidate = candidate.trim();
+        const candidateInput = /^[a-z][a-z0-9+.-]*:\/\//iu.test(normalizedCandidate)
+          ? normalizedCandidate
+          : `https://${normalizedCandidate}`;
+        try {
+          const candidateUrl = new URL(candidateInput);
+          if (
+            candidateUrl.protocol === 'https:'
+            && candidateUrl.username.length === 0
+            && candidateUrl.password.length === 0
+            && candidateUrl.pathname === '/'
+            && candidateUrl.search.length === 0
+            && candidateUrl.hash.length === 0
+          ) {
+            return [candidateUrl.origin];
+          }
+        } catch {
+          // Ignore malformed topology candidates; the selected target still
+          // has to match one independently confirmed canonical service origin.
+        }
+        return [];
+      })
+  );
+  if (!ownedOrigins.has(parsedUrl.origin)) {
+    throw new Error('App readiness target must belong to the selected Railway app service.');
+  }
+
+  return `${parsedUrl.origin}${READINESS_PATH}`;
+}
+
+/**
+ * Normalize an already constructed readiness URL before network access.
+ * Purpose: preserve the same exact-target boundary for direct helper callers.
+ * Inputs/outputs: readiness URL string -> canonical HTTPS readiness URL.
+ * Edge cases: rejects credentials, redirects encoded in query state, and every path except `/readyz`.
+ *
+ * @param {string} healthUrl - Candidate readiness URL.
+ * @returns {string}
+ */
+function normalizeReadinessRequestUrl(healthUrl) {
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(healthUrl);
+  } catch {
+    throw new Error('READINESS_TARGET_INVALID');
+  }
+
+  if (
+    parsedUrl.protocol !== 'https:'
+    || parsedUrl.username.length > 0
+    || parsedUrl.password.length > 0
+    || parsedUrl.pathname !== READINESS_PATH
+    || parsedUrl.search.length > 0
+    || parsedUrl.hash.length > 0
+  ) {
+    throw new Error('READINESS_TARGET_INVALID');
+  }
+
+  return `${parsedUrl.origin}${READINESS_PATH}`;
+}
+
+/**
+ * Read a readiness response without allowing a remote target to allocate an unbounded body.
+ * Purpose: keep the operator smoke helper bounded even when ingress returns an unexpected payload.
+ * Inputs/outputs: Fetch response + byte ceiling -> UTF-8 response text.
+ * Edge cases: uses the response stream when available and retains a bounded fallback for test doubles.
+ *
+ * @param {Response | { body?: unknown; headers?: Headers; text: () => Promise<string> }} response - Fetch response.
+ * @param {number} maxBytes - Maximum accepted body bytes.
+ * @returns {Promise<string>}
+ */
+async function readBoundedResponseText(response, maxBytes) {
+  const contentLengthValue = response.headers?.get?.('content-length');
+  const contentLength = contentLengthValue ? Number(contentLengthValue) : Number.NaN;
+
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error('READINESS_RESPONSE_TOO_LARGE');
+  }
+
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const bodyText = await response.text();
+    if (Buffer.byteLength(bodyText, 'utf8') > maxBytes) {
+      throw new Error('READINESS_RESPONSE_TOO_LARGE');
+    }
+    return bodyText;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      const chunk = Buffer.from(value);
+      totalBytes += chunk.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new Error('READINESS_RESPONSE_TOO_LARGE');
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks, totalBytes).toString('utf8');
+}
+
+/**
+ * Validate the exact production readiness check-name set.
+ * Purpose: prevent a lookalike healthy payload from satisfying post-deploy evidence.
+ * Inputs/outputs: readiness `checks` value -> exact-set boolean.
+ * Edge cases: duplicate, missing, extra, malformed, or unhealthy checks fail closed.
+ *
+ * @param {unknown} checks - Candidate readiness checks.
+ * @returns {boolean}
+ */
+function hasExactProductionReadinessChecks(checks) {
+  if (!Array.isArray(checks) || checks.length !== PRODUCTION_READINESS_CHECK_NAMES.length) {
+    return false;
+  }
+
+  const expectedNames = new Set(PRODUCTION_READINESS_CHECK_NAMES);
+  const observedNames = new Set();
+  for (const check of checks) {
+    if (
+      !check
+      || typeof check !== 'object'
+      || check.healthy !== true
+      || typeof check.name !== 'string'
+      || !expectedNames.has(check.name)
+      || observedNames.has(check.name)
+    ) {
+      return false;
+    }
+    observedNames.add(check.name);
+  }
+
+  return observedNames.size === expectedNames.size;
+}
+
+function hasJsonContentType(headers) {
+  const rawValue = headers?.get?.('content-type');
+  return (
+    typeof rawValue === 'string'
+    && rawValue.split(';', 1)[0].trim().toLowerCase() === 'application/json'
+  );
+}
+
+function hasNoStoreDirective(headers) {
+  const rawValue = headers?.get?.('cache-control');
+  return (
+    typeof rawValue === 'string'
+    && rawValue
+      .split(',')
+      .some((directive) => directive.trim().toLowerCase() === 'no-store')
+  );
 }
 
 /**
@@ -870,54 +1083,88 @@ function resolveHealthUrl(appVariables, appService, config) {
  * @returns {Promise<{ name: string; status: 'PASS'|'WARN'|'FAIL'; detail: string }>}
  */
 export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironment) {
+  let normalizedHealthUrl;
+  try {
+    normalizedHealthUrl = normalizeReadinessRequestUrl(healthUrl);
+  } catch {
+    return createResult(
+      'App public health endpoint',
+      RESULT_STATUS.FAIL,
+      'Readiness target must be a credential-free HTTPS URL with the fixed /readyz path.'
+    );
+  }
+
   const abortController = new AbortController();
   const timeoutHandle = setTimeout(() => abortController.abort(), config.requestTimeoutMs);
 
   try {
-    const response = await fetch(healthUrl, {
-      headers: {
-        'user-agent': 'arcanos-railway-production-smoke-check/1.0'
-      },
-      signal: abortController.signal
-    });
+    let response;
+    let bodyText;
+    try {
+      response = await fetch(normalizedHealthUrl, {
+        headers: {
+          'user-agent': 'arcanos-railway-production-smoke-check/1.0'
+        },
+        redirect: 'error',
+        signal: abortController.signal
+      });
+      bodyText = await readBoundedResponseText(response, MAX_READINESS_RESPONSE_BYTES);
+    } catch (error) {
+      const detail = error instanceof Error && error.message === 'READINESS_RESPONSE_TOO_LARGE'
+        ? `Readiness response exceeded the ${MAX_READINESS_RESPONSE_BYTES}-byte limit.`
+        : 'Readiness request failed before contract validation.';
+      return createResult('App public health endpoint', RESULT_STATUS.FAIL, detail);
+    }
 
-    const bodyText = await response.text();
     let parsedBody = null;
 
     try {
       parsedBody = JSON.parse(bodyText);
     } catch {
-      //audit assumption: ARCANOS health endpoint should return JSON, but parse failures should still report the HTTP status; failure risk: endpoint regressions are hidden behind generic request failures; expected invariant: JSON body when healthy; handling strategy: continue with null parsedBody and fail with body preview if needed.
+      //audit assumption: ARCANOS readiness should return JSON, but response content may contain sensitive upstream diagnostics; failure risk: a malformed response is reflected into CI or operator logs; expected invariant: invalid JSON fails with only fixed contract metadata; handling strategy: retain no response preview.
     }
 
-    const hasLegacyHealthShape = Boolean(
+    const expectsProductionRuntime = expectedNodeEnvironment === 'production';
+    const expectsProductionReadiness = config.environment.toLowerCase() === 'production';
+    const hasPassivePreviewReadinessShape = Boolean(
       parsedBody
-      && parsedBody.ok === true
-      && parsedBody.env === expectedNodeEnvironment
+      && expectsProductionRuntime
+      && !expectsProductionReadiness
+      && parsedBody.ready === true
+      && parsedBody.mode === 'passive-pr-preview'
+      && parsedBody.processKind === 'web'
+      && parsedBody.status === undefined
+      && parsedBody.checks === undefined
     );
-    const hasCurrentHealthShape = Boolean(
+    const hasProductionReadinessShape = Boolean(
       parsedBody
-      && parsedBody.status === 'ok'
-      && typeof parsedBody.service === 'string'
-      && parsedBody.service.length > 0
-      && typeof parsedBody.version === 'string'
-      && parsedBody.version.length > 0
-      && typeof parsedBody.gpt_routes === 'number'
-      && typeof parsedBody.openai_configured === 'boolean'
+      && expectsProductionRuntime
+      && expectsProductionReadiness
+      && parsedBody.ready === true
+      && parsedBody.status === 'healthy'
+      && parsedBody.mode === undefined
+      && parsedBody.processKind === undefined
+      && hasExactProductionReadinessChecks(parsedBody.checks)
     );
 
-    //audit assumption: the public health endpoint must return HTTP 200 plus either the legacy `{ ok: true, env }` contract or the current `{ status: "ok", service, version, gpt_routes, openai_configured }` contract; failure risk: ingress returns a generic page or a malformed payload; expected invariant: status 200 and one recognized health schema; handling strategy: fail on any contract violation.
-    if (!response.ok || !parsedBody || (!hasLegacyHealthShape && !hasCurrentHealthShape)) {
+    //audit assumption: the public post-deploy request must establish readiness rather than accept the broader /health liveness schema; failure risk: ingress returns a generic page, a preview boots production dependencies, or a live-but-unready application passes; expected invariant: exact status 200 and the environment-specific readiness contract; handling strategy: keep preview and production shapes mutually exclusive and fail on every mismatch.
+    if (
+      response.status !== 200
+      || !hasJsonContentType(response.headers)
+      || !hasNoStoreDirective(response.headers)
+      || !parsedBody
+      || (!hasPassivePreviewReadinessShape && !hasProductionReadinessShape)
+    ) {
       return createResult(
         'App public health endpoint',
         RESULT_STATUS.FAIL,
-        `Health check failed for ${healthUrl} with status=${response.status}, body=${truncate(bodyText, 220)}`
+        `Readiness response failed contract validation (status=${response.status}).`
       );
     }
 
-    const detail = hasLegacyHealthShape
-      ? `GET ${healthUrl} returned ${response.status} with ok=true and env=${parsedBody.env}.`
-      : `GET ${healthUrl} returned ${response.status} with status=ok, service=${parsedBody.service}, version=${parsedBody.version}, gpt_routes=${parsedBody.gpt_routes}.`;
+    const detail = hasPassivePreviewReadinessShape
+      ? `GET ${normalizedHealthUrl} returned ${response.status} with ready=true and mode=passive-pr-preview.`
+      : `GET ${normalizedHealthUrl} returned ${response.status} with ready=true, status=healthy, checks=${parsedBody.checks.length}.`;
 
     return createResult(
       'App public health endpoint',
