@@ -23,7 +23,10 @@ function sanitizeCanonicalGptIdentifier(path: string): string {
     // still bounding malformed caller input that exceeds the GPT ID ceiling.
   }
 
-  if (decodedIdentifier.length <= MAX_GPT_IDENTIFIER_LENGTH) {
+  if (
+    rawIdentifier.length <= MAX_GPT_IDENTIFIER_LENGTH
+    && decodedIdentifier.length <= MAX_GPT_IDENTIFIER_LENGTH
+  ) {
     return path;
   }
 

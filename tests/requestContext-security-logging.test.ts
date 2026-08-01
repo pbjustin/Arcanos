@@ -111,6 +111,7 @@ describe('requestContext security logging', () => {
   });
 
   it.each([
+    ['raw encoded segment', 'é'.repeat(200)],
     ['whitespace-only', ' '.repeat(257)],
     ['padded registered ID', `${' '.repeat(257)}arcanos-core`],
   ])('bounds an oversized %s canonical GPT path in every request log field', async (_caseName, gptId) => {

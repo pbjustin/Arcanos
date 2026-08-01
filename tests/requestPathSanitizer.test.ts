@@ -21,11 +21,13 @@ describe('requestPathSanitizer', () => {
 
   it('replaces oversized canonical GPT identifiers before request logging', () => {
     const oversizedGptId = 'x'.repeat(257);
+    const oversizedEncodedGptId = encodeURIComponent('é'.repeat(200));
     const encodedOversizedGptId = encodeURIComponent('é'.repeat(257));
     const encodedWhitespaceOnlyGptId = encodeURIComponent(' '.repeat(257));
     const encodedPaddedGptId = encodeURIComponent(`${' '.repeat(257)}arcanos-core`);
 
     expect(sanitizeRequestPath(`/gpt/${oversizedGptId}?debug=true`)).toBe('/gpt/invalid');
+    expect(sanitizeRequestPath(`/gpt/${oversizedEncodedGptId}`)).toBe('/gpt/invalid');
     expect(sanitizeRequestPath(`/gpt/${encodedOversizedGptId}`)).toBe('/gpt/invalid');
     expect(sanitizeRequestPath(`/gpt/${encodedWhitespaceOnlyGptId}`)).toBe('/gpt/invalid');
     expect(sanitizeRequestPath(`/gpt/${encodedPaddedGptId}`)).toBe('/gpt/invalid');
