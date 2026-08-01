@@ -1,3 +1,5 @@
+import { isRecord } from '@shared/typeGuards.js';
+
 export type DispatchTarget = 'gpt' | 'dag' | 'mcp' | 'tool' | 'auto';
 export type DispatchExecutionMode = 'gpt' | 'dag' | 'tool' | 'auto';
 export type DispatchClassifierMode = 'gpt' | 'dag';
@@ -16,6 +18,40 @@ export interface DispatchIntentDecision {
   confidence: number;
   reason: string;
 }
+
+export type DispatchIntentClassifier = (input: {
+  prompt?: string | null;
+  action?: string | null;
+  payload?: Record<string, unknown>;
+}) => DispatchIntentDecision;
+
+export interface NormalizedDispatchInput {
+  body: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  target: DispatchTarget;
+  gptId: string | null;
+  action: string;
+  executionMode: DispatchExecutionMode;
+  prompt: string;
+}
+
+export type DispatchLaneResolution =
+  | {
+      lane: 'dag';
+      reason: string;
+      input: NormalizedDispatchInput;
+    }
+  | {
+      lane: 'gpt';
+      reason: string;
+      input: NormalizedDispatchInput;
+    }
+  | {
+      lane: 'reject-control';
+      reason: string;
+      rejectionTarget: 'mcp' | 'tool';
+      input: NormalizedDispatchInput;
+    };
 
 const VALID_TARGETS = new Set<DispatchTarget>(['gpt', 'dag', 'mcp', 'tool', 'auto']);
 const VALID_EXECUTION_MODES = new Set<DispatchExecutionMode>(['gpt', 'dag', 'tool', 'auto']);
@@ -83,6 +119,20 @@ export function isDagDispatchAction(action: string | null | undefined): boolean 
   return typeof action === 'string' && action.trim().toLowerCase().startsWith('dag.');
 }
 
+function normalizeDispatchInput(rawBody: unknown): NormalizedDispatchInput {
+  const body = isRecord(rawBody) ? rawBody : {};
+
+  return {
+    body,
+    payload: isRecord(body.payload) ? body.payload : {},
+    target: normalizeDispatchTarget(body.target),
+    gptId: normalizeDispatchGptId(body.gptId),
+    action: normalizeDispatchAction(body.action),
+    executionMode: normalizeDispatchExecutionMode(body.executionMode),
+    prompt: normalizeDispatchPrompt(body.prompt),
+  };
+}
+
 /**
  * Classify only auto-mode dispatch prompts. The classifier is intentionally
  * conservative: content-generation prompts about workflows stay on GPT.
@@ -127,4 +177,72 @@ export function classifyDispatchIntent(input: {
     confidence: SAFE_DEFAULT_GPT_CONFIDENCE,
     reason: 'safe_default_gpt',
   };
+}
+
+/** Resolve the compatibility dispatcher lane once, without performing I/O. */
+export function resolveDispatchLane(
+  rawBody: unknown,
+  classifyIntent: DispatchIntentClassifier = classifyDispatchIntent
+): DispatchLaneResolution {
+  const input = normalizeDispatchInput(rawBody);
+
+  if (input.target === 'dag') {
+    return { lane: 'dag', reason: 'explicit_target_dag', input };
+  }
+
+  if (input.target === 'gpt') {
+    return { lane: 'gpt', reason: 'explicit_target_gpt', input };
+  }
+
+  if (input.target === 'mcp' || input.target === 'tool') {
+    return {
+      lane: 'reject-control',
+      reason: `explicit_target_${input.target}`,
+      rejectionTarget: input.target,
+      input,
+    };
+  }
+
+  if (input.gptId) {
+    return { lane: 'gpt', reason: 'explicit_gpt_id', input };
+  }
+
+  if (isDagDispatchAction(input.action)) {
+    return { lane: 'dag', reason: 'explicit_dag_action', input };
+  }
+
+  if (input.executionMode === 'dag') {
+    return { lane: 'dag', reason: 'explicit_execution_mode_dag', input };
+  }
+
+  if (input.executionMode === 'tool') {
+    return {
+      lane: 'reject-control',
+      reason: 'explicit_execution_mode_tool',
+      rejectionTarget: 'tool',
+      input,
+    };
+  }
+
+  if (input.executionMode === 'gpt') {
+    return { lane: 'gpt', reason: 'explicit_execution_mode_gpt', input };
+  }
+
+  const decision = classifyIntent({
+    prompt: input.prompt,
+    action: input.action,
+    payload: input.payload,
+  });
+  if (
+    decision.mode === 'dag'
+    && decision.confidence >= DAG_DISPATCH_CONFIDENCE_THRESHOLD
+  ) {
+    return {
+      lane: 'dag',
+      reason: `${decision.reason}:${decision.confidence}`,
+      input,
+    };
+  }
+
+  return { lane: 'gpt', reason: 'safe_fallback_gpt', input };
 }

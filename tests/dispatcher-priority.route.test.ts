@@ -1,6 +1,23 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
+import {
+  resolveDispatchLane,
+  type DispatchIntentDecision,
+} from '../src/shared/dispatch/universalDispatch.js';
+
+const controlPlaneToken = 'dispatch-dag-token-12345678901234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -64,14 +81,64 @@ const { default: requestContext } = await import('../src/middleware/requestConte
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 const { default: dispatchRouter } = await import('../src/routes/dispatch.js');
 
-function buildApp() {
+function buildApp(options: {
+  forceNonOperatorPrincipal?: boolean;
+} = {}) {
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
   app.use(requestContext);
+  if (options.forceNonOperatorPrincipal) {
+    app.use((req, _res, next) => {
+      Object.defineProperty(req, 'controlPlanePrincipal', {
+        configurable: true,
+        get: () => ({
+          audience: 'control-plane-http',
+          role: 'viewer',
+          principalId: 'viewer:dispatch-dag',
+          scopes: ['mcp:invoke'],
+        }),
+        set: () => undefined,
+      });
+      next();
+    });
+  }
   app.use('/gpt', gptRouter);
   app.use('/', dispatchRouter);
   return app;
 }
+
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(scopes = 'arcanos:read,mcp:invoke'): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:dispatch-dag';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
+
+const dagSelectorRequests = [
+  ['target', {
+    target: 'dag',
+    prompt: 'Run the workflow now.',
+  }],
+  ['action', {
+    action: 'dag.run.create',
+    prompt: 'Run the workflow now.',
+  }],
+  ['execution mode', {
+    executionMode: 'dag',
+    prompt: 'Run the workflow now.',
+  }],
+  ['automatic classification', {
+    executionMode: 'auto',
+    prompt: 'Run the workflow now and poll the trace.',
+  }],
+] as const;
 
 describe('dispatcher priority routing', () => {
   const originalGptRouteAsyncCoreDefault = process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
@@ -79,6 +146,7 @@ describe('dispatcher priority routing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureControlPlane();
     mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
       ok: true,
       plan: {
@@ -197,6 +265,8 @@ describe('dispatcher priority routing', () => {
     expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
       gptId: 'arcanos-core',
     }));
+    expect(response.headers['cache-control']).toBeUndefined();
+    expect(response.headers['x-ratelimit-bucket']).toBeUndefined();
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
@@ -231,7 +301,168 @@ describe('dispatcher priority routing', () => {
     expect(response.body.error.code).toBe(errorCode);
   });
 
-  it('routes /dispatch target=dag to DAG execution', async () => {
+  it.each(dagSelectorRequests)(
+    'protects the %s DAG selector from anonymous execution',
+    async (_selector, body) => {
+      const response = await request(buildApp())
+        .post('/dispatch')
+        .send(body);
+
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers.pragma).toBe('no-cache');
+      expect(mockCreateDagRun).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(dagSelectorRequests)(
+    'routes the authorized %s DAG selector to DAG execution',
+    async (_selector, body) => {
+      const response = await request(buildApp())
+        .post('/dispatch')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .send(body);
+
+      expect(response.status).toBe(202);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        target: 'dag',
+        operation: 'dag.run.create',
+        executionMode: 'dag',
+      }));
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers.pragma).toBe('no-cache');
+      expect(mockCreateDagRun).toHaveBeenCalledTimes(1);
+      expect(mockCreateDagRun).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({
+          goal: body.prompt,
+        }),
+      }));
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    }
+  );
+
+  it('protects a form-encoded DAG selector after body parsing', async () => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .type('form')
+      .send({
+        target: 'dag',
+        prompt: 'Run the workflow now.',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('lets target=dag outrank an explicit GPT id and still requires DAG authority', async () => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'dag',
+        gptId: 'arcanos-core',
+        prompt: 'Run the workflow now.',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DAG action', { action: 'dag.run.create', executionMode: 'auto' }],
+    ['DAG mode', { action: 'query', executionMode: 'dag' }],
+  ] as const)('lets an explicit GPT id outrank %s without DAG authentication', async (
+    _selector,
+    selection
+  ) => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        ...selection,
+        gptId: 'arcanos-core',
+        prompt: 'Run the workflow now and poll the trace.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.target).toBe('gpt');
+    expect(response.headers['cache-control']).toBeUndefined();
+    expect(response.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit MCP control rejection ahead of GPT and DAG selectors', async () => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'mcp',
+        gptId: 'arcanos-core',
+        action: 'dag.run.create',
+        executionMode: 'dag',
+        prompt: 'Run the workflow now.',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('MCP_CONTROL_REQUIRES_MCP_API');
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a malformed bearer', 'malformed', 'arcanos:read,mcp:invoke', 401, 'CONTROL_PLANE_AUTH_REQUIRED'],
+    ['the wrong scope', `Bearer ${controlPlaneToken}`, 'arcanos:read', 403, 'CONTROL_PLANE_SCOPE_DENIED'],
+  ] as const)('denies DAG execution for %s without creating a run', async (
+    _case,
+    authorization,
+    scopes,
+    expectedStatus,
+    expectedCode
+  ) => {
+    configureControlPlane(scopes);
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .set('Authorization', authorization)
+      .send({
+        target: 'dag',
+        prompt: 'Run the workflow now.',
+      });
+
+    expect(response.status).toBe(expectedStatus);
+    expect(response.body.error.code).toBe(expectedCode);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('denies a non-operator DAG principal without creating a run', async () => {
+    const response = await request(buildApp({ forceNonOperatorPrincipal: true }))
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        target: 'dag',
+        prompt: 'Run the workflow now.',
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_FORBIDDEN');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for unavailable DAG authentication without creating a run', async () => {
+    clearPurposeBoundCredentialEnvironment();
+
     const response = await request(buildApp())
       .post('/dispatch')
       .send({
@@ -239,19 +470,35 @@ describe('dispatcher priority routing', () => {
         prompt: 'Run the workflow now.',
       });
 
-    expect(response.status).toBe(202);
-    expect(response.body).toEqual(expect.objectContaining({
-      ok: true,
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unsupported DAG action', {
+      action: 'dag.run.cancel',
+      prompt: 'Cancel the workflow now.',
+    }, 'DAG_ACTION_UNSUPPORTED'],
+    ['missing DAG input', {
       target: 'dag',
-      action: 'query',
-      operation: 'dag.run.create',
-      executionMode: 'dag',
-    }));
-    expect(mockCreateDagRun).toHaveBeenCalledWith(expect.objectContaining({
-      input: expect.objectContaining({
-        goal: 'Run the workflow now.',
-      }),
-    }));
+    }, 'DAG_INPUT_REQUIRED'],
+  ] as const)('marks the %s response no-store', async (
+    _case,
+    body,
+    expectedCode
+  ) => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe(expectedCode);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -291,6 +538,7 @@ describe('dispatcher priority routing', () => {
 
     const dagResponse = await request(buildApp())
       .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         executionMode: 'auto',
         prompt: 'Run the workflow now and poll the trace.',
@@ -334,4 +582,176 @@ describe('dispatcher priority routing', () => {
     }));
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
+});
+
+describe('dispatch lane resolution', () => {
+  it.each([
+    ['explicit DAG target', {
+      target: 'dag',
+      gptId: 'arcanos-core',
+      action: 'query',
+      executionMode: 'tool',
+    }, 'dag', 'explicit_target_dag', undefined],
+    ['explicit GPT target', {
+      target: 'gpt',
+      action: 'dag.run.create',
+      executionMode: 'dag',
+    }, 'gpt', 'explicit_target_gpt', undefined],
+    ['explicit MCP target', {
+      target: 'mcp',
+      gptId: 'arcanos-core',
+      action: 'dag.run.create',
+      executionMode: 'dag',
+    }, 'reject-control', 'explicit_target_mcp', 'mcp'],
+    ['explicit tool target', {
+      target: 'tool',
+      gptId: 'arcanos-core',
+      action: 'dag.run.create',
+      executionMode: 'dag',
+    }, 'reject-control', 'explicit_target_tool', 'tool'],
+    ['explicit GPT id', {
+      gptId: 'Arcanos-Custom',
+      action: 'dag.run.create',
+      executionMode: 'dag',
+    }, 'gpt', 'explicit_gpt_id', undefined],
+    ['DAG action before tool mode', {
+      action: 'dag.run.create',
+      executionMode: 'tool',
+    }, 'dag', 'explicit_dag_action', undefined],
+    ['DAG action before DAG mode reason', {
+      action: 'dag.run.create',
+      executionMode: 'dag',
+    }, 'dag', 'explicit_dag_action', undefined],
+    ['DAG execution mode', {
+      action: 'query',
+      executionMode: 'dag',
+    }, 'dag', 'explicit_execution_mode_dag', undefined],
+    ['tool execution mode', {
+      action: 'query',
+      executionMode: 'tool',
+    }, 'reject-control', 'explicit_execution_mode_tool', 'tool'],
+    ['GPT execution mode', {
+      action: 'query',
+      executionMode: 'gpt',
+      prompt: 'Run the workflow now.',
+    }, 'gpt', 'explicit_execution_mode_gpt', undefined],
+  ] as const)('preserves precedence for %s', (
+    _case,
+    body,
+    expectedLane,
+    expectedReason,
+    expectedRejectionTarget
+  ) => {
+    const classifier = jest.fn<(_input: unknown) => DispatchIntentDecision>(() => ({
+      mode: 'dag',
+      confidence: 1,
+      reason: 'must_not_run',
+    }));
+
+    const resolution = resolveDispatchLane(body, classifier);
+
+    expect(resolution.lane).toBe(expectedLane);
+    expect(resolution.reason).toBe(expectedReason);
+    if (resolution.lane === 'reject-control') {
+      expect(resolution.rejectionTarget).toBe(expectedRejectionTarget);
+    } else {
+      expect(expectedRejectionTarget).toBeUndefined();
+    }
+    expect(classifier).not.toHaveBeenCalled();
+  });
+
+  it('selects DAG actions case-insensitively without rewriting the action', () => {
+    const classifier = jest.fn<(_input: unknown) => DispatchIntentDecision>();
+    const resolution = resolveDispatchLane({
+      action: '  DAG.RUN.CREATE  ',
+      executionMode: 'auto',
+    }, classifier);
+
+    expect(resolution).toEqual(expect.objectContaining({
+      lane: 'dag',
+      reason: 'explicit_dag_action',
+      input: expect.objectContaining({
+        action: 'DAG.RUN.CREATE',
+      }),
+    }));
+    expect(classifier).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0.85, 'dag', 'threshold_test:0.85'],
+    [0.849_999, 'gpt', 'safe_fallback_gpt'],
+  ] as const)('applies the inclusive DAG confidence threshold at %s', (
+    confidence,
+    expectedLane,
+    expectedReason
+  ) => {
+    const resolution = resolveDispatchLane(
+      {
+        executionMode: 'auto',
+        prompt: 'classifier-controlled prompt',
+      },
+      () => ({
+        mode: 'dag',
+        confidence,
+        reason: 'threshold_test',
+      })
+    );
+
+    expect(resolution.lane).toBe(expectedLane);
+    expect(resolution.reason).toBe(expectedReason);
+  });
+
+  it.each([
+    [undefined],
+    [null],
+    ['dispatch'],
+    [42],
+    [true],
+    [[]],
+    [{ executionMode: 'invalid', prompt: 'Run the workflow now.' }],
+  ])('keeps non-record or defaulted input on the GPT lane: %p', (body) => {
+    const classifier = jest.fn<(_input: unknown) => DispatchIntentDecision>();
+    const resolution = resolveDispatchLane(body, classifier);
+
+    expect(resolution).toEqual(expect.objectContaining({
+      lane: 'gpt',
+      reason: 'explicit_execution_mode_gpt',
+      input: expect.objectContaining({
+        target: 'auto',
+        executionMode: 'gpt',
+      }),
+    }));
+    expect(classifier).not.toHaveBeenCalled();
+  });
+
+  it('keeps content-generation workflow prompts on GPT in auto mode', () => {
+    const resolution = resolveDispatchLane({
+      executionMode: 'auto',
+      prompt: 'Generate a workflow, then run through its documentation now.',
+    });
+
+    expect(resolution).toEqual(expect.objectContaining({
+      lane: 'gpt',
+      reason: 'safe_fallback_gpt',
+    }));
+  });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

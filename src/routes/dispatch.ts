@@ -2,17 +2,14 @@ import express, { type Request, type Response } from 'express';
 
 import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import {
+  dispatchDagCompatibilityBoundary,
+  resolveDispatchLaneForRequest,
+} from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import {
-  classifyDispatchIntent,
-  DAG_DISPATCH_CONFIDENCE_THRESHOLD,
   isDagDispatchAction,
-  normalizeDispatchAction,
-  normalizeDispatchExecutionMode,
-  normalizeDispatchGptId,
-  normalizeDispatchPrompt,
-  normalizeDispatchTarget,
   type DispatchExecutionMode,
   type DispatchTarget,
 } from '@shared/dispatch/universalDispatch.js';
@@ -35,14 +32,6 @@ type DispatchRequestContext = Request & {
 
 function dispatchRequestContext(req: Request): DispatchRequestContext {
   return req as DispatchRequestContext;
-}
-
-function readDispatchBody(req: Request): DispatchBody {
-  return isRecord(req.body) ? req.body : {};
-}
-
-function readPayload(body: DispatchBody): Record<string, unknown> {
-  return isRecord(body.payload) ? body.payload : {};
 }
 
 function readString(value: unknown): string | null {
@@ -270,17 +259,20 @@ function rejectMcpDispatch(res: Response, input: {
 }
 
 export async function universalDispatch(req: Request, res: Response): Promise<Response | void> {
-  const body = readDispatchBody(req);
-  const payload = readPayload(body);
-  const target = normalizeDispatchTarget(body.target);
-  const gptId = normalizeDispatchGptId(body.gptId);
-  const action = normalizeDispatchAction(body.action);
-  const executionMode = normalizeDispatchExecutionMode(body.executionMode);
-  const prompt = normalizeDispatchPrompt(body.prompt);
+  const resolution = resolveDispatchLaneForRequest(req);
+  const {
+    body,
+    payload,
+    target,
+    gptId,
+    action,
+    executionMode,
+    prompt,
+  } = resolution.input;
 
   try {
     // Keep asynchronous branch failures inside this route's stable error boundary.
-    if (target === 'dag') {
+    if (resolution.lane === 'dag') {
       return await runDagDispatch(req, res, {
         gptId,
         action,
@@ -288,11 +280,11 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
         payload,
         target,
         executionMode,
-        reason: 'explicit_target_dag',
+        reason: resolution.reason,
       });
     }
 
-    if (target === 'gpt') {
+    if (resolution.lane === 'gpt') {
       return await runGptDispatch(req, res, {
         gptId,
         action,
@@ -301,80 +293,14 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
         body,
         target,
         executionMode,
-        reason: 'explicit_target_gpt',
+        reason: resolution.reason,
       });
     }
 
-    if (target === 'mcp' || target === 'tool') {
-      return rejectMcpDispatch(res, { target, action, executionMode });
-    }
-
-    if (gptId) {
-      return await runGptDispatch(req, res, {
-        gptId,
-        action,
-        prompt,
-        payload,
-        body,
-        target,
-        executionMode,
-        reason: 'explicit_gpt_id',
-      });
-    }
-
-    if (isDagDispatchAction(action) || executionMode === 'dag') {
-      return await runDagDispatch(req, res, {
-        gptId,
-        action,
-        prompt,
-        payload,
-        target,
-        executionMode,
-        reason: isDagDispatchAction(action) ? 'explicit_dag_action' : 'explicit_execution_mode_dag',
-      });
-    }
-
-    if (executionMode === 'tool') {
-      return rejectMcpDispatch(res, { target: 'tool', action, executionMode });
-    }
-
-    if (executionMode === 'gpt') {
-      return await runGptDispatch(req, res, {
-        gptId,
-        action,
-        prompt,
-        payload,
-        body,
-        target,
-        executionMode,
-        reason: 'explicit_execution_mode_gpt',
-      });
-    }
-
-    if (executionMode === 'auto') {
-      const decision = classifyDispatchIntent({ prompt, action, payload });
-      if (decision.mode === 'dag' && decision.confidence >= DAG_DISPATCH_CONFIDENCE_THRESHOLD) {
-        return await runDagDispatch(req, res, {
-          gptId,
-          action,
-          prompt,
-          payload,
-          target,
-          executionMode,
-          reason: `${decision.reason}:${decision.confidence}`,
-        });
-      }
-    }
-
-    return await runGptDispatch(req, res, {
-      gptId,
+    return rejectMcpDispatch(res, {
+      target: resolution.rejectionTarget,
       action,
-      prompt,
-      payload,
-      body,
-      target,
       executionMode,
-      reason: 'safe_fallback_gpt',
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -397,6 +323,6 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
   }
 }
 
-router.post('/dispatch', universalDispatch);
+router.post('/dispatch', dispatchDagCompatibilityBoundary, universalDispatch);
 
 export default router;

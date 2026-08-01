@@ -255,9 +255,12 @@ correlation. Railway deployments use `GET /readyz` for activation; retain
 
 ### Core AI interaction
 - `POST /gpt/:gptId` (canonical GPT writing plane)
-- `POST /dispatch` (universal GPT/DAG compatibility dispatcher; asynchronous
-  branch failures return the stable `500 DISPATCH_FAILED` envelope without
-  internal exception text)
+- `POST /dispatch` (universal GPT/DAG compatibility dispatcher; requests that
+  select DAG execution use the canonical DAG client-admission, control-plane
+  operator, `mcp:invoke`, principal-admission, and `no-store` policy before a
+  run can be created; GPT-selected requests retain compatibility behavior;
+  asynchronous branch failures return the stable `500 DISPATCH_FAILED`
+  envelope without internal exception text)
 - `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
 - `GET /trinity/status` (public aggregate worker-health projection; `no-store`)
 - `POST /arcanos` (confirmation required)

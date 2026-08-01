@@ -70,6 +70,9 @@ import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
+  dispatchDagCompatibilityBoundary,
+} from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
+import {
   cefHttpBoundary,
 } from '@services/controlPlane/cefHttpBoundary.js';
 import {
@@ -256,6 +259,7 @@ export function createApp(): Express {
   });
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
+  app.post('/dispatch', dispatchDagCompatibilityBoundary);
   app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {
     if (req.body !== undefined) {
       next();
