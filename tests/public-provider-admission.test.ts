@@ -1,18 +1,23 @@
-import express from 'express';
-import { describe, expect, it } from '@jest/globals';
+import express, { type Request } from 'express';
+import { describe, expect, it, jest } from '@jest/globals';
 
 import {
+  PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_BUCKET,
   PUBLIC_PROVIDER_RATE_LIMIT_BUCKET,
+  createPublicProviderAdmissionMiddleware,
   createPublicProviderRateLimitMiddleware,
   isPublicProviderAdmissionRequest,
+  normalizePublicProviderClientAddress,
+  isTrustedRailwayEdgePeerAddress,
+  resolvePublicProviderClientIdentity,
 } from '../src/transport/http/middleware/publicProviderAdmission.js';
 import {
-  createRateLimitMiddleware,
-  getRequestActorKey,
-} from '../src/platform/runtime/security.js';
-import {
+  normalizePublicProviderClientRateLimitMax,
   normalizePublicProviderRateLimitMax,
+  normalizePublicProviderRateLimitStoreMode,
   normalizePublicProviderRateLimitWindowMs,
+  resolvePublicProviderRateLimitNamespace,
+  resolvePublicProviderTrustRailwayRealIp,
 } from '../src/platform/runtime/publicProviderRateLimitPolicy.js';
 import { resolveDispatchLane } from '../src/shared/dispatch/universalDispatch.js';
 
@@ -442,48 +447,120 @@ describe('public provider admission policy', () => {
     });
   });
 
-  it('charges one constant-key budget exactly once across duplicate mounts', async () => {
+  it('charges one hierarchical budget exactly once and preserves global capacity on client denial', async () => {
     const limiter = createPublicProviderRateLimitMiddleware({
-      maxRequests: 2,
+      clientIdentityResolver: (req) => String(req.header('x-test-client') ?? 'unknown'),
+      clientMaxRequests: 2,
+      maxRequests: 3,
       windowMs: 60_000,
     });
     const app = express();
     app.use(limiter);
     app.use(limiter);
-    app.post(['/first', '/second', '/third'], (_req, res) => {
+    app.post(['/first', '/second', '/third', '/fourth', '/fifth'], (_req, res) => {
       res.json({ ok: true });
     });
 
     const first = await request(app)
       .post('/first')
-      .set('x-session-id', 'caller-a')
-      .set('Authorization', 'Bearer caller-a')
-      .set('x-forwarded-for', '198.51.100.1');
+      .set('x-test-client', 'caller-a');
     const second = await request(app)
       .post('/second')
-      .set('x-session-id', 'caller-b')
-      .set('Authorization', 'Bearer caller-b')
-      .set('x-forwarded-for', '198.51.100.2');
+      .set('x-test-client', 'caller-a');
     const third = await request(app)
       .post('/third')
-      .set('x-session-id', 'caller-c')
-      .set('Authorization', 'Bearer caller-c')
-      .set('x-forwarded-for', '198.51.100.3');
+      .set('x-test-client', 'caller-a');
+    const fourth = await request(app)
+      .post('/fourth')
+      .set('x-test-client', 'caller-b');
+    const fifth = await request(app)
+      .post('/fifth')
+      .set('x-test-client', 'caller-c');
 
     expect(first.status).toBe(200);
-    expect(first.headers['x-ratelimit-remaining']).toBe('1');
+    expect(first.headers['x-ratelimit-remaining']).toBe('2');
     expect(second.status).toBe(200);
-    expect(second.headers['x-ratelimit-remaining']).toBe('0');
+    expect(second.headers['x-ratelimit-remaining']).toBe('1');
     expect(third.status).toBe(429);
-    expect(third.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_RATE_LIMIT_BUCKET);
+    expect(third.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_BUCKET);
+    expect(third.headers['x-public-provider-global-remaining']).toBe('1');
     expect(third.headers['cache-control']).toBe('no-store');
+    expect(fourth.status).toBe(200);
+    expect(fourth.headers['x-ratelimit-remaining']).toBe('0');
+    expect(fifth.status).toBe(429);
+    expect(fifth.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_RATE_LIMIT_BUCKET);
+  });
+
+  it('keeps the deployment bucket when the compatibility ceiling is one', async () => {
+    const app = express();
+    app.use(createPublicProviderRateLimitMiddleware({
+      clientIdentityResolver: () => 'caller-a',
+      maxRequests: 1,
+      windowMs: 60_000,
+    }));
+    app.post('/provider', (_req, res) => res.json({ ok: true }));
+
+    const admitted = await request(app).post('/provider');
+    const denied = await request(app).post('/provider');
+
+    expect(admitted.status).toBe(200);
+    expect(denied.status).toBe(429);
+    expect(denied.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_RATE_LIMIT_BUCKET);
+    expect(denied.headers['x-ratelimit-limit']).toBe('1');
+  });
+
+  it('snapshots the legacy-route gate when the application admission middleware is built', async () => {
+    const originalLegacyRouteMode = process.env.LEGACY_GPT_ROUTES;
+    const rateLimit = jest.fn((
+      _req: express.Request,
+      res: express.Response
+    ) => {
+      res.status(429).json({ code: 'SNAPSHOTTED_LEGACY_ADMISSION' });
+    });
+
+    try {
+      process.env.LEGACY_GPT_ROUTES = 'enabled';
+      const enabledApp = express();
+      enabledApp.use(createPublicProviderAdmissionMiddleware({
+        rateLimitMiddleware: rateLimit,
+      }));
+      enabledApp.post('/write', (_req, res) => res.json({ ok: true }));
+      process.env.LEGACY_GPT_ROUTES = 'disabled';
+
+      const enabledResponse = await request(enabledApp).post('/write');
+      expect(enabledResponse.status).toBe(429);
+      expect(enabledResponse.body.code).toBe('SNAPSHOTTED_LEGACY_ADMISSION');
+      expect(rateLimit).toHaveBeenCalledTimes(1);
+
+      const disabledApp = express();
+      disabledApp.use(createPublicProviderAdmissionMiddleware({
+        rateLimitMiddleware: rateLimit,
+      }));
+      disabledApp.post('/write', (_req, res) => res.json({ ok: true }));
+      process.env.LEGACY_GPT_ROUTES = 'enabled';
+
+      const disabledResponse = await request(disabledApp).post('/write');
+      expect(disabledResponse.status).toBe(200);
+      expect(rateLimit).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalLegacyRouteMode === undefined) {
+        delete process.env.LEGACY_GPT_ROUTES;
+      } else {
+        process.env.LEGACY_GPT_ROUTES = originalLegacyRouteMode;
+      }
+    }
   });
 
   it('falls back from unsafe or operationally unbounded ceiling values', async () => {
     expect(normalizePublicProviderRateLimitMax('1')).toBe(1);
+    expect(normalizePublicProviderRateLimitMax('2')).toBe(2);
     for (const invalidMax of ['0', '-1', '1.5', 'not-a-number']) {
       expect(normalizePublicProviderRateLimitMax(invalidMax)).toBe(100);
     }
+    expect(normalizePublicProviderClientRateLimitMax(undefined, 1)).toBe(1);
+    expect(normalizePublicProviderClientRateLimitMax('20', 100)).toBe(20);
+    expect(normalizePublicProviderClientRateLimitMax('100', 100)).toBe(20);
+    expect(normalizePublicProviderClientRateLimitMax(undefined, 6)).toBe(5);
 
     expect(normalizePublicProviderRateLimitWindowMs('1000')).toBe(1000);
     for (const invalidWindow of ['0', '999', '-1', '1000.5', 'not-a-number']) {
@@ -494,6 +571,51 @@ describe('public provider admission policy', () => {
     expect(normalizePublicProviderRateLimitWindowMs(30 * 24 * 60 * 60 * 1000 + 1)).toBe(
       15 * 60 * 1000
     );
+    expect(normalizePublicProviderRateLimitStoreMode('memory', 'production')).toBe('redis');
+    expect(normalizePublicProviderRateLimitStoreMode('redis', 'development')).toBe('redis');
+    expect(normalizePublicProviderRateLimitStoreMode(undefined, 'test')).toBe('memory');
+    expect(resolvePublicProviderRateLimitNamespace({
+      configuredNamespace: 'Prod_Web-1',
+      nodeEnvironment: 'production',
+    })).toBe('configured:prod_web-1');
+    expect(resolvePublicProviderRateLimitNamespace({
+      nodeEnvironment: 'production',
+      railwayProjectId: 'project',
+      railwayEnvironmentId: 'environment',
+      railwayServiceId: 'service',
+    })).toBe('railway:project:environment:service');
+    expect(resolvePublicProviderRateLimitNamespace({
+      configuredNamespace: 'shared-but-wrong',
+      nodeEnvironment: 'production',
+      railwayProjectId: 'project',
+      railwayEnvironmentId: 'environment',
+      railwayServiceId: 'service',
+    })).toBe('railway:project:environment:service');
+    expect(resolvePublicProviderRateLimitNamespace({
+      configuredNamespace: 'invalid namespace',
+      nodeEnvironment: 'production',
+      railwayProjectId: 'project',
+      railwayEnvironmentId: 'environment',
+      railwayServiceId: 'service',
+    })).toBe('railway:project:environment:service');
+    expect(resolvePublicProviderRateLimitNamespace({
+      configuredNamespace: 'invalid namespace',
+      nodeEnvironment: 'production',
+    })).toBeNull();
+    expect(resolvePublicProviderRateLimitNamespace({
+      nodeEnvironment: 'production',
+    })).toBeNull();
+    const completeRailwayIdentity = {
+      railwayProjectId: 'project',
+      railwayEnvironmentId: 'environment',
+      railwayServiceId: 'service',
+    };
+    expect(resolvePublicProviderTrustRailwayRealIp('true', completeRailwayIdentity)).toBe(true);
+    expect(resolvePublicProviderTrustRailwayRealIp('false', completeRailwayIdentity)).toBe(false);
+    expect(resolvePublicProviderTrustRailwayRealIp('true', {
+      ...completeRailwayIdentity,
+      railwayServiceId: '',
+    })).toBe(false);
 
     const unsafeMaxApp = express();
     unsafeMaxApp.use(createPublicProviderRateLimitMiddleware({
@@ -523,7 +645,9 @@ describe('public provider admission policy', () => {
 
   it('catches a generic GPT reroute without double charging canonical GPT requests', async () => {
     const limiter = createPublicProviderRateLimitMiddleware({
-      maxRequests: 2,
+      clientIdentityResolver: (req) => String(req.header('x-test-client') ?? 'unknown'),
+      clientMaxRequests: 2,
+      maxRequests: 3,
       windowMs: 60_000,
     });
     const app = express();
@@ -552,54 +676,169 @@ describe('public provider admission policy', () => {
 
     const rerouted = await request(app)
       .post('/gpt/arcanos-gaming/evidence-retry')
+      .set('x-test-client', 'caller-a')
       .send({ originalPrompt: 'current guide' });
     const canonical = await request(app)
       .post('/gpt/arcanos-core')
+      .set('x-test-client', 'caller-a')
       .send({ action: 'query' });
-    const denied = await request(app)
+    const clientDenied = await request(app)
       .post('/gpt/guide')
+      .set('x-test-client', 'caller-a')
+      .send({ action: 'query' });
+    const otherCaller = await request(app)
+      .post('/gpt/guide')
+      .set('x-test-client', 'caller-b')
+      .send({ action: 'query' });
+    const globallyDenied = await request(app)
+      .post('/gpt/guide')
+      .set('x-test-client', 'caller-c')
       .send({ action: 'query' });
 
     expect(rerouted.status).toBe(200);
-    expect(rerouted.headers['x-ratelimit-remaining']).toBe('1');
+    expect(rerouted.headers['x-ratelimit-remaining']).toBe('2');
     expect(canonical.status).toBe(200);
-    expect(canonical.headers['x-ratelimit-remaining']).toBe('0');
-    expect(denied.status).toBe(429);
+    expect(canonical.headers['x-ratelimit-remaining']).toBe('1');
+    expect(clientDenied.status).toBe(429);
+    expect(clientDenied.headers['x-ratelimit-bucket']).toBe(
+      PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_BUCKET
+    );
+    expect(otherCaller.status).toBe(200);
+    expect(otherCaller.headers['x-ratelimit-remaining']).toBe('0');
+    expect(globallyDenied.status).toBe(429);
+    expect(globallyDenied.headers['x-ratelimit-bucket']).toBe(
+      PUBLIC_PROVIDER_RATE_LIMIT_BUCKET
+    );
   });
 
-  it('keeps caller-level fairness limits in addition to the instance ceiling', async () => {
-    const hardCeiling = createPublicProviderRateLimitMiddleware({
+  it('ignores caller-selected metadata unless Railway real-IP trust is explicit', async () => {
+    const untrustedLimiter = createPublicProviderRateLimitMiddleware({
+      clientMaxRequests: 1,
       maxRequests: 3,
       windowMs: 60_000,
     });
-    const fairnessLimit = createRateLimitMiddleware({
-      bucketName: 'representative-route-fairness',
-      maxRequests: 1,
-      windowMs: 60_000,
-      keyGenerator: (req) => getRequestActorKey(req),
-    });
-    const app = express();
-    app.use(hardCeiling);
-    app.use(fairnessLimit);
-    app.post('/provider', (_req, res) => {
-      res.json({ ok: true });
-    });
+    const untrustedApp = express();
+    untrustedApp.set('trust proxy', true);
+    untrustedApp.use(untrustedLimiter);
+    untrustedApp.post('/provider', (_req, res) => res.json({ ok: true }));
 
-    const actorA = await request(app).post('/provider').set('x-session-id', 'actor-a');
-    const actorB = await request(app).post('/provider').set('x-session-id', 'actor-b');
-    const repeatedActorA = await request(app).post('/provider').set('x-session-id', 'actor-a');
-    const actorCAfterFairnessDenial = await request(app)
+    const first = await request(untrustedApp)
       .post('/provider')
-      .set('x-session-id', 'actor-c');
+      .set('x-session-id', 'rotated-a')
+      .set('Authorization', 'Bearer rotated-a')
+      .set('x-forwarded-for', '198.51.100.1');
+    const rotated = await request(untrustedApp)
+      .post('/provider')
+      .set('x-session-id', 'rotated-b')
+      .set('Authorization', 'Bearer rotated-b')
+      .set('x-forwarded-for', '198.51.100.2');
 
-    expect(actorA.status).toBe(200);
-    expect(actorB.status).toBe(200);
-    expect(repeatedActorA.status).toBe(429);
-    expect(repeatedActorA.headers['x-ratelimit-bucket']).toBe('representative-route-fairness');
-    expect(repeatedActorA.headers['x-ratelimit-limit']).toBe('1');
-    expect(actorCAfterFairnessDenial.status).toBe(429);
-    expect(actorCAfterFairnessDenial.headers['x-ratelimit-bucket']).toBe(
-      PUBLIC_PROVIDER_RATE_LIMIT_BUCKET
+    expect(first.status).toBe(200);
+    expect(rotated.status).toBe(429);
+    expect(rotated.headers['x-ratelimit-bucket']).toBe(
+      PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_BUCKET
     );
+
+    const directRailwayLimiter = createPublicProviderRateLimitMiddleware({
+      clientMaxRequests: 1,
+      maxRequests: 3,
+      trustRailwayRealIp: true,
+      windowMs: 60_000,
+    });
+    const directRailwayApp = express();
+    directRailwayApp.use(directRailwayLimiter);
+    directRailwayApp.post('/provider', (_req, res) => res.json({ ok: true }));
+
+    const directRailwayA = await request(directRailwayApp)
+      .post('/provider')
+      .set('x-railway-edge', 'iad1')
+      .set('x-real-ip', '198.51.100.10');
+    const directRailwayB = await request(directRailwayApp)
+      .post('/provider')
+      .set('x-railway-edge', 'iad1')
+      .set('x-real-ip', '198.51.100.11');
+
+    expect(directRailwayA.status).toBe(200);
+    expect(directRailwayB.status).toBe(429);
+
+    const trustedRailwayLimiter = createPublicProviderRateLimitMiddleware({
+      clientMaxRequests: 1,
+      maxRequests: 3,
+      railwayEdgePeerMatcher: () => true,
+      trustRailwayRealIp: true,
+      windowMs: 60_000,
+    });
+    const trustedRailwayApp = express();
+    trustedRailwayApp.use(trustedRailwayLimiter);
+    trustedRailwayApp.post('/provider', (_req, res) => res.json({ ok: true }));
+
+    const railwayA = await request(trustedRailwayApp)
+      .post('/provider')
+      .set('x-railway-edge', 'iad1')
+      .set('x-real-ip', '198.51.100.10');
+    const railwayB = await request(trustedRailwayApp)
+      .post('/provider')
+      .set('x-railway-edge', 'iad1')
+      .set('x-real-ip', '198.51.100.11');
+    const railwayARepeated = await request(trustedRailwayApp)
+      .post('/provider')
+      .set('x-railway-edge', 'iad1')
+      .set('x-real-ip', '198.51.100.10')
+      .set('x-forwarded-for', '203.0.113.99');
+
+    expect(railwayA.status).toBe(200);
+    expect(railwayB.status).toBe(200);
+    expect(railwayARepeated.status).toBe(429);
+    expect(railwayARepeated.headers['x-public-provider-global-remaining']).toBe('1');
+
+    const trustedPeerRequest = (headers: Request['headers']): Request => ({
+      headers,
+      socket: { remoteAddress: '100.64.0.8' },
+    } as unknown as Request);
+    const trustOptions = {
+      railwayEdgePeerMatcher: () => true,
+      trustRailwayRealIp: true,
+    };
+    for (const headers of [
+      { 'x-real-ip': '198.51.100.20' },
+      { 'x-railway-edge': 'invalid', 'x-real-ip': '198.51.100.20' },
+      { 'x-railway-edge': ['iad1', 'ewr1'], 'x-real-ip': '198.51.100.20' },
+      { 'x-railway-edge': 'iad1', 'x-real-ip': 'invalid' },
+      { 'x-railway-edge': 'iad1', 'x-real-ip': '198.51.100.20, 198.51.100.21' },
+    ] as Request['headers'][]) {
+      expect(resolvePublicProviderClientIdentity(
+        trustedPeerRequest(headers),
+        trustOptions
+      )).toBe('network:ipv4:100.64.0.8/32');
+    }
+
+    const authenticatedRequest = trustedPeerRequest({
+      'x-railway-edge': 'iad1',
+      'x-real-ip': '198.51.100.20',
+    });
+    authenticatedRequest.authenticatedActorKey = 'server-established-actor';
+    expect(resolvePublicProviderClientIdentity(authenticatedRequest, trustOptions)).toBe(
+      'actor:server-established-actor'
+    );
+  });
+
+  it('canonicalizes IPv4-mapped callers and groups IPv6 privacy addresses by /64', () => {
+    expect(normalizePublicProviderClientAddress('198.51.100.8')).toBe(
+      'ipv4:198.51.100.8/32'
+    );
+    expect(normalizePublicProviderClientAddress('::ffff:198.51.100.8')).toBe(
+      'ipv4:198.51.100.8/32'
+    );
+    expect(normalizePublicProviderClientAddress('2001:db8:abcd:12::1')).toBe(
+      'ipv6:2001:0db8:abcd:0012::/64'
+    );
+    expect(normalizePublicProviderClientAddress('2001:0db8:abcd:0012:ffff::99')).toBe(
+      'ipv6:2001:0db8:abcd:0012::/64'
+    );
+    expect(normalizePublicProviderClientAddress('not-an-ip')).toBeNull();
+    expect(isTrustedRailwayEdgePeerAddress('100.64.0.1')).toBe(true);
+    expect(isTrustedRailwayEdgePeerAddress('::ffff:100.127.255.254')).toBe(true);
+    expect(isTrustedRailwayEdgePeerAddress('10.0.0.1')).toBe(false);
+    expect(isTrustedRailwayEdgePeerAddress('fd12::1')).toBe(false);
   });
 });

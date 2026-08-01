@@ -79,7 +79,9 @@ import {
   cefBodyParser,
 } from '@services/controlPlane/cefBodyParser.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
-import { publicProviderAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
+import {
+  createPublicProviderAdmissionMiddleware,
+} from '@transport/http/middleware/publicProviderAdmission.js';
 import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
@@ -125,6 +127,7 @@ export function createApp(): Express {
     limit: ACTION_PLAN_EXECUTION_BODY_LIMIT,
     strict: true,
   });
+  const publicProviderAdmission = createPublicProviderAdmissionMiddleware();
 
   app.use(requestContext);
   app.use('/jobs', noStoreResponse);

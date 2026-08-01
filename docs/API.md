@@ -26,20 +26,41 @@ Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Trusted GPT presence path: a request GPT ID in configured `TRUSTED_GPT_IDS` plus a non-empty `x-arcanos-confirm-token`. In the current middleware this header is a presence marker for trusted IDs; it is not consumed or validated against the one-time-token store. Because the request path, body, or header can supply the GPT ID, this setting is not caller authentication. Use it only behind deployment middleware that authenticates the caller and binds the permitted identity.
 - Automation secret: configured header (default `x-arcanos-automation`)
 
-Public provider-capable HTTP ingress shares one caller-independent admission
-ceiling per backend process. This covers canonical GPT writing requests,
+Public provider-capable HTTP ingress uses one atomic caller-plus-deployment
+admission ceiling. Production counters live in shared Redis, so replicas and
+rolling restarts use the same window. This covers canonical GPT writing requests,
 prompt, pipeline, code-generation, public media/search/simulation, enabled
 legacy GPT aliases, and `GET`, implicit `HEAD`, and `POST` `/brain` only when `ASK_ROUTE_MODE` is
 `compat`. Health/status probes, provider-free diagnostics, authenticated
 control-plane paths, canonical GPT control/DAG/MCP/job actions, and the
 DAG/MCP/tool lanes of `/dispatch` do not consume it. Accepted and rejected
 provider admissions use `Cache-Control: no-store`. The shared middleware sets
-`X-RateLimit-*` headers; an admitted response may report a later route/user
-fairness bucket instead. Exhaustion always returns HTTP `429` with
-`X-RateLimit-Bucket: public-provider-instance` and does not enter the downstream
-route handler. Configure the finite ceiling with `PUBLIC_PROVIDER_RATE_LIMIT_MAX`
-and `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS`; it supplements, rather than
-replaces, route/user fairness limits.
+`X-RateLimit-*` headers plus the stable
+`X-Public-Provider-Client-Remaining` and
+`X-Public-Provider-Global-Remaining` counters; an admitted response may report a
+later route/user fairness bucket instead. Caller exhaustion returns HTTP `429`
+with `X-RateLimit-Bucket: public-provider-client` without spending global
+capacity. Deployment exhaustion uses the compatibility bucket
+`public-provider-instance`. Neither denial enters the downstream route handler.
+At most 16 Redis admission decisions run concurrently per process (or fewer
+when the deployment maximum is lower); excess bursts fail immediately with
+bucket `public-provider-admission-concurrency` and never queue or touch Redis.
+A second process-local token bucket permits a burst of 100 Redis admission
+operation starts and then refills at 100 starts per second; cache-miss traffic above that ceiling receives
+bucket `public-provider-admission-redis-start-rate`. Client and global Redis
+denials are cached locally within a bounded map for at most one second and
+never beyond Redis's reported TTL. The cache preserves Redis's full
+`Retry-After`, is used only for the current READY lifecycle generation, and is
+cleared or bypassed across outages and generation changes. It absorbs short
+denial bursts without becoming an admission source of truth.
+Configure the finite ceilings with `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX`,
+`PUBLIC_PROVIDER_RATE_LIMIT_MAX`, and `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS`;
+they supplement, rather than replace, route/user fairness limits. Production
+Redis loss fails closed with no-store `503 REDIS_DEPENDENCY_UNAVAILABLE`.
+If a limiter command fails while the lifecycle remains READY, a generation-scoped
+process circuit opens immediately: later admissions return the same `503`
+without consuming Redis-start tokens or issuing Redis commands until the
+background capability probe succeeds or Redis advances to a new generation.
 
 ## Run locally
 Quick probes:
@@ -56,7 +77,11 @@ and confirmation-gated flows after deploy.
 
 ## Troubleshooting
 - 403 with `CONFIRMATION_REQUIRED`: use confirmation flow headers.
-- 429 with bucket `public-provider-instance`: wait for the shared process window shown by `Retry-After`; changing caller metadata does not create a new bucket.
+- 429 with bucket `public-provider-client`: wait for the caller/cohort window shown by `Retry-After`; changing session, body/query, authorization, cookie, or forwarding metadata does not create a new bucket.
+- 429 with bucket `public-provider-instance`: wait for the deployment-wide Redis window shown by `Retry-After`.
+- 429 with bucket `public-provider-admission-concurrency`: retry after the fixed two-second load-shed interval; no Redis counter was read or spent.
+- 429 with bucket `public-provider-admission-redis-start-rate`: retry after the reported interval; the per-process Redis-start token bucket rejected the cache miss without reading or spending either shared counter.
+- 503 with `REDIS_DEPENDENCY_UNAVAILABLE` from a provider-capable route: restore the production Redis lifecycle; provider admission never falls back to process memory.
 - 503 from AI routes: check OpenAI key config and upstream status.
 - 404 on expected route: verify method and mounted path prefix.
 
@@ -254,7 +279,8 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /api/fallback/test`
 
 The root backend's credential-free `/readyz` checks OpenAI, database, Redis,
-and startup readiness in that order. It returns `200` only when every critical
+public-provider admission capability, and startup readiness in that order. It
+returns `200` only when every critical
 check is healthy and otherwise returns `503`; all responses use
 `Cache-Control: no-store`. `GET` returns the top-level fields `ready`, `status`,
 `timestamp`, `checks`, and `duration`. Each check exposes only `name`,

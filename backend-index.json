@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T02:19:20.580Z",
+  "generatedAt": "2026-08-01T09:13:54.195Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -984,6 +984,12 @@
         },
         {
           "relativePath": "src/platform/runtime/publicProviderRateLimitPolicy.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitReadiness.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitStore.ts"
         },
         {
           "relativePath": "src/platform/runtime/railway.ts"
@@ -3586,6 +3592,9 @@
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/public-provider-rate-limit-redis.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/session-system.integration.test.ts"
         },
         {
@@ -3923,6 +3932,18 @@
         },
         {
           "relativePath": "tests/public-provider-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-config-wiring.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-default-executor.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-readiness.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-store.test.ts"
         },
         {
           "relativePath": "tests/public-worker-health-projection.test.ts"

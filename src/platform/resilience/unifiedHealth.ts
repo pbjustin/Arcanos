@@ -25,8 +25,12 @@ import {
   getConfig,
   getStableWorkerRuntimeMode
 } from "@platform/runtime/unifiedConfig.js";
+import { config as runtimeConfig } from '@platform/runtime/config.js';
 import { resolveConfiguredRedisConnection } from "@platform/runtime/redis.js";
 import { getRedisLifecycleSnapshot } from "@platform/runtime/redisLifecycle.js";
+import {
+  getPublicProviderRateLimitReadinessSnapshot,
+} from '@platform/runtime/publicProviderRateLimitReadiness.js';
 import { getStartupLifecycleSnapshot } from "@platform/runtime/startupLifecycle.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
@@ -120,6 +124,10 @@ const REDIS_UNAVAILABLE_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
   code: 'REDIS_DEPENDENCY_UNAVAILABLE',
   error: 'Redis dependency is unavailable.'
 };
+const PUBLIC_PROVIDER_ADMISSION_READINESS_FAILURE: PublicReadinessFailure = {
+  code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+  error: 'Public provider admission is unavailable.'
+};
 const APPLICATION_STARTING_PUBLIC_READINESS_FAILURE: PublicReadinessFailure = {
   code: 'APPLICATION_STARTING',
   error: 'Application startup is in progress.'
@@ -145,6 +153,8 @@ function resolvePublicReadinessFailure(result: HealthCheckResult): PublicReadine
       return result.code === 'REDIS_INITIALIZING'
         ? REDIS_INITIALIZING_PUBLIC_READINESS_FAILURE
         : REDIS_UNAVAILABLE_PUBLIC_READINESS_FAILURE;
+    case 'public-provider-admission':
+      return PUBLIC_PROVIDER_ADMISSION_READINESS_FAILURE;
     case 'startup':
       return result.code === 'APPLICATION_STARTING'
         ? APPLICATION_STARTING_PUBLIC_READINESS_FAILURE
@@ -695,6 +705,35 @@ export async function checkRedisReadiness(): Promise<HealthCheckResult> {
   });
 }
 
+/** Production web activation requires a generation-matched admission capability probe. */
+export function checkPublicProviderAdmissionReadiness(): HealthCheckResult {
+  const required = requiresProductionWebDependencies();
+  const namespaceConfigured = runtimeConfig.limits.publicProviderRateLimitNamespace !== null;
+  const redisLifecycle = getRedisLifecycleSnapshot();
+  const capability = getPublicProviderRateLimitReadinessSnapshot();
+  const capabilityReady = capability.status === 'ready'
+    && redisLifecycle.state === 'READY'
+    && capability.readyGeneration === redisLifecycle.readyGeneration;
+  const healthy = !required || (namespaceConfigured && capabilityReady);
+
+  return {
+    healthy,
+    name: 'public-provider-admission',
+    ...(!healthy ? {
+      code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+      error: 'Public provider admission is unavailable.'
+    } : {}),
+    metadata: {
+      required,
+      namespaceConfigured,
+      capabilityStatus: capability.status,
+      capabilityGeneration: capability.readyGeneration,
+      redisGeneration: redisLifecycle.readyGeneration,
+      retryScheduled: capability.retryScheduled
+    }
+  };
+}
+
 /**
  * Process startup readiness check.
  *
@@ -763,6 +802,7 @@ export default {
   checkOpenAIHealth,
   checkDatabaseHealth,
   checkRedisHealth,
+  checkPublicProviderAdmissionReadiness,
   checkStartupReadiness,
   checkApplicationHealth
 };

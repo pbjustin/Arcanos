@@ -13,8 +13,15 @@ const trackedEnvironmentNames = [
   'DISABLE_DIAGNOSTICS_CRON',
   'DIAGNOSTICS_SHARED_METRICS',
   'ASK_ROUTE_MODE',
+  'PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX',
   'PUBLIC_PROVIDER_RATE_LIMIT_MAX',
+  'PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE',
+  'PUBLIC_PROVIDER_RATE_LIMIT_STORE',
   'PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS',
+  'PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP',
+  'RAILWAY_PROJECT_ID',
+  'RAILWAY_ENVIRONMENT_ID',
+  'RAILWAY_SERVICE_ID',
 ] as const;
 
 const originalEnvironment = new Map(
@@ -32,8 +39,15 @@ process.env.DISABLE_EXTERNAL_CALLS = 'true';
 process.env.DISABLE_DIAGNOSTICS_CRON = 'true';
 process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
 process.env.ASK_ROUTE_MODE = 'compat';
-process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '6';
-process.env.PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS = '60000';
+process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = '6';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '7';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = 'memory';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS = '600000';
+delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE;
+delete process.env.PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP;
+delete process.env.RAILWAY_PROJECT_ID;
+delete process.env.RAILWAY_ENVIRONMENT_ID;
+delete process.env.RAILWAY_SERVICE_ID;
 
 const executeArcanosPipelineMock = jest.fn(async () => ({
   result: 'pipeline-ok',
@@ -196,9 +210,11 @@ function addRotatedCallerMetadata(
 }
 
 describe('public provider admission in the production application composition', () => {
-  it('shares one caller-independent ceiling without charging health, control, or DAG lanes', async () => {
+  it('shares one hierarchical ceiling without charging health, control, or DAG lanes', async () => {
     const app = createApp();
-    app.set('trust proxy', true);
+    app.set('trust proxy', (address: string) => (
+      address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+    ));
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const healthResponse = await request(app).get('/healthz');
@@ -223,7 +239,7 @@ describe('public provider admission in the production application composition', 
     expect(deniedByUnsafeGateResponse.headers['x-ratelimit-bucket']).toBe(
       'public-provider-instance'
     );
-    expect(deniedByUnsafeGateResponse.headers['x-ratelimit-remaining']).toBe('5');
+    expect(deniedByUnsafeGateResponse.headers['x-ratelimit-remaining']).toBe('6');
     expect(deniedByUnsafeGateResponse.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).not.toHaveBeenCalled();
 
@@ -252,7 +268,7 @@ describe('public provider admission in the production application composition', 
 
     expect(pipelineResponse.status).toBe(200);
     expect(pipelineResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
-    expect(pipelineResponse.headers['x-ratelimit-remaining']).toBe('3');
+    expect(pipelineResponse.headers['x-ratelimit-remaining']).toBe('4');
     expect(pipelineResponse.headers['cache-control']).toBe('no-store');
     expect(executeArcanosPipelineMock).toHaveBeenCalledTimes(1);
 
@@ -269,7 +285,7 @@ describe('public provider admission in the production application composition', 
 
     expect(dispatchResponse.status).toBe(500);
     expect(dispatchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
-    expect(dispatchResponse.headers['x-ratelimit-remaining']).toBe('2');
+    expect(dispatchResponse.headers['x-ratelimit-remaining']).toBe('3');
     expect(dispatchResponse.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
 
@@ -286,7 +302,7 @@ describe('public provider admission in the production application composition', 
     expect(directDiagnosticActionResponse.headers['x-ratelimit-bucket']).toBe(
       'public-provider-instance'
     );
-    expect(directDiagnosticActionResponse.headers['x-ratelimit-remaining']).toBe('1');
+    expect(directDiagnosticActionResponse.headers['x-ratelimit-remaining']).toBe('2');
     expect(directDiagnosticActionResponse.headers['cache-control']).toBe('no-store');
     expect(executeDirectGptActionMock).toHaveBeenCalledTimes(1);
 
@@ -302,7 +318,7 @@ describe('public provider admission in the production application composition', 
 
     expect(canonicalGptResponse.status).toBe(500);
     expect(canonicalGptResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
-    expect(canonicalGptResponse.headers['x-ratelimit-remaining']).toBe('0');
+    expect(canonicalGptResponse.headers['x-ratelimit-remaining']).toBe('1');
     expect(canonicalGptResponse.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).toHaveBeenCalledTimes(2);
 
@@ -345,9 +361,10 @@ describe('public provider admission in the production application composition', 
       });
 
     expect(deniedResearchResponse.status).toBe(429);
-    expect(deniedResearchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
+    expect(deniedResearchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-client');
     expect(deniedResearchResponse.headers['x-ratelimit-limit']).toBe('6');
     expect(deniedResearchResponse.headers['x-ratelimit-remaining']).toBe('0');
+    expect(deniedResearchResponse.headers['x-public-provider-global-remaining']).toBe('1');
     expect(deniedResearchResponse.headers['retry-after']).toBeTruthy();
     expect(deniedResearchResponse.headers['cache-control']).toBe('no-store');
     expect(researchMock).toHaveBeenCalledTimes(1);
@@ -363,7 +380,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedDirectDiagnosticAction.status).toBe(429);
     expect(deniedDirectDiagnosticAction.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedDirectDiagnosticAction.headers['cache-control']).toBe('no-store');
     expect(executeDirectGptActionMock).toHaveBeenCalledTimes(1);
@@ -379,7 +396,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedFastPathDiagnosticMode.status).toBe(429);
     expect(deniedFastPathDiagnosticMode.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedFastPathDiagnosticMode.headers['cache-control']).toBe('no-store');
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
@@ -395,7 +412,7 @@ describe('public provider admission in the production application composition', 
 
     expect(explicitPingWithGenerativePrompt.status).not.toBe(429);
     expect(explicitPingWithGenerativePrompt.headers['x-ratelimit-bucket']).not.toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
 
@@ -411,7 +428,7 @@ describe('public provider admission in the production application composition', 
 
     expect(diagnosticModeWithExplicitNonQueryAction.status).not.toBe(429);
     expect(diagnosticModeWithExplicitNonQueryAction.headers['x-ratelimit-bucket']).not.toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
 
@@ -425,7 +442,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedHeaderPingAlias.status).toBe(429);
     expect(deniedHeaderPingAlias.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedHeaderPingAlias.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).toHaveBeenCalledTimes(routeCallsBeforeDeniedPingAlias);
@@ -442,7 +459,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedPayloadPromptOverride.status).toBe(429);
     expect(deniedPayloadPromptOverride.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedPayloadPromptOverride.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).toHaveBeenCalledTimes(routeCallsBeforeDeniedPayloadPromptOverride);
@@ -482,7 +499,7 @@ describe('public provider admission in the production application composition', 
     );
     expect(deniedApiAliasConflict.status).toBe(429);
     expect(deniedApiAliasConflict.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedApiAliasConflict.headers['cache-control']).toBe('no-store');
     expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
@@ -544,7 +561,7 @@ describe('public provider admission in the production application composition', 
     ]) {
       expect(deniedBrainConflict.status).toBe(429);
       expect(deniedBrainConflict.headers['x-ratelimit-bucket']).toBe(
-        'public-provider-instance'
+        'public-provider-client'
       );
       expect(deniedBrainConflict.headers['cache-control']).toBe('no-store');
     }
@@ -559,7 +576,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedDuplicateSystemReviewQuery.status).toBe(429);
     expect(deniedDuplicateSystemReviewQuery.headers['x-ratelimit-bucket']).toBe(
-      'public-provider-instance'
+      'public-provider-client'
     );
     expect(deniedDuplicateSystemReviewQuery.headers['cache-control']).toBe('no-store');
     expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
@@ -581,8 +598,7 @@ describe('public provider admission in the production application composition', 
       '83'
     )
       .set('x-confirmed', 'yes')
-      .set('Content-Type', 'application/json')
-      .send(JSON.stringify({ prompt: 'Write a haiku.', sessionId: 'body-session-83' }));
+      .query({ prompt: 'Write a haiku.' });
 
     for (const deniedBrainResponse of [
       deniedSystemReviewPost,
@@ -591,7 +607,7 @@ describe('public provider admission in the production application composition', 
     ]) {
       expect(deniedBrainResponse.status).toBe(429);
       expect(deniedBrainResponse.headers['x-ratelimit-bucket']).toBe(
-        'public-provider-instance'
+        'public-provider-client'
       );
       expect(deniedBrainResponse.headers['cache-control']).toBe('no-store');
     }

@@ -30,6 +30,8 @@ export type RedisOperationName =
   | 'diagnostics.metrics.record'
   | 'diagnostics.metrics.read'
   | 'diagnostics.metrics.reset'
+  | 'public_provider.rate_limit.consume'
+  | 'public_provider.rate_limit.probe'
   | 'incident.kill_switch.read'
   | 'incident.kill_switch.write_restrictive'
   | 'incident.kill_switch.write_relaxing'
@@ -313,7 +315,7 @@ function isRedisLogicalCommandError(error: unknown): boolean {
     return false;
   }
   const replyPrefix = error.message.trim().split(/\s+/u, 1)[0]?.toUpperCase() ?? '';
-  return ['ERR', 'WRONGTYPE', 'NOSCRIPT'].includes(replyPrefix);
+  return ['ERR', 'WRONGTYPE', 'NOSCRIPT', 'NOPERM'].includes(replyPrefix);
 }
 
 /**

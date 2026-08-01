@@ -16,7 +16,11 @@ const ENV_NAMES = [
   'PGDATABASE',
   'REDIS_URL',
   'REDISHOST',
-  'REDIS_HOST'
+  'REDIS_HOST',
+  'PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE',
+  'RAILWAY_PROJECT_ID',
+  'RAILWAY_ENVIRONMENT_ID',
+  'RAILWAY_SERVICE_ID'
 ] as const;
 
 const originalEnvironment = Object.fromEntries(
@@ -198,6 +202,13 @@ describe('production web readiness policy', () => {
         name: 'redis',
         code: 'REDIS_DEPENDENCY_UNAVAILABLE',
         error: 'Redis dependency is unavailable.',
+        duration: expect.any(Number)
+      },
+      {
+        healthy: false,
+        name: 'public-provider-admission',
+        code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+        error: 'Public provider admission is unavailable.',
         duration: expect.any(Number)
       }
     ]));

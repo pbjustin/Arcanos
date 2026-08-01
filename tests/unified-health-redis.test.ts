@@ -22,6 +22,13 @@ interface UnifiedHealthHarnessOptions {
     url?: string;
   };
   redisLifecycle?: Partial<RedisLifecycleSnapshot>;
+  publicProviderReadiness?: {
+    status: 'not_required' | 'pending' | 'ready' | 'failed';
+    readyGeneration: number;
+    retryAttempt?: number;
+    retryScheduled?: boolean;
+  };
+  publicProviderNamespace?: string | null;
   startupLifecycle?: Partial<StartupLifecycleSnapshot>;
 }
 
@@ -140,6 +147,24 @@ async function loadUnifiedHealthHarness(
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
     getRedisLifecycleSnapshot: getRedisLifecycleSnapshotMock
   }));
+  jest.unstable_mockModule('@platform/runtime/config.js', () => ({
+    config: {
+      limits: {
+        publicProviderRateLimitNamespace:
+          options.publicProviderNamespace === undefined
+            ? null
+            : options.publicProviderNamespace,
+      },
+    },
+  }));
+  jest.unstable_mockModule('@platform/runtime/publicProviderRateLimitReadiness.js', () => ({
+    getPublicProviderRateLimitReadinessSnapshot: jest.fn(() => ({
+      status: options.publicProviderReadiness?.status ?? 'not_required',
+      readyGeneration: options.publicProviderReadiness?.readyGeneration ?? 0,
+      retryAttempt: options.publicProviderReadiness?.retryAttempt ?? 0,
+      retryScheduled: options.publicProviderReadiness?.retryScheduled ?? false,
+    })),
+  }));
   jest.unstable_mockModule('@platform/runtime/startupLifecycle.js', () => ({
     getStartupLifecycleSnapshot: getStartupLifecycleSnapshotMock
   }));
@@ -220,6 +245,128 @@ function createResponseMock() {
 }
 
 describe('platform/resilience/unifiedHealth Redis lifecycle checks', () => {
+  it('requires the admission capability latch to match the ready Redis generation', async () => {
+    const pendingHarness = await loadUnifiedHealthHarness({
+      config: { isProduction: true },
+      processKind: 'web',
+      publicProviderNamespace: 'railway:project:environment:service',
+      publicProviderReadiness: { status: 'pending', readyGeneration: 2 },
+      redisLifecycle: {
+        state: 'READY',
+        connected: true,
+        readyGeneration: 2,
+        circuitState: 'CLOSED',
+      },
+    });
+
+    expect(pendingHarness.moduleUnderTest.checkPublicProviderAdmissionReadiness())
+      .toEqual(expect.objectContaining({
+        healthy: false,
+        code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+        metadata: expect.objectContaining({
+          capabilityStatus: 'pending',
+          capabilityGeneration: 2,
+          redisGeneration: 2,
+        }),
+      }));
+
+    const failedHarness = await loadUnifiedHealthHarness({
+      config: { isProduction: true },
+      processKind: 'web',
+      publicProviderNamespace: 'railway:project:environment:service',
+      publicProviderReadiness: {
+        status: 'failed',
+        readyGeneration: 2,
+        retryAttempt: 1,
+        retryScheduled: true,
+      },
+      redisLifecycle: {
+        state: 'READY',
+        connected: true,
+        readyGeneration: 2,
+        circuitState: 'CLOSED',
+      },
+    });
+
+    expect(failedHarness.moduleUnderTest.checkPublicProviderAdmissionReadiness())
+      .toEqual(expect.objectContaining({
+        healthy: false,
+        code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+        metadata: expect.objectContaining({
+          capabilityStatus: 'failed',
+          capabilityGeneration: 2,
+          redisGeneration: 2,
+          retryScheduled: true,
+        }),
+      }));
+
+    const staleGenerationHarness = await loadUnifiedHealthHarness({
+      config: { isProduction: true },
+      processKind: 'web',
+      publicProviderNamespace: 'railway:project:environment:service',
+      publicProviderReadiness: { status: 'ready', readyGeneration: 2 },
+      redisLifecycle: {
+        state: 'READY',
+        connected: true,
+        readyGeneration: 3,
+        circuitState: 'CLOSED',
+      },
+    });
+
+    expect(staleGenerationHarness.moduleUnderTest.checkPublicProviderAdmissionReadiness())
+      .toEqual(expect.objectContaining({
+        healthy: false,
+        code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+        metadata: expect.objectContaining({
+          capabilityStatus: 'ready',
+          capabilityGeneration: 2,
+          redisGeneration: 3,
+        }),
+      }));
+
+    const degradedRedisHarness = await loadUnifiedHealthHarness({
+      config: { isProduction: true },
+      processKind: 'web',
+      publicProviderNamespace: 'railway:project:environment:service',
+      publicProviderReadiness: { status: 'ready', readyGeneration: 3 },
+      redisLifecycle: {
+        state: 'DEGRADED',
+        connected: false,
+        readyGeneration: 3,
+        circuitState: 'OPEN',
+      },
+    });
+
+    expect(degradedRedisHarness.moduleUnderTest.checkPublicProviderAdmissionReadiness())
+      .toEqual(expect.objectContaining({
+        healthy: false,
+        code: 'PUBLIC_PROVIDER_ADMISSION_UNAVAILABLE',
+      }));
+
+    const readyHarness = await loadUnifiedHealthHarness({
+      config: { isProduction: true },
+      processKind: 'web',
+      publicProviderNamespace: 'railway:project:environment:service',
+      publicProviderReadiness: { status: 'ready', readyGeneration: 3 },
+      redisLifecycle: {
+        state: 'READY',
+        connected: true,
+        readyGeneration: 3,
+        circuitState: 'CLOSED',
+      },
+    });
+
+    expect(readyHarness.moduleUnderTest.checkPublicProviderAdmissionReadiness())
+      .toEqual(expect.objectContaining({
+        healthy: true,
+        metadata: expect.objectContaining({
+          capabilityStatus: 'ready',
+          capabilityGeneration: 3,
+          redisGeneration: 3,
+        }),
+      }));
+  });
+
   it('reports healthy and optional without opening a client when Redis is unconfigured', async () => {
     const harness = await loadUnifiedHealthHarness({
       redisResolution: {

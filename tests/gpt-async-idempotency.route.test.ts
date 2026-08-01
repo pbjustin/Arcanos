@@ -1,7 +1,15 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
+
+const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+const originalPublicProviderClientRateLimitMax =
+  process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+const originalPublicProviderRateLimitStore = process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '1000000';
+process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = '999999';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = 'memory';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -1665,4 +1673,22 @@ describe('async /gpt idempotency', () => {
       idempotencyKey: 'retry-offline'
     });
   });
+});
+
+afterAll(() => {
+  if (originalPublicProviderRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = originalPublicProviderRateLimitMax;
+  }
+  if (originalPublicProviderClientRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = originalPublicProviderClientRateLimitMax;
+  }
+  if (originalPublicProviderRateLimitStore === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = originalPublicProviderRateLimitStore;
+  }
 });

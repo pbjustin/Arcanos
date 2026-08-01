@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import type { NextFunction, Request, Response } from 'express';
 import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -37,6 +35,9 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: resolveGptRoutingMock,
 }));
 jest.unstable_mockModule('@services/arcanosDagRunService.js', () => ({
+  DEFAULT_DAG_ADMISSION_RECONCILIATION_DELAY_MS: 1000,
+  DagRunAdmissionUncertainError: class DagRunAdmissionUncertainError extends Error {},
+  DagRunCapacityExceededError: class DagRunCapacityExceededError extends Error {},
   arcanosDagRunService: {
     createRun: createRunMock,
   },
@@ -62,13 +63,6 @@ jest.unstable_mockModule('@transport/http/gamingIngressAudit.js', () => ({
     next: NextFunction
   ) => next(),
 }));
-const { default: dispatchRouter } = await import('../src/routes/dispatch.js');
-jest.unstable_mockModule('@routes/register.js', () => ({
-  registerRoutes: (app: import('express').Express) => {
-    app.use('/', dispatchRouter);
-  },
-}));
-
 const request = (await import('supertest')).default;
 const { createApp } = await import('../src/app.js');
 
@@ -149,16 +143,6 @@ describe('/dispatch production application composition', () => {
   afterEach(() => {
     consoleInfoSpy.mockRestore();
     consoleLogSpy.mockRestore();
-  });
-
-  it('keeps the real route registry wired to the dispatch router', () => {
-    const registerSource = readFileSync(
-      new URL('../src/routes/register.ts', import.meta.url),
-      'utf8'
-    );
-
-    expect(registerSource).toContain("import dispatchRouter from './dispatch.js'");
-    expect(registerSource).toContain("app.use('/', dispatchRouter)");
   });
 
   it.each([

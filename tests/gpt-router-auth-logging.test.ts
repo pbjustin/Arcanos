@@ -1,6 +1,14 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+const originalPublicProviderClientRateLimitMax =
+  process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+const originalPublicProviderRateLimitStore = process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '1000000';
+process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = '999999';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = 'memory';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -1814,4 +1822,22 @@ describe('gpt router auth logging', () => {
     expect(response.headers['x-ai-degraded-reason']).toBe('arcanos_core_pipeline_timeout_direct_answer');
     expect(response.headers['x-ai-bypassed-subsystems']).toBe('trinity_intake,trinity_reasoning');
   });
+});
+
+afterAll(() => {
+  if (originalPublicProviderRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = originalPublicProviderRateLimitMax;
+  }
+  if (originalPublicProviderClientRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = originalPublicProviderClientRateLimitMax;
+  }
+  if (originalPublicProviderRateLimitStore === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = originalPublicProviderRateLimitStore;
+  }
 });
