@@ -92,6 +92,9 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { metricsRegistry, resetAppMetricsForTests } = await import(
+  '../src/platform/observability/appMetrics.js'
+);
 
 function buildApp() {
   const app = express();
@@ -210,6 +213,7 @@ const originalRouteTestEnv = captureEnv(GPT_ROUTE_TEST_ENV_KEYS);
 describe('GPT fast-path route branching', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetAppMetricsForTests();
     for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
     }
@@ -307,6 +311,7 @@ describe('GPT fast-path route branching', () => {
     expect(executeFastGptPromptMock).toHaveBeenCalledWith(
       expect.objectContaining({
         gptId: 'arcanos-core',
+        gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
         prompt: 'Generate a prompt for a launch email.',
         timeoutMs: 8_000,
         routeDecision: expect.objectContaining({
@@ -319,6 +324,83 @@ describe('GPT fast-path route branching', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('uses the finite registered match for fast-path latency metric labels', async () => {
+    const requestedAlias = 'arcanos-cor';
+    process.env.GPT_FAST_PATH_GPT_ALLOWLIST = requestedAlias;
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: true,
+      plan: {
+        matchedId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'fuzzy'
+      },
+      _route: {
+        gptId: requestedAlias,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-07-31T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post(`/gpt/${requestedAlias}`)
+      .send({ prompt: 'Generate a prompt for a launch email.' });
+
+    expect(response.status).toBe(200);
+    expect(executeFastGptPromptMock).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: requestedAlias,
+      gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
+    }));
+    const metricsText = await metricsRegistry.metrics();
+    expect(metricsText).toMatch(
+      /gpt_fast_path_latency_ms_count\{[^}]*gpt_id="arcanos-core"[^}]*outcome="completed"[^}]*\} 1/
+    );
+    expect(metricsText).not.toContain(`gpt_id="${requestedAlias}"`);
+  });
+
+  it('uses the finite registered match for fast-path fallback metric labels', async () => {
+    const requestedAlias = 'arcanos-cor';
+    process.env.GPT_FAST_PATH_GPT_ALLOWLIST = requestedAlias;
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: true,
+      plan: {
+        matchedId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'fuzzy'
+      },
+      _route: {
+        gptId: requestedAlias,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-07-31T00:00:00.000Z'
+      }
+    });
+    executeFastGptPromptMock.mockRejectedValueOnce(new Error('fast path unavailable'));
+
+    const response = await request(buildApp())
+      .post(`/gpt/${requestedAlias}`)
+      .send({ prompt: 'Generate a prompt for a launch email.' });
+
+    expect(response.status).toBe(202);
+    const metricsText = await metricsRegistry.metrics();
+    expect(metricsText).toMatch(
+      /gpt_fast_path_latency_ms_count\{[^}]*gpt_id="arcanos-core"[^}]*outcome="fallback"[^}]*\} 1/
+    );
+    expect(metricsText).not.toContain(`gpt_id="${requestedAlias}"`);
   });
 
   it('runs core query_and_wait through the direct action lane by default', async () => {
@@ -371,6 +453,10 @@ describe('GPT fast-path route branching', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    const metricsText = await metricsRegistry.metrics();
+    expect(metricsText).toMatch(
+      /gpt_fast_path_latency_ms_count\{[^}]*gpt_id="arcanos-core"[^}]*outcome="completed"[^}]*\} 1/
+    );
   });
 
   it('recognizes query_and_wait supplied as a request query parameter', async () => {
@@ -542,6 +628,10 @@ describe('GPT fast-path route branching', () => {
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    const metricsText = await metricsRegistry.metrics();
+    expect(metricsText).toMatch(
+      /gpt_fast_path_latency_ms_count\{[^}]*gpt_id="arcanos-core"[^}]*outcome="error"[^}]*\} 1/
+    );
   });
 
   it('returns internal error when direct action execution produces no output', async () => {

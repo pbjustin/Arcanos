@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import express from 'express';
 import request from 'supertest';
-import { afterAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import {
+  createDagExecutionHttpBoundary,
   createDagHttpBoundary,
 } from '../src/services/controlPlane/dagHttpBoundary.js';
 import {
@@ -87,6 +88,25 @@ function buildApp(options: {
     res.status((error as { status?: number }).status ?? 500).json({
       code: 'BROAD_PARSER_REJECTED',
     });
+  });
+
+  return app;
+}
+
+function buildExecutionCompatibilityApp(options: {
+  maxClientRequests?: number;
+  onAccepted?: ReturnType<typeof jest.fn>;
+} = {}): express.Express {
+  const app = express();
+  const boundary = createDagExecutionHttpBoundary({
+    maxClientRequests: options.maxClientRequests ?? 100,
+    windowMs: 60_000,
+  });
+
+  app.use(express.json());
+  app.post('/dispatch', boundary, (_req, res) => {
+    options.onAccepted?.();
+    res.status(202).json({ ok: true });
   });
 
   return app;
@@ -192,6 +212,80 @@ describe('DAG HTTP ingress boundary', () => {
     expect(authenticated.status).toBe(200);
   });
 
+  it('reuses the canonical execution policy for a compatibility route', async () => {
+    const accepted = jest.fn();
+    const response = await request(buildExecutionCompatibilityApp({ onAccepted: accepted }))
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({ target: 'dag' });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+    expect(response.headers['x-ratelimit-limit']).toBe('60');
+    expect(response.headers['x-ratelimit-remaining']).toBe('59');
+    expect(response.headers['x-ratelimit-bucket']).toBe('api-arcanos-dag-execution');
+    expect(accepted).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies canonical client admission before compatibility authentication', async () => {
+    const accepted = jest.fn();
+    const app = buildExecutionCompatibilityApp({
+      maxClientRequests: 1,
+      onAccepted: accepted,
+    });
+
+    const denied = await request(app)
+      .post('/dispatch')
+      .set('Authorization', 'Bearer invalid-control-plane-test-token')
+      .send({ target: 'dag' });
+    const throttled = await request(app)
+      .post('/dispatch')
+      .set('Authorization', 'Bearer invalid-control-plane-test-token')
+      .send({ target: 'dag' });
+    const authenticated = await request(app)
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({ target: 'dag' });
+
+    expect(denied.status).toBe(401);
+    expect(denied.headers['cache-control']).toBe('no-store');
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers['cache-control']).toBe('no-store');
+    expect(authenticated.status).toBe(202);
+    expect(authenticated.headers['cache-control']).toBe('no-store');
+    expect(accepted).toHaveBeenCalledTimes(1);
+  });
+
+  it('denies compatibility execution at canonical principal admission', async () => {
+    const accepted = jest.fn();
+    const app = buildExecutionCompatibilityApp({ onAccepted: accepted });
+
+    for (let requestIndex = 0; requestIndex < 60; requestIndex += 1) {
+      const response = await request(app)
+        .post('/dispatch')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .send({ target: 'dag' });
+      expect(response.status).toBe(202);
+      expect(response.headers['cache-control']).toBe('no-store');
+    }
+
+    expect(accepted).toHaveBeenCalledTimes(60);
+    accepted.mockClear();
+
+    const denied = await request(app)
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({ target: 'dag' });
+
+    expect(denied.status).toBe(429);
+    expect(denied.headers['cache-control']).toBe('no-store');
+    expect(denied.headers.pragma).toBe('no-cache');
+    expect(denied.headers['x-ratelimit-bucket']).toBe('api-arcanos-dag-execution');
+    expect(accepted).not.toHaveBeenCalled();
+  });
+
   it('terminates unknown protected subpaths without capturing neighbors', async () => {
     const unknownResponse = await authenticatedGet(
       buildApp(),
@@ -252,6 +346,27 @@ describe('DAG HTTP ingress boundary', () => {
     expect(boundaryIndex).toBeLessThan(broadParserIndex);
     expect(dagControlPlaneIndex).toBeGreaterThan(-1);
     expect(dagControlPlaneIndex).toBeLessThan(writingPlaneGateIndex);
+  });
+
+  it('mounts conditional dispatch DAG policy after both broad parsers and before the unsafe gate', () => {
+    const appSource = readFileSync(
+      new URL('../src/app.ts', import.meta.url),
+      'utf8'
+    );
+    const jsonParserIndex = appSource.indexOf(
+      'app.use(express.json({ limit: config.limits.jsonLimit }))'
+    );
+    const urlencodedParserIndex = appSource.indexOf(
+      'app.use(express.urlencoded({ extended: true }))'
+    );
+    const dispatchBoundaryIndex = appSource.indexOf(
+      "app.post('/dispatch', dispatchDagCompatibilityBoundary)"
+    );
+    const unsafeGateIndex = appSource.indexOf('app.use(unsafeExecutionGate)');
+
+    expect(dispatchBoundaryIndex).toBeGreaterThan(jsonParserIndex);
+    expect(dispatchBoundaryIndex).toBeGreaterThan(urlencodedParserIndex);
+    expect(dispatchBoundaryIndex).toBeLessThan(unsafeGateIndex);
   });
 });
 

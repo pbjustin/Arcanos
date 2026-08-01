@@ -1,6 +1,14 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+const originalPublicProviderClientRateLimitMax =
+  process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+const originalPublicProviderRateLimitStore = process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '1000000';
+process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = '999999';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = 'memory';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -171,6 +179,39 @@ describe('gpt router auth logging', () => {
       module: 'ARCANOS:GAMING',
       route: 'gaming',
     });
+  });
+
+  it('rejects oversized route identifiers without logging the caller-controlled identifier', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { handledBy: 'module-dispatch' },
+      _route: {
+        gptId: oversizedGptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post(`/gpt/${oversizedGptId}`)
+      .send({ action: 'query', prompt: 'Stop before GPT routing logs.' });
+
+    expect(response.status).toBe(400);
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.filter((entry) => entry.event?.startsWith('gpt.request.'))).toEqual([]);
+    expect(logs.find((entry) => entry.event === 'request.received')?.path).toBe('/gpt/invalid');
+    expect(logs.find((entry) => entry.event === 'request.completed')?.path).toBe('/gpt/invalid');
+    expect(consoleLogSpy.mock.calls.flat().join('\n')).not.toContain(oversizedGptId);
   });
 
   it('logs sanitized GPT request metadata without leaking prompt text', async () => {
@@ -1781,4 +1822,22 @@ describe('gpt router auth logging', () => {
     expect(response.headers['x-ai-degraded-reason']).toBe('arcanos_core_pipeline_timeout_direct_answer');
     expect(response.headers['x-ai-bypassed-subsystems']).toBe('trinity_intake,trinity_reasoning');
   });
+});
+
+afterAll(() => {
+  if (originalPublicProviderRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = originalPublicProviderRateLimitMax;
+  }
+  if (originalPublicProviderClientRateLimitMax === undefined) {
+    delete process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX;
+  } else {
+    process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = originalPublicProviderClientRateLimitMax;
+  }
+  if (originalPublicProviderRateLimitStore === undefined) {
+    delete process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE;
+  } else {
+    process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = originalPublicProviderRateLimitStore;
+  }
 });

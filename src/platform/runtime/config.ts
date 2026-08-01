@@ -9,6 +9,14 @@ import type { ReinforcementMode } from "@shared/types/reinforcement.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import { resolveRuntimeCorsConfig } from '@platform/runtime/corsConfig.js';
+import {
+  normalizePublicProviderClientRateLimitMax,
+  normalizePublicProviderRateLimitMax,
+  normalizePublicProviderRateLimitStoreMode,
+  normalizePublicProviderRateLimitWindowMs,
+  resolvePublicProviderRateLimitNamespace,
+  resolvePublicProviderTrustRailwayRealIp,
+} from '@platform/runtime/publicProviderRateLimitPolicy.js';
 
 // Load environment variables
 dotenv.config();
@@ -38,6 +46,35 @@ const fallbackStrictEnvironments = (getEnv('FALLBACK_STRICT_ENVIRONMENTS') || 'p
   .split(',')
   .map(value => value.trim())
   .filter(Boolean);
+const publicProviderRateLimitMax = normalizePublicProviderRateLimitMax(
+  getEnv('PUBLIC_PROVIDER_RATE_LIMIT_MAX')
+);
+const publicProviderClientRateLimitMax = normalizePublicProviderClientRateLimitMax(
+  getEnv('PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX'),
+  publicProviderRateLimitMax
+);
+const publicProviderRateLimitWindowMs = normalizePublicProviderRateLimitWindowMs(
+  getEnv('PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS')
+);
+const publicProviderRateLimitStore = normalizePublicProviderRateLimitStoreMode(
+  getEnv('PUBLIC_PROVIDER_RATE_LIMIT_STORE'),
+  nodeEnv
+);
+const publicProviderRateLimitNamespace = resolvePublicProviderRateLimitNamespace({
+  configuredNamespace: getEnv('PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE'),
+  nodeEnvironment: nodeEnv,
+  railwayProjectId: getEnv('RAILWAY_PROJECT_ID'),
+  railwayEnvironmentId: getEnv('RAILWAY_ENVIRONMENT_ID'),
+  railwayServiceId: getEnv('RAILWAY_SERVICE_ID'),
+});
+const publicProviderTrustRailwayRealIp = resolvePublicProviderTrustRailwayRealIp(
+  getEnv('PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP'),
+  {
+    railwayProjectId: getEnv('RAILWAY_PROJECT_ID'),
+    railwayEnvironmentId: getEnv('RAILWAY_ENVIRONMENT_ID'),
+    railwayServiceId: getEnv('RAILWAY_SERVICE_ID'),
+  }
+);
 
 export const config = {
   // Server configuration
@@ -64,7 +101,13 @@ export const config = {
   // Request limits
   limits: {
     jsonLimit: getEnv('JSON_LIMIT') || '10mb',
-    requestTimeout: Number(getEnv('REQUEST_TIMEOUT')) || 30000
+    requestTimeout: Number(getEnv('REQUEST_TIMEOUT')) || 30000,
+    publicProviderClientRateLimitMax,
+    publicProviderRateLimitMax,
+    publicProviderRateLimitWindowMs,
+    publicProviderRateLimitStore,
+    publicProviderRateLimitNamespace,
+    publicProviderTrustRailwayRealIp
   },
 
   fallback: {

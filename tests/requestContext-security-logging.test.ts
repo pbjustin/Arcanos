@@ -110,6 +110,31 @@ describe('requestContext security logging', () => {
     expect((requestReceived as { traceId?: unknown })?.traceId).toBe((requestCompleted as { traceId?: unknown })?.traceId);
   });
 
+  it.each([
+    ['raw encoded segment', 'é'.repeat(200)],
+    ['whitespace-only', ' '.repeat(257)],
+    ['padded registered ID', `${' '.repeat(257)}arcanos-core`],
+  ])('bounds an oversized %s canonical GPT path in every request log field', async (_caseName, gptId) => {
+    const encodedGptId = encodeURIComponent(gptId);
+    const app = express();
+    app.use(requestContext);
+    app.get('/gpt/:gptId', (req, res) => {
+      req.logger?.info('probe.endpoint', { endpoint: req.originalUrl });
+      res.status(200).json({ ok: true });
+    });
+
+    const response = await request(app).get(`/gpt/${encodedGptId}`);
+
+    expect(response.status).toBe(200);
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.find((entry) => entry.event === 'request.received')?.path).toBe('/gpt/invalid');
+    expect(logs.find((entry) => entry.event === 'probe.endpoint')?.data).toMatchObject({
+      endpoint: '/gpt/invalid',
+    });
+    expect(logs.find((entry) => entry.event === 'request.completed')?.path).toBe('/gpt/invalid');
+    expect(consoleLogSpy.mock.calls.flat().join('\n')).not.toContain(encodedGptId);
+  });
+
   it('keeps request.completed latency as a top-level field for non-2xx responses', async () => {
     const app = express();
     app.use(requestContext);

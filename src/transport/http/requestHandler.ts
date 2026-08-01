@@ -23,6 +23,7 @@ import {
   extractPromptText,
   recordPromptDebugTrace,
 } from '@services/promptDebugTraceService.js';
+import { extractApiArcanosInput } from '@shared/http/askRequestInput.js';
 
 const BUDGET_ABORT_ERROR_MARKERS = [
   'openai_call_aborted_due_to_budget',
@@ -104,7 +105,7 @@ const requestFeedbackWriter = new AsyncSnapshotFileWriter(
  */
 export function extractInput(body: AIRequestDTO): string | null {
   //audit Assumption: known fields cover all input variants; Handling: first match
-  return body.prompt || body.userInput || body.content || body.text || body.query || null;
+  return extractApiArcanosInput(body);
 }
 
 export function createMockAIResponse(

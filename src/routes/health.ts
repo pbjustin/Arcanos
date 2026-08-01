@@ -20,6 +20,7 @@ import {
   checkDatabaseReadiness,
   checkRedisHealth,
   checkRedisReadiness,
+  checkPublicProviderAdmissionReadiness,
   checkStartupReadiness,
   checkApplicationHealth
 } from "@platform/resilience/unifiedHealth.js";
@@ -43,6 +44,11 @@ router.get('/readyz', buildReadinessEndpoint([
   createHealthCheck('openai', checkOpenAIHealth, true),
   createHealthCheck('database', checkDatabaseReadiness, true),
   createHealthCheck('redis', checkRedisReadiness, true),
+  createHealthCheck(
+    'public-provider-admission',
+    checkPublicProviderAdmissionReadiness,
+    true
+  ),
   createHealthCheck('startup', checkStartupReadiness, true)
 ]));
 

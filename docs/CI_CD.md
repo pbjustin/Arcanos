@@ -110,6 +110,22 @@ the standard standalone runtime regression suite and this two-connection Redis
 and real BullMQ execution-fence suite in the required
 `runtime-redis-admission` service job.
 
+The root public-provider admission Lua gate reuses that job's Redis 7 service
+on isolated database 14:
+
+```bash
+PUBLIC_PROVIDER_TEST_REDIS_URL=redis://127.0.0.1:6379/14 \
+PUBLIC_PROVIDER_TEST_REDIS_CONFIRM_DISPOSABLE=disposable-loopback-only \
+npm run test:public-provider-redis-integration
+```
+
+The named command fails when either explicit test variable is missing. Its
+target guard rejects credentials, remote hosts, query/fragment components, and
+databases other than 14. The suite exercises the production Lua through two
+connections for atomic global concurrency, caller denial ordering, expiry,
+restart/namespace continuity, and corrupt-counter failure; cleanup deletes only
+the exact randomized keys tracked by the test and never flushes Redis.
+
 The required `PostgreSQL Fencing & Local Agent Concurrency` job provisions an
 isolated PostgreSQL 18 service with database
 `arcanos_audit_pg18_20260727`. It runs both

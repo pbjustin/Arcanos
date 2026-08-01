@@ -229,7 +229,79 @@ and never calls `FLUSHDB`. That job must pass before activation.
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 | `JSON_LIMIT` | `10mb` | JSON payload size limit. |
 | `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_MAX` | `100` | Deployment-wide HTTP admissions allowed across all public provider-capable routes during the shared window. Valid range: `1` through `1000000`. Invalid or out-of-range values fall back to `100`; there is no disable value. The legacy hard ceiling of `1` remains valid. |
+| `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX` | `20` | Maximum admissions for one established actor or network cohort in the shared window. It must be at least `1` and is strictly below the global maximum when the global maximum exceeds `1`; both limits are `1` for the compatibility ceiling of `1`. Invalid values fall back to the smaller of `20` and `max(1, global maximum - 1)`. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS` | `900000` | Shared caller/global public-provider admission window in milliseconds. Valid range: `1000` through `2592000000` (30 days). Invalid or out-of-range values fall back to 15 minutes. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_STORE` | `redis` in production; `memory` otherwise | Production always selects the lifecycle-owned Redis store and never falls back to memory. Development/test may select exact `redis` for integration work; every other value uses memory. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE` | Railway-derived / local environment | Optional stable lowercase namespace matching `^[a-z0-9][a-z0-9_-]{0,63}$`. Railway derives isolation from project, environment, and service IDs. Set this explicitly for a non-Railway production Redis deployment; missing or invalid production isolation fails `/readyz` and provider admission closed. Never use a deployment or commit ID. |
+| `PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP` | `false` | Exact `true` opts a Railway deployment into using a validated `X-Real-IP` cohort only when the request also has a valid Railway edge marker and its immediate socket peer is in Railway's documented `100.0.0.0/8` proxy range. Leave false unless public-edge provenance has been verified for the service. |
 | `ALLOWED_ORIGINS` | — | Optional comma-separated exact HTTP(S) browser origins. Outside development, missing or blank configuration disables cross-origin access. |
+
+The public-provider limit makes one atomic hierarchical decision: it checks the
+caller/cohort ceiling first, then the deployment ceiling, and increments both
+only when both admit. At the compatibility ceiling of `1`, an exhausted global
+counter takes precedence so the legacy `public-provider-instance` bucket is
+preserved. A caller rejected with bucket `public-provider-client` does not
+consume deployment capacity; deployment exhaustion retains bucket
+`public-provider-instance` for response compatibility. Caller-selected session,
+body/query, raw authorization, cookie, and `X-Forwarded-For` values never select
+the caller bucket, even if application code enables Express `trust proxy`. A
+server-established actor wins when already present. The default anonymous
+cohort is the immediate socket peer. Railway may opt into a strictly validated
+`X-Real-IP` cohort only for requests carrying a valid edge marker from the
+documented proxy peer range; IPv6 callers then share a `/64`. Direct/private
+requests and all other runtimes stay on the socket cohort. NAT/proxy users can
+therefore share a bucket, and botnets or rotating source networks still require
+an authenticated gateway or WAF.
+
+The Redis decision seam has a fixed non-queuing process guard: no more than the
+smaller of 16 and the configured deployment maximum may be in flight at once.
+Excess bursts receive no-store `429` with bucket
+`public-provider-admission-concurrency` and `Retry-After: 2`; they do not query
+or spend either Redis counter. A separate per-process token bucket allows a
+burst of 100 Redis admission operation starts and refills at 100 starts per
+second. Cache misses above that rate
+receive no-store `429` with bucket
+`public-provider-admission-redis-start-rate`; aggregate capacity therefore
+scales with replica count, a process restart restores a full bucket, and very
+high shared ceilings can still be locally under-admitted by this protective
+bound. A bounded local denial cache short-circuits repeated client or global
+denials for at most one second and never beyond the Redis-reported TTL. It
+preserves the Redis retry interval, runs only against the current READY
+lifecycle generation, and is cleared or bypassed across outages and generation
+changes. Cached denials remain conservative and cannot admit work; the
+opposite, unqueried counter header is omitted rather than reported as current.
+
+After canonical ingress validation, each provider-capable admission attempt
+consumes one unit before downstream route validation or route/user fairness,
+while provider-free diagnostics and control lanes consume none. One HTTP
+request consumes only one unit even if it crosses the canonical GPT
+compatibility seam or the selected pipeline makes several provider calls.
+`ASK_ROUTE_MODE=compat` brings `GET /brain`, implicit
+`HEAD /brain`, and `POST /brain` under this ceiling; GET uses query input while
+POST and HEAD use body input. The default `gone` response is not charged.
+Production uses an atomic Redis script and stable environment/service namespace,
+so replicas and rolling process restarts share the same expiring window. Redis
+unavailability returns no-store `503 REDIS_DEPENDENCY_UNAVAILABLE` before paid
+provider work; there is no production memory fallback. Redis flush/replacement
+can still reset the window. This is an HTTP-admission guard, not a provider
+token, cost, or downstream-SDK-call budget; retain provider-account spend caps.
+Coordinate changes to the two maxima and window across web replicas; mixed
+rolling revisions can temporarily apply different policy values to the same
+shared counters even though every admission remains atomic.
+
+On each Redis ready generation, startup runs one bounded Lua capability probe
+against a dedicated hashed, short-lived key. It exercises `EVAL`, `TIME`,
+`GET`, `PTTL`, `INCR`, and `PEXPIRE` without touching caller/global counters.
+Production web `/readyz` stays unavailable while that probe is pending or
+failed; failures retry with bounded background backoff rather than from health
+requests. A limiter operation that fails while the same Redis generation remains
+READY invalidates this capability latch and schedules a generation-fenced
+reprobe, covering live ACL or command-response drift without reconnect churn.
+The same failure opens a generation-scoped request-path circuit, so subsequent
+admissions fail fast with `503 REDIS_DEPENDENCY_UNAVAILABLE` without spending
+the process Redis-start bucket. A matching successful probe clears the circuit;
+a newer Redis ready generation is not blocked by an older generation's failure.
 
 ### Browser CORS policy
 
@@ -489,7 +561,8 @@ If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher
 The tracked Railway deployment gate is `/readyz` for both roles. When
 `NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, web readiness requires
 configured and connected PostgreSQL and Redis dependencies plus completed
-startup; PostgreSQL schema initialization must also be complete. Database
+startup; PostgreSQL schema initialization and the generation-matched Redis
+public-provider capability probe must also be complete. Database
 configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns

@@ -23,7 +23,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
-import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
+import { isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { TrinityControlLeakError } from "@core/logic/trinityWritingPipeline.js";
@@ -54,7 +54,10 @@ import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
 } from "@shared/gpt/gptDirectAction.js";
+import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
+import { extractPreparedGptDispatchPromptText } from '@shared/gpt/gptRequestAction.js';
+import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import {
   pickGptModuleAction,
   resolveGptModuleRequestedActionAlias,
@@ -850,19 +853,20 @@ export type ResolveEnvelope =
  * Useful for introspection and debugging routing/mapping issues.
  */
 export async function resolveGptRouting(gptId: string, requestId?: string): Promise<ResolveEnvelope> {
-  await initializeModuleRegistry();
-  const trimmedGptId = (gptId ?? "").trim();
+  const validation = validateGptIdentifier(gptId);
 
   const baseRoute: RouteMeta = {
     requestId,
-    gptId: trimmedGptId,
+    gptId: validation.value,
     timestamp: new Date().toISOString(),
   };
 
-  if (!trimmedGptId) {
-    return { ok: false, error: { code: "BAD_REQUEST", message: "Missing gptId" }, _route: baseRoute };
+  if (!validation.ok) {
+    return { ok: false, error: validation.error, _route: baseRoute };
   }
 
+  await initializeModuleRegistry();
+  const trimmedGptId = validation.value;
   const directResolved = resolveForcedDirectGptEntry(trimmedGptId);
   let gptModuleMap = directResolved ? null : await getGptModuleMap();
   let resolved = directResolved ?? resolveGptEntry(trimmedGptId, gptModuleMap ?? {});
@@ -912,7 +916,6 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   };
 }
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
-  await initializeModuleRegistry();
   const {
     gptId,
     body,
@@ -926,9 +929,23 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     suppressTimeoutFallback: suppressTimeoutFallbackInput,
     memoryPlaneAuthorized,
   } = input;
-  const trimmedGptId = (gptId ?? "").trim();
   const traceId = inputTraceId ?? request?.traceId ?? null;
-  const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
+  const validation = validateGptIdentifier(gptId);
+  const baseRoute: RouteMeta = {
+    requestId,
+    traceId,
+    gptId: validation.value,
+    timestamp: new Date().toISOString(),
+  };
+  if (!validation.ok) {
+    return { ok: false, error: validation.error, _route: baseRoute };
+  }
+
+  await initializeModuleRegistry();
+  const trimmedGptId = validation.value;
+  const requestEndpoint = request
+    ? sanitizeRequestPath(request.originalUrl ?? request.url ?? request.path ?? '')
+    : undefined;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
     buildDispatchPayload(body),
     runtimeExecutionMode
@@ -937,7 +954,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
   const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
-  const diagnosticTextInput = extractGptPromptText(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
+  const diagnosticTextInput = extractPreparedGptDispatchPromptText(body, preDispatchPayload);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
   const rawPrompt = extractGptPromptText(body) ?? diagnosticTextInput ?? '';
   const normalizedPrompt = extractGptPromptText(preDispatchPayload) ?? diagnosticTextInput ?? '';
@@ -955,25 +972,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     normalizedPrompt,
   }, suppressPromptDebugTrace);
 
-  const baseRoute: RouteMeta = {
-    requestId,
-    traceId,
-    gptId: trimmedGptId,
-    timestamp: new Date().toISOString(),
-  };
-
   logger?.info?.("gpt.dispatch.received", {
     requestId,
     gptId: trimmedGptId,
     endpoint: requestEndpoint,
   });
-
-  if (!trimmedGptId) {
-    return { ok: false, error: { code: "BAD_REQUEST", message: "Missing gptId" }, _route: baseRoute };
-  }
-  if (trimmedGptId.length > 256) {
-    return { ok: false, error: { code: "BAD_REQUEST", message: "gptId too long" }, _route: baseRoute };
-  }
 
   //audit Assumption: diagnostic probes must never enter module resolution or gameplay dispatch; failure risk: lightweight health checks trigger simulation, HRC, or persistence side effects; expected invariant: `action:"ping"` or `prompt:"ping"` returns the fixed diagnostic payload immediately; handling strategy: short-circuit before GPT map lookup and before any action inference.
   if (isDiagnosticRequest(body as Record<string, unknown> | undefined, diagnosticTextInput)) {
@@ -988,7 +991,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       responseReturned: buildDiagnosticRouteResult(),
     }, suppressPromptDebugTrace);
     recordDispatcherRoute({
-      gptId: trimmedGptId,
+      gpt: { kind: 'diagnostic' },
       module: 'diagnostic',
       route: 'diagnostic',
       handler: 'diagnostic',
@@ -1085,7 +1088,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       outcome: 'not_registered',
     });
     recordDispatcherRoute({
-      gptId: trimmedGptId,
+      gpt: { kind: 'unresolved' },
       module: 'unknown',
       route: 'unknown',
       handler: 'unknown-gpt',
@@ -1101,7 +1104,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  const { entry, matchMethod } = resolved;
+  const { entry, matchMethod, matchedId } = resolved;
+  const registeredGptMetricIdentity = {
+    kind: 'registered' as const,
+    id: matchedId,
+  };
   logger?.info?.("gpt.dispatch.lookup.resolved", {
     requestId,
     gptId: trimmedGptId,
@@ -1247,13 +1254,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       if (memoryResult.operation === "ignored") {
         recordMemoryDispatchIgnored({
-          gptId: trimmedGptId,
+          gpt: registeredGptMetricIdentity,
           module: activeEntry.module,
           reason: 'ignored_without_fallback',
         });
       }
       recordDispatcherRoute({
-        gptId: trimmedGptId,
+        gpt: registeredGptMetricIdentity,
         module: activeEntry.module,
         route: activeEntry.route,
         handler: 'memory-dispatcher',
@@ -1430,7 +1437,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     });
 
     recordDispatcherRoute({
-      gptId: trimmedGptId,
+      gpt: registeredGptMetricIdentity,
       module: activeEntry.module,
       route: activeEntry.route,
       handler: 'repo-inspection',
@@ -1606,7 +1613,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     });
 
     recordDispatcherRoute({
-      gptId: trimmedGptId,
+      gpt: registeredGptMetricIdentity,
       module: activeEntry.module,
       route: activeEntry.route,
       handler: 'module-dispatcher',
@@ -1673,12 +1680,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       if (err instanceof TrinityControlLeakError) {
         recordDispatcherMisroute({
-          gptId: trimmedGptId,
+          gpt: registeredGptMetricIdentity,
           module: activeEntry.module,
           reason: err.classification.reason,
         });
         recordDispatcherRoute({
-          gptId: trimmedGptId,
+          gpt: registeredGptMetricIdentity,
           module: activeEntry.module,
           route: activeEntry.route,
           handler: 'trinity-control-guard',
@@ -1758,14 +1765,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           timeoutPhase,
         });
         recordDispatcherRoute({
-          gptId: trimmedGptId,
+          gpt: registeredGptMetricIdentity,
           module: activeEntry.module,
           route: activeEntry.route,
           handler: 'module-dispatcher',
           outcome: 'timeout',
         });
         recordDispatcherFallback({
-          gptId: trimmedGptId,
+          gpt: registeredGptMetricIdentity,
           module: activeEntry.module,
           reason: 'module_timeout_static_fallback',
         });
@@ -1811,7 +1818,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       }
 
     recordDispatcherRoute({
-      gptId: trimmedGptId,
+      gpt: registeredGptMetricIdentity,
       module: activeEntry.module,
       route: activeEntry.route,
       handler: 'module-dispatcher',

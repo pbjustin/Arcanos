@@ -30,6 +30,7 @@ import {
   resolveAskRouteMode
 } from '@shared/http/gptRouteHeaders.js';
 import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
+import { extractBrainTextInput } from '@shared/http/askRequestInput.js';
 import { askValidationMiddleware } from "./validation.js";
 import type {
   AskRequest,
@@ -279,17 +280,6 @@ function wantsAsync(body: AskRequest): boolean {
   return body.mode === 'async' || anyBody.async === true;
 }
 
-function extractTextInput(body: AskRequest): string | null {
-  const candidates = [body.prompt, body.message, body.userInput, body.content, body.text, body.query];
-  for (const candidate of candidates) {
-    //audit Assumption: first non-empty string should be treated as primary text input; failure risk: alias precedence mismatch; expected invariant: deterministic extraction order; handling strategy: fixed field ordering.
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
-  }
-  return null;
-}
-
 function buildValidationBypassFlag(reason: string): SchemaValidationBypassAuditFlag {
   return {
     auditFlag: 'SCHEMA_VALIDATION_BYPASS',
@@ -355,7 +345,7 @@ function validateLenientChatRequest(body: AskRequest): {
   ok: false;
   errorPayload: ErrorResponseDTO;
 } {
-  const extractedPrompt = extractTextInput(body);
+  const extractedPrompt = extractBrainTextInput(body);
   //audit Assumption: chat mode requires textual input; failure risk: empty requests entering model pipeline; expected invariant: prompt exists; handling strategy: reject missing text fields.
   if (!extractedPrompt) {
     return {
@@ -759,7 +749,7 @@ export const handleAIRequest = async (
   const requestedAsyncAskWaitMs = readRequestedAsyncAskWaitMs(req.body);
 
   //audit Assumption: diagnostic probes must bypass prompt shortcuts, memory, audit-safe, and Trinity to stay deterministic and stateless; failure risk: health checks inherit prior context or gameplay routing; expected invariant: explicit diagnostic traffic returns a stable route-local payload; handling strategy: short-circuit before validation normalization and before any stateful or generative layer executes.
-  if (isDiagnosticRequest(req.body, extractTextInput(req.body))) {
+  if (isDiagnosticRequest(req.body, extractBrainTextInput(req.body))) {
     const diagnosticPayload = buildDiagnosticAskResponse({
       endpointName,
       clientContext: req.body.clientContext
@@ -798,7 +788,7 @@ export const handleAIRequest = async (
   const bypassAuditFlag = lenientChatValidation.auditFlag;
 
   const { sessionId, overrideAuditSafe, metadata } = req.body;
-  const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
+  const normalizedPrompt = req.body.prompt || extractBrainTextInput(req.body) || '';
   recordPromptDebugTrace(requestId, 'preprocess', buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt));
   const trackedSessionId =
     typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : undefined;

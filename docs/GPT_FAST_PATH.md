@@ -198,6 +198,14 @@ Metrics include:
 - `gpt_route_decisions_total{path,reason,queue_bypassed}`
 - `gpt_fast_path_latency_ms{gpt_id,outcome}`
 
+GPT-labelled dispatcher and fast-path metrics use the finite registered ID
+selected by routing, rather than a caller-supplied alias. Unregistered requests
+use the constant `gpt_id="unknown"`, and diagnostic short-circuits use
+`gpt_id="diagnostic"`; rejected identifiers and raw aliases are never metric
+labels. Fast-path and direct-action provider metrics likewise use that registered
+ID for `source_name`; the MCP generation tool uses the fixed `arcanos-core`
+source instead of its caller-supplied `gptId`.
+
 ## Troubleshooting
 If a request unexpectedly falls back to async, check:
 

@@ -1,6 +1,36 @@
+import {
+  INVALID_GPT_IDENTIFIER_PLACEHOLDER,
+  MAX_GPT_IDENTIFIER_LENGTH,
+} from '@shared/gpt/gptIdentifier.js';
+
 export interface RequestPathSource {
   path?: string;
   originalUrl?: string;
+}
+
+function sanitizeCanonicalGptIdentifier(path: string): string {
+  const match = /^(\/gpt\/)([^/]+)(\/?)$/i.exec(path);
+  if (!match) {
+    return path;
+  }
+
+  const rawIdentifier = match[2] ?? '';
+  let decodedIdentifier = rawIdentifier;
+  try {
+    decodedIdentifier = decodeURIComponent(rawIdentifier);
+  } catch {
+    // Preserve malformed short paths for the normal HTTP error boundary, while
+    // still bounding malformed caller input that exceeds the GPT ID ceiling.
+  }
+
+  if (
+    rawIdentifier.length <= MAX_GPT_IDENTIFIER_LENGTH
+    && decodedIdentifier.length <= MAX_GPT_IDENTIFIER_LENGTH
+  ) {
+    return path;
+  }
+
+  return `${match[1]}${INVALID_GPT_IDENTIFIER_PLACEHOLDER}${match[3] ?? ''}`;
 }
 
 /**
@@ -18,10 +48,10 @@ export function sanitizeRequestPath(rawPath: string): string {
   //audit Assumption: query parameters may contain sensitive data and must never be logged in path fields; failure risk: token/PII disclosure in logs; expected invariant: returned path excludes query text; handling strategy: truncate at the first query delimiter.
   if (queryStartIndex >= 0) {
     const pathWithoutQuery = trimmedPath.slice(0, queryStartIndex);
-    return pathWithoutQuery.length > 0 ? pathWithoutQuery : '/';
+    return pathWithoutQuery.length > 0 ? sanitizeCanonicalGptIdentifier(pathWithoutQuery) : '/';
   }
 
-  return trimmedPath;
+  return sanitizeCanonicalGptIdentifier(trimmedPath);
 }
 
 /**

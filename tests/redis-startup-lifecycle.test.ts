@@ -610,6 +610,29 @@ describe('RedisLifecycleManager', () => {
     expect(client.connect).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps unrelated Redis work available after an ACL capability denial', async () => {
+    const client = new FakeRedisClient();
+    const { manager } = createManager(client);
+    manager.start();
+    await flushAsyncWork();
+
+    await expect(manager.executeOperation(
+      async () => {
+        throw new SimpleError('NOPERM this user has no permissions to run EVAL');
+      },
+      { operation: 'public_provider.rate_limit.probe' }
+    )).rejects.toEqual(expect.objectContaining({
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    }));
+
+    expect(manager.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'READY',
+      circuitState: 'CLOSED',
+      readyGeneration: 1
+    }));
+    expect(client.connect).toHaveBeenCalledTimes(1);
+  });
+
   it('opens for an operational Redis reply instead of suppressing recovery', async () => {
     const client = new FakeRedisClient();
     const { manager } = createManager(client);

@@ -224,6 +224,7 @@ describe('/api/sim dispatcher wiring', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['Content-Type']).toBe('text/event-stream');
+    expect(response.headers['Cache-Control']).toContain('no-store');
     expect(response.headers['Access-Control-Allow-Origin']).toBeUndefined();
     expect(response.streamChunks?.join('')).toContain('no-');
     expect(response.streamChunks?.join('')).toContain('simulation');

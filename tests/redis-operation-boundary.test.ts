@@ -95,7 +95,7 @@ describe('Redis operation source boundary', () => {
       visit(sourceFile);
     }
 
-    expect(gateCallCount).toBe(13);
+    expect(gateCallCount).toBe(15);
     expect(missingOperation).toEqual([]);
   });
 
@@ -141,6 +141,29 @@ describe('Redis operation source boundary', () => {
 
     expect(managerMethods).not.toContain('getReadyClient');
     expect(managerMethods).not.toContain('reportUnavailable');
+  });
+
+  it('drives public-provider capability readiness from lifecycle generations only', () => {
+    const serverSource = fs.readFileSync(
+      path.join(SOURCE_ROOT, 'server.ts'),
+      'utf8'
+    );
+    const healthSource = fs.readFileSync(
+      path.join(SOURCE_ROOT, 'platform/resilience/unifiedHealth.ts'),
+      'utf8'
+    );
+    const observerCalls = serverSource.match(
+      /observePublicProviderRateLimitRedisLifecycle\(/gu
+    ) ?? [];
+
+    expect(observerCalls).toHaveLength(2);
+    expect(serverSource).toContain(
+      'observePublicProviderRateLimitRedisLifecycle(initialRedisSnapshot)'
+    );
+    expect(healthSource).toContain('getPublicProviderRateLimitReadinessSnapshot()');
+    expect(healthSource).not.toMatch(
+      /checkPublicProviderAdmissionReadiness[\s\S]{0,1200}executeRedisOperation/u
+    );
   });
 
   it('keeps the standalone AI runtime outside Railway web and worker entrypoints', () => {

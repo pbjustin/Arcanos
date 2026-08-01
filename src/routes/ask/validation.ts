@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { validateInput } from "@platform/runtime/security.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
+import { resolveAskRequestSource } from '@shared/http/askRequestInput.js';
 
 const ASK_TEXT_FIELDS = ['prompt', 'message', 'userInput', 'content', 'text', 'query'] as const;
 const SYSTEM_MODES = ['system_review', 'system_state'] as const;
@@ -39,13 +40,7 @@ const askValidationSchema = {
  * @edgeCases Rejects requests missing any supported text field aliases.
  */
 export const askValidationMiddleware = (req: Request, res: Response, next: () => void) => {
-  const rawSource = req.method === 'GET' ? req.query : req.body;
-  const source =
-    req.method === 'GET'
-      ? Object.fromEntries(
-          Object.entries(rawSource).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
-        )
-      : rawSource;
+  const source = resolveAskRequestSource(req.method, req.body, req.query);
 
   const validation = validateInput(source, askValidationSchema);
 

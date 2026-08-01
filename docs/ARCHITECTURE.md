@@ -79,6 +79,24 @@ Implementation rules:
   through the global unsafe-state mutation block. Public safety status is an
   allowlisted summary; raw safety records live only in the authenticated detail
   response.
+- Public provider-capable HTTP routes share one hierarchical admission seam.
+  Production evaluates the caller/cohort and deployment ceilings atomically in
+  lifecycle-owned Redis before paid work; denial at either tier does not enter
+  the route, and caller denial does not consume deployment capacity. Stable
+  Railway project/environment/service identity namespaces the shared keys,
+  while caller identity uses an established server actor or a hashed socket
+  cohort. Railway `X-Real-IP` cohorts require explicit opt-in plus a validated
+  edge marker and trusted immediate proxy peer. A fixed process-local semaphore
+  load-sheds excess Redis decisions without queueing, a process token bucket
+  with burst capacity 100 and a 100-starts/second refill bounds cache-miss
+  command rate, and a bounded denial
+  cache absorbs at most one second of repeated failures only within the current
+  READY Redis generation; the request-local guard keeps compatibility reroutes exact-once. Each Redis ready generation
+  must pass an isolated Lua/write capability probe before production web
+  readiness succeeds, and same-generation command failures invalidate that
+  latch for a backoff reprobe and open a generation-scoped fast-fail request
+  circuit. Redis loss fails provider admission closed rather than falling back
+  to a replica-local counter.
 - `POST /gpt/:gptId` has no public control actions; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, and MCP calls are rejected before write dispatch.
 - Canonical durable write actions are `query` and non-core `query_and_wait`. Core `query_and_wait` is synchronous direct action. Canonical async reads use `GET /jobs/:id` and `GET /jobs/:id/result`.
 - Before a public `gpt` or `ask` job is enqueued, the backend requires the dedicated current `ARCANOS_JOB_READ_CAPABILITY_SECRET`. The creating response derives and returns a deterministic job-specific HMAC bearer capability without persisting bearer material. New tokens use only the current key; verification can temporarily accept the distinct `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` during a bounded rotation overlap. Generic status, result, stream, and cancellation routes accept exactly one `x-arcanos-job-read-token`, verify it before storage access, expose only `gpt` and `ask` rows, and conceal invalid capabilities as not found. Cancellation additionally retains confirmation plus authenticated actor ownership, so the capability alone cannot mutate a job. These responses are `no-store`.

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-31T07:50:44.263Z",
+  "generatedAt": "2026-08-01T09:13:54.195Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -983,6 +983,15 @@
           "relativePath": "src/platform/runtime/prompts.ts"
         },
         {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitPolicy.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitReadiness.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitStore.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/railway.ts"
         },
         {
@@ -1590,6 +1599,9 @@
         },
         {
           "relativePath": "src/services/controlPlane/diagnosticExecutionHttpBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/dispatchDagCompatibilityBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/executor.ts"
@@ -2330,6 +2342,9 @@
           "relativePath": "src/shared/gpt/gptIdempotency.ts"
         },
         {
+          "relativePath": "src/shared/gpt/gptIdentifier.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/gptJobLifecycle.ts"
         },
         {
@@ -2355,6 +2370,9 @@
         },
         {
           "relativePath": "src/shared/http/aiDegradedHeaders.ts"
+        },
+        {
+          "relativePath": "src/shared/http/askRequestInput.ts"
         },
         {
           "relativePath": "src/shared/http/asyncHandler.ts"
@@ -2579,6 +2597,9 @@
           "relativePath": "src/transport/http/middleware/auditTrace.ts"
         },
         {
+          "relativePath": "src/transport/http/middleware/canonicalGptIdentifierBoundary.ts"
+        },
+        {
           "relativePath": "src/transport/http/middleware/capabilityGate.ts"
         },
         {
@@ -2649,6 +2670,9 @@
         },
         {
           "relativePath": "src/transport/http/middleware/memoryPlaneAuth.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/publicProviderAdmission.ts"
         },
         {
           "relativePath": "src/transport/http/middleware/unsafeExecutionGate.ts"
@@ -3280,6 +3304,9 @@
           "relativePath": "tests/dispatch-controller-v9.test.ts"
         },
         {
+          "relativePath": "tests/dispatch-dag-app-composition.test.ts"
+        },
+        {
           "relativePath": "tests/dispatch-error-boundary.test.ts"
         },
         {
@@ -3563,6 +3590,9 @@
         },
         {
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/public-provider-rate-limit-redis.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/session-system.integration.test.ts"
@@ -3896,6 +3926,24 @@
         },
         {
           "relativePath": "tests/public-gaming-canary.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-admission-app-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-config-wiring.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-default-executor.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-readiness.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-rate-limit-store.test.ts"
         },
         {
           "relativePath": "tests/public-worker-health-projection.test.ts"

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const runTrinityWritingPipelineMock = jest.fn();
 const getOpenAIClientOrAdapterMock = jest.fn();
 const recordAiOperationMock = jest.fn();
+const recordGptAiOperationMock = jest.fn();
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   createAbortError: jest.fn((message: string) => new Error(message)),
@@ -20,6 +21,7 @@ jest.unstable_mockModule('../src/services/openai/clientBridge.js', () => ({
 
 jest.unstable_mockModule('../src/platform/observability/appMetrics.js', () => ({
   recordAiOperation: recordAiOperationMock,
+  recordGptAiOperation: recordGptAiOperationMock,
 }));
 
 const { executeDirectGptAction, executeFastGptPrompt } = await import('../src/services/gptFastPath.js');
@@ -78,7 +80,8 @@ describe('executeFastGptPrompt', () => {
 
   it('routes simple fast-path prompts through Trinity', async () => {
     const result = await executeFastGptPrompt({
-      gptId: 'arcanos-core',
+      gptId: 'arcanos-cor',
+      gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
       prompt: 'Generate a prompt for a launch email.',
       timeoutMs: 8_000,
       routeDecision: buildDecision(),
@@ -87,7 +90,7 @@ describe('executeFastGptPrompt', () => {
     expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
       input: expect.objectContaining({
         prompt: 'Generate a prompt for a launch email.',
-        gptId: 'arcanos-core',
+        gptId: 'arcanos-cor',
         moduleId: 'GPT:FAST_PATH',
         sourceEndpoint: 'gpt.fast_path',
         requestedAction: 'query',
@@ -107,19 +110,22 @@ describe('executeFastGptPrompt', () => {
       orchestrationBypassed: false,
       queueBypassed: true,
     });
-    expect(recordAiOperationMock).toHaveBeenCalledWith(
+    expect(recordGptAiOperationMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        gpt: { kind: 'registered', id: 'arcanos-core' },
         operation: 'trinity.pipeline',
         sourceType: 'gpt_fast_path',
         model: 'trinity-model',
         outcome: 'ok',
       })
     );
+    expect(recordAiOperationMock).not.toHaveBeenCalled();
   });
 
   it('executes query_and_wait direct actions through Trinity', async () => {
     const result = await executeDirectGptAction({
       gptId: 'arcanos-core',
+      gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
       prompt: 'Summarize deployment health.',
       action: 'query_and_wait',
       timeoutMs: 24_000,
@@ -168,13 +174,53 @@ describe('executeFastGptPrompt', () => {
         route: 'direct_action',
       },
     });
-    expect(recordAiOperationMock).toHaveBeenCalledWith(
+    expect(recordGptAiOperationMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        gpt: { kind: 'registered', id: 'arcanos-core' },
         operation: 'trinity.pipeline',
         sourceType: 'gpt_direct_action',
         model: 'trinity-model',
         outcome: 'ok',
       })
     );
+    expect(recordAiOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the registered metric identity on fast-path provider failures', async () => {
+    runTrinityWritingPipelineMock.mockRejectedValueOnce(new Error('provider failed'));
+
+    await expect(executeFastGptPrompt({
+      gptId: 'rotating-caller-alias',
+      gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
+      prompt: 'Generate a prompt for a launch email.',
+      timeoutMs: 8_000,
+      routeDecision: buildDecision(),
+    })).rejects.toThrow('provider failed');
+
+    expect(recordGptAiOperationMock).toHaveBeenCalledWith(expect.objectContaining({
+      gpt: { kind: 'registered', id: 'arcanos-core' },
+      sourceType: 'gpt_fast_path',
+      outcome: 'error',
+    }));
+    expect(recordAiOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the registered metric identity on direct-action provider failures', async () => {
+    runTrinityWritingPipelineMock.mockRejectedValueOnce(new Error('provider failed'));
+
+    await expect(executeDirectGptAction({
+      gptId: 'arcanos-core',
+      gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
+      prompt: 'Summarize deployment health.',
+      action: 'query_and_wait',
+      timeoutMs: 24_000,
+    })).rejects.toThrow('provider failed');
+
+    expect(recordGptAiOperationMock).toHaveBeenCalledWith(expect.objectContaining({
+      gpt: { kind: 'registered', id: 'arcanos-core' },
+      sourceType: 'gpt_direct_action',
+      outcome: 'error',
+    }));
+    expect(recordAiOperationMock).not.toHaveBeenCalled();
   });
 });

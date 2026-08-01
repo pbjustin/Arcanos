@@ -20,6 +20,10 @@ import {
   type RedisLifecycleSnapshot,
 } from '@platform/runtime/redisLifecycle.js';
 import {
+  observePublicProviderRateLimitRedisLifecycle,
+  stopPublicProviderRateLimitReadinessTracker,
+} from '@platform/runtime/publicProviderRateLimitReadiness.js';
+import {
   getStartupLifecycleSnapshot,
   markStartupListenerBound,
   markStartupRuntimeFailed,
@@ -169,6 +173,7 @@ function closeHttpServer(server: Server): Promise<void> {
 async function stopDependencyLifecycles(): Promise<void> {
   unsubscribeRedisLifecycle?.();
   unsubscribeRedisLifecycle = null;
+  stopPublicProviderRateLimitReadinessTracker();
   await activeStopTelemetryPersistence();
   await activeStopRedisLifecycle();
 }
@@ -344,12 +349,15 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
 
   unsubscribeRedisLifecycle = subscribeRedis((snapshot) => {
     projectRedisLifecycle(snapshot);
+    observePublicProviderRateLimitRedisLifecycle(snapshot);
     startFullRuntimeIfReady();
   });
 
   // Project once even when a test double does not immediately invoke its
   // subscriber, then begin Redis recovery without awaiting it.
-  projectRedisLifecycle(getRedisSnapshot());
+  const initialRedisSnapshot = getRedisSnapshot();
+  projectRedisLifecycle(initialRedisSnapshot);
+  observePublicProviderRateLimitRedisLifecycle(initialRedisSnapshot);
   startRedis();
   void (options.primeTelemetry ?? primeSelfHealTelemetryPersistence)().catch((error: unknown) => {
     console.warn('[STARTUP] Self-heal telemetry priming deferred', {

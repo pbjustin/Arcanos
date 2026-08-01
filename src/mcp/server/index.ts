@@ -375,6 +375,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
 
       const output = await executeFastGptPrompt({
         gptId,
+        gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
         prompt,
         requestId: ctx.requestId,
         timeoutMs: decision.timeoutMs,

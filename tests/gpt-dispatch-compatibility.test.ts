@@ -4,6 +4,9 @@ const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockDispatchModuleAction = jest.fn();
+const mockInitializeModuleRegistry = jest.fn(async () => undefined);
+const mockRecordDispatcherRoute = jest.fn();
+const mockRecordUnknownGpt = jest.fn();
 
 jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
   getMetricsText: jest.fn(),
@@ -19,7 +22,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
   recordDependencyOperationInFlight: jest.fn(),
   recordDispatcherFallback: jest.fn(),
   recordDispatcherMisroute: jest.fn(),
-  recordDispatcherRoute: jest.fn(),
+  recordDispatcherRoute: mockRecordDispatcherRoute,
   recordHttpRequestCompletion: jest.fn(),
   recordHttpRequestEnd: jest.fn(),
   recordHttpRequestStart: jest.fn(),
@@ -27,7 +30,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
   recordJobEventInsertFailure: jest.fn(),
   recordMcpAutoInvoke: jest.fn(),
   recordMemoryDispatchIgnored: jest.fn(),
-  recordUnknownGpt: jest.fn(),
+  recordUnknownGpt: mockRecordUnknownGpt,
   recordWorkerFailureTotal: jest.fn(),
   recordWorkerRecoveredJobs: jest.fn(),
   recordWorkerRecoveryAction: jest.fn(),
@@ -98,7 +101,7 @@ jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
 jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   getModuleMetadata: mockGetModuleMetadata,
   dispatchModuleAction: mockDispatchModuleAction,
-  initializeModuleRegistry: jest.fn(async () => undefined)
+  initializeModuleRegistry: mockInitializeModuleRegistry
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
@@ -153,6 +156,30 @@ describe('gpt dispatch compatibility', () => {
     );
   });
 
+  it('uses an explicit payload prompt instead of a conflicting top-level diagnostic prompt', async () => {
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        prompt: 'ping',
+        payload: {
+          prompt: 'Write a haiku.',
+          extra: 'kept'
+        }
+      },
+      requestId: 'req_payload_overrides_diagnostic_prompt'
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        prompt: 'Write a haiku.',
+        extra: 'kept'
+      })
+    );
+  });
+
   it('stores the GPT route template instead of caller-controlled URL segments in trace metadata', async () => {
     const previousMode = process.env.PROMPT_DEBUG_TRACE_MODE;
     const previousPersist = process.env.PROMPT_DEBUG_TRACE_PERSIST;
@@ -193,6 +220,39 @@ describe('gpt dispatch compatibility', () => {
         process.env.PROMPT_DEBUG_TRACE_PERSIST = previousPersist;
       }
     }
+  });
+
+  it('sanitizes mounted endpoint metadata for trim-compatible oversized route paths', async () => {
+    const paddedGptId = `${' '.repeat(257)}arcanos-core`;
+    const encodedGptId = encodeURIComponent(paddedGptId);
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+
+    const response = await routeGptRequest({
+      gptId: paddedGptId,
+      body: {
+        action: 'query',
+        prompt: 'Preserve routing while bounding endpoint logs.',
+      },
+      requestId: 'req_padded_endpoint',
+      logger,
+      request: {
+        method: 'POST',
+        path: `/${encodedGptId}`,
+        url: `/${encodedGptId}`,
+        originalUrl: `/gpt/${encodedGptId}`,
+      } as never,
+    });
+
+    expect(response.ok).toBe(true);
+    expect(logger.info).toHaveBeenCalledWith(
+      'gpt.dispatch.received',
+      expect.objectContaining({ endpoint: '/gpt/invalid' })
+    );
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain(encodedGptId);
   });
 
   it("maps nested legacy 'ask' payloads onto the canonical 'query' action", async () => {
@@ -354,6 +414,117 @@ describe('gpt dispatch compatibility', () => {
       })
     }));
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized GPT identifiers before registry, GPT logging, metrics, or response echo', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    const logger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+
+    const resolved = await resolveGptRouting(oversizedGptId, 'req_oversized_resolve');
+    const dispatched = await routeGptRequest({
+      gptId: oversizedGptId,
+      body: { prompt: 'This request must stop at the identifier boundary.' },
+      requestId: 'req_oversized_dispatch',
+      logger,
+    });
+
+    for (const response of [resolved, dispatched]) {
+      expect(response).toEqual(expect.objectContaining({
+        ok: false,
+        error: {
+          code: 'BAD_REQUEST',
+          message: 'gptId too long',
+        },
+      }));
+    }
+    expect(JSON.stringify([resolved, dispatched])).not.toContain(oversizedGptId);
+    expect(mockInitializeModuleRegistry).not.toHaveBeenCalled();
+    expect(mockGetGptModuleMap).not.toHaveBeenCalled();
+    expect(mockRebuildGptModuleMap).not.toHaveBeenCalled();
+    expect(logger.debug).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
+    expect(mockRecordDispatcherRoute).not.toHaveBeenCalled();
+  });
+
+  it('uses one bounded dispatcher label for unregistered GPT identifiers', async () => {
+    const response = await routeGptRequest({
+      gptId: 'attacker-selected-unknown-gpt',
+      body: { prompt: 'This identifier is not registered.' },
+      requestId: 'req_unknown_metric_label',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'UNKNOWN_GPT' }),
+    }));
+    expect(mockRecordUnknownGpt).toHaveBeenCalledTimes(1);
+    expect(mockRecordDispatcherRoute).toHaveBeenCalledWith(expect.objectContaining({
+      gpt: { kind: 'unresolved' },
+      module: 'unknown',
+      route: 'unknown',
+      handler: 'unknown-gpt',
+      outcome: 'error',
+    }));
+  });
+
+  it.each([
+    ['normalized', 'ARCANOS-CORE'],
+    ['substring', 'client-arcanos-core-alias'],
+    ['token-subset', 'arcanos extra core'],
+    ['fuzzy', 'arcanos-cor'],
+  ])('uses the finite registered match for dispatcher metrics after %s routing', async (matchMethod, gptId) => {
+    const response = await routeGptRequest({
+      gptId,
+      body: {
+        action: 'query',
+        prompt: 'Use the registered metric identity.'
+      },
+      requestId: `req_${matchMethod}_metric_label`
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response._route.matchMethod).toBe(matchMethod);
+    expect(mockRecordDispatcherRoute).toHaveBeenCalledWith(expect.objectContaining({
+      gpt: { kind: 'registered', id: 'arcanos-core' },
+      module: 'ARCANOS:CORE',
+      route: 'core',
+      handler: 'module-dispatcher',
+      outcome: 'ok',
+    }));
+  });
+
+  it('uses one bounded diagnostic metric identity for one thousand rotating route IDs', async () => {
+    const responses = await Promise.all(
+      Array.from({ length: 1_000 }, (_, index) => routeGptRequest({
+        gptId: `caller-selected-diagnostic-${index}`,
+        body: { action: 'ping' },
+        requestId: `req_diagnostic_metric_${index}`,
+      }))
+    );
+
+    expect(responses).toHaveLength(1_000);
+    expect(responses.every((response) => (
+      response.ok === true && response._route.route === 'diagnostic'
+    ))).toBe(true);
+    expect(mockGetGptModuleMap).not.toHaveBeenCalled();
+    expect(mockRecordDispatcherRoute).toHaveBeenCalledTimes(1_000);
+    expect(mockRecordDispatcherRoute.mock.calls.every(([metricInput]) => (
+      JSON.stringify(metricInput) === JSON.stringify({
+        gpt: { kind: 'diagnostic' },
+        module: 'diagnostic',
+        route: 'diagnostic',
+        handler: 'diagnostic',
+        outcome: 'ok',
+      })
+    ))).toBe(true);
   });
 
   it.each([

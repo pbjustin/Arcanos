@@ -25,6 +25,7 @@ const DAG_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DAG_READ_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_DAG_CLIENT_RATE_LIMIT = 120;
 const dagBoundaryApplied = Symbol('dagBoundaryApplied');
+const dagHttpOperationOverride = Symbol('dagHttpOperationOverride');
 
 type DagHttpOperationKind = 'execution' | 'admission' | 'read';
 
@@ -32,6 +33,11 @@ interface DagHttpOperation {
   kind: DagHttpOperationKind;
   scope: string;
 }
+
+const DAG_EXECUTION_OPERATION: DagHttpOperation = Object.freeze({
+  kind: 'execution',
+  scope: DAG_EXECUTION_SCOPE,
+});
 
 const DAG_READ_PATH_PATTERNS = [
   /^\/dag\/runs\/latest$/u,
@@ -65,6 +71,7 @@ const DAG_PRINCIPAL_POLICIES: Readonly<
 
 type DagBoundaryRequest = Request & {
   [dagBoundaryApplied]?: true;
+  [dagHttpOperationOverride]?: DagHttpOperation;
 };
 
 export interface DagHttpBoundaryOptions {
@@ -102,6 +109,11 @@ function resolveIngressClientAddress(req: Request): string {
 }
 
 export function resolveDagHttpOperation(req: Request): DagHttpOperation | null {
+  const operationOverride = (req as DagBoundaryRequest)[dagHttpOperationOverride];
+  if (operationOverride) {
+    return operationOverride;
+  }
+
   const method = req.method.toUpperCase() === 'HEAD'
     ? 'GET'
     : req.method.toUpperCase();
@@ -141,6 +153,13 @@ export function resolveDagHttpOperation(req: Request): DagHttpOperation | null {
   }
 
   return null;
+}
+
+function wrapDagExecutionHttpBoundary(boundary: RequestHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    (req as DagBoundaryRequest)[dagHttpOperationOverride] = DAG_EXECUTION_OPERATION;
+    boundary(req, res, next);
+  };
 }
 
 function setDagNoStoreHeaders(
@@ -259,3 +278,10 @@ export function createDagHttpBoundary(
 }
 
 export const dagHttpBoundary = createDagHttpBoundary();
+export const dagExecutionHttpBoundary = wrapDagExecutionHttpBoundary(dagHttpBoundary);
+
+export function createDagExecutionHttpBoundary(
+  options: DagHttpBoundaryOptions = {}
+): RequestHandler {
+  return wrapDagExecutionHttpBoundary(createDagHttpBoundary(options));
+}

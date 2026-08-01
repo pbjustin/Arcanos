@@ -18,12 +18,46 @@ Every rejected or failed application operation returns the stable, credential-fr
 
 Every deployed web/worker Redis command must enter through `executeRedisOperation` with an allowlisted operation name. The standalone `arcanos-ai-runtime` workspace has its own BullMQ/ioredis topology, but neither Railway launcher entrypoint imports or starts that workspace; it is outside this web/worker lifecycle and preview proof. Its code boundary now includes the purpose-bound Bearer identity, endpoint scopes, server-owned job principal, owner-only reads, a shared Redis admission ledger, an explicit deployment-scoped queue name, separate liveness/readiness probes, readiness-gated worker startup, and bounded shutdown ownership.
 
+Production public-provider HTTP admission also uses this lifecycle. One atomic
+Lua operation checks a lower caller/cohort ceiling and the deployment ceiling,
+then increments both only when both admit. All web replicas share keys derived
+from stable project/environment/service identity; explicit namespaces cannot
+override complete Railway identity. Caller network identities are hashed, and
+keys expire with the configured window. Redis loss must return
+no-store `503 REDIS_DEPENDENCY_UNAVAILABLE` before provider execution—never
+enable a process-memory fallback during an incident. Redis flush, replacement,
+or persistence loss resets these admission windows, so keep provider-account
+spend caps as the durable financial boundary. The Redis ACL must permit `EVAL`,
+`TIME`, `GET`, `PTTL`, `INCR`, and `PEXPIRE` for the owned
+`arcanos:public-provider:v1:*` keyspace. Coordinate limit/window changes across
+web replicas so mixed rolling revisions do not apply different policy values to
+the same counters. Each process admits at most 16 concurrent limiter operations
+(or the lower configured global maximum) and rejects excess work without a
+Redis command or queue. A separate per-process token bucket admits an initial
+burst of 100 Redis limiter operation starts and refills at 100 starts per
+second. It bounds sustained cache-miss
+command pressure, but aggregate capacity scales with replica count and restart
+restores a full bucket; very high configured shared limits can therefore be
+locally under-admitted. A bounded local cache replays only denied decisions for
+at most one second and never past their Redis-reported TTL. It preserves the
+authoritative retry interval, is generation-fenced, and is cleared or bypassed
+while the lifecycle is not READY. A dedicated capability key exercises the
+complete command family in single-flight attempts, at least once per Redis ready
+generation and again after failures until the capability latch is ready. It is
+hashed, expires within one second, and never aliases live caller/global counters.
+A live limiter command failure while that generation remains READY invalidates
+readiness, opens a generation-scoped process circuit, and schedules a backoff
+reprobe. Requests then fail with `503 REDIS_DEPENDENCY_UNAVAILABLE` without an
+EVAL or Redis-start token until the matching probe succeeds; a newer Redis ready
+generation is not held by the older failure. ACL or response-contract drift
+therefore cannot leave `/readyz` green or sustain failed command pressure.
+
 Those source controls do not establish deployment readiness. Before separately activating the workspace, obtain current target-specific evidence for Redis ACL/TLS and private-network enforcement, persistence and high-availability behavior, eviction policy, the exact versioned queue cutover and backlog state, probe wiring, and the platform termination grace. No such operational evidence is available in this repository review, so this runbook makes no production-readiness claim for the standalone workspace.
 
 ## Health semantics
 
 - `/healthz` is process liveness. `/health` is dependency diagnostics; both remain HTTP 200 for a Redis-only outage because Redis is non-critical there.
-- `/readyz` is full application readiness. It returns HTTP 503 while configured Redis is unavailable.
+- `/readyz` is full application readiness. It returns HTTP 503 while configured Redis is unavailable or the generation-matched public-provider Lua/write capability probe is pending or failed. Probe retries run in bounded background backoff; readiness requests perform no Redis I/O.
 - Public lifecycle metadata includes only state, circuit state, attempt, retry status, recovery count, and ready generation.
 - Railway uses `/readyz` only as the deployment activation gate. A configured Redis outage therefore blocks a new revision from activating, while an already active revision is not removed merely because readiness later degrades; `/healthz` remains live, `/health` retains its diagnostic behavior, and Redis-dependent routes must fail fast and safely.
 

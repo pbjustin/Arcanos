@@ -461,6 +461,8 @@ jobs:
     env:
       AI_RUNTIME_TEST_REDIS_URL: redis://127.0.0.1:6379/15
       AI_RUNTIME_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
+      PUBLIC_PROVIDER_TEST_REDIS_URL: redis://127.0.0.1:6379/14
+      PUBLIC_PROVIDER_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
 
     steps:
       - name: 📥 Checkout code
@@ -482,6 +484,9 @@ jobs:
 
       - name: 🧱 Verify Redis admission and BullMQ execution invariants
         run: npm run test:runtime-redis-integration
+
+      - name: 🌐 Verify public provider Redis admission invariants
+        run: npm run test:public-provider-redis-integration
 
   all-checks-complete:
     name: All Checks Complete

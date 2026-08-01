@@ -397,21 +397,22 @@ describe('createMcpServer job control tools', () => {
   it('serves gpt.generate through the GPT fast path', async () => {
     const server = await createMcpServer(buildContext()) as FakeMcpServer;
     const output = await server.tools.get('gpt.generate')!.handler({
-      gptId: 'arcanos-core',
+      gptId: 'caller-selected-alias',
       prompt: 'Generate a prompt for a launch email',
       mode: 'fast',
     });
 
     expect(mockClassifyGptFastPathRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        gptId: 'arcanos-core',
+        gptId: 'caller-selected-alias',
         promptText: 'Generate a prompt for a launch email',
         explicitMode: 'fast',
       })
     );
     expect(mockExecuteFastGptPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
-        gptId: 'arcanos-core',
+        gptId: 'caller-selected-alias',
+        gptMetricIdentity: { kind: 'registered', id: 'arcanos-core' },
         prompt: 'Generate a prompt for a launch email',
         timeoutMs: 8_000,
         routeDecision: expect.objectContaining({

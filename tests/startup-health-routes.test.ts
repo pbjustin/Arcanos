@@ -239,6 +239,11 @@ describe('actual Express startup health route ordering', () => {
         duration: expect.any(Number)
       },
       {
+        healthy: true,
+        name: 'public-provider-admission',
+        duration: expect.any(Number)
+      },
+      {
         healthy: false,
         name: 'startup',
         code: 'APPLICATION_STARTING',
@@ -298,6 +303,11 @@ describe('actual Express startup health route ordering', () => {
         duration: expect.any(Number)
       },
       {
+        healthy: true,
+        name: 'public-provider-admission',
+        duration: expect.any(Number)
+      },
+      {
         name: 'startup',
         code: 'APPLICATION_DEGRADED',
         error: 'Application dependencies are degraded.',
@@ -351,6 +361,11 @@ describe('actual Express startup health route ordering', () => {
           circuitEnabled: true,
           circuitState: 'CLOSED'
         },
+        duration: expect.any(Number)
+      },
+      {
+        healthy: true,
+        name: 'public-provider-admission',
         duration: expect.any(Number)
       },
       {

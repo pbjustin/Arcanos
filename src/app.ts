@@ -70,12 +70,19 @@ import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
+  dispatchDagCompatibilityBoundary,
+} from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
+import {
   cefHttpBoundary,
 } from '@services/controlPlane/cefHttpBoundary.js';
 import {
   cefBodyParser,
 } from '@services/controlPlane/cefBodyParser.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
+import {
+  createPublicProviderAdmissionMiddleware,
+} from '@transport/http/middleware/publicProviderAdmission.js';
+import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
   configureDefaultAppMetricsRuntimeProviders
@@ -120,6 +127,7 @@ export function createApp(): Express {
     limit: ACTION_PLAN_EXECUTION_BODY_LIMIT,
     strict: true,
   });
+  const publicProviderAdmission = createPublicProviderAdmissionMiddleware();
 
   app.use(requestContext);
   app.use('/jobs', noStoreResponse);
@@ -256,6 +264,7 @@ export function createApp(): Express {
   });
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
+  app.post('/dispatch', dispatchDagCompatibilityBoundary);
   app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {
     if (req.body !== undefined) {
       next();
@@ -270,6 +279,8 @@ export function createApp(): Express {
     }
     next();
   });
+  app.post('/gpt/:gptId', canonicalGptIdentifierBoundary);
+  app.use(publicProviderAdmission);
   app.post('/gpt/arcanos-gaming', gamingIngressAudit);
 
   app.use(unsafeExecutionGate);
