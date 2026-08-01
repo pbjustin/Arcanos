@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import express, { type RequestHandler } from "express";
+import express from "express";
 import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
 import { publicProviderGptAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
+import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
 import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
@@ -20,7 +21,6 @@ import {
 import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
-import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import {
   applyAIDegradedResponseHeaders,
   extractAIDegradedResponseMetadata
@@ -1203,33 +1203,6 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
   req.url = '/arcanos-gaming';
   return next('route');
 });
-
-const canonicalGptIdentifierBoundary: RequestHandler = (req, res, next) => {
-  const gptIdValidation = validateGptIdentifier(req.params.gptId);
-  if (!gptIdValidation.ok) {
-    const requestId = req.requestId;
-    const traceId = resolveDispatcherTraceId(req, requestId);
-    applyCanonicalGptRouteHeaders(res);
-    return sendGuardedGptJsonResponse(
-      req,
-      res,
-      buildGptDispatcherErrorPayload({
-        requestId,
-        traceId,
-        gptId: gptIdValidation.value,
-        action: GPT_QUERY_ACTION,
-        code: gptIdValidation.error.code,
-        message: gptIdValidation.error.message,
-        route: 'gpt_id_boundary'
-      }),
-      'gpt.response.gpt_id_boundary',
-      400
-    );
-  }
-
-  req.params.gptId = gptIdValidation.value;
-  next();
-};
 
 router.post(
   "/:gptId",

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-31T20:56:08.331Z",
+  "generatedAt": "2026-08-01T02:19:20.580Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2589,6 +2589,9 @@
         },
         {
           "relativePath": "src/transport/http/middleware/auditTrace.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/canonicalGptIdentifierBoundary.ts"
         },
         {
           "relativePath": "src/transport/http/middleware/capabilityGate.ts"

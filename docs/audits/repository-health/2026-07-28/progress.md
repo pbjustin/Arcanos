@@ -4269,3 +4269,682 @@ preview validation cycle.
 - [Preview E2E report](../../../PREVIEW_E2E_REPORT.md)
 - [PR #1408 merge readiness](../../../MERGE_READINESS.md)
 - [Deprecation register](../../../../DEPRECATION.md)
+
+## `/dispatch` DAG compatibility-boundary implementation checkpoint — 2026-07-31
+
+The user authorized one isolated local implementation slice for the first
+active non-GPT-OSS P1 and explicitly prohibited staging, committing, pushing,
+opening or updating a pull request, merging, deploying, live-memory calls, and
+Railway, provider, GitHub-settings, or database mutation. GPT-OSS remained
+excluded. This checkpoint stops after that one slice.
+
+### Exact base and isolation
+
+- The historical checkout remained at
+  `C:\pbjustin\Arcanos` with its 17 intentional unstaged status entries and
+  zero staged files. The only file changed there by this implementation turn
+  is this already-modified historical report.
+- The reviewed clean source was reverified at
+  `C:\pbjustin\Arcanos-repository-health-a1-a3-pr`, commit
+  `398952a65feefd1544221e9159509c335ba5b199`, tree
+  `746ac8311c13b387bf8cb8dbb57ebd6287f7e240`.
+- A read-only remote check found `origin/main` at merge
+  `c7ceffd8fbd3f3e944f106e8ba1df0bf34c9ea2d`; its fetched commit object has the
+  same tree. The stale local `origin/main` reference was not rewritten.
+- The implementation lives uncommitted and unstaged in the dedicated worktree
+  `C:\pbjustin\Arcanos-dispatch-dag-boundary`, branch
+  `codex/dispatch-dag-boundary`, based directly on that merge/tree. The final
+  implementation-worktree status contains only the files for this slice:
+  dispatcher and policy source, focused tests, `docs/API.md`, and the four
+  coordinated generated indexes. No pre-existing dirty worktree was reused.
+- All qualifying validation used the exact Node executable
+  `C:\pbjustin\Arcanos-tools\node-v20.19.0-win-x64\node.exe`; `node --version`
+  returned `v20.19.0`. `npm ci` completed successfully before implementation,
+  and its postinstall made no tracked source change.
+
+### Red characterization evidence
+
+Characterization preceded production edits. The first behavioral red was
+captured before the new resolver import was added, so it is not a false red
+caused by a missing export:
+
+- `npm run build:packages` succeeded, followed by
+  `node scripts/run-jest.mjs --runTestsByPath tests/dispatcher-priority.route.test.ts --coverage=false --runInBand`.
+  Jest ran 24 tests: 10 passed and 14 failed. The four anonymous DAG selectors
+  returned `202` instead of `401`; authorized DAG successes and DAG `400`
+  errors lacked `Cache-Control: no-store`; `target: "dag"` plus a GPT ID still
+  ran anonymously; and malformed-bearer, wrong-scope, and unavailable-auth
+  cases reached `202`. These failures directly reproduced the reported
+  compatibility-boundary defect.
+- After adding pure-resolver characterization but before its implementation,
+  the same route suite failed during ESM linking because
+  `resolveDispatchLane` was not exported. This was retained only as the
+  resolver-extraction red, not as proof of the policy vulnerability.
+- Before the policy seam existed,
+  `tests/dispatch-error-boundary.test.ts` ran two tests: the existing GPT error
+  case passed and the new authorized DAG error case failed because the private
+  `500 DISPATCH_FAILED` response had no `Cache-Control` header.
+- Before the reusable execution-policy adapter existed,
+  `tests/dag-http-boundary.test.ts` failed during ESM linking because
+  `createDagExecutionHttpBoundary` was not exported. This separately froze the
+  required reusable seam.
+
+### Implemented boundary
+
+- `src/shared/dispatch/universalDispatch.ts:183` now owns one pure,
+  discriminated `resolveDispatchLane`. It normalizes the request once and
+  preserves the exact existing precedence: explicit DAG target; explicit GPT
+  target; explicit MCP/tool rejection; explicit GPT ID; `dag.*` action; DAG
+  execution mode; tool rejection; GPT mode; then explicit auto classification
+  with the inclusive `0.85` DAG threshold and safe GPT fallback. It preserves
+  trimmed action casing and the old omitted/invalid-mode GPT default.
+- `src/services/controlPlane/dispatchDagCompatibilityBoundary.ts:17-31`
+  caches that pure result behind a private request symbol. Both the app-level
+  boundary and `src/routes/dispatch.ts:262` consume the exact same cached
+  discriminated value. This lightweight module imports neither the dispatch
+  handler nor the DAG run service, database, provider, or route registry.
+- `src/services/controlPlane/dagHttpBoundary.ts:28,112-160` adds a private,
+  unforgeable fixed-operation override for compatibility execution.
+  `dagExecutionHttpBoundary` at line 281 wraps the existing production
+  `dagHttpBoundary` singleton, so canonical and compatibility traffic use the
+  same in-memory client and principal admission maps rather than merely equal
+  policies backed by separate state.
+- The canonical middleware chain remains literally unchanged at
+  `src/services/controlPlane/dagHttpBoundary.ts:236-243`:
+  security headers, `no-store`/`Pragma`, unauthenticated client admission,
+  control-plane authentication, operator role, operation-aware principal
+  admission, and the required operation scope. The compatibility override is
+  fixed to execution plus `mcp:invoke`; no authentication, role, scope, rate,
+  or header policy was copied or weakened.
+- `src/app.ts:262` mounts an exact `POST /dispatch` conditional boundary after
+  both broad parsers and before `unsafeExecutionGate`. The router retains the
+  idempotent fallback at `src/routes/dispatch.ts:326`. Form-encoded DAG
+  selection therefore cannot bypass the check, and unsafe-state denial cannot
+  precede authentication or strip the DAG `no-store` header. The cached lane
+  and canonical idempotency marker prevent double classification and double
+  principal charging.
+- Only a DAG-selected request enters the canonical policy. GPT-selected
+  compatibility requests remain anonymous-compatible and receive neither the
+  DAG cache policy nor DAG rate-limit headers. MCP/tool rejection behavior and
+  handler output shapes remain unchanged.
+- Every authentication, role, scope, client-admission, and
+  principal-admission denial terminates before the handler, so a denied request
+  cannot call `arcanosDagRunService.createRun`.
+- `docs/API.md` now documents the conditional DAG policy. The new source and
+  composition test were added to `backend-index.json` and
+  `docs/BACKEND_INDEX.md`; all four generated indexes were regenerated
+  together as required.
+
+The broad-parser/authentication ordering decision remains deliberately
+separate. Because selector classification requires the parsed compatibility
+body, malformed JSON still reaches the existing broad-parser behavior rather
+than being reclassified as DAG. The requested malformed-credential coverage
+uses a malformed bearer. No body contract or parser ordering outside this
+conditional post-parse seam changed.
+
+### Green and regression evidence
+
+All retained green evidence below used Node `20.19.0`:
+
+- Focused Jest after final review remediation:
+  `node scripts/run-jest.mjs --runTestsByPath tests/action-plan-execution-app-parser.test.ts tests/dispatcher-priority.route.test.ts tests/dispatch-dag-app-composition.test.ts tests/dag-http-boundary.test.ts tests/dispatch-error-boundary.test.ts tests/control-plane-http-auth.test.ts --coverage=false --runInBand --silent`
+  passed **6 suites and 128 tests**.
+- The focused coverage proves all four selectors, exact precedence, GPT
+  compatibility, exact `0.85` versus `0.849999`, case-insensitive DAG action
+  selection without action rewriting, anonymous denial, malformed bearer,
+  unavailable authentication, real-chain non-operator denial, wrong scope,
+  authorized `202`, private DAG `500`, unsupported/missing-input `400`, client
+  admission, principal admission, shared canonical/compatibility quota,
+  exactly-once idempotent charging, `no-store` on every DAG outcome class, and
+  zero `createRun` calls on denial. Authorized selector cases also assert the
+  preserved `createRun.input.goal` mapping, and GPT cases assert absence of DAG
+  cache and rate-limit headers.
+- The production-stack composition test uses real `createApp`, the real
+  dispatch router, both real broad parsers, the real conditional policy, the
+  real unsafe-gate position, and the real canonical DAG boundary. It mocks
+  persistence and mounts the real router through a test registry; a separate
+  assertion verifies the real registry imports and mounts that router. It
+  covers anonymous JSON and form DAG denial before the unsafe gate, authorized
+  downstream unsafe denial retaining `no-store`, one-charge success
+  (`X-RateLimit-Remaining: 59`, not 58), GPT precedence, and quota sharing with
+  the direct canonical boundary.
+- A proportionate bounded surrounding regression set passed **10 suites and
+  114 tests**: ActionPlan application-parser composition, canonical DAG
+  composition and routes, GPT dispatch compatibility and universal routing,
+  GPT-DAG bridge, public gaming dispatch, control-plane composition, CEF app
+  composition, and API-session app composition.
+- Focused ESLint over every changed TypeScript/test file passed with no output.
+- Final `npm run type-check` passed, including all named boundary checks,
+  shared-package builds, and `tsc --noEmit`.
+- Final `npm run lint` passed with zero errors and the unchanged repository
+  baseline of 76 warnings. No warning cleanup was mixed into this slice.
+- Final `npm run build` passed, including boundary checks, all shared packages,
+  the separate workers build, root TypeScript, alias rewrite/check, and asset
+  copy.
+- `npm run reindex`, `npm run reindex:check`, and `npm run docs:check` passed;
+  the documentation audit reported **311/311** checks and current generated
+  indexes (1,455 backend files and 252 CLI-agent files).
+- `git diff --check` passed. The isolated branch has zero staged files.
+
+One exploratory wildcard command,
+`node scripts/run-jest.mjs --testPathPatterns=dispatch --coverage=false --runInBand`,
+was not credited: it exited `1` after 535.4 seconds and 10,063 output lines
+without a usable final summary in the captured result. It was replaced by the
+explicit bounded regression set above rather than being reported as a pass.
+
+An early fully imported application-test harness also exposed an ESM spy
+specifier mismatch and reached the local DAG persistence readiness check.
+No `DATABASE_URL` or PostgreSQL target variables were configured, the check
+failed before a connection or mutation, and the retained harness now mocks
+persistence. No configured database or live service was contacted.
+
+### Adversarial review and checkpoint verdict
+
+Three independent read-only adversarial reviews examined the final diff after
+remediation:
+
+- **Policy equivalence:** approved. The reviewer verified the same canonical
+  singleton, shared limiter state, fixed private execution/scope override,
+  unchanged middleware order, direct-route behavior, idempotency, real
+  wrong-role denial, and `createRun` unreachability on denial.
+- **Resolver correctness:** approved. The reviewer verified normalization,
+  full selector precedence, GPT behavior, threshold inclusion, case behavior,
+  private request caching, and use of the same cached resolution by boundary
+  and handler.
+- **Test trust and composition:** approved after requesting and receiving the
+  preserved `createRun` argument assertion, GPT no-policy-header assertions,
+  real registry evidence, real-chain wrong-role coverage, lightweight import
+  containment, and coordinated index regeneration.
+
+Reviewers' independent Jest/ESLint runs used their default Node 24 runtime and
+are supplemental only; the qualifying results are the primary agent's Node
+20.19.0 runs recorded above.
+
+**Checkpoint:** the isolated local implementation achieves the requested P1
+behavior and has no known review blocker. It is intentionally uncommitted,
+unstaged, unpushed, undeployed, and not yet part of `main`; the historical
+health verdict should not credit it as merged source. No second finding was
+started. The next active-queue item still requires separate authorization.
+
+## Shared instance-wide public-provider hard-ceiling implementation checkpoint — 2026-07-31
+
+The user authorized the second isolated non-GPT-OSS P1 slice: one shared,
+instance-wide hard ceiling for public HTTP requests that can admit external
+provider work. The authorization covered local source, test, documentation,
+and generated-index edits plus local verification. It explicitly excluded
+staging, committing, pushing, pull-request work, merging, deployment, live
+memory, provider/model execution, database work, and Railway or GitHub
+settings. GPT-OSS remained excluded. This checkpoint stops after this slice;
+no third finding was started.
+
+### Exact base and isolation
+
+- The historical checkout remained at `C:\pbjustin\Arcanos`, with exactly its
+  17 preserved unstaged status entries and zero staged files before this
+  checkpoint was appended. The only file changed there by this slice is this
+  already-modified historical report.
+- The reviewed clean source remained
+  `C:\pbjustin\Arcanos-repository-health-a1-a3-pr` at commit
+  `398952a65feefd1544221e9159509c335ba5b199`, tree
+  `746ac8311c13b387bf8cb8dbb57ebd6287f7e240`.
+- A final read-only remote check found `origin/main` at
+  `c7ceffd8fbd3f3e944f106e8ba1df0bf34c9ea2d`, with the same reviewed tree.
+  No local remote-tracking reference or remote state was changed.
+- The uncommitted implementation lives only in the dedicated worktree
+  `C:\pbjustin\Arcanos-provider-instance-ceiling`, branch
+  `codex/provider-instance-ceiling`, based directly on that `main` commit and
+  tree. Its final index regeneration reports 1,458 backend files and 252 CLI
+  files. The worktree has zero staged files.
+- All qualifying commands used
+  `C:\pbjustin\Arcanos-tools\node-v20.19.0-win-x64\node.exe`; its version is
+  exactly `v20.19.0`. `npm ci` completed successfully before implementation.
+
+### Red characterization evidence
+
+Characterization tests were written before the production seam, then extended
+whenever adversarial review found another route-resolution mismatch. These
+successive RED captures are retained because they distinguish the original
+missing hard ceiling from later false-negative admission classifiers:
+
+1. The initial two-suite run reported **3 failed and 60 passed of 63 tests**.
+   It proved that an explicit `query_and_wait` request with prompt `ping` was
+   classified provider-free, a conflicting Brain body/query request followed
+   the wrong source, and full application composition had no shared hard
+   bucket.
+2. The diagnostic-mode extension reported **2 failed and 61 passed of 63**.
+   Both the pure matcher and full application composition incorrectly treated
+   a generative diagnostic-mode request as provider-free; the application
+   reached a handler `500` instead of the shared `429`.
+3. HEAD, `system_review`, and exact-ping characterization reported **3 failed
+   and 60 passed of 63**. The matcher disagreed with the real Brain handler for
+   implicit HEAD, `system_review` combined with `ping`, and a direct prompt
+   containing `ping` as only one field among generative content.
+4. Explicit non-query diagnostic-action characterization reported **1 failed
+   and 62 passed of 63**; the admission classifier charged work the canonical
+   GPT handler resolves without a provider.
+5. Exact top-level `ping` alias characterization reported **1 failed and 62
+   passed of 63**; the classifier did not yet match the handler's provider-free
+   alias semantics.
+6. Brain duplicate-query characterization reported **2 failed and 63 passed
+   of 65** across the focused matcher and application suites; admission did not
+   preserve Express's first-array-value normalization for GET/HEAD Brain
+   compatibility traffic.
+7. The final shared-resolver RED reported **5 failed and 62 passed of 67**.
+   It froze canonical explicit-payload prompt precedence, Brain first-array
+   normalization, Brain sanitizer plus prompt-first precedence, API Arcanos
+   prompt-first precedence, and the resulting full-app payload-override bypass.
+
+Every one of those cases is green in the final shared-resolver tree. The RED
+sequence also prevented tests from blessing a second, admission-only parser
+whose behavior could drift from the handlers again.
+
+### Implemented hard ceiling and compatibility resolvers
+
+- `src/platform/runtime/publicProviderRateLimitPolicy.ts` defines the pure
+  configuration policy. Defaults are 100 admissions per 900,000 milliseconds;
+  only safe integers are accepted, with a maximum range of 1 through 1,000,000
+  and a window range of 1,000 through 2,592,000,000 milliseconds. Invalid,
+  fractional, disabling, or out-of-range values fall back to the finite
+  defaults. `src/platform/runtime/config.ts`, `.env.example`, and
+  `docs/CONFIGURATION.md` expose the two settings without adding a disable
+  value.
+- `src/transport/http/middleware/publicProviderAdmission.ts` owns the only
+  production counter instance. Every covered route uses the constant key
+  `instance`, so rotating IP, forwarded-IP, session, authentication, body, GPT
+  ID, or other caller-selected metadata cannot acquire another bucket. A
+  private request symbol makes repeated application-level and generic-GPT leaf
+  checks idempotent, so one provider admission consumes exactly one unit.
+- The middleware sets `Cache-Control: no-store` and `Pragma: no-cache` before
+  counting. Focused composition proves those headers survive admitted
+  successes, downstream errors, and shared-ceiling denials. The two SSE routes
+  that previously overwrote cache policy now retain `no-store, no-cache`.
+- `src/app.ts` mounts the shared admission after the broad request parsers and
+  before unsafe execution and route dispatch. `src/routes/gptRouter.ts` reuses
+  the same singleton at the generic GPT leaf, closing internal compatibility
+  reroutes without double charging.
+- The covered catalog includes the public provider-capable prompt, pipeline,
+  reusable, research, media, web-search, simulation, Siri, fine-tune-query,
+  booking, Brain/API-Arcanos compatibility, canonical GPT, `/dispatch` GPT,
+  and enabled legacy GPT/module ingress identified by the audit. Provider-free
+  health, control, DAG, MCP/tool, exact system-state, diagnostic, and other
+  non-writing outcomes do not spend this provider budget.
+- `src/shared/dispatch/universalDispatch.ts` now exports one pure discriminated
+  `resolveDispatchLane`, shared by admission and the `/dispatch` handler. It
+  preserves selector precedence across `target`, explicit GPT ID, `dag.*`
+  action, execution mode, tool rejection, and auto classification, including
+  the inclusive `0.85` DAG threshold. Consequently all four DAG selectors stay
+  outside this provider ceiling while GPT selection remains covered.
+- `src/shared/gpt/gptRequestAction.ts` centralizes the canonical action and
+  outer/prepared/explicit-payload prompt decisions used by both admission and
+  the actual GPT dispatcher. Explicit `query` and `query_and_wait` continue to
+  require the ceiling even for a `ping`-like prompt, while true non-provider
+  control and diagnostic actions retain compatibility.
+- New pure `src/shared/http/askRequestInput.ts` helpers are consumed by Brain
+  validation, the Brain handler, API Arcanos transport, and admission. They
+  preserve GET/HEAD first-query-array selection, POST body semantics,
+  route-local sanitization, `system_review` before diagnostic behavior, exact
+  `system_state`, and the distinct Brain versus API Arcanos text-field
+  precedence.
+- The ceiling intentionally counts public provider admission, not only
+  successful provider calls. A request admitted and then rejected by a local
+  downstream gate still consumes one unit. This prevents caller-controlled
+  local-failure patterns from receiving free retries and preserves the
+  requested hard-ceiling semantics.
+- This is explicitly an in-process, instance-wide ceiling. It closes
+  caller-key rotation within one backend process but is not a cross-replica
+  global quota. A shared-store/multi-replica design remains a separate future
+  slice and receives no completion credit here.
+
+### Green and broad validation evidence
+
+All retained validation below used the exact Node `20.19.0` toolchain:
+
+- The final focused command
+  `node scripts/run-jest.mjs "--testPathPatterns=public-provider-admission|gpt-dispatch-compatibility" --coverage=false --runInBand --silent`
+  passed **3 suites and 86/86 tests**.
+- A proportionate expanded focused selection covering affected routes,
+  compatibility handlers, matcher/resolver behavior, and application
+  composition passed **20 suites and 226/226 tests**.
+- The focused tests exercise caller-identity rotation, configuration lower and
+  upper bounds, the absence of a disable value, production exact-once
+  charging, every public route family, every `/dispatch` selector and
+  precedence edge, canonical GPT fast/direct/action/payload precedence, Brain
+  GET/HEAD/POST semantics, API Arcanos sanitization and precedence, provider-free
+  exclusions, admitted `202`/success and downstream error outcomes, shared
+  `429`, and `no-store` on success, error, and denial. Provider mocks remain at
+  zero calls after shared denial.
+- The full-application suite uses real `createApp` composition and a hard
+  maximum of five. Research, pipeline, `/dispatch` GPT error, direct
+  `query_and_wait`, and direct `ping`-action provider work each consume exactly
+  one shared unit despite rotated caller metadata. Subsequent diagnostic-mode,
+  alias, payload-precedence, Brain, API Arcanos, and HEAD candidates are denied
+  by the same `429` before provider mocks. Health, control, DAG, exact
+  system-state, and genuine diagnostic requests remain outside the provider
+  bucket.
+- Focused ESLint over every changed TypeScript and test file passed with no
+  output. Final `npm run type-check` passed, including all named boundary
+  checks, shared-package builds, and root `tsc --noEmit`.
+- Final `npm run lint` passed with zero errors and the unchanged repository
+  baseline of 76 warnings. No warning cleanup was mixed into this slice.
+- Final `npm run build` passed, including boundary checks, all shared packages,
+  the separate worker workspace, root compilation, alias rewrite/check, and
+  asset copy. Alias verification scanned 818 files and found zero unresolved
+  aliases.
+- Final `npm run reindex` generated **1,458 backend** and **252 CLI-agent**
+  entries. `npm run docs:check` passed **311/311** checks, including
+  `reindex:check`; `npm run docs:links` passed all **166 local** and **25
+  external** links with zero failures or warnings.
+- Final `npm test` ran **571 suites** and **7,135 tests**: **565 suites passed,
+  1 failed, and 5 skipped; 7,101 tests passed, 1 failed, and 33 skipped**. The
+  sole failure was
+  `tests/gptoss-private-serving-durable-replay-migration-guard.test.ts`, where
+  an LF-only marker replacement does not remove a CRLF fixture marker. The
+  identical failure was reproduced on the untouched clean base, and the
+  historical audit already records it as `GPTOSS-TEST-001`. It is unrelated to
+  this slice, remains excluded by instruction, and was not repaired here.
+- `git diff --check` passed apart from informational Windows line-ending
+  conversion warnings. The implementation branch has zero staged files.
+
+### Adversarial review and checkpoint verdict
+
+Three independent read-only reviewers inspected the latest shared-resolver
+tree after all requested remediations:
+
+- **Policy equivalence:** approved. The reviewer found no bypass in the one
+  production singleton, constant instance key, exact-once marker, admission
+  ordering, provider-denial behavior, or `no-store` coverage.
+- **Matcher and resolver correctness:** approved. The reviewer verified Brain,
+  API Arcanos, canonical GPT, and `/dispatch` handler equivalence, including
+  payload precedence and GET array normalization.
+- **Test trust:** approved. The reviewer found no remaining bypass or
+  composition gap and independently ran the final core selection under Node
+  `20.19.0`, passing **3 suites and 86/86 tests**.
+
+**Checkpoint:** this isolated local tree implements the requested second P1
+slice and has no known slice-specific review or validation blocker. It remains
+intentionally uncommitted, unstaged, unpushed, undeployed, and absent from
+`main`. No database, Railway, provider, model, live-memory, GitHub-settings, or
+other external mutation occurred. The historical health verdict must not
+credit this work as merged source, and no third finding was started.
+
+## Unknown-GPT metric-cardinality and canonical route-boundary implementation checkpoint — 2026-07-31
+
+The user authorized the third isolated non-GPT-OSS P1 slice: bound rejected
+GPT metric cardinality, ensure every other GPT-derived metric label comes from
+a finite lane or registered route identity, and add the missing canonical
+`POST /gpt/:gptId` identifier boundary before registry, GPT logging, GPT
+metrics, jobs, or provider work. Authorization covered local source, test,
+documentation, generated-index edits, a clean dedicated worktree, and local
+verification. It explicitly excluded staging, committing, pushing,
+pull-request work, merging, deployment, live memory, provider/model execution,
+database work, and Railway or GitHub settings. GPT-OSS remained excluded. This
+checkpoint stops after this slice; no fourth finding was started.
+
+### Exact base and isolation
+
+- The historical checkout remained at `C:\pbjustin\Arcanos`, with exactly its
+  17 preserved unstaged status entries and zero staged files immediately before
+  this checkpoint was appended. The only file changed there by this slice is
+  this already-modified historical report.
+- The reviewed clean source remained
+  `C:\pbjustin\Arcanos-repository-health-a1-a3-pr` at commit
+  `398952a65feefd1544221e9159509c335ba5b199`, tree
+  `746ac8311c13b387bf8cb8dbb57ebd6287f7e240`.
+- A final read-only `git ls-remote` check found remote `main` at
+  `c7ceffd8fbd3f3e944f106e8ba1df0bf34c9ea2d`; the locally present commit object
+  has the same reviewed tree. The local `origin/main` reference remained stale
+  and was not fetched or rewritten.
+- The uncommitted implementation lives only in the dedicated worktree
+  `C:\pbjustin\Arcanos-unknown-gpt-metric-boundary`, branch
+  `codex/unknown-gpt-metric-boundary`, based directly on that remote `main`
+  commit and tree. Its final status contains 25 intended tracked/untracked
+  entries and zero staged files. Final index regeneration reports 1,454 backend
+  files and 252 CLI-agent files.
+- All qualifying commands used
+  `C:\pbjustin\Arcanos-tools\node-v20.19.0-win-x64\node.exe`; its version is
+  exactly `v20.19.0`. `npm ci` completed successfully before implementation and
+  left the tracked worktree clean.
+
+### Red characterization evidence
+
+Tests were written before each production correction. Adversarial review then
+added successively sharper cases so a superficially bounded `gpt_id` could not
+hide a raw endpoint or a second provider-metric cardinality carrier:
+
+1. The final untouched-production RED across the five initial metric, direct
+   dispatcher, canonical router, logging, and fast-path suites reported **5
+   failed suites; 9 failed and 106 passed of 115 tests**. It froze the 1,000-ID
+   reproduction, canonical 257-character rejection, 256-character inclusive
+   compatibility, registered-alias metric identity, and zero routing work after
+   boundary rejection.
+2. The global-log extension reported **2 failed and 82 passed of 84 tests**
+   across four suites. The canonical handler rejected the request, but
+   `request.received` and `request.completed` still contained the full
+   caller-controlled route segment.
+3. The `/dispatch` response-boundary characterization reported **1 failed and
+   8 passed of 9 tests**. The compatibility wrapper overwrote the bounded
+   direct-dispatch envelope with the rejected raw GPT ID.
+4. Encoded whitespace-only and trim-compatible padded route characterization
+   reported **3 failed and 16 passed of 19 tests** across two suites. It proved
+   that route-compatible trimming must remain separate from the pre-trim log
+   representation bound.
+5. The final provider-label and mounted-endpoint RED reported **5 failed
+   suites; 7 failed and 55 passed of 62 tests**. It exposed Express mounted
+   `req.path` precedence dropping `/gpt`, and exposed fast/direct provider
+   telemetry using caller aliases as `source_name`, including the MCP
+   compatibility lane.
+
+Every retained case is green in the final tree. The sequence specifically
+prevents hashing, truncation, a bounded `unknown_gpt_total` alone, or a mocked
+route-only assertion from being credited as an actual series-count bound.
+
+### Implemented identifier and metric boundaries
+
+- New pure `src/shared/gpt/gptIdentifier.ts` owns the discriminated GPT-ID
+  validation result, the inclusive 256 UTF-16-code-unit compatibility maximum,
+  and the stable `invalid` response placeholder. `resolveGptRouting` and
+  `routeGptRequest` now validate before module-registry initialization, map
+  construction/recovery, prompt tracing, GPT-specific logging, or metric work.
+- The canonical `POST /gpt/:gptId` handler applies the same validator before
+  priority/action planning and before resolver, job, fast/direct, or provider
+  work. A normalized identifier over 256 returns deterministic HTTP `400`,
+  canonical route headers, and bounded `gptId: "invalid"`; exactly 256 remains
+  admissible, and a short unregistered identifier retains `404 UNKNOWN_GPT`.
+- `src/shared/requestPathSanitizer.ts` independently measures the decoded,
+  pre-trim canonical path segment for logging. Overlength plain, encoded,
+  whitespace-only, and padded segments become `/gpt/invalid` in global request
+  logs without tightening the established trim-then-route compatibility.
+  Request-scoped structured `endpoint` fields use the same sanitizer, and the
+  direct dispatcher preserves original-URL precedence before sanitizing mounted
+  route metadata.
+- The GPT lane of `/dispatch` now preserves the bounded dispatcher envelope's
+  route ID instead of re-echoing the rejected input. DAG-lane parsing and the
+  earlier broad-parser/auth ordering decision were not changed in this slice.
+- `src/platform/observability/appMetrics.ts` defines one discriminated
+  `GptMetricIdentity`: registered, unresolved, or diagnostic. The six
+  `gpt_id` metrics now resolve through that seam. Rejected/unknown traffic uses
+  only `unknown`, diagnostics use only `diagnostic`, and every resolved HTTP
+  producer uses `resolveGptEntry(...).matchedId`, an actual finite registry key,
+  rather than the caller's exact, normalized, substring, token-subset, or fuzzy
+  alias.
+- A registered-only `recordGptAiOperation` seam closes the less obvious
+  `source_name` cardinality path in `ai_calls_total`,
+  `ai_call_duration_ms`, and `ai_tokens_total`. Fast-path and direct-action
+  execution keep the caller ID for functional compatibility but require the
+  separate registry-owned metric identity. MCP `gpt.generate`, which does not
+  resolve a module, uses the fixed finite `arcanos-core` lane identity.
+- Documentation now records the exact 256-code-unit boundary, stable rejection
+  behavior, and the registered/constant `gpt_id` and `source_name` policies.
+  All four generated indexes were regenerated together because the slice added
+  a new source file.
+
+### Cardinality and compatibility proof
+
+- One real Prometheus registry receives 1,000 distinct rejected identifiers
+  and exposes exactly one `unknown_gpt_total` series with
+  `gpt_id="unknown"` and value 1,000; no rejected marker appears in the output.
+- The same real registry receives 1,000 unresolved and 1,000 diagnostic
+  dispatcher records and exposes exactly two series, each with its constant
+  identity and value 1,000.
+- One real provider-metric registry receives 1,000 registered GPT operations
+  and retains one `ai_calls_total` series, one duration-count series, and only
+  the three expected token-type series, all with
+  `source_name="arcanos-core"`.
+- Direct routing asserts the actual `matchMethod` for normalized, substring,
+  token-subset, and fuzzy aliases, then asserts the finite `matchedId` metric
+  identity. HTTP fast-path success/fallback and direct-action success/error use
+  the same identity; service tests prove both success and failure telemetry
+  never calls the legacy raw-source recorder.
+- Canonical HTTP composition proves 257-character rejection before resolution
+  or dispatch, safe response and global/GPT log metadata, 256-character
+  admission, and no raw encoded whitespace/padding marker. Direct-dispatch and
+  MCP composition prove their respective bounded-envelope and fixed-metric
+  seams.
+
+### Green and broad validation evidence
+
+All retained validation below used exact Node `20.19.0`:
+
+- The initial production correction passed the original **5 suites and 115/115
+  tests**. After matcher-mode and fast/direct trust repairs the same core set
+  passed **5 suites and 119/119 tests**; the expanded boundary set then passed
+  **7 suites and 134/134 tests**.
+- The padding/logging correction passed **4 suites and 94/94 tests**. The final
+  mounted-endpoint/provider-label correction passed **5 suites and 64/64
+  tests**.
+- The proportionate expanded selection covering metrics, request logging,
+  dispatch compatibility, registry recovery, fast/direct service and HTTP
+  paths, async/idempotent and DAG routing, router configuration, MCP, and
+  control-plane GPT policy passed **23 suites and 309/309 tests**.
+- Focused ESLint over every changed source and test file passed with no output.
+  Final `npm run type-check` passed all named boundary checks, shared-package
+  builds, and root `tsc --noEmit`.
+- Final `npm run lint` completed with zero errors and the unchanged repository
+  baseline of 76 warnings; no warning cleanup was mixed into this slice.
+  `npm run build` passed all boundary checks, shared packages, the separate
+  worker workspace, root compilation, alias repair/check over 816 files, and
+  asset copy with zero unresolved aliases.
+- `npm run docs:check` passed **311/311** checks, including current generated
+  indexes. `npm run docs:links` passed all **166 local** and **25 external**
+  links with zero failures or warnings. `git diff --check` passed apart from
+  informational Windows line-ending conversion notices.
+- A quiet parallel full root run covered **569 suites and 7,089 tests**: **562
+  suites passed, 2 failed, and 5 skipped; 7,054 tests passed, 2 failed, and 33
+  skipped**. One failure was the unchanged
+  `tests/gptoss-private-serving-durable-replay-migration-guard.test.ts`
+  LF-only replacement against a CRLF fixture, already recorded as
+  `GPTOSS-TEST-001` and explicitly excluded from this slice. The second was the
+  untouched `tests/phase2e-migration-validator.test.ts`; immediate Jest
+  `--onlyFailures --runInBand` retry passed that entire suite and left only the
+  known GPT-OSS failure (**1 suite passed, 1 failed; 20 tests passed, 1
+  failed**). An optional duplicate quiet run forced through one worker was
+  manually stopped after several minutes because serializing the full suite was
+  disproportionate; it produced no result and is not counted as validation.
+- The final implementation worktree has zero staged files. No test invoked a
+  live provider, model, database, Railway service, persistent memory endpoint,
+  deployment, or remote mutation.
+
+### Adversarial review and checkpoint verdict
+
+Three independent read-only review tracks mapped the metric producers,
+challenged route/ingress ordering, and audited test trust. Their findings found
+and drove the global-log, padding, mounted-path, `/dispatch` response, and
+provider `source_name` corrections above. After those remediations:
+
+- **Metric/route boundary:** approved. The final reviewer traced every GPT
+  dispatcher, fast/direct, provider, and MCP metric producer to a constant or
+  finite registry-owned identity and found no remaining ingress/cardinality
+  bypass.
+- **Resolver correctness:** approved. The reviewer verified canonical
+  pre-registry ordering, direct compatibility, finite `matchedId` provenance,
+  all four alias methods, global endpoint sanitization, and bounded
+  `/dispatch` behavior.
+- **Test trust:** approved. The reviewer verified real-registry series counts,
+  mounted-route composition, provider success/error paths, MCP composition, and
+  zero legacy raw-source recording, and independently passed **11 suites and
+  165/165 tests** under Node `20.19.0`.
+
+**Checkpoint:** this isolated local tree implements the requested third P1
+slice and has no known slice-specific review or validation blocker. It remains
+intentionally uncommitted, unstaged, unpushed, undeployed, and absent from
+`main`. No database, Railway, provider, model, live-memory, GitHub-settings, or
+other external mutation occurred. The historical health verdict must not
+credit this work as merged source, and no fourth finding was started.
+
+## Three-slice draft-PR composition checkpoint — 2026-07-31
+
+The user subsequently authorized publishing the three completed non-GPT-OSS
+P1 slices together as one draft pull request. Composition used a new clean
+worktree at `C:\pbjustin\Arcanos-public-ingress-hardening-pr`, branch
+`agent/public-ingress-hardening`, based on remote `main` commit
+`c7ceffd8fbd3f3e944f106e8ba1df0bf34c9ea2d`, tree
+`746ac8311c13b387bf8cb8dbb57ebd6287f7e240`. The historical checkout's 17
+preserved changes were not staged or copied; only the three implementation
+checkpoints above were selected from its progress report. GPT-OSS remained
+excluded, and no database, provider, live-memory, Railway, deployment, or
+GitHub-settings mutation occurred.
+
+The composed branch carries the three logical slice commits—canonical
+`/dispatch` DAG admission, the shared instance-wide public-provider admission
+rate ceiling, and the unknown-GPT identifier/metric-cardinality boundary—plus
+one composition-remediation checkpoint. All four generated indexes were
+regenerated together from the final composed source. The combined diff contains
+49 implementation/test/configuration/documentation files plus this historical
+progress file, 50 files total.
+
+Composition exposed two real policy-alignment defects that no isolated
+worktree could show:
+
+1. With the shared provider bucket exhausted, global admission originally ran
+   before canonical GPT identifier validation, so a 257-character GPT ID
+   returned `429` instead of the deterministic safe `400`. A full-application
+   regression was added first and failed **1/1** with `Expected: 400`,
+   `Received: 429`. A reusable `canonicalGptIdentifierBoundary` now runs after
+   request parsing but before global provider admission, while the GPT router
+   retains the same boundary as an idempotent fallback for standalone and
+   compatibility use. Valid canonical GPT work is still charged by the global
+   seam. The regression then passed with `400`, no provider-bucket header,
+   bounded `gptId: "invalid"`, and zero registry-resolution or GPT-route calls.
+2. The first composed `/dispatch` admission matcher charged GPT-selected
+   diagnostics/control and could disagree with the handler when outer and
+   nested payload prompts conflicted. The initial provider-free
+   characterization failed **4/70 tests across 2 suites** (**66 passed**).
+   After the obvious diagnostic correction, an inverse payload-precedence
+   characterization still failed **1/70** (**69 passed**): outer control text
+   plus a nested writing prompt bypassed admission. The final matcher and
+   handler share `buildResolvedGptDispatchBody`; admission uses that prepared
+   body's effective payload prompt, diagnostic short-circuit, action, and
+   writing-plane classifier. Both conflicting prompt directions are covered,
+   and the two admission suites pass **71/71**.
+
+Composed-tree validation under exact Node `20.19.0`:
+
+- `npm ci`: passed; no tracked dependency-manifest change.
+- focused integration/Jest sweep: **19/19 suites, 319/319 tests passed**;
+- `npm run type-check`: passed, including all boundary checks, packages, and
+  root TypeScript;
+- `npm run lint`: exit 0 with zero errors and the unchanged **76-warning**
+  repository baseline;
+- `npm run build`: passed; the alias verifier scanned **821** emitted files
+  with zero unresolved aliases;
+- `npm run docs:check`: **311/311** checks passed and all generated indexes
+  were current;
+- `npm run docs:links`: **166** local and **25** external targets passed with
+  zero failures or warnings;
+- `npm run validate:railway`: the passive local compatibility validator
+  passed; nothing was deployed or connected to Railway;
+- final full `npm test -- --silent`: **572 suites total, 566 passed, 1 failed,
+  5 skipped; 7,178 tests passed, 1 failed, 33 skipped**. The sole failure is
+  the unchanged, explicitly excluded `GPTOSS-TEST-001` CRLF-sensitive fixture;
+  the previously observed Phase 2E parallel timeout passed in this final run.
+
+Final independent read-only review approved the composed policy, resolver,
+metric boundary, and test trust. The policy reviewer passed **4 suites and
+146/146 tests** with no cache; the test-trust reviewer passed the critical
+**5 suites and 152/152 tests**, focused ESLint, type-check, and docs/index
+checks. Neither reviewer edited the tree.
+
+This is a draft-review checkpoint, not merge or deployment evidence. The PR
+must disclose the excluded GPT-OSS fixture and must not claim a completely
+green broad Jest run. No merge, deployment, provider call, database mutation,
+live-memory operation, Railway change, or GitHub-settings change occurred.

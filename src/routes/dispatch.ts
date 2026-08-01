@@ -9,6 +9,7 @@ import {
 import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import {
+  buildResolvedGptDispatchBody,
   isDagDispatchAction,
   type DispatchExecutionMode,
   type DispatchTarget,
@@ -58,30 +59,6 @@ function readPositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function buildGptBody(input: {
-  body: DispatchBody;
-  action: string;
-  prompt: string;
-  payload: Record<string, unknown>;
-}): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    ...input.body,
-    action: input.action,
-  };
-
-  if (input.prompt) {
-    body.prompt = input.prompt;
-  }
-
-  if (Object.keys(input.payload).length > 0) {
-    body.payload = input.payload;
-  }
-
-  delete body.target;
-  delete body.gptId;
-  return body;
-}
-
 function gptStatusCode(envelope: AskEnvelope): number {
   if (envelope.ok) {
     return 200;
@@ -124,7 +101,7 @@ async function runGptDispatch(
   const requestContext = dispatchRequestContext(req);
   const envelope = await routeGptRequest({
     gptId,
-    body: buildGptBody(input),
+    body: buildResolvedGptDispatchBody(input),
     requestId: requestContext.requestId,
     logger: requestContext.logger,
     request: req,

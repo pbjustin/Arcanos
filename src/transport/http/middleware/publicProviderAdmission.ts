@@ -10,7 +10,10 @@ import {
 } from '@platform/runtime/publicProviderRateLimitPolicy.js';
 import { createRateLimitMiddleware, sanitizeInput } from '@platform/runtime/security.js';
 import { classifyWritingPlaneInput } from '@platform/runtime/writingPlaneContract.js';
-import { resolveDispatchLane } from '@shared/dispatch/universalDispatch.js';
+import {
+  buildResolvedGptDispatchBody,
+  resolveDispatchLane,
+} from '@shared/dispatch/universalDispatch.js';
 import {
   extractGptDispatchPromptText,
   extractGptPromptText,
@@ -211,7 +214,25 @@ export function isPublicProviderAdmissionRequest(
   }
 
   if (path === '/dispatch') {
-    return resolveDispatchLane(candidate.body).lane === 'gpt';
+    const resolution = resolveDispatchLane(candidate.body);
+    if (resolution.lane !== 'gpt') {
+      return false;
+    }
+
+    const preparedBody = buildResolvedGptDispatchBody(resolution.input);
+    const effectivePromptText = extractGptDispatchPromptText(preparedBody);
+    if (isDiagnosticRequest(asRecord(preparedBody), effectivePromptText)) {
+      return false;
+    }
+
+    const requestedAction = typeof preparedBody.action === 'string'
+      ? preparedBody.action.trim()
+      : null;
+    return classifyWritingPlaneInput({
+      body: preparedBody,
+      promptText: effectivePromptText,
+      requestedAction,
+    }).plane === 'writing';
   }
 
   const legacyRoutesEnabled = options.legacyGptRoutesEnabled

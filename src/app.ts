@@ -80,6 +80,7 @@ import {
 } from '@services/controlPlane/cefBodyParser.js';
 import { requireMemoryPlaneAuth } from '@transport/http/middleware/memoryPlaneAuth.js';
 import { publicProviderAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
+import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
   configureDefaultAppMetricsRuntimeProviders
@@ -275,6 +276,7 @@ export function createApp(): Express {
     }
     next();
   });
+  app.post('/gpt/:gptId', canonicalGptIdentifierBoundary);
   app.use(publicProviderAdmission);
   app.post('/gpt/arcanos-gaming', gamingIngressAudit);
 

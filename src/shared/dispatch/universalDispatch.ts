@@ -133,6 +133,28 @@ function normalizeDispatchInput(rawBody: unknown): NormalizedDispatchInput {
   };
 }
 
+/** Build the exact GPT body consumed after universal lane resolution. */
+export function buildResolvedGptDispatchBody(
+  input: NormalizedDispatchInput
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    ...input.body,
+    action: input.action,
+  };
+
+  if (input.prompt) {
+    body.prompt = input.prompt;
+  }
+
+  if (Object.keys(input.payload).length > 0) {
+    body.payload = input.payload;
+  }
+
+  delete body.target;
+  delete body.gptId;
+  return body;
+}
+
 /**
  * Classify only auto-mode dispatch prompts. The classifier is intentionally
  * conservative: content-generation prompts about workflows stay on GPT.

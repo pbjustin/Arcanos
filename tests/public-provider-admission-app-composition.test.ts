@@ -32,7 +32,7 @@ process.env.DISABLE_EXTERNAL_CALLS = 'true';
 process.env.DISABLE_DIAGNOSTICS_CRON = 'true';
 process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
 process.env.ASK_ROUTE_MODE = 'compat';
-process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '5';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '6';
 process.env.PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS = '60000';
 
 const executeArcanosPipelineMock = jest.fn(async () => ({
@@ -119,6 +119,22 @@ const runTrinityWritingPipelineMock = jest.fn(async () => ({
   activeModel: 'test-model',
   routingStages: [],
 }));
+let unsafeExecutionDenied = false;
+const unsafeExecutionGateMock = jest.fn(
+  (_req: Request, res: Response, next: NextFunction) => {
+    if (!unsafeExecutionDenied) {
+      next();
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(503).json({
+      ok: false,
+      code: 'UNSAFE_EXECUTION_DENIED',
+      message: 'Unsafe execution is unavailable.',
+    });
+  }
+);
 
 jest.unstable_mockModule('@services/arcanosPipeline.js', () => ({
   executeArcanosPipeline: executeArcanosPipelineMock,
@@ -158,7 +174,7 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   },
 }));
 jest.unstable_mockModule('@transport/http/middleware/unsafeExecutionGate.js', () => ({
-  unsafeExecutionGate: (_req: Request, _res: Response, next: NextFunction) => next(),
+  unsafeExecutionGate: unsafeExecutionGateMock,
 }));
 jest.unstable_mockModule('@transport/http/gamingIngressAudit.js', () => ({
   gamingIngressAudit: (_req: Request, _res: Response, next: NextFunction) => next(),
@@ -191,6 +207,25 @@ describe('public provider admission in the production application composition', 
       expect(healthResponse.status).toBe(200);
       expect(controlResponse.status).not.toBe(429);
     }
+
+    unsafeExecutionDenied = true;
+    const deniedByUnsafeGateResponse = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '05'
+    ).send({
+      action: 'query',
+      prompt: 'This valid provider request must be charged before unsafe denial.',
+      sessionId: 'body-session-05',
+    });
+    unsafeExecutionDenied = false;
+
+    expect(deniedByUnsafeGateResponse.status).toBe(503);
+    expect(deniedByUnsafeGateResponse.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedByUnsafeGateResponse.headers['x-ratelimit-remaining']).toBe('5');
+    expect(deniedByUnsafeGateResponse.headers['cache-control']).toBe('no-store');
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
 
     const admittedResearchResponse = await addRotatedCallerMetadata(
       request(app).post('/commands/research'),
@@ -271,6 +306,33 @@ describe('public provider admission in the production application composition', 
     expect(canonicalGptResponse.headers['cache-control']).toBe('no-store');
     expect(routeGptRequestMock).toHaveBeenCalledTimes(2);
 
+    const oversizedGptId = 'x'.repeat(257);
+    const routeCallsBeforeOversizedId = routeGptRequestMock.mock.calls.length;
+    const resolveCallsBeforeOversizedId = resolveGptRoutingMock.mock.calls.length;
+    const oversizedGptResponse = await addRotatedCallerMetadata(
+      request(app).post(`/gpt/${oversizedGptId}`),
+      '55'
+    ).send({
+      action: 'query',
+      prompt: 'The canonical identifier boundary must run before the exhausted provider bucket.',
+      sessionId: 'body-session-55',
+    });
+
+    expect(oversizedGptResponse.status).toBe(400);
+    expect(oversizedGptResponse.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(oversizedGptResponse.body).toEqual(expect.objectContaining({
+      ok: false,
+      gptId: 'invalid',
+      code: 'BAD_REQUEST',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+    }));
+    expect(JSON.stringify(oversizedGptResponse.body)).not.toContain(oversizedGptId);
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(routeCallsBeforeOversizedId);
+    expect(resolveGptRoutingMock).toHaveBeenCalledTimes(resolveCallsBeforeOversizedId);
+
     const deniedResearchResponse = await addRotatedCallerMetadata(
       request(app).post('/commands/research'),
       '60'
@@ -284,7 +346,7 @@ describe('public provider admission in the production application composition', 
 
     expect(deniedResearchResponse.status).toBe(429);
     expect(deniedResearchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
-    expect(deniedResearchResponse.headers['x-ratelimit-limit']).toBe('5');
+    expect(deniedResearchResponse.headers['x-ratelimit-limit']).toBe('6');
     expect(deniedResearchResponse.headers['x-ratelimit-remaining']).toBe('0');
     expect(deniedResearchResponse.headers['retry-after']).toBeTruthy();
     expect(deniedResearchResponse.headers['cache-control']).toBe('no-store');
@@ -550,6 +612,15 @@ describe('public provider admission in the production application composition', 
     const diagnosticAfterExhaustion = await request(app)
       .post('/api/arcanos/ask')
       .send({ action: 'ping' });
+    const dispatchDiagnosticActionAfterExhaustion = await request(app)
+      .post('/dispatch')
+      .send({ action: 'ping' });
+    const dispatchDiagnosticPromptAfterExhaustion = await request(app)
+      .post('/dispatch')
+      .send({ prompt: 'ping' });
+    const dispatchControlAfterExhaustion = await request(app)
+      .post('/dispatch')
+      .send({ target: 'gpt', action: 'runtime.inspect' });
 
     expect(dagResponse.status).not.toBe(429);
     expect(healthAfterExhaustion.status).toBe(200);
@@ -560,6 +631,16 @@ describe('public provider admission in the production application composition', 
     expect(canonicalDagAfterExhaustion.headers['x-ratelimit-bucket']).not.toBe('public-provider-instance');
     expect(diagnosticAfterExhaustion.status).toBe(200);
     expect(diagnosticAfterExhaustion.headers['x-ratelimit-bucket']).not.toBe('public-provider-instance');
+    for (const providerFreeDispatchResponse of [
+      dispatchDiagnosticActionAfterExhaustion,
+      dispatchDiagnosticPromptAfterExhaustion,
+      dispatchControlAfterExhaustion,
+    ]) {
+      expect(providerFreeDispatchResponse.status).not.toBe(429);
+      expect(providerFreeDispatchResponse.headers['x-ratelimit-bucket']).not.toBe(
+        'public-provider-instance'
+      );
+    }
   });
 });
 

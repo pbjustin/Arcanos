@@ -42,11 +42,8 @@ describe('public provider admission policy', () => {
     ['/sim', undefined],
     ['/modules/core', undefined],
     ['/queryroute', undefined],
-    ['/dispatch', { target: 'gpt', action: 'dag.run.create' }],
-    ['/dispatch', { gptId: 'arcanos-core', action: 'dag.run.create', executionMode: 'dag' }],
-    ['/dispatch', { executionMode: 'gpt', prompt: 'Run the workflow now.' }],
     ['/dispatch', { prompt: 'Answer this question.' }],
-  ] as const)('admits public provider work at POST %s', (path, body) => {
+  ] as const)('admits public provider work at POST %s with %j', (path, body) => {
     expect(isPublicProviderAdmissionRequest({
       method: 'POST',
       path,
@@ -81,12 +78,40 @@ describe('public provider admission policy', () => {
     ['/dispatch', { executionMode: 'auto', prompt: 'Run the workflow now.' }],
     ['/dispatch', { target: 'mcp' }],
     ['/dispatch', { executionMode: 'tool' }],
-  ] as const)('excludes non-public-provider work at POST %s', (path, body) => {
+    ['/dispatch', { target: 'gpt', action: 'dag.run.create' }],
+    ['/dispatch', { gptId: 'arcanos-core', action: 'dag.run.create', executionMode: 'dag' }],
+    ['/dispatch', { executionMode: 'gpt', prompt: 'Run the workflow now.' }],
+    ['/dispatch', { action: 'ping' }],
+    ['/dispatch', { prompt: 'ping' }],
+    ['/dispatch', { target: 'gpt', action: 'runtime.inspect' }],
+  ] as const)('excludes non-public-provider work at POST %s with %j', (path, body) => {
     expect(isPublicProviderAdmissionRequest({
       method: 'POST',
       path,
       body,
     }, { legacyGptRoutesEnabled: true })).toBe(false);
+  });
+
+  it('uses the resolved /dispatch payload prompt when deciding provider admission', () => {
+    expect(isPublicProviderAdmissionRequest({
+      method: 'POST',
+      path: '/dispatch',
+      body: {
+        target: 'gpt',
+        prompt: 'show me worker status',
+        payload: { prompt: 'Write a haiku.' },
+      },
+    })).toBe(true);
+
+    expect(isPublicProviderAdmissionRequest({
+      method: 'POST',
+      path: '/dispatch',
+      body: {
+        target: 'gpt',
+        prompt: 'Write a haiku.',
+        payload: { prompt: 'show me worker status' },
+      },
+    })).toBe(false);
   });
 
   it('excludes non-POST requests and disabled legacy aliases', () => {

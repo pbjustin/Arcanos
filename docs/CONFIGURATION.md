@@ -236,11 +236,12 @@ and never calls `FLUSHDB`. That job must pass before activation.
 The public-provider limit uses one caller-independent, constant-key counter per
 Node backend process. Rotating session, authorization, or forwarding metadata
 does not create a new bucket, and existing route/user fairness limiters remain
-in force. Each provider-capable admission attempt consumes one unit before
-later route validation or route/user fairness, while provider-free diagnostics
-and control lanes consume none. One HTTP request consumes only one unit even if
-it crosses the canonical GPT compatibility seam or the selected pipeline makes
-several provider calls. `ASK_ROUTE_MODE=compat` brings `GET /brain`, implicit
+in force. After canonical ingress validation, each provider-capable admission
+attempt consumes one unit before downstream route validation or route/user
+fairness, while provider-free diagnostics and control lanes consume none. One
+HTTP request consumes only one unit even if it crosses the canonical GPT
+compatibility seam or the selected pipeline makes several provider calls.
+`ASK_ROUTE_MODE=compat` brings `GET /brain`, implicit
 `HEAD /brain`, and `POST /brain` under this ceiling; GET uses query input while
 POST and HEAD use body input. The default `gone` response is not charged.
 This is intentionally not a cross-replica, token, cost, or downstream-SDK-call
