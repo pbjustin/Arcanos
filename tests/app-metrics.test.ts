@@ -55,19 +55,19 @@ describe('app metrics registry', () => {
     } = await loadMetricsModule();
 
     recordDispatcherRoute({
-      gptId: 'arcanos-core',
+      gpt: { kind: 'registered', id: 'arcanos-core' },
       module: 'ARCANOS:CORE',
       route: 'core',
       handler: 'module-dispatcher',
       outcome: 'ok',
     });
     recordDispatcherFallback({
-      gptId: 'arcanos-core',
+      gpt: { kind: 'registered', id: 'arcanos-core' },
       module: 'ARCANOS:CORE',
       reason: 'memory_ignored_retry_dag',
     });
     recordMemoryDispatchIgnored({
-      gptId: 'arcanos-core',
+      gpt: { kind: 'registered', id: 'arcanos-core' },
       module: 'ARCANOS:CORE',
       reason: 'memory_ignored_retry_dag',
     });
@@ -140,7 +140,7 @@ describe('app metrics registry', () => {
     const metricsText = await metricsRegistry.metrics();
 
     expect(metricsText).toMatch(/dispatcher_route_total\{[^}]*gpt_id="arcanos-core"[^}]*handler="module-dispatcher"[^}]*outcome="ok"[^}]*\} 1/);
-    expect(metricsText).toMatch(/unknown_gpt_total\{[^}]*gpt_id="missing-core"[^}]*outcome="not_registered"[^}]*\} 1/);
+    expect(metricsText).toMatch(/unknown_gpt_total\{[^}]*gpt_id="unknown"[^}]*outcome="not_registered"[^}]*\} 1/);
     expect(metricsText).toMatch(/dag_run_requests_total\{[^}]*handler="trace"[^}]*outcome="ok"[^}]*snapshot_source="persisted"[^}]*\} 1/);
     expect(metricsText).toMatch(/dag_node_fetch_duration_ms_bucket\{[^}]*handler="trace"[^}]*snapshot_source="persisted"[^}]*\} \d+/);
     expect(metricsText).toMatch(/dependency_calls_total\{[^}]*dependency="postgres"[^}]*operation="select"[^}]*outcome="ok"[^}]*\} 1/);
@@ -156,6 +156,108 @@ describe('app metrics registry', () => {
     expect(metricsText).toContain('process_heap_used_bytes');
     expect(metricsText).toContain('ai_circuit_breaker_state');
     expect(metricsText).toContain('event_loop_lag_ms');
+  });
+
+  it('collapses one thousand unique rejected GPT identifiers into one metric series', async () => {
+    const {
+      metricsRegistry,
+      recordUnknownGpt,
+    } = await loadMetricsModule();
+
+    for (let index = 0; index < 1_000; index += 1) {
+      recordUnknownGpt({
+        gptId: `rejected-gpt-${index}`,
+        outcome: 'not_registered',
+      });
+    }
+
+    const metricsText = await metricsRegistry.metrics();
+    const unknownGptSeries = metricsText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('unknown_gpt_total{'));
+
+    expect(unknownGptSeries).toHaveLength(1);
+    expect(unknownGptSeries[0]).toMatch(
+      /gpt_id="unknown"[^}]*outcome="not_registered"[^}]*\} 1000$/
+    );
+    expect(metricsText).not.toContain('rejected-gpt-');
+  });
+
+  it('maps unresolved and diagnostic dispatcher identities to two constant metric series', async () => {
+    const {
+      metricsRegistry,
+      recordDispatcherRoute,
+    } = await loadMetricsModule();
+
+    for (let index = 0; index < 1_000; index += 1) {
+      recordDispatcherRoute({
+        gpt: { kind: 'unresolved' },
+        module: null,
+        route: null,
+        handler: 'dispatcher',
+        outcome: 'unknown_gpt',
+      });
+      recordDispatcherRoute({
+        gpt: { kind: 'diagnostic' },
+        module: 'diagnostic',
+        route: 'diagnostic',
+        handler: 'diagnostic',
+        outcome: 'ok',
+      });
+    }
+
+    const metricsText = await metricsRegistry.metrics();
+    const dispatcherSeries = metricsText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('dispatcher_route_total{'));
+
+    expect(dispatcherSeries).toHaveLength(2);
+    expect(dispatcherSeries).toEqual(expect.arrayContaining([
+      expect.stringMatching(/gpt_id="unknown"[^}]*\} 1000$/),
+      expect.stringMatching(/gpt_id="diagnostic"[^}]*\} 1000$/),
+    ]));
+  });
+
+  it('uses the registered GPT identity for provider metric source labels', async () => {
+    const {
+      metricsRegistry,
+      recordGptAiOperation,
+    } = await loadMetricsModule();
+
+    for (let index = 0; index < 1_000; index += 1) {
+      recordGptAiOperation({
+        gpt: { kind: 'registered', id: 'arcanos-core' },
+        provider: 'openai',
+        operation: 'trinity.pipeline',
+        sourceType: 'gpt_fast_path',
+        model: 'gpt-test',
+        outcome: 'ok',
+        durationMs: 25,
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      });
+    }
+
+    const metricsText = await metricsRegistry.metrics();
+    const aiCallSeries = metricsText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('ai_calls_total{'));
+    const durationCountSeries = metricsText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('ai_call_duration_ms_count{'));
+    const tokenSeries = metricsText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('ai_tokens_total{'));
+
+    expect(aiCallSeries).toHaveLength(1);
+    expect(aiCallSeries[0]).toMatch(
+      /source_name="arcanos-core"[^}]*\} 1000$/
+    );
+    expect(durationCountSeries).toHaveLength(1);
+    expect(durationCountSeries[0]).toMatch(/source_name="arcanos-core"[^}]*\} 1000$/);
+    expect(tokenSeries).toHaveLength(3);
+    expect(tokenSeries.every((line) => line.includes('source_name="arcanos-core"'))).toBe(true);
   });
 
   it('reconstructs worker watchdog counters from persisted snapshots without double counting', async () => {

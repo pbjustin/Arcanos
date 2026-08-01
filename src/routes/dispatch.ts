@@ -135,7 +135,7 @@ async function runGptDispatch(
     ...envelope,
     target: 'gpt',
     routeFamily: 'dispatch',
-    gptId,
+    gptId: envelope._route.gptId,
     action: input.action,
     executionMode: 'gpt',
     _dispatch: {

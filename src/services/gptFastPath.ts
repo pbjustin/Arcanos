@@ -3,13 +3,17 @@ import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runt
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import type { TrinityResult } from '@core/logic/trinity.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { recordAiOperation } from '@platform/observability/appMetrics.js';
+import {
+  recordGptAiOperation,
+  type RegisteredGptMetricIdentity,
+} from '@platform/observability/appMetrics.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { type GptFastPathDecision } from '@shared/gpt/gptFastPath.js';
 
 export interface ExecuteFastGptPromptInput {
   gptId: string;
+  gptMetricIdentity: RegisteredGptMetricIdentity;
   prompt: string;
   requestId?: string;
   timeoutMs: number;
@@ -46,6 +50,7 @@ export interface FastGptPromptEnvelope {
 
 export interface ExecuteDirectGptActionInput {
   gptId: string;
+  gptMetricIdentity: RegisteredGptMetricIdentity;
   prompt: string;
   requestId?: string;
   action: 'query_and_wait';
@@ -196,11 +201,11 @@ export async function executeFastGptPrompt(
     );
 
     const totalLatencyMs = Date.now() - startedAtMs;
-    recordAiOperation({
+    recordGptAiOperation({
+      gpt: input.gptMetricIdentity,
       provider: 'openai',
       operation: 'trinity.pipeline',
       sourceType: 'gpt_fast_path',
-      sourceName: input.gptId,
       model: trinityResult.activeModel,
       outcome: 'ok',
       durationMs: totalLatencyMs,
@@ -229,11 +234,11 @@ export async function executeFastGptPrompt(
       }
     };
   } catch (error) {
-    recordAiOperation({
+    recordGptAiOperation({
+      gpt: input.gptMetricIdentity,
       provider: 'openai',
       operation: 'trinity.pipeline',
       sourceType: 'gpt_fast_path',
-      sourceName: input.gptId,
       outcome: 'error',
       durationMs: Date.now() - startedAtMs
     });
@@ -304,11 +309,11 @@ export async function executeDirectGptAction(
     );
 
     const totalLatencyMs = Date.now() - startedAtMs;
-    recordAiOperation({
+    recordGptAiOperation({
+      gpt: input.gptMetricIdentity,
       provider: 'openai',
       operation: 'trinity.pipeline',
       sourceType: 'gpt_direct_action',
-      sourceName: input.gptId,
       model: trinityResult.activeModel,
       outcome: 'ok',
       durationMs: totalLatencyMs,
@@ -337,11 +342,11 @@ export async function executeDirectGptAction(
       }
     };
   } catch (error) {
-    recordAiOperation({
+    recordGptAiOperation({
+      gpt: input.gptMetricIdentity,
       provider: 'openai',
       operation: 'trinity.pipeline',
       sourceType: 'gpt_direct_action',
-      sourceName: input.gptId,
       outcome: 'error',
       durationMs: Date.now() - startedAtMs
     });

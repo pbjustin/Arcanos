@@ -270,6 +270,46 @@ describe('dispatcher priority routing', () => {
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
+  it('preserves the bounded direct-dispatch envelope for oversized GPT identifiers', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+      _route: {
+        gptId: 'invalid',
+        timestamp: '2026-04-25T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: oversizedGptId,
+        action: 'query',
+        prompt: 'Stop at the GPT identifier boundary.',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      target: 'gpt',
+      gptId: 'invalid',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+    }));
+    expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: oversizedGptId,
+    }));
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['MEMORY_AUTH_REQUIRED', 401],
     ['MEMORY_AUTH_UNAVAILABLE', 503],

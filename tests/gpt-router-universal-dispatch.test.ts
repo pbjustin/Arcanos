@@ -619,6 +619,59 @@ describe('gpt router universal dispatch', () => {
     );
   });
 
+  it('rejects an oversized canonical GPT route identifier before routing or dispatch', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    const response = await request(buildApp())
+      .post(`/gpt/${oversizedGptId}`)
+      .send({
+        action: 'query',
+        prompt: 'This request must not reach registry-backed routing.'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-canonical-route']).toBe('/gpt/{gptId}');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      gptId: 'invalid',
+      code: 'BAD_REQUEST',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+    }));
+    expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('preserves the existing 256-character canonical GPT identifier boundary', async () => {
+    const maximumLengthGptId = 'x'.repeat(256);
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: `gptId '${maximumLengthGptId}' is not registered`,
+      },
+      _route: {
+        gptId: maximumLengthGptId,
+        route: 'routing_validation',
+        timestamp: '2026-07-31T00:00:00.000Z',
+      },
+    });
+    const response = await request(buildApp())
+      .post(`/gpt/${maximumLengthGptId}`)
+      .send({
+        action: 'query',
+        prompt: 'The existing maximum remains admissible.'
+      });
+
+    expect(response.status).toBe(404);
+    expect(mockResolveGptRouting).toHaveBeenCalledWith(
+      maximumLengthGptId,
+      expect.any(String)
+    );
+  });
+
   it('blocks diagnostics through POST /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')

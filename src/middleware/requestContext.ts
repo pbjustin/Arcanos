@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { generateRequestId } from '@shared/idGenerator.js';
-import { resolveSafeRequestPath } from '@shared/requestPathSanitizer.js';
+import { resolveSafeRequestPath, sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { readAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
@@ -80,6 +80,13 @@ function createRequestLogger(req: Request, requestId: string, traceId: string): 
     data?: Record<string, unknown>,
     latencyMs?: number
   ): void => {
+    const sanitizedData = data
+      ? (redactSensitive(data) as Record<string, unknown>)
+      : undefined;
+    if (sanitizedData && typeof sanitizedData.endpoint === 'string') {
+      sanitizedData.endpoint = sanitizeRequestPath(sanitizedData.endpoint);
+    }
+
     emitRequestLog({
       timestamp: new Date().toISOString(),
       level,
@@ -89,7 +96,7 @@ function createRequestLogger(req: Request, requestId: string, traceId: string): 
       method: base.method,
       path: base.path,
       latencyMs,
-      data: data ? (redactSensitive(data) as Record<string, unknown>) : undefined
+      data: sanitizedData
     });
   };
 

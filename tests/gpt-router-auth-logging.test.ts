@@ -173,6 +173,39 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('rejects oversized route identifiers without logging the caller-controlled identifier', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { handledBy: 'module-dispatch' },
+      _route: {
+        gptId: oversizedGptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post(`/gpt/${oversizedGptId}`)
+      .send({ action: 'query', prompt: 'Stop before GPT routing logs.' });
+
+    expect(response.status).toBe(400);
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.filter((entry) => entry.event?.startsWith('gpt.request.'))).toEqual([]);
+    expect(logs.find((entry) => entry.event === 'request.received')?.path).toBe('/gpt/invalid');
+    expect(logs.find((entry) => entry.event === 'request.completed')?.path).toBe('/gpt/invalid');
+    expect(consoleLogSpy.mock.calls.flat().join('\n')).not.toContain(oversizedGptId);
+  });
+
   it('logs sanitized GPT request metadata without leaking prompt text', async () => {
     const promptMarker = 'QA-LOG-PRIVACY-MARKER-20260407';
     mockRouteGptRequest.mockResolvedValue({

@@ -12,6 +12,16 @@ import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/p
 const METRICS_SERVICE_NAME = process.env.RAILWAY_SERVICE_NAME?.trim() || 'arcanos-backend';
 const WORKER_METRICS_REFRESH_TTL_MS = 5_000;
 
+export const UNKNOWN_GPT_METRIC_LABEL = 'unknown';
+export const DIAGNOSTIC_GPT_METRIC_LABEL = 'diagnostic';
+
+export type RegisteredGptMetricIdentity = { kind: 'registered'; id: string };
+
+export type GptMetricIdentity =
+  | RegisteredGptMetricIdentity
+  | { kind: 'unresolved' }
+  | { kind: 'diagnostic' };
+
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
 
@@ -595,6 +605,16 @@ function normalizeLabel(value: string | number | null | undefined, fallback = 'u
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+function resolveGptMetricLabel(identity: GptMetricIdentity): string {
+  if (identity.kind === 'registered') {
+    return normalizeLabel(identity.id);
+  }
+
+  return identity.kind === 'diagnostic'
+    ? DIAGNOSTIC_GPT_METRIC_LABEL
+    : UNKNOWN_GPT_METRIC_LABEL;
+}
+
 function normalizeRoutePath(routePath: string): string {
   const normalized = routePath.replace(/\/+/g, '/');
   if (normalized.length === 0) {
@@ -652,14 +672,14 @@ export function recordHttpRequestEnd(): void {
 }
 
 export function recordDispatcherRoute(input: {
-  gptId: string;
+  gpt: GptMetricIdentity;
   module?: string | null;
   route?: string | null;
   handler: string;
   outcome: string;
 }): void {
   dispatcherRouteTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: resolveGptMetricLabel(input.gpt),
     module: normalizeLabel(input.module),
     route: normalizeLabel(input.route),
     handler: normalizeLabel(input.handler),
@@ -668,24 +688,24 @@ export function recordDispatcherRoute(input: {
 }
 
 export function recordDispatcherMisroute(input: {
-  gptId: string;
+  gpt: GptMetricIdentity;
   module?: string | null;
   reason: string;
 }): void {
   dispatcherMisroutesTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: resolveGptMetricLabel(input.gpt),
     module: normalizeLabel(input.module),
     reason: normalizeLabel(input.reason),
   });
 }
 
 export function recordDispatcherFallback(input: {
-  gptId: string;
+  gpt: GptMetricIdentity;
   module?: string | null;
   reason: string;
 }): void {
   dispatcherFallbackTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: resolveGptMetricLabel(input.gpt),
     module: normalizeLabel(input.module),
     reason: normalizeLabel(input.reason),
   });
@@ -696,18 +716,18 @@ export function recordUnknownGpt(input: {
   outcome?: string;
 }): void {
   unknownGptTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: UNKNOWN_GPT_METRIC_LABEL,
     outcome: normalizeLabel(input.outcome, 'unknown_gpt'),
   });
 }
 
 export function recordMemoryDispatchIgnored(input: {
-  gptId: string;
+  gpt: GptMetricIdentity;
   module?: string | null;
   reason: string;
 }): void {
   memoryDispatchIgnoredTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: resolveGptMetricLabel(input.gpt),
     module: normalizeLabel(input.module),
     reason: normalizeLabel(input.reason),
   });
@@ -1150,7 +1170,7 @@ export function recordGptRouteDecision(input: {
 }
 
 export function recordGptFastPathLatency(input: {
-  gptId: string;
+  gpt: GptMetricIdentity;
   outcome: 'completed' | 'fallback' | 'error';
   durationMs: number;
 }): void {
@@ -1159,7 +1179,7 @@ export function recordGptFastPathLatency(input: {
   }
 
   gptFastPathLatencyMs.observe({
-    gpt_id: normalizeLabel(input.gptId),
+    gpt_id: resolveGptMetricLabel(input.gpt),
     outcome: normalizeLabel(input.outcome)
   }, Math.max(0, Math.trunc(input.durationMs)));
 }
@@ -1264,7 +1284,7 @@ export function recordDependencyOperationInFlight(
   );
 }
 
-export function recordAiOperation(input: {
+export type AiOperationMetricInput = {
   provider: string;
   operation: string;
   sourceType?: string | null;
@@ -1275,7 +1295,9 @@ export function recordAiOperation(input: {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
-}): void {
+};
+
+export function recordAiOperation(input: AiOperationMetricInput): void {
   const provider = normalizeLabel(input.provider, 'openai');
   const operation = normalizeLabel(input.operation);
   const sourceType = normalizeLabel(input.sourceType, 'unknown');
@@ -1346,6 +1368,18 @@ export function recordAiOperation(input: {
       token_type: 'total',
     }, totalTokens);
   }
+}
+
+export function recordGptAiOperation(
+  input: Omit<AiOperationMetricInput, 'sourceName'> & {
+    gpt: RegisteredGptMetricIdentity;
+  }
+): void {
+  const { gpt, ...operation } = input;
+  recordAiOperation({
+    ...operation,
+    sourceName: resolveGptMetricLabel(gpt),
+  });
 }
 
 export function recordAiBudgetExceeded(input: {

@@ -18,4 +18,17 @@ describe('requestPathSanitizer', () => {
     expect(sanitizeRequestPath('?queryValue=alpha')).toBe('/');
     expect(resolveSafeRequestPath({ path: '   ', originalUrl: '   ' })).toBe('/');
   });
+
+  it('replaces oversized canonical GPT identifiers before request logging', () => {
+    const oversizedGptId = 'x'.repeat(257);
+    const encodedOversizedGptId = encodeURIComponent('é'.repeat(257));
+    const encodedWhitespaceOnlyGptId = encodeURIComponent(' '.repeat(257));
+    const encodedPaddedGptId = encodeURIComponent(`${' '.repeat(257)}arcanos-core`);
+
+    expect(sanitizeRequestPath(`/gpt/${oversizedGptId}?debug=true`)).toBe('/gpt/invalid');
+    expect(sanitizeRequestPath(`/gpt/${encodedOversizedGptId}`)).toBe('/gpt/invalid');
+    expect(sanitizeRequestPath(`/gpt/${encodedWhitespaceOnlyGptId}`)).toBe('/gpt/invalid');
+    expect(sanitizeRequestPath(`/gpt/${encodedPaddedGptId}`)).toBe('/gpt/invalid');
+    expect(sanitizeRequestPath(`/gpt/${'x'.repeat(256)}`)).toBe(`/gpt/${'x'.repeat(256)}`);
+  });
 });

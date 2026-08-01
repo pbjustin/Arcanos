@@ -74,6 +74,13 @@ Writing vs control:
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
+- GPT identifiers are trimmed, must be non-empty, and may contain at most 256
+  UTF-16 code units. The canonical route returns deterministic HTTP
+  `400` with `BAD_REQUEST` before registry lookup, GPT-specific logging, GPT
+  metrics, job creation, or provider work when that inclusive maximum is
+  exceeded. Its structured request-log path and response metadata use
+  `gptId: "invalid"` instead of the rejected caller value. Short unregistered
+  identifiers retain the existing `404 UNKNOWN_GPT` behavior.
 - Authenticated bridge, GPT Access, and server-established public GPT principals
   may send `Idempotency-Key` when retrying the same submission. The backend
   hashes the key before storage.

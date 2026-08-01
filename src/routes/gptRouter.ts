@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import express from "express";
+import express, { type RequestHandler } from "express";
 import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
 import { publicProviderGptAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
 import {
@@ -20,6 +20,7 @@ import {
 import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
+import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import {
   applyAIDegradedResponseHeaders,
   extractAIDegradedResponseMetadata
@@ -1203,7 +1204,38 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
   return next('route');
 });
 
-router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
+const canonicalGptIdentifierBoundary: RequestHandler = (req, res, next) => {
+  const gptIdValidation = validateGptIdentifier(req.params.gptId);
+  if (!gptIdValidation.ok) {
+    const requestId = req.requestId;
+    const traceId = resolveDispatcherTraceId(req, requestId);
+    applyCanonicalGptRouteHeaders(res);
+    return sendGuardedGptJsonResponse(
+      req,
+      res,
+      buildGptDispatcherErrorPayload({
+        requestId,
+        traceId,
+        gptId: gptIdValidation.value,
+        action: GPT_QUERY_ACTION,
+        code: gptIdValidation.error.code,
+        message: gptIdValidation.error.message,
+        route: 'gpt_id_boundary'
+      }),
+      'gpt.response.gpt_id_boundary',
+      400
+    );
+  }
+
+  req.params.gptId = gptIdValidation.value;
+  next();
+};
+
+router.post(
+  "/:gptId",
+  canonicalGptIdentifierBoundary,
+  publicProviderGptAdmission,
+  async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
   const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
@@ -1260,7 +1292,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
         abortMessage: timeoutMessage
       },
       async () => {
-        const incomingGptId = req.params.gptId;
+        const incomingGptId = routeGptId;
         const requestLogger = (req as any).logger;
         const priorityQueueConfigured = priorityGpt && isPriorityQueueEnabled();
         const normalizedBody = normalizeGptRequestBody(req.body);
@@ -1571,6 +1603,11 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
           );
         }
 
+        const registeredGptMetricIdentity = {
+          kind: 'registered' as const,
+          id: routingValidation.plan.matchedId,
+        };
+
         const memoryInterception = classifyGptMemoryInterception({
           body: effectiveBody,
           availableActions: routingValidation.plan.availableActions,
@@ -1873,6 +1910,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
           try {
             const directEnvelope = await executeDirectGptAction({
               gptId: incomingGptId,
+              gptMetricIdentity: registeredGptMetricIdentity,
               prompt: promptText!,
               requestId,
               action: GPT_QUERY_AND_WAIT_ACTION,
@@ -1882,7 +1920,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
             });
             const totalLatencyMs = Date.now() - directActionStartedAt;
             recordGptFastPathLatency({
-              gptId: incomingGptId,
+              gpt: registeredGptMetricIdentity,
               outcome: 'completed',
               durationMs: totalLatencyMs
             });
@@ -1944,7 +1982,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
             const directActionFailureStatus = resolveDirectGptActionFailureStatus(error);
             const timedOut = directActionFailureStatus === 504;
             recordGptFastPathLatency({
-              gptId: incomingGptId,
+              gpt: registeredGptMetricIdentity,
               outcome: 'error',
               durationMs: Date.now() - directActionStartedAt
             });
@@ -2063,6 +2101,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
           try {
             const fastPathEnvelope = await executeFastGptPrompt({
               gptId: incomingGptId,
+              gptMetricIdentity: registeredGptMetricIdentity,
               prompt: promptText,
               requestId,
               timeoutMs: fastPathTimeoutMs,
@@ -2072,7 +2111,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
             });
             const totalLatencyMs = Date.now() - fastPathStartedAt;
             recordGptFastPathLatency({
-              gptId: incomingGptId,
+              gpt: registeredGptMetricIdentity,
               outcome: 'completed',
               durationMs: totalLatencyMs
             });
@@ -2116,7 +2155,7 @@ router.post("/:gptId", publicProviderGptAdmission, async (req, res, next) => {
 
             const totalLatencyMs = Date.now() - fastPathStartedAt;
             recordGptFastPathLatency({
-              gptId: incomingGptId,
+              gpt: registeredGptMetricIdentity,
               outcome: 'fallback',
               durationMs: totalLatencyMs
             });

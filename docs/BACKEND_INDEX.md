@@ -797,6 +797,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `src/shared/gpt/gptExecutionPlanner.ts` |
 | `src/shared/gpt/gptFastPath.ts` |
 | `src/shared/gpt/gptIdempotency.ts` |
+| `src/shared/gpt/gptIdentifier.ts` |
 | `src/shared/gpt/gptJobLifecycle.ts` |
 | `src/shared/gpt/gptJobResult.ts` |
 | `src/shared/gpt/gptModuleAction.ts` |
