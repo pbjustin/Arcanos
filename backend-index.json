@@ -983,6 +983,9 @@
           "relativePath": "src/platform/runtime/prompts.ts"
         },
         {
+          "relativePath": "src/platform/runtime/publicProviderRateLimitPolicy.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/railway.ts"
         },
         {
@@ -2360,6 +2363,9 @@
           "relativePath": "src/shared/http/aiDegradedHeaders.ts"
         },
         {
+          "relativePath": "src/shared/http/askRequestInput.ts"
+        },
+        {
           "relativePath": "src/shared/http/asyncHandler.ts"
         },
         {
@@ -2652,6 +2658,9 @@
         },
         {
           "relativePath": "src/transport/http/middleware/memoryPlaneAuth.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/publicProviderAdmission.ts"
         },
         {
           "relativePath": "src/transport/http/middleware/unsafeExecutionGate.ts"
@@ -3902,6 +3911,12 @@
         },
         {
           "relativePath": "tests/public-gaming-canary.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-admission-app-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/public-provider-admission.test.ts"
         },
         {
           "relativePath": "tests/public-worker-health-projection.test.ts"

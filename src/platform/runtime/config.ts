@@ -9,6 +9,10 @@ import type { ReinforcementMode } from "@shared/types/reinforcement.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import { resolveRuntimeCorsConfig } from '@platform/runtime/corsConfig.js';
+import {
+  normalizePublicProviderRateLimitMax,
+  normalizePublicProviderRateLimitWindowMs,
+} from '@platform/runtime/publicProviderRateLimitPolicy.js';
 
 // Load environment variables
 dotenv.config();
@@ -38,6 +42,12 @@ const fallbackStrictEnvironments = (getEnv('FALLBACK_STRICT_ENVIRONMENTS') || 'p
   .split(',')
   .map(value => value.trim())
   .filter(Boolean);
+const publicProviderRateLimitMax = normalizePublicProviderRateLimitMax(
+  getEnv('PUBLIC_PROVIDER_RATE_LIMIT_MAX')
+);
+const publicProviderRateLimitWindowMs = normalizePublicProviderRateLimitWindowMs(
+  getEnv('PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS')
+);
 
 export const config = {
   // Server configuration
@@ -64,7 +74,9 @@ export const config = {
   // Request limits
   limits: {
     jsonLimit: getEnv('JSON_LIMIT') || '10mb',
-    requestTimeout: Number(getEnv('REQUEST_TIMEOUT')) || 30000
+    requestTimeout: Number(getEnv('REQUEST_TIMEOUT')) || 30000,
+    publicProviderRateLimitMax,
+    publicProviderRateLimitWindowMs
   },
 
   fallback: {

@@ -1,0 +1,574 @@
+import type { NextFunction, Request, Response } from 'express';
+import { afterAll, describe, expect, it, jest } from '@jest/globals';
+
+const trackedEnvironmentNames = [
+  'NODE_ENV',
+  'DATABASE_URL',
+  'OPENAI_API_KEY',
+  'RAILWAY_OPENAI_API_KEY',
+  'API_KEY',
+  'OPENAI_KEY',
+  'RUN_WORKERS',
+  'DISABLE_EXTERNAL_CALLS',
+  'DISABLE_DIAGNOSTICS_CRON',
+  'DIAGNOSTICS_SHARED_METRICS',
+  'ASK_ROUTE_MODE',
+  'PUBLIC_PROVIDER_RATE_LIMIT_MAX',
+  'PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS',
+] as const;
+
+const originalEnvironment = new Map(
+  trackedEnvironmentNames.map((name) => [name, process.env[name]] as const)
+);
+
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = '';
+process.env.OPENAI_API_KEY = '';
+process.env.RAILWAY_OPENAI_API_KEY = '';
+process.env.API_KEY = '';
+process.env.OPENAI_KEY = '';
+process.env.RUN_WORKERS = 'false';
+process.env.DISABLE_EXTERNAL_CALLS = 'true';
+process.env.DISABLE_DIAGNOSTICS_CRON = 'true';
+process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
+process.env.ASK_ROUTE_MODE = 'compat';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '5';
+process.env.PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS = '60000';
+
+const executeArcanosPipelineMock = jest.fn(async () => ({
+  result: 'pipeline-ok',
+  stages: ['analysis', 'draft'],
+  meta: {},
+  activeModel: 'test-model',
+  routingStages: [],
+}));
+const routeGptRequestMock = jest.fn(async (gptId: string) => ({
+  ok: true,
+  result: {
+    ok: true,
+    route: 'diagnostic',
+    message: 'backend operational',
+  },
+  _route: {
+    requestId: 'diagnostic-request',
+    traceId: 'diagnostic-trace',
+    gptId,
+    module: 'diagnostic',
+    action: 'diagnostic',
+    route: 'diagnostic',
+    availableActions: [],
+    moduleVersion: null,
+    timestamp: '2026-07-31T00:00:00.000Z',
+  },
+}));
+const resolveGptRoutingMock = jest.fn(async (gptId: string) => ({
+  ok: true,
+  plan: {
+    matchedId: gptId,
+    module: 'ARCANOS:CORE',
+    route: 'core',
+    action: 'query',
+    availableActions: ['query'],
+    moduleVersion: null,
+    moduleDescription: null,
+    matchMethod: 'exact',
+  },
+  _route: {
+    gptId,
+    route: 'core',
+    module: 'ARCANOS:CORE',
+    action: 'query',
+    timestamp: '2026-07-31T00:00:00.000Z',
+  },
+}));
+const researchMock = jest.fn(async () => ({
+  summary: 'research-ok',
+  sources: [],
+}));
+const executeDirectGptActionMock = jest.fn(async () => ({
+  ok: true,
+  result: {
+    result: 'direct-ok',
+    module: 'direct_action',
+    activeModel: 'test-model',
+    routingStages: ['GPT-DIRECT-ACTION'],
+  },
+  directAction: {
+    inline: true,
+    queueBypassed: true,
+    orchestrationBypassed: true,
+    action: 'query_and_wait',
+    timeoutMs: 24_000,
+    modelLatencyMs: 1,
+    totalLatencyMs: 1,
+  },
+  _route: {
+    requestId: 'direct-request',
+    gptId: 'arcanos-core',
+    module: 'GPT:DIRECT_ACTION',
+    action: 'query_and_wait',
+    route: 'direct_action',
+    timestamp: '2026-07-31T00:00:00.000Z',
+  },
+}));
+const executeFastGptPromptMock = jest.fn();
+const runTrinityWritingPipelineMock = jest.fn(async () => ({
+  result: '{}',
+  stages: [],
+  meta: {},
+  activeModel: 'test-model',
+  routingStages: [],
+}));
+
+jest.unstable_mockModule('@services/arcanosPipeline.js', () => ({
+  executeArcanosPipeline: executeArcanosPipelineMock,
+}));
+jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  routeGptRequest: routeGptRequestMock,
+  resolveGptRouting: resolveGptRoutingMock,
+}));
+jest.unstable_mockModule('@services/researchHub.js', () => ({
+  connectResearchBridge: jest.fn(() => ({
+    requestResearch: researchMock,
+    subscribe: jest.fn(() => jest.fn()),
+  })),
+  requestResearchViaHub: researchMock,
+}));
+jest.unstable_mockModule('@services/gptFastPath.js', () => ({
+  executeDirectGptAction: executeDirectGptActionMock,
+  executeFastGptPrompt: executeFastGptPromptMock,
+}));
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock,
+  applyTrinityGenerationInvariant: (result: unknown) => result,
+}));
+jest.unstable_mockModule('@core/init-openai.js', () => ({
+  initOpenAI: jest.fn(),
+}));
+jest.unstable_mockModule('@core/diagnostics.js', () => ({
+  setupDiagnostics: jest.fn(),
+  writePublicHealthResponse: jest.fn(async (_req: Request, res: Response) => {
+    res.status(200).json({ status: 'ok' });
+  }),
+}));
+jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
+  runtimeDiagnosticsService: {
+    logStartupSummary: jest.fn(async () => undefined),
+    recordRequestCompletion: jest.fn(),
+  },
+}));
+jest.unstable_mockModule('@transport/http/middleware/unsafeExecutionGate.js', () => ({
+  unsafeExecutionGate: (_req: Request, _res: Response, next: NextFunction) => next(),
+}));
+jest.unstable_mockModule('@transport/http/gamingIngressAudit.js', () => ({
+  gamingIngressAudit: (_req: Request, _res: Response, next: NextFunction) => next(),
+}));
+
+const request = (await import('supertest')).default;
+const { createApp } = await import('../src/app.js');
+
+function addRotatedCallerMetadata(
+  pendingRequest: import('supertest').Test,
+  suffix: string
+): import('supertest').Test {
+  return pendingRequest
+    .query({ sessionId: `query-session-${suffix}` })
+    .set('x-session-id', `header-session-${suffix}`)
+    .set('mcp-session-id', `mcp-session-${suffix}`)
+    .set('Authorization', `Bearer caller-selected-${suffix}`)
+    .set('x-forwarded-for', `198.51.100.${suffix}`);
+}
+
+describe('public provider admission in the production application composition', () => {
+  it('shares one caller-independent ceiling without charging health, control, or DAG lanes', async () => {
+    const app = createApp();
+    app.set('trust proxy', true);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const healthResponse = await request(app).get('/healthz');
+      const controlResponse = await request(app).get('/api/control-plane/allowlist');
+
+      expect(healthResponse.status).toBe(200);
+      expect(controlResponse.status).not.toBe(429);
+    }
+
+    const admittedResearchResponse = await addRotatedCallerMetadata(
+      request(app).post('/commands/research'),
+      '10'
+    )
+      .set('x-confirmed', 'yes')
+      .send({
+        topic: 'Bounded test research',
+        urls: [],
+        sessionId: 'body-session-10',
+      });
+
+    expect(admittedResearchResponse.status).toBe(200);
+    expect(admittedResearchResponse.headers['cache-control']).toBe('no-store');
+    expect(researchMock).toHaveBeenCalledTimes(1);
+
+    const pipelineResponse = await addRotatedCallerMetadata(
+      request(app).post('/arcanos-pipeline'),
+      '20'
+    ).send({
+      messages: [],
+      sessionId: 'body-session-10',
+    });
+
+    expect(pipelineResponse.status).toBe(200);
+    expect(pipelineResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
+    expect(pipelineResponse.headers['x-ratelimit-remaining']).toBe('3');
+    expect(pipelineResponse.headers['cache-control']).toBe('no-store');
+    expect(executeArcanosPipelineMock).toHaveBeenCalledTimes(1);
+
+    routeGptRequestMock.mockRejectedValueOnce(new Error('provider failure sentinel'));
+    const dispatchResponse = await addRotatedCallerMetadata(
+      request(app).post('/dispatch'),
+      '30'
+    ).send({
+      target: 'gpt',
+      action: 'query',
+      prompt: 'Use the GPT lane.',
+      sessionId: 'body-session-30',
+    });
+
+    expect(dispatchResponse.status).toBe(500);
+    expect(dispatchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
+    expect(dispatchResponse.headers['x-ratelimit-remaining']).toBe('2');
+    expect(dispatchResponse.headers['cache-control']).toBe('no-store');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+
+    const directDiagnosticActionResponse = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '40'
+    ).send({
+      action: 'query_and_wait',
+      prompt: 'ping',
+      sessionId: 'body-session-40',
+    });
+
+    expect(directDiagnosticActionResponse.status).toBe(200);
+    expect(directDiagnosticActionResponse.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(directDiagnosticActionResponse.headers['x-ratelimit-remaining']).toBe('1');
+    expect(directDiagnosticActionResponse.headers['cache-control']).toBe('no-store');
+    expect(executeDirectGptActionMock).toHaveBeenCalledTimes(1);
+
+    routeGptRequestMock.mockRejectedValueOnce(new Error('canonical provider failure sentinel'));
+    const canonicalGptResponse = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '50'
+    ).send({
+      action: 'query',
+      prompt: 'Use the canonical GPT route.',
+      sessionId: 'body-session-50',
+    });
+
+    expect(canonicalGptResponse.status).toBe(500);
+    expect(canonicalGptResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
+    expect(canonicalGptResponse.headers['x-ratelimit-remaining']).toBe('0');
+    expect(canonicalGptResponse.headers['cache-control']).toBe('no-store');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(2);
+
+    const deniedResearchResponse = await addRotatedCallerMetadata(
+      request(app).post('/commands/research'),
+      '60'
+    )
+      .set('x-confirmed', 'yes')
+      .send({
+        topic: 'Bounded test research',
+        urls: [],
+        sessionId: 'body-session-60',
+      });
+
+    expect(deniedResearchResponse.status).toBe(429);
+    expect(deniedResearchResponse.headers['x-ratelimit-bucket']).toBe('public-provider-instance');
+    expect(deniedResearchResponse.headers['x-ratelimit-limit']).toBe('5');
+    expect(deniedResearchResponse.headers['x-ratelimit-remaining']).toBe('0');
+    expect(deniedResearchResponse.headers['retry-after']).toBeTruthy();
+    expect(deniedResearchResponse.headers['cache-control']).toBe('no-store');
+    expect(researchMock).toHaveBeenCalledTimes(1);
+
+    const deniedDirectDiagnosticAction = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '70'
+    ).send({
+      action: 'query_and_wait',
+      prompt: 'ping',
+      sessionId: 'body-session-70',
+    });
+
+    expect(deniedDirectDiagnosticAction.status).toBe(429);
+    expect(deniedDirectDiagnosticAction.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedDirectDiagnosticAction.headers['cache-control']).toBe('no-store');
+    expect(executeDirectGptActionMock).toHaveBeenCalledTimes(1);
+
+    const deniedFastPathDiagnosticMode = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '80'
+    ).send({
+      mode: 'diagnostic',
+      prompt: 'Write a haiku.',
+      sessionId: 'body-session-80',
+    });
+
+    expect(deniedFastPathDiagnosticMode.status).toBe(429);
+    expect(deniedFastPathDiagnosticMode.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedFastPathDiagnosticMode.headers['cache-control']).toBe('no-store');
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+
+    const explicitPingWithGenerativePrompt = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '79'
+    ).send({
+      action: 'ping',
+      prompt: 'Write a haiku.',
+      sessionId: 'body-session-79',
+    });
+
+    expect(explicitPingWithGenerativePrompt.status).not.toBe(429);
+    expect(explicitPingWithGenerativePrompt.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+
+    const diagnosticModeWithExplicitNonQueryAction = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '78'
+    ).send({
+      mode: 'diagnostic',
+      action: 'generateBooking',
+      prompt: 'Write a haiku.',
+      sessionId: 'body-session-78',
+    });
+
+    expect(diagnosticModeWithExplicitNonQueryAction.status).not.toBe(429);
+    expect(diagnosticModeWithExplicitNonQueryAction.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+
+    const routeCallsBeforeDeniedPingAlias = routeGptRequestMock.mock.calls.length;
+    const deniedHeaderPingAlias = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '77'
+    )
+      .set('x-gpt-action', 'ping')
+      .send({ prompt: 'Write a haiku.', sessionId: 'body-session-77' });
+
+    expect(deniedHeaderPingAlias.status).toBe(429);
+    expect(deniedHeaderPingAlias.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedHeaderPingAlias.headers['cache-control']).toBe('no-store');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(routeCallsBeforeDeniedPingAlias);
+
+    const routeCallsBeforeDeniedPayloadPromptOverride = routeGptRequestMock.mock.calls.length;
+    const deniedPayloadPromptOverride = await addRotatedCallerMetadata(
+      request(app).post('/gpt/arcanos-core'),
+      '74'
+    ).send({
+      prompt: 'ping',
+      payload: { prompt: 'Write a haiku.' },
+      sessionId: 'body-session-74',
+    });
+
+    expect(deniedPayloadPromptOverride.status).toBe(429);
+    expect(deniedPayloadPromptOverride.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedPayloadPromptOverride.headers['cache-control']).toBe('no-store');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(routeCallsBeforeDeniedPayloadPromptOverride);
+
+    const providerFreeApiAliasConflict = await addRotatedCallerMetadata(
+      request(app).post('/api/arcanos/ask'),
+      '73'
+    ).send({
+      prompt: 'ping',
+      message: 'Write a haiku.',
+      sessionId: 'body-session-73',
+    });
+    const deniedApiAliasConflict = await addRotatedCallerMetadata(
+      request(app).post('/api/arcanos/ask'),
+      '72'
+    ).send({
+      prompt: 'Write a haiku.',
+      message: 'ping',
+      sessionId: 'body-session-72',
+    });
+    const providerFreeSanitizedApiMode = await addRotatedCallerMetadata(
+      request(app).post('/api/arcanos/ask'),
+      '67'
+    ).send({
+      mode: 'diag\0nostic',
+      prompt: 'Write a haiku.',
+      sessionId: 'body-session-67',
+    });
+
+    expect(providerFreeApiAliasConflict.status).not.toBe(429);
+    expect(providerFreeApiAliasConflict.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    expect(providerFreeSanitizedApiMode.status).not.toBe(429);
+    expect(providerFreeSanitizedApiMode.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    expect(deniedApiAliasConflict.status).toBe(429);
+    expect(deniedApiAliasConflict.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedApiAliasConflict.headers['cache-control']).toBe('no-store');
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+
+    const providerFreeDuplicateQuery = await addRotatedCallerMetadata(
+      request(app).get('/brain'),
+      '76'
+    )
+      .query({
+        mode: ['chat', 'system_review'],
+        prompt: ['ping', 'Write a haiku.'],
+      })
+      .set('x-confirmed', 'yes');
+
+    expect(providerFreeDuplicateQuery.status).not.toBe(429);
+    expect(providerFreeDuplicateQuery.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+
+    const providerFreeBrainAliasConflict = await addRotatedCallerMetadata(
+      request(app).post('/brain'),
+      '71'
+    )
+      .set('x-confirmed', 'yes')
+      .send({
+        prompt: 'ping',
+        message: 'Write a haiku.',
+        sessionId: 'body-session-71',
+      });
+    const deniedBrainAliasConflict = await addRotatedCallerMetadata(
+      request(app).post('/brain'),
+      '69'
+    )
+      .set('x-confirmed', 'yes')
+      .send({
+        prompt: 'Write a haiku.',
+        message: 'ping',
+        sessionId: 'body-session-69',
+      });
+    const deniedSanitizedSystemReview = await addRotatedCallerMetadata(
+      request(app).post('/brain'),
+      '68'
+    )
+      .set('x-confirmed', 'yes')
+      .send({
+        mode: 'system_\0review',
+        prompt: 'ping',
+        sessionId: 'body-session-68',
+      });
+
+    expect(providerFreeBrainAliasConflict.status).not.toBe(429);
+    expect(providerFreeBrainAliasConflict.headers['x-ratelimit-bucket']).not.toBe(
+      'public-provider-instance'
+    );
+    for (const deniedBrainConflict of [
+      deniedBrainAliasConflict,
+      deniedSanitizedSystemReview,
+    ]) {
+      expect(deniedBrainConflict.status).toBe(429);
+      expect(deniedBrainConflict.headers['x-ratelimit-bucket']).toBe(
+        'public-provider-instance'
+      );
+      expect(deniedBrainConflict.headers['cache-control']).toBe('no-store');
+    }
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+
+    const deniedDuplicateSystemReviewQuery = await addRotatedCallerMetadata(
+      request(app).get('/brain'),
+      '75'
+    )
+      .query({ mode: ['system_review', 'chat'], prompt: 'ping' })
+      .set('x-confirmed', 'yes');
+
+    expect(deniedDuplicateSystemReviewQuery.status).toBe(429);
+    expect(deniedDuplicateSystemReviewQuery.headers['x-ratelimit-bucket']).toBe(
+      'public-provider-instance'
+    );
+    expect(deniedDuplicateSystemReviewQuery.headers['cache-control']).toBe('no-store');
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+
+    const deniedSystemReviewPost = await addRotatedCallerMetadata(
+      request(app).post('/brain'),
+      '81'
+    )
+      .set('x-confirmed', 'yes')
+      .send({ mode: 'system_review', prompt: 'ping', sessionId: 'body-session-81' });
+    const deniedSystemReviewGet = await addRotatedCallerMetadata(
+      request(app).get('/brain'),
+      '82'
+    )
+      .query({ mode: 'system_review', prompt: 'ping' })
+      .set('x-confirmed', 'yes');
+    const deniedImplicitHead = await addRotatedCallerMetadata(
+      request(app).head('/brain'),
+      '83'
+    )
+      .set('x-confirmed', 'yes')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({ prompt: 'Write a haiku.', sessionId: 'body-session-83' }));
+
+    for (const deniedBrainResponse of [
+      deniedSystemReviewPost,
+      deniedSystemReviewGet,
+      deniedImplicitHead,
+    ]) {
+      expect(deniedBrainResponse.status).toBe(429);
+      expect(deniedBrainResponse.headers['x-ratelimit-bucket']).toBe(
+        'public-provider-instance'
+      );
+      expect(deniedBrainResponse.headers['cache-control']).toBe('no-store');
+    }
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+
+    const dagResponse = await request(app)
+      .post('/dispatch')
+      .send({ target: 'dag' });
+    const healthAfterExhaustion = await request(app).get('/healthz');
+    const controlAfterExhaustion = await request(app).get('/api/control-plane/allowlist');
+    const postControlAfterExhaustion = await request(app)
+      .post('/api/control-plane/operations')
+      .send({ operation: 'list' });
+    const canonicalDagAfterExhaustion = await request(app)
+      .post('/gpt/arcanos-core')
+      .set('x-gpt-action', 'dag.status')
+      .send({ payload: {} });
+    const diagnosticAfterExhaustion = await request(app)
+      .post('/api/arcanos/ask')
+      .send({ action: 'ping' });
+
+    expect(dagResponse.status).not.toBe(429);
+    expect(healthAfterExhaustion.status).toBe(200);
+    expect(controlAfterExhaustion.status).not.toBe(429);
+    expect(postControlAfterExhaustion.status).not.toBe(429);
+    expect(postControlAfterExhaustion.headers['x-ratelimit-bucket']).not.toBe('public-provider-instance');
+    expect(canonicalDagAfterExhaustion.status).not.toBe(429);
+    expect(canonicalDagAfterExhaustion.headers['x-ratelimit-bucket']).not.toBe('public-provider-instance');
+    expect(diagnosticAfterExhaustion.status).toBe(200);
+    expect(diagnosticAfterExhaustion.headers['x-ratelimit-bucket']).not.toBe('public-provider-instance');
+  });
+});
+
+afterAll(() => {
+  for (const [name, value] of originalEnvironment) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+});

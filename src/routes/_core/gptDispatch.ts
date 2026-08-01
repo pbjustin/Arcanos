@@ -23,7 +23,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
-import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
+import { isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { TrinityControlLeakError } from "@core/logic/trinityWritingPipeline.js";
@@ -55,6 +55,7 @@ import {
   normalizeBooleanFlagValue
 } from "@shared/gpt/gptDirectAction.js";
 import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
+import { extractPreparedGptDispatchPromptText } from '@shared/gpt/gptRequestAction.js';
 import {
   pickGptModuleAction,
   resolveGptModuleRequestedActionAlias,
@@ -937,7 +938,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
   const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
-  const diagnosticTextInput = extractGptPromptText(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
+  const diagnosticTextInput = extractPreparedGptDispatchPromptText(body, preDispatchPayload);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
   const rawPrompt = extractGptPromptText(body) ?? diagnosticTextInput ?? '';
   const normalizedPrompt = extractGptPromptText(preDispatchPayload) ?? diagnosticTextInput ?? '';

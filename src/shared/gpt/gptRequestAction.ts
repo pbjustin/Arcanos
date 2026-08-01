@@ -1,6 +1,12 @@
 import type { Request } from 'express';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
+  extractGptPromptText as extractDispatcherPromptText,
+  extractLastUserMessageText,
+} from '@shared/gpt/messageContentText.js';
+import { extractDiagnosticTextInput } from '@shared/http/diagnosticRequest.js';
+import { isRecord } from '@shared/typeGuards.js';
+import {
   GPT_GET_RESULT_ACTION,
   GPT_GET_STATUS_ACTION,
   GPT_QUERY_ACTION,
@@ -9,6 +15,15 @@ import {
 
 const MAX_ACTION_ALIAS_DEPTH = 8;
 const MAX_ACTION_ALIAS_VALUES = 64;
+const DISPATCH_PROMPT_ALIAS_KEYS = [
+  'message',
+  'prompt',
+  'userInput',
+  'content',
+  'text',
+  'query',
+  'messages',
+] as const;
 
 function readFirstNonEmptyString(value: unknown): string | null {
   const frames: Array<{ values: unknown[]; nextIndex: number; depth: number }> = [];
@@ -102,7 +117,7 @@ function readActionAlias(record: Record<string, unknown> | null | undefined): st
   return actionValue ? normalizeRequestedGptActionName(actionValue) : null;
 }
 
-function resolveRequestedAction(body: unknown): string | null {
+function resolveRequestedActionFromBody(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
   if (!normalizedBody) {
     return null;
@@ -121,14 +136,108 @@ function resolveRequestedAction(body: unknown): string | null {
   return readActionAlias(payload as Record<string, unknown>);
 }
 
-export function resolveRequestedGptActionFromRequest(req: Request): string | null {
-  const headerAction = typeof req.header === 'function'
-    ? readFirstNonEmptyString(req.header('x-gpt-action')) ??
-      readFirstNonEmptyString(req.header('x-arcanos-action'))
-    : null;
+export interface RequestedGptActionInput {
+  body?: unknown;
+  query?: Record<string, unknown>;
+  gptActionHeader?: unknown;
+  arcanosActionHeader?: unknown;
+}
+
+export function resolveRequestedGptAction(input: RequestedGptActionInput): string | null {
+  const headerAction =
+    readFirstNonEmptyString(input.gptActionHeader) ??
+    readFirstNonEmptyString(input.arcanosActionHeader);
+
   return (
-    resolveRequestedAction(req.body) ??
-    readActionAlias(req.query as Record<string, unknown> | undefined) ??
+    resolveRequestedActionFromBody(input.body) ??
+    readActionAlias(input.query) ??
     normalizeRequestedGptActionName(headerAction ?? '')
   );
+}
+
+export function extractGptPromptTextFromRecord(
+  record: Record<string, unknown> | null
+): string | null {
+  const candidate =
+    record?.message ??
+    record?.prompt ??
+    record?.userInput ??
+    record?.content ??
+    record?.text ??
+    record?.query;
+
+  if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    return candidate.trim();
+  }
+
+  return extractLastUserMessageText(record?.messages);
+}
+
+export function extractGptPromptText(body: unknown): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  const payload = normalizedBody?.payload;
+  const payloadRecord = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null;
+
+  return extractGptPromptTextFromRecord(normalizedBody)
+    ?? extractGptPromptTextFromRecord(payloadRecord);
+}
+
+/** Resolve text from the dispatcher's already-prepared payload with its body fallback. */
+export function extractPreparedGptDispatchPromptText(
+  body: unknown,
+  dispatchPayload: unknown
+): string | null {
+  return extractDispatcherPromptText(dispatchPayload)
+    ?? extractDiagnosticTextInput(isRecord(body) ? body : undefined);
+}
+
+/** Match HTTP dispatcher prompt precedence when an explicit payload is present. */
+export function extractGptDispatchPromptText(body: unknown): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  if (!normalizedBody) {
+    return null;
+  }
+
+  let dispatchPayload: unknown = normalizedBody;
+  if (Object.prototype.hasOwnProperty.call(normalizedBody, 'payload')) {
+    const explicitPayload = normalizedBody.payload;
+    if (isRecord(explicitPayload)) {
+      const mergedPayload: Record<string, unknown> = { ...explicitPayload };
+      const explicitPayloadHasPromptAlias = DISPATCH_PROMPT_ALIAS_KEYS.some(
+        (key) => Object.prototype.hasOwnProperty.call(explicitPayload, key)
+      );
+      if (!explicitPayloadHasPromptAlias) {
+        for (const key of DISPATCH_PROMPT_ALIAS_KEYS) {
+          const forwardedValue = normalizedBody[key];
+          if (forwardedValue !== undefined) {
+            mergedPayload[key] = forwardedValue;
+          }
+        }
+      }
+      dispatchPayload = mergedPayload;
+    } else {
+      dispatchPayload = explicitPayload;
+    }
+  }
+
+  return extractPreparedGptDispatchPromptText(normalizedBody, dispatchPayload);
+}
+
+export function extractGptPromptTextFromRequest(req: Request): string | null {
+  return (
+    extractGptPromptText(req.body) ??
+    extractGptPromptTextFromRecord(req.query as Record<string, unknown>)
+  );
+}
+
+export function resolveRequestedGptActionFromRequest(req: Request): string | null {
+  return resolveRequestedGptAction({
+    body: req.body,
+    query: req.query as Record<string, unknown>,
+    gptActionHeader: typeof req.header === 'function' ? req.header('x-gpt-action') : undefined,
+    arcanosActionHeader:
+      typeof req.header === 'function' ? req.header('x-arcanos-action') : undefined,
+  });
 }

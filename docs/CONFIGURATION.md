@@ -229,7 +229,22 @@ and never calls `FLUSHDB`. That job must pass before activation.
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 | `JSON_LIMIT` | `10mb` | JSON payload size limit. |
 | `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_MAX` | `100` | Integer HTTP admissions allowed across all public provider-capable routes in one backend process during the shared window. Valid range: `1` through `1000000`. Invalid or out-of-range values fall back to `100`; there is no disable value. |
+| `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS` | `900000` | Shared public-provider admission window in milliseconds. Valid range: `1000` through `2592000000` (30 days). Invalid or out-of-range values fall back to 15 minutes. |
 | `ALLOWED_ORIGINS` | — | Optional comma-separated exact HTTP(S) browser origins. Outside development, missing or blank configuration disables cross-origin access. |
+
+The public-provider limit uses one caller-independent, constant-key counter per
+Node backend process. Rotating session, authorization, or forwarding metadata
+does not create a new bucket, and existing route/user fairness limiters remain
+in force. Each provider-capable admission attempt consumes one unit before
+later route validation or route/user fairness, while provider-free diagnostics
+and control lanes consume none. One HTTP request consumes only one unit even if
+it crosses the canonical GPT compatibility seam or the selected pipeline makes
+several provider calls. `ASK_ROUTE_MODE=compat` brings `GET /brain`, implicit
+`HEAD /brain`, and `POST /brain` under this ceiling; GET uses query input while
+POST and HEAD use body input. The default `gone` response is not charged.
+This is intentionally not a cross-replica, token, cost, or downstream-SDK-call
+budget; a shared-store ceiling requires a separately coordinated rollout.
 
 ### Browser CORS policy
 

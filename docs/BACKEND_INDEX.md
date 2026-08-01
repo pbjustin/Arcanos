@@ -346,6 +346,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `src/platform/runtime/prAssistantMessages.ts` |
 | `src/platform/runtime/prAssistantTemplates.ts` |
 | `src/platform/runtime/prompts.ts` |
+| `src/platform/runtime/publicProviderRateLimitPolicy.ts` |
 | `src/platform/runtime/railway.ts` |
 | `src/platform/runtime/reasoningTemplates.ts` |
 | `src/platform/runtime/redis.ts` |
@@ -805,6 +806,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `src/shared/gpt/priorityGpt.ts` |
 | `src/shared/hashUtils.ts` |
 | `src/shared/http/aiDegradedHeaders.ts` |
+| `src/shared/http/askRequestInput.ts` |
 | `src/shared/http/asyncHandler.ts` |
 | `src/shared/http/clientJsonPayload.ts` |
 | `src/shared/http/clientResponseCommon.ts` |
@@ -903,6 +905,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `src/transport/http/middleware/memoryConsistencyGate/types.ts` |
 | `src/transport/http/middleware/memoryConsistencyGate/utils.ts` |
 | `src/transport/http/middleware/memoryPlaneAuth.ts` |
+| `src/transport/http/middleware/publicProviderAdmission.ts` |
 | `src/transport/http/middleware/unsafeExecutionGate.ts` |
 | `src/transport/http/middleware/validation.ts` |
 | `src/transport/http/middleware/workerHealRateLimit.ts` |
@@ -1323,6 +1326,8 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `tests/promptRouteShortcuts.test.ts` |
 | `tests/prompts-system.test.ts` |
 | `tests/public-gaming-canary.test.ts` |
+| `tests/public-provider-admission-app-composition.test.ts` |
+| `tests/public-provider-admission.test.ts` |
 | `tests/public-worker-health-projection.test.ts` |
 | `tests/purpose-bound-credential.test.ts` |
 | `tests/query-finetune-rate-limit.test.ts` |

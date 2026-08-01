@@ -153,6 +153,30 @@ describe('gpt dispatch compatibility', () => {
     );
   });
 
+  it('uses an explicit payload prompt instead of a conflicting top-level diagnostic prompt', async () => {
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        prompt: 'ping',
+        payload: {
+          prompt: 'Write a haiku.',
+          extra: 'kept'
+        }
+      },
+      requestId: 'req_payload_overrides_diagnostic_prompt'
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        prompt: 'Write a haiku.',
+        extra: 'kept'
+      })
+    );
+  });
+
   it('stores the GPT route template instead of caller-controlled URL segments in trace metadata', async () => {
     const previousMode = process.env.PROMPT_DEBUG_TRACE_MODE;
     const previousPersist = process.env.PROMPT_DEBUG_TRACE_PERSIST;

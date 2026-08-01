@@ -147,7 +147,7 @@ async function sendSimulationStream(
 ): Promise<void> {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-store, no-cache',
     'Connection': 'keep-alive'
   });
 

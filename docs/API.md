@@ -26,6 +26,21 @@ Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Trusted GPT presence path: a request GPT ID in configured `TRUSTED_GPT_IDS` plus a non-empty `x-arcanos-confirm-token`. In the current middleware this header is a presence marker for trusted IDs; it is not consumed or validated against the one-time-token store. Because the request path, body, or header can supply the GPT ID, this setting is not caller authentication. Use it only behind deployment middleware that authenticates the caller and binds the permitted identity.
 - Automation secret: configured header (default `x-arcanos-automation`)
 
+Public provider-capable HTTP ingress shares one caller-independent admission
+ceiling per backend process. This covers canonical GPT writing requests,
+prompt, pipeline, code-generation, public media/search/simulation, enabled
+legacy GPT aliases, and `GET`, implicit `HEAD`, and `POST` `/brain` only when `ASK_ROUTE_MODE` is
+`compat`. Health/status probes, provider-free diagnostics, authenticated
+control-plane paths, canonical GPT control/DAG/MCP/job actions, and the
+DAG/MCP/tool lanes of `/dispatch` do not consume it. Accepted and rejected
+provider admissions use `Cache-Control: no-store`. The shared middleware sets
+`X-RateLimit-*` headers; an admitted response may report a later route/user
+fairness bucket instead. Exhaustion always returns HTTP `429` with
+`X-RateLimit-Bucket: public-provider-instance` and does not enter the downstream
+route handler. Configure the finite ceiling with `PUBLIC_PROVIDER_RATE_LIMIT_MAX`
+and `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS`; it supplements, rather than
+replaces, route/user fairness limits.
+
 ## Run locally
 Quick probes:
 ```bash
@@ -41,6 +56,7 @@ and confirmation-gated flows after deploy.
 
 ## Troubleshooting
 - 403 with `CONFIRMATION_REQUIRED`: use confirmation flow headers.
+- 429 with bucket `public-provider-instance`: wait for the shared process window shown by `Retry-After`; changing caller metadata does not create a new bucket.
 - 503 from AI routes: check OpenAI key config and upstream status.
 - 404 on expected route: verify method and mounted path prefix.
 
@@ -261,7 +277,7 @@ correlation. Railway deployments use `GET /readyz` for activation; retain
   run can be created; GPT-selected requests retain compatibility behavior;
   asynchronous branch failures return the stable `500 DISPATCH_FAILED`
   envelope without internal exception text)
-- `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
+- `GET|HEAD|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation; GET uses query input while POST and implicit HEAD use body input)
 - `GET /trinity/status` (public aggregate worker-health projection; `no-store`)
 - `POST /arcanos` (confirmation required)
 - `POST /arcanos-pipeline`
