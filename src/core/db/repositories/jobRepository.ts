@@ -173,6 +173,7 @@ export interface FailPendingJobIfUnclaimedOptions {
 export interface RecoverStaleJobsOptions {
   staleAfterMs: number;
   maxRetries?: number;
+  batchSize?: number;
 }
 
 export interface RecoverStaleJobsResult {
@@ -188,6 +189,7 @@ export interface RecoverStalledJobsForWorkersOptions {
   staleAfterMs: number;
   maxRetries?: number;
   stalledJobAction?: StalledJobRecoveryAction;
+  batchSize?: number;
 }
 
 export interface RecoverStalledJobsForWorkersResult {
@@ -587,6 +589,8 @@ function resolveReusableFingerprintStatuses(idempotencyOrigin: 'explicit' | 'der
 
 export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
 export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 45_000;
+export const DEFAULT_JOB_WORKER_RECOVERY_BATCH_SIZE = 100;
+export const MAX_JOB_WORKER_RECOVERY_BATCH_SIZE = 1_000;
 export const DEFAULT_FAILED_JOB_RETENTION_COUNT = 50;
 export const DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_FAILED_JOB_RETENTION_COUNT = 500;
@@ -616,6 +620,21 @@ export function resolveJobWorkerStaleAfterMs(
   }
 
   return Math.max(1_000, Math.trunc(parsedValue));
+}
+
+export function resolveJobWorkerRecoveryBatchSize(value: unknown): number {
+  const parsedValue = typeof value === 'string' || typeof value === 'number'
+    ? Number(value)
+    : Number.NaN;
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_JOB_WORKER_RECOVERY_BATCH_SIZE;
+  }
+
+  return Math.min(
+    MAX_JOB_WORKER_RECOVERY_BATCH_SIZE,
+    Math.max(1, Math.trunc(parsedValue))
+  );
 }
 
 function normalizeFailedJobRetentionCount(value: number | undefined): number {
@@ -1934,8 +1953,8 @@ export async function deferJobForProviderRecovery(
 /**
  * Recover stale running jobs whose leases expired or heartbeats disappeared.
  * Purpose: self-heal queue state after worker crashes or hung executions.
- * Inputs/outputs: accepts stale timing and retry limits; returns recovered and terminally failed job ids.
- * Edge case behavior: jobs that already exceeded retry caps are marked failed instead of re-queued.
+ * Inputs/outputs: accepts stale timing, retry limits, and an optional batch bound; returns recovered and terminally failed job ids.
+ * Edge case behavior: jobs that already exceeded retry caps are marked failed instead of re-queued; locked/overflow rows remain for later passes.
  */
 export async function recoverStaleJobs(
   options: RecoverStaleJobsOptions
@@ -1948,6 +1967,9 @@ export async function recoverStaleJobs(
   }
 
   const staleAfterMs = Math.max(1_000, options.staleAfterMs);
+  const batchSize = resolveJobWorkerRecoveryBatchSize(
+    options.batchSize ?? process.env.JOB_WORKER_RECOVERY_BATCH_SIZE
+  );
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1962,8 +1984,10 @@ export async function recoverStaleJobs(
            OR (last_heartbeat_at IS NULL AND started_at < NOW() - ($1::bigint * INTERVAL '1 millisecond'))
            OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($1::bigint * INTERVAL '1 millisecond'))
          )
-       FOR UPDATE`,
-      [staleAfterMs]
+       ORDER BY updated_at ASC NULLS FIRST, id ASC
+       LIMIT $2::int
+       FOR UPDATE SKIP LOCKED`,
+      [staleAfterMs, batchSize]
     );
 
     const recoveredJobs: string[] = [];
@@ -2127,8 +2151,8 @@ export async function recoverStaleJobs(
 /**
  * Recover running jobs whose last assigned workers stopped heartbeating.
  * Purpose: reclaim work quickly after worker crashes or hung slots using the persisted worker heartbeat stream.
- * Inputs/outputs: accepts stale worker ids, stale timing, and retry policy; returns the affected worker and job ids.
- * Edge case behavior: cancelled jobs resolve to `cancelled`, retry-exhausted jobs become dead-lettered retained failures, and empty worker-id sets no-op.
+ * Inputs/outputs: accepts stale worker ids, stale timing, retry policy, and an optional batch bound; returns the affected worker and job ids.
+ * Edge case behavior: cancelled jobs resolve to `cancelled`, retry-exhausted jobs become dead-lettered retained failures, locked/overflow rows remain for later passes, and empty worker-id sets no-op.
  */
 export async function recoverStalledJobsForWorkers(
   options: RecoverStalledJobsForWorkersOptions
@@ -2157,6 +2181,9 @@ export async function recoverStalledJobsForWorkers(
   }
 
   const staleAfterMs = Math.max(1_000, options.staleAfterMs);
+  const batchSize = resolveJobWorkerRecoveryBatchSize(
+    options.batchSize ?? process.env.JOB_WORKER_RECOVERY_BATCH_SIZE
+  );
   const stalledJobAction: StalledJobRecoveryAction =
     options.stalledJobAction === 'dead_letter' ? 'dead_letter' : 'requeue';
   const client = await pool.connect();
@@ -2187,8 +2214,10 @@ export async function recoverStalledJobsForWorkers(
            OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
            OR updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
          )
-       FOR UPDATE`,
-      [normalizedWorkerIds, staleAfterMs]
+       ORDER BY updated_at ASC NULLS FIRST, id ASC
+       LIMIT $3::int
+       FOR UPDATE SKIP LOCKED`,
+      [normalizedWorkerIds, staleAfterMs, batchSize]
     );
 
     const stalledJobIds: string[] = [];

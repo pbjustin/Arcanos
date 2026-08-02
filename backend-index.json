@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T23:17:00.881Z",
+  "generatedAt": "2026-08-02T00:38:42.968Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3587,6 +3587,9 @@
         },
         {
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/job-stale-recovery-batching.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/job-worker-budget-identity.pg18.integration.test.ts"

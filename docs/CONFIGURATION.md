@@ -712,6 +712,7 @@ database URL as a command-line argument.
 | `JOB_WORKER_DB_BOOTSTRAP_RETRY_MS` | `5000` | Initial retry delay while waiting for database connectivity. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS` | `30000` | Max DB bootstrap retry delay. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS` | `0` | `0` means retry indefinitely. |
+| `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` | Maximum generic stale jobs locked and transitioned in one recovery transaction, clamped to 1-1,000. Global and worker-targeted passes each apply the bound independently; oldest visible unlocked rows are processed first and overflow remains for later passes. |
 | `JOB_EVENTS_CLEANUP_ENABLED` | `true` | Enables best-effort `job_events` retention cleanup during worker inspection. Legacy `JOB_EVENT_CLEANUP_ENABLED` is also accepted. |
 | `JOB_EVENTS_RETENTION_DAYS` | `30` | Retains recent job timeline events for operational forensics. Values are bounded to 1-365 days. Legacy `JOB_EVENT_RETENTION_DAYS` is also accepted. |
 | `JOB_EVENTS_CLEANUP_BATCH_SIZE` | `1000` | Maximum `job_events` rows matched or deleted per cleanup run. Values are bounded to 1-10000 to avoid long table locks. Legacy `JOB_EVENT_CLEANUP_BATCH_SIZE` is also accepted. |
@@ -917,6 +918,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
 | `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |
 | `JOB_WORKER_STALE_AFTER_MS` | `45000` | Age after which a worker heartbeat is considered stale. |
+| `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` (commented) | Per-transaction stale-recovery lock/transition bound, clamped to 1-1,000. This bounds selected rows and result arrays, not the underlying scan; overlapping passes skip locked rows and may process separate batches. |
 | `JOB_WORKER_WATCHDOG_MS` | `10000` | Worker watchdog inspection interval. |
 | `JOB_WORKER_WATCHDOG_IDLE_MS` | `120000` | Idle threshold used by the worker watchdog. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | `420000` (code default) | Worker Trinity runtime budget. |
