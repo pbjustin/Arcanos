@@ -359,8 +359,8 @@ describe('DAG HTTP ingress boundary', () => {
     const urlencodedParserIndex = appSource.indexOf(
       'app.use(express.urlencoded({ extended: true }))'
     );
-    const dispatchBoundaryIndex = appSource.indexOf(
-      "app.post('/dispatch', dispatchDagCompatibilityBoundary)"
+    const dispatchBoundaryIndex = appSource.search(
+      /app\.post\(\s*['"]\/dispatch['"],\s*dispatchDagCompatibilityBoundary\b/
     );
     const unsafeGateIndex = appSource.indexOf('app.use(unsafeExecutionGate)');
 
