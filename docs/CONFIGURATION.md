@@ -725,13 +725,26 @@ can charge one exact worker-group budget. The database column and concurrent
 time-window index in `migrations/20260801_job_worker_stats_identity_v1/` must be
 applied before a future production cutover. Old workers do not stamp the new
 identity, so mixed old/new worker revisions must not overlap during that
-cutover. Draining old workers alone is insufficient: recent legacy terminal
-rows remain null inside the trailing-hour budget. Keep generic claims quiesced
-for one full hour after the final legacy-row update, or separately authorize a
-bounded exact backfill/transition reader using confirmed slot-to-group evidence,
-before enabling the new reader. The quiesced path also requires a zero-null
-check over budget-eligible running/terminal rows in the trailing hour. Existing
-null rows are never inferred from producer or lease prefixes.
+cutover. Compatible-worker bootstrap performs stale recovery and GPT lifecycle
+cleanup before reading exact stats, so a legacy row can receive a fresh
+`updated_at` while `stats_worker_id` remains null. The mutable population
+includes recoverable running rows, pending GPT rows, and retained terminal GPT
+rows. A quiet-window-only transition is unsupported. Draining workers and
+waiting one hour alone is insufficient.
+
+Establish one continuous freeze of all `job_data` mutators before either path.
+Every transition, including an exact backfill, must run under the same continuous
+freeze. Under it, use a reviewed, bounded exact backfill based on confirmed
+slot-to-group evidence or take the no-backfill path. Fail closed if any affected
+row cannot be mapped or accounted for exactly.
+
+Both paths must pass the migration README's common post-transition read-only
+gate: zero generic running rows, zero recent null budget rows, zero null pending
+GPT rows, and zero null retained terminal GPT rows. A one-shot read cannot close
+a writer race. The compatible worker must be the first released mutator.
+Complete compatible worker activation and bootstrap/readiness verification
+before releasing the remaining compatible writers. Existing null rows are never
+inferred from producer or lease prefixes.
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 

@@ -168,14 +168,27 @@ dependency-free plain column before removing it. Recovery and rollback use an
 access-exclusive `job_data` lock to keep verification and removal inseparable;
 all phases must run under one reviewed trusted schema/search-path context.
 
-Old workers do not stamp the column. Draining them alone would undercount the
-trailing-hour budget because their recent terminal rows remain null. A future
-production rollout must either keep generic claims quiesced until one full hour
-after the final legacy-row update before compatible writers and readers start
-together and prove no budget-eligible running/terminal row in that hour remains
-null, or separately authorize a bounded exact backfill/transition reader
-using confirmed deployment-specific slot-to-group mapping. Prefix inference is
-intentionally unsupported because
+Old workers do not stamp the column. Compatible-worker bootstrap performs stale
+recovery and GPT lifecycle cleanup before reading exact stats, so legacy rows
+can receive a fresh `updated_at` while `stats_worker_id` remains null. This
+includes recoverable running rows, pending GPT rows, and retained terminal GPT
+rows whose lifecycle deadline can later expire. A quiet-window-only transition
+is unsupported. Draining workers and waiting one hour alone is insufficient.
+
+Production must establish one continuous freeze of all `job_data` mutators
+before inspecting or changing legacy rows. Every transition, including an exact
+backfill, must run under the same continuous freeze. Under that freeze, use a
+reviewed, bounded exact backfill based on confirmed deployment-specific
+slot-to-group evidence or take the no-backfill path. Fail closed if any affected
+row cannot be mapped or accounted for exactly.
+
+Both paths must pass the migration README's common post-transition read-only
+gate: zero generic running rows, zero trailing-hour null running/terminal rows,
+zero null pending GPT rows, and zero null retained terminal GPT rows. A single
+query cannot close a concurrent-writer race. The compatible worker must be the
+first released mutator. Complete compatible worker activation and
+bootstrap/readiness verification before releasing the remaining compatible
+writers. Prefix inference is intentionally unsupported because
 `JOB_WORKER_STATS_ID` can differ from `JOB_WORKER_ID`. The guarded PostgreSQL 18
 suite uses only `JOB_WORKER_BUDGET_TEST_DATABASE_URL` and refuses non-loopback or
 unexpected database targets. Required CI also sets
