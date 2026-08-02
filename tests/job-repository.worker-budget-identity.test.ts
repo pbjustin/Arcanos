@@ -31,7 +31,7 @@ describe('jobRepository worker budget identity', () => {
   it('queries only the exact persisted stats worker identity', async () => {
     const since = new Date('2026-08-01T12:00:00.000Z');
 
-    await expect(getJobExecutionStatsSince(since, 'production-ai-budget')).resolves.toEqual({
+    await expect(getJobExecutionStatsSince(since, '  production-ai-budget  ')).resolves.toEqual({
       completed: 2,
       failed: 1,
       running: 1,
@@ -50,6 +50,20 @@ describe('jobRepository worker budget identity', () => {
     const since = new Date('2026-08-01T12:00:00.000Z');
 
     await getJobExecutionStatsSince(since);
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining('$2::text IS NULL'),
+      [since.toISOString(), null]
+    );
+  });
+
+  it.each([
+    ['an empty', ''],
+    ['a whitespace-only', '  \t  ']
+  ])('treats %s stats id as deployment-wide aggregation', async (_label, statsWorkerId) => {
+    const since = new Date('2026-08-01T12:00:00.000Z');
+
+    await getJobExecutionStatsSince(since, statsWorkerId);
 
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining('$2::text IS NULL'),

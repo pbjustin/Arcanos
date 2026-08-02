@@ -2765,7 +2765,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
  * Aggregate recent queue execution stats for autonomy budgets.
  * Purpose: let the worker decide whether to pause new claims when throughput or AI-call budgets are exhausted.
  * Inputs/outputs: accepts a lower-bound timestamp and optional exact worker-group stats id; returns normalized execution counters.
- * Edge case behavior: returns zeroed counters when the database is unavailable.
+ * Edge case behavior: blank stats ids aggregate deployment-wide; returns zeroed counters when the database is unavailable.
  */
 export async function getJobExecutionStatsSince(
   since: Date | string,
@@ -2794,7 +2794,7 @@ export async function getJobExecutionStatsSince(
      FROM job_data
      WHERE updated_at >= $1::timestamptz
        AND ($2::text IS NULL OR stats_worker_id = $2)`,
-    [normalizeNullableDate(since), statsWorkerId ?? null]
+    [normalizeNullableDate(since), normalizeNullableString(statsWorkerId)]
   );
 
   const row = result.rows[0] as {
