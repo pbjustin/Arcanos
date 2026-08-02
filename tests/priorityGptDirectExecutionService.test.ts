@@ -162,7 +162,8 @@ describe('priorityGptDirectExecutionService', () => {
     );
 
     expect(routeGptRequestMock.mock.calls[0]?.[0]).toMatchObject({
-      runtimeExecutionMode: 'background'
+      runtimeExecutionMode: 'background',
+      enforceQueuedBackstageMutationAdmission: true,
     });
     expect(routeGptRequestMock.mock.calls[0]?.[0]?.parentAbortSignal).toBeDefined();
 
@@ -276,6 +277,48 @@ describe('priorityGptDirectExecutionService', () => {
     expect(recordGptJobTimingMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'completed' })
     );
+  });
+
+  it('forwards the exact persisted Backstage mutation admission to direct execution', async () => {
+    const slot = { release: jest.fn() };
+    const backstageMutationAdmission = {
+      version: 1,
+      source: 'control-plane-http',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      scope: 'mcp:invoke',
+      principalId: 'operator:priority-backstage',
+    } as const;
+    routeGptRequestMock.mockResolvedValue({
+      ok: true,
+      result: { updated: true },
+    });
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'completed' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-backstage',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'backstage',
+        body: { action: 'updateRoster', payload: [] },
+        requestId: 'req-priority-direct-backstage',
+        backstageMutationAdmission,
+      },
+      slot,
+    });
+
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct Backstage completion'
+    );
+
+    expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'backstage',
+      body: { action: 'updateRoster', payload: [] },
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
+    }));
   });
 
   it.each([

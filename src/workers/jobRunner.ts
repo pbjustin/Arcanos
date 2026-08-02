@@ -687,7 +687,8 @@ async function executeQueuedGptRequest(params: {
     bypassIntentRouting,
     requestPath,
     executionModeReason,
-    routeHint
+    routeHint,
+    backstageMutationAdmission,
   } = parsedGptJobInput.value;
   const hydratedBody = attachQueuedGptExecutionMetadata(
     hydrateQueuedGptBodyPrompt(body, prompt),
@@ -768,7 +769,9 @@ async function executeQueuedGptRequest(params: {
       logger: routeLogger,
       bypassIntentRouting,
       runtimeExecutionMode: 'background',
-      parentAbortSignal: params.cancellationSignal
+      parentAbortSignal: params.cancellationSignal,
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
   } catch (error: unknown) {
     if (params.cancellationSignal?.aborted && isAbortError(error)) {

@@ -259,6 +259,11 @@ export function getRequestEstablishedActorKey(req: Request): string | null {
     return req.authenticatedActorKey.trim();
   }
 
+  const controlPlanePrincipalId = req.controlPlanePrincipal?.principalId;
+  if (isNonEmptyString(controlPlanePrincipalId)) {
+    return `control-plane:${controlPlanePrincipalId.trim()}`;
+  }
+
   if (req.authUser?.id !== undefined) {
     return `user:${req.authUser.id}`;
   }

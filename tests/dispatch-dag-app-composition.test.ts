@@ -228,6 +228,58 @@ describe('/dispatch production application composition', () => {
     expect(createRunMock).not.toHaveBeenCalled();
   });
 
+  it('rejects an anonymous direct Backstage mutation before broad JSON parsing', async () => {
+    const response = await request(createApp())
+      .post('/backstage/book-event')
+      .set('Content-Type', 'application/json')
+      .set('X-Confirmed', 'yes')
+      .send('{');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(unsafeExecutionGateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anonymous canonical Backstage mutation selected through a query alias', async () => {
+    const response = await request(createApp())
+      .post('/gpt/backstage')
+      .query({ operation: 'updateRoster' })
+      .set('X-Confirmed', 'yes')
+      .send({ payload: [] });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(unsafeExecutionGateMock).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('admits a confirmed operator Backstage mutation through GPT-selected dispatch', async () => {
+    configureControlPlane('operator:dispatch-app-backstage');
+
+    const response = await request(createApp())
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        target: 'gpt',
+        gptId: 'backstage',
+        action: 'updateRoster',
+        payload: [],
+      });
+
+    expect(response.status).toBe(200);
+    expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'backstage',
+      body: expect.objectContaining({
+        action: 'updateRoster',
+        payload: [],
+      }),
+    }));
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
   it('shares principal admission between the canonical and compatibility DAG routes', async () => {
     configureControlPlane('operator:dispatch-app-shared-quota');
     const app = createApp();

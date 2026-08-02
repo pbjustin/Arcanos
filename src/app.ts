@@ -73,6 +73,9 @@ import {
   dispatchDagCompatibilityBoundary,
 } from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
 import {
+  backstageMutationHttpBoundary,
+} from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import {
   cefHttpBoundary,
 } from '@services/controlPlane/cefHttpBoundary.js';
 import {
@@ -83,6 +86,9 @@ import {
   createPublicProviderAdmissionMiddleware,
 } from '@transport/http/middleware/publicProviderAdmission.js';
 import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
+import {
+  backstageMutationConfirmationGate,
+} from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
   configureDefaultAppMetricsRuntimeProviders
@@ -182,6 +188,11 @@ export function createApp(): Express {
   app.use('/sdk', legacyOperatorBodyParser);
   app.use('/orchestration/reset', legacyOperatorBodyParser);
   app.use('/orchestration/purge', legacyOperatorBodyParser);
+
+  app.use('/backstage/book-event', backstageMutationHttpBoundary);
+  app.use('/backstage/book-gpt', backstageMutationHttpBoundary);
+  app.use('/backstage/track-storyline', backstageMutationHttpBoundary);
+  app.use('/backstage/update-roster', backstageMutationHttpBoundary);
   // System-state is a direct control-plane surface. Establish operator identity,
   // method-specific scope, and a bounded body before the broad application parser.
   app.use('/system-state', systemStateHttpBoundary);
@@ -264,7 +275,12 @@ export function createApp(): Express {
   });
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
-  app.post('/dispatch', dispatchDagCompatibilityBoundary);
+  app.post(
+    '/dispatch',
+    dispatchDagCompatibilityBoundary,
+    backstageMutationHttpBoundary,
+    backstageMutationConfirmationGate
+  );
   app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {
     if (req.body !== undefined) {
       next();
@@ -279,7 +295,22 @@ export function createApp(): Express {
     }
     next();
   });
-  app.post('/gpt/:gptId', canonicalGptIdentifierBoundary);
+  app.post(
+    '/gpt/:gptId',
+    canonicalGptIdentifierBoundary,
+    backstageMutationHttpBoundary,
+    backstageMutationConfirmationGate
+  );
+  app.post(
+    '/modules/:moduleRoute',
+    backstageMutationHttpBoundary,
+    backstageMutationConfirmationGate
+  );
+  app.post(
+    '/queryroute',
+    backstageMutationHttpBoundary,
+    backstageMutationConfirmationGate
+  );
   app.use(publicProviderAdmission);
   app.post('/gpt/arcanos-gaming', gamingIngressAudit);
 

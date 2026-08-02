@@ -58,6 +58,9 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 }));
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const {
+  buildQueuedGptBackstageMutationAdmission,
+} = await import('../src/shared/gpt/asyncGptJob.js');
 
 describe('routeGptRequest backstage booker auto-routing', () => {
   beforeEach(() => {
@@ -183,6 +186,81 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         })
       })
     );
+  });
+
+  it('fails closed before executing an unattested queued Backstage mutation', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'updateRoster',
+        payload: [],
+      },
+      requestId: 'req-booker-queued-unattested',
+      enforceQueuedBackstageMutationAdmission: true,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_MUTATION_ADMISSION_REQUIRED',
+      },
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+      },
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('executes only the exact queued Backstage mutation covered by admission', async () => {
+    const backstageMutationAdmission = buildQueuedGptBackstageMutationAdmission({
+      action: 'updateRoster',
+      principalId: 'operator:queued-backstage-test',
+    });
+    const admitted = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'updateRoster',
+        payload: [],
+      },
+      requestId: 'req-booker-queued-admitted',
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
+    });
+
+    expect(admitted).toMatchObject({
+      ok: true,
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+      },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      []
+    );
+
+    mockDispatchModuleAction.mockClear();
+    const drifted = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'trackStoryline',
+        payload: {},
+      },
+      requestId: 'req-booker-queued-drifted',
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
+    });
+
+    expect(drifted).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_MUTATION_ADMISSION_MISMATCH',
+      },
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it("surfaces NO_DEFAULT_ACTION for legacy 'ask' actions when the module has no canonical query action", async () => {

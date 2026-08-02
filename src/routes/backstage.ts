@@ -4,6 +4,7 @@ import { BackstageBooker, MatchInput, Wrestler } from '@services/backstage-booke
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.get('/', (_req: Request, res: Response) => {
 });
 
 // Book Event
-router.post('/book-event', confirmGate, async (req: Request, res: Response) => {
+router.post('/book-event', backstageMutationHttpBoundary, confirmGate, async (req: Request, res: Response) => {
   try {
     const eventID = await BackstageBooker.bookEvent(req.body);
     res.status(200).json({ success: true, eventID });
@@ -29,7 +30,7 @@ router.post('/book-event', confirmGate, async (req: Request, res: Response) => {
 });
 
 // Generate and save storyline via custom GPT
-router.post('/book-gpt', confirmGate, async (req: Request, res: Response) => {
+router.post('/book-gpt', backstageMutationHttpBoundary, confirmGate, async (req: Request, res: Response) => {
   try {
     const { prompt, key } = req.body as { prompt: string; key?: string };
     if (!prompt || typeof prompt !== 'string') {
@@ -57,7 +58,7 @@ router.post('/simulate-match', confirmGate, async (req: Request, res: Response) 
 });
 
 // Update Roster
-router.post('/update-roster', confirmGate, async (req: Request, res: Response) => {
+router.post('/update-roster', backstageMutationHttpBoundary, confirmGate, async (req: Request, res: Response) => {
   try {
     const roster = await BackstageBooker.updateRoster(req.body as Wrestler[]);
     res.status(200).json({ success: true, roster });
@@ -68,7 +69,7 @@ router.post('/update-roster', confirmGate, async (req: Request, res: Response) =
 });
 
 // Track Storyline
-router.post('/track-storyline', confirmGate, async (req: Request, res: Response) => {
+router.post('/track-storyline', backstageMutationHttpBoundary, confirmGate, async (req: Request, res: Response) => {
   try {
     const storyline = await BackstageBooker.trackStoryline(req.body);
     res.status(200).json({ success: true, storyline });

@@ -62,6 +62,14 @@ import {
   pickGptModuleAction,
   resolveGptModuleRequestedActionAlias,
 } from "@shared/gpt/gptModuleAction.js";
+import { resolveGptModuleMapEntry } from '@shared/gpt/gptModuleMapResolution.js';
+import {
+  BACKSTAGE_MODULE_NAME,
+  isBackstagePublicAction,
+} from '@shared/backstage/backstageActionPolicy.js';
+import type {
+  QueuedGptBackstageMutationAdmission,
+} from '@shared/gpt/asyncGptJob.js';
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -92,7 +100,59 @@ export type RouteGptRequestInput = {
   parentAbortSignal?: AbortSignal;
   suppressTimeoutFallback?: boolean;
   memoryPlaneAuthorized?: true;
+  enforceQueuedBackstageMutationAdmission?: boolean;
+  queuedBackstageMutationAdmission?: QueuedGptBackstageMutationAdmission;
 };
+
+type BackstageMutationAdmissionDenial = {
+  code:
+    | 'BACKSTAGE_MUTATION_ADMISSION_REQUIRED'
+    | 'BACKSTAGE_MUTATION_ADMISSION_MISMATCH';
+  message: string;
+};
+
+function resolveBackstageMutationAdmissionDenial(input: {
+  action: string | null;
+  admission?: QueuedGptBackstageMutationAdmission;
+  enforce: boolean;
+  moduleName: string;
+}): BackstageMutationAdmissionDenial | null {
+  if (!input.enforce) {
+    return null;
+  }
+
+  const resolvesToBackstageMutation =
+    input.moduleName === BACKSTAGE_MODULE_NAME
+    && input.action !== null
+    && !isBackstagePublicAction(input.action);
+  if (!resolvesToBackstageMutation) {
+    return input.admission
+      ? {
+          code: 'BACKSTAGE_MUTATION_ADMISSION_MISMATCH',
+          message: 'Queued Backstage mutation admission no longer matches execution routing.',
+        }
+      : null;
+  }
+
+  if (!input.admission) {
+    return {
+      code: 'BACKSTAGE_MUTATION_ADMISSION_REQUIRED',
+      message: 'Queued Backstage mutation execution requires prior operator admission.',
+    };
+  }
+
+  if (
+    input.admission.module !== input.moduleName
+    || input.admission.action !== input.action
+  ) {
+    return {
+      code: 'BACKSTAGE_MUTATION_ADMISSION_MISMATCH',
+      message: 'Queued Backstage mutation admission no longer matches execution routing.',
+    };
+  }
+
+  return null;
+}
 
 function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message: "backend operational" } {
   return {
@@ -698,82 +758,12 @@ function resolveForcedDirectGptEntry(incomingGptId: string): {
   return null;
 }
 
-function stripNonAlnum(s: string): string {
-  return normalize(s).replace(/[^a-z0-9]+/g, "");
-}
-
-function levenshtein(a: string, b: string): number {
-  const A = stripNonAlnum(a);
-  const B = stripNonAlnum(b);
-  const n = A.length, m = B.length;
-  if (n === 0) return m;
-  if (m === 0) return n;
-  const d: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
-  for (let i = 0; i <= n; i++) d[i][0] = i;
-  for (let j = 0; j <= m; j++) d[0][j] = j;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      const cost = A[i - 1] === B[j - 1] ? 0 : 1;
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
-    }
-  }
-  return d[n][m];
-}
-
 function resolveGptEntry(incomingGptId: string, gptModuleMap: Record<string, GptMapEntry>): { entry: GptMapEntry; matchMethod: GptMatchMethod | "normalized"; matchedId: string } | null {
   if (isProtectedModuleIdentifier(incomingGptId)) {
     return null;
   }
 
-  const configuredGptIds = Object.keys(gptModuleMap);
-
-  // 1) exact match
-  const exact = configuredGptIds.find(id => id === incomingGptId);
-  if (exact) return { entry: gptModuleMap[exact], matchMethod: "exact", matchedId: exact };
-
-  // 2) normalized direct match
-  const normalizedIncoming = normalize(incomingGptId);
-  const normalizedEntry = gptModuleMap[normalizedIncoming];
-  if (normalizedEntry) return { entry: normalizedEntry, matchMethod: "normalized", matchedId: normalizedIncoming };
-
-  // 3) longest substring match
-  const sortedIds = [...configuredGptIds].sort((a, b) => b.length - a.length);
-  const substrMatch = sortedIds.find(id => incomingGptId.includes(id));
-  if (substrMatch) return { entry: gptModuleMap[substrMatch], matchMethod: "substring" as GptMatchMethod, matchedId: substrMatch };
-
-  // 4) token-subset heuristic
-  const incomingTokens = new Set(normalize(incomingGptId).split(/[^a-z0-9]+/).filter(Boolean));
-  let tokenMatchId: string | undefined;
-  for (const id of configuredGptIds) {
-    const tokens = normalize(id).split(/[^a-z0-9]+/).filter(Boolean);
-    if (!tokens.length) continue;
-    const common = tokens.filter(t => incomingTokens.has(t)).length;
-    const ratio = common / tokens.length;
-    if (ratio >= 0.6) {
-      tokenMatchId = id;
-      break;
-    }
-  }
-  if (tokenMatchId) return { entry: gptModuleMap[tokenMatchId], matchMethod: "token-subset" as GptMatchMethod, matchedId: tokenMatchId };
-
-  // 5) fuzzy Levenshtein fallback
-  let bestId: string | undefined;
-  let bestScore = Infinity;
-  for (const id of configuredGptIds) {
-    const distance = levenshtein(incomingGptId, id);
-    if (distance < bestScore) {
-      bestScore = distance;
-      bestId = id;
-    }
-  }
-  if (bestId) {
-    const threshold = Math.max(2, Math.floor(bestId.length * 0.25));
-    if (bestScore <= threshold) {
-      return { entry: gptModuleMap[bestId], matchMethod: "fuzzy" as GptMatchMethod, matchedId: bestId };
-    }
-  }
-
-  return null;
+  return resolveGptModuleMapEntry(incomingGptId, gptModuleMap);
 }
 
 type UnknownGptRecoveryResult = {
@@ -928,6 +918,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     parentAbortSignal,
     suppressTimeoutFallback: suppressTimeoutFallbackInput,
     memoryPlaneAuthorized,
+    enforceQueuedBackstageMutationAdmission = false,
+    queuedBackstageMutationAdmission,
   } = input;
   const traceId = inputTraceId ?? request?.traceId ?? null;
   const validation = validateGptIdentifier(gptId);
@@ -1109,6 +1101,44 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     kind: 'registered' as const,
     id: matchedId,
   };
+  const rejectQueuedBackstageMutationAdmission = (params: {
+    action: string | null;
+    availableActions: string[];
+    moduleName: string;
+    moduleVersion: string | null;
+    route: string;
+  }): AskEnvelope | null => {
+    const denial = resolveBackstageMutationAdmissionDenial({
+      action: params.action,
+      admission: queuedBackstageMutationAdmission,
+      enforce: enforceQueuedBackstageMutationAdmission,
+      moduleName: params.moduleName,
+    });
+    if (!denial) {
+      return null;
+    }
+
+    logger?.warn?.('gpt.dispatch.backstage_mutation_admission_denied', {
+      requestId,
+      gptId: trimmedGptId,
+      module: params.moduleName,
+      action: params.action,
+      code: denial.code,
+    });
+    return {
+      ok: false,
+      error: denial,
+      _route: {
+        ...baseRoute,
+        module: params.moduleName,
+        ...(params.action ? { action: params.action } : {}),
+        matchMethod,
+        route: params.route,
+        availableActions: params.availableActions,
+        moduleVersion: params.moduleVersion,
+      },
+    };
+  };
   logger?.info?.("gpt.dispatch.lookup.resolved", {
     requestId,
     gptId: trimmedGptId,
@@ -1143,6 +1173,20 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let requestedAction = memoryInterception.requestedAction;
   if (writePlaneClassification.plane !== 'writing' && activeEntry.module === 'ARCANOS:CORE') {
     requestedAction = 'query';
+  }
+
+  const initialActionCandidate = requestedAction
+    ? pickGptModuleAction(availableActions, requestedAction)
+    : fallbackActionCandidate;
+  const initialAdmissionDenial = rejectQueuedBackstageMutationAdmission({
+    action: initialActionCandidate,
+    availableActions,
+    moduleName: activeEntry.module,
+    moduleVersion: (moduleMetadata as any)?.version ?? null,
+    route: activeEntry.route,
+  });
+  if (initialAdmissionDenial) {
+    return initialAdmissionDenial;
   }
 
   const parsedMemoryCommand = { intent: memoryInterception.parsedIntent };
@@ -1500,6 +1544,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
     };
+  }
+
+  const finalAdmissionDenial = rejectQueuedBackstageMutationAdmission({
+    action,
+    availableActions,
+    moduleName: activeEntry.module,
+    moduleVersion: (moduleMetadata as any)?.version ?? null,
+    route: activeEntry.route,
+  });
+  if (finalAdmissionDenial) {
+    return finalAdmissionDenial;
   }
 
   const { timeoutMs, timeoutSource } = resolveDispatchTimeout(
