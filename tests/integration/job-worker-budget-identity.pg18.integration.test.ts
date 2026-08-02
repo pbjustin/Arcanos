@@ -649,6 +649,50 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
     );
   });
 
+  test('removes the exact empty stats identity column and keeps rollback idempotent', async () => {
+    const readRollbackState = async (): Promise<{
+      column_present: boolean;
+      index_present: boolean;
+    }> => {
+      const state = await databaseClient.query<{
+        column_present: boolean;
+        index_present: boolean;
+      }>(
+        `SELECT
+           EXISTS (
+             SELECT 1
+             FROM pg_attribute
+             WHERE attrelid = 'job_data'::regclass
+               AND attname = 'stats_worker_id'
+               AND NOT attisdropped
+           ) AS column_present,
+           to_regclass('idx_job_data_stats_worker_updated') IS NOT NULL AS index_present`
+      );
+      return state.rows[0]!;
+    };
+
+    try {
+      await databaseClient.query(rollbackIndexSql);
+      await databaseClient.query(rollbackColumnSql);
+      await expect(readRollbackState()).resolves.toEqual({
+        column_present: false,
+        index_present: false
+      });
+
+      await expect(databaseClient.query(rollbackIndexSql)).resolves.toBeDefined();
+      await expect(databaseClient.query(rollbackColumnSql)).resolves.toBeDefined();
+      await expect(readRollbackState()).resolves.toEqual({
+        column_present: false,
+        index_present: false
+      });
+    } finally {
+      await databaseClient.query(addColumnSql);
+      await databaseClient.query(precheckIndexSql);
+      await databaseClient.query(createIndexSql);
+      await databaseClient.query(verifyIndexSql);
+    }
+  });
+
   test('rolls back only the exact owned index and refuses populated accounting history', async () => {
     await databaseClient.query(
       `INSERT INTO job_data (id, worker_id, job_type, stats_worker_id, input)

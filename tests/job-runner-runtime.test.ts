@@ -12,6 +12,7 @@ import {
   emitWorkerBootstrapReadySignal,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
+  JOB_WORKER_STATS_ID_MAX_CHARACTERS,
   resolveJobRunnerEntrypointRuntimeMode,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerIdleBackoffDelayMs,
@@ -100,6 +101,27 @@ describe('jobRunnerRuntime', () => {
     expect(slotDefinitions[0]?.isInspectorSlot).toBe(true);
     expect(slotDefinitions[1]?.isInspectorSlot).toBe(false);
     expect(slotDefinitions.every(slot => slot.statsWorkerId === 'railway-worker')).toBe(true);
+  });
+
+  it.each([
+    ['an ASCII', 'x'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS)],
+    ['a Unicode', '🧠'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS)]
+  ])('accepts %s stats worker identity at the PostgreSQL character limit', (_label, statsWorkerId) => {
+    expect(resolveJobRunnerRuntimeSettings({
+      JOB_WORKER_STATS_ID: statsWorkerId
+    } as NodeJS.ProcessEnv).statsWorkerId).toBe(statsWorkerId);
+  });
+
+  it.each([
+    ['explicit ASCII', { JOB_WORKER_STATS_ID: 'x'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS + 1) }],
+    ['explicit Unicode', { JOB_WORKER_STATS_ID: '🧠'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS + 1) }],
+    ['fallback worker', { JOB_WORKER_ID: 'x'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS + 1) }]
+  ])('rejects an overlong %s stats identity before worker startup', (_label, env) => {
+    expect(() => resolveJobRunnerRuntimeSettings({
+      ...env
+    } as NodeJS.ProcessEnv)).toThrow(
+      `JOB_WORKER_STATS_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
   });
 
   it.each(['warn', 'error'])(
@@ -649,6 +671,9 @@ describe('jobRunnerRuntime', () => {
 
   it('declares the worker ready only after every consumer slot starts its dispatcher', () => {
     const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const runtimeSettingsIndex = source.indexOf(
+      'const runtimeSettings = resolveJobRunnerRuntimeSettings()'
+    );
     const enabledGuardIndex = source.indexOf('if (!entrypointRuntimeMode.enabled)');
     const operatorDispatchProviderIndex = source.indexOf(
       'configureDefaultArcanosCoreRuntimeProviders()',
@@ -697,6 +722,7 @@ describe('jobRunnerRuntime', () => {
     );
 
     expect([
+      runtimeSettingsIndex,
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
@@ -711,6 +737,8 @@ describe('jobRunnerRuntime', () => {
       readinessProtocolIndex,
       consumerRuntimeBarrierIndex
     ]).not.toContain(-1);
+    expect(runtimeSettingsIndex).toBeLessThan(operatorDispatchProviderIndex);
+    expect(runtimeSettingsIndex).toBeLessThan(databaseBootstrapIndex);
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
     expect(databaseBootstrapIndex).toBeLessThan(autonomyBootstrapIndex);
