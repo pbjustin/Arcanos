@@ -154,7 +154,7 @@ Examples:
 | `check what is wrong with workers` | `workers.status` when registered. |
 | `kick stale workers`, `fix slot 8`, `recycle 3 and 8` | `workers.recover` or `workers.recycle` with confirmation. Slot numbers normalize to IDs such as `async-queue-slot-8`. |
 
-Worker recycle/recover dispatch is privileged and requires explicit `workers.recover` scope plus confirmation. It does not run shell commands or restart containers. It uses the approved queue recovery runner to reclaim stale running jobs globally or for specific `async-queue-slot-N` worker IDs.
+Worker recycle/recover dispatch is privileged and requires explicit `workers.recover` scope plus confirmation. It does not run shell commands or restart containers. It uses one server-bounded, oldest-first queue recovery pass to reclaim stale running jobs globally or for specific `async-queue-slot-N` worker IDs. Concurrent passes skip locked rows, and a successful response does not prove that a larger stale backlog is empty; overflow remains for later inspector or confirmed recovery passes.
 
 ## Final Trinity Flow
 The protected Trinity job path is:

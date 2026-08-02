@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getPoolMock = jest.fn();
 const isDatabaseConnectedMock = jest.fn();
@@ -17,11 +17,16 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 }));
 
 const {
+  DEFAULT_JOB_WORKER_RECOVERY_BATCH_SIZE,
   DEFAULT_JOB_WORKER_STALE_AFTER_MS,
+  MAX_JOB_WORKER_RECOVERY_BATCH_SIZE,
   recoverStalledJobsForWorkers,
   recoverStaleJobs,
+  resolveJobWorkerRecoveryBatchSize,
   resolveJobWorkerStaleAfterMs
 } = await import('../src/core/db/repositories/jobRepository.js');
+
+const originalRecoveryBatchSize = process.env.JOB_WORKER_RECOVERY_BATCH_SIZE;
 
 function mockStaleRows(rows: Array<Record<string, unknown>>): void {
   clientQueryMock.mockImplementation(async (sql: unknown) => {
@@ -52,6 +57,7 @@ function getJobUpdateSql(): string {
 describe('jobRepository lifecycle recovery', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.JOB_WORKER_RECOVERY_BATCH_SIZE;
     isDatabaseConnectedMock.mockReturnValue(true);
     poolConnectMock.mockResolvedValue({
       query: clientQueryMock,
@@ -60,6 +66,14 @@ describe('jobRepository lifecycle recovery', () => {
     getPoolMock.mockReturnValue({
       connect: poolConnectMock
     });
+  });
+
+  afterAll(() => {
+    if (originalRecoveryBatchSize === undefined) {
+      delete process.env.JOB_WORKER_RECOVERY_BATCH_SIZE;
+    } else {
+      process.env.JOB_WORKER_RECOVERY_BATCH_SIZE = originalRecoveryBatchSize;
+    }
   });
 
   it('defaults worker stale recovery to the quieter env-backed threshold', () => {
@@ -75,6 +89,71 @@ describe('jobRepository lifecycle recovery', () => {
         JOB_WORKER_STALE_AFTER_MS: '999.9'
       } as NodeJS.ProcessEnv)
     ).toBe(1_000);
+  });
+
+  it('normalizes the shared recovery batch limit deterministically', () => {
+    expect(DEFAULT_JOB_WORKER_RECOVERY_BATCH_SIZE).toBe(100);
+    expect(MAX_JOB_WORKER_RECOVERY_BATCH_SIZE).toBe(1_000);
+    expect(resolveJobWorkerRecoveryBatchSize(undefined)).toBe(100);
+    expect(resolveJobWorkerRecoveryBatchSize('invalid')).toBe(100);
+    expect(resolveJobWorkerRecoveryBatchSize(0)).toBe(100);
+    expect(resolveJobWorkerRecoveryBatchSize('17.9')).toBe(17);
+    expect(resolveJobWorkerRecoveryBatchSize(2_000)).toBe(1_000);
+  });
+
+  it('bounds and deterministically orders both stale selectors with skip-locked claims', async () => {
+    clientQueryMock.mockResolvedValue({ rows: [] });
+
+    await recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      batchSize: 7
+    });
+    const staleSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('FROM job_data') && sql.includes('FOR UPDATE')
+    );
+    expect(staleSelector?.[0]).toContain('ORDER BY updated_at ASC NULLS FIRST, id ASC');
+    expect(staleSelector?.[0]).toContain('LIMIT $2::int');
+    expect(staleSelector?.[0]).toContain('FOR UPDATE SKIP LOCKED');
+    expect(staleSelector?.[1]).toEqual([60_000, 7]);
+
+    clientQueryMock.mockClear();
+    clientQueryMock.mockResolvedValue({ rows: [] });
+    process.env.JOB_WORKER_RECOVERY_BATCH_SIZE = '19.9';
+    await recoverStalledJobsForWorkers({
+      workerIds: ['worker-b'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      stalledJobAction: 'requeue'
+    });
+    const stalledSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('last_worker_id = ANY')
+    );
+    expect(stalledSelector?.[0]).toContain('ORDER BY updated_at ASC NULLS FIRST, id ASC');
+    expect(stalledSelector?.[0]).toContain('LIMIT $3::int');
+    expect(stalledSelector?.[0]).toContain('FOR UPDATE SKIP LOCKED');
+    expect(stalledSelector?.[1]).toEqual([['worker-b'], 60_000, 19]);
+  });
+
+  it('applies the default batch bound when callers omit an override', async () => {
+    clientQueryMock.mockResolvedValue({ rows: [] });
+
+    await recoverStaleJobs({ staleAfterMs: 60_000 });
+    const staleSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('FROM job_data') && sql.includes('FOR UPDATE')
+    );
+    expect(staleSelector?.[1]).toEqual([60_000, 100]);
+
+    clientQueryMock.mockClear();
+    clientQueryMock.mockResolvedValue({ rows: [] });
+    await recoverStalledJobsForWorkers({
+      workerIds: ['worker-default'],
+      staleAfterMs: 60_000
+    });
+    const stalledSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('last_worker_id = ANY')
+    );
+    expect(stalledSelector?.[1]).toEqual([['worker-default'], 60_000, 100]);
   });
 
   it('leaves local-agent expiry and lease recovery to the device protocol', async () => {

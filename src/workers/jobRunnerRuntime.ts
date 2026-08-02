@@ -31,6 +31,7 @@ export interface JobRunnerEntrypointRuntimeMode {
 }
 
 export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
+export const JOB_WORKER_STATS_ID_MAX_CHARACTERS = 255;
 
 export interface WorkerBootstrapReadyDestination {
   write(chunk: string): unknown;
@@ -413,7 +414,7 @@ export function createNonOverlappingTaskRunner(
  * Resolve queue-worker runtime settings from the environment.
  * Purpose: centralize Railway worker polling and concurrency configuration in one pure helper.
  * Inputs/outputs: accepts an optional environment object and returns normalized runtime settings.
- * Edge case behavior: invalid or missing numeric env values fall back to safe positive defaults.
+ * Edge case behavior: invalid numeric values fall back safely; overlong persisted stats identities fail before startup.
  */
 export function resolveJobRunnerRuntimeSettings(
   env: NodeJS.ProcessEnv = process.env
@@ -427,13 +428,19 @@ export function resolveJobRunnerRuntimeSettings(
     env.JOB_WORKER_ID?.trim() ||
     env.WORKER_ID?.trim() ||
     'async-queue';
+  const statsWorkerId = env.JOB_WORKER_STATS_ID?.trim() || baseWorkerId;
+  if (Array.from(statsWorkerId).length > JOB_WORKER_STATS_ID_MAX_CHARACTERS) {
+    throw new RangeError(
+      `JOB_WORKER_STATS_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
+  }
 
   return {
     pollMs: readPositiveIntegerEnvValue(env.JOB_WORKER_POLL_MS, 250),
     idleBackoffMs: readPositiveIntegerEnvValue(env.JOB_WORKER_IDLE_BACKOFF_MS, 1_000),
     concurrency,
     baseWorkerId,
-    statsWorkerId: env.JOB_WORKER_STATS_ID?.trim() || baseWorkerId
+    statsWorkerId
   };
 }
 

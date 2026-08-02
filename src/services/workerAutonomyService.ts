@@ -568,13 +568,14 @@ export class WorkerAutonomyService {
 
   /**
    * Return claim options shared by the worker loop and heartbeat calls.
-   * Purpose: avoid drift between the lease duration used at claim time and subsequent heartbeats.
+   * Purpose: avoid drift between the lease duration and exact worker-group stats identity used at claim time.
    * Inputs/outputs: no inputs, returns normalized claim options.
-   * Edge case behavior: always includes a non-empty worker id and positive lease duration.
+   * Edge case behavior: always includes non-empty lease and stats worker ids plus a positive lease duration.
    */
   getClaimOptions(): SchedulerClaimOptions {
     return {
       workerId: this.settings.workerId,
+      statsWorkerId: this.getStatsWorkerId(),
       leaseMs: this.settings.leaseMs,
       priorityQueueEnabled: isPriorityQueueEnabled(),
       priorityQueueWeight: resolvePriorityQueueWeight()

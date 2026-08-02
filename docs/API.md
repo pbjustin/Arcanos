@@ -225,7 +225,9 @@ GPT job lifecycle:
 - Storage states: `pending`, `running`, `completed`, `failed`, `cancelled`, `expired`
 - API alias: `lifecycle_status: "queued"` is emitted for stored `pending`
 - Running-job cancellation is best effort; queued jobs cancel synchronously
-- Running stale jobs are recovered through the worker lease inspector
+- Running stale jobs are recovered through oldest-first, server-bounded worker
+  lease-inspector passes. Overlapping passes skip rows already locked by another
+  recovery transaction; overflow remains eligible for later passes.
 - Old terminal GPT jobs transition to `expired`, then are compacted after an additional grace window
 
 Retention defaults:

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T09:13:54.195Z",
+  "generatedAt": "2026-08-02T00:38:42.968Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3589,6 +3589,12 @@
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/job-stale-recovery-batching.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/job-worker-budget-identity.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
         },
         {
@@ -3652,7 +3658,13 @@
           "relativePath": "tests/job-repository.updateJob.test.ts"
         },
         {
+          "relativePath": "tests/job-repository.worker-budget-identity.test.ts"
+        },
+        {
           "relativePath": "tests/job-runner-runtime.test.ts"
+        },
+        {
+          "relativePath": "tests/job-worker-budget-migration.test.ts"
         },
         {
           "relativePath": "tests/jobs.route.test.ts"

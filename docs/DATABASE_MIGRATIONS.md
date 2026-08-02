@@ -143,6 +143,58 @@ PostgreSQL 18 database by setting
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`; the guarded test never reads an
 inherited `DATABASE_URL`.
 
+### Generic worker stats-identity migration
+
+`migrations/20260801_job_worker_stats_identity_v1/` adds nullable
+`job_data.stats_worker_id`, the exact configured worker-group identity stamped
+on every generic queue claim. It remains separate from `last_worker_id`, which
+continues to fence the individual slot lease, and from `worker_id`, which
+continues to identify the producer.
+
+The rollout is deliberately phased. Add and verify the column first, precheck
+the index name, run `CREATE INDEX CONCURRENTLY` as its own non-transactional
+statement, then run the exact catalog verifier. The partial B-tree on
+`(stats_worker_id, updated_at)` supports the hourly budget window without
+putting an ordinary index build on application startup. No migration is applied
+by source validation.
+
+If the concurrent build is interrupted, the exact same-name index may remain
+invalid or not ready. The normal precheck refuses that state. With claims still
+quiesced, use the migration's guarded atomic recovery drop and rerun phases 2-4;
+the recovery refuses a healthy index or any unexpected definition. Destructive
+rollback likewise verifies and atomically drops only the owned index, requires
+all compatible readers and writers to be drained, and verifies the exact empty,
+dependency-free plain column before removing it. Recovery and rollback use an
+access-exclusive `job_data` lock to keep verification and removal inseparable;
+all phases must run under one reviewed trusted schema/search-path context.
+
+Old workers do not stamp the column. Compatible-worker bootstrap performs stale
+recovery and GPT lifecycle cleanup before reading exact stats, so legacy rows
+can receive a fresh `updated_at` while `stats_worker_id` remains null. This
+includes recoverable running rows, pending GPT rows, and retained terminal GPT
+rows whose lifecycle deadline can later expire. A quiet-window-only transition
+is unsupported. Draining workers and waiting one hour alone is insufficient.
+
+Production must establish one continuous freeze of all `job_data` mutators
+before inspecting or changing legacy rows. Every transition, including an exact
+backfill, must run under the same continuous freeze. Under that freeze, use a
+reviewed, bounded exact backfill based on confirmed deployment-specific
+slot-to-group evidence or take the no-backfill path. Fail closed if any affected
+row cannot be mapped or accounted for exactly.
+
+Both paths must pass the migration README's common post-transition read-only
+gate: zero generic running rows, zero trailing-hour null running/terminal rows,
+zero null pending GPT rows, and zero null retained terminal GPT rows. A single
+query cannot close a concurrent-writer race. The compatible worker must be the
+first released mutator. Complete compatible worker activation and
+bootstrap/readiness verification before releasing the remaining compatible
+writers. Prefix inference is intentionally unsupported because
+`JOB_WORKER_STATS_ID` can differ from `JOB_WORKER_ID`. The guarded PostgreSQL 18
+suite uses only `JOB_WORKER_BUDGET_TEST_DATABASE_URL` and refuses non-loopback or
+unexpected database targets. Required CI also sets
+`JOB_WORKER_BUDGET_REQUIRE_DATABASE=1`, which turns a missing database URL into
+a hard failure instead of a skipped database suite.
+
 ### DAG snapshot-generation fencing migration
 
 `migrations/20260727_dag_run_snapshot_generation_v1.sql` adds the

@@ -600,7 +600,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
 | `DATABASE_URL` or complete `PG*` set | Yes for durable async jobs | none | Required by `/gpt-access/jobs/create` persistence and by the worker queue. Web and worker services must share the same database. |
 | `JOB_WORKER_ID` | No | `async-queue` | Base worker identity for queue claims, logs, and heartbeat state. |
-| `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Stable aggregate identity for worker inspection. |
+| `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Exact worker-group identity shared by inspection, alert cooldowns, and hourly job/AI-call budgets. Every generic queue claim persists this value separately from its slot lease ID. Values longer than 255 characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | No | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | No | `420000` | Max worker Trinity runtime budget. |
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | No | `180000` | Per-stage/model timeout passed from worker-originated Trinity calls. |
@@ -705,18 +705,46 @@ database URL as a command-line argument.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `JOB_WORKER_ID` | `async-queue` | Base worker identity used in logs, heartbeats, and queue claiming. |
-| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Stable stats/inspection identity. |
+| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Exact worker-group identity persisted on every generic claim and used for shared slot-level inspection and hourly budget accounting. Groups may span processes only when they use the same configured value. Values longer than 255 characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
 | `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
 | `JOB_WORKER_DB_BOOTSTRAP_RETRY_MS` | `5000` | Initial retry delay while waiting for database connectivity. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS` | `30000` | Max DB bootstrap retry delay. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS` | `0` | `0` means retry indefinitely. |
+| `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` | Maximum generic stale jobs locked and transitioned in one recovery transaction, clamped to 1-1,000. Global and worker-targeted passes each apply the bound independently; oldest visible unlocked rows are processed first and overflow remains for later passes. |
 | `JOB_EVENTS_CLEANUP_ENABLED` | `true` | Enables best-effort `job_events` retention cleanup during worker inspection. Legacy `JOB_EVENT_CLEANUP_ENABLED` is also accepted. |
 | `JOB_EVENTS_RETENTION_DAYS` | `30` | Retains recent job timeline events for operational forensics. Values are bounded to 1-365 days. Legacy `JOB_EVENT_RETENTION_DAYS` is also accepted. |
 | `JOB_EVENTS_CLEANUP_BATCH_SIZE` | `1000` | Maximum `job_events` rows matched or deleted per cleanup run. Values are bounded to 1-10000 to avoid long table locks. Legacy `JOB_EVENT_CLEANUP_BATCH_SIZE` is also accepted. |
 | `JOB_EVENTS_CLEANUP_DRY_RUN` | `true` | When true, cleanup counts eligible old events without deleting them. Set to `false` after reviewing cleanup metrics/logs. Legacy `JOB_EVENT_CLEANUP_DRY_RUN` is also accepted. |
 | `JOB_EVENT_RECORD_HEARTBEATS` | `false` | When true, records high-frequency `worker.heartbeat` timeline events. Leave false unless debugging a specific lease issue because `job_data.last_heartbeat_at` already tracks liveness. |
+
+`JOB_WORKER_STATS_ID` is intentionally independent of `JOB_WORKER_ID`: lease
+owners such as `async-queue-slot-1` stay distinct, while all configured slots
+can charge one exact worker-group budget. The database column and concurrent
+time-window index in `migrations/20260801_job_worker_stats_identity_v1/` must be
+applied before a future production cutover. Old workers do not stamp the new
+identity, so mixed old/new worker revisions must not overlap during that
+cutover. Compatible-worker bootstrap performs stale recovery and GPT lifecycle
+cleanup before reading exact stats, so a legacy row can receive a fresh
+`updated_at` while `stats_worker_id` remains null. The mutable population
+includes recoverable running rows, pending GPT rows, and retained terminal GPT
+rows. A quiet-window-only transition is unsupported. Draining workers and
+waiting one hour alone is insufficient.
+
+Establish one continuous freeze of all `job_data` mutators before either path.
+Every transition, including an exact backfill, must run under the same continuous
+freeze. Under it, use a reviewed, bounded exact backfill based on confirmed
+slot-to-group evidence or take the no-backfill path. Fail closed if any affected
+row cannot be mapped or accounted for exactly.
+
+Both paths must pass the migration README's common post-transition read-only
+gate: zero generic running rows, zero recent null budget rows, zero null pending
+GPT rows, and zero null retained terminal GPT rows. A one-shot read cannot close
+a writer race. The compatible worker must be the first released mutator.
+Complete compatible worker activation and bootstrap/readiness verification
+before releasing the remaining compatible writers. Existing null rows are never
+inferred from producer or lease prefixes.
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 
@@ -898,10 +926,12 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `RUN_WORKERS` | `true` | Whether the explicit local/direct API startup lifecycle boots the in-process worker runtime. The Railway launcher sets this by role; the dedicated `jobRunner` owns its own PostgreSQL queue lifecycle. |
 | `WORKER_API_TIMEOUT_MS` | `60000` template override; `30000` unified-config default when unset | Timeout for worker-to-server API calls. |
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
+| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` (commented) | Exact persisted worker-group identity for shared inspection and hourly budgets; maximum 255 characters. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
 | `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |
 | `JOB_WORKER_STALE_AFTER_MS` | `45000` | Age after which a worker heartbeat is considered stale. |
+| `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` (commented) | Per-transaction stale-recovery lock/transition bound, clamped to 1-1,000. This bounds selected rows and result arrays, not the underlying scan; overlapping passes skip locked rows and may process separate batches. |
 | `JOB_WORKER_WATCHDOG_MS` | `10000` | Worker watchdog inspection interval. |
 | `JOB_WORKER_WATCHDOG_IDLE_MS` | `120000` | Idle threshold used by the worker watchdog. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | `420000` (code default) | Worker Trinity runtime budget. |

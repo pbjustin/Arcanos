@@ -53,11 +53,32 @@ describe('jobRepository.claimNextPendingJob', () => {
     );
 
     expect(updateCall).toBeDefined();
-    expect(updateCall?.[0]).not.toContain('$3');
+    expect(updateCall?.[0]).not.toContain('$4');
     expect(updateCall?.[0]).toContain("job_type <> 'local-agent'");
     expect(updateCall?.[0]).toContain('claim_generation = claim_generation + 1');
     expect(updateCall?.[0]).toContain('last_worker_id = $2');
-    expect(updateCall?.[1]).toEqual([12_000, 'worker-1']);
+    expect(updateCall?.[0]).toContain('stats_worker_id = $3');
+    expect(updateCall?.[1]).toEqual([12_000, 'worker-1', 'worker-1']);
+  });
+
+  it('persists the exact shared stats worker id independently of the lease worker id', async () => {
+    const claimOptions = {
+      workerId: 'async-queue-slot-2',
+      statsWorkerId: 'async-queue',
+      leaseMs: 12_000,
+      priorityQueueEnabled: false
+    };
+
+    await claimNextPendingJob(claimOptions);
+
+    const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE job_data')
+    );
+
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.[0]).toContain('last_worker_id = $2');
+    expect(updateCall?.[0]).toContain('stats_worker_id = $3');
+    expect(updateCall?.[1]).toEqual([12_000, 'async-queue-slot-2', 'async-queue']);
   });
 
   it.each([undefined, '', '   '])(
@@ -93,7 +114,7 @@ describe('jobRepository.claimNextPendingJob', () => {
     );
 
     expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0]?.[0]).not.toContain('$3');
+    expect(updateCalls[0]?.[0]).not.toContain('$4');
   });
 
   it('uses the configured priority lane threshold when claiming the normal lane', async () => {
@@ -132,10 +153,10 @@ describe('jobRepository.claimNextPendingJob', () => {
     );
 
     expect(updateCalls).toHaveLength(2);
-    expect(updateCalls[0]?.[0]).toContain('$3');
-    expect(updateCalls[0]?.[1]).toEqual([12_000, 'worker-1', 3]);
-    expect(updateCalls[1]?.[0]).not.toContain('$3');
-    expect(updateCalls[1]?.[1]).toEqual([12_000, 'worker-1']);
+    expect(updateCalls[0]?.[0]).toContain('$4');
+    expect(updateCalls[0]?.[1]).toEqual([12_000, 'worker-1', 'worker-1', 3]);
+    expect(updateCalls[1]?.[0]).not.toContain('$4');
+    expect(updateCalls[1]?.[1]).toEqual([12_000, 'worker-1', 'worker-1']);
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.claimed',
       metadata: expect.objectContaining({
@@ -148,7 +169,7 @@ describe('jobRepository.claimNextPendingJob', () => {
     const laneClaims: string[] = [];
     clientQueryMock.mockImplementation(async (sql: unknown) => {
       if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
-        const lane = sql.includes('$3') ? 'normal' : 'priority';
+        const lane = sql.includes('$4') ? 'normal' : 'priority';
         laneClaims.push(lane);
         return {
           rows: [{

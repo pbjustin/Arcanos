@@ -421,6 +421,12 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      JOB_WORKER_BUDGET_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      JOB_WORKER_BUDGET_REQUIRE_DATABASE: '1'
+      JOB_STALE_RECOVERY_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      JOB_STALE_RECOVERY_REQUIRE_DATABASE: '1'
 
     steps:
       - name: 📥 Checkout code
@@ -438,7 +444,7 @@ jobs:
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
-      - name: 🧱 Verify PostgreSQL claim and snapshot fencing
+      - name: 🧱 Verify PostgreSQL claim, snapshot, budget, and stale-recovery fencing
         run: npm run test:postgres-fencing
 
   runtime-redis-admission:

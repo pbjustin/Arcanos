@@ -42,6 +42,7 @@ describe('PostgresQueueSchedulerAdapter', () => {
 
     const result = await adapter.claimNext({
       workerId: 'worker-1',
+      statsWorkerId: 'shared-worker-budget',
       leaseMs: 15_000,
       priorityQueueEnabled: true,
       priorityQueueWeight: 5,
@@ -50,6 +51,7 @@ describe('PostgresQueueSchedulerAdapter', () => {
 
     expect(claimNextPendingJob).toHaveBeenCalledWith({
       workerId: 'worker-1',
+      statsWorkerId: 'shared-worker-budget',
       leaseMs: 15_000,
       priorityQueueEnabled: true,
       priorityQueueWeight: 5,
