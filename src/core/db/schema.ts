@@ -65,6 +65,7 @@ export const JobDataSchema = z.object({
   lease_expires_at: z.date().optional(),
   priority: z.number().int().optional(),
   last_worker_id: z.string().nullable().optional(),
+  stats_worker_id: z.string().nullable().optional(),
   correlation_id: z.string().nullable().optional(),
   autonomy_state: z.unknown().optional(),
   request_fingerprint_hash: z.string().nullable().optional(),
@@ -315,6 +316,7 @@ export const TABLE_DEFINITIONS = [
     lease_expires_at TIMESTAMPTZ,
     priority INTEGER NOT NULL DEFAULT 100,
     last_worker_id VARCHAR(255),
+    stats_worker_id VARCHAR(255) COLLATE "C",
     correlation_id TEXT,
     autonomy_state JSONB NOT NULL DEFAULT '{}'::jsonb,
     request_fingerprint_hash TEXT,
@@ -393,6 +395,39 @@ export const TABLE_DEFINITIONS = [
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS last_worker_id VARCHAR(255)`,
+  `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS stats_worker_id VARCHAR(255) COLLATE "C"`,
+  `DO $$
+   DECLARE
+     column_type OID;
+     column_type_modifier INTEGER;
+     column_collation OID;
+     column_not_null BOOLEAN;
+     column_generated "char";
+     column_identity "char";
+     column_has_default BOOLEAN;
+   BEGIN
+     SELECT atttypid, atttypmod, attcollation, attnotnull,
+            attgenerated, attidentity, atthasdef
+     INTO column_type, column_type_modifier, column_collation, column_not_null,
+          column_generated, column_identity, column_has_default
+     FROM pg_attribute
+     WHERE attrelid = 'job_data'::regclass
+       AND attname = 'stats_worker_id'
+       AND NOT attisdropped;
+
+     IF column_type IS DISTINCT FROM 'varchar'::regtype
+       OR column_type_modifier IS DISTINCT FROM 259
+       OR column_collation IS DISTINCT FROM '"C"'::regcollation
+       OR column_not_null IS DISTINCT FROM FALSE
+       OR column_generated IS DISTINCT FROM ''::"char"
+       OR column_identity IS DISTINCT FROM ''::"char"
+       OR column_has_default IS DISTINCT FROM FALSE THEN
+       RAISE EXCEPTION
+         'job_data.stats_worker_id must be a plain writable nullable VARCHAR(255) COLLATE "C" without a default'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS correlation_id TEXT`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS autonomy_state JSONB NOT NULL DEFAULT '{}'::jsonb`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS request_fingerprint_hash TEXT`,
@@ -658,6 +693,8 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_job_data_gpt_idempotency_lookup ON job_data(job_type, idempotency_scope_hash, idempotency_key_hash, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_gpt_retention ON job_data(job_type, status, retention_until ASC, expires_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_cancel_requested ON job_data(status, cancel_requested_at ASC)`,
+  // idx_job_data_stats_worker_updated is migration-managed because its first
+  // build must use CREATE INDEX CONCURRENTLY outside application startup.
   `CREATE INDEX IF NOT EXISTS idx_job_events_job_occurred ON job_events(job_id, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_trace_id ON job_events(trace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_event_type_occurred ON job_events(event_type, occurred_at)`,

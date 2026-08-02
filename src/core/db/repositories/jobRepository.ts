@@ -1619,13 +1619,14 @@ async function claimPendingJobWithLane(
   params: {
     leaseMs: number;
     workerId: string;
+    statsWorkerId: string;
     lane: PriorityQueueClaimLane;
     priorityLaneMaxPriority: number;
   }
 ): Promise<JobData | null> {
-  const queryParams: unknown[] = [params.leaseMs, params.workerId];
+  const queryParams: unknown[] = [params.leaseMs, params.workerId, params.statsWorkerId];
   const normalLaneFilter = params.lane === 'normal'
-    ? `AND NOT (job_type = 'gpt' AND priority <= $3)`
+    ? `AND NOT (job_type = 'gpt' AND priority <= $4)`
     : '';
   if (params.lane === 'normal') {
     queryParams.push(params.priorityLaneMaxPriority);
@@ -1640,6 +1641,7 @@ async function claimPendingJobWithLane(
        last_heartbeat_at = NOW(),
        lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
        last_worker_id = $2,
+       stats_worker_id = $3,
        claim_generation = claim_generation + 1
      WHERE id = (
        SELECT id
@@ -1689,6 +1691,7 @@ export async function claimNextPendingJob(
   if (!workerId) {
     throw new TypeError('claimNextPendingJob requires a non-empty workerId.');
   }
+  const statsWorkerId = normalizeNullableString(options?.statsWorkerId) ?? workerId;
 
   assertDatabaseReady();
 
@@ -1717,6 +1720,7 @@ export async function claimNextPendingJob(
       claimedJob = await claimPendingJobWithLane(client, {
         leaseMs,
         workerId,
+        statsWorkerId,
         lane: firstLane,
         priorityLaneMaxPriority
       });
@@ -1725,6 +1729,7 @@ export async function claimNextPendingJob(
         claimedJob = await claimPendingJobWithLane(client, {
           leaseMs,
           workerId,
+          statsWorkerId,
           lane: 'priority',
           priorityLaneMaxPriority
         });
@@ -2730,12 +2735,12 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
 /**
  * Aggregate recent queue execution stats for autonomy budgets.
  * Purpose: let the worker decide whether to pause new claims when throughput or AI-call budgets are exhausted.
- * Inputs/outputs: accepts a lower-bound timestamp and optional worker id; returns normalized execution counters.
+ * Inputs/outputs: accepts a lower-bound timestamp and optional exact worker-group stats id; returns normalized execution counters.
  * Edge case behavior: returns zeroed counters when the database is unavailable.
  */
 export async function getJobExecutionStatsSince(
   since: Date | string,
-  workerId?: string
+  statsWorkerId?: string
 ): Promise<JobExecutionStats> {
   if (!isDatabaseConnected()) {
     return {
@@ -2759,8 +2764,8 @@ export async function getJobExecutionStatsSince(
        )::int AS ai_call_count
      FROM job_data
      WHERE updated_at >= $1::timestamptz
-       AND ($2::text IS NULL OR last_worker_id = $2 OR worker_id = $2)`,
-    [normalizeNullableDate(since), workerId ?? null]
+       AND ($2::text IS NULL OR stats_worker_id = $2)`,
+    [normalizeNullableDate(since), statsWorkerId ?? null]
   );
 
   const row = result.rows[0] as {

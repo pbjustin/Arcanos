@@ -60,7 +60,12 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain('POSTGRES_DB: arcanos_audit_pg18_20260727');
     expect(workflow).toContain('JOB_CLAIM_FENCING_TEST_DATABASE_URL:');
     expect(workflow).toContain('DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL:');
+    expect(workflow).toContain('JOB_WORKER_BUDGET_TEST_DATABASE_URL:');
+    expect(workflow).toContain("JOB_WORKER_BUDGET_REQUIRE_DATABASE: '1'");
     expect(workflow).toContain('run: npm run test:local-agent-postgres');
     expect(workflow).toContain('run: npm run test:postgres-fencing');
+    expect(readWorkflow('package.json')).toContain(
+      'tests/integration/job-worker-budget-identity.pg18.integration.test.ts'
+    );
   });
 });

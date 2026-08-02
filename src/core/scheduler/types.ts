@@ -41,6 +41,7 @@ export interface SchedulerState {
 
 export interface SchedulerClaimOptions {
   workerId?: string;
+  statsWorkerId?: string;
   leaseMs?: number;
   priorityQueueEnabled?: boolean;
   priorityQueueWeight?: number;

@@ -1555,6 +1555,10 @@ describe('workerAutonomyService', () => {
       expect.any(Date),
       'async-queue'
     );
+    expect(service.getClaimOptions()).toEqual(expect.objectContaining({
+      workerId: 'async-queue-slot-2',
+      statsWorkerId: 'async-queue'
+    }));
   });
 
   it('throttles healthy snapshot writes but preserves forced state transitions', async () => {
