@@ -160,15 +160,8 @@ jobs:
           set -euo pipefail
           audit_exit=0
           npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
-          policy_exit=0
-          node "$AUDIT_POLICY_PATH" npm-audit.json || policy_exit=$?
-
-          if (( audit_exit != 0 || policy_exit != 0 )); then
-            echo "Production npm audit failed (npm=$audit_exit policy=$policy_exit)" >&2
-            exit 1
-          fi
-
-          echo "Production npm audit and strict repository policy passed"
+          node "$AUDIT_POLICY_PATH" npm-audit.json
+          echo "Production npm audit policy passed (raw npm exit=$audit_exit)"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0

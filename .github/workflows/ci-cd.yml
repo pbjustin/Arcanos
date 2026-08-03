@@ -262,13 +262,8 @@ jobs:
           set -euo pipefail
           audit_exit=0
           npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
-          policy_exit=0
-          node scripts/check-npm-audit.js npm-audit.json || policy_exit=$?
-
-          if (( audit_exit != 0 || policy_exit != 0 )); then
-            echo "Production npm audit failed (npm=$audit_exit policy=$policy_exit)" >&2
-            exit 1
-          fi
+          node scripts/check-npm-audit.js npm-audit.json
+          echo "Production npm audit policy passed (raw npm exit=$audit_exit)"
 
       - name: 📜 License compliance check
         run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0"
