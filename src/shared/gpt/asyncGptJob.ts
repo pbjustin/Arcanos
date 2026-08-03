@@ -8,6 +8,22 @@ import {
   isGptBridgeSmokeAction,
   type QueuedBridgeSmokeInput
 } from './bridgeSmoke.js';
+import {
+  BACKSTAGE_MODULE_NAME,
+  BACKSTAGE_MUTATION_SCOPE,
+} from '@shared/backstage/backstageActionPolicy.js';
+
+export const QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_VERSION = 1;
+export const QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_SOURCE = 'control-plane-http';
+
+const queuedGptBackstageMutationAdmissionSchema = z.object({
+  version: z.literal(QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_VERSION),
+  source: z.literal(QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_SOURCE),
+  module: z.literal(BACKSTAGE_MODULE_NAME),
+  action: z.string().trim().min(1).max(128),
+  scope: z.literal(BACKSTAGE_MUTATION_SCOPE),
+  principalId: z.string().trim().min(1).max(128),
+}).strict();
 
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -31,9 +47,19 @@ const queuedGptJobInputSchema = z.object({
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
   executionModeReason: z.string().trim().min(1).max(128).optional(),
+  backstageMutationAdmission: queuedGptBackstageMutationAdmissionSchema.optional(),
   bridgeSmoke: z.literal(true).optional(),
   bridgeAction: z.enum([GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION]).optional()
 }).passthrough();
+
+export interface QueuedGptBackstageMutationAdmission {
+  version: typeof QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_VERSION;
+  source: typeof QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_SOURCE;
+  module: typeof BACKSTAGE_MODULE_NAME;
+  action: string;
+  scope: typeof BACKSTAGE_MUTATION_SCOPE;
+  principalId: string;
+}
 
 export interface QueuedGptJobInput extends QueuedBridgeSmokeInput {
   gptId: string;
@@ -46,6 +72,7 @@ export interface QueuedGptJobInput extends QueuedBridgeSmokeInput {
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
+  backstageMutationAdmission?: QueuedGptBackstageMutationAdmission;
 }
 
 export interface QueuedGptPendingResponse {
@@ -86,6 +113,21 @@ function normalizeBoundedOptionalString(value: string | undefined, maxLength: nu
   return trimmed ? trimmed.slice(0, maxLength) : undefined;
 }
 
+/** Build server-owned proof that one queued Backstage mutation passed HTTP admission. */
+export function buildQueuedGptBackstageMutationAdmission(input: {
+  action: string;
+  principalId: string;
+}): QueuedGptBackstageMutationAdmission {
+  return queuedGptBackstageMutationAdmissionSchema.parse({
+    version: QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_VERSION,
+    source: QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_SOURCE,
+    module: BACKSTAGE_MODULE_NAME,
+    action: input.action,
+    scope: BACKSTAGE_MUTATION_SCOPE,
+    principalId: input.principalId,
+  });
+}
+
 /**
  * Build the persisted payload for an async `/gpt/:gptId` job.
  * Purpose: keep the queue contract centralized and schema-backed for worker execution.
@@ -103,6 +145,7 @@ export function buildQueuedGptJobInput(input: {
   routeHint?: string | null;
   requestPath?: string | null;
   executionModeReason?: string | null;
+  backstageMutationAdmission?: QueuedGptBackstageMutationAdmission | null;
   bridgeSmoke?: boolean | null;
   bridgeAction?: string | null;
 }): QueuedGptJobInput {
@@ -151,6 +194,11 @@ export function buildQueuedGptJobInput(input: {
   );
   if (normalizedExecutionModeReason) {
     normalizedJobInput.executionModeReason = normalizedExecutionModeReason;
+  }
+
+  if (input.backstageMutationAdmission) {
+    normalizedJobInput.backstageMutationAdmission =
+      queuedGptBackstageMutationAdmissionSchema.parse(input.backstageMutationAdmission);
   }
 
   if (input.bridgeSmoke === true && isGptBridgeSmokeAction(input.bridgeAction)) {

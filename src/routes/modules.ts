@@ -24,6 +24,8 @@ import {
   buildLegacyModuleDispatchBody,
   unwrapLegacyModuleRouteResult
 } from './_core/legacyRouteAdapters.js';
+import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 
 const router = express.Router();
 await initializeModuleRegistry();
@@ -101,7 +103,12 @@ function createHandler(mod: ModuleDef, route: string) {
  */
 export function registerModule(route: string, mod: ModuleDef) {
   if (legacyGptRoutesEnabled() && isLegacyModuleExposed(mod)) {
-    router.post(`/modules/${route}`, createHandler(mod, route));
+    router.post(
+      `/modules/${route}`,
+      backstageMutationHttpBoundary,
+      backstageMutationConfirmationGate,
+      createHandler(mod, route)
+    );
   }
 }
 
@@ -141,59 +148,64 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 });
 
 if (legacyGptRoutesEnabled()) {
-  router.post('/queryroute', async (req: Request, res: Response, next: NextFunction) => {
-    const { module: moduleName, action, payload } = req.body as ModuleDispatchRequestBody;
-    const mod = resolveLegacyModule(moduleName)?.definition;
-    const canonicalGptId = mod?.gptIds?.[0] ?? null;
-    applyLegacyRouteDeprecationHeaders(
-      res,
-      canonicalGptId ? buildCanonicalGptRoute(canonicalGptId) : buildCanonicalGptRoute()
-    );
+  router.post(
+    '/queryroute',
+    backstageMutationHttpBoundary,
+    backstageMutationConfirmationGate,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { module: moduleName, action, payload } = req.body as ModuleDispatchRequestBody;
+      const mod = resolveLegacyModule(moduleName)?.definition;
+      const canonicalGptId = mod?.gptIds?.[0] ?? null;
+      applyLegacyRouteDeprecationHeaders(
+        res,
+        canonicalGptId ? buildCanonicalGptRoute(canonicalGptId) : buildCanonicalGptRoute()
+      );
 
-    //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
-    if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
-      logger.warn('Rerouted request reached queryroute handler unexpectedly', {
-        module: 'modules',
-        url: req.url,
-        originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
-      });
-      return res.status(409).json({
-        error: 'Dispatch rerouted to safe default dispatcher',
-        code: 'DISPATCH_REROUTED',
-        target: '/gpt/arcanos-daemon'
-      });
-    }
+      //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
+      if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+        logger.warn('Rerouted request reached queryroute handler unexpectedly', {
+          module: 'modules',
+          url: req.url,
+          originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+        });
+        return res.status(409).json({
+          error: 'Dispatch rerouted to safe default dispatcher',
+          code: 'DISPATCH_REROUTED',
+          target: '/gpt/arcanos-daemon'
+        });
+      }
 
-    if (!moduleName) {
-      return sendBadRequest(res, 'Module name is required');
+      if (!moduleName) {
+        return sendBadRequest(res, 'Module name is required');
+      }
+      if (!mod) {
+        return sendNotFound(res, 'Module not found');
+      }
+      if (!action) {
+        return sendBadRequest(res, 'Action is required');
+      }
+      const handler = mod.actions[action];
+      if (!handler) {
+        return sendNotFound(res, 'Action not found');
+      }
+      if (canonicalGptId) {
+        return dispatchLegacyRouteToGpt(req, res, next, {
+          legacyRoute: '/queryroute',
+          gptId: canonicalGptId,
+          applyDeprecationHeaders: false,
+          bodyTransform: () => buildLegacyModuleDispatchBody(action, payload),
+          successBodyTransform: (result) => unwrapLegacyModuleRouteResult(result)
+        });
+      }
+      try {
+        const result = await handler(payload);
+        res.json(result);
+      } catch (err: unknown) {
+        //audit Assumption: module failures should return 500
+        sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
+      }
     }
-    if (!mod) {
-      return sendNotFound(res, 'Module not found');
-    }
-    if (!action) {
-      return sendBadRequest(res, 'Action is required');
-    }
-    const handler = mod.actions[action];
-    if (!handler) {
-      return sendNotFound(res, 'Action not found');
-    }
-    if (canonicalGptId) {
-      return dispatchLegacyRouteToGpt(req, res, next, {
-        legacyRoute: '/queryroute',
-        gptId: canonicalGptId,
-        applyDeprecationHeaders: false,
-        bodyTransform: () => buildLegacyModuleDispatchBody(action, payload),
-        successBodyTransform: (result) => unwrapLegacyModuleRouteResult(result)
-      });
-    }
-    try {
-      const result = await handler(payload);
-      res.json(result);
-    } catch (err: unknown) {
-      //audit Assumption: module failures should return 500
-      sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
-    }
-  });
+  );
 }
 
 export default router;

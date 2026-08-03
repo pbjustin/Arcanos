@@ -315,7 +315,16 @@ async function executeReservedPriorityGptDirectExecution(params: {
       return;
     }
 
-    const { gptId, body, prompt, requestId, traceId, correlationId, bypassIntentRouting } = parsedGptJobInput.value;
+    const {
+      gptId,
+      body,
+      prompt,
+      requestId,
+      traceId,
+      correlationId,
+      bypassIntentRouting,
+      backstageMutationAdmission,
+    } = parsedGptJobInput.value;
     const preflightJob = await recordJobHeartbeat(params.jobId, {
       fence,
       leaseMs
@@ -401,7 +410,9 @@ async function executeReservedPriorityGptDirectExecution(params: {
       logger: routeLogger,
       bypassIntentRouting,
       runtimeExecutionMode: 'background',
-      parentAbortSignal: cancellationController.signal
+      parentAbortSignal: cancellationController.signal,
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
     }));
 
     stopHeartbeat();

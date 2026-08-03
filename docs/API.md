@@ -305,11 +305,14 @@ correlation. Railway deployments use `GET /readyz` for activation; retain
 `GET /healthz` for liveness and `GET /health` for dependency diagnostics.
 
 ### Core AI interaction
-- `POST /gpt/:gptId` (canonical GPT writing plane)
+- `POST /gpt/:gptId` (canonical GPT writing plane; valid Backstage mutation
+  actions additionally require the control-plane operator boundary described
+  below)
 - `POST /dispatch` (universal GPT/DAG compatibility dispatcher; requests that
   select DAG execution use the canonical DAG client-admission, control-plane
   operator, `mcp:invoke`, principal-admission, and `no-store` policy before a
-  run can be created; GPT-selected requests retain compatibility behavior;
+  run can be created; GPT-selected Backstage mutations use the separate shared
+  Backstage operator boundary; other GPT-selected requests retain compatibility behavior;
   asynchronous branch failures return the stable `500 DISPATCH_FAILED`
   envelope without internal exception text)
 - `GET|HEAD|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation; GET uses query input while POST and implicit HEAD use body input)
@@ -362,6 +365,16 @@ reservation until the background execution promise settles.
 - `GET /system-state` (control-plane operator and `arcanos:read` required)
 - `POST /system-state` (control-plane operator, `mcp:invoke`, and an issued
   one-use confirmation challenge required)
+- `POST /backstage/book-event` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /backstage/book-gpt` (control-plane operator, `mcp:invoke`, and
+  confirmation required because the generated storyline is saved)
+- `POST /backstage/update-roster` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /backstage/track-storyline` (control-plane operator, `mcp:invoke`, and
+  confirmation required)
+- `POST /backstage/simulate-match` (public caller identity; existing
+  confirmation requirement retained)
 - `POST /api/bridge/gpt`
 - `POST /api/openai/gpt-action` (bridge compatibility alias)
 - `GET /api/bridge/health` (requires the bridge shared secret; returns a
@@ -378,6 +391,34 @@ automation bypasses are not accepted. The server accepts caller-selected
 `sessionId` values up to 100 characters for compatibility. This is
 deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
+
+Backstage generation and simulation actions remain public through the canonical
+GPT and compatibility writing routes: `generateBooking`,
+`generateBookingWithHRC`, and `simulateMatch`. The state-changing module actions
+`bookEvent`, `updateRoster`, `trackStoryline`, and `saveStoryline` require
+`Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>`, the configured
+operator principal, the server-owned `mcp:invoke` scope, and the existing
+confirmation contract through `/gpt/:gptId`, GPT-selected `/dispatch`,
+`/modules/backstage-booker`, and `/queryroute`. The same control-plane principal
+has one shared 10-attempts-per-15-minute Backstage mutation budget across these
+aliases; invalid credentials use a separate 120-per-15-minute ingress-address
+budget. Protected responses are `no-store`. Direct mutation paths establish
+identity before broad body parsing; action-selecting aliases parse first so the
+server can preserve public generation and simulation. Confirmation is approval,
+not authentication. Issued confirmation challenges are bound to the authenticated
+principal, request path, canonical mutation action, and request body, so a token
+cannot be replayed across Backstage actions. GPT Access and HTTP MCP retain their
+own existing bearer, scope, and allowlist boundaries rather than requiring two
+bearer credentials on one request.
+
+Canonical async Backstage mutations persist a server-generated admission record
+binding the admitted operator principal to the resolved Backstage module and
+action. Both the normal worker and priority direct executor require that record
+and fail closed if it is absent or no longer matches current routing; queued
+rows created before this policy cannot newly execute a Backstage mutation.
+The established control-plane principal also supplies the idempotency actor, so
+an operator retry with the same idempotency key stays in one authenticated
+scope instead of creating a new anonymous scope.
 
 ### AFOL decision and inspection
 - `POST /api/afol/decide` (control-plane operator, `mcp:invoke`, and an issued

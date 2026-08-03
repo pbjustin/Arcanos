@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  buildQueuedGptBackstageMutationAdmission,
   buildQueuedGptJobInput,
   parseQueuedGptJobInput
 } from '../src/shared/gpt/asyncGptJob.js';
@@ -39,5 +40,48 @@ describe('async GPT job payload helpers', () => {
     expect(isQueuedBridgeSmokeJobInput({
       bridgeAction: GPT_HEALTH_ECHO_ACTION
     })).toBe(false);
+  });
+
+  it('round-trips only schema-valid server-owned Backstage mutation admission', () => {
+    const backstageMutationAdmission = buildQueuedGptBackstageMutationAdmission({
+      action: 'updateRoster',
+      principalId: 'operator:queued-backstage-test',
+    });
+    const payload = buildQueuedGptJobInput({
+      gptId: 'backstage',
+      body: { action: 'updateRoster', payload: [] },
+      backstageMutationAdmission,
+    });
+
+    expect(parseQueuedGptJobInput(payload)).toEqual({
+      ok: true,
+      value: expect.objectContaining({ backstageMutationAdmission }),
+    });
+    expect(parseQueuedGptJobInput({
+      ...payload,
+      backstageMutationAdmission: {
+        ...backstageMutationAdmission,
+        source: 'caller-supplied',
+      },
+    })).toMatchObject({ ok: false });
+  });
+
+  it('preserves persisted mutation action drift for worker mismatch enforcement', () => {
+    const backstageMutationAdmission = buildQueuedGptBackstageMutationAdmission({
+      action: 'updateRoster',
+      principalId: 'operator:queued-backstage-test',
+    });
+
+    expect(parseQueuedGptJobInput({
+      gptId: 'backstage',
+      body: { action: 'trackStoryline', payload: {} },
+      backstageMutationAdmission,
+    })).toMatchObject({
+      ok: true,
+      value: {
+        body: { action: 'trackStoryline', payload: {} },
+        backstageMutationAdmission,
+      },
+    });
   });
 });

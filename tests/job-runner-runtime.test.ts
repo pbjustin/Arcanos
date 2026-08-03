@@ -620,6 +620,14 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry')");
   });
 
+  it('enforces persisted Backstage mutation admission for queued GPT execution', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+
+    expect(source).toContain('backstageMutationAdmission');
+    expect(source).toContain('enforceQueuedBackstageMutationAdmission: true');
+    expect(source).toContain('queuedBackstageMutationAdmission: backstageMutationAdmission');
+  });
+
   it('uses live claim-generation fences for worker heartbeats and terminal outcomes', () => {
     const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
 

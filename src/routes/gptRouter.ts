@@ -4,6 +4,11 @@ import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
 import { publicProviderGptAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
 import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
 import {
+  backstageMutationHttpBoundary,
+  resolveBackstageMutationHttpOperation,
+} from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
+import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
 } from "@services/arcanos-core.js";
@@ -51,6 +56,7 @@ import {
 } from '@core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import {
+  buildQueuedGptBackstageMutationAdmission,
   buildQueuedGptJobInput,
   buildQueuedGptPendingResponse
 } from '@shared/gpt/asyncGptJob.js';
@@ -1207,6 +1213,8 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 router.post(
   "/:gptId",
   canonicalGptIdentifierBoundary,
+  backstageMutationHttpBoundary,
+  backstageMutationConfirmationGate,
   publicProviderGptAdmission,
   async (req, res, next) => {
   const routeGptId = req.params.gptId;
@@ -1271,12 +1279,20 @@ router.post(
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
-        const effectiveBody =
+        const backstageMutationOperation =
+          await resolveBackstageMutationHttpOperation(req);
+        const normalizedEffectiveBody =
           hydrateDirectQueryBody(
             normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? normalizedBody,
             promptText,
             bypassIntentRouting
           ) ?? req.body;
+        const effectiveBody = backstageMutationOperation
+          ? {
+              ...(normalizedEffectiveBody as Record<string, unknown>),
+              action: backstageMutationOperation.action,
+            }
+          : normalizedEffectiveBody;
         applyCanonicalGptRouteHeaders(res, incomingGptId);
 
         requestLogger?.info?.('gpt.request.timeout_plan', {
@@ -2334,6 +2350,37 @@ router.post(
                 source: 'derived'
               });
             }
+            const backstageMutationPrincipalId =
+              req.controlPlanePrincipal?.principalId;
+            if (backstageMutationOperation && !backstageMutationPrincipalId) {
+              requestLogger?.error?.('gpt.request.backstage_mutation_admission_unavailable', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                action: backstageMutationOperation.action,
+              });
+              return sendGuardedGptJsonResponse(req, res, {
+                ok: false,
+                error: {
+                  code: 'BACKSTAGE_MUTATION_ADMISSION_UNAVAILABLE',
+                  message: 'Backstage mutation admission could not be persisted.'
+                },
+                _route: {
+                  requestId,
+                  traceId,
+                  gptId: incomingGptId,
+                  route: 'backstage_mutation_admission',
+                  action: backstageMutationOperation.action,
+                  timestamp: new Date().toISOString()
+                }
+              }, 'gpt.response.backstage_mutation_admission_unavailable', 500);
+            }
+            const backstageMutationAdmission = backstageMutationOperation
+              ? buildQueuedGptBackstageMutationAdmission({
+                  action: backstageMutationOperation.action,
+                  principalId: backstageMutationPrincipalId!,
+                })
+              : undefined;
             const queuedGptJobInput = buildQueuedGptJobInput({
               gptId: incomingGptId,
               body: effectiveBody as Record<string, unknown>,
@@ -2344,7 +2391,8 @@ router.post(
               correlationId: traceId,
               routeHint: effectiveRequestedAction ?? 'query',
               requestPath: `/gpt/${encodeURIComponent(incomingGptId)}`,
-              executionModeReason: executionPlan.reason
+              executionModeReason: executionPlan.reason,
+              backstageMutationAdmission,
             });
             const priorityDirectWorkerId = `${process.env.WORKER_ID || 'api'}:priority-gpt-direct`;
             let priorityDirectSlot: PriorityGptDirectExecutionSlot | null = priorityQueueActive

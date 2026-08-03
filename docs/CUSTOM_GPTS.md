@@ -180,14 +180,20 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 **Known GPT IDs:** `backstage-booker`, `backstage`. The catalog registers `backstage-booker.ts` at route `backstage-booker`, and both declared GPT IDs map to that route. (`src/services/backstage-booker.ts`) (`src/services/moduleCatalog.ts`)
 
 **Available actions (via `/gpt/<gpt-id>`):**
-- `bookEvent`
-- `updateRoster`
-- `trackStoryline`
-- `simulateMatch`
-- `generateBooking`
-- `generateBookingWithHRC`
-- `saveStoryline`
+- Public generation/simulation: `simulateMatch`, `generateBooking`,
+  `generateBookingWithHRC`
+- Operator mutations: `bookEvent`, `updateRoster`, `trackStoryline`,
+  `saveStoryline`
 (`src/services/backstage-booker.ts`)
+
+Operator mutations require the existing control-plane bearer, configured
+operator principal, `mcp:invoke` scope, and explicit confirmation. The same rule
+applies to configured Backstage GPT IDs and to GPT-selected `/dispatch`,
+`/modules/backstage-booker`, and `/queryroute` compatibility calls. Direct
+`/backstage/book-gpt` is also an operator mutation because it saves the generated
+storyline. Confirmation metadata or `x-confirmed` alone does not establish
+caller identity. GPT Access and HTTP MCP keep their separate protected trust
+boundaries; callers do not combine their bearer with the control-plane bearer.
 
 **Spec sheet example:**
 ```yaml
@@ -198,8 +204,13 @@ endpoint: /gpt/backstage-booker
 method: POST
 headers:
   Content-Type: application/json
+  Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>
+  X-Confirmed: "yes"
 body:
-  prompt: "Book an AEW card at Daily's Place for 2024-09-20 with Omega vs. Danielson in the main event."
+  action: bookEvent
+  payload:
+    name: "AEW Daily's Place"
+    date: "2024-09-20"
 success_response:
   description: Booking ID plus _route metadata.
 ```

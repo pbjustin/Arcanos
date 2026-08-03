@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-02T00:38:42.968Z",
+  "generatedAt": "2026-08-03T05:02:16.206Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1577,6 +1577,9 @@
           "relativePath": "src/services/controlPlane/audit.ts"
         },
         {
+          "relativePath": "src/services/controlPlane/backstageMutationHttpBoundary.ts"
+        },
+        {
           "relativePath": "src/services/controlPlane/cefBodyParser.ts"
         },
         {
@@ -2291,6 +2294,9 @@
           "relativePath": "src/shared/ask/trinityResponseSerializer.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -2352,6 +2358,9 @@
         },
         {
           "relativePath": "src/shared/gpt/gptModuleAction.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/gptModuleMapResolution.ts"
         },
         {
           "relativePath": "src/shared/gpt/gptRequestAction.ts"
@@ -2595,6 +2604,9 @@
         },
         {
           "relativePath": "src/transport/http/middleware/auditTrace.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/backstageMutationConfirmationGate.ts"
         },
         {
           "relativePath": "src/transport/http/middleware/canonicalGptIdentifierBoundary.ts"
@@ -3092,6 +3104,12 @@
         },
         {
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage.route.test.ts"
         },
         {
           "relativePath": "tests/backstageBookerRouteShortcut.test.ts"
@@ -3659,6 +3677,9 @@
         },
         {
           "relativePath": "tests/job-repository.worker-budget-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/job-runner-backstage-admission.test.ts"
         },
         {
           "relativePath": "tests/job-runner-runtime.test.ts"

@@ -6,6 +6,8 @@ import {
   dispatchDagCompatibilityBoundary,
   resolveDispatchLaneForRequest,
 } from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
+import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import {
@@ -300,6 +302,12 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
   }
 }
 
-router.post('/dispatch', dispatchDagCompatibilityBoundary, universalDispatch);
+router.post(
+  '/dispatch',
+  dispatchDagCompatibilityBoundary,
+  backstageMutationHttpBoundary,
+  backstageMutationConfirmationGate,
+  universalDispatch
+);
 
 export default router;

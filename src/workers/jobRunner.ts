@@ -661,7 +661,7 @@ async function executeQueuedDagNode(
  * Inputs/outputs: accepts raw persisted queue input and returns a structured execution outcome for centralized retry handling.
  * Edge case behavior: malformed payloads are terminal failures, while transient module timeouts remain retryable.
  */
-async function executeQueuedGptRequest(params: {
+export async function executeQueuedGptRequest(params: {
   jobId: string;
   rawInput: unknown;
   cancellationSignal?: AbortSignal;
@@ -687,7 +687,8 @@ async function executeQueuedGptRequest(params: {
     bypassIntentRouting,
     requestPath,
     executionModeReason,
-    routeHint
+    routeHint,
+    backstageMutationAdmission,
   } = parsedGptJobInput.value;
   const hydratedBody = attachQueuedGptExecutionMetadata(
     hydrateQueuedGptBodyPrompt(body, prompt),
@@ -768,7 +769,9 @@ async function executeQueuedGptRequest(params: {
       logger: routeLogger,
       bypassIntentRouting,
       runtimeExecutionMode: 'background',
-      parentAbortSignal: params.cancellationSignal
+      parentAbortSignal: params.cancellationSignal,
+      enforceQueuedBackstageMutationAdmission: true,
+      queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
   } catch (error: unknown) {
     if (params.cancellationSignal?.aborted && isAbortError(error)) {

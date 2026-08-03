@@ -130,6 +130,8 @@ const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 
 const ASYNC_IDEMPOTENCY_ENV_KEYS = [
   ...PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+  'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  'ARCANOS_CONTROL_PLANE_SCOPES',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
   'GPT_ASYNC_HEAVY_MAX_WORDS',
@@ -1588,6 +1590,155 @@ describe('async /gpt idempotency', () => {
     expect(secondResponse.body.deduped).toBe(true);
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
       .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
+  });
+
+  it('binds admitted async Backstage mutation retries to the control-plane principal', async () => {
+    const controlPlaneToken = 'async-backstage-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:async-backstage';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    mockResolveGptRouting.mockResolvedValue({
+      ok: true,
+      plan: {
+        matchedId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'generateBooking',
+        availableActions: [
+          'bookEvent',
+          'updateRoster',
+          'trackStoryline',
+          'simulateMatch',
+          'generateBooking',
+          'generateBookingWithHRC',
+          'saveStoryline',
+        ],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact',
+      },
+      _route: {
+        gptId: 'backstage',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+    let callCount = 0;
+    findOrCreateGptJobMock.mockImplementation(async () => {
+      callCount += 1;
+      return {
+        job: {
+          id: 'job-backstage-mutation-1',
+          status: 'pending',
+        },
+        created: callCount === 1,
+        deduped: callCount > 1,
+        dedupeReason: callCount === 1 ? 'new_job' : 'reused_inflight_job',
+      };
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-backstage-mutation-1',
+        status: 'pending',
+      },
+    });
+
+    const submitMutation = () => request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('Idempotency-Key', 'backstage-mutation-retry-1')
+      .set('X-GPT-Action', 'updateRoster')
+      .set('X-Confirmed', 'yes')
+      .send({ payload: [] });
+    const firstResponse = await submitMutation();
+    const secondResponse = await submitMutation();
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(secondResponse.body.deduped).toBe(true);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(2);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
+      .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.input).toMatchObject({
+      body: {
+        action: 'updateRoster',
+        payload: [],
+      },
+      backstageMutationAdmission: {
+        version: 1,
+        source: 'control-plane-http',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        scope: 'mcp:invoke',
+        principalId: 'operator:async-backstage',
+      },
+    });
+  });
+
+  it('materializes an admitted header-selected Backstage mutation for synchronous dispatch', async () => {
+    const controlPlaneToken = 'sync-backstage-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:sync-backstage';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    mockResolveGptRouting.mockResolvedValue({
+      ok: true,
+      plan: {
+        matchedId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'generateBooking',
+        availableActions: [
+          'bookEvent',
+          'updateRoster',
+          'trackStoryline',
+          'simulateMatch',
+          'generateBooking',
+          'generateBookingWithHRC',
+          'saveStoryline',
+        ],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact',
+      },
+      _route: {
+        gptId: 'backstage',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { updated: true },
+      _route: {
+        gptId: 'backstage',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'updateRoster')
+      .set('X-Confirmed', 'yes')
+      .send({ payload: [] });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'backstage',
+      body: {
+        action: 'updateRoster',
+        payload: [],
+      },
+    }));
   });
 
   it('rejects explicit idempotency key reuse for a different semantic request', async () => {
