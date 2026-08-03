@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
+} from '../src/shared/backstage/backstageRoster.js';
 
 const recordJobHeartbeatMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -319,6 +323,133 @@ describe('priorityGptDirectExecutionService', () => {
       enforceQueuedBackstageMutationAdmission: true,
       queuedBackstageMutationAdmission: backstageMutationAdmission,
     }));
+  });
+
+  it('records invalid Backstage roster input as a non-retryable priority-direct failure', async () => {
+    const slot = { release: jest.fn() };
+    const backstageMutationAdmission = {
+      version: 1,
+      source: 'control-plane-http',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      scope: 'mcp:invoke',
+      principalId: 'operator:priority-backstage-invalid',
+    } as const;
+    routeGptRequestMock.mockResolvedValue({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.',
+      },
+    });
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'failed' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-backstage-invalid',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'updateRoster',
+          payload: { name: 'not-an-array', overall: 90 },
+        },
+        requestId: 'req-priority-direct-backstage-invalid',
+        backstageMutationAdmission,
+      },
+      slot,
+    });
+
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct invalid Backstage roster failure'
+    );
+
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-backstage-invalid',
+      'failed',
+      expect.objectContaining({
+        errorMessage: `${BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE}: Roster payload must be an array.`,
+        autonomyState: expect.objectContaining({
+          priorityDirectExecution: expect.objectContaining({
+            retryable: false,
+          }),
+          lastFailure: expect.objectContaining({
+            retryable: false,
+            retryExhausted: true,
+          }),
+        }),
+      })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'non_retryable_failure',
+      status: 'failed',
+      retryable: false,
+    });
+  });
+
+  it('records Backstage roster persistence failure as retryable priority-direct failure', async () => {
+    const slot = { release: jest.fn() };
+    const backstageMutationAdmission = {
+      version: 1,
+      source: 'control-plane-http',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      scope: 'mcp:invoke',
+      principalId: 'operator:priority-backstage-persistence',
+    } as const;
+    routeGptRequestMock.mockResolvedValue({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.',
+      },
+    });
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'failed' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-backstage-persistence',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'updateRoster',
+          payload: [{ name: 'Rhea Ripley', overall: 96 }],
+        },
+        requestId: 'req-priority-direct-backstage-persistence',
+        backstageMutationAdmission,
+      },
+      slot,
+    });
+
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct Backstage roster persistence failure'
+    );
+
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-backstage-persistence',
+      'failed',
+      expect.objectContaining({
+        errorMessage:
+          `${BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE}: Roster update persistence could not be confirmed.`,
+        autonomyState: expect.objectContaining({
+          priorityDirectExecution: expect.objectContaining({
+            retryable: true,
+          }),
+          lastFailure: expect.objectContaining({
+            retryable: true,
+            retryExhausted: true,
+          }),
+        }),
+      })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'retryable_failure',
+      status: 'failed',
+      retryable: true,
+    });
   });
 
   it.each([

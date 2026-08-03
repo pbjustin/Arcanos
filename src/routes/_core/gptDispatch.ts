@@ -67,6 +67,10 @@ import {
   BACKSTAGE_MODULE_NAME,
   isBackstagePublicAction,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  isBackstageRosterPersistenceError,
+  isBackstageRosterValidationError
+} from '@shared/backstage/backstageRoster.js';
 import type {
   QueuedGptBackstageMutationAdmission,
 } from '@shared/gpt/asyncGptJob.js';
@@ -1701,6 +1705,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const errorMessage = String(err?.message ?? err);
       const isDispatchCancellation = isDispatchCancellationError(err);
       const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
+      const isRosterValidationFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && action === 'updateRoster'
+        && isBackstageRosterValidationError(err);
+      const isRosterPersistenceFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && action === 'updateRoster'
+        && isBackstageRosterPersistenceError(err);
       const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
       const dispatchErrorMessage = isDispatchTimeout
         ? buildDispatchTimeoutMessage(timeoutMs)
@@ -1893,7 +1905,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     return {
       ok: false,
       error: {
-        code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
+        code: isDispatchTimeout
+          ? "MODULE_TIMEOUT"
+          : (isRosterValidationFailure || isRosterPersistenceFailure)
+            ? err.code
+            : "MODULE_ERROR",
         message: dispatchErrorMessage,
         ...(buildDispatchErrorDetails(activeEntry.module, err, errorMessage)
           ? { details: buildDispatchErrorDetails(activeEntry.module, err, errorMessage) }

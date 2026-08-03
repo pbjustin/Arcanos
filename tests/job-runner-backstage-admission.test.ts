@@ -1,4 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError,
+} from '../src/shared/backstage/backstageRoster.js';
 
 const mockGetJobById = jest.fn(async (_jobId: string) => null);
 const mockGetGptModuleMap = jest.fn();
@@ -224,5 +230,81 @@ describe('normal worker queued Backstage mutation admission', () => {
       },
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('fails an admitted invalid roster non-retryably after module validation', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'job-backstage-invalid-roster',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'updateRoster',
+          payload: { name: 'not-an-array', overall: 90 },
+        },
+        requestId: 'req-backstage-invalid-roster',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'updateRoster',
+          principalId: 'operator:normal-worker-test',
+        }),
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: `${BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE}: Roster payload must be an array.`,
+      output: {
+        ok: false,
+        error: {
+          code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+          message: 'Roster payload must be an array.',
+        },
+      },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      expect.objectContaining({ name: 'not-an-array', overall: 90 })
+    );
+  });
+
+  it('fails an admitted roster transaction retryably without reporting completion', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterPersistenceError()
+    );
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'job-backstage-roster-persistence',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'updateRoster',
+          payload: [{ name: 'Rhea Ripley', overall: 96 }],
+        },
+        requestId: 'req-backstage-roster-persistence',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'updateRoster',
+          principalId: 'operator:normal-worker-test',
+        }),
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: true,
+      errorMessage:
+        `${BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE}: Roster update persistence could not be confirmed.`,
+      output: {
+        ok: false,
+        error: {
+          code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+          message: 'Roster update persistence could not be confirmed.',
+        },
+      },
+    });
   });
 });

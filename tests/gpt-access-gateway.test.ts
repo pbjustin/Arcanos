@@ -2,6 +2,11 @@ import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError
+} from '../src/shared/backstage/backstageRoster.js';
 
 const writePublicHealthResponseMock = jest.fn();
 const getPoolMock = jest.fn();
@@ -2929,6 +2934,130 @@ describe('/gpt-access gateway', () => {
     expect(response.body.error).toEqual({
       code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
       message: 'Capability or action not found.'
+    });
+  });
+
+  it('maps typed Backstage roster validation failures to capability client errors', async () => {
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:updateRoster');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['updateRoster'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run')
+    )).send({
+      action: 'updateRoster',
+      payload: { name: 'not-an-array', overall: 90 },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Roster payload must be an array.',
+    });
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      { name: 'not-an-array', overall: 90 }
+    );
+  });
+
+  it('preserves a successful Backstage roster array through GPT Access', async () => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:updateRoster');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['updateRoster'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    dispatchModuleActionMock.mockResolvedValueOnce(refreshedRoster);
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run')
+    )).send({
+      action: 'updateRoster',
+      payload: refreshedRoster,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: true });
+    expect(response.body.result).toEqual(refreshedRoster);
+  });
+
+  it('maps typed Backstage roster persistence failures to capability unavailable errors', async () => {
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:updateRoster');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['updateRoster'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageRosterPersistenceError()
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run')
+    )).send({
+      action: 'updateRoster',
+      payload: [{ name: 'Rhea Ripley', overall: 96 }],
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toEqual({
+      code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+      message: 'Roster update persistence could not be confirmed.',
+    });
+  });
+
+  it('does not remap a roster-shaped error from another capability', async () => {
+    allowCapabilityRun();
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/core/run')
+    )).send({
+      action: 'query',
+      payload: {},
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_INTERNAL_ERROR',
+      message: 'Capability execution failed.',
     });
   });
 

@@ -6,6 +6,7 @@ import {
   extractAIDegradedResponseMetadata
 } from '@shared/http/aiDegradedHeaders.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
+import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
 type SuccessBodyTransform = (
@@ -22,6 +23,7 @@ const LEGACY_ROUTE_ERROR_STATUS_CODES: Record<string, number> = {
   UNKNOWN_GPT: 404,
   MEMORY_AUTH_REQUIRED: 401,
   MEMORY_AUTH_UNAVAILABLE: 503,
+  [BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE]: 503,
   SYSTEM_STATE_CONFLICT: 409,
   MODULE_TIMEOUT: 504,
 };

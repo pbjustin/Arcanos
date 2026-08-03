@@ -66,7 +66,15 @@ import {
   getControlPlaneCapabilities,
   requiresControlPlaneApproval
 } from '@services/controlPlane/service.js';
-import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
+import {
+  stripConfirmationFields,
+  requireNonceOrIssue,
+  notExposed,
+  buildBackstageRosterPersistenceMcpError,
+  buildBackstageRosterValidationMcpError,
+  buildClearRecheckInput,
+  wrapTool
+} from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
 import { registerJobMcpTools } from './jobTools.js';
 import { registerControlPlaneMcpTools } from './controlPlaneTools.js';
@@ -1289,7 +1297,26 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       if (!gate.ok) return gate.error;
 
       await initializeModuleRegistry();
-      const out = await dispatchModuleAction(args.module, args.action, args.payload ?? {});
+      let out: unknown;
+      try {
+        out = await dispatchModuleAction(args.module, args.action, args.payload ?? {});
+      } catch (error: unknown) {
+        const rosterError = buildBackstageRosterValidationMcpError(
+          args.module,
+          args.action,
+          error,
+          ctx
+        ) ?? buildBackstageRosterPersistenceMcpError(
+          args.module,
+          args.action,
+          error,
+          ctx
+        );
+        if (!rosterError) {
+          throw error;
+        }
+        return rosterError;
+      }
       return mcpText(out);
     })
   );

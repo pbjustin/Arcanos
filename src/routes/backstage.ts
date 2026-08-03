@@ -4,8 +4,12 @@ import { BackstageBooker, MatchInput, Wrestler } from '@services/backstage-booke
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/index.js';
 import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import {
+  isBackstageRosterPersistenceError,
+  isBackstageRosterValidationError
+} from '@shared/backstage/backstageRoster.js';
 
 const router = express.Router();
 
@@ -61,9 +65,31 @@ router.post('/simulate-match', confirmGate, async (req: Request, res: Response) 
 // Update Roster
 router.post('/update-roster', backstageMutationHttpBoundary, backstageMutationConfirmationGate, async (req: Request, res: Response) => {
   try {
-    const roster = await BackstageBooker.updateRoster(req.body as Wrestler[]);
+    const roster = await BackstageBooker.updateRoster(req.body);
     res.status(200).json({ success: true, roster });
   } catch (error: unknown) {
+    if (isBackstageRosterValidationError(error)) {
+      sendBadRequestPayload(res, {
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+      return;
+    }
+
+    if (isBackstageRosterPersistenceError(error)) {
+      res.status(503).json({
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+      return;
+    }
+
     //audit Assumption: roster update failures should return 500
     sendInternalErrorPayload(res, { success: false, error: resolveErrorMessage(error) });
   }

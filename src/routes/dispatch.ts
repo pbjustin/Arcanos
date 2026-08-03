@@ -10,6 +10,7 @@ import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageM
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
+import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
   buildResolvedGptDispatchBody,
   isDagDispatchAction,
@@ -74,6 +75,9 @@ function gptStatusCode(envelope: AskEnvelope): number {
     return 401;
   }
   if (code === 'MEMORY_AUTH_UNAVAILABLE') {
+    return 503;
+  }
+  if (code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE) {
     return 503;
   }
   if (code === 'SYSTEM_STATE_CONFLICT') {

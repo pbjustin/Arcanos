@@ -1,4 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError,
+} from '../src/shared/backstage/backstageRoster.js';
 
 const originalAllowAllGpts = process.env.ALLOW_ALL_GPTS;
 process.env.ALLOW_ALL_GPTS = 'false';
@@ -112,6 +118,59 @@ describe('direct Backstage routes', () => {
     expect(response.status).toBe(403);
     expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
     expect(mockUpdateRoster).not.toHaveBeenCalled();
+  });
+
+  it('updates a valid roster after operator admission and confirmation', async () => {
+    const payload = [{ name: 'A', overall: 90 }];
+
+    const response = await authorizedConfirmedPost('/backstage/update-roster')
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: true,
+      roster: payload
+    });
+    expect(mockUpdateRoster).toHaveBeenCalledWith(payload);
+  });
+
+  it('maps typed roster validation failures to a stable client error', async () => {
+    mockUpdateRoster.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+
+    const response = await authorizedConfirmedPost('/backstage/update-roster')
+      .send({ name: 'not-an-array', overall: 90 });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.'
+      }
+    });
+    expect(mockUpdateRoster).toHaveBeenCalledWith({
+      name: 'not-an-array',
+      overall: 90
+    });
+  });
+
+  it('maps authoritative roster persistence failures to a stable unavailable response', async () => {
+    mockUpdateRoster.mockRejectedValueOnce(new BackstageRosterPersistenceError());
+
+    const response = await authorizedConfirmedPost('/backstage/update-roster')
+      .send([{ name: 'A', overall: 90 }]);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.'
+      }
+    });
+    expect(mockUpdateRoster).toHaveBeenCalledWith([{ name: 'A', overall: 90 }]);
   });
 
   it('does not replay a direct mutation challenge across control-plane principals', async () => {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-03T05:02:16.206Z",
+  "generatedAt": "2026-08-03T07:59:57.054Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2297,6 +2297,9 @@
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageRoster.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -3104,6 +3107,9 @@
         },
         {
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker.roster.test.ts"
         },
         {
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"

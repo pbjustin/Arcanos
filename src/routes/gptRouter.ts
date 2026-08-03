@@ -61,6 +61,13 @@ import {
   buildQueuedGptPendingResponse
 } from '@shared/gpt/asyncGptJob.js';
 import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE,
+  isBackstageRosterValidationError,
+  parseBackstageRosterPayload
+} from '@shared/backstage/backstageRoster.js';
+import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
   waitForQueuedGptJobCompletion,
   resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs
@@ -1042,6 +1049,59 @@ function hydrateDirectQueryBody(
   };
 }
 
+function normalizeBackstageRosterMutationBody(body: unknown): Record<string, unknown> {
+  const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const rosterPayload = Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
+    ? bodyRecord.payload
+    : body;
+
+  return {
+    ...bodyRecord,
+    payload: parseBackstageRosterPayload(rosterPayload)
+  };
+}
+
+function normalizeFailedBackstageRosterPersistenceOutput(output: unknown): {
+  code: typeof BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE;
+  message: typeof BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE;
+} | null {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) {
+    return null;
+  }
+
+  const candidate = output as Record<string, unknown>;
+  const error = candidate.error;
+  const route = candidate._route;
+  if (
+    candidate.ok !== false
+    || !error
+    || typeof error !== 'object'
+    || Array.isArray(error)
+    || !route
+    || typeof route !== 'object'
+    || Array.isArray(route)
+  ) {
+    return null;
+  }
+
+  const errorRecord = error as Record<string, unknown>;
+  const routeRecord = route as Record<string, unknown>;
+  if (
+    errorRecord.code !== BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+    || routeRecord.module !== BACKSTAGE_MODULE_NAME
+    || routeRecord.action !== 'updateRoster'
+  ) {
+    return null;
+  }
+
+  return {
+    code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+    message: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE
+  };
+}
+
 function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
   return queryAndWaitRequested
     ? GPT_QUERY_AND_WAIT_ACTION
@@ -1287,7 +1347,7 @@ router.post(
             promptText,
             bypassIntentRouting
           ) ?? req.body;
-        const effectiveBody = backstageMutationOperation
+        let effectiveBody = backstageMutationOperation
           ? {
               ...(normalizedEffectiveBody as Record<string, unknown>),
               action: backstageMutationOperation.action,
@@ -1596,6 +1656,54 @@ router.post(
           kind: 'registered' as const,
           id: routingValidation.plan.matchedId,
         };
+
+        if (
+          backstageMutationOperation?.action === 'updateRoster'
+          && routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+        ) {
+          try {
+            effectiveBody = normalizeBackstageRosterMutationBody(effectiveBody);
+          } catch (error: unknown) {
+            if (!isBackstageRosterValidationError(error)) {
+              throw error;
+            }
+
+            requestLogger?.warn?.('gpt.request.backstage_roster_validation_failed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              action: backstageMutationOperation.action,
+              errorCode: error.code
+            });
+            const errorPayload = buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: backstageMutationOperation.action,
+              code: error.code,
+              message: error.message,
+              route: 'backstage_roster_validation'
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: backstageMutationOperation.action,
+              status: 400,
+              error: {
+                name: error.code,
+                message: error.message
+              }
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              errorPayload,
+              'gpt.response.backstage_roster_validation',
+              400
+            );
+          }
+        }
 
         const memoryInterception = classifyGptMemoryInterception({
           body: effectiveBody,
@@ -2787,17 +2895,21 @@ router.post(
               }
 
               if (waitedJob.state === 'failed') {
+                const rosterPersistenceFailure =
+                  normalizeFailedBackstageRosterPersistenceOutput(waitedJob.job.output);
                 requestLogger?.warn?.('gpt.request.async_failed', {
                   endpoint: req.originalUrl,
                   gptId: incomingGptId,
                   jobId: job.id,
-                  error: waitedJob.job.error_message ?? 'Async GPT job failed.',
+                  error: rosterPersistenceFailure?.code
+                    ?? waitedJob.job.error_message
+                    ?? 'Async GPT job failed.',
                   deduped: createResult.deduped,
                   ...summarizeGptJobTimings(waitedJob.job)
                 });
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
-                  error: {
+                  error: rosterPersistenceFailure ?? {
                     code: 'ASYNC_GPT_JOB_FAILED',
                     message: waitedJob.job.error_message ?? 'Async GPT job failed.'
                   },
@@ -2814,7 +2926,7 @@ router.post(
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                }, 'gpt.response.async_failed', 500);
+                }, 'gpt.response.async_failed', rosterPersistenceFailure ? 503 : 500);
               }
 
               if (waitedJob.state === 'cancelled') {
@@ -3060,6 +3172,8 @@ router.post(
               : envelope.error.code === 'MEMORY_AUTH_REQUIRED'
               ? 401
               : envelope.error.code === 'MEMORY_AUTH_UNAVAILABLE'
+              ? 503
+              : envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
               ? 503
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409

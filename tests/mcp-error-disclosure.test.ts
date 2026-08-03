@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError,
+} from '../src/shared/backstage/backstageRoster.js';
 
 const verifyAndConsumeNonceMock = jest.fn();
 const issueConfirmationNonceMock = jest.fn();
@@ -20,7 +26,11 @@ jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
   validateCapability: jest.fn(),
 }));
 
-const { wrapTool } = await import('../src/mcp/server/helpers.js');
+const {
+  buildBackstageRosterPersistenceMcpError,
+  buildBackstageRosterValidationMcpError,
+  wrapTool,
+} = await import('../src/mcp/server/helpers.js');
 
 function buildContext(loggerOverrides: Partial<Record<'debug' | 'info' | 'warn' | 'error', jest.Mock>> = {}) {
   return {
@@ -177,5 +187,115 @@ describe('MCP external error disclosure contract', () => {
     const handler = wrapTool('clear.evaluate', context, async () => ({ ok: true }));
 
     await expect(handler({})).resolves.toEqual({ ok: true });
+  });
+
+  it('maps only Backstage updateRoster validation failures to a safe bad request', () => {
+    const context = buildContext();
+    const validationError = new BackstageRosterValidationError(
+      'Roster payload must be an array.'
+    );
+
+    expect(buildBackstageRosterValidationMcpError(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      validationError,
+      context
+    )).toEqual({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: {
+            code: 'ERR_BAD_REQUEST',
+            message: 'Roster payload must be an array.',
+            details: {
+              tool: 'modules.invoke',
+              category: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+            },
+            requestId: 'phase2b-request',
+          },
+        }, null, 2),
+      }],
+      structuredContent: {
+        error: {
+          code: 'ERR_BAD_REQUEST',
+          message: 'Roster payload must be an array.',
+          details: {
+            tool: 'modules.invoke',
+            category: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+          },
+          requestId: 'phase2b-request',
+        },
+      },
+      isError: true,
+    });
+    expect(buildBackstageRosterValidationMcpError(
+      'BACKSTAGE:BOOKER',
+      'trackStoryline',
+      validationError,
+      context
+    )).toBeNull();
+    expect(buildBackstageRosterValidationMcpError(
+      'OTHER:MODULE',
+      'updateRoster',
+      validationError,
+      context
+    )).toBeNull();
+    expect(buildBackstageRosterValidationMcpError(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      {
+        name: 'BackstageRosterValidationError',
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'spoofed validation disclosure',
+      },
+      context
+    )).toBeNull();
+  });
+
+  it('maps only Backstage updateRoster persistence failures to a safe unavailable error', () => {
+    const context = buildContext();
+    const persistenceError = new BackstageRosterPersistenceError();
+
+    expect(buildBackstageRosterPersistenceMcpError(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      persistenceError,
+      context
+    )).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_UNAVAILABLE',
+          message: 'Roster update persistence could not be confirmed.',
+          details: {
+            tool: 'modules.invoke',
+            category: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+          },
+          requestId: 'phase2b-request',
+        },
+      },
+    }));
+    expect(buildBackstageRosterPersistenceMcpError(
+      'BACKSTAGE:BOOKER',
+      'trackStoryline',
+      persistenceError,
+      context
+    )).toBeNull();
+    expect(buildBackstageRosterPersistenceMcpError(
+      'OTHER:MODULE',
+      'updateRoster',
+      persistenceError,
+      context
+    )).toBeNull();
+    expect(buildBackstageRosterPersistenceMcpError(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      {
+        name: 'BackstageRosterPersistenceError',
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'spoofed persistence disclosure',
+      },
+      context
+    )).toBeNull();
   });
 });

@@ -11,18 +11,22 @@ import {
 import {
   AUDITED_TRANSIENT_READ_QUERIES,
   query,
-  saveMemory
+  saveMemory,
+  transaction
 } from "@core/db/index.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { resolveErrorMessage } from '@shared/errorUtils.js';
+import {
+  BackstageRosterPersistenceError,
+  parseBackstageRosterPayload,
+  type Wrestler
+} from '@shared/backstage/backstageRoster.js';
 
-export interface Wrestler {
-  name: string;
-  overall: number; // rating 0-100
-}
+export type { Wrestler } from '@shared/backstage/backstageRoster.js';
 
 export interface MatchInput {
   wrestler1: string;
@@ -82,7 +86,10 @@ async function persistLatestRosterSnapshot(
     updatedAt: new Date().toISOString()
   }).catch((error: unknown) => {
     //audit Assumption: convenience roster mirror is optional metadata; failure risk: stale roster recall in new chats; expected invariant: primary roster mutation still succeeds; handling strategy: warn and continue.
-    console.warn("Backstage Booker: failed to persist latest roster snapshot", (error as Error).message);
+    console.warn(
+      "Backstage Booker: failed to persist latest roster snapshot",
+      resolveErrorMessage(error)
+    );
   });
 }
 
@@ -374,7 +381,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_ROSTER_RECENT.sql,
         [],
         {
-          useCache: true,
+          useCache: false,
           retry: 'transient-read',
           idempotent: true,
           auditedQueryId:
@@ -519,48 +526,42 @@ export async function bookEvent(data: EventData): Promise<string> {
   }
 }
 
-export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
+export async function updateRoster(payload: unknown): Promise<Wrestler[]> {
+  const wrestlers = parseBackstageRosterPayload(payload);
+
+  let nextRoster: Wrestler[];
   try {
-    await Promise.all(
-      wrestlers.map(wrestler =>
-        query(
+    nextRoster = await transaction(async client => {
+      if (wrestlers.length > 0) {
+        await client.query(
           `INSERT INTO backstage_wrestlers (name, overall, created_at, updated_at)
-           VALUES ($1, $2, NOW(), NOW())
+           SELECT incoming.name, incoming.overall, NOW(), NOW()
+           FROM UNNEST($1::TEXT[], $2::INTEGER[]) AS incoming(name, overall)
            ON CONFLICT (name)
            DO UPDATE SET overall = EXCLUDED.overall, updated_at = NOW()`,
-          [wrestler.name, wrestler.overall]
-        )
-      )
-    );
-
-    const result = await query(
-      AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
-      [],
-      {
-        useCache: true,
-        retry: 'transient-read',
-        idempotent: true,
-        auditedQueryId:
-          AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.id
+          [
+            wrestlers.map(wrestler => wrestler.name),
+            wrestlers.map(wrestler => wrestler.overall)
+          ]
+        );
       }
-    );
 
-    roster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
-    await persistLatestRosterSnapshot(roster, "database");
-    return roster;
-  } catch (error) {
-    console.warn('Backstage Booker: roster DB unavailable, using in-memory roster', (error as Error).message);
-    wrestlers.forEach(w => {
-      const idx = roster.findIndex(r => r.name === w.name);
-      if (idx >= 0) {
-        roster[idx] = w;
-      } else {
-        roster.push(w);
-      }
+      const result = await client.query(
+        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
+        []
+      );
+      return result.rows.map(row => ({
+        name: row.name as string,
+        overall: Number(row.overall)
+      }));
     });
-    await persistLatestRosterSnapshot(roster, "fallback");
-    return roster;
+  } catch {
+    throw new BackstageRosterPersistenceError();
   }
+
+  roster = nextRoster;
+  await persistLatestRosterSnapshot(nextRoster, "database");
+  return nextRoster;
 }
 
 export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
@@ -690,7 +691,7 @@ export async function simulateMatch(
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.sql,
         [],
         {
-          useCache: true,
+          useCache: false,
           retry: 'transient-read',
           idempotent: true,
           auditedQueryId:
@@ -783,7 +784,7 @@ export const BackstageBookerModule = {
       const record = normalizePayloadRecord(payload);
       return BackstageBooker.bookEvent(record);
     },
-    async updateRoster(payload: Wrestler[]) {
+    async updateRoster(payload: unknown) {
       return BackstageBooker.updateRoster(payload);
     },
     async trackStoryline(payload: unknown) {

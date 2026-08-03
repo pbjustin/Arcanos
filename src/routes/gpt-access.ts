@@ -39,6 +39,11 @@ import {
   sendInternalErrorPayload
 } from '@shared/http/index.js';
 import type { ModuleHandlerContext } from '@services/moduleLoader.js';
+import {
+  isBackstageRosterPersistenceError,
+  isBackstageRosterValidationError
+} from '@shared/backstage/backstageRoster.js';
+import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import {
   buildGptAccessHealthPayload,
@@ -900,6 +905,40 @@ async function runGptAccessCapabilityAction(input: {
           error: {
             code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
             message: 'Capability or action not found.'
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && input.action === 'updateRoster'
+      && isBackstageRosterValidationError(error)
+    ) {
+      return {
+        statusCode: 400,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_VALIDATION_ERROR',
+            message: error.message
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && input.action === 'updateRoster'
+      && isBackstageRosterPersistenceError(error)
+    ) {
+      return {
+        statusCode: 503,
+        payload: {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message
           }
         }
       };
