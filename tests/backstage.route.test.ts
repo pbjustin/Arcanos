@@ -114,6 +114,36 @@ describe('direct Backstage routes', () => {
     expect(mockUpdateRoster).not.toHaveBeenCalled();
   });
 
+  it('does not replay a direct mutation challenge across control-plane principals', async () => {
+    const app = buildApp();
+    const body = { name: 'Event' };
+    const replayControlPlaneToken = 'backstage-route-replay-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:backstage-route-a';
+
+    const challengeResponse = await request(app)
+      .post('/backstage/book-event')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send(body);
+    const challengeId = challengeResponse.headers['x-confirmation-challenge'];
+
+    expect(challengeResponse.status).toBe(403);
+    expect(challengeId).toEqual(expect.any(String));
+
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = replayControlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:backstage-route-b';
+    const replayResponse = await request(app)
+      .post('/backstage/book-event')
+      .set('Authorization', `Bearer ${replayControlPlaneToken}`)
+      .set('X-Confirmed', `token:${challengeId}`)
+      .send(body);
+
+    expect(replayResponse.status).toBe(403);
+    expect(replayResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(replayResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
+    expect(replayResponse.headers['x-confirmation-status']).toBe('pending');
+    expect(mockBookEvent).not.toHaveBeenCalled();
+  });
+
   it('keeps simulation public while preserving its existing confirmation gate', async () => {
     const denied = await request(buildApp())
       .post('/backstage/simulate-match')

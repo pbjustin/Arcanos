@@ -565,9 +565,12 @@ describe('Backstage mutation HTTP boundary', () => {
     expect(directBoundaryIndex).toBeLessThan(broadParserIndex);
     expect(postParserBoundaryIndex).toBeGreaterThan(broadParserIndex);
     expect(postParserBoundaryIndex).toBeLessThan(providerAdmissionIndex);
-    expect(backstageSource).toContain(
-      "router.post('/book-event', backstageMutationHttpBoundary, confirmGate"
-    );
+    for (const path of ['/book-event', '/book-gpt', '/update-roster', '/track-storyline']) {
+      expect(backstageSource).toContain(
+        `router.post('${path}', backstageMutationHttpBoundary, backstageMutationConfirmationGate`
+      );
+    }
+    expect(backstageSource).toContain("router.post('/simulate-match', confirmGate");
     expect(dispatchRouteIndex).toBeGreaterThan(-1);
     expect(dispatchBoundaryIndex).toBeGreaterThan(dispatchRouteIndex);
     expect(dispatchHandlerIndex).toBeGreaterThan(dispatchBoundaryIndex);
