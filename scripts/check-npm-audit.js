@@ -225,10 +225,10 @@ const temporaryExceptionIdentities = [
   ...Object.values(temporaryDirectExceptions),
   ...Object.values(temporaryPropagatedExceptions),
 ].map(exception => exception.identity);
-// npm 10.8.2 on the Linux CI runner omits the propagated root cheerio record
-// while retaining its exact direct undici advisory. npm 10 on Windows reports
-// cheerio, and npm 11 additionally reports the vendored brace-expansion node.
-// When either optional record is present it must still match its full exception.
+// npm 10.8.2 on the Linux CI runner emits a coherent eight-record graph with
+// different remediation metadata and SDK propagation than npm 10 on Windows.
+// npm 11 on Windows additionally reports the vendored brace-expansion node.
+// Select one whole profile so field-level variants cannot be mixed and matched.
 const platformOptionalTemporaryExceptionNames = new Set([
   'brace-expansion',
   'cheerio',
@@ -237,6 +237,21 @@ const requiredTemporaryExceptionNames = new Set([
   ...Object.keys(temporaryDirectExceptions),
   ...Object.keys(temporaryPropagatedExceptions),
 ].filter(name => !platformOptionalTemporaryExceptionNames.has(name)));
+const linuxNpm10DirectExpectations = {
+  'fast-uri': { fixAvailable: true },
+  hono: { fixAvailable: true },
+  'ip-address': { fixAvailable: true },
+  undici: { fixAvailable: true },
+};
+const linuxNpm10PropagatedExpectations = {
+  '@hono/node-server': { via: ['hono'], fixAvailable: true },
+  '@modelcontextprotocol/sdk': {
+    via: ['express-rate-limit', 'hono'],
+    fixAvailable: true,
+  },
+  ajv: { via: ['fast-uri'], fixAvailable: true },
+  'express-rate-limit': { via: ['ip-address'], fixAvailable: true },
+};
 
 const reportPath = process.argv[2];
 const candidateLockPath = process.argv[3]
@@ -374,6 +389,21 @@ if (missingRequiredTemporaryExceptions.length > 0) {
   process.exit(1);
 }
 
+const hasCheerioRecord = Object.hasOwn(report.vulnerabilities, 'cheerio');
+const hasBraceExpansionRecord = Object.hasOwn(
+  report.vulnerabilities,
+  'brace-expansion',
+);
+const temporaryAuditProfile = hasCheerioRecord
+  ? 'standard'
+  : !hasBraceExpansionRecord
+    ? 'linux-npm10'
+    : null;
+if (!temporaryAuditProfile) {
+  console.error('npm audit report does not match a supported platform graph');
+  process.exit(1);
+}
+
 function projectViaEntry(entry) {
   if (typeof entry === 'string') {
     return entry;
@@ -455,15 +485,35 @@ function hasValidCommonShape(
   );
 }
 
+function getDirectProfileExpectation(name, exception) {
+  if (temporaryAuditProfile === 'linux-npm10') {
+    return linuxNpm10DirectExpectations[name];
+  }
+
+  return { fixAvailable: exception.fixAvailable };
+}
+
+function getPropagatedProfileExpectation(name, exception) {
+  if (temporaryAuditProfile === 'linux-npm10') {
+    return linuxNpm10PropagatedExpectations[name];
+  }
+
+  return { via: exception.via, fixAvailable: exception.fixAvailable };
+}
+
 function isIgnoredDirectVulnerability(name, vulnerability) {
   const exception = temporaryDirectExceptions[name];
+  const profileExpectation = exception
+    ? getDirectProfileExpectation(name, exception)
+    : undefined;
   if (
     !exception ||
+    !profileExpectation ||
     !hasValidCommonShape(
       name,
       vulnerability,
       [exception.identity.node],
-      exception.fixAvailable,
+      profileExpectation.fixAvailable,
       exception.severity,
     )
   ) {
@@ -501,13 +551,17 @@ function isIgnoredPropagatedVulnerability(
   ignoredNames,
 ) {
   const exception = temporaryPropagatedExceptions[name];
+  const profileExpectation = exception
+    ? getPropagatedProfileExpectation(name, exception)
+    : undefined;
   if (
     !exception ||
+    !profileExpectation ||
     !hasValidCommonShape(
       name,
       vulnerability,
       [exception.identity.node],
-      exception.fixAvailable,
+      profileExpectation.fixAvailable,
       exception.severity,
     )
   ) {
@@ -515,12 +569,12 @@ function isIgnoredPropagatedVulnerability(
   }
 
   return (
-    vulnerability.via.length === exception.via.length &&
-    new Set(vulnerability.via).size === exception.via.length &&
+    vulnerability.via.length === profileExpectation.via.length &&
+    new Set(vulnerability.via).size === profileExpectation.via.length &&
     vulnerability.via.every(
       entry =>
         typeof entry === 'string' &&
-        exception.via.includes(entry) &&
+        profileExpectation.via.includes(entry) &&
         ignoredNames.has(entry),
     )
   );

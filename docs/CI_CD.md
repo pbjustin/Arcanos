@@ -75,11 +75,10 @@ Release automation boundaries:
   package, or dependency path. Advisories disclosed on 2026-08-03 whose patched
   releases are not yet available from npm have temporary exact-advisory and
   exact-node exceptions bound to exact aggregate and per-advisory severities,
-  the complete common record set, the observed platform-specific propagated
-  `cheerio` record and npm 11 vendored advisory when present, a record-consistent
-  severity histogram, the candidate lockfile's exact versions, sources,
-  integrity hashes, propagated dependency sets, and current remediation metadata;
-  review and remove them no later than 2026-08-10.
+  one complete observed platform graph (Linux npm 10 or Windows npm 10/11), a
+  record-consistent severity histogram, the candidate lockfile's exact versions,
+  sources, integrity hashes, profile-specific propagated dependency sets, and
+  remediation metadata; review and remove them no later than 2026-08-10.
   Workflows record npm's raw audit exit code while relying on the fail-closed
   policy classification.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no

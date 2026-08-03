@@ -420,6 +420,31 @@ function completeVulnerabilityGraph(
   return { ...currentVulnerabilityGraph(), ...overrides };
 }
 
+function linuxNpm10VulnerabilityGraph(): Record<string, AuditVulnerability> {
+  const vulnerabilities = currentVulnerabilityGraph();
+  delete vulnerabilities['brace-expansion'];
+  delete vulnerabilities.cheerio;
+
+  for (const name of [
+    '@hono/node-server',
+    '@modelcontextprotocol/sdk',
+    'ajv',
+    'express-rate-limit',
+    'fast-uri',
+    'hono',
+    'ip-address',
+    'undici',
+  ]) {
+    vulnerabilities[name].fixAvailable = true;
+  }
+  vulnerabilities['@modelcontextprotocol/sdk'].via = [
+    'express-rate-limit',
+    'hono',
+  ];
+
+  return vulnerabilities;
+}
+
 describe('npm audit policy', () => {
   it('includes child-process output when policy JSON parsing fails', () => {
     expect(() => parseStdout({ stdout: '', stderr: 'spawn failed' })).toThrow(
@@ -588,9 +613,7 @@ describe('npm audit policy', () => {
   });
 
   it('accepts the Linux npm 10 graph that also omits propagated cheerio', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-    delete vulnerabilities['brace-expansion'];
-    delete vulnerabilities.cheerio;
+    const vulnerabilities = linuxNpm10VulnerabilityGraph();
 
     const result = runAuditPolicy(vulnerabilities);
     const output = parseStdout(result);
@@ -604,8 +627,7 @@ describe('npm audit policy', () => {
   });
 
   it('rejects an omitted cheerio record when its direct undici advisory is not exact', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-    delete vulnerabilities.cheerio;
+    const vulnerabilities = linuxNpm10VulnerabilityGraph();
     const undici = vulnerabilities.undici;
     const directAdvisory = undici.via[0];
     if (typeof directAdvisory !== 'string') {
@@ -620,6 +642,57 @@ describe('npm audit policy', () => {
     expect(
       output.actionable.map((entry: { name: string }) => entry.name),
     ).toContain('undici');
+  });
+
+  it.each([
+    '@hono/node-server',
+    '@modelcontextprotocol/sdk',
+    'ajv',
+    'fast-uri',
+    'hono',
+    'undici',
+  ])('requires the exact Linux npm 10 remediation metadata for %s', name => {
+    const vulnerabilities = linuxNpm10VulnerabilityGraph();
+    vulnerabilities[name].fixAvailable = cloneExpectedFixAvailable(name);
+
+    const result = runAuditPolicy(vulnerabilities);
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(1);
+    expect(
+      output.actionable.map((entry: { name: string }) => entry.name),
+    ).toContain(name);
+  });
+
+  it('requires the exact Linux npm 10 SDK propagation set', () => {
+    const vulnerabilities = linuxNpm10VulnerabilityGraph();
+    vulnerabilities['@modelcontextprotocol/sdk'].via = [
+      '@hono/node-server',
+      'ajv',
+      'express-rate-limit',
+      'hono',
+    ];
+
+    const result = runAuditPolicy(vulnerabilities);
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(1);
+    expect(
+      output.actionable.map((entry: { name: string }) => entry.name),
+    ).toContain('@modelcontextprotocol/sdk');
+  });
+
+  it('rejects a hybrid graph with vendored brace but no cheerio record', () => {
+    const vulnerabilities = currentVulnerabilityGraph();
+    delete vulnerabilities.cheerio;
+
+    const result = runAuditPolicy(vulnerabilities);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain(
+      'npm audit report does not match a supported platform graph',
+    );
   });
 
   it.each(requiredTemporaryExceptionNames)(
