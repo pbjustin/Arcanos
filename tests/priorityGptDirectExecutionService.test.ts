@@ -403,6 +403,7 @@ describe('priorityGptDirectExecutionService', () => {
       error: {
         code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
         message: 'Roster update persistence could not be confirmed.',
+        details: { retryable: true },
       },
     });
     updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'failed' }));

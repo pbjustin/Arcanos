@@ -75,6 +75,11 @@ export {
 } from './repositories/ragRepository.js';
 
 export {
+  applyBackstageRosterMutation,
+  type BackstageRosterMutationResult
+} from './repositories/backstageRosterRepository.js';
+
+export {
   logExecution,
   logExecutionBatch
 } from './repositories/executionLogRepository.js';

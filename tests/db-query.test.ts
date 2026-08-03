@@ -129,6 +129,43 @@ describe('db query helper', () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves the primary transaction error when rollback also fails', async () => {
+    const primaryError = Object.assign(new Error('commit acknowledgement lost'), {
+      code: 'ECONNRESET'
+    });
+    const rollbackError = new Error('connection unavailable during rollback');
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockImplementation(async (sql: string) => {
+      if (sql === 'COMMIT') {
+        throw primaryError;
+      }
+      if (sql === 'ROLLBACK') {
+        throw rollbackError;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const connectMock = jest.fn().mockResolvedValue({
+      query: clientQueryMock,
+      release: releaseMock
+    });
+    getPoolMock.mockReturnValue({ connect: connectMock });
+
+    await expect(transaction(async () => 'result')).rejects.toBe(primaryError);
+
+    expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'COMMIT',
+      'ROLLBACK'
+    ]);
+    expect(dbLoggerErrorMock).toHaveBeenCalledWith(
+      'db.transaction.rollback_failed',
+      { operation: 'transaction' },
+      { message: rollbackError.message },
+      rollbackError
+    );
+    expect(releaseMock).toHaveBeenCalledWith(rollbackError);
+  });
+
   it('attempts rollback and preserves the error when commit acknowledgement fails', async () => {
     const commitError = new Error('injected commit acknowledgement failure');
     const releaseMock = jest.fn();

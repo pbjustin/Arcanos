@@ -274,7 +274,7 @@ describe('normal worker queued Backstage mutation admission', () => {
 
   it('fails an admitted roster transaction retryably without reporting completion', async () => {
     mockDispatchModuleAction.mockRejectedValueOnce(
-      new BackstageRosterPersistenceError()
+      new BackstageRosterPersistenceError({ retryable: true })
     );
 
     const outcome = await executeQueuedGptRequest({
@@ -303,6 +303,40 @@ describe('normal worker queued Backstage mutation admission', () => {
         error: {
           code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
           message: 'Roster update persistence could not be confirmed.',
+          details: { retryable: true },
+        },
+      },
+    });
+  });
+
+  it('does not retry a deterministic admitted roster persistence failure', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterPersistenceError({ retryable: false })
+    );
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'job-backstage-roster-permanent-persistence',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'updateRoster',
+          payload: [{ name: 'Rhea Ripley', overall: 96 }],
+        },
+        requestId: 'req-backstage-roster-permanent-persistence',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'updateRoster',
+          principalId: 'operator:normal-worker-test',
+        }),
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      output: {
+        error: {
+          code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+          details: { retryable: false },
         },
       },
     });

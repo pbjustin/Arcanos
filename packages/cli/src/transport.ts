@@ -11,12 +11,20 @@ import {
 } from "@arcanos/protocol";
 
 import { createLocalProtocolDispatcher } from "./dispatcher.js";
+import { requestPythonTransportProcessTreeTermination } from "./internal/pythonTransportProcessTree.js";
 
 export type ProtocolTransportName = "local" | "python";
 
 export interface ProtocolTransportOptions {
   pythonBinary?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
 }
+
+export const DEFAULT_PYTHON_TRANSPORT_TIMEOUT_MS = 30_000;
+export const MAX_PYTHON_TRANSPORT_TIMEOUT_MS = 120_000;
+export const DEFAULT_PYTHON_TRANSPORT_OUTPUT_BYTES = 2 * 1024 * 1024;
+export const MAX_PYTHON_TRANSPORT_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 /**
  * Dispatches a protocol request over the selected transport.
@@ -52,69 +60,155 @@ async function dispatchViaPythonRuntime(
   request: ProtocolRequest<unknown>,
   options: ProtocolTransportOptions
 ): Promise<ProtocolResponse<unknown>> {
+  const timeoutMs = resolveBoundedPositiveInteger(
+    "timeoutMs",
+    options.timeoutMs,
+    DEFAULT_PYTHON_TRANSPORT_TIMEOUT_MS,
+    MAX_PYTHON_TRANSPORT_TIMEOUT_MS
+  );
+  const maxOutputBytes = resolveBoundedPositiveInteger(
+    "maxOutputBytes",
+    options.maxOutputBytes,
+    DEFAULT_PYTHON_TRANSPORT_OUTPUT_BYTES,
+    MAX_PYTHON_TRANSPORT_OUTPUT_BYTES
+  );
   const repositoryRoot = resolveRepositoryRoot();
   const daemonWorkingDirectory = resolvePythonRuntimeDirectory(repositoryRoot);
   const pythonBinary = options.pythonBinary ?? process.env.PYTHON ?? "python";
 
   return new Promise<ProtocolResponse<unknown>>((resolve, reject) => {
-    const childProcess = spawn(
-      pythonBinary,
-      ["-m", "arcanos.protocol_runtime"],
-      {
-        cwd: daemonWorkingDirectory,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          ARCANOS_REPOSITORY_ROOT: repositoryRoot,
-          ARCANOS_WORKSPACE_ROOT: process.env.ARCANOS_WORKSPACE_ROOT ?? repositoryRoot,
+    let childProcess: ReturnType<typeof spawn>;
+    try {
+      childProcess = spawn(
+        pythonBinary,
+        ["-m", "arcanos.protocol_runtime"],
+        {
+          cwd: daemonWorkingDirectory,
+          stdio: ["pipe", "pipe", "pipe"],
+          detached: process.platform !== "win32",
+          windowsHide: true,
+          env: {
+            ...process.env,
+            ARCANOS_REPOSITORY_ROOT: repositoryRoot,
+            ARCANOS_WORKSPACE_ROOT: process.env.ARCANOS_WORKSPACE_ROOT ?? repositoryRoot,
+          }
         }
+      );
+    } catch {
+      reject(new Error("Python transport failed to start."));
+      return;
+    }
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let retainedOutputBytes = 0;
+    let settled = false;
+    let deadline: NodeJS.Timeout | undefined;
+
+    const clearDeadline = (): void => {
+      if (deadline !== undefined) {
+        clearTimeout(deadline);
+        deadline = undefined;
       }
-    );
-
-    let stdoutBuffer = "";
-    let stderrBuffer = "";
-
-    childProcess.stdout.on("data", (chunk) => {
-      stdoutBuffer += chunk.toString();
-    });
-
-    childProcess.stderr.on("data", (chunk) => {
-      stderrBuffer += chunk.toString();
-    });
-
-    childProcess.on("error", (error) => {
-      reject(new Error(`Python transport failed to start: ${error.message}`));
-    });
-
-    childProcess.on("close", (exitCode) => {
-      const trimmedOutput = stdoutBuffer.trim();
-
-      //audit assumption: python transport must return exactly one JSON payload on stdout. failure risk: mixed stdout/stderr output would break deterministic parsing. invariant: stdout contains a parseable protocol response or the transport fails. handling: reject malformed responses with stderr context.
-      if (!trimmedOutput) {
-        reject(
-          new Error(
-            `Python transport returned no JSON output. Exit code: ${exitCode ?? "unknown"}. ${stderrBuffer.trim()}`
-          )
+    };
+    const rejectOnce = (error: Error, terminate = false): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearDeadline();
+      reject(error);
+      if (terminate) {
+        void requestPythonTransportProcessTreeTermination(childProcess)
+          .catch(() => undefined);
+      }
+    };
+    const resolveOnce = (response: ProtocolResponse<unknown>): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearDeadline();
+      resolve(response);
+    };
+    const retainOutput = (chunk: unknown, destination: Buffer[]): void => {
+      if (settled) {
+        return;
+      }
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      retainedOutputBytes += buffer.byteLength;
+      if (retainedOutputBytes > maxOutputBytes) {
+        rejectOnce(
+          new Error(`Python transport output exceeded ${maxOutputBytes} bytes.`),
+          true
         );
+        return;
+      }
+      destination.push(buffer);
+    };
+
+    deadline = setTimeout(() => {
+      rejectOnce(
+        new Error(`Python transport timed out after ${timeoutMs}ms.`),
+        true
+      );
+    }, timeoutMs);
+
+    childProcess.stdout?.on("data", chunk => retainOutput(chunk, stdoutChunks));
+    childProcess.stderr?.on("data", chunk => retainOutput(chunk, stderrChunks));
+
+    childProcess.on("error", () => {
+      rejectOnce(new Error("Python transport failed to start."));
+    });
+
+    childProcess.on("close", () => {
+      if (settled) {
+        return;
+      }
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+
+      if (!stdout) {
+        if (/ModuleNotFoundError|No module named/u.test(stderr)) {
+          rejectOnce(new Error("Python transport runtime dependency is unavailable."));
+          return;
+        }
+        rejectOnce(new Error("Python transport returned no JSON output."));
         return;
       }
 
       try {
-        resolve(JSON.parse(trimmedOutput) as ProtocolResponse<unknown>);
-      } catch (error) {
-        reject(
-          new Error(
-            error instanceof Error
-              ? `Python transport returned invalid JSON: ${error.message}. ${stderrBuffer.trim()}`
-              : "Python transport returned invalid JSON."
-          )
-        );
+        resolveOnce(JSON.parse(stdout) as ProtocolResponse<unknown>);
+      } catch {
+        rejectOnce(new Error("Python transport returned invalid JSON."));
       }
     });
 
-    childProcess.stdin.write(JSON.stringify(request));
-    childProcess.stdin.end();
+    childProcess.stdin?.on("error", () => undefined);
+    try {
+      childProcess.stdin?.write(JSON.stringify(request));
+      childProcess.stdin?.end();
+    } catch {
+      rejectOnce(new Error("Python transport failed to start."), true);
+    }
   });
+}
+
+function resolveBoundedPositiveInteger(
+  optionName: string,
+  value: number | undefined,
+  defaultValue: number,
+  maximum: number
+): number {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(
+      `Python transport ${optionName} must be a positive integer no greater than ${maximum}.`
+    );
+  }
+  return value;
 }
 
 function resolveRepositoryRoot(): string {

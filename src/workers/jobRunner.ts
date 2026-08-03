@@ -816,7 +816,12 @@ export async function executeQueuedGptRequest(params: {
       retryable:
         envelope.error.code === 'MODULE_TIMEOUT'
         || envelope.error.code === 'MODULE_ERROR'
-        || envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+        || (
+          envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+          && typeof envelope.error.details === 'object'
+          && envelope.error.details !== null
+          && (envelope.error.details as { retryable?: unknown }).retryable === true
+        )
     };
   }
 

@@ -70,6 +70,14 @@ def _read_nullable_string(value: Any) -> Optional[str]:
     return _read_string(value)
 
 
+def _is_gpt_async_bridge_envelope(payload: Mapping[str, Any], action: str) -> bool:
+    return (
+        isinstance(payload.get("ok"), bool)
+        and _read_string(payload.get("action")) == action
+        and _is_mapping(payload.get("result"))
+    )
+
+
 def _read_job_read_capability(
     payload: Mapping[str, Any],
 ) -> tuple[Optional[str], Optional[str]]:
@@ -149,7 +157,11 @@ def _normalize_gpt_async_bridge_payload(
     job_read_token, job_read_token_header = _read_job_read_capability(payload)
 
     if action == "get_status":
-        raw_status = payload.get("result") if _is_mapping(payload.get("result")) else payload
+        raw_status = (
+            payload.get("result")
+            if _is_gpt_async_bridge_envelope(payload, action)
+            else payload
+        )
         assert isinstance(raw_status, Mapping)
         return BackendGptAsyncBridgeResult(
             action=action,
@@ -164,7 +176,11 @@ def _normalize_gpt_async_bridge_payload(
         )
 
     if action == "get_result":
-        raw_lookup = payload.get("result") if _is_mapping(payload.get("result")) else payload
+        raw_lookup = (
+            payload.get("result")
+            if _is_gpt_async_bridge_envelope(payload, action)
+            else payload
+        )
         assert isinstance(raw_lookup, Mapping)
         error_payload = payload.get("error") if _is_mapping(payload.get("error")) else raw_lookup.get("error")
         return BackendGptAsyncBridgeResult(
@@ -175,7 +191,13 @@ def _normalize_gpt_async_bridge_payload(
             job_status=_read_nullable_string(payload.get("jobStatus")) or _read_nullable_string(raw_lookup.get("jobStatus")),
             poll=_read_string(payload.get("poll")) or _read_string(raw_lookup.get("poll")),
             stream=_read_string(payload.get("stream")) or _read_string(raw_lookup.get("stream")),
-            result=payload.get("output") if "output" in payload else raw_lookup.get("result"),
+            result=(
+                payload.get("output")
+                if "output" in payload
+                else payload.get("result")
+                if raw_lookup is payload
+                else raw_lookup.get("result")
+            ),
             error=dict(error_payload) if _is_mapping(error_payload) else None,
             raw=dict(payload),
             job_read_token=job_read_token,

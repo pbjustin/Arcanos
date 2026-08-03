@@ -12,6 +12,8 @@ const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
+const { applyBackstageRosterMutation } =
+  await import('../src/core/db/repositories/backstageRosterRepository.js');
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   getGPT5Model: mockGetGPT5Model,
@@ -34,6 +36,7 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES,
+  applyBackstageRosterMutation,
   query: mockQuery,
   transaction: mockTransaction,
   saveMemory: mockSaveMemory
@@ -74,6 +77,24 @@ function findTransactionQueryCall(sql: string): QueryCall | undefined {
   return transactionQueryCalls().find(([calledSql]) => calledSql === sql);
 }
 
+function configureSuccessfulRosterTransaction(
+  rows: Array<{ name: string; overall: number }>,
+  revision = '100'
+): void {
+  mockTransactionClientQuery.mockImplementation(async (sql: unknown) => {
+    if (typeof sql === 'string' && sql.includes('pg_advisory_xact_lock')) {
+      return { rows: [{}] };
+    }
+    if (typeof sql === 'string' && sql.includes('txid_current')) {
+      return { rows: [{ revision }] };
+    }
+    if (sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql) {
+      return { rows };
+    }
+    return { rows: [] };
+  });
+}
+
 function wrestlerBatch(count: number, prefix = 'Wrestler') {
   return Array.from({ length: count }, (_unused, index) => ({
     name: `${prefix} ${index + 1}`,
@@ -96,6 +117,7 @@ describe('backstage-booker roster containment', () => {
     mockTransaction.mockImplementation(async (
       callback: (client: { query: typeof mockTransactionClientQuery }) => Promise<unknown>
     ) => callback({ query: mockTransactionClientQuery }));
+    configureSuccessfulRosterTransaction([]);
     mockRunTrinityWritingPipeline.mockResolvedValue({
       result: 'Fresh roster booking',
       activeModel: 'trinity-model',
@@ -125,6 +147,7 @@ describe('backstage-booker roster containment', () => {
     ['an array roster item', [[{ name: 'Rhea Ripley', overall: 96 }]]],
     ['a non-string name', [{ name: 42, overall: 96 }]],
     ['an empty trimmed name', [{ name: '   ', overall: 96 }]],
+    ['a PostgreSQL-incompatible NUL name', [{ name: 'Rhea\u0000Ripley', overall: 96 }]],
     ['a name over the Unicode code-point limit', [{ name: '😀'.repeat(BACKSTAGE_WRESTLER_NAME_MAX_LENGTH + 1), overall: 96 }]],
     ['a string rating', [{ name: 'Rhea Ripley', overall: '96' }]],
     ['a fractional rating', [{ name: 'Rhea Ripley', overall: 96.5 }]],
@@ -142,6 +165,7 @@ describe('backstage-booker roster containment', () => {
     });
 
     expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
     expect(mockSaveMemory).not.toHaveBeenCalled();
   });
 
@@ -166,12 +190,7 @@ describe('backstage-booker roster containment', () => {
 
   it('accepts exactly 100 supplied items in one bulk transaction', async () => {
     const payload = wrestlerBatch(BACKSTAGE_ROSTER_MAX_ITEMS, 'Exact-cap');
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => {
-      if (sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql) {
-        return { rows: payload };
-      }
-      return { rows: [] };
-    });
+    configureSuccessfulRosterTransaction(payload, '101');
 
     await expect(updateRoster(payload)).resolves.toEqual(payload);
 
@@ -200,12 +219,7 @@ describe('backstage-booker roster containment', () => {
       { name: ' rhea ripley ', overall: 95, nested: { ignored: true } },
       { name: 'Rhea Ripley', overall: 96, ignored: false }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => {
-      if (sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql) {
-        return { rows: expectedRoster };
-      }
-      return { rows: [] };
-    });
+    configureSuccessfulRosterTransaction(expectedRoster, '102');
 
     await expect(updateRoster(payload)).resolves.toEqual(expectedRoster);
 
@@ -218,13 +232,14 @@ describe('backstage-booker roster containment', () => {
     ]]);
     expect(mockSaveMemory).toHaveBeenCalledWith(
       'backstage-roster:latest',
-      expect.objectContaining({ roster: expectedRoster, source: 'database' })
+      expect.objectContaining({ roster: expectedRoster, source: 'database', revision: '102' }),
+      { ifNewerRevision: '102' }
     );
   });
 
   it('preserves the empty-array refresh contract without issuing upserts', async () => {
     const freshRows = [{ name: 'Existing Wrestler', overall: 88 }];
-    mockTransactionClientQuery.mockResolvedValue({ rows: freshRows });
+    configureSuccessfulRosterTransaction(freshRows, '103');
 
     await expect(updateRoster([])).resolves.toEqual(freshRows);
 
@@ -239,14 +254,16 @@ describe('backstage-booker roster containment', () => {
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockSaveMemory).toHaveBeenCalledWith(
       'backstage-roster:latest',
-      expect.objectContaining({ roster: freshRows, source: 'database' })
+      expect.objectContaining({ roster: freshRows, source: 'database', revision: '103' }),
+      { ifNewerRevision: '103' }
     );
   });
 
   it('fails closed when the bulk write fails without a snapshot or fallback query', async () => {
-    mockTransactionClientQuery.mockRejectedValueOnce(
-      new Error('injected roster bulk write failure')
-    );
+    mockTransactionClientQuery
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ revision: '104' }] })
+      .mockRejectedValueOnce(new Error('injected roster bulk write failure'));
 
     await expect(updateRoster([{ name: 'Rejected Wrestler', overall: 91 }]))
       .rejects.toEqual(expect.objectContaining({
@@ -255,22 +272,26 @@ describe('backstage-booker roster containment', () => {
         message: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE
       }));
 
-    expect(mockTransactionClientQuery).toHaveBeenCalledTimes(1);
+    expect(mockTransactionClientQuery).toHaveBeenCalledTimes(3);
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockSaveMemory).not.toHaveBeenCalled();
   });
 
   it('fails closed when the transactional roster read fails after the bulk write', async () => {
     mockTransactionClientQuery
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ revision: '105' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockRejectedValueOnce(new Error('injected transactional roster read failure'));
 
     await expect(updateRoster([{ name: 'Read Failure Wrestler', overall: 92 }]))
       .rejects.toBeInstanceOf(BackstageRosterPersistenceError);
 
-    expect(transactionQueryCalls()).toHaveLength(2);
-    expect(transactionQueryCalls()[0]?.[0]).toContain('INSERT INTO backstage_wrestlers');
-    expect(transactionQueryCalls()[1]?.[0]).toBe(
+    expect(transactionQueryCalls()).toHaveLength(4);
+    expect(transactionQueryCalls()[0]?.[0]).toContain('pg_advisory_xact_lock');
+    expect(transactionQueryCalls()[1]?.[0]).toContain('txid_current');
+    expect(transactionQueryCalls()[2]?.[0]).toContain('INSERT INTO backstage_wrestlers');
+    expect(transactionQueryCalls()[3]?.[0]).toBe(
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
     );
     expect(mockQuery).not.toHaveBeenCalled();
@@ -282,12 +303,7 @@ describe('backstage-booker roster containment', () => {
       { name: 'Committed One', overall: 90 },
       { name: 'Committed Two', overall: 80 }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => {
-      if (sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql) {
-        return { rows: committedRoster };
-      }
-      return { rows: [] };
-    });
+    configureSuccessfulRosterTransaction(committedRoster, '106');
     await updateRoster(committedRoster);
 
     jest.clearAllMocks();
@@ -323,11 +339,7 @@ describe('backstage-booker roster containment', () => {
       { name: 'Confirmed One', overall: 90 },
       { name: 'Confirmed Two', overall: 80 }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => (
-      sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
-        ? { rows: committedRoster }
-        : { rows: [] }
-    ));
+    configureSuccessfulRosterTransaction(committedRoster, '107');
     await updateRoster(committedRoster);
 
     jest.clearAllMocks();
@@ -335,11 +347,7 @@ describe('backstage-booker roster containment', () => {
       { name: 'Unconfirmed One', overall: 99 },
       { name: 'Unconfirmed Two', overall: 98 }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => (
-      sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
-        ? { rows: unconfirmedRoster }
-        : { rows: [] }
-    ));
+    configureSuccessfulRosterTransaction(unconfirmedRoster, '108');
     mockTransaction.mockImplementationOnce(async (
       callback: (client: { query: typeof mockTransactionClientQuery }) => Promise<unknown>
     ) => {
@@ -380,11 +388,15 @@ describe('backstage-booker roster containment', () => {
     ) => {
       const transactionRoster = transactionCount === 0 ? firstRoster : secondRoster;
       transactionCount += 1;
-      const clientQuery = jest.fn(async (sql: unknown) => (
-        sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
+      const revision = transactionCount === 1 ? '109' : '110';
+      const clientQuery = jest.fn(async (sql: unknown) => {
+        if (typeof sql === 'string' && sql.includes('txid_current')) {
+          return { rows: [{ revision }] };
+        }
+        return sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
           ? { rows: transactionRoster }
-          : { rows: [] }
-      ));
+          : { rows: [] };
+      });
       return callback({ query: clientQuery as typeof mockTransactionClientQuery });
     });
 
@@ -408,6 +420,81 @@ describe('backstage-booker roster containment', () => {
     await expect(updateRoster(secondRoster)).resolves.toEqual(secondRoster);
     releaseFirstSnapshot?.();
     await expect(firstUpdate).resolves.toEqual(firstRoster);
+    expect(mockSaveMemory).toHaveBeenNthCalledWith(
+      1,
+      'backstage-roster:latest',
+      expect.objectContaining({ roster: firstRoster, revision: '109' }),
+      { ifNewerRevision: '109' }
+    );
+    expect(mockSaveMemory).toHaveBeenNthCalledWith(
+      2,
+      'backstage-roster:latest',
+      expect.objectContaining({ roster: secondRoster, revision: '110' }),
+      { ifNewerRevision: '110' }
+    );
+  });
+
+  it('does not let a delayed older commit acknowledgement regress process fallback state', async () => {
+    const olderRoster = [
+      { name: 'Older One', overall: 81 },
+      { name: 'Older Two', overall: 82 }
+    ];
+    const newerRoster = [
+      { name: 'Newer One', overall: 91 },
+      { name: 'Newer Two', overall: 92 }
+    ];
+    let transactionCount = 0;
+    let releaseOlderCommit: (() => void) | undefined;
+    let markOlderCallbackComplete: (() => void) | undefined;
+    const olderCommitPending = new Promise<void>(resolve => {
+      releaseOlderCommit = resolve;
+    });
+    const olderCallbackComplete = new Promise<void>(resolve => {
+      markOlderCallbackComplete = resolve;
+    });
+
+    mockTransaction.mockImplementation(async (
+      callback: (client: { query: typeof mockTransactionClientQuery }) => Promise<unknown>
+    ) => {
+      const isOlder = transactionCount === 0;
+      transactionCount += 1;
+      const transactionRoster = isOlder ? olderRoster : newerRoster;
+      const revision = isOlder ? '111' : '112';
+      const clientQuery = jest.fn(async (sql: unknown) => {
+        if (typeof sql === 'string' && sql.includes('txid_current')) {
+          return { rows: [{ revision }] };
+        }
+        return sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
+          ? { rows: transactionRoster }
+          : { rows: [] };
+      });
+      const result = await callback({ query: clientQuery as typeof mockTransactionClientQuery });
+      if (isOlder) {
+        markOlderCallbackComplete?.();
+        await olderCommitPending;
+      }
+      return result;
+    });
+
+    const olderUpdate = updateRoster(olderRoster);
+    await olderCallbackComplete;
+    await expect(updateRoster(newerRoster)).resolves.toEqual(newerRoster);
+    releaseOlderCommit?.();
+    await expect(olderUpdate).resolves.toEqual(olderRoster);
+
+    mockQuery.mockRejectedValueOnce(new Error('database unavailable for match read'));
+    const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      await expect(simulateMatch({
+        wrestler1: 'Newer One',
+        wrestler2: 'Newer Two',
+        matchType: 'Singles'
+      })).resolves.toEqual(expect.objectContaining({
+        match: 'Newer One vs Newer Two (Singles)'
+      }));
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 
   it('uses uncached current rows for the post-update snapshot and response', async () => {
@@ -416,12 +503,7 @@ describe('backstage-booker roster containment', () => {
       { name: 'Existing Wrestler', overall: 84 },
       { name: 'Updated Wrestler', overall: 91 }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => {
-      if (sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql) {
-        return { rows: freshRows };
-      }
-      return { rows: [] };
-    });
+    configureSuccessfulRosterTransaction(freshRows, '113');
 
     await expect(updateRoster(submitted)).resolves.toEqual(freshRows);
 
@@ -434,7 +516,8 @@ describe('backstage-booker roster containment', () => {
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockSaveMemory).toHaveBeenCalledWith(
       'backstage-roster:latest',
-      expect.objectContaining({ roster: freshRows, source: 'database' })
+      expect.objectContaining({ roster: freshRows, source: 'database', revision: '113' }),
+      { ifNewerRevision: '113' }
     );
   });
 
@@ -446,11 +529,7 @@ describe('backstage-booker roster containment', () => {
       { name: 'Durable One', overall: 94 },
       { name: 'Durable Two', overall: 93 }
     ];
-    mockTransactionClientQuery.mockImplementation(async (sql: unknown) => (
-      sql === AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
-        ? { rows: freshRows }
-        : { rows: [] }
-    ));
+    configureSuccessfulRosterTransaction(freshRows, '114');
     mockSaveMemory.mockRejectedValueOnce(snapshotError);
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
@@ -476,6 +555,70 @@ describe('backstage-booker roster containment', () => {
 
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockSaveMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks only transient persistence causes as retryable', async () => {
+    mockTransaction.mockRejectedValueOnce(Object.assign(new Error('connection reset'), {
+      code: 'ECONNRESET'
+    }));
+    await expect(updateRoster([{ name: 'Transient', overall: 90 }]))
+      .rejects.toMatchObject({ retryable: true });
+
+    mockTransaction.mockRejectedValueOnce(Object.assign(new Error('constraint failed'), {
+      code: '23514'
+    }));
+    await expect(updateRoster([{ name: 'Permanent', overall: 90 }]))
+      .rejects.toMatchObject({ retryable: false });
+  });
+
+  it.each([
+    new Error('Connection terminated unexpectedly'),
+    new Error('pool wrapper', {
+      cause: new Error('timeout exceeded when trying to connect')
+    }),
+    Object.assign(new Error('canceling statement due to statement timeout'), {
+      code: '57014'
+    }),
+    new AggregateError([
+      Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
+    ], 'pool failures')
+  ])('recognizes nested and code-less PostgreSQL transport failures as retryable', async error => {
+    mockTransaction.mockRejectedValueOnce(error);
+
+    await expect(updateRoster([{ name: 'Transient', overall: 90 }]))
+      .rejects.toMatchObject({ retryable: true });
+  });
+
+  it('does not retry an explicitly cancelled PostgreSQL statement', async () => {
+    mockTransaction.mockRejectedValueOnce(Object.assign(
+      new Error('canceling statement due to user request'),
+      { code: '57014' }
+    ));
+
+    await expect(updateRoster([{ name: 'Cancelled', overall: 90 }]))
+      .rejects.toMatchObject({ retryable: false });
+  });
+
+  it('defines two zero-rated wrestlers as a 50/50 matchup', async () => {
+    const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    try {
+      await expect(simulateMatch({
+        wrestler1: 'Zero One',
+        wrestler2: 'Zero Two',
+        matchType: 'Singles'
+      }, [
+        { name: 'Zero One', overall: 0 },
+        { name: 'Zero Two', overall: 0 }
+      ])).resolves.toMatchObject({
+        probability: {
+          'Zero One': '0.50',
+          'Zero Two': '0.50'
+        }
+      });
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 
   it('uses an uncached roster-table read when match input omits a roster', async () => {

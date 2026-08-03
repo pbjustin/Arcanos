@@ -368,6 +368,7 @@ export async function transaction<T>(callback: (client: PoolClient) => Promise<T
 
   const connectStartedAtMs = Date.now();
   let client: PoolClient;
+  let clientReleaseError: Error | undefined;
   try {
     client = await pool.connect();
     recordDependencyCall({
@@ -400,7 +401,19 @@ export async function transaction<T>(callback: (client: PoolClient) => Promise<T
     });
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError: unknown) {
+      const normalizedRollbackError = rollbackError instanceof Error
+        ? rollbackError
+        : new Error('Unknown transaction rollback failure');
+      clientReleaseError = normalizedRollbackError;
+      dbLogger.error('db.transaction.rollback_failed', {
+        operation: 'transaction',
+      }, {
+        message: normalizedRollbackError.message,
+      }, normalizedRollbackError);
+    }
     dbLogger.error('db.transaction.error', {
       operation: 'transaction',
     }, {
@@ -414,6 +427,6 @@ export async function transaction<T>(callback: (client: PoolClient) => Promise<T
     });
     throw error;
   } finally {
-    client.release();
+    client.release(clientReleaseError);
   }
 }

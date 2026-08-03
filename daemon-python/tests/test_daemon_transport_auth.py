@@ -70,6 +70,7 @@ def test_raw_daemon_paths_send_only_the_dedicated_custom_header(path: str) -> No
     }
     assert "Authorization" not in request_headers
     assert "x-gpt-id" not in request_headers
+    assert sender.call_args.kwargs["allow_redirects"] is False
     generic_provider.assert_not_called()
 
 
@@ -102,6 +103,7 @@ def test_json_daemon_request_uses_the_same_dedicated_transport(
         "Content-Type": "application/json",
         DAEMON_ACCESS_TOKEN_HEADER_NAME: DAEMON_ACCESS_TOKEN,
     }
+    assert sender.call_args.kwargs["allow_redirects"] is False
     assert any(
         args
         and args[0] == "backend_request_outbound"
@@ -146,7 +148,50 @@ def test_non_daemon_lookalikes_keep_generic_auth_and_never_receive_daemon_header
     headers = sender.call_args.kwargs["headers"]
     assert headers["Authorization"] == f"Bearer {GENERIC_BACKEND_TOKEN}"
     assert DAEMON_ACCESS_TOKEN_HEADER_NAME not in headers
+    assert sender.call_args.kwargs["allow_redirects"] is False
     daemon_provider.assert_not_called()
+
+
+@pytest.mark.parametrize("raw", [False, True])
+def test_daemon_credentials_are_not_forwarded_to_cross_origin_redirects(raw: bool) -> None:
+    requested_urls: list[str] = []
+    redirect_target_headers: list[dict[str, str]] = []
+    redirect_target = "https://redirect.example/api/daemon/registry"
+
+    def sender(method: str, url: str, **kwargs: Any):
+        requested_urls.append(url)
+        headers = dict(kwargs.get("headers", {}))
+        if url == redirect_target:
+            redirect_target_headers.append(headers)
+            return _response()
+        if kwargs.get("allow_redirects", True):
+            return sender(method, redirect_target, headers=headers)
+        return SimpleNamespace(
+            status_code=302,
+            json=lambda: {},
+            text="redirect refused",
+            headers={"Location": redirect_target},
+        )
+
+    client = BackendApiClient(
+        "https://backend.example",
+        lambda: GENERIC_BACKEND_TOKEN,
+        request_sender=sender,
+        daemon_access_token_provider=lambda: DAEMON_ACCESS_TOKEN,
+    )
+
+    if raw:
+        response = client.make_raw_request("GET", "/api/daemon/registry")
+        assert response.status_code == 302
+    else:
+        response = client._request_json("get", "/api/daemon/registry", None)
+        assert response.ok is False
+        assert response.error is not None
+        assert response.error.kind == "http"
+        assert response.error.message == "Authenticated backend request returned redirect"
+
+    assert requested_urls == ["https://backend.example/api/daemon/registry"]
+    assert redirect_target_headers == []
 
 
 @pytest.mark.parametrize(

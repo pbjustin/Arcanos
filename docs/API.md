@@ -418,7 +418,8 @@ the result must contain 1 through 120 Unicode code points. Duplicate trimmed
 names within one request are rejected using exact, case-sensitive comparison,
 while names that differ only by case remain distinct. Accepted items are
 normalized to exactly `{ name, overall }`, so additional properties are
-discarded. An empty array remains a valid refresh request: it performs no
+discarded. Names containing U+0000 are rejected before database work because
+PostgreSQL `TEXT` cannot store that code point. An empty array remains a valid refresh request: it performs no
 upserts and returns the current roster. The 100-item limit applies to supplied
 items in one request; it does not delete existing wrestlers or impose a total
 stored-roster limit. Invalid roster input returns HTTP `400` with
@@ -427,19 +428,33 @@ HTTP paths. GPT Access exposes the same failure as
 `GPT_ACCESS_VALIDATION_ERROR`; MCP `modules.invoke` exposes `ERR_BAD_REQUEST`
 with `BACKSTAGE_ROSTER_INVALID` as its error category.
 
-Accepted roster mutations use one PostgreSQL transaction containing a bulk
-upsert and the fresh post-write roster read. Process-local roster state changes
-only after that transaction reports a successful commit. A begin, write, or
-read failure rolls back the transaction. A commit failure triggers a rollback
-attempt, but a lost commit acknowledgement can leave the database outcome
-indeterminate. Every such failure is fail-closed: it performs no in-memory
-fallback mutation and returns `BACKSTAGE_ROSTER_PERSISTENCE_FAILED`. Direct,
+Accepted roster mutations use one PostgreSQL transaction containing a
+cluster-wide transaction-scoped advisory lock, a bulk upsert, and the fresh
+post-write roster read. The lock serializes mutation/read snapshots across web
+and worker replicas. Process-local roster state changes only after that
+transaction reports a successful commit, and the same monotonic revision fence
+prevents a delayed older commit acknowledgement from regressing fallback state.
+A begin, write, or read failure rolls back the transaction. A commit failure
+triggers a rollback attempt. Failure of that rollback does not replace the
+primary error, but a lost commit acknowledgement can leave the database outcome
+indeterminate. Every
+such failure is fail-closed: it performs no in-memory fallback mutation and
+returns `BACKSTAGE_ROSTER_PERSISTENCE_FAILED`. Direct,
 canonical GPT, dispatch, legacy, and GPT Access HTTP paths expose that failure
 with HTTP `503`; MCP `modules.invoke` exposes `ERR_UNAVAILABLE`. Queued GPT
-execution records the same failure as retryable rather than completing an
-unconfirmed mutation. The `backstage-roster:latest` memory entry remains a
-best-effort convenience mirror written after commit; it is not the authority
-for roster-mutation success.
+execution retries that failure only when its SQL state, transport code, or
+bounded nested PostgreSQL transport cause is classified as transient. Explicit
+query cancellation is not retryable; PostgreSQL statement timeout is. The
+`backstage-roster:latest` memory entry remains a
+best-effort convenience mirror written after commit; a database transaction
+revision fences its conditional upsert so a delayed older request cannot
+replace a newer snapshot. The option revision must match the revision carried
+inside the stored payload. This mirror is not the authority for
+roster-mutation success.
+
+Match simulation accepts the ratified `0` through `100` ratings. When both
+wrestlers have rating `0`, the base matchup is explicitly `0.50`/`0.50` before
+the existing bounded modifier and interference rules are applied.
 
 Canonical async Backstage mutations persist a server-generated admission record
 binding the admitted operator principal to the resolved Backstage module and

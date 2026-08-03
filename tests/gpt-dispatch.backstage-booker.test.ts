@@ -314,7 +314,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     'maps transactional roster failures for canonical alias %s to a retryable persistence code',
     async (gptId) => {
       mockDispatchModuleAction.mockRejectedValueOnce(
-        new BackstageRosterPersistenceError()
+        new BackstageRosterPersistenceError({ retryable: true })
       );
 
       const envelope = await routeGptRequest({
@@ -331,6 +331,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         error: {
           code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
           message: 'Roster update persistence could not be confirmed.',
+          details: { retryable: true },
         },
         _route: {
           module: 'BACKSTAGE:BOOKER',

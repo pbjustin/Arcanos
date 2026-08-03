@@ -186,6 +186,15 @@ Arcanos CLI supports two protocol transport strategies:
 - `python` (default): spawns `python -m arcanos.protocol_runtime` in `daemon-python`
 - `local`: dispatches to the local in-process TypeScript protocol dispatcher
 
+The Python subprocess transport has a 30-second default deadline and a 2 MiB
+combined stdout/stderr limit. Programmatic callers may configure positive
+integer bounds up to hard ceilings of 120 seconds and 8 MiB. Deadline or output
+overflow rejects immediately with a fixed error that excludes captured child
+output, then requests bounded process-tree cleanup. POSIX uses the detached
+process group; Windows asynchronously invokes fixed `taskkill.exe /T /F` and
+falls back to direct-child termination if tree-wide cleanup cannot be
+confirmed. That Windows fallback is explicitly best-effort for descendants.
+
 Use `--transport local` for local-only workflows; use default/python when you need parity with the Python protocol runtime.
 
 The local dispatcher intentionally omits Python-only schema introspection and repository tool execution. These operations require `--transport python`:

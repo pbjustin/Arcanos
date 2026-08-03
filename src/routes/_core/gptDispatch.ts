@@ -444,6 +444,10 @@ function buildDispatchErrorDetails(
   error: unknown,
   errorMessage: string
 ): Record<string, unknown> | undefined {
+  if (isBackstageRosterPersistenceError(error)) {
+    return { retryable: error.retryable };
+  }
+
   const timeoutDetails = buildDispatchTimeoutDetails(moduleName, errorMessage);
   if (timeoutDetails) {
     return timeoutDetails;

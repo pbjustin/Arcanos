@@ -40,10 +40,20 @@ const DIRECT_HEARTBEAT_INTERVAL_MS = 5_000;
 let activePriorityDirectExecutions = 0;
 let routeGptRequestLoader: Promise<typeof routeGptRequestType> | null = null;
 
-function isRetryablePriorityGptErrorCode(code: string): boolean {
+function isRetryablePriorityGptError(error: {
+  code: string;
+  details?: unknown;
+}): boolean {
+  const backstagePersistenceRetryable =
+    error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+    && typeof error.details === 'object'
+    && error.details !== null
+    && (error.details as { retryable?: unknown }).retryable === true;
+
+  const code = error.code;
   return code === 'MODULE_TIMEOUT'
     || code === 'MODULE_ERROR'
-    || code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE;
+    || backstagePersistenceRetryable;
 }
 
 async function loadRouteGptRequest(): Promise<typeof routeGptRequestType> {
@@ -441,12 +451,12 @@ async function executeReservedPriorityGptDirectExecution(params: {
             priorityDirectExecution: {
               completedAt: new Date().toISOString(),
               durationMs: Date.now() - startedAtMs,
-              retryable: isRetryablePriorityGptErrorCode(envelope.error.code)
+              retryable: isRetryablePriorityGptError(envelope.error)
             },
             lastFailure: {
               at: new Date().toISOString(),
               reason: errorMessage,
-              retryable: isRetryablePriorityGptErrorCode(envelope.error.code),
+              retryable: isRetryablePriorityGptError(envelope.error),
               retryExhausted: true,
               priorityDirectExecution: true
             }
@@ -467,11 +477,11 @@ async function executeReservedPriorityGptDirectExecution(params: {
       }
       recordGptJobEvent({
         event:
-          isRetryablePriorityGptErrorCode(envelope.error.code)
+          isRetryablePriorityGptError(envelope.error)
             ? 'retryable_failure'
             : 'non_retryable_failure',
         status: 'failed',
-        retryable: isRetryablePriorityGptErrorCode(envelope.error.code)
+        retryable: isRetryablePriorityGptError(envelope.error)
       });
       return;
     }

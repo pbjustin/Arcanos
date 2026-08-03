@@ -21,14 +21,100 @@ export class BackstageRosterValidationError extends TypeError {
   }
 }
 
-/** Represent a safe, retryable failure of the authoritative roster transaction. */
+const RETRYABLE_ROSTER_SQLSTATES = new Set([
+  '40001',
+  '40P01',
+  '53300',
+  '55P03',
+  '57P01',
+  '57P02',
+  '57P03'
+]);
+const RETRYABLE_ROSTER_TRANSPORT_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT'
+]);
+const RETRYABLE_ROSTER_TRANSPORT_MESSAGES = new Set([
+  'Connection terminated',
+  'Connection terminated due to connection timeout',
+  'Connection terminated unexpectedly',
+  'Database not configured or not connected',
+  'Database pool not available',
+  'canceling statement due to statement timeout',
+  'timeout exceeded when trying to connect'
+]);
+const MAX_ROSTER_PERSISTENCE_CAUSES = 8;
+
+/** Represent a safely disclosed failure of the authoritative roster transaction. */
 export class BackstageRosterPersistenceError extends Error {
   readonly code = BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE;
+  readonly retryable: boolean;
 
-  constructor() {
-    super(BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE);
+  constructor(options: { retryable?: boolean; cause?: unknown } = {}) {
+    super(
+      BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE,
+      options.cause === undefined ? undefined : { cause: options.cause }
+    );
     this.name = 'BackstageRosterPersistenceError';
+    this.retryable = options.retryable ?? false;
   }
+}
+
+/** Classify only transient database/transport failures as safe to retry. */
+export function isRetryableBackstageRosterPersistenceCause(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  const seen = new Set<object>();
+
+  for (
+    let inspected = 0;
+    pending.length > 0 && inspected < MAX_ROSTER_PERSISTENCE_CAUSES;
+    inspected += 1
+  ) {
+    const current = pending.shift();
+    if (typeof current !== 'object' || current === null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    try {
+      const candidate = current as {
+        cause?: unknown;
+        code?: unknown;
+        errors?: unknown;
+        message?: unknown;
+      };
+      const code = typeof candidate.code === 'string'
+        ? candidate.code.trim().toUpperCase()
+        : '';
+      if (
+        (code.length === 5 && code.startsWith('08'))
+        || RETRYABLE_ROSTER_SQLSTATES.has(code)
+        || RETRYABLE_ROSTER_TRANSPORT_CODES.has(code)
+        || (
+          typeof candidate.message === 'string'
+          && RETRYABLE_ROSTER_TRANSPORT_MESSAGES.has(candidate.message.trim())
+        )
+      ) {
+        return true;
+      }
+
+      if (candidate.cause !== undefined) {
+        pending.push(candidate.cause);
+      }
+      if (Array.isArray(candidate.errors)) {
+        pending.push(...candidate.errors.slice(0, MAX_ROSTER_PERSISTENCE_CAUSES));
+      }
+    } catch {
+      // Ignore hostile accessors and continue through the bounded queue.
+    }
+  }
+
+  return false;
 }
 
 /** Recognize the typed roster validation failure at in-process adapter boundaries. */
@@ -105,6 +191,11 @@ export function parseBackstageRosterPayload(payload: unknown): Wrestler[] {
       ? nameDescriptor.value
       : undefined;
     const name = typeof rawName === 'string' ? rawName.trim() : '';
+    if (name.includes('\u0000')) {
+      throw new BackstageRosterValidationError(
+        `Roster item at index ${index} name must not contain U+0000.`
+      );
+    }
     if (!hasBoundedCodePointLength(name, BACKSTAGE_WRESTLER_NAME_MAX_LENGTH)) {
       throw new BackstageRosterValidationError(
         `Roster item at index ${index} requires a name between 1 and ${BACKSTAGE_WRESTLER_NAME_MAX_LENGTH} characters.`

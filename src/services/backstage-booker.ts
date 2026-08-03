@@ -10,6 +10,7 @@ import {
 } from "@platform/runtime/prompts.js";
 import {
   AUDITED_TRANSIENT_READ_QUERIES,
+  applyBackstageRosterMutation,
   query,
   saveMemory,
   transaction
@@ -22,6 +23,7 @@ import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import {
   BackstageRosterPersistenceError,
+  isRetryableBackstageRosterPersistenceCause,
   parseBackstageRosterPayload,
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
@@ -68,6 +70,7 @@ interface Storyline {
 // Internal in-memory stores
 const events: Array<{ id: string; data: EventData }> = [];
 let roster: Wrestler[] = [];
+let rosterRevision: bigint | null = null;
 const storylines: Array<Storyline> = [];
 
 /**
@@ -78,13 +81,15 @@ const storylines: Array<Storyline> = [];
  */
 async function persistLatestRosterSnapshot(
   nextRoster: Wrestler[],
-  source: "database" | "fallback"
+  source: "database" | "fallback",
+  revision: string
 ): Promise<void> {
   await saveMemory("backstage-roster:latest", {
     roster: nextRoster,
     source,
+    revision,
     updatedAt: new Date().toISOString()
-  }).catch((error: unknown) => {
+  }, { ifNewerRevision: revision }).catch((error: unknown) => {
     //audit Assumption: convenience roster mirror is optional metadata; failure risk: stale roster recall in new chats; expected invariant: primary roster mutation still succeeds; handling strategy: warn and continue.
     console.warn(
       "Backstage Booker: failed to persist latest roster snapshot",
@@ -529,39 +534,29 @@ export async function bookEvent(data: EventData): Promise<string> {
 export async function updateRoster(payload: unknown): Promise<Wrestler[]> {
   const wrestlers = parseBackstageRosterPayload(payload);
 
-  let nextRoster: Wrestler[];
+  let mutationResult: Awaited<ReturnType<typeof applyBackstageRosterMutation>>;
   try {
-    nextRoster = await transaction(async client => {
-      if (wrestlers.length > 0) {
-        await client.query(
-          `INSERT INTO backstage_wrestlers (name, overall, created_at, updated_at)
-           SELECT incoming.name, incoming.overall, NOW(), NOW()
-           FROM UNNEST($1::TEXT[], $2::INTEGER[]) AS incoming(name, overall)
-           ON CONFLICT (name)
-           DO UPDATE SET overall = EXCLUDED.overall, updated_at = NOW()`,
-          [
-            wrestlers.map(wrestler => wrestler.name),
-            wrestlers.map(wrestler => wrestler.overall)
-          ]
-        );
-      }
-
-      const result = await client.query(
-        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
-        []
-      );
-      return result.rows.map(row => ({
-        name: row.name as string,
-        overall: Number(row.overall)
-      }));
+    mutationResult = await transaction(
+      client => applyBackstageRosterMutation(client, wrestlers)
+    );
+  } catch (error: unknown) {
+    throw new BackstageRosterPersistenceError({
+      retryable: isRetryableBackstageRosterPersistenceCause(error),
+      cause: error
     });
-  } catch {
-    throw new BackstageRosterPersistenceError();
   }
 
-  roster = nextRoster;
-  await persistLatestRosterSnapshot(nextRoster, "database");
-  return nextRoster;
+  const committedRevision = BigInt(mutationResult.revision);
+  if (rosterRevision === null || committedRevision > rosterRevision) {
+    roster = mutationResult.roster;
+    rosterRevision = committedRevision;
+  }
+  await persistLatestRosterSnapshot(
+    mutationResult.roster,
+    "database",
+    mutationResult.revision
+  );
+  return mutationResult.roster;
 }
 
 export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
@@ -712,7 +707,8 @@ export async function simulateMatch(
     throw new Error('One or both wrestlers not found in roster');
   }
 
-  let w1Chance = w1.overall / (w1.overall + w2.overall);
+  const totalOverall = w1.overall + w2.overall;
+  let w1Chance = totalOverall === 0 ? 0.5 : w1.overall / totalOverall;
   let w2Chance = 1 - w1Chance;
 
   w1Chance = Math.min(Math.max(w1Chance + winProbModifier, 0), 1);
