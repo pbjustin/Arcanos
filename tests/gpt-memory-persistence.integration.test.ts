@@ -41,6 +41,7 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   query: mockQuery,
   saveMemory: mockSaveMemory,
+  transaction: jest.fn(),
 }));
 
 jest.unstable_mockModule('@services/sessionMemoryService.js', () => ({
