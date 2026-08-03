@@ -127,7 +127,7 @@ const expectedSeverityByPackage = {
 } as const;
 const requiredTemporaryExceptionNames = Object.keys(
   expectedSeverityByPackage,
-).filter(name => name !== 'brace-expansion');
+).filter(name => !['brace-expansion', 'cheerio'].includes(name));
 
 const directAdvisorySeverityCases = temporaryDirectExceptions.flatMap(
   exception =>
@@ -575,7 +575,7 @@ describe('npm audit policy', () => {
     ).toEqual(Object.keys(vulnerabilities).sort());
   });
 
-  it('accepts the npm 10 graph that omits the vendored brace advisory', () => {
+  it('accepts the Windows npm 10 graph that omits the vendored brace advisory', () => {
     const vulnerabilities = currentVulnerabilityGraph();
     delete vulnerabilities['brace-expansion'];
 
@@ -585,6 +585,41 @@ describe('npm audit policy', () => {
     expect(result.status).toBe(0);
     expect(output.actionable).toEqual([]);
     expect(output.ignored).toHaveLength(9);
+  });
+
+  it('accepts the Linux npm 10 graph that also omits propagated cheerio', () => {
+    const vulnerabilities = currentVulnerabilityGraph();
+    delete vulnerabilities['brace-expansion'];
+    delete vulnerabilities.cheerio;
+
+    const result = runAuditPolicy(vulnerabilities);
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(0);
+    expect(output.actionable).toEqual([]);
+    expect(output.ignored).toHaveLength(8);
+    expect(
+      output.ignored.map((entry: { name: string }) => entry.name),
+    ).toContain('undici');
+  });
+
+  it('rejects an omitted cheerio record when its direct undici advisory is not exact', () => {
+    const vulnerabilities = currentVulnerabilityGraph();
+    delete vulnerabilities.cheerio;
+    const undici = vulnerabilities.undici;
+    const directAdvisory = undici.via[0];
+    if (typeof directAdvisory !== 'string') {
+      directAdvisory.url =
+        'https://github.com/advisories/GHSA-new1-new2-new3';
+    }
+
+    const result = runAuditPolicy(vulnerabilities);
+    const output = parseStdout(result);
+
+    expect(result.status).toBe(1);
+    expect(
+      output.actionable.map((entry: { name: string }) => entry.name),
+    ).toContain('undici');
   });
 
   it.each(requiredTemporaryExceptionNames)(

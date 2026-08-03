@@ -225,12 +225,18 @@ const temporaryExceptionIdentities = [
   ...Object.values(temporaryDirectExceptions),
   ...Object.values(temporaryPropagatedExceptions),
 ].map(exception => exception.identity);
-const requiredTemporaryExceptionNames = new Set([
-  ...Object.keys(temporaryDirectExceptions).filter(
-    name => name !== 'brace-expansion',
-  ),
-  ...Object.keys(temporaryPropagatedExceptions),
+// npm 10.8.2 on the Linux CI runner omits the propagated root cheerio record
+// while retaining its exact direct undici advisory. npm 10 on Windows reports
+// cheerio, and npm 11 additionally reports the vendored brace-expansion node.
+// When either optional record is present it must still match its full exception.
+const platformOptionalTemporaryExceptionNames = new Set([
+  'brace-expansion',
+  'cheerio',
 ]);
+const requiredTemporaryExceptionNames = new Set([
+  ...Object.keys(temporaryDirectExceptions),
+  ...Object.keys(temporaryPropagatedExceptions),
+].filter(name => !platformOptionalTemporaryExceptionNames.has(name)));
 
 const reportPath = process.argv[2];
 const candidateLockPath = process.argv[3]
