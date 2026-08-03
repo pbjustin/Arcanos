@@ -358,13 +358,12 @@ if (
   process.exit(1);
 }
 
-if (
-  ![...requiredTemporaryExceptionNames].every(name =>
-    Object.hasOwn(report.vulnerabilities, name),
-  )
-) {
+const missingRequiredTemporaryExceptions = [
+  ...requiredTemporaryExceptionNames,
+].filter(name => !Object.hasOwn(report.vulnerabilities, name));
+if (missingRequiredTemporaryExceptions.length > 0) {
   console.error(
-    'npm audit report is missing required temporary advisory records',
+    `npm audit report is missing required temporary advisory records: ${missingRequiredTemporaryExceptions.join(', ')}`,
   );
   process.exit(1);
 }

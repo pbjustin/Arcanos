@@ -437,6 +437,9 @@ describe('npm audit policy', () => {
     expect(result.stderr).toContain(
       'npm audit report is missing required temporary advisory records',
     );
+    for (const name of requiredTemporaryExceptionNames) {
+      expect(result.stderr).toContain(name);
+    }
   });
 
   it.each([
@@ -597,6 +600,7 @@ describe('npm audit policy', () => {
       expect(result.stderr).toContain(
         'npm audit report is missing required temporary advisory records',
       );
+      expect(result.stderr).toContain(name);
     },
   );
 
