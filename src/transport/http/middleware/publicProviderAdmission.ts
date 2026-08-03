@@ -420,12 +420,15 @@ function applyPublicProviderRateLimitHeaders(
   const selectedBucket = decision.limitedTier === 'client'
     ? PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_BUCKET
     : PUBLIC_PROVIDER_RATE_LIMIT_BUCKET;
-  const headers: Record<string, string> = {
-    'X-RateLimit-Limit': String(selectedTier.limit),
-    'X-RateLimit-Remaining': String(selectedTier.remaining),
-    'X-RateLimit-Reset': new Date(selectedTier.resetTimeMs).toISOString(),
-    'X-RateLimit-Bucket': selectedBucket,
-  };
+  const preserveUpstreamRateLimitHeaders =
+    decision.allowed && res.hasHeader('X-RateLimit-Bucket');
+  const headers: Record<string, string> = {};
+  if (!preserveUpstreamRateLimitHeaders) {
+    headers['X-RateLimit-Limit'] = String(selectedTier.limit);
+    headers['X-RateLimit-Remaining'] = String(selectedTier.remaining);
+    headers['X-RateLimit-Reset'] = new Date(selectedTier.resetTimeMs).toISOString();
+    headers['X-RateLimit-Bucket'] = selectedBucket;
+  }
   if (decision.clientSnapshotFresh !== false) {
     headers['X-Public-Provider-Client-Remaining'] = String(decision.client.remaining);
   }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-02T23:43:52.574Z",
+  "generatedAt": "2026-08-03T05:02:16.206Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3677,6 +3677,9 @@
         },
         {
           "relativePath": "tests/job-repository.worker-budget-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/job-runner-backstage-admission.test.ts"
         },
         {
           "relativePath": "tests/job-runner-runtime.test.ts"

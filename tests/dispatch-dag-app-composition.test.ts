@@ -270,6 +270,11 @@ describe('/dispatch production application composition', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-limit']).toBe('10');
+    expect(response.headers['x-ratelimit-remaining']).toBe('9');
+    expect(response.headers['x-ratelimit-bucket']).toBe('backstage-mutation-principal');
+    expect(response.headers['x-public-provider-client-remaining']).toBeDefined();
+    expect(response.headers['x-public-provider-global-remaining']).toBeDefined();
     expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
       gptId: 'backstage',
       body: expect.objectContaining({

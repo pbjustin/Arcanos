@@ -491,6 +491,44 @@ describe('public provider admission policy', () => {
     expect(fifth.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_RATE_LIMIT_BUCKET);
   });
 
+  it('preserves an earlier operation-specific rate policy until provider admission denies', async () => {
+    const limiter = createPublicProviderRateLimitMiddleware({
+      clientIdentityResolver: () => 'backstage-operator',
+      clientMaxRequests: 10,
+      maxRequests: 1,
+      windowMs: 60_000,
+    });
+    const app = express();
+    app.use((_req, res, next) => {
+      res.set({
+        'X-RateLimit-Limit': '10',
+        'X-RateLimit-Remaining': '9',
+        'X-RateLimit-Reset': '2030-01-01T00:00:00.000Z',
+        'X-RateLimit-Bucket': 'backstage-mutation-principal',
+      });
+      next();
+    });
+    app.use(limiter);
+    app.post('/provider', (_req, res) => res.json({ ok: true }));
+
+    const admitted = await request(app).post('/provider');
+    const denied = await request(app).post('/provider');
+
+    expect(admitted.status).toBe(200);
+    expect(admitted.headers['x-ratelimit-limit']).toBe('10');
+    expect(admitted.headers['x-ratelimit-remaining']).toBe('9');
+    expect(admitted.headers['x-ratelimit-reset']).toBe('2030-01-01T00:00:00.000Z');
+    expect(admitted.headers['x-ratelimit-bucket']).toBe('backstage-mutation-principal');
+    expect(admitted.headers['x-public-provider-client-remaining']).toBe('0');
+    expect(admitted.headers['x-public-provider-global-remaining']).toBe('0');
+
+    expect(denied.status).toBe(429);
+    expect(denied.headers['x-ratelimit-limit']).toBe('1');
+    expect(denied.headers['x-ratelimit-remaining']).toBe('0');
+    expect(denied.headers['x-ratelimit-bucket']).toBe(PUBLIC_PROVIDER_RATE_LIMIT_BUCKET);
+    expect(denied.headers['retry-after']).toBeDefined();
+  });
+
   it('keeps the deployment bucket when the compatibility ceiling is one', async () => {
     const app = express();
     app.use(createPublicProviderRateLimitMiddleware({
