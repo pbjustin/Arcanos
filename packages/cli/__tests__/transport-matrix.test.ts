@@ -190,6 +190,5 @@ async function dispatchPythonRequestOrSkip(request: ReturnType<typeof createRequ
 }
 
 function isMissingPythonRuntimeDependency(message: string): boolean {
-  return message.includes("ModuleNotFoundError")
-    || message.includes("No module named");
+  return message === "Python transport runtime dependency is unavailable.";
 }

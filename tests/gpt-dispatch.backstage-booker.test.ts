@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError,
+} from '../src/shared/backstage/backstageRoster.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -67,11 +73,13 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     jest.clearAllMocks();
     mockGetGptModuleMap.mockResolvedValue({
       'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
-      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
+      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' },
+      'backstage-booker': { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
     });
     mockRebuildGptModuleMap.mockResolvedValue({
       'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
-      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
+      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' },
+      'backstage-booker': { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
     });
     mockValidateGptRegistry.mockReturnValue({
       requiredGptIds: ['arcanos-core', 'core'],
@@ -214,6 +222,8 @@ describe('routeGptRequest backstage booker auto-routing', () => {
   });
 
   it('executes only the exact queued Backstage mutation covered by admission', async () => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
+    mockDispatchModuleAction.mockResolvedValueOnce(refreshedRoster);
     const backstageMutationAdmission = buildQueuedGptBackstageMutationAdmission({
       action: 'updateRoster',
       principalId: 'operator:queued-backstage-test',
@@ -231,6 +241,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
 
     expect(admitted).toMatchObject({
       ok: true,
+      result: refreshedRoster,
       _route: {
         module: 'BACKSTAGE:BOOKER',
         action: 'updateRoster',
@@ -261,6 +272,101 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       },
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['backstage', 'backstage-booker'])(
+    'maps typed roster validation failures for canonical alias %s without persistence',
+    async (gptId) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageRosterValidationError('Roster payload must be an array.')
+      );
+
+      const envelope = await routeGptRequest({
+        gptId,
+        body: {
+          action: 'updateRoster',
+          payload: { name: 'not-an-array', overall: 90 },
+        },
+        requestId: `req-${gptId}-invalid-roster`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+          message: 'Roster payload must be an array.',
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'updateRoster',
+        },
+      });
+      expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+        'BACKSTAGE:BOOKER',
+        'updateRoster',
+        expect.objectContaining({ name: 'not-an-array', overall: 90 })
+      );
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['backstage', 'backstage-booker'])(
+    'maps transactional roster failures for canonical alias %s to a retryable persistence code',
+    async (gptId) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageRosterPersistenceError({ retryable: true })
+      );
+
+      const envelope = await routeGptRequest({
+        gptId,
+        body: {
+          action: 'updateRoster',
+          payload: [{ name: 'Rhea Ripley', overall: 96 }],
+        },
+        requestId: `req-${gptId}-roster-persistence-failure`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+          message: 'Roster update persistence could not be confirmed.',
+          details: { retryable: true },
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'updateRoster',
+        },
+      });
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not remap a roster-shaped error from another Backstage action', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'trackStoryline',
+        payload: {},
+      },
+      requestId: 'req-backstage-non-roster-error',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: 'Roster payload must be an array.',
+      },
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'trackStoryline',
+      },
+    });
   });
 
   it("surfaces NO_DEFAULT_ACTION for legacy 'ask' actions when the module has no canonical query action", async () => {

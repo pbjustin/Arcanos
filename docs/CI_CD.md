@@ -62,17 +62,25 @@ Release automation boundaries:
   validation.
 - Full and patch releases run the same Node and Python production dependency
   policies before `npm ci --ignore-scripts`, followed by type-check, lint, build,
-  Railway compatibility, and Jest gates. A failed or incomplete `npm audit`
-  report is blocking, and installation or validation must leave tracked files
-  unchanged.
+  Railway compatibility, and Jest gates. A missing, malformed, incomplete, or
+  policy-rejected `npm audit` report is blocking, and installation or validation
+  must leave tracked files unchanged.
 - Broad dependency lifecycle scripts remain disabled. The workflow explicitly
   runs only `node node_modules/@prisma/client/scripts/postinstall.js` after
   installation because the audited package requires it to generate the
   TypeScript stubs consumed by type-check and build.
-- The trusted default-branch copy of `scripts/check-npm-audit.js` is the strict
-  zero-production-vulnerability policy. It has no advisory exceptions, rejects
-  incomplete or internally inconsistent audit-v2 reports, and is enforced
-  alongside npm's raw audit exit code.
+- The trusted default-branch copy of `scripts/check-npm-audit.js` is the
+  authoritative production-vulnerability policy. It rejects incomplete or
+  internally inconsistent audit-v2 reports and every unregistered advisory,
+  package, or dependency path. Advisories disclosed on 2026-08-03 whose patched
+  releases are not yet available from npm have temporary exact-advisory and
+  exact-node exceptions bound to exact aggregate and per-advisory severities,
+  one complete observed platform graph (Linux npm 10 or Windows npm 10/11), a
+  record-consistent severity histogram, the candidate lockfile's exact versions,
+  sources, integrity hashes, profile-specific propagated dependency sets, and
+  remediation metadata; review and remove them no later than 2026-08-10.
+  Workflows record npm's raw audit exit code while relying on the fail-closed
+  policy classification.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing

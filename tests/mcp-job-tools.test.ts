@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { z } from 'zod';
 
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  BackstageRosterPersistenceError,
+  BackstageRosterValidationError,
+} from '../src/shared/backstage/backstageRoster.js';
+
 const mockGetJobById = jest.fn();
 const mockRunThroughBrain = jest.fn();
 const mockRunARCANOS = jest.fn();
@@ -355,6 +362,87 @@ describe('createMcpServer job control tools', () => {
     expect(mockGetPublicModulesForRegistry).toHaveBeenCalledTimes(1);
     expect(output).toEqual(expect.objectContaining({
       structuredContent: { value: publicModules },
+    }));
+  });
+
+  it('maps an invalid Backstage roster mutation to a client-safe modules.invoke error', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterValidationError('Roster payload must be an array.')
+    );
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const tool = server.tools.get('modules.invoke');
+    const output = await tool!.handler({
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      payload: { invalid: true },
+    });
+
+    expect(mockInitializeModuleRegistry).toHaveBeenCalledTimes(1);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'updateRoster',
+      { invalid: true }
+    );
+    expect(output).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_BAD_REQUEST',
+          message: 'Roster payload must be an array.',
+          details: {
+            tool: 'modules.invoke',
+            category: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+          },
+          requestId: 'mcp-req-1',
+        },
+      },
+    }));
+  });
+
+  it('preserves a successful Backstage roster array through modules.invoke', async () => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
+    mockDispatchModuleAction.mockResolvedValueOnce(refreshedRoster);
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const tool = server.tools.get('modules.invoke');
+    const output = await tool!.handler({
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      payload: refreshedRoster,
+    });
+
+    expect(output).toEqual(expect.objectContaining({
+      structuredContent: { value: refreshedRoster },
+    }));
+  });
+
+  it('maps a failed Backstage roster transaction to an unavailable modules.invoke error', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterPersistenceError()
+    );
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const tool = server.tools.get('modules.invoke');
+    const output = await tool!.handler({
+      module: 'BACKSTAGE:BOOKER',
+      action: 'updateRoster',
+      payload: [{ name: 'Rhea Ripley', overall: 96 }],
+    });
+
+    expect(output).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_UNAVAILABLE',
+          message: 'Roster update persistence could not be confirmed.',
+          details: {
+            tool: 'modules.invoke',
+            category: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+          },
+          requestId: 'mcp-req-1',
+        },
+      },
     }));
   });
 

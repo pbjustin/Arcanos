@@ -4,6 +4,11 @@ import { mcpError } from '../errors.js';
 import { issueConfirmationNonce, verifyAndConsumeNonce } from '../confirm.js';
 import type { ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { validateCapability } from '@stores/agentRegistry.js';
+import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  isBackstageRosterPersistenceError,
+  isBackstageRosterValidationError
+} from '@shared/backstage/backstageRoster.js';
 
 const MCP_OPERATION_ERROR = Object.freeze({
   category: 'MCP_OPERATION_FAILED',
@@ -85,6 +90,58 @@ export function notExposed(toolName: string, ctx: McpRequestContext) {
     message: `Tool '${toolName}' is disabled on this deployment (MCP_EXPOSE_DESTRUCTIVE=false).`,
     details: { tool: toolName },
     requestId: ctx.requestId,
+  });
+}
+
+/** Build a client-safe MCP error only for the Backstage roster mutation contract. */
+export function buildBackstageRosterValidationMcpError(
+  moduleName: unknown,
+  action: unknown,
+  error: unknown,
+  ctx: McpRequestContext
+): ReturnType<typeof mcpError> | null {
+  if (
+    moduleName !== BACKSTAGE_MODULE_NAME
+    || action !== 'updateRoster'
+    || !isBackstageRosterValidationError(error)
+  ) {
+    return null;
+  }
+
+  return mcpError({
+    code: 'ERR_BAD_REQUEST',
+    message: error.message,
+    details: {
+      tool: 'modules.invoke',
+      category: error.code
+    },
+    requestId: ctx.requestId
+  });
+}
+
+/** Build a retryable MCP unavailable error for the authoritative roster transaction. */
+export function buildBackstageRosterPersistenceMcpError(
+  moduleName: unknown,
+  action: unknown,
+  error: unknown,
+  ctx: McpRequestContext
+): ReturnType<typeof mcpError> | null {
+  if (
+    moduleName !== BACKSTAGE_MODULE_NAME
+    || action !== 'updateRoster'
+    || !isBackstageRosterPersistenceError(error)
+  ) {
+    return null;
+  }
+
+  return mcpError({
+    code: 'ERR_UNAVAILABLE',
+    message: error.message,
+    details: {
+      tool: 'modules.invoke',
+      category: error.code
+    },
+    requestId: ctx.requestId
   });
 }
 

@@ -1,6 +1,20 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
+} from '../src/shared/backstage/backstageRoster.js';
+import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
+
 const originalLegacyGptRoutes = process.env.LEGACY_GPT_ROUTES;
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+const controlPlaneToken = 'legacy-module-token-12345678901234567890';
 process.env.LEGACY_GPT_ROUTES = 'enabled';
 
 const express = (await import('express')).default;
@@ -27,6 +41,18 @@ jest.unstable_mockModule('@services/moduleLoader.js', () => ({
           query: moduleActionHandler
         }
       }
+    },
+    {
+      route: 'backstage-booker',
+      definition: {
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        gptIds: ['backstage-booker', 'backstage'],
+        defaultAction: 'updateRoster',
+        actions: {
+          updateRoster: moduleActionHandler
+        }
+      }
     }
   ])
 }));
@@ -42,18 +68,46 @@ function buildApp() {
   return app;
 }
 
+function configureControlPlane(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:legacy-module-backstage';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read,mcp:invoke';
+}
+
 describe('module legacy route compatibility', () => {
   afterAll(() => {
     if (originalLegacyGptRoutes === undefined) {
       delete process.env.LEGACY_GPT_ROUTES;
-      return;
+    } else {
+      process.env.LEGACY_GPT_ROUTES = originalLegacyGptRoutes;
     }
 
-    process.env.LEGACY_GPT_ROUTES = originalLegacyGptRoutes;
+    for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+      const originalValue = originalCredentialEnvironment.get(environmentName);
+      if (originalValue === undefined) {
+        delete process.env[environmentName];
+      } else {
+        process.env[environmentName] = originalValue;
+      }
+    }
+    if (originalPrincipalId === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+    }
+    if (originalScopes === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+    }
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
+    configureControlPlane();
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
       result: {
@@ -164,6 +218,124 @@ describe('module legacy route compatibility', () => {
       echoedPrompt: 'hello'
     });
     expect(response.body._route).toBeUndefined();
+  });
+
+  it.each([
+    '/modules/backstage-booker',
+    '/queryroute'
+  ])('maps an invalid Backstage roster through %s to the stable client error', async (route) => {
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.'
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-08-03T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post(route)
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        payload: { invalid: true }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-canonical-route']).toBe('/gpt/backstage-booker');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.'
+      }
+    });
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'updateRoster',
+        payload: { invalid: true }
+      }
+    }));
+    expect(moduleActionHandler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/modules/backstage-booker',
+    '/queryroute'
+  ])('preserves a successful Backstage roster array through %s', async (route) => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: refreshedRoster,
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-08-03T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post(route)
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        payload: refreshedRoster
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(refreshedRoster);
+  });
+
+  it.each([
+    '/modules/backstage-booker',
+    '/queryroute'
+  ])('maps a failed Backstage roster transaction through %s to unavailable', async (route) => {
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.'
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-08-03T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post(route)
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        payload: [{ name: 'Rhea Ripley', overall: 96 }]
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.'
+      }
+    });
   });
 
   it('preserves the legacy /queryroute validation contract before dispatching', async () => {

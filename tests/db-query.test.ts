@@ -46,7 +46,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 getEnvNumberMock.mockReturnValue(50);
 getConfiguredLogLevelMock.mockReturnValue('info');
 
-const { query } = await import('../src/core/db/query.js');
+const { query, transaction } = await import('../src/core/db/query.js');
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 const AUDITED_TEST_READ =
@@ -55,9 +55,146 @@ const AUDITED_TEST_READ =
 describe('db query helper', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    queryCacheGetMock.mockReset();
+    queryCacheSetMock.mockReset();
     isDatabaseConnectedMock.mockReturnValue(true);
     getConfiguredLogLevelMock.mockReturnValue('info');
     getEnvNumberMock.mockReturnValue(50);
+  });
+
+  it('bypasses a populated query cache when the caller requires a fresh read', async () => {
+    const staleResult = {
+      rows: [{ name: 'Stale Wrestler', overall: 1 }],
+      rowCount: 1
+    };
+    const freshResult = {
+      rows: [{ name: 'Fresh Wrestler', overall: 99 }],
+      rowCount: 1
+    };
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockResolvedValue(freshResult);
+    const connectMock = jest.fn().mockResolvedValue({
+      query: clientQueryMock,
+      release: releaseMock
+    });
+    queryCacheGetMock.mockReturnValue(staleResult);
+    getPoolMock.mockReturnValue({ connect: connectMock });
+
+    await expect(query(
+      'SELECT name, overall FROM backstage_wrestlers ORDER BY name ASC',
+      [],
+      { useCache: false }
+    )).resolves.toBe(freshResult);
+
+    expect(queryCacheGetMock).not.toHaveBeenCalled();
+    expect(queryCacheSetMock).not.toHaveBeenCalled();
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(clientQueryMock).toHaveBeenCalledWith(
+      'SELECT name, overall FROM backstage_wrestlers ORDER BY name ASC',
+      []
+    );
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a transaction when a read fails after a successful write', async () => {
+    const primaryError = new Error('injected transactional read failure');
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockImplementation(async (sql: string) => {
+      if (sql === 'SELECT name FROM backstage_wrestlers') {
+        throw primaryError;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const connectMock = jest.fn().mockResolvedValue({
+      query: clientQueryMock,
+      release: releaseMock
+    });
+    getPoolMock.mockReturnValue({ connect: connectMock });
+
+    await expect(transaction(async client => {
+      await client.query(
+        'INSERT INTO backstage_wrestlers (name, overall) VALUES ($1, $2)',
+        ['Atomic Wrestler', 90]
+      );
+      await client.query('SELECT name FROM backstage_wrestlers');
+    })).rejects.toBe(primaryError);
+
+    expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'INSERT INTO backstage_wrestlers (name, overall) VALUES ($1, $2)',
+      'SELECT name FROM backstage_wrestlers',
+      'ROLLBACK'
+    ]);
+    expect(clientQueryMock).not.toHaveBeenCalledWith('COMMIT');
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the primary transaction error when rollback also fails', async () => {
+    const primaryError = Object.assign(new Error('commit acknowledgement lost'), {
+      code: 'ECONNRESET'
+    });
+    const rollbackError = new Error('connection unavailable during rollback');
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockImplementation(async (sql: string) => {
+      if (sql === 'COMMIT') {
+        throw primaryError;
+      }
+      if (sql === 'ROLLBACK') {
+        throw rollbackError;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const connectMock = jest.fn().mockResolvedValue({
+      query: clientQueryMock,
+      release: releaseMock
+    });
+    getPoolMock.mockReturnValue({ connect: connectMock });
+
+    await expect(transaction(async () => 'result')).rejects.toBe(primaryError);
+
+    expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'COMMIT',
+      'ROLLBACK'
+    ]);
+    expect(dbLoggerErrorMock).toHaveBeenCalledWith(
+      'db.transaction.rollback_failed',
+      { operation: 'transaction' },
+      { message: rollbackError.message },
+      rollbackError
+    );
+    expect(releaseMock).toHaveBeenCalledWith(rollbackError);
+  });
+
+  it('attempts rollback and preserves the error when commit acknowledgement fails', async () => {
+    const commitError = new Error('injected commit acknowledgement failure');
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockImplementation(async (sql: string) => {
+      if (sql === 'COMMIT') {
+        throw commitError;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const connectMock = jest.fn().mockResolvedValue({
+      query: clientQueryMock,
+      release: releaseMock
+    });
+    getPoolMock.mockReturnValue({ connect: connectMock });
+
+    await expect(transaction(async client => {
+      await client.query(
+        'INSERT INTO backstage_wrestlers (name, overall) VALUES ($1, $2)',
+        ['Unconfirmed Wrestler', 90]
+      );
+    })).rejects.toBe(commitError);
+
+    expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'INSERT INTO backstage_wrestlers (name, overall) VALUES ($1, $2)',
+      'COMMIT',
+      'ROLLBACK'
+    ]);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
   it('logs pool wait and execution timing without raw SQL', async () => {

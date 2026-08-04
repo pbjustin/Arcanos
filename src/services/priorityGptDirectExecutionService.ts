@@ -18,6 +18,7 @@ import {
 } from '@services/openai/aiExecutionContext.js';
 import type { routeGptRequest as routeGptRequestType } from '@routes/_core/gptDispatch.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
   resolveGptWaitTimeoutMs,
@@ -38,6 +39,22 @@ export interface PriorityGptDirectExecutionSnapshot {
 const DIRECT_HEARTBEAT_INTERVAL_MS = 5_000;
 let activePriorityDirectExecutions = 0;
 let routeGptRequestLoader: Promise<typeof routeGptRequestType> | null = null;
+
+function isRetryablePriorityGptError(error: {
+  code: string;
+  details?: unknown;
+}): boolean {
+  const backstagePersistenceRetryable =
+    error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+    && typeof error.details === 'object'
+    && error.details !== null
+    && (error.details as { retryable?: unknown }).retryable === true;
+
+  const code = error.code;
+  return code === 'MODULE_TIMEOUT'
+    || code === 'MODULE_ERROR'
+    || backstagePersistenceRetryable;
+}
 
 async function loadRouteGptRequest(): Promise<typeof routeGptRequestType> {
   routeGptRequestLoader ??= import('@routes/_core/gptDispatch.js').then(
@@ -434,16 +451,12 @@ async function executeReservedPriorityGptDirectExecution(params: {
             priorityDirectExecution: {
               completedAt: new Date().toISOString(),
               durationMs: Date.now() - startedAtMs,
-              retryable:
-                envelope.error.code === 'MODULE_TIMEOUT' ||
-                envelope.error.code === 'MODULE_ERROR'
+              retryable: isRetryablePriorityGptError(envelope.error)
             },
             lastFailure: {
               at: new Date().toISOString(),
               reason: errorMessage,
-              retryable:
-                envelope.error.code === 'MODULE_TIMEOUT' ||
-                envelope.error.code === 'MODULE_ERROR',
+              retryable: isRetryablePriorityGptError(envelope.error),
               retryExhausted: true,
               priorityDirectExecution: true
             }
@@ -464,13 +477,11 @@ async function executeReservedPriorityGptDirectExecution(params: {
       }
       recordGptJobEvent({
         event:
-          envelope.error.code === 'MODULE_TIMEOUT' || envelope.error.code === 'MODULE_ERROR'
+          isRetryablePriorityGptError(envelope.error)
             ? 'retryable_failure'
             : 'non_retryable_failure',
         status: 'failed',
-        retryable:
-          envelope.error.code === 'MODULE_TIMEOUT' ||
-          envelope.error.code === 'MODULE_ERROR'
+        retryable: isRetryablePriorityGptError(envelope.error)
       });
       return;
     }

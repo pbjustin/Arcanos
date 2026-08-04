@@ -262,13 +262,8 @@ jobs:
           set -euo pipefail
           audit_exit=0
           npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
-          policy_exit=0
-          node scripts/check-npm-audit.js npm-audit.json || policy_exit=$?
-
-          if (( audit_exit != 0 || policy_exit != 0 )); then
-            echo "Production npm audit failed (npm=$audit_exit policy=$policy_exit)" >&2
-            exit 1
-          fi
+          node scripts/check-npm-audit.js npm-audit.json
+          echo "Production npm audit policy passed (raw npm exit=$audit_exit)"
 
       - name: 📜 License compliance check
         run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0"
@@ -427,6 +422,8 @@ jobs:
       JOB_STALE_RECOVERY_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       JOB_STALE_RECOVERY_REQUIRE_DATABASE: '1'
+      BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code

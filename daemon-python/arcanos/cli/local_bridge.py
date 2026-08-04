@@ -42,10 +42,54 @@ MAX_OUTPUT_CHARS = 16000
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_PENDING_JOBS = 8
 REQUEST_READ_TIMEOUT_SECONDS = 5
+RESPONSE_GRACE_SECONDS = 1
 REQUEST_TOO_LARGE = object()
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 BRIDGE_TOKEN_ENV = "ARCANOS_CLI_BRIDGE_TOKEN"
 BRIDGE_TOKEN_HEADER = "x-arcanos-cli-bridge-token"
+
+
+class _BridgeJobLifecycle:
+    """Linearize queue admission, cancellation, and result publication."""
+
+    def __init__(self, deadline_monotonic: float):
+        self.deadline_monotonic = deadline_monotonic
+        self.done = threading.Event()
+        self._phase = "queued"
+        self._result: dict[str, Any] | None = None
+        self._lock = threading.Lock()
+
+    def try_claim(self) -> bool:
+        with self._lock:
+            if self._phase != "queued":
+                return False
+            if time.monotonic() >= self.deadline_monotonic:
+                self._phase = "cancelled"
+                self.done.set()
+                return False
+            self._phase = "running"
+            return True
+
+    def cancel_if_queued(self) -> bool:
+        with self._lock:
+            if self._phase != "queued":
+                return False
+            self._phase = "cancelled"
+            self.done.set()
+            return True
+
+    def complete(self, result: dict[str, Any]) -> bool:
+        with self._lock:
+            if self._phase != "running":
+                return False
+            self._result = result
+            self._phase = "finished"
+            self.done.set()
+            return True
+
+    def snapshot(self) -> tuple[str, dict[str, Any] | None]:
+        with self._lock:
+            return self._phase, self._result
 
 
 @dataclass
@@ -55,8 +99,7 @@ class BridgeJob:
     proposal_id: str
     timeout: int
     cwd: str | None
-    done: threading.Event
-    result: dict[str, Any] | None = None
+    lifecycle: _BridgeJobLifecycle
 
 
 @dataclass
@@ -66,8 +109,7 @@ class BridgePatchJob:
     proposal_id: str
     timeout: int
     cwd: str | None
-    done: threading.Event
-    result: dict[str, Any] | None = None
+    lifecycle: _BridgeJobLifecycle
 
 
 def _empty_response(
@@ -377,7 +419,9 @@ class LocalBridge:
                         proposal_id=proposal_id.strip(),
                         timeout=timeout,
                         cwd=resolved_cwd,
-                        done=threading.Event(),
+                        lifecycle=_BridgeJobLifecycle(
+                            time.monotonic() + timeout + RESPONSE_GRACE_SECONDS
+                        ),
                     )
                 else:
                     command_decision = evaluate_command_policy(command.strip(), resolved_cwd, timeout * 1000)
@@ -433,7 +477,9 @@ class LocalBridge:
                         proposal_id=proposal_id.strip(),
                         timeout=timeout,
                         cwd=command_decision.cwd,
-                        done=threading.Event(),
+                        lifecycle=_BridgeJobLifecycle(
+                            time.monotonic() + timeout + RESPONSE_GRACE_SECONDS
+                        ),
                     )
                 try:
                     bridge.jobs.put_nowait(job)
@@ -450,9 +496,17 @@ class LocalBridge:
                         ),
                     )
                     return
-                job.done.wait(timeout + 1)
+                remaining = max(
+                    0.0,
+                    job.lifecycle.deadline_monotonic - time.monotonic(),
+                )
+                job.lifecycle.done.wait(remaining)
+                phase, result = job.lifecycle.snapshot()
+                if phase == "queued":
+                    job.lifecycle.cancel_if_queued()
+                    phase, result = job.lifecycle.snapshot()
 
-                if job.result is None:
+                if phase == "cancelled":
                     self._send_json(
                         504,
                         _empty_response(
@@ -466,7 +520,26 @@ class LocalBridge:
                     )
                     return
 
-                self._send_json(200, job.result)
+                if phase == "running":
+                    #audit Assumption: the worker-side command and patch runners enforce their own execution deadlines; failure risk: returning an admission timeout after execution starts permits a mutation after the caller has been told it expired; expected invariant: only queued work may be cancelled as expired; handling strategy: once claimed, wait for the bounded worker result.
+                    job.lifecycle.done.wait()
+                    phase, result = job.lifecycle.snapshot()
+
+                if phase != "finished" or result is None:
+                    self._send_json(
+                        500,
+                        _empty_response(
+                            ok=False,
+                            status="error",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr="Bridge execution failed",
+                        ),
+                    )
+                    return
+
+                self._send_json(200, result)
 
             def log_message(self, format: str, *args: Any) -> None:
                 return
@@ -514,6 +587,8 @@ class LocalBridge:
             job = self.jobs.get()
             if job is None:
                 return
+            if not job.lifecycle.try_claim():
+                continue
             start = time.perf_counter()
             try:
                 if isinstance(job, BridgePatchJob):
@@ -521,7 +596,7 @@ class LocalBridge:
                 else:
                     stdout, stderr, exit_code = self._run_command(job)
                 normalized_stdout, normalized_stderr, truncated = _truncate_output(stdout or "", stderr or "")
-                job.result = _empty_response(
+                result = _empty_response(
                     ok=exit_code == 0,
                     status="completed" if exit_code == 0 else "failed",
                     stdout=normalized_stdout,
@@ -538,7 +613,7 @@ class LocalBridge:
                     audit_id=job.audit_id,
                     error_type=type(exc).__name__,
                 )
-                job.result = _empty_response(
+                result = _empty_response(
                     ok=False,
                     status="error",
                     exit_code=1,
@@ -547,7 +622,7 @@ class LocalBridge:
                     stderr="Bridge execution failed",
                 )
             finally:
-                job.done.set()
+                job.lifecycle.complete(result)
 
     def _run_command(self, job: BridgeJob) -> tuple[str | None, str | None, int]:
         return self._execute_bounded(job.command, _resolve_sandboxed_cwd(job.cwd), job.timeout)

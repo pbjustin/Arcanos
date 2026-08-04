@@ -102,6 +102,62 @@ describe('memoryRepository TTL persistence', () => {
     expect(harness.queryMock).not.toHaveBeenCalled();
   });
 
+  it('conditionally publishes only a newer database revision', async () => {
+    const harness = await loadMemoryRepositoryHarness(true);
+    harness.queryMock.mockResolvedValueOnce({
+      rows: [{ key: 'backstage-roster:latest' }],
+      rowCount: 1
+    });
+
+    await expect(harness.module.saveMemory(
+      'backstage-roster:latest',
+      { roster: [], revision: '42' },
+      { ifNewerRevision: '42' }
+    )).resolves.toEqual({ key: 'backstage-roster:latest' });
+
+    expect(harness.queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("memory.value #>> '{payload,revision}'"),
+      ['backstage-roster:latest', expect.any(String), null, '42']
+    );
+    expect(harness.queryMock.mock.calls[0][0]).toContain('END < $4::NUMERIC');
+  });
+
+  it('reports a revision-fenced no-op when a newer snapshot already exists', async () => {
+    const harness = await loadMemoryRepositoryHarness(true);
+    harness.queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await expect(harness.module.saveMemory(
+      'backstage-roster:latest',
+      { roster: [], revision: '41' },
+      { ifNewerRevision: '41' }
+    )).resolves.toBeNull();
+  });
+
+  it('rejects a conditional revision that does not match the payload fence', async () => {
+    const harness = await loadMemoryRepositoryHarness(true);
+
+    await expect(harness.module.saveMemory(
+      'backstage-roster:latest',
+      { roster: [], revision: '41' },
+      { ifNewerRevision: '42' }
+    )).rejects.toThrow('Memory conditional revision must match value revision.');
+    expect(harness.queryMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '0', '-1', '1.5', 'not-a-revision', '1'.repeat(21)])(
+    'rejects invalid conditional revision %p before issuing a query',
+    async revision => {
+      const harness = await loadMemoryRepositoryHarness(true);
+
+      await expect(harness.module.saveMemory(
+        'backstage-roster:latest',
+        { roster: [], revision },
+        { ifNewerRevision: revision }
+      )).rejects.toThrow('Invalid memory conditional revision.');
+      expect(harness.queryMock).not.toHaveBeenCalled();
+    }
+  );
+
   it('filters expired rows out of loadMemory reads', async () => {
     const harness = await loadMemoryRepositoryHarness(true);
     harness.queryMock.mockResolvedValueOnce({

@@ -4,6 +4,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@je
 import {
   PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
 } from '../src/shared/security/purposeBoundCredential.js';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
+} from '../src/shared/backstage/backstageRoster.js';
 
 const controlPlaneToken = 'dispatch-app-token-12345678901234567890';
 const originalCredentialEnvironment = new Map(
@@ -256,7 +260,19 @@ describe('/dispatch production application composition', () => {
   });
 
   it('admits a confirmed operator Backstage mutation through GPT-selected dispatch', async () => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
     configureControlPlane('operator:dispatch-app-backstage');
+    routeGptRequestMock.mockResolvedValueOnce({
+      ok: true,
+      result: refreshedRoster,
+      _route: {
+        gptId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-07-31T00:00:00.000Z',
+      },
+    });
 
     const response = await request(createApp())
       .post('/dispatch')
@@ -275,6 +291,7 @@ describe('/dispatch production application composition', () => {
     expect(response.headers['x-ratelimit-bucket']).toBe('backstage-mutation-principal');
     expect(response.headers['x-public-provider-client-remaining']).toBeDefined();
     expect(response.headers['x-public-provider-global-remaining']).toBeDefined();
+    expect(response.body.result).toEqual(refreshedRoster);
     expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
       gptId: 'backstage',
       body: expect.objectContaining({
@@ -283,6 +300,94 @@ describe('/dispatch production application composition', () => {
       }),
     }));
     expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it('maps an invalid admitted Backstage roster mutation to a stable dispatch client error', async () => {
+    configureControlPlane('operator:dispatch-app-backstage-invalid');
+    routeGptRequestMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.',
+      },
+      _route: {
+        gptId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-07-31T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(createApp())
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        target: 'gpt',
+        gptId: 'backstage',
+        action: 'updateRoster',
+        payload: { invalid: true },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message: 'Roster payload must be an array.',
+      },
+      target: 'gpt',
+      routeFamily: 'dispatch',
+    });
+    expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'backstage',
+      body: expect.objectContaining({
+        action: 'updateRoster',
+        payload: { invalid: true },
+      }),
+    }));
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it('maps a failed Backstage roster transaction to a stable dispatch unavailable response', async () => {
+    configureControlPlane('operator:dispatch-app-backstage-persistence');
+    routeGptRequestMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.',
+      },
+      _route: {
+        gptId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'updateRoster',
+        timestamp: '2026-07-31T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(createApp())
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        target: 'gpt',
+        gptId: 'backstage',
+        action: 'updateRoster',
+        payload: [{ name: 'Rhea Ripley', overall: 96 }],
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.',
+      },
+      target: 'gpt',
+      routeFamily: 'dispatch',
+    });
   });
 
   it('shares principal admission between the canonical and compatibility DAG routes', async () => {

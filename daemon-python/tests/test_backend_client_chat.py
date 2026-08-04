@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 import arcanos.backend_client as backend_client_module
 from arcanos.backend_client.chat import (
     resolve_backend_chat_route,
@@ -333,6 +335,100 @@ def test_request_gpt_job_result_uses_canonical_jobs_route() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "stored_output",
+    [{"status": "user-value", "answer": 42}, "scalar", None],
+)
+def test_gpt_job_status_preserves_exact_flat_payloads(stored_output: Any) -> None:
+    payload = {
+        "id": "job-flat-status",
+        "status": "completed",
+        "lifecycle_status": "completed",
+        "result": stored_output,
+    }
+    client = SimpleNamespace(
+        _request_json=MagicMock(return_value=BackendResponse(ok=True, value=payload))
+    )
+
+    response = request_gpt_job_status(
+        client,
+        "job-flat-status",
+        job_read_token=JOB_READ_TOKEN,
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    assert response.value.result == payload
+    assert response.value.lifecycle_status == "completed"
+    assert response.value.raw == payload
+
+
+@pytest.mark.parametrize(
+    "stored_output",
+    [
+        {
+            "jobId": "user-value",
+            "status": "user-value",
+            "lifecycleStatus": "user-value",
+            "poll": "user-value",
+            "answer": 42,
+        },
+        "scalar",
+        None,
+    ],
+)
+def test_gpt_job_result_preserves_exact_flat_results(stored_output: Any) -> None:
+    payload = {
+        "jobId": "job-flat-result",
+        "status": "completed",
+        "jobStatus": "completed",
+        "lifecycleStatus": "completed",
+        "poll": "/jobs/job-flat-result",
+        "result": stored_output,
+    }
+    client = SimpleNamespace(
+        _request_json=MagicMock(return_value=BackendResponse(ok=True, value=payload))
+    )
+
+    response = request_gpt_job_result(
+        client,
+        "job-flat-result",
+        job_read_token=JOB_READ_TOKEN,
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    assert response.value.result == stored_output
+    assert response.value.raw == payload
+
+
+def test_gpt_job_result_unwraps_a_discriminated_compatibility_envelope() -> None:
+    payload = {
+        "ok": True,
+        "action": "get_result",
+        "result": {
+            "jobId": "job-compatibility-result",
+            "status": "completed",
+            "lifecycleStatus": "completed",
+            "result": {"nested": "output"},
+        },
+    }
+    client = SimpleNamespace(
+        _request_json=MagicMock(return_value=BackendResponse(ok=True, value=payload))
+    )
+
+    response = request_gpt_job_result(
+        client,
+        "job-compatibility-result",
+        job_read_token=JOB_READ_TOKEN,
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    assert response.value.result == {"nested": "output"}
+    assert response.value.raw == payload
+
+
 def test_request_job_result_uses_canonical_jobs_result_route() -> None:
     client = SimpleNamespace()
     client._request_json = MagicMock(
@@ -555,13 +651,21 @@ def test_backend_api_client_parses_gpt_envelope_chat_response() -> None:
 def test_backend_api_client_request_json_prefers_route_gpt_id_for_header_and_logs(monkeypatch) -> None:
     logged_events: list[dict[str, Any]] = []
 
-    def _request_sender(method: str, url: str, headers: dict[str, str], json: dict[str, Any], timeout: int):
+    def _request_sender(
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        json: dict[str, Any],
+        timeout: int,
+        allow_redirects: bool,
+    ):
         assert method == "post"
         assert url == "https://backend.example.com/gpt/arcanos-gaming"
         assert headers["Authorization"] == "Bearer token"
         assert headers["x-gpt-id"] == "arcanos-gaming"
         assert json == {"prompt": "Ping gaming"}
         assert timeout == 15
+        assert allow_redirects is False
         return SimpleNamespace(
             status_code=200,
             json=lambda: {
@@ -820,6 +924,7 @@ def test_backend_api_client_request_json_supports_gpt_id_auth_without_bearer_tok
         "Content-Type": "application/json",
         "x-gpt-id": "arcanos-gaming",
     }
+    assert captured_request["kwargs"]["allow_redirects"] is False
     assert any(
         args and args[0] == "backend_request_outbound"
         and kwargs.get("auth_mode") == "gpt-id"

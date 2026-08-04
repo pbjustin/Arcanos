@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-03T05:02:16.206Z",
+  "generatedAt": "2026-08-03T21:36:52.640Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -172,6 +172,9 @@
           "relativePath": "packages/cli/__tests__/gpt-client.test.ts"
         },
         {
+          "relativePath": "packages/cli/__tests__/transport-limits.test.ts"
+        },
+        {
           "relativePath": "packages/cli/__tests__/transport-matrix.test.ts"
         },
         {
@@ -254,6 +257,9 @@
         },
         {
           "relativePath": "packages/cli/src/index.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/internal/pythonTransportProcessTree.ts"
         },
         {
           "relativePath": "packages/cli/src/protocolCli.ts"
@@ -429,6 +435,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/actionPlanExecutionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageRosterRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/dagArtifactRepository.ts"
@@ -2297,6 +2306,9 @@
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageRoster.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -3106,6 +3118,9 @@
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker.roster.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
         },
         {
@@ -3599,6 +3614,9 @@
         },
         {
           "relativePath": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"

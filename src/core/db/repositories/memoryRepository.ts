@@ -14,6 +14,23 @@ export interface SaveMemoryOptions {
   ttlSeconds?: number;
 }
 
+export interface ConditionalSaveMemoryOptions extends SaveMemoryOptions {
+  ifNewerRevision: string;
+}
+
+/** @internal Exact PostgreSQL fence used by roster snapshot publication and its PG18 contract test. */
+export const CONDITIONAL_MEMORY_UPSERT_SQL =
+  `INSERT INTO memory (key, value, expires_at, updated_at)
+   VALUES ($1, $2, CASE WHEN $3::INTEGER IS NULL THEN NULL ELSE NOW() + ($3::INTEGER * INTERVAL '1 second') END, NOW())
+   ON CONFLICT (key)
+   DO UPDATE SET value = $2, expires_at = EXCLUDED.expires_at, updated_at = NOW()
+   WHERE CASE
+     WHEN memory.value #>> '{payload,revision}' ~ '^[0-9]{1,20}$'
+       THEN (memory.value #>> '{payload,revision}')::NUMERIC
+     ELSE -1
+   END < $4::NUMERIC
+   RETURNING *`;
+
 export interface DurableMemoryRecord {
   dbRowId: number | null;
   recordId: string | null;
@@ -59,6 +76,29 @@ function resolveTtlSeconds(ttlSeconds: number | undefined): number | null {
   return ttlSeconds;
 }
 
+function resolveConditionalRevision(revision: string | undefined): string | null {
+  if (revision === undefined) {
+    return null;
+  }
+
+  if (!/^[0-9]{1,20}$/u.test(revision) || BigInt(revision) < 1n) {
+    throw new Error('Invalid memory conditional revision.');
+  }
+
+  return BigInt(revision).toString();
+}
+
+function resolvePayloadRevision(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const revision = (value as { revision?: unknown }).revision;
+  return typeof revision === 'string'
+    ? resolveConditionalRevision(revision)
+    : null;
+}
+
 /**
  * Normalize a raw memory row into a stable durable-record shape.
  * Inputs/outputs: database memory row -> unwrapped durable memory record.
@@ -91,7 +131,21 @@ function normalizeDurableMemoryRecord(row: MemoryRepositoryRow): DurableMemoryRe
  * Inputs/outputs: canonical key, arbitrary value, optional TTL -> persisted memory row.
  * Edge cases: undefined TTL stores a non-expiring row; invalid TTL values throw before any query executes.
  */
-export async function saveMemory(key: string, value: unknown, options: SaveMemoryOptions = {}): Promise<MemoryEntry> {
+export function saveMemory(
+  key: string,
+  value: unknown,
+  options: ConditionalSaveMemoryOptions
+): Promise<MemoryEntry | null>;
+export function saveMemory(
+  key: string,
+  value: unknown,
+  options?: SaveMemoryOptions
+): Promise<MemoryEntry>;
+export async function saveMemory(
+  key: string,
+  value: unknown,
+  options: SaveMemoryOptions | ConditionalSaveMemoryOptions = {}
+): Promise<MemoryEntry | null> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -100,6 +154,21 @@ export async function saveMemory(key: string, value: unknown, options: SaveMemor
     prefix: 'db-memory'
   });
   const ttlSeconds = resolveTtlSeconds(options.ttlSeconds);
+  const conditionalRevision = resolveConditionalRevision(
+    'ifNewerRevision' in options ? options.ifNewerRevision : undefined
+  );
+
+  if (conditionalRevision !== null) {
+    if (resolvePayloadRevision(value) !== conditionalRevision) {
+      throw new Error('Memory conditional revision must match value revision.');
+    }
+    const result = await query(
+      CONDITIONAL_MEMORY_UPSERT_SQL,
+      [key, JSON.stringify(envelopedValue), ttlSeconds, conditionalRevision]
+    );
+
+    return result.rows[0] ?? null;
+  }
 
   const result = await query(
     `INSERT INTO memory (key, value, expires_at, updated_at) 

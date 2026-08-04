@@ -2,6 +2,10 @@ import express from 'express';
 import request from 'supertest';
 import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
+import {
+  BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
+} from '../src/shared/backstage/backstageRoster.js';
 
 const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
 const originalPublicProviderClientRateLimitMax =
@@ -234,6 +238,37 @@ function buildMemoryDispatchEnvelope() {
       timestamp: '2026-04-24T00:00:00.000Z',
     },
   };
+}
+
+function configureBackstageRoutingMock(): void {
+  mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+    ok: true,
+    plan: {
+      matchedId: gptId,
+      module: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action: 'generateBooking',
+      availableActions: [
+        'bookEvent',
+        'updateRoster',
+        'trackStoryline',
+        'simulateMatch',
+        'generateBooking',
+        'generateBookingWithHRC',
+        'saveStoryline',
+      ],
+      moduleVersion: null,
+      moduleDescription: null,
+      matchMethod: 'exact',
+    },
+    _route: {
+      gptId,
+      route: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'generateBooking',
+      timestamp: '2026-04-24T00:00:00.000Z',
+    },
+  }));
 }
 
 describe('async /gpt idempotency', () => {
@@ -1646,13 +1681,18 @@ describe('async /gpt idempotency', () => {
       },
     });
 
+    const submittedRoster = [{
+      name: '  Rhea Ripley  ',
+      overall: 96,
+      ignored: 'not persisted',
+    }];
     const submitMutation = () => request(buildApp())
       .post('/gpt/backstage')
       .set('Authorization', `Bearer ${controlPlaneToken}`)
       .set('Idempotency-Key', 'backstage-mutation-retry-1')
       .set('X-GPT-Action', 'updateRoster')
       .set('X-Confirmed', 'yes')
-      .send({ payload: [] });
+      .send({ payload: submittedRoster });
     const firstResponse = await submitMutation();
     const secondResponse = await submitMutation();
 
@@ -1665,7 +1705,7 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.input).toMatchObject({
       body: {
         action: 'updateRoster',
-        payload: [],
+        payload: [{ name: 'Rhea Ripley', overall: 96 }],
       },
       backstageMutationAdmission: {
         version: 1,
@@ -1678,7 +1718,59 @@ describe('async /gpt idempotency', () => {
     });
   });
 
+  it.each([
+    ['backstage', 'explicit async', undefined, true],
+    ['backstage-booker', 'explicit async', undefined, true],
+    ['backstage', 'explicit idempotency', 'invalid-backstage-roster-idempotency-key', false],
+    ['backstage-booker', 'explicit idempotency', 'invalid-backstage-roster-alias-key', false],
+  ] as const)(
+    'rejects invalid admitted roster input for %s before %s job planning',
+    async (gptId, _mode, idempotencyKey, explicitAsync) => {
+      const controlPlaneToken = 'invalid-async-backstage-control-plane-token-1234567890';
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:invalid-async-backstage';
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureBackstageRoutingMock();
+
+      let pendingRequest = request(buildApp())
+        .post(`/gpt/${gptId}`)
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-GPT-Action', 'updateRoster')
+        .set('X-Confirmed', 'yes');
+      if (explicitAsync) {
+        pendingRequest = pendingRequest.set('X-GPT-Execution-Mode', 'async');
+      }
+      if (idempotencyKey) {
+        pendingRequest = pendingRequest.set('Idempotency-Key', idempotencyKey);
+      }
+
+      const response = await pendingRequest.send({
+        payload: { name: 'not-an-array', overall: 96 },
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+          message: 'Roster payload must be an array.',
+        },
+        _route: {
+          gptId,
+          action: 'updateRoster',
+          route: 'backstage_roster_validation',
+        },
+      });
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    }
+  );
+
   it('materializes an admitted header-selected Backstage mutation for synchronous dispatch', async () => {
+    const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];
     const controlPlaneToken = 'sync-backstage-control-plane-token-1234567890';
     process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
     process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:sync-backstage';
@@ -1714,7 +1806,7 @@ describe('async /gpt idempotency', () => {
     });
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
-      result: { updated: true },
+      result: refreshedRoster,
       _route: {
         gptId: 'backstage',
         route: 'backstage-booker',
@@ -1732,6 +1824,7 @@ describe('async /gpt idempotency', () => {
       .send({ payload: [] });
 
     expect(response.status).toBe(200);
+    expect(response.body.result).toEqual(refreshedRoster);
     expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
       gptId: 'backstage',
       body: {
@@ -1739,6 +1832,120 @@ describe('async /gpt idempotency', () => {
         payload: [],
       },
     }));
+  });
+
+  it('returns 503 when a synchronous Backstage roster transaction cannot persist', async () => {
+    const controlPlaneToken = 'sync-backstage-persistence-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:sync-backstage-persistence';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.',
+      },
+      _route: {
+        gptId: 'backstage',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'updateRoster',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'updateRoster')
+      .set('X-Confirmed', 'yes')
+      .send({ payload: [{ name: 'Rhea Ripley', overall: 96 }] });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.',
+      },
+    });
+  });
+
+  it('returns the stable 503 when an admitted async roster transaction fails while waiting', async () => {
+    const controlPlaneToken = 'async-backstage-persistence-token-1234567890';
+    const privateFailure = 'private database failure details';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:async-backstage-persistence';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-backstage-roster-persistence',
+        status: 'failed'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'failed',
+      job: {
+        id: 'job-backstage-roster-persistence',
+        status: 'failed',
+        error_message: privateFailure,
+        output: {
+          ok: false,
+          error: {
+            code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+            message: 'Roster update persistence could not be confirmed.'
+          },
+          _route: {
+            gptId: 'backstage',
+            route: 'backstage-booker',
+            module: 'BACKSTAGE:BOOKER',
+            action: 'updateRoster',
+            timestamp: '2026-04-24T00:00:00.000Z'
+          }
+        }
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'updateRoster')
+      .set('X-GPT-Execution-Mode', 'async')
+      .set('X-Confirmed', 'yes')
+      .send({
+        payload: [{ name: 'Rhea Ripley', overall: 96 }],
+        waitForResultMs: 1_000
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'query',
+      status: 'failed',
+      jobStatus: 'failed',
+      lifecycleStatus: 'failed',
+      jobId: 'job-backstage-roster-persistence',
+      error: {
+        code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
+        message: 'Roster update persistence could not be confirmed.'
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privateFailure);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-backstage-roster-persistence',
+      expect.objectContaining({
+        waitForResultMs: 1_000,
+        pollIntervalMs: 250
+      })
+    );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('rejects explicit idempotency key reuse for a different semantic request', async () => {

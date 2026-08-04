@@ -235,6 +235,8 @@ The optional HTTP bridge:
 - requires `ARCANOS_CLI_BRIDGE_TOKEN` for POST requests
 - accepts only `application/json`
 - enforces request limits, a sandboxed working directory, timeout/output caps, redaction, and deterministic errors
+- atomically cancels an expired job only while it is still queued, so a request
+  reported as timed out cannot execute later
 - never returns raw tracebacks
 
 Rotate the bridge token by replacing it in the daemon and calling-process environments, then restart both processes. Disable bridge execution by stopping the bridge, omitting its token, or setting backend `ARCANOS_CLI_BRIDGE_ENABLED=false`.
@@ -285,7 +287,7 @@ Python clients use structured writing and control-plane operations:
 - `BackendApiClient.request_gpt_job_status(...)`
 - `BackendApiClient.request_gpt_job_result(...)`
 
-The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available.
+The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available. Flat job payloads retain object, scalar, and null outputs exactly; only explicitly identified compatibility envelopes are unwrapped. Requests carrying bearer, GPT-ID, daemon, cookie, or job-read capability headers do not follow redirects.
 
 ## Built-in CLI commands
 

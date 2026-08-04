@@ -294,20 +294,6 @@ async function persistBackstageBookerConvenienceKeys(
     }
   }
 
-  //audit Assumption: updateRoster returns canonical roster array; failure risk: stale roster recall; expected invariant: latest roster snapshot mirrored; handling strategy: save when array result present.
-  if (normalizedAction === "updateRoster" && Array.isArray(responsePayload)) {
-    await saveMemory("backstage-roster:latest", {
-      roster: responsePayload,
-      savedAt: timestamp
-    }).catch((error: unknown) => {
-      modulePersistenceLogger.warn("Failed to persist latest Backstage roster convenience key", {
-        operation: "persistBackstageBookerConvenienceKeys",
-        key: "backstage-roster:latest",
-        error: resolveErrorMessage(error, "unknown")
-      });
-    });
-  }
-
   //audit Assumption: trackStoryline returns chronological storyline collection; failure risk: no short-form recall in new chats; expected invariant: latest beat timeline mirrored; handling strategy: save when array result present.
   if (normalizedAction === "trackStoryline" && Array.isArray(responsePayload)) {
     await saveMemory("backstage-storybeats:latest", {

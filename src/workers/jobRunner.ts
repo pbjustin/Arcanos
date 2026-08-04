@@ -29,6 +29,7 @@ import {
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
   buildBridgeSmokeCompletedOutput,
   isQueuedBridgeSmokeJobInput
@@ -812,7 +813,15 @@ export async function executeQueuedGptRequest(params: {
       status: 'failed',
       output: envelope,
       errorMessage: `${envelope.error.code}: ${envelope.error.message}`,
-      retryable: envelope.error.code === 'MODULE_TIMEOUT' || envelope.error.code === 'MODULE_ERROR'
+      retryable:
+        envelope.error.code === 'MODULE_TIMEOUT'
+        || envelope.error.code === 'MODULE_ERROR'
+        || (
+          envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+          && typeof envelope.error.details === 'object'
+          && envelope.error.details !== null
+          && (envelope.error.details as { retryable?: unknown }).retryable === true
+        )
     };
   }
 

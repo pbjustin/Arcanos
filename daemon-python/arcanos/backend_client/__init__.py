@@ -43,6 +43,15 @@ from ..config import Config, is_valid_daemon_access_token
 from arcanos.debug import log_audit_event
 
 DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
+SENSITIVE_CAPABILITY_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "x-gpt-id",
+        DAEMON_ACCESS_TOKEN_HEADER_NAME,
+        JOB_READ_TOKEN_HEADER_NAME,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,20 @@ class BackendRequestContext:
             self.has_daemon_access_token
             or self.has_authorization
             or self.has_x_gpt_id
+        )
+
+    @property
+    def has_sensitive_capability_header(self) -> bool:
+        return any(
+            name.lower() in SENSITIVE_CAPABILITY_HEADER_NAMES
+            for name in self.headers
+        )
+
+    @property
+    def has_job_read_token(self) -> bool:
+        return any(
+            name.lower() == JOB_READ_TOKEN_HEADER_NAME
+            for name in self.headers
         )
 
 
@@ -508,12 +531,17 @@ class BackendApiClient:
             self._log_outbound_request(method, context)
 
             try:
+                request_options: dict[str, Any] = {
+                    "headers": context.headers,
+                    "json": context.payload,
+                    "timeout": self._timeout_seconds,
+                }
+                if context.has_sensitive_capability_header:
+                    request_options["allow_redirects"] = False
                 response = self._request_sender(
                     method,
                     context.url,
-                    headers=context.headers,
-                    json=context.payload,
-                    timeout=self._timeout_seconds
+                    **request_options,
                 )
                 self._log_request_response(method, context, status_code=response.status_code)
                 return response
@@ -743,7 +771,7 @@ class BackendApiClient:
                 "json": context.payload,
                 "timeout": self._timeout_seconds,
             }
-            if job_read_token is not None:
+            if context.has_sensitive_capability_header:
                 request_options["allow_redirects"] = False
             response = self._request_sender(
                 method,
@@ -765,16 +793,17 @@ class BackendApiClient:
                 error_kind="network",
             )
 
-        if (
-            job_read_token is not None
-            and 300 <= response.status_code < 400
-        ):
+        if context.has_sensitive_capability_header and 300 <= response.status_code < 400:
             return self._build_logged_error_response(
                 method,
                 context,
                 BackendRequestError(
                     kind="http",
-                    message="Backend job-read request returned redirect",
+                    message=(
+                        "Backend job-read request returned redirect"
+                        if context.has_job_read_token
+                        else "Authenticated backend request returned redirect"
+                    ),
                     status_code=response.status_code,
                     details=response.text,
                 ),
