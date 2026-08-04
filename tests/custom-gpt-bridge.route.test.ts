@@ -10,6 +10,7 @@ const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => reque
 const getDatabaseStatusMock = jest.fn();
 const getWorkerControlHealthMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
+const isRegisteredResearchGptIdMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -42,6 +43,10 @@ jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: resolveGptRoutingMock,
+}));
+
+jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
+  isRegisteredResearchGptId: isRegisteredResearchGptIdMock,
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -82,6 +87,7 @@ function buildJob(id: string, status: string, output: unknown = null) {
 describe('Custom GPT bridge route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    isRegisteredResearchGptIdMock.mockResolvedValue(false);
     process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.OPENAI_ACTION_SHARED_SECRET = 'test-bridge-secret';
     process.env.DEFAULT_GPT_ID = 'arcanos-core';
@@ -316,6 +322,36 @@ describe('Custom GPT bridge route', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
+
+  it.each(['/api/bridge/gpt', '/api/openai/gpt-action'])(
+    'rejects an eventual Research run before bridge planning at %s',
+    async (path) => {
+      isRegisteredResearchGptIdMock.mockResolvedValue(true);
+
+      const response = await request(buildApp())
+        .post(path)
+        .set('Authorization', 'Bearer test-bridge-secret')
+        .send({
+          gptId: 'custom-research-alias',
+          prompt: `${' '.repeat(500)}x`,
+          action: 'query_and_wait',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        status: 'invalid_request',
+        error: {
+          source: 'routing',
+          message: expect.stringContaining('JavaScript String.length units'),
+        },
+        request_id: expect.any(String),
+      });
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['/api/bridge/gpt', '/api/openai/gpt-action'])(
     'returns a fixed error for unexpected failures from %s',

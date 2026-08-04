@@ -7,6 +7,9 @@ import {
   BackstageRosterPersistenceError,
   BackstageRosterValidationError
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  ResearchRequestValidationError,
+} from '../src/shared/researchRequest.js';
 
 const writePublicHealthResponseMock = jest.fn();
 const getPoolMock = jest.fn();
@@ -2598,6 +2601,105 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('preflights a rule-resolved Research dispatch before confirmation or execution', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:RESEARCH:run');
+    getModulesForRegistryMock.mockReturnValue([
+      {
+        id: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+      },
+    ]);
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:RESEARCH' && capabilityId !== 'research') {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({ utterance: 'ARCANOS:RESEARCH.run' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Research topic must be a string.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('validates an LLM-planned Research payload immediately after its single planner call', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:RESEARCH:run');
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    getModulesForRegistryMock.mockReturnValue([
+      {
+        id: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+      },
+    ]);
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:RESEARCH' && capabilityId !== 'research') {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
+      output_text: JSON.stringify({
+        action: 'ARCANOS:RESEARCH.run',
+        payload: {
+          topic: 'bounded topic',
+          urls: Array.from({ length: 11 }, () => ' '),
+        },
+        confidence: 0.93,
+        requiresConfirmation: true,
+        reason: 'research_request',
+        candidates: [
+          {
+            action: 'ARCANOS:RESEARCH.run',
+            confidence: 0.93,
+            reason: 'research_request',
+          },
+        ],
+      }),
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({ utterance: "what's wrong with the backend?" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Research URLs must contain no more than 10 entries.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(logExecutionMock).not.toHaveBeenCalled();
+  });
+
   it('maps worker recovery language to a privileged registered recovery action', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
     hasValidOpenAiKeyMock.mockReturnValue(true);
@@ -2974,6 +3076,138 @@ describe('/gpt-access gateway', () => {
       'updateRoster',
       { name: 'not-an-array', overall: 90 }
     );
+  });
+
+  it('maps typed research validation failures to capability client errors', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:RESEARCH:run');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:RESEARCH' && capabilityId !== 'research') {
+        return null;
+      }
+
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new ResearchRequestValidationError(
+        'Research URLs must contain no more than 10 entries.',
+      ),
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/ARCANOS%3ARESEARCH/run')
+    )).send({
+      action: 'run',
+      payload: { topic: 'bounded topic', urls: [] },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Research URLs must contain no more than 10 entries.',
+    });
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+      'ARCANOS:RESEARCH',
+      'run',
+      { topic: 'bounded topic', urls: [] },
+    );
+  });
+
+  it('preflights invalid research payloads before capability confirmation', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:RESEARCH:run');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:RESEARCH' && capabilityId !== 'research') {
+        return null;
+      }
+
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+
+    const response = await authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/ARCANOS%3ARESEARCH/run'),
+    ).send({
+      action: 'run',
+      payload: {
+        topic: 'bounded topic',
+        urls: Array.from({ length: 11 }, () => ' '),
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Research URLs must contain no more than 10 entries.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('preflights invalid research payloads before default-deny allowlisting and confirmation', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'capabilities.run';
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:RESEARCH' && capabilityId !== 'research') {
+        return null;
+      }
+
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+
+    const response = await authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/research/run'),
+    ).send({
+      action: 'run',
+      payload: {
+        topic: 'bounded topic',
+        urls: Array.from({ length: 11 }, () => ' '),
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('does not remap typed research errors from another capability', async () => {
+    allowCapabilityRun();
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new ResearchRequestValidationError('private non-research failure'),
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/core/run'),
+    )).send({
+      action: 'query',
+      payload: {},
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_INTERNAL_ERROR',
+      message: 'Capability execution failed.',
+    });
+    expect(JSON.stringify(response.body)).not.toContain('private non-research failure');
   });
 
   it('preserves a successful Backstage roster array through GPT Access', async () => {
@@ -4996,6 +5230,7 @@ describe('/gpt-access gateway', () => {
       })
     ]);
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('General generation and advisory prompts must use createAiJob');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('one semantic-planner provider call');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('Prefer dedicated GPT Access operations');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/DispatchRunRequest'

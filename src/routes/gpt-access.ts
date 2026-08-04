@@ -44,6 +44,13 @@ import {
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchModulePayload,
+  RESEARCH_ACTION_NAME,
+  RESEARCH_MODULE_NAME,
+  type ResearchRequestValidationError,
+} from '@shared/researchRequest.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import {
   buildGptAccessHealthPayload,
@@ -507,6 +514,91 @@ function confirmCapabilityRunWhenRequired(
     : {});
 }
 
+function preflightResearchCapabilityRun(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (req.params.id !== RESEARCH_MODULE_NAME && req.params.id !== 'research') {
+    next();
+    return;
+  }
+
+  const body = readCapabilityRunBody(req.body);
+  if (!body.ok || typeof body.action !== 'string') {
+    next();
+    return;
+  }
+
+  let metadata: CapabilityMetadata | null;
+  try {
+    metadata = getModuleMetadata(req.params.id);
+  } catch {
+    next();
+    return;
+  }
+  if (
+    metadata?.name !== RESEARCH_MODULE_NAME
+    || body.action.trim() !== RESEARCH_ACTION_NAME
+  ) {
+    next();
+    return;
+  }
+
+  try {
+    normalizeResearchModulePayload(body.payload);
+    next();
+  } catch (error: unknown) {
+    if (!isResearchRequestValidationError(error)) {
+      throw error;
+    }
+
+    sendGptAccessResult(res, {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: error.message,
+        },
+      },
+    });
+  }
+}
+
+function resolveResearchDispatchValidationError(
+  plan: DispatchPlan,
+  policy: DispatchPolicyDecision,
+): ResearchRequestValidationError | null {
+  const runner = policy.registryAction?.runner;
+  if (
+    runner?.kind !== 'gpt-access-capability'
+    || runner.capabilityAction !== RESEARCH_ACTION_NAME
+  ) {
+    return null;
+  }
+
+  let metadata: CapabilityMetadata | null;
+  try {
+    metadata = getModuleMetadata(runner.capabilityId);
+  } catch {
+    return null;
+  }
+  if (metadata?.name !== RESEARCH_MODULE_NAME) {
+    return null;
+  }
+
+  try {
+    normalizeResearchModulePayload(plan.payload);
+    return null;
+  } catch (error: unknown) {
+    if (!isResearchRequestValidationError(error)) {
+      throw error;
+    }
+    return error;
+  }
+}
+
 function readDispatchRunBody(body: unknown): DispatchRunBody {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, message: 'request body must be a JSON object.' };
@@ -928,6 +1020,23 @@ async function runGptAccessCapabilityAction(input: {
     }
 
     if (
+      metadata.name === RESEARCH_MODULE_NAME
+      && input.action === RESEARCH_ACTION_NAME
+      && isResearchRequestValidationError(error)
+    ) {
+      return {
+        statusCode: 400,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_VALIDATION_ERROR',
+            message: error.message,
+          },
+        },
+      };
+    }
+
+    if (
       metadata.name === BACKSTAGE_MODULE_NAME
       && input.action === 'updateRoster'
       && isBackstageRosterPersistenceError(error)
@@ -1108,6 +1217,21 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
     isModuleActionAllowed
   });
 
+  const researchValidationError = resolveResearchDispatchValidationError(plan, policy);
+  if (researchValidationError) {
+    sendGptAccessResult(res, {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: researchValidationError.message,
+        },
+      },
+    });
+    return;
+  }
+
   if (body.dryRun) {
     res.json({
       ok: true,
@@ -1208,6 +1332,7 @@ router.post(
   requireGptAccessModuleRegistry,
   mapCapabilityRunConfirmationToken,
   validateCapabilityIdempotencyKey,
+  preflightResearchCapabilityRun,
   confirmCapabilityRunWhenRequired,
   runGptAccessCapability
 );

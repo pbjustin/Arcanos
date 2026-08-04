@@ -3234,7 +3234,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runDispatch',
           summary: 'Resolve and run an operational GPT Access command.',
-          description: 'Operational natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics. Resolves a DispatchPlan, validates policy, then confirms and runs when allowed. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
+          description: 'Prefer dedicated GPT Access operations. Resolves a DispatchPlan; hybrid/LLM-first may make one semantic-planner provider call before identifying Research, then validates it before confirmation or execution. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
           security: protectedSecurity,
           parameters: [
             {

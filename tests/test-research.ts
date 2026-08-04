@@ -17,16 +17,18 @@ type ResearchResult = {
 type ResearchDeps = {
   researchTopic: (topic: string, urls?: string[]) => Promise<ResearchResult>;
   getMemory: <T = any>(key: string) => Promise<T | null>;
+  buildResearchStorageTopicComponent: (topic: string) => string;
 };
 
 async function loadResearchDependencies(): Promise<ResearchDeps> {
   try {
-    const [{ researchTopic }, { getMemory }] = await Promise.all([
-      import('../dist/modules/research.js'),
-      import('../dist/services/memory.js')
+    const [{ researchTopic }, { getMemory }, { buildResearchStorageTopicComponent }] = await Promise.all([
+      import('../dist/services/research.js'),
+      import('../dist/services/memory.js'),
+      import('../dist/shared/researchRequest.js')
     ]);
 
-    return { researchTopic, getMemory };
+    return { researchTopic, getMemory, buildResearchStorageTopicComponent };
   } catch (error: any) {
     const isMissingDist = error?.code === 'ERR_MODULE_NOT_FOUND';
 
@@ -38,12 +40,13 @@ async function loadResearchDependencies(): Promise<ResearchDeps> {
         throw new Error('Failed to build project before running research tests.');
       }
 
-      const [{ researchTopic }, { getMemory }] = await Promise.all([
-        import('../dist/modules/research.js'),
-        import('../dist/services/memory.js')
+      const [{ researchTopic }, { getMemory }, { buildResearchStorageTopicComponent }] = await Promise.all([
+        import('../dist/services/research.js'),
+        import('../dist/services/memory.js'),
+        import('../dist/shared/researchRequest.js')
       ]);
 
-      return { researchTopic, getMemory };
+      return { researchTopic, getMemory, buildResearchStorageTopicComponent };
     }
 
     throw error;
@@ -55,7 +58,11 @@ process.env.OPENAI_API_KEY = 'test_key_for_mocking';
 async function runResearchTests() {
   console.log('🔬 Running Research Module Tests\n');
 
-  const { researchTopic, getMemory } = await loadResearchDependencies();
+  const {
+    researchTopic,
+    getMemory,
+    buildResearchStorageTopicComponent,
+  } = await loadResearchDependencies();
 
   // Test 1: Basic research function with mock URLs (test mode)
   console.log('Test 1: Basic research function (test mode)');
@@ -87,7 +94,8 @@ async function runResearchTests() {
     const result = await researchTopic(topic, testUrls);
 
     // Check if summary was stored
-    const summaryMemory = await getMemory(`research/${topic}/summary`);
+    const storageTopic = buildResearchStorageTopicComponent(topic);
+    const summaryMemory = await getMemory(`research/${storageTopic}/summary`);
 
     if (summaryMemory && summaryMemory.topic === topic) {
       console.log('✅ Research summary stored correctly');
@@ -101,7 +109,7 @@ async function runResearchTests() {
       console.log('⚠️ Research summary not found or malformed');
     }
 
-    const sourceMemory = await getMemory(`research/${topic}/sources/1`);
+    const sourceMemory = await getMemory(`research/${storageTopic}/sources/1`);
     if (sourceMemory) {
       console.log('ℹ️ Source memory stored:', sourceMemory.url);
     } else {

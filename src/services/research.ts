@@ -10,6 +10,12 @@ import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from "@platform
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import type OpenAI from 'openai';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import {
+  buildResearchStorageTopicComponent,
+  normalizeResearchRequest,
+} from '@shared/researchRequest.js';
+
+export { buildResearchStorageTopicComponent };
 
 export interface ResearchSourceSummary {
   url: string;
@@ -48,25 +54,8 @@ function resolveResearchModel(): string {
   return configuredModel && configuredModel.length > 0 ? configuredModel : getDefaultModel();
 }
 
-function sanitizeSegment(segment: string): string {
-  const cleaned = segment
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .replace(/\.\.+/g, '')
-    .replace(/[<>:"|?*]/g, '')
-    .replace(/[\\/]/g, '-')
-    .trim();
-
-  //audit Assumption: empty or dot paths are unsafe; risk: path traversal or empty directories; invariant: safe folder name; handling: fallback.
-  if (!cleaned || cleaned === '.' || cleaned === '..') {
-    return 'topic';
-  }
-
-  return cleaned;
-}
-
-function resolveSourcesDir(topic: string): string {
-  const safeTopic = sanitizeSegment(topic);
-  return path.join('memory', 'research', safeTopic, 'sources');
+function resolveSourcesDir(storageTopicComponent: string): string {
+  return path.join('memory', 'research', storageTopicComponent, 'sources');
 }
 
 async function runResearchCompletion(
@@ -211,7 +200,7 @@ async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
-function createMockResult(topic: string, urls: string[]): ResearchResult {
+function createMockResult(topic: string, urls: readonly string[]): ResearchResult {
   const generatedAt = new Date().toISOString();
   const sources = urls.map((url, index) => ({
     url,
@@ -229,11 +218,11 @@ function createMockResult(topic: string, urls: string[]): ResearchResult {
   };
 }
 
-export async function researchTopic(topic: string, urls: string[] = []): Promise<ResearchResult> {
-  //audit Assumption: topic must be present for research
-  if (!topic || !topic.trim()) {
-    throw new Error('Topic is required for research');
-  }
+export async function researchTopic(topic: string, urls: readonly string[] = []): Promise<ResearchResult> {
+  const normalized = normalizeResearchRequest({ topic, urls });
+  const normalizedTopic = normalized.topic;
+  const normalizedUrls = normalized.urls;
+  const storageTopicComponent = buildResearchStorageTopicComponent(normalizedTopic);
 
   const generatedAt = new Date().toISOString();
   const { client } = getOpenAIClientOrAdapter();
@@ -244,15 +233,15 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
 
   //audit Assumption: mock mode when client missing or test key
   if (useMock) {
-    const mockResult = createMockResult(topic, urls);
-    await persistResearch(topic, mockResult);
+    const mockResult = createMockResult(normalizedTopic, normalizedUrls);
+    await persistResearch(storageTopicComponent, mockResult);
     return mockResult;
   }
 
   const summaries: ResearchSourceSummary[] = [];
   const failedUrls: string[] = [];
 
-  for (const url of urls) {
+  for (const url of normalizedUrls) {
     try {
       const raw = await fetchAndClean(url);
       const content = raw.slice(0, MAX_CONTENT_CHARS);
@@ -263,7 +252,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
         },
         {
           role: 'user' as const,
-          content: `Topic: ${topic}\nSource URL: ${url}\n\nContent (truncated):\n${content}`
+          content: `Topic: ${normalizedTopic}\nSource URL: ${url}\n\nContent (truncated):\n${content}`
         }
       ];
       const summary = await runResearchCompletion(
@@ -293,7 +282,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     },
     {
       role: 'user' as const,
-      content: buildSynthesisUserMessage(topic, summaries)
+      content: buildSynthesisUserMessage(normalizedTopic, summaries)
     }
   ];
 
@@ -305,18 +294,18 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     900,
     'research.synthesize'
   );
-  let finalInsight = insight || `No insight generated for ${topic}.`;
+  let finalInsight = insight || `No insight generated for ${normalizedTopic}.`;
 
   if (summaries.length > 0) {
-    const auditResult = await runSynthesisAudit(client, topic, summaries, finalInsight, researchModel);
+    const auditResult = await runSynthesisAudit(client, normalizedTopic, summaries, finalInsight, researchModel);
     //audit Assumption: synthesis output may still contain injected instructions; risk: compromised downstream guidance; invariant: only audited-safe text is returned; handling: combine heuristic + model audit and fail closed to safe fallback.
     if (!auditResult.safe || hasSuspiciousInstructions(finalInsight)) {
-      finalInsight = buildUnsafeInsightFallback(topic, auditResult.reason);
+      finalInsight = buildUnsafeInsightFallback(normalizedTopic, auditResult.reason);
     }
   }
 
   const result: ResearchResult = {
-    topic,
+    topic: normalizedTopic,
     insight: finalInsight,
     sourcesProcessed: summaries.length,
     sources: summaries,
@@ -325,16 +314,18 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     model: researchModel
   };
 
-  await persistResearch(topic, result);
+  await persistResearch(storageTopicComponent, result);
 
   return result;
 }
 
-async function persistResearch(topic: string, result: ResearchResult): Promise<void> {
-  const safeTopic = sanitizeSegment(topic);
-  const summaryPath = `research/${safeTopic}/summary`;
+async function persistResearch(
+  storageTopicComponent: string,
+  result: ResearchResult,
+): Promise<void> {
+  const summaryPath = `research/${storageTopicComponent}/summary`;
   await setMemory(summaryPath, {
-    topic,
+    topic: result.topic,
     insight: result.insight,
     sources: result.sourcesProcessed,
     failedUrls: result.failedUrls,
@@ -342,12 +333,12 @@ async function persistResearch(topic: string, result: ResearchResult): Promise<v
     model: result.model
   });
 
-  const sourcesDir = resolveSourcesDir(safeTopic);
+  const sourcesDir = resolveSourcesDir(storageTopicComponent);
   await ensureDir(sourcesDir);
 
   await Promise.all(
     result.sources.map(async (source, index) => {
-      const sourcePath = `research/${safeTopic}/sources/${index + 1}`;
+      const sourcePath = `research/${storageTopicComponent}/sources/${index + 1}`;
       await setMemory(sourcePath, {
         url: source.url,
         summary: source.summary,
@@ -357,7 +348,7 @@ async function persistResearch(topic: string, result: ResearchResult): Promise<v
   );
 
   if (result.sources.length === 0) {
-    const sourcePath = `research/${safeTopic}/sources/overview`;
+    const sourcePath = `research/${storageTopicComponent}/sources/overview`;
     await setMemory(sourcePath, {
       note: 'No external sources processed.',
       generatedAt: result.generatedAt

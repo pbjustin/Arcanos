@@ -44,6 +44,11 @@ import {
   resolveAsyncGptWaitForResultMs,
   waitForQueuedGptJobCompletion,
 } from './queuedGptCompletionService.js';
+import { isRegisteredResearchGptId } from './researchGptRouting.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchModulePayload,
+} from '@shared/researchRequest.js';
 
 export type BridgeErrorSource = 'routing' | 'queue' | 'worker' | 'provider' | 'timeout' | 'auth';
 
@@ -92,6 +97,7 @@ type CustomGptBridgeAction =
 export interface CustomGptBridgeRequest {
   gptId: string;
   prompt: string;
+  rawPrompt?: string;
   action: CustomGptBridgeAction;
   metadata: Record<string, unknown>;
 }
@@ -627,6 +633,9 @@ export function validateCustomGptBridgeSecret(
 }
 
 export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeRequestResult {
+  const rawPrompt = isPlainRecord(rawBody) && typeof rawBody.prompt === 'string'
+    ? rawBody.prompt
+    : undefined;
   const parsed = bridgeRequestSchema.safeParse(rawBody);
   if (!parsed.success) {
     return {
@@ -669,6 +678,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
     request: {
       gptId: defaultGptId.value,
       prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
+      ...(rawPrompt === undefined ? {} : { rawPrompt }),
       action: parsed.data.action,
       metadata: parsed.data.metadata,
     },
@@ -679,6 +689,31 @@ export async function executeCustomGptBridgeRequest(
   input: ExecuteBridgeRequestInput,
 ): Promise<ExecuteBridgeRequestResult> {
   const startedAtMs = Date.now();
+  if (
+    input.request.action === GPT_QUERY_AND_WAIT_ACTION
+    && await isRegisteredResearchGptId(input.request.gptId)
+  ) {
+    try {
+      normalizeResearchModulePayload({
+        prompt: input.request.rawPrompt ?? input.request.prompt,
+      });
+    } catch (error: unknown) {
+      if (!isResearchRequestValidationError(error)) {
+        throw error;
+      }
+      return {
+        statusCode: 400,
+        errorSource: 'routing',
+        body: buildBridgeErrorPayload({
+          source: 'routing',
+          status: 'invalid_request',
+          message: error.message,
+          requestId: input.requestId,
+        }),
+      };
+    }
+  }
+
   if (!resolveConfiguredJobReadCapabilitySecret()) {
     return {
       statusCode: 503,

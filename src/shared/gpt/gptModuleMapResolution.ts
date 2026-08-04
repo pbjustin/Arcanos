@@ -39,31 +39,28 @@ function levenshteinDistance(left: string, right: string): number {
     return leftLength;
   }
 
-  const distances: number[][] = Array.from(
-    { length: leftLength + 1 },
-    () => Array(rightLength + 1).fill(0)
+  let previousRow = Array.from(
+    { length: rightLength + 1 },
+    (_unused, rightIndex) => rightIndex,
   );
-  for (let leftIndex = 0; leftIndex <= leftLength; leftIndex += 1) {
-    distances[leftIndex][0] = leftIndex;
-  }
-  for (let rightIndex = 0; rightIndex <= rightLength; rightIndex += 1) {
-    distances[0][rightIndex] = rightIndex;
-  }
+  let currentRow = Array<number>(rightLength + 1).fill(0);
 
   for (let leftIndex = 1; leftIndex <= leftLength; leftIndex += 1) {
+    currentRow[0] = leftIndex;
     for (let rightIndex = 1; rightIndex <= rightLength; rightIndex += 1) {
       const substitutionCost = normalizedLeft[leftIndex - 1] === normalizedRight[rightIndex - 1]
         ? 0
         : 1;
-      distances[leftIndex][rightIndex] = Math.min(
-        distances[leftIndex - 1][rightIndex] + 1,
-        distances[leftIndex][rightIndex - 1] + 1,
-        distances[leftIndex - 1][rightIndex - 1] + substitutionCost
+      currentRow[rightIndex] = Math.min(
+        (previousRow[rightIndex] ?? 0) + 1,
+        (currentRow[rightIndex - 1] ?? 0) + 1,
+        (previousRow[rightIndex - 1] ?? 0) + substitutionCost,
       );
     }
+    [previousRow, currentRow] = [currentRow, previousRow];
   }
 
-  return distances[leftLength][rightLength];
+  return previousRow[rightLength] ?? rightLength;
 }
 
 /** Resolve a GPT ID with the exact matching order used by the public dispatcher. */

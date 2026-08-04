@@ -9,6 +9,10 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
+import {
+  isResearchRequestValidationError,
+  RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+} from '@shared/researchRequest.js';
 
 const MCP_OPERATION_ERROR = Object.freeze({
   category: 'MCP_OPERATION_FAILED',
@@ -142,6 +146,27 @@ export function buildBackstageRosterPersistenceMcpError(
       category: error.code
     },
     requestId: ctx.requestId
+  });
+}
+
+/** Build a client-safe bad-request error only for the typed research contract. */
+export function buildResearchRequestValidationMcpError(
+  toolName: string,
+  error: unknown,
+  ctx: McpRequestContext,
+): ReturnType<typeof mcpError> | null {
+  if (!isResearchRequestValidationError(error)) {
+    return null;
+  }
+
+  return mcpError({
+    code: 'ERR_BAD_REQUEST',
+    message: error.message,
+    details: {
+      tool: toolName,
+      category: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+    },
+    requestId: ctx.requestId,
   });
 }
 

@@ -20,10 +20,64 @@ import {
   resolvePublicProviderTrustRailwayRealIp,
 } from '../src/platform/runtime/publicProviderRateLimitPolicy.js';
 import { resolveDispatchLane } from '../src/shared/dispatch/universalDispatch.js';
+import { ResearchRequestValidationError } from '../src/shared/researchRequest.js';
 
 const request = (await import('supertest')).default;
 
 describe('public provider admission policy', () => {
+  it.each([
+    '/gpt/custom-research',
+    '/dispatch',
+  ] as const)(
+    'uses bounded Research preflight text without traversing message content at %s',
+    (path) => {
+      const content = ['bounded'];
+      Object.defineProperty(content, 'map', {
+        value: () => {
+          throw new Error('unbounded message traversal');
+        },
+      });
+      const body = path === '/dispatch'
+        ? {
+            target: 'gpt',
+            gptId: 'custom-research',
+            action: 'run',
+            messages: [{ role: 'user', content }],
+          }
+        : {
+            action: 'run',
+            messages: [{ role: 'user', content }],
+          };
+
+      expect(isPublicProviderAdmissionRequest({
+        method: 'POST',
+        path,
+        body,
+        researchGptPreflight: {
+          promptText: 'bounded topic',
+          validationError: null,
+        },
+      })).toBe(true);
+    },
+  );
+
+  it('retains admission accounting for invalid Research work after bounded preflight', () => {
+    expect(isPublicProviderAdmissionRequest({
+      method: 'POST',
+      path: '/gpt/custom-research',
+      body: {
+        action: 'run',
+        messages: [{ role: 'user', content: 'm'.repeat(501) }],
+      },
+      researchGptPreflight: {
+        promptText: null,
+        validationError: new ResearchRequestValidationError(
+          'Research topic must be no more than 500 JavaScript String.length units.',
+        ),
+      },
+    })).toBe(true);
+  });
+
   it.each([
     ['/gpt/arcanos-core', undefined],
     ['/api/openai/prompt', undefined],

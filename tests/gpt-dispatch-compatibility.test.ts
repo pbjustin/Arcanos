@@ -1,4 +1,10 @@
+import express, { type NextFunction, type Request, type Response } from 'express';
+import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+  ResearchRequestValidationError,
+} from '../src/shared/researchRequest.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -101,11 +107,45 @@ jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
 jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   getModuleMetadata: mockGetModuleMetadata,
   dispatchModuleAction: mockDispatchModuleAction,
-  initializeModuleRegistry: mockInitializeModuleRegistry
+  initializeModuleRegistry: mockInitializeModuleRegistry,
+  resolveLegacyModule: jest.fn(() => null),
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 const { listPromptDebugTraces } = await import('../src/services/promptDebugTraceService.js');
+const { universalDispatch } = await import('../src/routes/dispatch.js');
+const {
+  dispatchResearchGptAdmissionBoundary,
+  dispatchResearchGptPreflightBoundary,
+} = await import('../src/routes/_core/researchGptPreflight.js');
+const {
+  dispatchDagCompatibilityBoundary,
+} = await import('../src/services/controlPlane/dispatchDagCompatibilityBoundary.js');
+const {
+  createPublicProviderAdmissionMiddleware,
+} = await import('../src/transport/http/middleware/publicProviderAdmission.js');
+
+function buildResearchDispatchApp(
+  rateLimitMiddleware: (req: Request, res: Response, next: NextFunction) => void,
+) {
+  const app = express();
+  app.use(express.json());
+  app.post(
+    '/dispatch',
+    dispatchDagCompatibilityBoundary,
+    dispatchResearchGptAdmissionBoundary,
+  );
+  app.use(createPublicProviderAdmissionMiddleware({
+    legacyGptRoutesEnabled: false,
+    rateLimitMiddleware,
+  }));
+  app.post(
+    '/dispatch',
+    dispatchResearchGptPreflightBoundary,
+    universalDispatch,
+  );
+  return app;
+}
 
 describe('gpt dispatch compatibility', () => {
   beforeEach(() => {
@@ -373,6 +413,238 @@ describe('gpt dispatch compatibility', () => {
     expect(JSON.stringify(response)).not.toContain('OBSERVABILITY_SMOKE_TEST_OK');
   });
 
+  it('maps typed research validation failures to the stable research code', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new ResearchRequestValidationError(
+        'Research URLs must contain no more than 10 entries.',
+      ),
+    );
+
+    const response = await routeGptRequest({
+      gptId: 'research',
+      body: { topic: 'bounded topic', urls: [] },
+      requestId: 'req_research_validation',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+        message: 'Research URLs must contain no more than 10 entries.',
+      }),
+      _route: expect.objectContaining({
+        module: 'ARCANOS:RESEARCH',
+        action: 'run',
+      }),
+    }));
+  });
+
+  it('rejects an over-limit Research /dispatch request after one admission and before work', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'custom-research': { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+    const rateLimitMiddleware = jest.fn(
+      (_req: Request, res: Response, next: NextFunction) => {
+        res.setHeader('x-ratelimit-bucket', 'research-dispatch-test');
+        next();
+      },
+    );
+
+    const response = await request(buildResearchDispatchApp(rateLimitMiddleware))
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: 'custom-research',
+        action: 'run',
+        payload: { topic: 't'.repeat(501) },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-ratelimit-bucket']).toBe('research-dispatch-test');
+    expect(response.body.error).toEqual(expect.objectContaining({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research topic must be no more than 500 JavaScript String.length units.',
+    }));
+    expect(rateLimitMiddleware).toHaveBeenCalledTimes(1);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exactly 500-unit Research topic through /dispatch', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'custom-research': { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+    const rateLimitMiddleware = jest.fn(
+      (_req: Request, res: Response, next: NextFunction) => {
+        res.setHeader('x-ratelimit-bucket', 'research-dispatch-test');
+        next();
+      },
+    );
+
+    const response = await request(buildResearchDispatchApp(rateLimitMiddleware))
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: 'custom-research',
+        action: 'run',
+        payload: { topic: 't'.repeat(500) },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-bucket']).toBe('research-dispatch-test');
+    expect(rateLimitMiddleware).toHaveBeenCalledTimes(1);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:RESEARCH',
+      'run',
+      expect.objectContaining({ topic: 't'.repeat(500) }),
+    );
+  });
+
+  it('rejects over-limit Research messages before generic message traversal', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'custom-research': { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+    const content = ['m'.repeat(501)];
+    Object.defineProperty(content, 'map', {
+      value: () => {
+        throw new Error('unbounded message traversal');
+      },
+    });
+
+    const response = await routeGptRequest({
+      gptId: 'custom-research',
+      body: {
+        messages: [{ role: 'user', content }],
+      },
+      requestId: 'req_research_bounded_messages',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      }),
+    }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('does not traverse ignored Research messages when a bounded topic is supplied', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'custom-research': { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+    const content = ['ignored'];
+    Object.defineProperty(content, 'map', {
+      value: () => {
+        throw new Error('unbounded message traversal');
+      },
+    });
+
+    const response = await routeGptRequest({
+      gptId: 'custom-research',
+      body: {
+        topic: 'bounded topic',
+        messages: [{ role: 'user', content }],
+      },
+      requestId: 'req_research_ignored_messages',
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:RESEARCH',
+      'run',
+      expect.objectContaining({ topic: 'bounded topic' }),
+    );
+  });
+
+  it('preserves top-level ping fallback before explicit Research payload validation', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+    });
+
+    const response = await routeGptRequest({
+      gptId: 'research',
+      body: {
+        prompt: 'ping',
+        payload: {
+          prompt: '',
+          topic: 't'.repeat(501),
+        },
+      },
+      requestId: 'req_research_top_level_diagnostic_fallback',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({ route: 'diagnostic' }),
+      _route: expect.objectContaining({
+        module: 'diagnostic',
+        action: 'diagnostic',
+      }),
+    }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('does not remap a research-typed error from another module', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new ResearchRequestValidationError('Research topic is required.'),
+    );
+
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: { prompt: 'Run the core action.' },
+      requestId: 'req_non_research_validation',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'MODULE_ERROR' }),
+    }));
+  });
+
   it('resolves normalized GPT IDs without executing a module action', async () => {
     const response = await resolveGptRouting(' ARCANOS-CORE ', 'req_resolve_normalized');
 
@@ -525,6 +797,36 @@ describe('gpt dispatch compatibility', () => {
         outcome: 'ok',
       })
     ))).toBe(true);
+  });
+
+  it('does not traverse message content for an explicit diagnostic action', async () => {
+    const messages = new Proxy([{ role: 'user', content: ['ignored'] }], {
+      get(target, property, receiver) {
+        if (property === '0' || property === 'map') {
+          throw new Error('diagnostic messages were traversed');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      getOwnPropertyDescriptor(target, property) {
+        if (property === '0') {
+          throw new Error('diagnostic messages were inspected');
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+
+    const response = await routeGptRequest({
+      gptId: 'research',
+      body: { action: 'ping', messages },
+      requestId: 'req_bounded_explicit_diagnostic',
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({ route: 'diagnostic' }),
+    }));
+    expect(mockGetGptModuleMap).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it.each([

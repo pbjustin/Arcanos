@@ -50,6 +50,7 @@ import { connectResearchBridge } from '@services/researchHub.js';
 import { saveMemory, loadMemory, deleteMemory, query as dbQuery } from '@core/db/index.js';
 import {
   dispatchModuleAction,
+  getModuleMetadata,
   getPublicModulesForRegistry,
   initializeModuleRegistry
 } from '@services/moduleRegistry.js';
@@ -60,6 +61,15 @@ import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
+import {
+  assertResearchUrlsPreNormalization,
+  normalizeResearchModulePayload,
+  RESEARCH_ACTION_NAME,
+  RESEARCH_MODULE_NAME,
+  RESEARCH_TOPIC_MAX_LENGTH,
+  RESEARCH_URL_MAX_ITEMS,
+  RESEARCH_URL_MAX_LENGTH,
+} from '@shared/researchRequest.js';
 import { resolveArcanosMcpPortFromRequest } from '@services/arcanosMcpPort.js';
 import {
   executeControlPlaneRequest,
@@ -72,6 +82,7 @@ import {
   notExposed,
   buildBackstageRosterPersistenceMcpError,
   buildBackstageRosterValidationMcpError,
+  buildResearchRequestValidationMcpError,
   buildClearRecheckInput,
   wrapTool
 } from './helpers.js';
@@ -84,6 +95,23 @@ import {
 } from './actionPlanTools.js';
 
 type AnyMcpServer = any;
+
+const researchUrlsInputSchema = z.custom<string[]>((value) => {
+  try {
+    assertResearchUrlsPreNormalization(value, { requireArray: true });
+    return Array.isArray(value);
+  } catch {
+    return false;
+  }
+}, {
+  message: 'Research URLs exceed the supported input limits.',
+}).pipe(
+  z.array(
+    z.string()
+      .max(RESEARCH_URL_MAX_LENGTH)
+      .url(),
+  ).max(RESEARCH_URL_MAX_ITEMS),
+);
 
 /**
  * MCP SDK imports vary by version; keep them isolated here.
@@ -1147,8 +1175,10 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       description: 'Runs research workflow (same as POST /commands/research).',
       annotations: { openWorldHint: true },
       inputSchema: z.object({
-        topic: z.string(),
-        urls: z.array(z.string().url()).optional(),
+        topic: z.string()
+          .max(RESEARCH_TOPIC_MAX_LENGTH)
+          .refine((value) => value.trim().length > 0, 'Research topic is required.'),
+        urls: researchUrlsInputSchema.optional(),
         sessionId: z.string().optional(),
         confirmationNonce: z.string().optional(),
       }),
@@ -1158,8 +1188,20 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       if (!gate.ok) return gate.error;
 
       const bridge = connectResearchBridge('mcp');
-      const out = await bridge.requestResearch({ topic: args.topic, urls: args.urls });
-      return mcpText(out);
+      try {
+        const out = await bridge.requestResearch({ topic: args.topic, urls: args.urls });
+        return mcpText(out);
+      } catch (error: unknown) {
+        const validationError = buildResearchRequestValidationMcpError(
+          'research.run',
+          error,
+          ctx,
+        );
+        if (!validationError) {
+          throw error;
+        }
+        return validationError;
+      }
     })
   );
 
@@ -1293,15 +1335,40 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         });
       }
 
+      await initializeModuleRegistry();
+      const invokedModuleMetadata = getModuleMetadata(args.module);
+      const isResearchRun = invokedModuleMetadata?.name === RESEARCH_MODULE_NAME
+        && args.action === RESEARCH_ACTION_NAME;
+      if (isResearchRun) {
+        try {
+          normalizeResearchModulePayload(args.payload ?? {});
+        } catch (error: unknown) {
+          const validationError = buildResearchRequestValidationMcpError(
+            'modules.invoke',
+            error,
+            ctx,
+          );
+          if (!validationError) {
+            throw error;
+          }
+          return validationError;
+        }
+      }
+
       const gate = requireNonceOrIssue(args, 'modules.invoke', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
-      await initializeModuleRegistry();
       let out: unknown;
       try {
         out = await dispatchModuleAction(args.module, args.action, args.payload ?? {});
       } catch (error: unknown) {
-        const rosterError = buildBackstageRosterValidationMcpError(
+        const moduleError = (isResearchRun
+          ? buildResearchRequestValidationMcpError(
+              'modules.invoke',
+              error,
+              ctx,
+            )
+          : null) ?? buildBackstageRosterValidationMcpError(
           args.module,
           args.action,
           error,
@@ -1312,10 +1379,10 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           error,
           ctx
         );
-        if (!rosterError) {
+        if (!moduleError) {
           throw error;
         }
-        return rosterError;
+        return moduleError;
       }
       return mcpText(out);
     })

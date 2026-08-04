@@ -6,6 +6,11 @@ import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+  RESEARCH_TOPIC_MAX_LENGTH,
+  RESEARCH_URL_MAX_ITEMS,
+} from '../src/shared/researchRequest.js';
 
 const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
 const originalPublicProviderClientRateLimitMax =
@@ -17,6 +22,7 @@ process.env.PUBLIC_PROVIDER_RATE_LIMIT_STORE = 'memory';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
+const isRegisteredResearchGptIdMock = jest.fn();
 const executeFastGptPromptMock = jest.fn();
 const executeDirectGptActionMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
@@ -33,6 +39,10 @@ class MockJobRepositoryUnavailableError extends Error {}
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
+}));
+
+jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
+  isRegisteredResearchGptId: isRegisteredResearchGptIdMock,
 }));
 
 jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
@@ -163,10 +173,20 @@ function restoreEnv(snapshot: ReadonlyMap<string, string | undefined>): void {
   }
 }
 
-function buildApp(options: { authenticatedUserId?: number } = {}) {
+function buildApp(options: {
+  authenticatedUserId?: number;
+  bodyOverride?: unknown;
+} = {}) {
   const app = express();
   app.use(express.json());
+  app.use(express.text({ type: 'text/plain' }));
   app.use(requestContext);
+  if (Object.prototype.hasOwnProperty.call(options, 'bodyOverride')) {
+    app.use((req, _res, next) => {
+      req.body = options.bodyOverride;
+      next();
+    });
+  }
   if (options.authenticatedUserId !== undefined) {
     app.use((req, _res, next) => {
       req.authUser = {
@@ -271,11 +291,36 @@ function configureBackstageRoutingMock(): void {
   }));
 }
 
+function configureResearchRoutingMock(): void {
+  isRegisteredResearchGptIdMock.mockResolvedValue(true);
+  mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+    ok: true,
+    plan: {
+      matchedId: gptId,
+      module: 'ARCANOS:RESEARCH',
+      route: 'research',
+      action: 'run',
+      availableActions: ['run'],
+      moduleVersion: null,
+      moduleDescription: null,
+      matchMethod: 'exact',
+    },
+    _route: {
+      gptId,
+      route: 'research',
+      module: 'ARCANOS:RESEARCH',
+      action: 'run',
+      timestamp: '2026-08-04T00:00:00.000Z',
+    },
+  }));
+}
+
 describe('async /gpt idempotency', () => {
   const originalAsyncIdempotencyEnv = captureEnv(ASYNC_IDEMPOTENCY_ENV_KEYS);
 
   beforeEach(() => {
     jest.clearAllMocks();
+    isRegisteredResearchGptIdMock.mockResolvedValue(false);
     for (const key of ASYNC_IDEMPOTENCY_ENV_KEYS) {
       delete process.env[key];
     }
@@ -356,6 +401,671 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['arcanos-research', 'explicit async', true],
+    ['research', 'idempotency-key request', false],
+  ] as const)(
+    'rejects over-limit research input for %s before %s job planning',
+    async (gptId, _path, explicitAsync) => {
+      configureResearchRoutingMock();
+      let pendingRequest = request(buildApp()).post(`/gpt/${gptId}`);
+      if (explicitAsync) {
+        pendingRequest = pendingRequest.set('X-GPT-Execution-Mode', 'async');
+      } else {
+        pendingRequest = pendingRequest.set(
+          'Idempotency-Key',
+          `bounded-research-${gptId}`,
+        );
+      }
+
+      const response = await pendingRequest.send({
+        payload: {
+          topic: 'bounded topic',
+          urls: Array.from({ length: RESEARCH_URL_MAX_ITEMS + 1 }, () => ' '),
+        },
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+          message: 'Research URLs must contain no more than 10 entries.',
+        },
+        _route: {
+          gptId,
+          action: 'run',
+          route: 'research_request_validation',
+        },
+      });
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it('bounds a configured Research GPT alias while retaining admission accounting', async () => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/custom-research-alias')
+      .send({
+        messages: [{ role: 'user', content: 'm'.repeat(501) }],
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe(RESEARCH_REQUEST_VALIDATION_ERROR_CODE);
+    expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+    expect(isRegisteredResearchGptIdMock).toHaveBeenCalledWith('custom-research-alias');
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects Research query_and_wait before job planning after its action is removed', async () => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send({
+        action: 'query_and_wait',
+        prompt: 't'.repeat(501),
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe(RESEARCH_REQUEST_VALIDATION_ERROR_CODE);
+    expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['bounded scalar', 'bounded scalar'],
+    ['over-limit scalar', 's'.repeat(501)],
+  ])('preserves the query_and_wait JSON-object error for a %s', async (_name, body) => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .set('Content-Type', 'text/plain')
+      .set('X-GPT-Action', 'query_and_wait')
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual(expect.objectContaining({
+      code: 'BAD_REQUEST',
+      message: 'query_and_wait requires a JSON object request body.',
+    }));
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['header query', 'header', {
+      prompt: 't'.repeat(501),
+    }],
+    ['query-string action', 'query', {
+      prompt: 't'.repeat(501),
+    }],
+    ['payload action', 'payload', {
+      payload: { action: 'query', prompt: 't'.repeat(501) },
+    }],
+  ] as const)(
+    'preflights Research when a %s is not forwarded as the module action',
+    async (_name, carrier, body) => {
+      configureResearchRoutingMock();
+      let pending = request(buildApp()).post('/gpt/research');
+      if (carrier === 'header') {
+        pending = pending.set('X-GPT-Action', 'query');
+      } else if (carrier === 'query') {
+        pending = pending.query({ action: 'query' });
+      }
+      const response = await pending.send(body);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe(RESEARCH_REQUEST_VALIDATION_ERROR_CODE);
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it('hydrates a bounded Research query prompt before run preflight', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'bounded query topic', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .query({ action: 'query', prompt: 'bounded query topic' })
+      .send({ topic: 'explicit bounded topic', executionMode: 'sync' });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ prompt: 'bounded query topic' }),
+    }));
+  });
+
+  it('rejects an over-limit Research query prompt before dispatch', async () => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .query({ action: 'query', prompt: 'q'.repeat(501) })
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research topic must be no more than 500 JavaScript String.length units.',
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exactly 500-unit padded Research query prompt before trimming', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'x', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .query({ action: 'query', prompt: `${' '.repeat(499)}x` })
+      .send({ executionMode: 'sync' });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ prompt: 'x' }),
+    }));
+  });
+
+  it.each([
+    ['501-unit padded prompt', `${' '.repeat(500)}x`, 'Research topic must be no more than 500 JavaScript String.length units.'],
+    ['501-unit blank prompt', ' '.repeat(501), 'Research topic must be no more than 500 JavaScript String.length units.'],
+    ['500-unit blank prompt', ' '.repeat(500), 'Research topic must be a string.'],
+  ] as const)('applies raw Research query bounds to a %s', async (_name, prompt, message) => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .query({ action: 'query', prompt })
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message,
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('preflights top-level research fields merged into an explicit payload', async () => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .set('X-GPT-Execution-Mode', 'async')
+      .send({
+        prompt: 'bounded topic',
+        urls: Array.from({ length: RESEARCH_URL_MAX_ITEMS + 1 }, () => ' '),
+        payload: {},
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe(RESEARCH_REQUEST_VALIDATION_ERROR_CODE);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an over-limit higher-priority explicit-payload alias before job planning', async () => {
+    configureResearchRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-research')
+      .set('Idempotency-Key', 'research-explicit-alias-conflict')
+      .send({
+        payload: {
+          message: 'bounded lower-priority alias',
+          prompt: 'p'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1),
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research topic must be no more than 500 JavaScript String.length units.',
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects accessor-backed explicit Research payloads before job planning', async () => {
+    configureResearchRoutingMock();
+    const promptGetter = jest.fn(() => 'p'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1));
+    const explicitPayload: Record<string, unknown> = {
+      message: 'bounded lower-priority alias',
+    };
+    Object.defineProperty(explicitPayload, 'prompt', {
+      configurable: true,
+      enumerable: true,
+      get: promptGetter,
+    });
+    const body = { payload: explicitPayload };
+
+    const response = await request(buildApp({ bodyOverride: body }))
+      .post('/gpt/arcanos-research')
+      .set('Idempotency-Key', 'research-explicit-accessor')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research explicit payload fields must be plain data properties.',
+    });
+    expect(promptGetter).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('validates canonical research payloads without reshaping dispatch fields', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'café', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+        matchMethod: 'exact',
+      },
+    });
+    const body = {
+      executionMode: 'sync',
+      payload: {
+        topic: 'café',
+        urls: ['https://example.com/source'],
+        sessionId: 'research-session-1',
+        extra: { preserve: true },
+      },
+    };
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'research',
+      body,
+    }));
+  });
+
+  it('does not apply run preflight to a different requested research action', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { status: 'unsupported action preserved for dispatcher ordering' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'unsupported-action',
+        availableActions: ['run'],
+        matchMethod: 'exact',
+      },
+    });
+    const body = {
+      action: 'unsupported-action',
+      executionMode: 'sync',
+      topic: 't'.repeat(501),
+    };
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
+  });
+
+  it('preserves an explicit wrapper action before invalid Research payload precedence', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'NO_DEFAULT_ACTION', message: 'wrapper action is not available' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        availableActions: ['run'],
+      },
+    });
+    const body = {
+      action: 'invokeGptRoute',
+      topic: 't'.repeat(501),
+      executionMode: 'sync',
+    };
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('NO_DEFAULT_ACTION');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
+  });
+
+  it('preflights the parsed fallback body instead of its serialized length', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'bounded topic', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+    const serializedBody = JSON.stringify({
+      topic: 'bounded topic',
+      metadata: { padding: 'm'.repeat(600) },
+      executionMode: 'sync',
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .set('Content-Type', 'text/plain')
+      .send(serializedBody);
+
+    expect(serializedBody.length).toBeGreaterThan(500);
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalled();
+  });
+
+  it('does not traverse ignored Research messages during memory classification', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'bounded topic', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+    const content = ['ignored'];
+    Object.defineProperty(content, 'map', {
+      value: () => {
+        throw new Error('unbounded message traversal');
+      },
+    });
+    const body = {
+      topic: 'bounded topic',
+      messages: [{ role: 'user', content }],
+      executionMode: 'sync',
+    };
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['mode-only diagnostic', { mode: 'diagnostic' }],
+    ['nested ping diagnostic', {
+      payload: {
+        prompt: 'ping',
+        topic: 't'.repeat(501),
+        urls: Array.from({ length: RESEARCH_URL_MAX_ITEMS + 1 }, () => ' '),
+      },
+    }],
+    ['top-level ping fallback around an empty explicit payload prompt', {
+      prompt: 'ping',
+      payload: {
+        prompt: '',
+        topic: 't'.repeat(501),
+      },
+    }],
+    ['top-level ping fallback around an oversized blank explicit payload prompt', {
+      prompt: 'ping',
+      payload: {
+        prompt: ' '.repeat(501),
+        topic: 't'.repeat(501),
+      },
+    }],
+  ] as const)('preserves the research %s shortcut before run preflight', async (_name, body) => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, route: 'diagnostic', message: 'backend operational' },
+      _route: {
+        gptId: 'research',
+        route: 'diagnostic',
+        action: 'diagnostic',
+        availableActions: [],
+        matchMethod: 'exact',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('conservatively accounts a message-only Research diagnostic before inspecting messages', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    const body = {
+      messages: [{ role: 'user', content: 'ping' }],
+    };
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, route: 'diagnostic', message: 'backend operational' },
+      _route: {
+        gptId: 'research',
+        route: 'diagnostic',
+        action: 'diagnostic',
+        availableActions: [],
+        matchMethod: 'exact',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
+  });
+
+  it.each([
+    ['top-level blank alias', { message: ' ', prompt: 'ping' }, 'Research topic must be a string.'],
+    [
+      'top-level oversized blank alias',
+      { message: ' '.repeat(501), prompt: 'ping' },
+      'Research topic must be no more than 500 JavaScript String.length units.',
+    ],
+  ] as const)(
+    'preserves first-truthy Research prompt precedence for a %s',
+    async (_name, body, message) => {
+      configureResearchRoutingMock();
+
+      const response = await request(buildApp())
+        .post('/gpt/research')
+        .send(body);
+
+      expect(response.status).toBe(400);
+      expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+      expect(response.body.error).toMatchObject({
+        code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+        message,
+      });
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it('uses Research module alias order for an explicit payload', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    const body = {
+      executionMode: 'sync',
+      payload: {
+        message: 'm'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1),
+        prompt: 'bounded explicit prompt',
+      },
+    };
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'bounded explicit prompt', insight: 'bounded result' },
+      _route: {
+        gptId: 'research',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/research')
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['body', { action: 'query', prompt: 'ping' }],
+    ['header', { prompt: 'ping' }],
+    ['query string', { prompt: 'ping' }],
+    ['payload', { payload: { action: 'query', prompt: 'ping' } }],
+  ] as const)(
+    'retains admission accounting for a %s Research query lane with a ping prompt',
+    async (carrier, body) => {
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureResearchRoutingMock();
+      mockRouteGptRequest.mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, route: 'diagnostic', message: 'backend operational' },
+        _route: {
+          gptId: 'research',
+          route: 'diagnostic',
+          action: 'diagnostic',
+          availableActions: [],
+          matchMethod: 'exact',
+        },
+      });
+
+      let pending = request(buildApp()).post('/gpt/research');
+      if (carrier === 'header') {
+        pending = pending.set('X-GPT-Action', 'query');
+      } else if (carrier === 'query string') {
+        pending = pending.query({ action: 'query' });
+      }
+      const response = await pending.send(body);
+
+      expect(response.status).toBe(200);
+      expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+      expect(mockRouteGptRequest).toHaveBeenCalled();
+    },
+  );
+
+  it('does not traverse Research messages for an explicit diagnostic action', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, route: 'diagnostic', message: 'backend operational' },
+      _route: {
+        gptId: 'research',
+        route: 'diagnostic',
+        action: 'diagnostic',
+        availableActions: [],
+        matchMethod: 'exact',
+      },
+    });
+    const messages = new Proxy([{ role: 'user', content: 'ignored' }], {
+      get(target, property, receiver) {
+        if (property === '0' || property === 'map') {
+          throw new Error('Research diagnostic messages were traversed');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      getOwnPropertyDescriptor(target, property) {
+        if (property === '0') {
+          throw new Error('Research diagnostic messages were inspected');
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+    const body = {
+      action: 'ping',
+      messages,
+    };
+
+    const response = await request(buildApp({ bodyOverride: body }))
+      .post('/gpt/research')
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ body }));
   });
 
   it('fails closed before async GPT planning and persistence when job-read capability configuration is unavailable', async () => {
