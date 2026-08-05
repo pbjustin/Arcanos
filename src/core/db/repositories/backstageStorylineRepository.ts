@@ -35,6 +35,9 @@ export async function applyBackstageStorylineMutation(
   client: BackstageStorylineTransactionClient,
   serializedBeat: string
 ): Promise<BackstageStorylineMutationResult> {
+  // Keep this as the first transaction statement: PostgreSQL permits normalizing an explicit
+  // BEGIN ... REPEATABLE READ before any snapshot-establishing query, and the PG18 concurrency
+  // regression covers that exact caller sequence.
   await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
 
   //audit Assumption: all supported storyline mutations use this fixed transaction-scoped advisory lock; failure risk: replicas prune or publish competing timelines; expected invariant: insert, legacy containment, retention, and read execute serially; handling strategy: acquire one shared lock before inspecting or mutating beat state.

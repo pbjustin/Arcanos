@@ -251,7 +251,7 @@ async function persistModuleSummary(key: string, snapshot: ModuleInteractionSnap
 
 /**
  * Persist convenience keys for Backstage Booker roster/storyline retrieval.
- * Inputs: action name, request payload, response payload, timestamp.
+ * Inputs: action name, request payload, timestamp.
  * Output: resolves when applicable convenience keys are updated.
  * Edge cases: ignores malformed payloads and only writes when required fields exist.
  */
