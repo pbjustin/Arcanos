@@ -3650,6 +3650,139 @@ describe('/gpt-access gateway', () => {
   });
 
   it.each([
+    ['revoked proxy', () => {
+      const revocable = Proxy.revocable<Record<string, unknown>>({
+        gptId: 'research',
+        task: 'bounded topic'
+      }, {});
+      revocable.revoke();
+      return revocable.proxy;
+    }],
+    ['hostile task descriptor proxy', () => {
+      return new Proxy({
+        gptId: 'research',
+        task: 'bounded topic'
+      }, {
+        getOwnPropertyDescriptor(target, property) {
+          if (property === 'task') {
+            throw new Error('private task descriptor trap failure');
+          }
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        }
+      });
+    }],
+    ['hostile nested schema-read proxy', () => {
+      let valueReads = 0;
+      const input = new Proxy({
+        value: 'bounded input'
+      }, {
+        get(target, property, receiver) {
+          if (property === 'value' && ++valueReads > 1) {
+            throw new Error('private nested read trap failure');
+          }
+          return Reflect.get(target, property, receiver);
+        }
+      });
+      return {
+        gptId: 'research',
+        task: 'bounded topic',
+        input
+      };
+    }]
+  ] as const)('rejects a %s before AI job routing or admission work', async (_label, buildBody) => {
+    const actorKeyTrimMock = jest.fn(() => {
+      throw new Error('idempotency descriptor construction must not run');
+    });
+
+    const response = await createGptAccessAiJob(
+      buildBody(),
+      {
+        actorKey: { trim: actorKeyTrimMock } as unknown as string,
+        traceId: 'trace-hostile-ai-job-body'
+      }
+    );
+
+    expect(response).toEqual({
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'AI job request fields could not be safely inspected.'
+        }
+      }
+    });
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(actorKeyTrimMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an accessor-backed AI job body without invoking its getter', async () => {
+    const taskGetter = jest.fn(() => {
+      throw new Error('private task getter must not run');
+    });
+    const body: Record<string, unknown> = {
+      gptId: 'research'
+    };
+    Object.defineProperty(body, 'task', {
+      configurable: true,
+      enumerable: true,
+      get: taskGetter
+    });
+    const actorKeyTrimMock = jest.fn(() => {
+      throw new Error('idempotency descriptor construction must not run');
+    });
+
+    const response = await createGptAccessAiJob(
+      body,
+      {
+        actorKey: { trim: actorKeyTrimMock } as unknown as string,
+        traceId: 'trace-accessor-ai-job-body'
+      }
+    );
+
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'AI job request fields could not be safely inspected.'
+    });
+    expect(taskGetter).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(actorKeyTrimMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an own __proto__ field for unsafe-field rejection during snapshotting', async () => {
+    const body: Record<string, unknown> = {
+      gptId: 'research',
+      task: 'bounded topic'
+    };
+    Object.defineProperty(body, '__proto__', {
+      configurable: true,
+      enumerable: true,
+      value: { polluted: true }
+    });
+
+    const response = await createGptAccessAiJob(
+      body,
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-prototype-ai-job-body'
+      }
+    );
+
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Unsafe field is not allowed for AI job creation.'
+    });
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it.each([
     ['raw padded', `${' '.repeat(RESEARCH_TOPIC_MAX_LENGTH)}x`],
     ['non-whitespace', 'x'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1)]
   ])('rejects %s overlong Research topics before direct job planning or persistence', async (_label, task) => {

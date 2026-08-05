@@ -51,7 +51,10 @@ jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: bridgeRouter } = await import('../src/routes/bridge.js');
-const { executeCustomGptBridgeRequest } = await import('../src/services/customGptBridgeService.js');
+const {
+  executeCustomGptBridgeRequest,
+  parseCustomGptBridgeRequest,
+} = await import('../src/services/customGptBridgeService.js');
 const {
   buildGptIdempotencyScopeHash,
   buildGptRequestFingerprintHash,
@@ -60,10 +63,16 @@ const { buildAuthenticatedCredentialActorKey } = await import(
   '../src/shared/security/opaqueSecret.js'
 );
 
-function buildApp() {
+function buildApp(options: { bodyOverride?: unknown } = {}) {
   const app = express();
   app.use(express.json());
   app.use(requestContext);
+  if (Object.prototype.hasOwnProperty.call(options, 'bodyOverride')) {
+    app.use((req, _res, next) => {
+      req.body = options.bodyOverride;
+      next();
+    });
+  }
   app.use('/', bridgeRouter);
   return app;
 }
@@ -122,6 +131,161 @@ describe('Custom GPT bridge route', () => {
       },
       planningReasons: [],
     });
+  });
+
+  it('captures an own prompt data descriptor without invoking a Proxy get trap', () => {
+    const prompt = '  Analyze this deployment  ';
+    const getTrap = jest.fn(() => {
+      throw new Error('bridge request get trap must not run');
+    });
+    const body = new Proxy({
+      gptId: 'arcanos-core',
+      prompt,
+      action: 'query',
+      metadata: {},
+    }, {
+      get: getTrap,
+    });
+
+    const parsed = parseCustomGptBridgeRequest(body);
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      statusCode: 200,
+      request: {
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        rawPrompt: prompt,
+        action: 'query',
+        metadata: {},
+      },
+    });
+    expect(getTrap).not.toHaveBeenCalled();
+  });
+
+  it('preserves an own __proto__ field so strict bridge validation rejects it', () => {
+    const body = Object.fromEntries([
+      ['gptId', 'arcanos-core'],
+      ['prompt', 'Analyze this deployment'],
+      ['action', 'query'],
+      ['metadata', {}],
+      ['__proto__', 'attacker-selected'],
+    ]);
+
+    const parsed = parseCustomGptBridgeRequest(body);
+
+    expect(Object.prototype.hasOwnProperty.call(body, '__proto__')).toBe(true);
+    expect(parsed).toMatchObject({
+      ok: false,
+      statusCode: 400,
+      body: {
+        ok: false,
+        status: 'invalid_request',
+        error: {
+          source: 'routing',
+        },
+      },
+    });
+  });
+
+  it('rejects an accessor-backed prompt without invoking its getter or protected work', async () => {
+    const promptGetter = jest.fn(() => 'Analyze this deployment');
+    const body: Record<string, unknown> = {
+      gptId: 'arcanos-core',
+      action: 'query',
+      metadata: {},
+    };
+    Object.defineProperty(body, 'prompt', {
+      configurable: true,
+      enumerable: true,
+      get: promptGetter,
+    });
+
+    const response = await request(buildApp({ bodyOverride: body }))
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'invalid_request',
+      error: {
+        source: 'routing',
+        message: 'Invalid request body.',
+      },
+    });
+    expect(promptGetter).not.toHaveBeenCalled();
+    expect(isRegisteredResearchGptIdMock).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'throwing ownKeys proxy',
+      () => new Proxy({}, {
+        ownKeys() {
+          throw new Error('bridge ownKeys trap failed');
+        },
+      }),
+    ],
+    [
+      'throwing descriptor proxy',
+      () => new Proxy({ prompt: 'Analyze this deployment' }, {
+        getOwnPropertyDescriptor() {
+          throw new Error('bridge descriptor trap failed');
+        },
+      }),
+    ],
+  ] as const)(
+    'maps a %s to a sanitized 400 without protected work',
+    async (_name, buildBody) => {
+      const response = await request(buildApp({ bodyOverride: buildBody() }))
+        .post('/api/bridge/gpt')
+        .set('Authorization', 'Bearer test-bridge-secret')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        status: 'invalid_request',
+        error: {
+          source: 'routing',
+          message: 'Invalid request body.',
+        },
+      });
+      expect(isRegisteredResearchGptIdMock).not.toHaveBeenCalled();
+      expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('maps a revoked parser input to a sanitized 400 without protected work', () => {
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+
+    expect(parseCustomGptBridgeRequest(revocable.proxy)).toMatchObject({
+      ok: false,
+      statusCode: 400,
+      body: {
+        ok: false,
+        status: 'invalid_request',
+        error: {
+          source: 'routing',
+          message: 'Invalid request body.',
+        },
+      },
+    });
+    expect(isRegisteredResearchGptIdMock).not.toHaveBeenCalled();
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it('requires bridge authentication before collecting health diagnostics', async () => {

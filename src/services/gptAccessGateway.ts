@@ -81,6 +81,8 @@ const GPT_ACCESS_EXACT_GPT_ID_ALIASES = new Map<string, string>([
   ['arcanos', ARCANOS_CORE_CANONICAL_GPT_ID]
 ]);
 const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
+const CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE =
+  'AI job request fields could not be safely inspected.';
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
   '__proto__',
@@ -298,6 +300,30 @@ function inspectCreateAiJobPayload(value: unknown): CreateAiJobPayloadValidation
   return null;
 }
 
+function snapshotCreateAiJobPayload(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<
+    PropertyKey,
+    PropertyDescriptor
+  >;
+  const entries: Array<readonly [PropertyKey, unknown]> = [];
+  for (const property of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[property];
+    if (!descriptor?.enumerable) {
+      continue;
+    }
+    if (!('value' in descriptor)) {
+      throw new TypeError(CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE);
+    }
+    entries.push([property, descriptor.value]);
+  }
+
+  return Object.fromEntries(entries);
+}
+
 const mcpRequestSchema = z.object({
   tool: z.string().trim().min(1),
   args: z.record(z.unknown()).optional().default({})
@@ -452,6 +478,28 @@ function getCreateAiJobValidationMessage(error: z.ZodError): string {
   }
 
   return 'Invalid AI job request.';
+}
+
+function buildCreateAiJobInspectionFailure(
+  context: CreateGptAccessAiJobContext,
+  traceId: string
+) {
+  context.logger?.warn?.('gpt_access.ai_job.rejected', {
+    traceId,
+    requestType: 'createAiJob',
+    status: 'validation_failed',
+    reason: 'payload_inspection_failed'
+  });
+  return {
+    statusCode: 400,
+    payload: {
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE
+      }
+    }
+  };
 }
 
 function mapStoredJobStatusToCreateStatus(
@@ -1302,7 +1350,14 @@ function buildGptAccessJobResultLookupPayload(
 
 export async function createGptAccessAiJob(body: unknown, context: CreateGptAccessAiJobContext) {
   const traceId = normalizeTraceId(context.traceId);
-  const payloadIssue = inspectCreateAiJobPayload(body);
+  let payloadSnapshot: unknown;
+  let payloadIssue: CreateAiJobPayloadValidationIssue | null;
+  try {
+    payloadSnapshot = snapshotCreateAiJobPayload(body);
+    payloadIssue = inspectCreateAiJobPayload(payloadSnapshot);
+  } catch {
+    return buildCreateAiJobInspectionFailure(context, traceId);
+  }
   if (payloadIssue?.kind === 'unsafe_field') {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
@@ -1342,10 +1397,16 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     };
   }
 
-  const rawTask = body && typeof body === 'object' && !Array.isArray(body)
-    ? Object.getOwnPropertyDescriptor(body, 'task')?.value
-    : undefined;
-  const parsed = createAiJobRequestSchema.safeParse(body);
+  let rawTask: unknown;
+  let parsed: ReturnType<typeof createAiJobRequestSchema.safeParse>;
+  try {
+    rawTask = payloadSnapshot && typeof payloadSnapshot === 'object' && !Array.isArray(payloadSnapshot)
+      ? Object.getOwnPropertyDescriptor(payloadSnapshot, 'task')?.value
+      : undefined;
+    parsed = createAiJobRequestSchema.safeParse(payloadSnapshot);
+  } catch {
+    return buildCreateAiJobInspectionFailure(context, traceId);
+  }
   if (!parsed.success) {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,

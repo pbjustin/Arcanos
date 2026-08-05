@@ -109,6 +109,16 @@ export interface ParseBridgeRequestResult {
   body?: Record<string, unknown>;
 }
 
+type BridgeRequestBodyInspection =
+  | {
+      ok: true;
+      body: unknown;
+      rawPrompt?: string;
+    }
+  | {
+      ok: false;
+    };
+
 export interface BridgeSecretValidationInput {
   authorization?: string | null;
   actionSecret?: string | null;
@@ -161,6 +171,42 @@ function resultUrl(jobId: string): string {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function inspectBridgeRequestBody(rawBody: unknown): BridgeRequestBodyInspection {
+  if (!rawBody || typeof rawBody !== 'object') {
+    return { ok: true, body: rawBody };
+  }
+
+  try {
+    if (Array.isArray(rawBody)) {
+      return { ok: true, body: rawBody };
+    }
+
+    const descriptors = Object.getOwnPropertyDescriptors(rawBody);
+    const entries: Array<[string, unknown]> = [];
+    let rawPrompt: string | undefined;
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) {
+        continue;
+      }
+      if (!('value' in descriptor)) {
+        return { ok: false };
+      }
+      entries.push([key, descriptor.value]);
+      if (key === 'prompt' && typeof descriptor.value === 'string') {
+        rawPrompt = descriptor.value;
+      }
+    }
+
+    return {
+      ok: true,
+      body: Object.fromEntries(entries),
+      ...(rawPrompt === undefined ? {} : { rawPrompt }),
+    };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function projectBridgeHealthError(
@@ -632,11 +678,30 @@ export function validateCustomGptBridgeSecret(
   return credentialResult;
 }
 
+function buildInvalidBridgeRequestBodyResult(): ParseBridgeRequestResult {
+  return {
+    ok: false,
+    statusCode: 400,
+    body: buildBridgeErrorPayload({
+      source: 'routing',
+      status: 'invalid_request',
+      message: 'Invalid request body.',
+    }),
+  };
+}
+
 export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeRequestResult {
-  const rawPrompt = isPlainRecord(rawBody) && typeof rawBody.prompt === 'string'
-    ? rawBody.prompt
-    : undefined;
-  const parsed = bridgeRequestSchema.safeParse(rawBody);
+  const inspection = inspectBridgeRequestBody(rawBody);
+  if (!inspection.ok) {
+    return buildInvalidBridgeRequestBodyResult();
+  }
+
+  let parsed: ReturnType<typeof bridgeRequestSchema.safeParse>;
+  try {
+    parsed = bridgeRequestSchema.safeParse(inspection.body);
+  } catch {
+    return buildInvalidBridgeRequestBodyResult();
+  }
   if (!parsed.success) {
     return {
       ok: false,
@@ -678,7 +743,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
     request: {
       gptId: defaultGptId.value,
       prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
-      ...(rawPrompt === undefined ? {} : { rawPrompt }),
+      ...(inspection.rawPrompt === undefined ? {} : { rawPrompt: inspection.rawPrompt }),
       action: parsed.data.action,
       metadata: parsed.data.metadata,
     },
