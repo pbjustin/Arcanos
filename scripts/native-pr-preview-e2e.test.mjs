@@ -197,11 +197,13 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 61);
+  assert.equal(requestPlan.length, 65);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
+      && expectedType !== 'backstage-storyline-contract'
       && caseId !== 'worker-research-denied'
+      && caseId !== 'worker-backstage-storyline-denied'
     ).length,
     50
   );
@@ -212,10 +214,110 @@ test('executes the bounded credential-free matrix and detects identity stability
     10
   );
   assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'backstage-storyline-contract'
+    ).length,
+    3
+  );
+  assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-research-denied'
     ).length,
     1
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-backstage-storyline-denied'
+    ).length,
+    1
+  );
+  const lifecycleCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-storyline-lifecycle-exact'
+  );
+  const repeatedLifecycleCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-storyline-lifecycle-repeat'
+  );
+  assert.ok(lifecycleCase);
+  assert.ok(repeatedLifecycleCase);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(repeatedLifecycleCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    expectedNativePrPreviewResponseBody(lifecycleCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    })
+  );
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(lifecycleCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: true,
+      fixture: 'lifecycle-exact',
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: true,
+      protectedEffectsEnabled: false,
+      schemaVersion: 1,
+      transactionComponentExecuted: true,
+      validationCompleted: true,
+      validationCode: 'VALID',
+      lifecycle: {
+        exactBytes: 16_384,
+        finalResponseSequences: Array.from(
+          { length: 25 },
+          (_unused, index) => index + 78
+        ),
+        firstAcceptedBeatIncluded: true,
+        firstAncientBeatRetained: true,
+        firstNewestSequence: 101,
+        firstOldestSequence: 2,
+        firstResponseFirstSequence: 77,
+        firstResponseLastSequence: 101,
+        freshReadObservedPriorAcceptedBeat: true,
+        mutationCount: 2,
+        queryPhaseCount: 20,
+        responseCount: 25,
+        responseLimit: 25,
+        retainedCount: 100,
+        retentionLimit: 100,
+        secondAcceptedBeatIncluded: true,
+        secondNewestSequence: 102,
+        secondOldestSequence: 3,
+        transactionPhaseOrderVerified: true,
+      },
+    }
+  );
+  const payloadOverCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-storyline-payload-over'
+  );
+  assert.ok(payloadOverCase);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(payloadOverCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: false,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      fixture: 'payload-over',
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: false,
+      protectedEffectsEnabled: false,
+      schemaVersion: 1,
+      transactionComponentExecuted: false,
+      validationCompleted: true,
+      validationCode: 'BACKSTAGE_STORYLINE_INVALID',
+    }
   );
   const mock = buildMockFetch(requestPlan);
 
@@ -228,9 +330,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 61);
-  assert.equal(result.checks.length, 61);
-  assert.equal(mock.requestCount, 61);
+  assert.equal(result.summary.requestsMade, 65);
+  assert.equal(result.checks.length, 65);
+  assert.equal(mock.requestCount, 65);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -246,6 +348,34 @@ test('executes the bounded credential-free matrix and detects identity stability
   for (const { init } of researchCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const backstageStorylineCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/backstage/storyline-contract')
+  );
+  assert.equal(backstageStorylineCalls.length, 4);
+  assert.equal(
+    backstageStorylineCalls.filter(({ url }) =>
+      url.startsWith(WEB_BASE_URL)
+    ).length,
+    3
+  );
+  assert.equal(
+    backstageStorylineCalls.filter(({ url }) =>
+      url.startsWith(WORKER_BASE_URL)
+    ).length,
+    1
+  );
+  for (const { init } of backstageStorylineCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
+    assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
   }
   assert.equal(
     mock.calls.some(({ init }) =>

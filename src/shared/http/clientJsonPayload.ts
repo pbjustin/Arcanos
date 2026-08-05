@@ -218,9 +218,13 @@ export function prepareBoundedClientJsonPayload<T extends Record<string, unknown
     logger?: RequestScopedLogger;
     logEvent?: string;
     maxBytes?: number;
+    maxBytesCeiling?: number;
   } = {}
 ): PreparedClientJsonPayload<T> {
-  const maxResponseBytes = resolveClientResponseMaxBytes(options.maxBytes);
+  const maxResponseBytes = resolveClientResponseMaxBytes(
+    options.maxBytes,
+    options.maxBytesCeiling
+  );
   const originalResponseBytes = measureJsonBytes(payload);
   let normalizedPayload: Record<string, unknown> = payload;
   let truncated = false;

@@ -9,6 +9,7 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
+import { isBackstageStorylineValidationError } from '@shared/backstage/backstageStoryline.js';
 import {
   isResearchRequestValidationError,
   RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
@@ -108,6 +109,32 @@ export function buildBackstageRosterValidationMcpError(
     moduleName !== BACKSTAGE_MODULE_NAME
     || action !== 'updateRoster'
     || !isBackstageRosterValidationError(error)
+  ) {
+    return null;
+  }
+
+  return mcpError({
+    code: 'ERR_BAD_REQUEST',
+    message: error.message,
+    details: {
+      tool: 'modules.invoke',
+      category: error.code
+    },
+    requestId: ctx.requestId
+  });
+}
+
+/** Build a client-safe MCP error only for the Backstage storyline mutation contract. */
+export function buildBackstageStorylineValidationMcpError(
+  moduleName: unknown,
+  action: unknown,
+  error: unknown,
+  ctx: McpRequestContext
+): ReturnType<typeof mcpError> | null {
+  if (
+    moduleName !== BACKSTAGE_MODULE_NAME
+    || action !== 'trackStoryline'
+    || !isBackstageStorylineValidationError(error)
   ) {
     return null;
   }

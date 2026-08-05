@@ -414,6 +414,21 @@ cannot be replayed across Backstage actions. GPT Access and HTTP MCP retain thei
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
+`trackStoryline` accepts one JSON object whose compact serialized UTF-8 form is
+at most 16,384 bytes. A successful database mutation serializes insert, cleanup,
+retention, and read under one transaction lock; it retains the newest 100 beats
+and returns the newest 25 in oldest-to-newest order, always including the beat
+just accepted. The response remains the existing raw beat-array shape. If the
+storyline database transaction fails with a classified transient availability
+error before the commit phase, the service uses a replica-local volatile
+fallback with the same 100-retained/25-returned limits. A failure received while
+awaiting `COMMIT` fails closed because the durable outcome cannot be confirmed;
+it is never appended to volatile state. Integrity and other unclassified
+persistence failures likewise fail closed as server errors. Recent booking context reads bypass the
+process-local SQL cache, and fallback prompt context is limited to the newest
+five beats. These limits apply only to tracked beats; named `saveStoryline`
+canon remains durable by key and has no automatic expiry.
+
 The `updateRoster` payload is an array of at most 100 supplied items per
 request. Each item must be a plain JSON object whose `name` is a string and
 whose `overall` is an integer from 0 through 100. The server trims each name;

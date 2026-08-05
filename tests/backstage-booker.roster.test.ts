@@ -37,6 +37,8 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES,
   applyBackstageRosterMutation,
+  applyBackstageStorylineMutation: jest.fn(),
+  isTransactionCommitAmbiguousError: jest.fn(() => false),
   query: mockQuery,
   transaction: mockTransaction,
   saveMemory: mockSaveMemory

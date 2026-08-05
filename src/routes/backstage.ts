@@ -10,6 +10,7 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
+import { isBackstageStorylineValidationError } from '@shared/backstage/backstageStoryline.js';
 
 const router = express.Router();
 
@@ -101,6 +102,17 @@ router.post('/track-storyline', backstageMutationHttpBoundary, backstageMutation
     const storyline = await BackstageBooker.trackStoryline(req.body);
     res.status(200).json({ success: true, storyline });
   } catch (error: unknown) {
+    if (isBackstageStorylineValidationError(error)) {
+      sendBadRequestPayload(res, {
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+      return;
+    }
+
     //audit Assumption: storyline failures should return 500
     sendInternalErrorPayload(res, { success: false, error: resolveErrorMessage(error) });
   }

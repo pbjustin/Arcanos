@@ -5,6 +5,10 @@ import {
   BackstageRosterPersistenceError,
   BackstageRosterValidationError,
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+  BackstageStorylineValidationError,
+} from '../src/shared/backstage/backstageStoryline.js';
 
 const originalAllowAllGpts = process.env.ALLOW_ALL_GPTS;
 process.env.ALLOW_ALL_GPTS = 'false';
@@ -154,6 +158,31 @@ describe('direct Backstage routes', () => {
       name: 'not-an-array',
       overall: 90
     });
+  });
+
+  it('maps invalid storyline input before issuing a confirmation challenge', async () => {
+    mockTrackStoryline.mockRejectedValueOnce(
+      new BackstageStorylineValidationError(
+        'Storyline beat payload must be a JSON object.'
+      )
+    );
+
+    const response = await request(buildApp())
+      .post('/backstage/track-storyline')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send([]);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+        message: 'Storyline beat payload must be a JSON object.'
+      }
+    });
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
+    expect(mockTrackStoryline).toHaveBeenCalledWith([]);
   });
 
   it('maps authoritative roster persistence failures to a stable unavailable response', async () => {

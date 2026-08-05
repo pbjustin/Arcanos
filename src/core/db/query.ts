@@ -57,6 +57,30 @@ export type DbQueryOptions = DbQueryBaseOptions & (
     }
 );
 
+export interface DbTransactionOptions {
+  commitErrorMode?: 'preserve' | 'ambiguous';
+}
+
+export const TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE =
+  'DB_TRANSACTION_COMMIT_OUTCOME_UNKNOWN';
+
+/** Mark a failure received while awaiting COMMIT, when durable outcome is unconfirmed. */
+export class TransactionCommitAmbiguousError extends Error {
+  readonly code = TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE;
+
+  constructor(cause: unknown) {
+    super('Database transaction commit outcome is unknown.', { cause });
+    this.name = 'TransactionCommitAmbiguousError';
+  }
+}
+
+/** Recognize the typed transaction failure without inspecting its private cause. */
+export function isTransactionCommitAmbiguousError(
+  value: unknown
+): value is TransactionCommitAmbiguousError {
+  return value instanceof TransactionCommitAmbiguousError;
+}
+
 /**
  * Creates a cache key for database queries
  */
@@ -354,9 +378,14 @@ export async function query(
 }
 
 /**
- * Transaction helper function
+ * Run one callback in a PostgreSQL transaction.
+ * The opt-in ambiguous mode marks only errors received while awaiting COMMIT;
+ * default callers retain the historical raw-error contract.
  */
-export async function transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+export async function transaction<T>(
+  callback: (client: PoolClient) => Promise<T>,
+  options: DbTransactionOptions = {}
+): Promise<T> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured or not connected');
   }
@@ -392,7 +421,14 @@ export async function transaction<T>(callback: (client: PoolClient) => Promise<T
     const startedAtMs = Date.now();
     await client.query('BEGIN');
     const result = await callback(client);
-    await client.query('COMMIT');
+    try {
+      await client.query('COMMIT');
+    } catch (commitError: unknown) {
+      if (options.commitErrorMode === 'ambiguous') {
+        throw new TransactionCommitAmbiguousError(commitError);
+      }
+      throw commitError;
+    }
     recordDependencyCall({
       dependency: 'postgres',
       operation: 'transaction',

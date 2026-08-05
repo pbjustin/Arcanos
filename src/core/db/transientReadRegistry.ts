@@ -22,11 +22,18 @@ export const AUDITED_TRANSIENT_READ_QUERIES = Object.freeze({
   ),
   BACKSTAGE_PROMPT_STORY_BEATS_RECENT: defineAuditedTransientReadQuery(
     'backstage.prompt.story-beats-recent.v1',
-    'SELECT data, created_at FROM backstage_story_beats ORDER BY created_at DESC LIMIT 5'
+    `SELECT serialized_data, storage_sequence
+     FROM backstage_story_beats
+     WHERE serialized_data IS NOT NULL
+     ORDER BY storage_sequence DESC, id DESC
+     LIMIT 5`
   ),
   BACKSTAGE_PROMPT_STORYLINES_RECENT: defineAuditedTransientReadQuery(
     'backstage.prompt.storylines-recent.v1',
-    'SELECT story_key, storyline, updated_at FROM backstage_storylines ORDER BY updated_at DESC LIMIT 5'
+    `SELECT story_key, storyline, updated_at
+     FROM backstage_storylines
+     ORDER BY updated_at DESC NULLS LAST, id DESC
+     LIMIT 5`
   ),
   BACKSTAGE_ROSTER_READ_AFTER_UPDATE: defineAuditedTransientReadQuery(
     'backstage.roster.read-after-update.v1',
@@ -34,7 +41,15 @@ export const AUDITED_TRANSIENT_READ_QUERIES = Object.freeze({
   ),
   BACKSTAGE_STORYLINE_READ_AFTER_TRACK: defineAuditedTransientReadQuery(
     'backstage.storyline.read-after-track.v1',
-    'SELECT data FROM backstage_story_beats ORDER BY created_at ASC'
+    `SELECT recent.serialized_data
+     FROM (
+       SELECT id, serialized_data, storage_sequence
+       FROM backstage_story_beats
+       WHERE serialized_data IS NOT NULL
+       ORDER BY storage_sequence DESC, id DESC
+       LIMIT 100
+     ) AS recent
+     ORDER BY recent.storage_sequence ASC, recent.id ASC`
   ),
   BACKSTAGE_MATCH_ROSTER_READ: defineAuditedTransientReadQuery(
     'backstage.match.roster-read.v1',

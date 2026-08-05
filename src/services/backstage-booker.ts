@@ -11,6 +11,8 @@ import {
 import {
   AUDITED_TRANSIENT_READ_QUERIES,
   applyBackstageRosterMutation,
+  applyBackstageStorylineMutation,
+  isTransactionCommitAmbiguousError,
   query,
   saveMemory,
   transaction
@@ -27,6 +29,16 @@ import {
   parseBackstageRosterPayload,
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
+import {
+  BACKSTAGE_STORYLINE_PROMPT_BEATS,
+  BackstageStorylinePersistenceError,
+  appendBoundedBackstageStorylineBeat,
+  isRetryableBackstageStorylinePersistenceCause,
+  parseBackstageStorylinePayload,
+  parseBackstageStorylineSerializedPayload,
+  selectBackstageStorylineResponseBeats,
+  type StorylineBeat
+} from '@shared/backstage/backstageStoryline.js';
 
 export type { Wrestler } from '@shared/backstage/backstageRoster.js';
 
@@ -63,15 +75,12 @@ interface EventData {
   [key: string]: unknown;
 }
 
-interface Storyline {
-  [key: string]: unknown;
-}
-
 // Internal in-memory stores
 const events: Array<{ id: string; data: EventData }> = [];
 let roster: Wrestler[] = [];
 let rosterRevision: bigint | null = null;
-const storylines: Array<Storyline> = [];
+const storylines: StorylineBeat[] = [];
+let storylineRevision: bigint | null = null;
 
 /**
  * Persist latest roster snapshot for cross-session recall.
@@ -129,19 +138,20 @@ async function persistLatestStorylineSnapshot(
 
 /**
  * Persist latest storyline beats snapshot for cross-session recall.
- * Inputs: storyline beat collection and source marker.
+ * Inputs: bounded storyline response and monotonic database revision.
  * Output: resolves when convenience key is updated.
  * Edge cases: warns and continues when persistence is unavailable.
  */
 async function persistLatestStoryBeatsSnapshot(
-  beats: Storyline[],
-  source: "database" | "fallback"
+  beats: StorylineBeat[],
+  revision: string
 ): Promise<void> {
   await saveMemory("backstage-storybeats:latest", {
     beats,
-    source,
+    source: "database",
+    revision,
     updatedAt: new Date().toISOString()
-  }).catch((error: unknown) => {
+  }, { ifNewerRevision: revision }).catch((error: unknown) => {
     //audit Assumption: story beats mirror is best-effort; failure risk: reduced context continuity; expected invariant: storyline tracking still returns beats; handling strategy: warn and continue.
     console.warn("Backstage Booker: failed to persist latest story beats snapshot", (error as Error).message);
   });
@@ -408,7 +418,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORY_BEATS_RECENT.sql,
         [],
         {
-          useCache: true,
+          useCache: false,
           retry: 'transient-read',
           idempotent: true,
           auditedQueryId:
@@ -419,7 +429,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORYLINES_RECENT.sql,
         [],
         {
-          useCache: true,
+          useCache: false,
           retry: 'transient-read',
           idempotent: true,
           auditedQueryId:
@@ -449,7 +459,11 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
 
     const beatsBlock = beatsResult.rows.length
       ? beatsResult.rows
-          .map(row => `- ${toISODate(row.created_at)} :: ${formatJsonSnippet(row.data)}`)
+          .map(row =>
+            `- Beat ${String(row.storage_sequence)} :: ${formatJsonSnippet(
+              parseBackstageStorylineSerializedPayload(row.serialized_data)
+            )}`
+          )
           .join('\n')
       : 'No story beats recorded yet.';
 
@@ -478,8 +492,9 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
     const fallbackRoster = roster.length
       ? roster.map(w => `- ${w.name} (Overall ${w.overall})`).join('\n')
       : 'No roster data recorded yet.';
-    const fallbackStories = storylines.length
-      ? storylines.map((entry, idx) => `- #${idx + 1}: ${formatJsonSnippet(entry)}`).join('\n')
+    const fallbackStorylines = storylines.slice(-BACKSTAGE_STORYLINE_PROMPT_BEATS);
+    const fallbackStories = fallbackStorylines.length
+      ? fallbackStorylines.map((entry, idx) => `- #${idx + 1}: ${formatJsonSnippet(entry)}`).join('\n')
       : 'No story beats recorded yet.';
 
     //audit Assumption: fallback continuity mode must preserve the same direct-answer vs persona split as the primary database-backed prompt builder; failure risk: DB outages reintroduce simulation-heavy framing that the primary path suppresses; expected invariant: execution mode remains stable regardless of data source; handling strategy: reuse the same direct-answer prompt sections in the fallback branch.
@@ -559,30 +574,44 @@ export async function updateRoster(payload: unknown): Promise<Wrestler[]> {
   return mutationResult.roster;
 }
 
-export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
+export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]> {
+  const data = parseBackstageStorylinePayload(payload);
+  const serializedData = JSON.stringify(data);
+
+  let mutationResult: Awaited<ReturnType<typeof applyBackstageStorylineMutation>>;
   try {
-    await query('INSERT INTO backstage_story_beats (data, created_at) VALUES ($1, NOW())', [data]);
-    const result = await query(
-      AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_STORYLINE_READ_AFTER_TRACK.sql,
-      [],
-      {
-        useCache: true,
-        retry: 'transient-read',
-        idempotent: true,
-        auditedQueryId:
-          AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_STORYLINE_READ_AFTER_TRACK.id
-      }
+    mutationResult = await transaction(
+      client => applyBackstageStorylineMutation(client, serializedData),
+      { commitErrorMode: 'ambiguous' }
     );
-    storylines.length = 0;
-    storylines.push(...result.rows.map(row => row.data));
-    await persistLatestStoryBeatsSnapshot([...storylines], "database");
-    return [...storylines];
-  } catch (error) {
-    console.warn('Backstage Booker: storyline DB unavailable, using in-memory log', (error as Error).message);
-    storylines.push(data);
-    await persistLatestStoryBeatsSnapshot([...storylines], "fallback");
-    return [...storylines];
+  } catch (error: unknown) {
+    if (
+      isTransactionCommitAmbiguousError(error)
+      || !isRetryableBackstageStorylinePersistenceCause(error)
+    ) {
+      throw new BackstageStorylinePersistenceError(error);
+    }
+    console.warn(
+      'Backstage Booker: storyline DB unavailable, using bounded in-memory log',
+      resolveErrorMessage(error)
+    );
+    const retainedFallback = appendBoundedBackstageStorylineBeat(storylines, data);
+    storylines.splice(0, storylines.length, ...retainedFallback);
+    return selectBackstageStorylineResponseBeats(storylines);
   }
+
+  const committedRevision = BigInt(mutationResult.revision);
+  if (storylineRevision === null || committedRevision > storylineRevision) {
+    storylines.length = 0;
+    storylines.push(...mutationResult.retainedBeats);
+    storylineRevision = committedRevision;
+  }
+
+  const responseBeats = selectBackstageStorylineResponseBeats(
+    mutationResult.retainedBeats
+  );
+  await persistLatestStoryBeatsSnapshot(responseBeats, mutationResult.revision);
+  return responseBeats;
 }
 
 /**
@@ -784,8 +813,7 @@ export const BackstageBookerModule = {
       return BackstageBooker.updateRoster(payload);
     },
     async trackStoryline(payload: unknown) {
-      const record = normalizePayloadRecord(payload);
-      return BackstageBooker.trackStoryline(record);
+      return BackstageBooker.trackStoryline(payload);
     },
     async simulateMatch(payload: { match: MatchInput; rosters: Wrestler[]; winProbModifier?: number }) {
       const result = await BackstageBooker.simulateMatch(payload.match, payload.rosters, payload.winProbModifier ?? 0);

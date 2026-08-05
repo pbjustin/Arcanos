@@ -146,7 +146,11 @@ export function buildResolvedGptDispatchBody(
     body.prompt = input.prompt;
   }
 
-  if (Object.keys(input.payload).length > 0) {
+  if (input.action === 'trackStoryline') {
+    body.payload = Object.prototype.hasOwnProperty.call(input.body, 'payload')
+      ? input.body.payload
+      : {};
+  } else if (Object.keys(input.payload).length > 0) {
     body.payload = input.payload;
   }
 

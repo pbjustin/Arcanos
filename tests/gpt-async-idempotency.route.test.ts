@@ -7,6 +7,10 @@ import {
   BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
 } from '../src/shared/backstage/backstageRoster.js';
 import {
+  BACKSTAGE_STORYLINE_MAX_BYTES,
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE
+} from '../src/shared/backstage/backstageStoryline.js';
+import {
   RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
   RESEARCH_TOPIC_MAX_LENGTH,
   RESEARCH_URL_MAX_ITEMS,
@@ -288,6 +292,14 @@ function configureBackstageRoutingMock(): void {
       action: 'generateBooking',
       timestamp: '2026-04-24T00:00:00.000Z',
     },
+  }));
+}
+
+function buildLargeStorylineBeats() {
+  return Array.from({ length: 25 }, (_value, index) => ({
+    sequence: index + 1,
+    summary: `storyline-beat-${index + 1}`,
+    detail: `${String(index + 1).padStart(2, '0')}:${'x'.repeat(11_000)}`,
   }));
 }
 
@@ -2528,6 +2540,152 @@ describe('async /gpt idempotency', () => {
       expect(mockRouteGptRequest).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    ['backstage', 'explicit async', undefined, true],
+    ['backstage-booker', 'explicit async', undefined, true],
+    ['backstage', 'explicit idempotency', 'invalid-backstage-storyline-idempotency-key', false],
+    ['backstage-booker', 'explicit idempotency', 'invalid-backstage-storyline-alias-key', false],
+  ] as const)(
+    'rejects invalid admitted storyline input for %s before %s job planning',
+    async (gptId, _mode, idempotencyKey, explicitAsync) => {
+      const controlPlaneToken = 'invalid-async-storyline-control-plane-token-1234567890';
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:invalid-async-storyline';
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureBackstageRoutingMock();
+
+      let pendingRequest = request(buildApp())
+        .post(`/gpt/${gptId}`)
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-GPT-Action', 'trackStoryline');
+      if (explicitAsync) {
+        pendingRequest = pendingRequest.set('X-GPT-Execution-Mode', 'async');
+      }
+      if (idempotencyKey) {
+        pendingRequest = pendingRequest.set('Idempotency-Key', idempotencyKey);
+      }
+
+      const response = await pendingRequest.send({ payload: [] });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+          message: 'Storyline beat payload must be a JSON object.',
+        },
+        _route: {
+          gptId,
+          action: 'trackStoryline',
+          route: 'backstage_storyline_validation',
+        },
+      });
+      expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+      expect(response.headers['x-confirmation-status']).toBeUndefined();
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    }
+  );
+
+  it('preserves all 25 large storyline beats through a completed async direct return', async () => {
+    const controlPlaneToken = 'async-storyline-response-control-token-1234567890';
+    const beats = buildLargeStorylineBeats();
+    expect(Buffer.byteLength(JSON.stringify(beats), 'utf8')).toBeGreaterThan(256 * 1024);
+    expect(beats.every(
+      (beat) => Buffer.byteLength(JSON.stringify(beat), 'utf8') <= BACKSTAGE_STORYLINE_MAX_BYTES
+    )).toBe(true);
+
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:async-storyline-response';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-backstage-storyline-direct-return',
+        status: 'completed',
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'completed',
+      job: {
+        id: 'job-backstage-storyline-direct-return',
+        status: 'completed',
+        output: {
+          ok: true,
+          result: beats,
+          _route: {
+            gptId: 'backstage',
+            module: 'BACKSTAGE:BOOKER',
+            route: 'backstage-booker',
+            action: 'trackStoryline',
+            timestamp: '2026-08-05T10:01:00.000Z',
+          },
+        },
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .set('X-GPT-Execution-Mode', 'async')
+      .set('X-Confirmed', 'yes')
+      .send({
+        payload: {
+          sequence: 25,
+          summary: 'Close the current rivalry chapter.',
+        },
+        waitForResultMs: 1_000,
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(Number(response.headers['x-response-bytes'])).toBeGreaterThan(256 * 1024);
+    expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(512 * 1024);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      jobId: 'job-backstage-storyline-direct-return',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+    });
+    expect(response.body.result).toHaveLength(25);
+    expect(response.body.result).toEqual(beats);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-backstage-storyline-direct-return',
+      expect.objectContaining({
+        waitForResultMs: 1_000,
+        pollIntervalMs: 250,
+      })
+    );
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.input).toMatchObject({
+      body: {
+        action: 'trackStoryline',
+        payload: {
+          sequence: 25,
+          summary: 'Close the current rivalry chapter.',
+        },
+      },
+      backstageMutationAdmission: {
+        version: 1,
+        source: 'control-plane-http',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'trackStoryline',
+        scope: 'mcp:invoke',
+        principalId: 'operator:async-storyline-response',
+      },
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
 
   it('materializes an admitted header-selected Backstage mutation for synchronous dispatch', async () => {
     const refreshedRoster = [{ name: 'Rhea Ripley', overall: 96 }];

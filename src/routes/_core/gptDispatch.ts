@@ -75,6 +75,10 @@ import {
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
 import {
+  isBackstageStorylinePersistenceError,
+  isBackstageStorylineValidationError
+} from '@shared/backstage/backstageStoryline.js';
+import {
   buildResearchModulePreflightPayload,
   extractBoundedResearchDispatchPromptText,
   inspectResearchPreAdmissionPromptText,
@@ -1269,12 +1273,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     forcedDirectRoute: forceDirectModuleRouting,
     bypassIntentRouting: bypassIntentRouting === true,
   });
-  const dispatchSourceEndpoint = resolveDispatchSourceEndpoint(body, requestEndpoint);
-  const payload = enrichWritingDispatchPayload(preDispatchPayload, {
-    gptId: trimmedGptId,
-    sourceEndpoint: dispatchSourceEndpoint,
-    requestedAction: rawRequestedAction ?? writePlaneClassification.action
-  });
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
@@ -1314,6 +1312,21 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   if (initialAdmissionDenial) {
     return initialAdmissionDenial;
   }
+
+  const dispatchSourceEndpoint = resolveDispatchSourceEndpoint(body, requestEndpoint);
+  const isBackstageStorylineMutation =
+    activeEntry.module === BACKSTAGE_MODULE_NAME
+    && initialActionCandidate === 'trackStoryline';
+  //audit Assumption: state payload bytes must describe caller data rather than dispatcher metadata; failure risk: valid boundary-sized beats are rejected or internal route fields become durable canon; expected invariant: trackStoryline receives the exact explicit payload; handling strategy: bypass writing-plane enrichment only for this typed mutation.
+  const payload = isBackstageStorylineMutation
+    && isRecord(body)
+    && Object.prototype.hasOwnProperty.call(body, 'payload')
+    ? body.payload
+    : enrichWritingDispatchPayload(preDispatchPayload, {
+        gptId: trimmedGptId,
+        sourceEndpoint: dispatchSourceEndpoint,
+        requestedAction: rawRequestedAction ?? writePlaneClassification.action
+      });
 
   const parsedMemoryCommand = { intent: memoryInterception.parsedIntent };
   const sessionId = resolveSessionId(body, payload);
@@ -1835,6 +1848,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'updateRoster'
         && isBackstageRosterPersistenceError(err);
+      const isStorylineValidationFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && action === 'trackStoryline'
+        && isBackstageStorylineValidationError(err);
+      const isStorylinePersistenceFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && action === 'trackStoryline'
+        && isBackstageStorylinePersistenceError(err);
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -2033,7 +2054,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: {
         code: isDispatchTimeout
           ? "MODULE_TIMEOUT"
-          : (isRosterValidationFailure || isRosterPersistenceFailure || isResearchValidationFailure)
+          : (
+              isRosterValidationFailure
+              || isRosterPersistenceFailure
+              || isStorylineValidationFailure
+              || isStorylinePersistenceFailure
+              || isResearchValidationFailure
+            )
             ? err.code
             : "MODULE_ERROR",
         message: dispatchErrorMessage,

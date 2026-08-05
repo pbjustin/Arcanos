@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 61;
+const MAX_REQUESTS = 65;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
@@ -345,6 +345,24 @@ function researchCase(caseId, fixtureName, status) {
   };
 }
 
+function backstageStorylineCase(caseId, fixtureName, status) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: status,
+    expectedType: 'backstage-storyline-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
+    role: 'web',
+  };
+}
+
 export function buildNativePrPreviewRequestPlan() {
   const cases = [
     {
@@ -556,6 +574,21 @@ export function buildNativePrPreviewRequestPlan() {
     ),
     researchCase('research-url-snapshot', 'urlSnapshot', 200),
     researchCase('research-storage-component', 'storageComponent', 200),
+    backstageStorylineCase(
+      'backstage-storyline-lifecycle-exact',
+      'lifecycleExact',
+      200
+    ),
+    backstageStorylineCase(
+      'backstage-storyline-lifecycle-repeat',
+      'lifecycleExact',
+      200
+    ),
+    backstageStorylineCase(
+      'backstage-storyline-payload-over',
+      'payloadOver',
+      400
+    ),
     {
       body: {
         fixture:
@@ -567,6 +600,20 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'POST',
       path: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+      role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.fixtures
+            .lifecycleExact,
+      },
+      caseId: 'worker-backstage-storyline-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
       role: 'worker',
     },
     {
@@ -825,6 +872,69 @@ function expectedResearchContractPayload(requestCase) {
   };
 }
 
+function expectedBackstageStorylineContractPayload(requestCase) {
+  const base = {
+    fixture: requestCase.fixture,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+  };
+  if (requestCase.fixtureName === 'payloadOver') {
+    return {
+      accepted: false,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      ...base,
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: false,
+      transactionComponentExecuted: false,
+      validationCompleted: true,
+      validationCode: 'BACKSTAGE_STORYLINE_INVALID',
+    };
+  }
+  if (requestCase.fixtureName !== 'lifecycleExact') {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    ...base,
+    durablePersistenceAttempted: false,
+    postValidationBoundaryReached: true,
+    transactionComponentExecuted: true,
+    validationCompleted: true,
+    validationCode: 'VALID',
+    lifecycle: {
+      exactBytes: 16_384,
+      finalResponseSequences: Array.from(
+        { length: 25 },
+        (_unused, index) => index + 78
+      ),
+      firstAcceptedBeatIncluded: true,
+      firstAncientBeatRetained: true,
+      firstNewestSequence: 101,
+      firstOldestSequence: 2,
+      firstResponseFirstSequence: 77,
+      firstResponseLastSequence: 101,
+      freshReadObservedPriorAcceptedBeat: true,
+      mutationCount: 2,
+      queryPhaseCount: 20,
+      responseCount: 25,
+      responseLimit: 25,
+      retainedCount: 100,
+      retentionLimit: 100,
+      secondAcceptedBeatIncluded: true,
+      secondNewestSequence: 102,
+      secondOldestSequence: 3,
+      transactionPhaseOrderVerified: true,
+    },
+  };
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
   if (
     requestCase.expectedType === 'health'
@@ -929,6 +1039,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return { error: 'JOB_ID_INVALID' };
     case 'research-contract':
       return expectedResearchContractPayload(requestCase);
+    case 'backstage-storyline-contract':
+      return expectedBackstageStorylineContractPayload(requestCase);
     default:
       fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
   }

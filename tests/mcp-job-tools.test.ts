@@ -8,6 +8,9 @@ import {
   BackstageRosterValidationError,
 } from '../src/shared/backstage/backstageRoster.js';
 import {
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+} from '../src/shared/backstage/backstageStoryline.js';
+import {
   RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
   RESEARCH_TOPIC_MAX_LENGTH,
   RESEARCH_URL_MAX_ITEMS,
@@ -681,6 +684,55 @@ describe('createMcpServer job control tools', () => {
         },
       },
     }));
+  });
+
+  it('preflights an invalid Backstage storyline mutation before nonce issuance or dispatch', async () => {
+    const previousAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+    process.env.MCP_ALLOW_MODULE_ACTIONS = 'BACKSTAGE:BOOKER:trackStoryline';
+    mockGetModuleMetadata.mockImplementation((moduleId: unknown) => {
+      if (moduleId !== 'BACKSTAGE:BOOKER' && moduleId !== 'backstage-booker') {
+        return null;
+      }
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'generateBooking',
+      };
+    });
+
+    try {
+      const server = await createMcpServer(buildContext()) as FakeMcpServer;
+      const output = await server.tools.get('modules.invoke')!.handler({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'trackStoryline',
+        payload: [],
+      });
+
+      expect(output).toEqual(expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: 'ERR_BAD_REQUEST',
+            message: 'Storyline beat payload must be a JSON object.',
+            details: {
+              tool: 'modules.invoke',
+              category: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+            },
+            requestId: 'mcp-req-1',
+          },
+        },
+      }));
+      expect(JSON.stringify(output)).not.toContain('confirmationNonce');
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+      } else {
+        process.env.MCP_ALLOW_MODULE_ACTIONS = previousAllowlist;
+      }
+    }
   });
 
   it('preserves a successful Backstage roster array through modules.invoke', async () => {

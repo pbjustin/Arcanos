@@ -46,7 +46,12 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 getEnvNumberMock.mockReturnValue(50);
 getConfiguredLogLevelMock.mockReturnValue('info');
 
-const { query, transaction } = await import('../src/core/db/query.js');
+const {
+  isTransactionCommitAmbiguousError,
+  query,
+  transaction,
+  TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE
+} = await import('../src/core/db/query.js');
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 const AUDITED_TEST_READ =
@@ -118,6 +123,7 @@ describe('db query helper', () => {
       );
       await client.query('SELECT name FROM backstage_wrestlers');
     })).rejects.toBe(primaryError);
+    expect(isTransactionCommitAmbiguousError(primaryError)).toBe(false);
 
     expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',
@@ -129,7 +135,7 @@ describe('db query helper', () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves the primary transaction error when rollback also fails', async () => {
+  it('preserves the ambiguous commit cause when rollback also fails', async () => {
     const primaryError = Object.assign(new Error('commit acknowledgement lost'), {
       code: 'ECONNRESET'
     });
@@ -150,7 +156,19 @@ describe('db query helper', () => {
     });
     getPoolMock.mockReturnValue({ connect: connectMock });
 
-    await expect(transaction(async () => 'result')).rejects.toBe(primaryError);
+    const observedError = await transaction(
+      async () => 'result',
+      { commitErrorMode: 'ambiguous' }
+    ).then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect(isTransactionCommitAmbiguousError(observedError)).toBe(true);
+    expect(observedError).toMatchObject({
+      code: TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE,
+      cause: primaryError
+    });
 
     expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',
@@ -187,6 +205,7 @@ describe('db query helper', () => {
         ['Unconfirmed Wrestler', 90]
       );
     })).rejects.toBe(commitError);
+    expect(isTransactionCommitAmbiguousError(commitError)).toBe(false);
 
     expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',

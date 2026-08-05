@@ -14,6 +14,9 @@ export const NATIVE_PR_PREVIEW_TRUST_SCOPE =
 export const NATIVE_PR_PREVIEW_RESEARCH_CONTRACT =
   NATIVE_PR_PREVIEW_E2E_CONTRACT.research;
 
+export const NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT =
+  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline;
+
 export interface NativePrPreviewIdentity {
   prNumber: number;
   sourceCommit: string;
