@@ -8,6 +8,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_MODE,
+  NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
 } from '../src/nativePrPreviewContract.js';
 import {
   resolveNativePrPreviewChildEnvironment,
@@ -104,6 +105,47 @@ function buildApplication() {
 
 function expectNoStore(response: { headers: Record<string, string | undefined> }): void {
   expect(response.headers['cache-control']).toContain('no-store');
+}
+
+function expectedResearchAccepted(
+  fixture: string,
+  normalized: {
+    topicLength: number;
+    urlAggregateLength: number;
+    urlCount: number;
+    urlItemMaxLength: number;
+  },
+  extra: Record<string, unknown> = {}
+) {
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    fixture,
+    normalized,
+    postValidationBoundaryReached: true,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    ...extra,
+    validationCompleted: true,
+    validationCode: 'VALID',
+  };
+}
+
+function expectedResearchInvalid(fixture: string) {
+  return {
+    accepted: false,
+    confirmationAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture,
+    postValidationBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    validationCompleted: true,
+    validationCode: 'RESEARCH_REQUEST_INVALID',
+  };
 }
 
 describe('native PR contained application', () => {
@@ -261,6 +303,204 @@ describe('native PR contained application', () => {
       authUnavailable,
       unauthorized,
     ].forEach(expectNoStore);
+  });
+
+  it('executes the real Research validator and storage-key helper against sealed boundary fixtures', async () => {
+    const { app } = buildApplication();
+    const fixtures = NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures;
+    const cases = [
+      {
+        fixture: fixtures.topicExact,
+        status: 200,
+        body: expectedResearchAccepted(fixtures.topicExact, {
+          topicLength: 500,
+          urlAggregateLength: 0,
+          urlCount: 0,
+          urlItemMaxLength: 0,
+        }),
+      },
+      {
+        fixture: fixtures.topicOver,
+        status: 400,
+        body: expectedResearchInvalid(fixtures.topicOver),
+      },
+      {
+        fixture: fixtures.urlCountExact,
+        status: 200,
+        body: expectedResearchAccepted(fixtures.urlCountExact, {
+          topicLength: 18,
+          urlAggregateLength: 0,
+          urlCount: 0,
+          urlItemMaxLength: 0,
+        }),
+      },
+      {
+        fixture: fixtures.urlCountOver,
+        status: 400,
+        body: expectedResearchInvalid(fixtures.urlCountOver),
+      },
+      {
+        fixture: fixtures.urlItemExact,
+        status: 200,
+        body: expectedResearchAccepted(fixtures.urlItemExact, {
+          topicLength: 17,
+          urlAggregateLength: 2_048,
+          urlCount: 1,
+          urlItemMaxLength: 2_048,
+        }),
+      },
+      {
+        fixture: fixtures.urlItemOver,
+        status: 400,
+        body: expectedResearchInvalid(fixtures.urlItemOver),
+      },
+      {
+        fixture: fixtures.urlAggregateExact,
+        status: 200,
+        body: expectedResearchAccepted(fixtures.urlAggregateExact, {
+          topicLength: 22,
+          urlAggregateLength: 16_384,
+          urlCount: 8,
+          urlItemMaxLength: 2_048,
+        }),
+      },
+      {
+        fixture: fixtures.urlAggregateOver,
+        status: 400,
+        body: expectedResearchInvalid(fixtures.urlAggregateOver),
+      },
+      {
+        fixture: fixtures.urlSnapshot,
+        status: 200,
+        body: expectedResearchAccepted(
+          fixtures.urlSnapshot,
+          {
+            topicLength: 12,
+            urlAggregateLength: 38,
+            urlCount: 1,
+            urlItemMaxLength: 38,
+          },
+          {
+            snapshot: {
+              descriptorReads: 1,
+              normalizedUrl: 'https://example.invalid/first-snapshot',
+              sourceMutationIsolated: true,
+            },
+          }
+        ),
+      },
+      {
+        fixture: fixtures.storageComponent,
+        status: 200,
+        body: expectedResearchAccepted(
+          fixtures.storageComponent,
+          {
+            topicLength: 36,
+            urlAggregateLength: 0,
+            urlCount: 0,
+            urlItemMaxLength: 0,
+          },
+          {
+            storage: {
+              ascii: true,
+              bytes: 97,
+              component:
+                'abcdefghijklmnopqrstuvwxyz012345-cc4166d770c11a66f226530d5a8d6c2d2b79bae729cf6f4c9350bb4635b8500d',
+              deterministic: true,
+              maxBytes: 97,
+              portablePattern: true,
+              withinLimit: true,
+            },
+          }
+        ),
+      },
+    ];
+
+    for (const requestCase of cases) {
+      const response = await request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({ fixture: requestCase.fixture });
+
+      expect(response.status).toBe(requestCase.status);
+      expect(response.body).toEqual(requestCase.body);
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('rejects unsealed Research fixture requests before contract evaluation', async () => {
+    const { app } = buildApplication();
+    const responses = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({ fixture: 'unlisted' }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({
+          fixture:
+            NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures.topicExact,
+          extra: true,
+        }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_RESEARCH_FIXTURE_INVALID',
+      });
+      expectNoStore(response);
+    }
+  });
+
+  it('keeps the Research fixture selector behind transport and credential boundaries', async () => {
+    const { app } = buildApplication();
+    const fixture =
+      NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures.topicExact;
+    const credentialCarrierHeaders = [
+      'authorization',
+      'proxy-authorization',
+      'x-api-key',
+      'x-debug-key',
+      'x-metrics-token',
+      'x-preview-credential',
+      'x-preview-secret',
+      'x-preview-session',
+      'x-preview-token',
+    ];
+    const responses = await Promise.all([
+      request(app)
+        .post(`${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}?fixture=${fixture}`)
+        .send({ fixture }),
+      request(app)
+        .post('/research%2fcontract')
+        .send({ fixture }),
+      ...credentialCarrierHeaders.map((headerName) =>
+        request(app)
+          .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+          .set(headerName, 'sensitive-sentinel')
+          .send({ fixture })
+      ),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({ fixture: 'x'.repeat(4_097) }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
   });
 
   it('keeps synthetic cancellation deterministic across repeated runs', async () => {

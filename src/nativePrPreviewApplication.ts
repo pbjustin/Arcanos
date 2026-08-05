@@ -7,11 +7,28 @@ import {
 import {
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_MODE,
+  NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
 } from './nativePrPreviewContract.js';
+import {
+  buildResearchStorageTopicComponent,
+  isResearchRequestValidationError,
+  normalizeResearchHttpRequest,
+  RESEARCH_STORAGE_TOPIC_COMPONENT_MAX_BYTES,
+  RESEARCH_TOPIC_MAX_LENGTH,
+  RESEARCH_URL_MAX_ITEMS,
+  RESEARCH_URL_MAX_LENGTH,
+  RESEARCH_URLS_MAX_AGGREGATE_LENGTH,
+  type NormalizedResearchRequest,
+  type ResearchRequestInput,
+} from './shared/researchRequest.js';
+import {
+  sendBoundedJsonResponse,
+} from './shared/http/sendBoundedJsonResponse.js';
 
 const MAX_REQUEST_BYTES = 4 * 1024;
+const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9]\d*)$/u;
 const FIXTURE_ACTOR_KEY = 'operator:native-pr-preview-fixture';
 const FIXTURE_TIMESTAMP = new Date('2026-07-30T00:00:00.000Z');
@@ -27,6 +44,14 @@ const FORBIDDEN_HEADER_NAMES = new Set([
   'x-openai-action-secret',
   'x-session-id',
 ]);
+const SENSITIVE_HEADER_SEGMENT_PATTERN =
+  /(?:^|-)(?:authorization|cookie|credential|key|secret|session|token)(?:-|$)/u;
+const RESEARCH_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures)
+);
+const SNAPSHOT_FIRST_URL = 'https://example.invalid/first-snapshot';
+const SNAPSHOT_SECOND_URL = 'https://example.invalid/second-snapshot';
+const STORAGE_COMPONENT_TOPIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 export interface NativePrPreviewReadinessState {
   applicationImported: boolean;
@@ -41,6 +66,230 @@ export interface NativePrPreviewApplicationOptions {
 }
 
 class NativePrPreviewRepositoryUnavailableError extends Error {}
+
+interface SyntheticResearchFixture {
+  input: ResearchRequestInput;
+  observeSnapshot?: (
+    normalized: NormalizedResearchRequest
+  ) => Record<string, unknown>;
+}
+
+interface SyntheticResearchResult {
+  payload: Record<string, unknown>;
+  statusCode: number;
+}
+
+function buildSyntheticResearchFixture(
+  fixture: string
+): SyntheticResearchFixture {
+  const fixtures = NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures;
+  switch (fixture) {
+    case fixtures.topicExact:
+      return {
+        input: {
+          topic: '😀'.repeat(RESEARCH_TOPIC_MAX_LENGTH / 2),
+          urls: [],
+        },
+      };
+    case fixtures.topicOver:
+      return {
+        input: {
+          topic:
+            `${'😀'.repeat(RESEARCH_TOPIC_MAX_LENGTH / 2)}x`,
+          urls: [],
+        },
+      };
+    case fixtures.urlCountExact:
+      return {
+        input: {
+          topic: 'URL count boundary',
+          urls: Array.from(
+            { length: RESEARCH_URL_MAX_ITEMS },
+            () => ' '
+          ),
+        },
+      };
+    case fixtures.urlCountOver:
+      return {
+        input: {
+          topic: 'URL count over boundary',
+          urls: Array.from(
+            { length: RESEARCH_URL_MAX_ITEMS + 1 },
+            () => ' '
+          ),
+        },
+      };
+    case fixtures.urlItemExact:
+      return {
+        input: {
+          topic: 'URL item boundary',
+          urls: ['😀'.repeat(RESEARCH_URL_MAX_LENGTH / 2)],
+        },
+      };
+    case fixtures.urlItemOver:
+      return {
+        input: {
+          topic: 'URL item over boundary',
+          urls: [
+            `${'😀'.repeat(RESEARCH_URL_MAX_LENGTH / 2)}x`,
+          ],
+        },
+      };
+    case fixtures.urlAggregateExact:
+      return {
+        input: {
+          topic: 'URL aggregate boundary',
+          urls: Array.from(
+            {
+              length:
+                RESEARCH_URLS_MAX_AGGREGATE_LENGTH
+                / RESEARCH_URL_MAX_LENGTH,
+            },
+            () => '😀'.repeat(RESEARCH_URL_MAX_LENGTH / 2)
+          ),
+        },
+      };
+    case fixtures.urlAggregateOver:
+      return {
+        input: {
+          topic: 'URL aggregate over boundary',
+          urls: [
+            ...Array.from(
+              {
+                length:
+                  RESEARCH_URLS_MAX_AGGREGATE_LENGTH
+                  / RESEARCH_URL_MAX_LENGTH,
+              },
+              () => '😀'.repeat(RESEARCH_URL_MAX_LENGTH / 2)
+            ),
+            'x',
+          ],
+        },
+      };
+    case fixtures.urlSnapshot: {
+      const sourceUrls = [` ${SNAPSHOT_FIRST_URL} `];
+      let descriptorReads = 0;
+      const urls = new Proxy(sourceUrls, {
+        getOwnPropertyDescriptor(target, property) {
+          const descriptor = Object.getOwnPropertyDescriptor(target, property);
+          if (property !== '0' || !descriptor || !('value' in descriptor)) {
+            return descriptor;
+          }
+          descriptorReads += 1;
+          return {
+            ...descriptor,
+            value:
+              descriptorReads === 1
+                ? ` ${SNAPSHOT_FIRST_URL} `
+                : SNAPSHOT_SECOND_URL,
+          };
+        },
+      });
+      return {
+        input: { topic: 'URL snapshot', urls },
+        observeSnapshot(normalized) {
+          sourceUrls[0] = SNAPSHOT_SECOND_URL;
+          return {
+            descriptorReads,
+            normalizedUrl: normalized.urls[0],
+            sourceMutationIsolated:
+              normalized.urls[0] === SNAPSHOT_FIRST_URL,
+          };
+        },
+      };
+    }
+    case fixtures.storageComponent:
+      return {
+        input: { topic: STORAGE_COMPONENT_TOPIC, urls: [] },
+      };
+    default:
+      throw new Error('PREVIEW_RESEARCH_FIXTURE_INVALID');
+  }
+}
+
+function summarizeNormalizedResearchRequest(
+  normalized: NormalizedResearchRequest
+): Record<string, number> {
+  let urlAggregateLength = 0;
+  let urlItemMaxLength = 0;
+  for (const url of normalized.urls) {
+    urlAggregateLength += url.length;
+    urlItemMaxLength = Math.max(urlItemMaxLength, url.length);
+  }
+  return {
+    topicLength: normalized.topic.length,
+    urlAggregateLength,
+    urlCount: normalized.urls.length,
+    urlItemMaxLength,
+  };
+}
+
+function runSyntheticResearchFixture(fixture: string): SyntheticResearchResult {
+  const syntheticFixture = buildSyntheticResearchFixture(fixture);
+  let normalized: NormalizedResearchRequest;
+  try {
+    normalized = normalizeResearchHttpRequest(syntheticFixture.input);
+  } catch (error) {
+    if (!isResearchRequestValidationError(error)) {
+      throw error;
+    }
+    return {
+      statusCode: 400,
+      payload: {
+        accepted: false,
+        confirmationAttempted: false,
+        effectsBoundaryReached: false,
+        eligibleForConfirmation: false,
+        fixture,
+        postValidationBoundaryReached: false,
+        protectedEffectsEnabled: false,
+        schemaVersion: 1,
+        validationCompleted: true,
+        validationCode: error.code,
+      },
+    };
+  }
+
+  // This marker is intentionally only a post-validation sentinel. The
+  // contained preview never imports confirmGate or crosses an effects boundary.
+  const payload: Record<string, unknown> = {
+    accepted: true,
+    confirmationAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    fixture,
+    normalized: summarizeNormalizedResearchRequest(normalized),
+    postValidationBoundaryReached: true,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    validationCompleted: true,
+    validationCode: 'VALID',
+  };
+
+  if (syntheticFixture.observeSnapshot) {
+    payload.snapshot = syntheticFixture.observeSnapshot(normalized);
+  }
+  if (
+    fixture
+    === NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures.storageComponent
+  ) {
+    const first = buildResearchStorageTopicComponent(normalized.topic);
+    const second = buildResearchStorageTopicComponent(normalized.topic);
+    const bytes = Buffer.byteLength(first, 'utf8');
+    payload.storage = {
+      ascii: /^[\x00-\x7f]+$/u.test(first),
+      bytes,
+      component: first,
+      deterministic: first === second,
+      maxBytes: RESEARCH_STORAGE_TOPIC_COMPONENT_MAX_BYTES,
+      portablePattern: /^[a-z0-9-]+-[a-f0-9]{64}$/u.test(first),
+      withinLimit:
+        bytes <= RESEARCH_STORAGE_TOPIC_COMPONENT_MAX_BYTES,
+    };
+  }
+
+  return { payload, statusCode: 200 };
+}
 
 function cloneJob(job: GenericJobData): GenericJobData {
   const cloned = structuredClone(job);
@@ -198,6 +447,7 @@ function isCredentialCarrierPresent(request: express.Request): boolean {
   return Object.keys(request.headers).some((rawHeaderName) => {
     const headerName = rawHeaderName.toLowerCase();
     return FORBIDDEN_HEADER_NAMES.has(headerName)
+      || SENSITIVE_HEADER_SEGMENT_PATTERN.test(headerName)
       || headerName.startsWith('x-arcanos-')
       || headerName.startsWith('x-openai-');
   });
@@ -211,6 +461,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     'GET /jobs/not-a-uuid',
     'GET /jobs/not-a-uuid/result',
     'POST /jobs/not-a-uuid/cancel',
@@ -282,6 +533,7 @@ export function createNativePrPreviewApplication(
       || rawPath.includes('%')
       || !allowedRouteKeys.has(routeKey)
       || isCredentialCarrierPresent(request)
+      || request.header('content-encoding') !== undefined
       || request.header('transfer-encoding') !== undefined
       || (
         contentLength !== undefined
@@ -339,6 +591,48 @@ export function createNativePrPreviewApplication(
     }
     jsonBodyParser(request, response, next);
   });
+
+  app.post(
+    NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path,
+    (request, response) => {
+      const body = request.body as unknown;
+      const bodyKeys =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body)
+          : [];
+      const fixture =
+        bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+          ? (body as { fixture?: unknown }).fixture
+          : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !RESEARCH_FIXTURE_NAMES.has(fixture)
+      ) {
+        return sendBoundedJsonResponse(
+          request,
+          response,
+          { error: 'PREVIEW_RESEARCH_FIXTURE_INVALID' },
+          {
+            logEvent: 'native_pr_preview.research_fixture_invalid',
+            maxBytes: MAX_RESEARCH_RESPONSE_BYTES,
+            statusCode: 400,
+          }
+        );
+      }
+
+      const result = runSyntheticResearchFixture(fixture);
+      return sendBoundedJsonResponse(
+        request,
+        response,
+        result.payload,
+        {
+          logEvent: 'native_pr_preview.research_fixture',
+          maxBytes: MAX_RESEARCH_RESPONSE_BYTES,
+          statusCode: result.statusCode,
+        }
+      );
+    }
+  );
 
   app.use('/', createGenericJobsRouter({
     confirmCancellation: (_request, _response, next) => next(),

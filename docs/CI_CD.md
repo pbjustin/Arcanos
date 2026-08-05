@@ -148,8 +148,21 @@ secrets in each workflow file before enabling auto-deploy.
 
 Railway-native PR deployments use the tracked
 `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
-credential-empty, deny-by-default synthetic generic-jobs application; the worker
-role stays passive. `npm run check:native-pr-preview-imports` is part of both
+credential-empty, deny-by-default synthetic generic-jobs application plus a
+sealed Research contract fixture surface; the worker role stays passive. The
+Research surface imports only the central `src/shared/researchRequest.ts`
+validator and storage-component helper. It does not import the normal Research
+route, confirmation middleware, hub, provider, fetcher, database, memory, or
+persistence code. Its ten server-owned fixtures cover exact and over-limit
+topic, URL count, URL item, and aggregate boundaries in JavaScript
+`String.length` units, one normalized URL descriptor snapshot, and the
+deterministic ASCII storage component capped at 97 UTF-8 bytes. Requests contain
+only `{ "fixture": "<sealed-name>" }`; they never carry raw Research URLs or
+credentials. The descriptor probe is constructed by the server-owned fixture;
+it does not claim that caller JSON can carry accessors or property descriptors.
+Accepted fixtures are reported only as eligible for confirmation;
+the surface never attempts confirmation or crosses an effects boundary.
+`npm run check:native-pr-preview-imports` is part of both
 type-check and build, and `npm run test:native-pr-preview-e2e` validates the
 credential-free runner without network access. The import gate fails closed on
 ambient namespace and capability aliases, dynamic/rest access, listener
@@ -179,7 +192,9 @@ contract in the same PR. The complete launcher and contained-child entry files
 are also pinned by comment/format-normalized semantic digests: every semantic
 edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
-format-only edits do not. Both
+format-only edits do not. The central Research helper is likewise
+semantic-digest pinned, with only its exact `createHash` import and pure
+`Reflect.ownKeys(descriptors)` read admitted to the contained graph. Both
 required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical

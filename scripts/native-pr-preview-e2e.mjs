@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 50;
+const MAX_REQUESTS = 61;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
@@ -327,6 +327,24 @@ function jobCase(
   };
 }
 
+function researchCase(caseId, fixtureName, status) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.research.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: status,
+    expectedType: 'research-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+    role: 'web',
+  };
+}
+
 export function buildNativePrPreviewRequestPlan() {
   const cases = [
     {
@@ -520,6 +538,37 @@ export function buildNativePrPreviewRequestPlan() {
       pathTemplate: '/jobs/:invalid/cancel',
       role: 'web',
     },
+    researchCase('research-topic-exact', 'topicExact', 200),
+    researchCase('research-topic-over', 'topicOver', 400),
+    researchCase('research-url-count-exact', 'urlCountExact', 200),
+    researchCase('research-url-count-over', 'urlCountOver', 400),
+    researchCase('research-url-item-exact', 'urlItemExact', 200),
+    researchCase('research-url-item-over', 'urlItemOver', 400),
+    researchCase(
+      'research-url-aggregate-exact',
+      'urlAggregateExact',
+      200
+    ),
+    researchCase(
+      'research-url-aggregate-over',
+      'urlAggregateOver',
+      400
+    ),
+    researchCase('research-url-snapshot', 'urlSnapshot', 200),
+    researchCase('research-storage-component', 'storageComponent', 200),
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.research.fixtures.topicExact,
+      },
+      caseId: 'worker-research-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+      role: 'worker',
+    },
     {
       caseId: 'web-readiness-final',
       expectedStatus: 200,
@@ -679,6 +728,103 @@ function expectedNotFoundResult(jobId) {
   };
 }
 
+function expectedResearchContractPayload(requestCase) {
+  const base = {
+    fixture: requestCase.fixture,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+  };
+  if (requestCase.expectedStatus === 400) {
+    return {
+      accepted: false,
+      confirmationAttempted: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      ...base,
+      postValidationBoundaryReached: false,
+      validationCompleted: true,
+      validationCode: 'RESEARCH_REQUEST_INVALID',
+    };
+  }
+
+  const normalizedByFixture = {
+    topicExact: {
+      topicLength: 500,
+      urlAggregateLength: 0,
+      urlCount: 0,
+      urlItemMaxLength: 0,
+    },
+    urlCountExact: {
+      topicLength: 18,
+      urlAggregateLength: 0,
+      urlCount: 0,
+      urlItemMaxLength: 0,
+    },
+    urlItemExact: {
+      topicLength: 17,
+      urlAggregateLength: 2_048,
+      urlCount: 1,
+      urlItemMaxLength: 2_048,
+    },
+    urlAggregateExact: {
+      topicLength: 22,
+      urlAggregateLength: 16_384,
+      urlCount: 8,
+      urlItemMaxLength: 2_048,
+    },
+    urlSnapshot: {
+      topicLength: 12,
+      urlAggregateLength: 38,
+      urlCount: 1,
+      urlItemMaxLength: 38,
+    },
+    storageComponent: {
+      topicLength: 36,
+      urlAggregateLength: 0,
+      urlCount: 0,
+      urlItemMaxLength: 0,
+    },
+  };
+  const normalized = normalizedByFixture[requestCase.fixtureName];
+  if (!normalized) {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    ...base,
+    normalized,
+    postValidationBoundaryReached: true,
+    ...(requestCase.fixtureName === 'urlSnapshot'
+      ? {
+          snapshot: {
+            descriptorReads: 1,
+            normalizedUrl: 'https://example.invalid/first-snapshot',
+            sourceMutationIsolated: true,
+          },
+        }
+      : {}),
+    ...(requestCase.fixtureName === 'storageComponent'
+      ? {
+          storage: {
+            ascii: true,
+            bytes: 97,
+            component:
+              'abcdefghijklmnopqrstuvwxyz012345-cc4166d770c11a66f226530d5a8d6c2d2b79bae729cf6f4c9350bb4635b8500d',
+            deterministic: true,
+            maxBytes: 97,
+            portablePattern: true,
+            withinLimit: true,
+          },
+        }
+      : {}),
+    validationCompleted: true,
+    validationCode: 'VALID',
+  };
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
   if (
     requestCase.expectedType === 'health'
@@ -781,6 +927,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       };
     case 'job-id-invalid':
       return { error: 'JOB_ID_INVALID' };
+    case 'research-contract':
+      return expectedResearchContractPayload(requestCase);
     default:
       fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
   }

@@ -173,6 +173,7 @@ jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
 
 jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: jest.fn(),
+  getModuleMetadata: jest.fn(),
   getPublicModulesForRegistry: jest.fn(() => []),
   initializeModuleRegistry: jest.fn(async () => undefined),
 }));

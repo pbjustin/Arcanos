@@ -4,6 +4,21 @@ export interface NativePrPreviewE2eContract {
   readonly trustScope: 'trusted-pr-accidental-effects';
   readonly invalidJobId: 'not-a-uuid';
   readonly unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+  readonly research: Readonly<{
+    path: '/research/contract';
+    fixtures: Readonly<{
+      topicExact: 'topic-exact';
+      topicOver: 'topic-over';
+      urlCountExact: 'url-count-exact';
+      urlCountOver: 'url-count-over';
+      urlItemExact: 'url-item-exact';
+      urlItemOver: 'url-item-over';
+      urlAggregateExact: 'url-aggregate-exact';
+      urlAggregateOver: 'url-aggregate-over';
+      urlSnapshot: 'url-snapshot';
+      storageComponent: 'storage-component';
+    }>;
+  }>;
   readonly fixtures: Readonly<{
     completed: '11111111-1111-4111-8111-111111111111';
     failed: '22222222-2222-4222-8222-222222222222';

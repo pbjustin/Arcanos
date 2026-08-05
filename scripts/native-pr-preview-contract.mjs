@@ -4,6 +4,21 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   trustScope: 'trusted-pr-accidental-effects',
   invalidJobId: 'not-a-uuid',
   unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
+  research: Object.freeze({
+    path: '/research/contract',
+    fixtures: Object.freeze({
+      topicExact: 'topic-exact',
+      topicOver: 'topic-over',
+      urlCountExact: 'url-count-exact',
+      urlCountOver: 'url-count-over',
+      urlItemExact: 'url-item-exact',
+      urlItemOver: 'url-item-over',
+      urlAggregateExact: 'url-aggregate-exact',
+      urlAggregateOver: 'url-aggregate-over',
+      urlSnapshot: 'url-snapshot',
+      storageComponent: 'storage-component',
+    }),
+  }),
   fixtures: Object.freeze({
     completed: '11111111-1111-4111-8111-111111111111',
     failed: '22222222-2222-4222-8222-222222222222',

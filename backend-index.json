@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-04T19:59:18.090Z",
+  "generatedAt": "2026-08-05T00:09:52.700Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4076,6 +4076,9 @@
         },
         {
           "relativePath": "tests/research-dispatch-preflight.test.ts"
+        },
+        {
+          "relativePath": "tests/research-gpt-routing.test.ts"
         },
         {
           "relativePath": "tests/research-ingress-contract.test.ts"

@@ -36,6 +36,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/http/validation.ts',
   'src/shared/jobs/jobLinks.ts',
   'src/shared/jobs/jobReadCapability.ts',
+  'src/shared/researchRequest.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
   'src/start-native-pr-preview.ts',
@@ -136,6 +137,12 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
       ['express', new Set(['default:express'])],
       ['node:crypto', new Set(['default:crypto'])],
       ['zod', new Set(['z:z'])],
+    ]),
+  ],
+  [
+    'src/shared/researchRequest.ts',
+    new Map([
+      ['node:crypto', new Set(['createHash:createHash'])],
     ]),
   ],
   [
@@ -441,6 +448,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/start-native-pr-preview.ts',
     'eede53e221d3fecdb00d1662205d56d1fe91d40a3a3905477c54a5582c1ec54d',
+  ],
+  [
+    'src/shared/researchRequest.ts',
+    '807813ff0656608e087dc0966f02d7b307627e8462be191793ab8883424e08a0',
   ],
 ]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([
@@ -969,6 +980,32 @@ function isForbiddenRuntimeCapabilityIdentifierReference(node) {
     && FORBIDDEN_RUNTIME_BINDING_NAMES.has(node.text)
     && !isNonReferenceIdentifier(node)
     && !isDirectCallOrConstructorTarget(node)
+  );
+}
+
+function isReviewedResearchOwnKeysReference(filePath, node) {
+  if (
+    filePath !== 'src/shared/researchRequest.ts'
+    || !ts.isIdentifier(node)
+    || node.text !== 'Reflect'
+  ) {
+    return false;
+  }
+  const access = node.parent;
+  if (
+    !ts.isPropertyAccessExpression(access)
+    || access.expression !== node
+    || access.name.text !== 'ownKeys'
+  ) {
+    return false;
+  }
+  const call = access.parent;
+  return (
+    ts.isCallExpression(call)
+    && call.expression === access
+    && call.arguments.length === 1
+    && ts.isIdentifier(call.arguments[0])
+    && call.arguments[0].text === 'descriptors'
   );
 }
 
@@ -4617,6 +4654,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       );
     } else if (
       isForbiddenRuntimeCapabilityIdentifierReference(node)
+      && !isReviewedResearchOwnKeysReference(filePath, node)
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden runtime capability reference`

@@ -11,6 +11,9 @@ export const NATIVE_PR_PREVIEW_FIXTURE_IDS =
 export const NATIVE_PR_PREVIEW_TRUST_SCOPE =
   NATIVE_PR_PREVIEW_E2E_CONTRACT.trustScope;
 
+export const NATIVE_PR_PREVIEW_RESEARCH_CONTRACT =
+  NATIVE_PR_PREVIEW_E2E_CONTRACT.research;
+
 export interface NativePrPreviewIdentity {
   prNumber: number;
   sourceCommit: string;
