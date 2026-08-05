@@ -19,6 +19,13 @@ export interface NativePrPreviewE2eContract {
       storageComponent: 'storage-component';
     }>;
   }>;
+  readonly backstageStoryline: Readonly<{
+    path: '/backstage/storyline-contract';
+    fixtures: Readonly<{
+      lifecycleExact: 'lifecycle-exact';
+      payloadOver: 'payload-over';
+    }>;
+  }>;
   readonly fixtures: Readonly<{
     completed: '11111111-1111-4111-8111-111111111111';
     failed: '22222222-2222-4222-8222-222222222222';

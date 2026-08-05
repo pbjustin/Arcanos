@@ -146,6 +146,13 @@ export function appendBoundedBackstageStorylineBeat(
   return [...retainedBeats.slice(firstRetainedIndex), beat];
 }
 
+/** Select the contract's newest bounded response while preserving chronological order. */
+export function selectBackstageStorylineResponseBeats(
+  retainedBeats: readonly StorylineBeat[]
+): StorylineBeat[] {
+  return retainedBeats.slice(-BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   try {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {

@@ -5,6 +5,10 @@ import {
   type GenericJobData,
 } from './routes/genericJobsRouter.js';
 import {
+  applyBackstageStorylineMutation,
+} from './core/db/repositories/backstageStorylineRepository.js';
+import {
+  NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
@@ -24,11 +28,22 @@ import {
   type ResearchRequestInput,
 } from './shared/researchRequest.js';
 import {
+  BACKSTAGE_STORYLINE_MAX_BYTES,
+  BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+  BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS,
+  isBackstageStorylineValidationError,
+  parseBackstageStorylinePayload,
+  parseBackstageStorylineSerializedPayload,
+  selectBackstageStorylineResponseBeats,
+  type StorylineBeat,
+} from './shared/backstage/backstageStoryline.js';
+import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
 
 const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
+const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9]\d*)$/u;
 const FIXTURE_ACTOR_KEY = 'operator:native-pr-preview-fixture';
 const FIXTURE_TIMESTAMP = new Date('2026-07-30T00:00:00.000Z');
@@ -48,6 +63,9 @@ const SENSITIVE_HEADER_SEGMENT_PATTERN =
   /(?:^|-)(?:authorization|cookie|credential|key|secret|session|token)(?:-|$)/u;
 const RESEARCH_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures)
+);
+const STORYLINE_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures)
 );
 const SNAPSHOT_FIRST_URL = 'https://example.invalid/first-snapshot';
 const SNAPSHOT_SECOND_URL = 'https://example.invalid/second-snapshot';
@@ -78,6 +96,29 @@ interface SyntheticResearchResult {
   payload: Record<string, unknown>;
   statusCode: number;
 }
+
+interface SyntheticStorylineResult {
+  payload: Record<string, unknown>;
+  statusCode: number;
+}
+
+interface StorylineFixtureRow {
+  id: string;
+  serializedData: string;
+  storageSequence: number;
+}
+
+const STORYLINE_TRANSACTION_PHASES = Object.freeze([
+  'isolation',
+  'advisory-lock',
+  'revision',
+  'legacy-backfill',
+  'null-cleanup',
+  'prune',
+  'compact',
+  'insert',
+  'fresh-read',
+]);
 
 function buildSyntheticResearchFixture(
   fixture: string
@@ -291,6 +332,387 @@ function runSyntheticResearchFixture(fixture: string): SyntheticResearchResult {
   return { payload, statusCode: 200 };
 }
 
+function requireStorylineFixtureInvariant(
+  condition: boolean,
+  code: string
+): asserts condition {
+  if (!condition) {
+    throw new Error(code);
+  }
+}
+
+function storylineFixtureId(sequence: number): string {
+  return `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
+}
+
+function storylineSequence(beat: StorylineBeat): number {
+  const sequence = beat.sequence;
+  requireStorylineFixtureInvariant(
+    Number.isSafeInteger(sequence),
+    'PREVIEW_BACKSTAGE_STORYLINE_SEQUENCE_INVALID'
+  );
+  return sequence as number;
+}
+
+function buildStorylineBeatAtSerializedBytes(
+  sequence: number,
+  targetBytes: number
+): StorylineBeat {
+  const empty = { sequence, padding: '' };
+  const envelopeBytes = Buffer.byteLength(JSON.stringify(empty), 'utf8');
+  const paddingBytes = targetBytes - envelopeBytes;
+  requireStorylineFixtureInvariant(
+    paddingBytes >= 0,
+    'PREVIEW_BACKSTAGE_STORYLINE_BYTE_FIXTURE_INVALID'
+  );
+  const emojiCount = Math.floor(paddingBytes / 4);
+  const asciiCount = paddingBytes - (emojiCount * 4);
+  const beat = {
+    sequence,
+    padding: `${'😀'.repeat(emojiCount)}${'x'.repeat(asciiCount)}`,
+  };
+  requireStorylineFixtureInvariant(
+    Buffer.byteLength(JSON.stringify(beat), 'utf8') === targetBytes,
+    'PREVIEW_BACKSTAGE_STORYLINE_BYTE_FIXTURE_INVALID'
+  );
+  return beat;
+}
+
+function compareStorylineFixtureRows(
+  left: StorylineFixtureRow,
+  right: StorylineFixtureRow
+): number {
+  const sequenceOrder = left.storageSequence - right.storageSequence;
+  if (sequenceOrder !== 0 || left.id === right.id) {
+    return sequenceOrder;
+  }
+  return left.id < right.id ? -1 : 1;
+}
+
+function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[]) {
+  let rows: StorylineFixtureRow[] = initialBeats.map((beat, index) => ({
+    id: storylineFixtureId(index + 1),
+    serializedData: JSON.stringify(beat),
+    storageSequence: index + 1,
+  }));
+  let nextIdSequence = initialBeats.length + 1;
+  let nextRevision = 9_001;
+  const phases: string[] = [];
+
+  function recordPhase(phase: string): void {
+    const expected =
+      STORYLINE_TRANSACTION_PHASES[phases.length % STORYLINE_TRANSACTION_PHASES.length];
+    requireStorylineFixtureInvariant(
+      phase === expected,
+      'PREVIEW_BACKSTAGE_STORYLINE_TRANSACTION_PHASE_INVALID'
+    );
+    phases.push(phase);
+  }
+
+  const query = async (
+    queryText: unknown,
+    parameters: readonly unknown[] = []
+  ): Promise<{ rows: unknown[] }> => {
+    requireStorylineFixtureInvariant(
+      typeof queryText === 'string',
+      'PREVIEW_BACKSTAGE_STORYLINE_QUERY_INVALID'
+    );
+    const sql = queryText.replace(/\s+/gu, ' ').trim();
+
+    if (sql === 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED') {
+      recordPhase('isolation');
+      return { rows: [] };
+    }
+    if (sql.includes('SELECT pg_advisory_xact_lock')) {
+      recordPhase('advisory-lock');
+      requireStorylineFixtureInvariant(
+        parameters.length === 2
+        && parameters.every(value => Number.isSafeInteger(value)),
+        'PREVIEW_BACKSTAGE_STORYLINE_LOCK_INVALID'
+      );
+      return { rows: [] };
+    }
+    if (sql === 'SELECT txid_current()::TEXT AS revision') {
+      recordPhase('revision');
+      const revision = String(nextRevision);
+      nextRevision += 1;
+      return { rows: [{ revision }] };
+    }
+    if (sql.startsWith('WITH newest_legacy AS MATERIALIZED')) {
+      recordPhase('legacy-backfill');
+      requireStorylineFixtureInvariant(
+        parameters[0] === BACKSTAGE_STORYLINE_MAX_BYTES
+        && parameters[1] === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        'PREVIEW_BACKSTAGE_STORYLINE_LEGACY_BOUND_INVALID'
+      );
+      return { rows: [] };
+    }
+    if (
+      sql
+      === 'DELETE FROM backstage_story_beats WHERE serialized_data IS NULL'
+    ) {
+      recordPhase('null-cleanup');
+      return { rows: [] };
+    }
+    if (sql.startsWith('WITH expired AS MATERIALIZED')) {
+      recordPhase('prune');
+      const retainedBeforeInsert = BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1;
+      requireStorylineFixtureInvariant(
+        parameters[0] === retainedBeforeInsert,
+        'PREVIEW_BACKSTAGE_STORYLINE_RETENTION_BOUND_INVALID'
+      );
+      rows = [...rows]
+        .sort(compareStorylineFixtureRows)
+        .slice(-retainedBeforeInsert);
+      return { rows: [] };
+    }
+    if (sql.startsWith('WITH ordered AS MATERIALIZED')) {
+      recordPhase('compact');
+      rows = [...rows]
+        .sort(compareStorylineFixtureRows)
+        .map((row, index) => ({ ...row, storageSequence: index + 1 }));
+      return { rows: [] };
+    }
+    if (sql.startsWith('INSERT INTO backstage_story_beats')) {
+      recordPhase('insert');
+      const serializedData = parameters[0];
+      parseBackstageStorylineSerializedPayload(serializedData);
+      const id = storylineFixtureId(nextIdSequence);
+      nextIdSequence += 1;
+      rows.push({
+        id,
+        serializedData: serializedData as string,
+        storageSequence:
+          Math.max(0, ...rows.map(row => row.storageSequence)) + 1,
+      });
+      return { rows: [{ id }] };
+    }
+    if (sql.startsWith('SELECT recent.serialized_data')) {
+      recordPhase('fresh-read');
+      const insertedId = parameters[0];
+      const limit = parameters[1];
+      requireStorylineFixtureInvariant(
+        typeof insertedId === 'string'
+        && limit === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        'PREVIEW_BACKSTAGE_STORYLINE_READ_BOUND_INVALID'
+      );
+      const selected = [...rows]
+        .sort((left, right) => {
+          const leftInserted = left.id === insertedId;
+          const rightInserted = right.id === insertedId;
+          if (leftInserted !== rightInserted) {
+            return leftInserted ? -1 : 1;
+          }
+          return right.storageSequence - left.storageSequence
+            || (right.id < left.id ? -1 : 1);
+        })
+        .slice(0, BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS)
+        .sort(compareStorylineFixtureRows);
+      return {
+        rows: selected.map(row => ({
+          serialized_data: row.serializedData,
+        })),
+      };
+    }
+
+    throw new Error('PREVIEW_BACKSTAGE_STORYLINE_QUERY_INVALID');
+  };
+
+  return {
+    client: { query } as unknown as Parameters<
+      typeof applyBackstageStorylineMutation
+    >[0],
+    phases,
+  };
+}
+
+function requireStorylineSequences(
+  beats: readonly StorylineBeat[],
+  first: number,
+  last: number
+): number[] {
+  const expected = Array.from(
+    { length: last - first + 1 },
+    (_, index) => first + index
+  );
+  const actual = beats.map(storylineSequence);
+  requireStorylineFixtureInvariant(
+    actual.length === expected.length
+    && actual.every((sequence, index) => sequence === expected[index]),
+    'PREVIEW_BACKSTAGE_STORYLINE_ORDER_INVALID'
+  );
+  return actual;
+}
+
+async function runStorylineLifecycleFixture(
+  fixture: string
+): Promise<SyntheticStorylineResult> {
+  const exactPayload = parseBackstageStorylinePayload(
+    buildStorylineBeatAtSerializedBytes(
+      101,
+      BACKSTAGE_STORYLINE_MAX_BYTES
+    )
+  );
+  const exactSerialized = JSON.stringify(exactPayload);
+  const initialBeats = Array.from({ length: 100 }, (_, index) => {
+    const sequence = index + 1;
+    return parseBackstageStorylinePayload(
+      sequence === 2
+        ? { sequence, occurredAt: '1900-01-01T00:00:00.000Z' }
+        : { sequence }
+    );
+  });
+  const transactionFixture = createStorylineTransactionFixture(initialBeats);
+  const firstMutation = await applyBackstageStorylineMutation(
+    transactionFixture.client,
+    exactSerialized
+  );
+  const firstSequences = requireStorylineSequences(
+    firstMutation.retainedBeats,
+    2,
+    101
+  );
+  const firstResponse = selectBackstageStorylineResponseBeats(
+    firstMutation.retainedBeats
+  );
+  const firstResponseSequences = requireStorylineSequences(
+    firstResponse,
+    77,
+    101
+  );
+
+  const secondPayload = parseBackstageStorylinePayload({ sequence: 102 });
+  const secondMutation = await applyBackstageStorylineMutation(
+    transactionFixture.client,
+    JSON.stringify(secondPayload)
+  );
+  const secondSequences = requireStorylineSequences(
+    secondMutation.retainedBeats,
+    3,
+    102
+  );
+  const secondResponse = selectBackstageStorylineResponseBeats(
+    secondMutation.retainedBeats
+  );
+  const finalResponseSequences = requireStorylineSequences(
+    secondResponse,
+    78,
+    102
+  );
+  const firstAncientBeatRetained = firstMutation.retainedBeats.some(
+    beat => storylineSequence(beat) === 2
+      && beat.occurredAt === '1900-01-01T00:00:00.000Z'
+  );
+  const firstAcceptedBeatIncluded =
+    firstSequences.filter(sequence => sequence === 101).length === 1;
+  const secondAcceptedBeatIncluded =
+    secondSequences.filter(sequence => sequence === 102).length === 1;
+  const freshReadObservedPriorAcceptedBeat =
+    secondSequences.filter(sequence => sequence === 101).length === 1;
+
+  requireStorylineFixtureInvariant(
+    Buffer.byteLength(exactSerialized, 'utf8')
+      === BACKSTAGE_STORYLINE_MAX_BYTES
+    && firstAncientBeatRetained
+    && firstAcceptedBeatIncluded
+    && secondAcceptedBeatIncluded
+    && freshReadObservedPriorAcceptedBeat
+    && transactionFixture.phases.length
+      === STORYLINE_TRANSACTION_PHASES.length * 2,
+    'PREVIEW_BACKSTAGE_STORYLINE_LIFECYCLE_INVALID'
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: true,
+      fixture,
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: true,
+      protectedEffectsEnabled: false,
+      schemaVersion: 1,
+      transactionComponentExecuted: true,
+      validationCompleted: true,
+      validationCode: 'VALID',
+      lifecycle: {
+        exactBytes: BACKSTAGE_STORYLINE_MAX_BYTES,
+        finalResponseSequences,
+        firstAcceptedBeatIncluded,
+        firstAncientBeatRetained,
+        firstNewestSequence: firstSequences.at(-1),
+        firstOldestSequence: firstSequences[0],
+        firstResponseFirstSequence: firstResponseSequences[0],
+        firstResponseLastSequence: firstResponseSequences.at(-1),
+        freshReadObservedPriorAcceptedBeat,
+        mutationCount: 2,
+        queryPhaseCount: transactionFixture.phases.length,
+        responseCount: secondResponse.length,
+        responseLimit: BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS,
+        retainedCount: secondMutation.retainedBeats.length,
+        retentionLimit: BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        secondAcceptedBeatIncluded,
+        secondNewestSequence: secondSequences.at(-1),
+        secondOldestSequence: secondSequences[0],
+        transactionPhaseOrderVerified: true,
+      },
+    },
+  };
+}
+
+function runStorylinePayloadOverFixture(
+  fixture: string
+): SyntheticStorylineResult {
+  try {
+    parseBackstageStorylinePayload(
+      buildStorylineBeatAtSerializedBytes(
+        101,
+        BACKSTAGE_STORYLINE_MAX_BYTES + 1
+      )
+    );
+  } catch (error) {
+    if (!isBackstageStorylineValidationError(error)) {
+      throw error;
+    }
+    return {
+      statusCode: 400,
+      payload: {
+        accepted: false,
+        confirmationAttempted: false,
+        databaseBoundaryReached: false,
+        effectsBoundaryReached: false,
+        eligibleForConfirmation: false,
+        fixture,
+        durablePersistenceAttempted: false,
+        postValidationBoundaryReached: false,
+        protectedEffectsEnabled: false,
+        schemaVersion: 1,
+        transactionComponentExecuted: false,
+        validationCompleted: true,
+        validationCode: error.code,
+      },
+    };
+  }
+  throw new Error('PREVIEW_BACKSTAGE_STORYLINE_OVER_LIMIT_ACCEPTED');
+}
+
+async function runStorylineFixture(
+  fixture: string
+): Promise<SyntheticStorylineResult> {
+  const fixtures = NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures;
+  switch (fixture) {
+    case fixtures.lifecycleExact:
+      return runStorylineLifecycleFixture(fixture);
+    case fixtures.payloadOver:
+      return runStorylinePayloadOverFixture(fixture);
+    default:
+      throw new Error('PREVIEW_BACKSTAGE_STORYLINE_FIXTURE_INVALID');
+  }
+}
+
 function cloneJob(job: GenericJobData): GenericJobData {
   const cloned = structuredClone(job);
   for (const [key, value] of Object.entries(job)) {
@@ -461,6 +883,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     'GET /jobs/not-a-uuid',
     'GET /jobs/not-a-uuid/result',
@@ -631,6 +1054,50 @@ export function createNativePrPreviewApplication(
           statusCode: result.statusCode,
         }
       );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path,
+    (request, response, next) => {
+      const body = request.body as unknown;
+      const bodyKeys =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body)
+          : [];
+      const fixture =
+        bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+          ? (body as { fixture?: unknown }).fixture
+          : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !STORYLINE_FIXTURE_NAMES.has(fixture)
+      ) {
+        return sendBoundedJsonResponse(
+          request,
+          response,
+          { error: 'PREVIEW_BACKSTAGE_STORYLINE_FIXTURE_INVALID' },
+          {
+            logEvent: 'native_pr_preview.backstage_storyline_fixture_invalid',
+            maxBytes: MAX_STORYLINE_RESPONSE_BYTES,
+            statusCode: 400,
+          }
+        );
+      }
+
+      void runStorylineFixture(fixture)
+        .then(result => sendBoundedJsonResponse(
+          request,
+          response,
+          result.payload,
+          {
+            logEvent: 'native_pr_preview.backstage_storyline_fixture',
+            maxBytes: MAX_STORYLINE_RESPONSE_BYTES,
+            statusCode: result.statusCode,
+          }
+        ))
+        .catch(next);
+      return undefined;
     }
   );
 

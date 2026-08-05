@@ -12,6 +12,14 @@ const NATIVE_PREVIEW_CHILD_URL =
   new URL('../src/start-native-pr-preview.ts', import.meta.url);
 const RESEARCH_REQUEST_URL =
   new URL('../src/shared/researchRequest.ts', import.meta.url);
+const STORYLINE_REPOSITORY_URL = new URL(
+  '../src/core/db/repositories/backstageStorylineRepository.ts',
+  import.meta.url
+);
+const STORYLINE_SHARED_URL = new URL(
+  '../src/shared/backstage/backstageStoryline.ts',
+  import.meta.url
+);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -25,6 +33,16 @@ async function readNativePreviewChildSource() {
 
 async function readResearchRequestSource() {
   return (await readFile(RESEARCH_REQUEST_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readStorylineRepositorySource() {
+  return (await readFile(STORYLINE_REPOSITORY_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readStorylineSharedSource() {
+  return (await readFile(STORYLINE_SHARED_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -64,6 +82,56 @@ describe('native PR preview import boundary', () => {
         'scripts/register-esm-loader.mjs',
       ])
     );
+  });
+
+  it('admits only the pinned storyline component seam from the database tree', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining([
+        'src/core/db/repositories/backstageStorylineRepository.ts',
+        'src/shared/backstage/backstageStoryline.ts',
+      ])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/core/db/index.ts',
+        'src/core/db/connection.ts',
+        'src/services/backstage-booker.ts',
+      ])
+    );
+
+    const repositorySource = await readStorylineRepositorySource();
+    const sharedSource = await readStorylineSharedSource();
+    expect(findUnsafeRuntimeSyntax(
+      'src/core/db/repositories/backstageStorylineRepository.ts',
+      repositorySource
+    )).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/backstage/backstageStoryline.ts',
+      sharedSource
+    )).toEqual([]);
+
+    const driftedRepository = replaceRequired(
+      repositorySource,
+      'SET TRANSACTION ISOLATION LEVEL READ COMMITTED',
+      'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE'
+    );
+    const driftedSharedContract = replaceRequired(
+      sharedSource,
+      'export const BACKSTAGE_STORYLINE_MAX_BYTES = 16 * 1024;',
+      'export const BACKSTAGE_STORYLINE_MAX_BYTES = 32 * 1024;'
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/core/db/repositories/backstageStorylineRepository.ts',
+      driftedRepository
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/backstage/backstageStoryline.ts',
+      driftedSharedContract
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
   });
 
   it('pins the central Research helper and its one reviewed Reflect read', async () => {

@@ -6,6 +6,7 @@ import {
   createNativePrPreviewReadinessState,
 } from '../src/nativePrPreviewApplication.js';
 import {
+  NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
@@ -145,6 +146,66 @@ function expectedResearchInvalid(fixture: string) {
     schemaVersion: 1,
     validationCompleted: true,
     validationCode: 'RESEARCH_REQUEST_INVALID',
+  };
+}
+
+function expectedStorylineLifecycle(fixture: string) {
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    fixture,
+    durablePersistenceAttempted: false,
+    postValidationBoundaryReached: true,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    transactionComponentExecuted: true,
+    validationCompleted: true,
+    validationCode: 'VALID',
+    lifecycle: {
+      exactBytes: 16_384,
+      finalResponseSequences: Array.from(
+        { length: 25 },
+        (_, index) => 78 + index
+      ),
+      firstAcceptedBeatIncluded: true,
+      firstAncientBeatRetained: true,
+      firstNewestSequence: 101,
+      firstOldestSequence: 2,
+      firstResponseFirstSequence: 77,
+      firstResponseLastSequence: 101,
+      freshReadObservedPriorAcceptedBeat: true,
+      mutationCount: 2,
+      queryPhaseCount: 18,
+      responseCount: 25,
+      responseLimit: 25,
+      retainedCount: 100,
+      retentionLimit: 100,
+      secondAcceptedBeatIncluded: true,
+      secondNewestSequence: 102,
+      secondOldestSequence: 3,
+      transactionPhaseOrderVerified: true,
+    },
+  };
+}
+
+function expectedStorylinePayloadOver(fixture: string) {
+  return {
+    accepted: false,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture,
+    durablePersistenceAttempted: false,
+    postValidationBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    transactionComponentExecuted: false,
+    validationCompleted: true,
+    validationCode: 'BACKSTAGE_STORYLINE_INVALID',
   };
 }
 
@@ -494,6 +555,108 @@ describe('native PR contained application', () => {
     ]);
 
     for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('executes the real Backstage storyline lifecycle components against sealed fixtures', async () => {
+    const { app } = buildApplication();
+    const fixtures = NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures;
+    const cases = [
+      {
+        fixture: fixtures.lifecycleExact,
+        status: 200,
+        body: expectedStorylineLifecycle(fixtures.lifecycleExact),
+      },
+      {
+        fixture: fixtures.payloadOver,
+        status: 400,
+        body: expectedStorylinePayloadOver(fixtures.payloadOver),
+      },
+    ];
+
+    for (const requestCase of cases) {
+      const response = await request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture: requestCase.fixture });
+
+      expect(response.status).toBe(requestCase.status);
+      expect(response.body).toEqual(requestCase.body);
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+
+    const repeatedLifecycleResponses = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture: fixtures.lifecycleExact }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture: fixtures.lifecycleExact }),
+    ]);
+    expect(repeatedLifecycleResponses[0]?.status).toBe(200);
+    expect(repeatedLifecycleResponses[1]?.status).toBe(200);
+    expect(repeatedLifecycleResponses[0]?.text).toBe(
+      repeatedLifecycleResponses[1]?.text
+    );
+  });
+
+  it('keeps Backstage storyline fixtures sealed and transport-contained', async () => {
+    const { app } = buildApplication();
+    const fixture =
+      NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures.lifecycleExact;
+    const responses = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture: 'unlisted' }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture, extra: true }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_BACKSTAGE_STORYLINE_FIXTURE_INVALID',
+      });
+      expectNoStore(response);
+    }
+
+    const deniedResponses = await Promise.all([
+      request(app)
+        .post(
+          `${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}?fixture=${fixture}`
+        )
+        .send({ fixture }),
+      request(app)
+        .post('/backstage%2fstoryline-contract')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path)
+        .send({ fixture: 'x'.repeat(4_097) }),
+      request(app)
+        .post('/backstage/track-storyline')
+        .send({ sequence: 1 }),
+    ]);
+
+    for (const response of deniedResponses) {
       expect(response.status).toBe(404);
       expect(response.text).toBe('not found');
       expect(response.text).not.toContain('sensitive-sentinel');

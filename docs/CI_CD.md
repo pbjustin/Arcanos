@@ -151,8 +151,9 @@ secrets in each workflow file before enabling auto-deploy.
 
 Railway-native PR deployments use the tracked
 `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
-credential-empty, deny-by-default synthetic generic-jobs application plus a
-sealed Research contract fixture surface; the worker role stays passive. The
+credential-empty, deny-by-default synthetic generic-jobs application plus
+sealed Research and Backstage storyline contract fixture surfaces; the worker
+role stays passive and denies both contract paths. The
 Research surface imports only the central `src/shared/researchRequest.ts`
 validator and storage-component helper. It does not import the normal Research
 route, confirmation middleware, hub, provider, fetcher, database, memory, or
@@ -165,6 +166,20 @@ credentials. The descriptor probe is constructed by the server-owned fixture;
 it does not claim that caller JSON can carry accessors or property descriptors.
 Accepted fixtures are reported only as eligible for confirmation;
 the surface never attempts confirmation or crosses an effects boundary.
+
+The exact `POST /backstage/storyline-contract` surface accepts only the
+server-owned `lifecycle-exact` and `payload-over` selectors. `lifecycle-exact`
+calls the real storyline validator, response selector, and repository
+transaction helper through a fresh per-request in-memory query adapter. Its two
+mutations prove the exact 16,384-byte beat boundary, 100-beat retention,
+fresh-read response, chronological newest-25 selection, and accepted-beat
+inclusion. `payload-over` proves a 16,385-byte beat is rejected before the
+repository helper is reached. This is a contained component E2E, not a database
+E2E: it does not connect to PostgreSQL or prove SQL-engine locking or atomicity.
+The PostgreSQL 18 CI suite remains authoritative for those properties. The
+storyline fixtures carry no credentials, contact no provider, and do not reach
+memory, confirmation, persistence effects, or any other protected effect.
+
 `npm run check:native-pr-preview-imports` is part of both
 type-check and build, and `npm run test:native-pr-preview-e2e` validates the
 credential-free runner without network access. The import gate fails closed on
@@ -202,7 +217,10 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance.
+evidence, not Railway control-plane provenance. The fixed 65-request plan is the
+original 50 checks, ten Research web fixtures, three storyline web requests (two
+`lifecycle-exact` requests plus `payload-over`), and
+one worker-role denial for each contract path.
 
 This repository containment is for trusted same-repository PRs and accidental
 effects only. A PR controls its own launcher code, so untrusted or forked code

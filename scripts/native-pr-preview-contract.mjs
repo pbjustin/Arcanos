@@ -19,6 +19,13 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       storageComponent: 'storage-component',
     }),
   }),
+  backstageStoryline: Object.freeze({
+    path: '/backstage/storyline-contract',
+    fixtures: Object.freeze({
+      lifecycleExact: 'lifecycle-exact',
+      payloadOver: 'payload-over',
+    }),
+  }),
   fixtures: Object.freeze({
     completed: '11111111-1111-4111-8111-111111111111',
     failed: '22222222-2222-4222-8222-222222222222',

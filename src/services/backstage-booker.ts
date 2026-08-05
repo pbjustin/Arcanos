@@ -29,13 +29,13 @@ import {
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
 import {
-  BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS,
   BACKSTAGE_STORYLINE_PROMPT_BEATS,
   BackstageStorylinePersistenceError,
   appendBoundedBackstageStorylineBeat,
   isRetryableBackstageStorylinePersistenceCause,
   parseBackstageStorylinePayload,
   parseBackstageStorylineSerializedPayload,
+  selectBackstageStorylineResponseBeats,
   type StorylineBeat
 } from '@shared/backstage/backstageStoryline.js';
 
@@ -592,7 +592,7 @@ export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]>
     );
     const retainedFallback = appendBoundedBackstageStorylineBeat(storylines, data);
     storylines.splice(0, storylines.length, ...retainedFallback);
-    return storylines.slice(-BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS);
+    return selectBackstageStorylineResponseBeats(storylines);
   }
 
   const committedRevision = BigInt(mutationResult.revision);
@@ -602,8 +602,8 @@ export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]>
     storylineRevision = committedRevision;
   }
 
-  const responseBeats = mutationResult.retainedBeats.slice(
-    -BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS
+  const responseBeats = selectBackstageStorylineResponseBeats(
+    mutationResult.retainedBeats
   );
   await persistLatestStoryBeatsSnapshot(responseBeats, mutationResult.revision);
   return responseBeats;

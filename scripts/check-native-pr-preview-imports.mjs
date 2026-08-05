@@ -21,6 +21,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
+  'src/core/db/repositories/backstageStorylineRepository.ts',
   'src/lib/errors/responses.ts',
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
@@ -50,7 +51,7 @@ const ALLOWED_GRAPH_FILES =
 const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/app\.ts$/u,
   /^src\/server\.ts$/u,
-  /^src\/core\/db\//u,
+  /^src\/core\/db\/(?!repositories\/backstageStorylineRepository\.ts$)/u,
   /^src\/core\/diagnostics\.ts$/u,
   /^src\/core\/init-openai\.ts$/u,
   /^src\/middleware\//u,
@@ -444,12 +445,20 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
+    'src/core/db/repositories/backstageStorylineRepository.ts',
+    '053c61698f2ad0116191f0558b6d405764b3557d94cf5cf7a6dce255dea9f4fc',
+  ],
+  [
     'scripts/start-railway-service.mjs',
     'ce4f69c883bed63e019db3d166c1c6f9c5a2c82f2ae632d89f594c812a2da06d',
   ],
   [
     'src/start-native-pr-preview.ts',
     'eede53e221d3fecdb00d1662205d56d1fe91d40a3a3905477c54a5582c1ec54d',
+  ],
+  [
+    'src/shared/backstage/backstageStoryline.ts',
+    '721c6f1f4305df5bd4be6e86ee156fd83ba46411c61f14571056cb69ad42e85c',
   ],
   [
     'src/shared/researchRequest.ts',

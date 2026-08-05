@@ -53,7 +53,8 @@ const {
   BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS,
   BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
-  appendBoundedBackstageStorylineBeat
+  appendBoundedBackstageStorylineBeat,
+  selectBackstageStorylineResponseBeats
 } = await import('../src/shared/backstage/backstageStoryline.js');
 const { generateBooking, trackStoryline } =
   await import('../src/services/backstage-booker.js');
@@ -397,6 +398,20 @@ describe('backstage-booker storyline lifecycle containment', () => {
     expect(retained).toHaveLength(BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS);
     expect(retained[0]).toEqual({ sequence: 2 });
     expect(retained.at(-1)).toEqual({ sequence: 101 });
+  });
+
+  it('selects only the newest 25 retained beats in chronological order', () => {
+    const retained = Array.from(
+      { length: BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS },
+      (_, index) => ({ sequence: index + 1 })
+    );
+
+    expect(selectBackstageStorylineResponseBeats(retained)).toEqual(
+      Array.from(
+        { length: BACKSTAGE_STORYLINE_MAX_RESPONSE_BEATS },
+        (_, index) => ({ sequence: 76 + index })
+      )
+    );
   });
 
   it('bypasses the process-local cache for mutable storyline prompt reads', async () => {
