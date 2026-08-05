@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-03T21:36:52.640Z",
+  "generatedAt": "2026-08-05T00:09:52.700Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1088,6 +1088,9 @@
           "relativePath": "src/routes/_core/promptShortcutResponse.ts"
         },
         {
+          "relativePath": "src/routes/_core/researchGptPreflight.ts"
+        },
+        {
           "relativePath": "src/routes/_core/researchRoute.ts"
         },
         {
@@ -2087,6 +2090,9 @@
           "relativePath": "src/services/research.ts"
         },
         {
+          "relativePath": "src/services/researchGptRouting.ts"
+        },
+        {
           "relativePath": "src/services/researchHub.ts"
         },
         {
@@ -2493,6 +2499,9 @@
         },
         {
           "relativePath": "src/shared/requestPathSanitizer.ts"
+        },
+        {
+          "relativePath": "src/shared/researchRequest.ts"
         },
         {
           "relativePath": "src/shared/runtimeInspectionPrompt.ts"
@@ -4064,6 +4073,21 @@
         },
         {
           "relativePath": "tests/requestPathSanitizer.test.ts"
+        },
+        {
+          "relativePath": "tests/research-dispatch-preflight.test.ts"
+        },
+        {
+          "relativePath": "tests/research-gpt-routing.test.ts"
+        },
+        {
+          "relativePath": "tests/research-ingress-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/research-request-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/research-storage-key.test.ts"
         },
         {
           "relativePath": "tests/reusable-code-audit-audit-safe.characterization.test.ts"

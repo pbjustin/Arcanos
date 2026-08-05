@@ -44,6 +44,10 @@ import {
   resolveAskRequestSource,
 } from '@shared/http/askRequestInput.js';
 import {
+  getResearchGptPromptPreflight,
+  type ResearchGptPromptPreflight,
+} from '@shared/researchRequest.js';
+import {
   resolveAskRouteMode,
   type AskRouteMode,
 } from '@shared/http/gptRouteHeaders.js';
@@ -104,6 +108,7 @@ export interface PublicProviderAdmissionCandidate {
   query?: Record<string, unknown>;
   gptActionHeader?: unknown;
   arcanosActionHeader?: unknown;
+  researchGptPreflight?: ResearchGptPromptPreflight | null;
 }
 
 export interface PublicProviderAdmissionMatcherOptions {
@@ -179,15 +184,25 @@ function isProviderFreeApiArcanosPayload(value: unknown): boolean {
 }
 
 function isPublicProviderGptCandidate(candidate: PublicProviderAdmissionCandidate): boolean {
+  if (candidate.researchGptPreflight?.providerIntended !== undefined) {
+    return candidate.researchGptPreflight.providerIntended;
+  }
+  if (candidate.researchGptPreflight?.validationError) {
+    return true;
+  }
+
   const requestedAction = resolveRequestedGptAction({
     body: candidate.body,
     query: candidate.query,
     gptActionHeader: candidate.gptActionHeader,
     arcanosActionHeader: candidate.arcanosActionHeader,
   });
-  const promptText =
-    extractGptPromptText(candidate.body) ?? extractGptPromptText(candidate.query);
-  const dispatchPromptText = extractGptDispatchPromptText(candidate.body);
+  const promptText = candidate.researchGptPreflight
+    ? candidate.researchGptPreflight.promptText
+    : extractGptPromptText(candidate.body) ?? extractGptPromptText(candidate.query);
+  const dispatchPromptText = candidate.researchGptPreflight
+    ? candidate.researchGptPreflight.promptText
+    : extractGptDispatchPromptText(candidate.body);
   const explicitProviderQueryLane =
     Boolean(promptText)
     && (requestedAction === GPT_QUERY_ACTION || requestedAction === GPT_QUERY_AND_WAIT_ACTION);
@@ -245,13 +260,21 @@ export function isPublicProviderAdmissionRequest(
   }
 
   if (path === '/dispatch') {
+    if (candidate.researchGptPreflight?.providerIntended !== undefined) {
+      return candidate.researchGptPreflight.providerIntended;
+    }
     const resolution = resolveDispatchLane(candidate.body);
     if (resolution.lane !== 'gpt') {
       return false;
     }
 
     const preparedBody = buildResolvedGptDispatchBody(resolution.input);
-    const effectivePromptText = extractGptDispatchPromptText(preparedBody);
+    if (candidate.researchGptPreflight?.validationError) {
+      return true;
+    }
+    const effectivePromptText = candidate.researchGptPreflight
+      ? candidate.researchGptPreflight.promptText
+      : extractGptDispatchPromptText(preparedBody);
     if (isDiagnosticRequest(asRecord(preparedBody), effectivePromptText)) {
       return false;
     }
@@ -601,6 +624,7 @@ export function createPublicProviderAdmissionMiddleware(
       query: req.query as Record<string, unknown>,
       gptActionHeader: req.header('x-gpt-action'),
       arcanosActionHeader: req.header('x-arcanos-action'),
+      researchGptPreflight: getResearchGptPromptPreflight(req),
     }, matcherOptions)) {
       next();
       return;
@@ -619,6 +643,7 @@ export const publicProviderGptAdmission: RequestHandler = (req, res, next): void
     query: req.query as Record<string, unknown>,
     gptActionHeader: req.header('x-gpt-action'),
     arcanosActionHeader: req.header('x-arcanos-action'),
+    researchGptPreflight: getResearchGptPromptPreflight(req),
   })) {
     next();
     return;

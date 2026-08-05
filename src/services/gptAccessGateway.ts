@@ -21,6 +21,11 @@ import {
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchRequest,
+  RESEARCH_MODULE_NAME
+} from '@shared/researchRequest.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
@@ -76,6 +81,8 @@ const GPT_ACCESS_EXACT_GPT_ID_ALIASES = new Map<string, string>([
   ['arcanos', ARCANOS_CORE_CANONICAL_GPT_ID]
 ]);
 const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
+const CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE =
+  'AI job request fields could not be safely inspected.';
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
   '__proto__',
@@ -293,6 +300,30 @@ function inspectCreateAiJobPayload(value: unknown): CreateAiJobPayloadValidation
   return null;
 }
 
+function snapshotCreateAiJobPayload(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<
+    PropertyKey,
+    PropertyDescriptor
+  >;
+  const entries: Array<readonly [PropertyKey, unknown]> = [];
+  for (const property of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[property];
+    if (!descriptor?.enumerable) {
+      continue;
+    }
+    if (!('value' in descriptor)) {
+      throw new TypeError(CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE);
+    }
+    entries.push([property, descriptor.value]);
+  }
+
+  return Object.fromEntries(entries);
+}
+
 const mcpRequestSchema = z.object({
   tool: z.string().trim().min(1),
   args: z.record(z.unknown()).optional().default({})
@@ -447,6 +478,28 @@ function getCreateAiJobValidationMessage(error: z.ZodError): string {
   }
 
   return 'Invalid AI job request.';
+}
+
+function buildCreateAiJobInspectionFailure(
+  context: CreateGptAccessAiJobContext,
+  traceId: string
+) {
+  context.logger?.warn?.('gpt_access.ai_job.rejected', {
+    traceId,
+    requestType: 'createAiJob',
+    status: 'validation_failed',
+    reason: 'payload_inspection_failed'
+  });
+  return {
+    statusCode: 400,
+    payload: {
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: CREATE_AI_JOB_INSPECTION_ERROR_MESSAGE
+      }
+    }
+  };
 }
 
 function mapStoredJobStatusToCreateStatus(
@@ -1297,7 +1350,14 @@ function buildGptAccessJobResultLookupPayload(
 
 export async function createGptAccessAiJob(body: unknown, context: CreateGptAccessAiJobContext) {
   const traceId = normalizeTraceId(context.traceId);
-  const payloadIssue = inspectCreateAiJobPayload(body);
+  let payloadSnapshot: unknown;
+  let payloadIssue: CreateAiJobPayloadValidationIssue | null;
+  try {
+    payloadSnapshot = snapshotCreateAiJobPayload(body);
+    payloadIssue = inspectCreateAiJobPayload(payloadSnapshot);
+  } catch {
+    return buildCreateAiJobInspectionFailure(context, traceId);
+  }
   if (payloadIssue?.kind === 'unsafe_field') {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
@@ -1337,7 +1397,16 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     };
   }
 
-  const parsed = createAiJobRequestSchema.safeParse(body);
+  let rawTask: unknown;
+  let parsed: ReturnType<typeof createAiJobRequestSchema.safeParse>;
+  try {
+    rawTask = payloadSnapshot && typeof payloadSnapshot === 'object' && !Array.isArray(payloadSnapshot)
+      ? Object.getOwnPropertyDescriptor(payloadSnapshot, 'task')?.value
+      : undefined;
+    parsed = createAiJobRequestSchema.safeParse(payloadSnapshot);
+  } catch {
+    return buildCreateAiJobInspectionFailure(context, traceId);
+  }
   if (!parsed.success) {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
@@ -1423,6 +1492,34 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
         }
       }
     };
+  }
+
+  if (routeResolution.plan.module === RESEARCH_MODULE_NAME) {
+    try {
+      normalizeResearchRequest({ topic: rawTask });
+    } catch (error: unknown) {
+      if (!isResearchRequestValidationError(error)) {
+        throw error;
+      }
+
+      context.logger?.warn?.('gpt_access.ai_job.rejected', {
+        traceId,
+        requestType: 'createAiJob',
+        gptId: canonicalGptId,
+        status: 'validation_failed',
+        reason: 'research_request_invalid'
+      });
+      return {
+        statusCode: 400,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_VALIDATION_ERROR',
+            message: error.message
+          }
+        }
+      };
+    }
   }
 
   const aiJobBody = buildGatewayAiJobBody(request);
@@ -3234,7 +3331,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runDispatch',
           summary: 'Resolve and run an operational GPT Access command.',
-          description: 'Operational natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics. Resolves a DispatchPlan, validates policy, then confirms and runs when allowed. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
+          description: 'Prefer dedicated GPT Access operations. Resolves a DispatchPlan; hybrid/LLM-first may make one semantic-planner provider call before identifying Research, then validates it before confirmation or execution. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
           security: protectedSecurity,
           parameters: [
             {

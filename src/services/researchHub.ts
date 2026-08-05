@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
+import { normalizeResearchRequest } from '@shared/researchRequest.js';
 import { researchTopic, ResearchResult } from './research.js';
 
 export interface ResearchHubRequest {
@@ -39,22 +40,13 @@ export type ResearchHubEvent =
 
 type ResearchHubListener = (event: ResearchHubEvent) => void;
 
-function normalizeRequest(request: ResearchHubRequest): ResearchHubEventBase['request'] {
-  const topic = request.topic?.trim();
-  if (!topic) {
-    throw new Error('Research topic is required');
-  }
-
-  const urls = Array.isArray(request.urls)
-    ? request.urls.filter(url => typeof url === 'string' && url.trim().length > 0)
-    : [];
-
-  const metadata = request.metadata && typeof request.metadata === 'object' ? request.metadata : undefined;
-
+function buildEventRequest(
+  request: ResearchHubEventBase['request'],
+): ResearchHubEventBase['request'] {
   return {
-    topic,
-    urls,
-    metadata
+    topic: request.topic,
+    urls: [...request.urls],
+    metadata: request.metadata,
   };
 }
 
@@ -62,7 +54,8 @@ class ResearchHub {
   private emitter = new EventEmitter();
 
   async request(requester: string, request: ResearchHubRequest): Promise<ResearchResult> {
-    const normalized = normalizeRequest(request);
+    const normalized = normalizeResearchRequest(request);
+    const executionUrls: readonly string[] = Object.freeze([...normalized.urls]);
     const requestId = randomUUID();
     const startedAt = new Date().toISOString();
 
@@ -71,17 +64,17 @@ class ResearchHub {
       requestId,
       requester,
       timestamp: startedAt,
-      request: normalized
+      request: buildEventRequest(normalized),
     });
 
     try {
-      const result = await researchTopic(normalized.topic, normalized.urls);
+      const result = await researchTopic(normalized.topic, executionUrls);
       const completedEvent: ResearchHubCompletedEvent = {
         type: 'completed',
         requestId,
         requester,
         timestamp: new Date().toISOString(),
-        request: normalized,
+        request: buildEventRequest(normalized),
         result
       };
       this.emit(completedEvent);
@@ -92,7 +85,7 @@ class ResearchHub {
         requestId,
         requester,
         timestamp: new Date().toISOString(),
-        request: normalized,
+        request: buildEventRequest(normalized),
         error: (error as Error).message
       };
       this.emit(failedEvent);

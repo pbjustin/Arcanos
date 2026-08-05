@@ -162,6 +162,26 @@ state to `ERR_UNAVAILABLE` with `DAG_RUN_OWNED_ELSEWHERE` or
 - `rag.query`
 - `research.run`
 
+`research.run` uses the shared inclusive research bounds before any research
+work begins. The supplied `topic` may have at most 500 JavaScript
+`String.length` units. `urls` may contain at most 10 supplied entries, each raw
+URL string may have at most 2,048 JavaScript `String.length` units, and all raw
+URL strings together may have at most 16,384 such units. Entries are counted
+before filtering, so blank, duplicate, and syntactically invalid entries consume
+the same entry and aggregate budgets as other entries. Metadata is excluded
+from the URL aggregate. Tool-schema failures remain bad requests, and typed
+central validation failures from `research.run` or `modules.invoke` map to
+`ERR_BAD_REQUEST` with category `RESEARCH_REQUEST_INVALID`. Exact research
+validation completes before confirmation nonce issuance or consumption.
+
+MCP is syntactically stricter than the other research ingress paths: its tool
+schema rejects invalid URL syntax, while HTTP, SDK, and module callers retain
+their existing per-source invalid-URL handling. This syntax difference does not
+relax the shared count or length bounds. Accepted research topics map to a
+deterministic portable-ASCII storage component made from a readable slug and
+the full SHA-256 hexadecimal digest, capped at 97 UTF-8 bytes. New writes do not
+promise a dual write to legacy topic paths.
+
 ### Memory
 
 - `memory.save`

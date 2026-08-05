@@ -44,6 +44,11 @@ import {
   resolveAsyncGptWaitForResultMs,
   waitForQueuedGptJobCompletion,
 } from './queuedGptCompletionService.js';
+import { isRegisteredResearchGptId } from './researchGptRouting.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchModulePayload,
+} from '@shared/researchRequest.js';
 
 export type BridgeErrorSource = 'routing' | 'queue' | 'worker' | 'provider' | 'timeout' | 'auth';
 
@@ -92,6 +97,7 @@ type CustomGptBridgeAction =
 export interface CustomGptBridgeRequest {
   gptId: string;
   prompt: string;
+  rawPrompt?: string;
   action: CustomGptBridgeAction;
   metadata: Record<string, unknown>;
 }
@@ -102,6 +108,16 @@ export interface ParseBridgeRequestResult {
   request?: CustomGptBridgeRequest;
   body?: Record<string, unknown>;
 }
+
+type BridgeRequestBodyInspection =
+  | {
+      ok: true;
+      body: unknown;
+      rawPrompt?: string;
+    }
+  | {
+      ok: false;
+    };
 
 export interface BridgeSecretValidationInput {
   authorization?: string | null;
@@ -155,6 +171,42 @@ function resultUrl(jobId: string): string {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function inspectBridgeRequestBody(rawBody: unknown): BridgeRequestBodyInspection {
+  if (!rawBody || typeof rawBody !== 'object') {
+    return { ok: true, body: rawBody };
+  }
+
+  try {
+    if (Array.isArray(rawBody)) {
+      return { ok: true, body: rawBody };
+    }
+
+    const descriptors = Object.getOwnPropertyDescriptors(rawBody);
+    const entries: Array<[string, unknown]> = [];
+    let rawPrompt: string | undefined;
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) {
+        continue;
+      }
+      if (!('value' in descriptor)) {
+        return { ok: false };
+      }
+      entries.push([key, descriptor.value]);
+      if (key === 'prompt' && typeof descriptor.value === 'string') {
+        rawPrompt = descriptor.value;
+      }
+    }
+
+    return {
+      ok: true,
+      body: Object.fromEntries(entries),
+      ...(rawPrompt === undefined ? {} : { rawPrompt }),
+    };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function projectBridgeHealthError(
@@ -626,8 +678,30 @@ export function validateCustomGptBridgeSecret(
   return credentialResult;
 }
 
+function buildInvalidBridgeRequestBodyResult(): ParseBridgeRequestResult {
+  return {
+    ok: false,
+    statusCode: 400,
+    body: buildBridgeErrorPayload({
+      source: 'routing',
+      status: 'invalid_request',
+      message: 'Invalid request body.',
+    }),
+  };
+}
+
 export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeRequestResult {
-  const parsed = bridgeRequestSchema.safeParse(rawBody);
+  const inspection = inspectBridgeRequestBody(rawBody);
+  if (!inspection.ok) {
+    return buildInvalidBridgeRequestBodyResult();
+  }
+
+  let parsed: ReturnType<typeof bridgeRequestSchema.safeParse>;
+  try {
+    parsed = bridgeRequestSchema.safeParse(inspection.body);
+  } catch {
+    return buildInvalidBridgeRequestBodyResult();
+  }
   if (!parsed.success) {
     return {
       ok: false,
@@ -669,6 +743,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
     request: {
       gptId: defaultGptId.value,
       prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
+      ...(inspection.rawPrompt === undefined ? {} : { rawPrompt: inspection.rawPrompt }),
       action: parsed.data.action,
       metadata: parsed.data.metadata,
     },
@@ -679,6 +754,31 @@ export async function executeCustomGptBridgeRequest(
   input: ExecuteBridgeRequestInput,
 ): Promise<ExecuteBridgeRequestResult> {
   const startedAtMs = Date.now();
+  if (
+    !isGptBridgeSmokeAction(input.request.action)
+    && await isRegisteredResearchGptId(input.request.gptId)
+  ) {
+    try {
+      normalizeResearchModulePayload({
+        prompt: input.request.rawPrompt ?? input.request.prompt,
+      });
+    } catch (error: unknown) {
+      if (!isResearchRequestValidationError(error)) {
+        throw error;
+      }
+      return {
+        statusCode: 400,
+        errorSource: 'routing',
+        body: buildBridgeErrorPayload({
+          source: 'routing',
+          status: 'invalid_request',
+          message: error.message,
+          requestId: input.requestId,
+        }),
+      };
+    }
+  }
+
   if (!resolveConfiguredJobReadCapabilitySecret()) {
     return {
       statusCode: 503,

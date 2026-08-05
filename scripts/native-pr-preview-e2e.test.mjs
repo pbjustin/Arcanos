@@ -197,7 +197,26 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 50);
+  assert.equal(requestPlan.length, 61);
+  assert.equal(
+    requestPlan.filter(({ caseId, expectedType }) =>
+      expectedType !== 'research-contract'
+      && caseId !== 'worker-research-denied'
+    ).length,
+    50
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'research-contract'
+    ).length,
+    10
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-research-denied'
+    ).length,
+    1
+  );
   const mock = buildMockFetch(requestPlan);
 
   const result = await runNativePrPreviewE2e({
@@ -209,9 +228,25 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 50);
-  assert.equal(result.checks.length, 50);
-  assert.equal(mock.requestCount, 50);
+  assert.equal(result.summary.requestsMade, 61);
+  assert.equal(result.checks.length, 61);
+  assert.equal(mock.requestCount, 61);
+  const researchCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/research/contract')
+  );
+  assert.equal(researchCalls.length, 11);
+  assert.equal(
+    researchCalls.filter(({ url }) => url.startsWith(WEB_BASE_URL)).length,
+    10
+  );
+  assert.equal(
+    researchCalls.filter(({ url }) => url.startsWith(WORKER_BASE_URL)).length,
+    1
+  );
+  for (const { init } of researchCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
+    assert.equal(init.body.includes('https://'), false);
+  }
   assert.equal(
     mock.calls.some(({ init }) =>
       Object.keys(init.headers).some((headerName) =>

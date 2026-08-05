@@ -33,8 +33,11 @@ prompt, pipeline, code-generation, public media/search/simulation, enabled
 legacy GPT aliases, and `GET`, implicit `HEAD`, and `POST` `/brain` only when `ASK_ROUTE_MODE` is
 `compat`. Health/status probes, provider-free diagnostics, authenticated
 control-plane paths, canonical GPT control/DAG/MCP/job actions, and the
-DAG/MCP/tool lanes of `/dispatch` do not consume it. Accepted and rejected
-provider admissions use `Cache-Control: no-store`. The shared middleware sets
+DAG/MCP/tool lanes of `/dispatch` do not consume it. Research diagnostics with
+an explicit `action`, `mode`, or direct prompt signal remain provider-free;
+message-only diagnostic intent is conservatively admitted before bounded
+message inspection. Accepted and rejected provider admissions use
+`Cache-Control: no-store`. The shared middleware sets
 `X-RateLimit-*` headers plus the stable
 `X-Public-Provider-Client-Remaining` and
 `X-Public-Provider-Global-Remaining` counters; an admitted response may report a
@@ -700,6 +703,36 @@ establishes caller identity. Direct and worker-helper heal requests share one
   one-use confirmation challenge required)
 - `POST /rag/query` (control-plane operator and `arcanos:read` required;
   confirmation is not required)
+
+All research ingress paths share the same inclusive bounds, applied to the
+supplied values before trimming or filtering: `topic` may have at most 500
+JavaScript `String.length` units; `urls` may contain at most 10 supplied
+entries; each raw URL string may have at most 2,048 JavaScript `String.length`
+units; and the raw URL strings together may have at most 16,384 such units.
+Blank, duplicate, and syntactically invalid URL entries still count toward the
+entry and aggregate ceilings; metadata is excluded from the URL aggregate.
+Stable validation completes before confirmation challenges, request events,
+outbound fetches, Research execution-provider calls, or persistence work.
+Hybrid or LLM-first `POST /gpt-access/dispatch/run` resolution may make one
+semantic-planner provider call before the generated plan can be identified as
+Research. Any resulting Research payload is validated immediately after that
+planning call and before confirmation or Research execution work; deterministic
+rule-resolved Research dispatch makes no planner call. Direct HTTP and SDK
+failures use their existing HTTP 400 validation envelopes, canonical GPT
+aliases report `RESEARCH_REQUEST_INVALID` with HTTP 400, and GPT Access
+capability or natural-dispatch runs report `GPT_ACCESS_VALIDATION_ERROR` with
+HTTP 400.
+
+URL syntax handling remains ingress-specific. MCP `research.run` validates URL
+syntax at its tool boundary, while the HTTP, SDK, and module paths preserve
+their existing per-source failure handling for syntactically invalid URL
+strings. The shared count and length ceilings apply in either case.
+
+Research persistence derives its topic directory component deterministically
+as portable ASCII: a readable slug followed by the full SHA-256 hexadecimal
+digest. The component is capped at 97 UTF-8 bytes. New writes use this bounded
+component; the storage contract does not promise a dual write to legacy topic
+paths.
 
 The exact command/agent CEF boundary authenticates before body allocation,
 returns `Cache-Control: no-store`, and uses separate authenticated-principal

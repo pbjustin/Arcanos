@@ -68,6 +68,20 @@ import {
 } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  buildResearchModulePreflightPayload,
+  getResearchGptPromptPreflight,
+  isResearchRequestValidationError,
+  normalizeResearchModulePayload,
+  RESEARCH_ACTION_NAME,
+  RESEARCH_MODULE_NAME,
+} from '@shared/researchRequest.js';
+import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
+import {
+  canonicalResearchGptAdmissionBoundary,
+  canonicalResearchGptPreflightBoundary,
+} from './_core/researchGptPreflight.js';
+import { resolveGptModuleRequestedActionAlias } from '@shared/gpt/gptModuleAction.js';
+import {
   waitForQueuedGptJobCompletion,
   resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs
@@ -1063,6 +1077,12 @@ function normalizeBackstageRosterMutationBody(body: unknown): Record<string, unk
   };
 }
 
+function validateResearchGptRequestBody(body: unknown): void {
+  normalizeResearchModulePayload(
+    buildResearchModulePreflightPayload(body),
+  );
+}
+
 function normalizeFailedBackstageRosterPersistenceOutput(output: unknown): {
   code: typeof BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE;
   message: typeof BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE;
@@ -1275,7 +1295,9 @@ router.post(
   canonicalGptIdentifierBoundary,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
+  canonicalResearchGptAdmissionBoundary,
   publicProviderGptAdmission,
+  canonicalResearchGptPreflightBoundary,
   async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
@@ -1285,7 +1307,10 @@ router.post(
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
   const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
-  const promptText = extractGptPromptTextFromRequest(req);
+  const researchGptPreflight = getResearchGptPromptPreflight(req);
+  const promptText = researchGptPreflight?.validationComplete
+    ? researchGptPreflight.promptText
+    : extractGptPromptTextFromRequest(req);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
     ? 'dag_execution'
     : 'default';
@@ -1412,6 +1437,44 @@ router.post(
             errorPayload,
             'gpt.response.body_gpt_id_forbidden',
             400
+          );
+        }
+
+        if (researchGptPreflight?.validationError) {
+          const error = researchGptPreflight.validationError;
+          requestLogger?.warn?.('gpt.request.research_validation_failed', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            action: RESEARCH_ACTION_NAME,
+            errorCode: error.code,
+          });
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: RESEARCH_ACTION_NAME,
+            code: error.code,
+            message: error.message,
+            route: 'research_request_validation',
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: RESEARCH_ACTION_NAME,
+            status: 400,
+            error: {
+              name: error.code,
+              message: error.message,
+            },
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.research_validation',
+            400,
           );
         }
 
@@ -1657,6 +1720,75 @@ router.post(
           id: routingValidation.plan.matchedId,
         };
 
+        const effectiveBodyRecord = effectiveBody
+          && typeof effectiveBody === 'object'
+          && !Array.isArray(effectiveBody)
+          ? effectiveBody as Record<string, unknown>
+          : null;
+        const rawResearchAction = effectiveBodyRecord
+          ? Object.getOwnPropertyDescriptor(effectiveBodyRecord, 'action')?.value
+          : undefined;
+        const requestedResearchAction = typeof rawResearchAction === 'string'
+          ? resolveGptModuleRequestedActionAlias(
+              rawResearchAction,
+              routingValidation.plan.availableActions,
+            )
+          : undefined;
+        const researchAction = requestedResearchAction ?? routingValidation.plan.action;
+        const researchDiagnosticRequest = isDiagnosticRequest(
+          effectiveBodyRecord ?? undefined,
+          promptText,
+        );
+        if (
+          routingValidation.plan.module === RESEARCH_MODULE_NAME
+          && researchAction === RESEARCH_ACTION_NAME
+          && !researchDiagnosticRequest
+          && !(queryAndWaitRequested && !normalizedBody)
+        ) {
+          try {
+            validateResearchGptRequestBody(effectiveBody);
+          } catch (error: unknown) {
+            if (!isResearchRequestValidationError(error)) {
+              throw error;
+            }
+
+            requestLogger?.warn?.('gpt.request.research_validation_failed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              action: RESEARCH_ACTION_NAME,
+              errorCode: error.code,
+            });
+            const errorPayload = buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: RESEARCH_ACTION_NAME,
+              code: error.code,
+              message: error.message,
+              route: 'research_request_validation',
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: RESEARCH_ACTION_NAME,
+              status: 400,
+              error: {
+                name: error.code,
+                message: error.message,
+              },
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              errorPayload,
+              'gpt.response.research_validation',
+              400,
+            );
+          }
+        }
+
         if (
           backstageMutationOperation?.action === 'updateRoster'
           && routingValidation.plan.module === BACKSTAGE_MODULE_NAME
@@ -1705,8 +1837,14 @@ router.post(
           }
         }
 
+        const memoryClassificationBody = routingValidation.plan.module === RESEARCH_MODULE_NAME
+          ? {
+              action: rawResearchAction,
+              prompt: promptText,
+            }
+          : effectiveBody;
         const memoryInterception = classifyGptMemoryInterception({
-          body: effectiveBody,
+          body: memoryClassificationBody,
           availableActions: routingValidation.plan.availableActions,
           fallbackActionCandidate: routingValidation.plan.action,
           forceDirectModuleRouting: directGamingRoute || bypassIntentRouting,

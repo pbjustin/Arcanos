@@ -1,8 +1,12 @@
-import express, { Request } from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 
 import { createValidationMiddleware } from '@platform/runtime/security.js';
 import { connectResearchBridge } from '@services/researchHub.js';
 import { asyncHandler } from '@shared/http/index.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchHttpRequest,
+} from '@shared/researchRequest.js';
 import { buildValidationErrorResponse } from '@core/lib/errors/index.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 
@@ -11,8 +15,6 @@ const researchSchema = {
     required: true,
     type: 'string' as const,
     minLength: 1,
-    maxLength: 500,
-    sanitize: true,
   },
   urls: {
     required: false,
@@ -22,7 +24,7 @@ const researchSchema = {
 
 type ResearchRequestBody = {
   topic: string;
-  urls?: string[];
+  urls?: unknown;
 };
 
 type ValidationErrorPayload = ReturnType<typeof buildValidationErrorResponse> & {
@@ -51,28 +53,45 @@ export function createResearchRouter(options: CreateResearchRouterOptions) {
   const researchBridge = connectResearchBridge(options.bridgeName);
   const formatUrlValidationError =
     options.formatUrlValidationError ?? defaultFormatUrlValidationError;
+  const validateResearchContract = (
+    req: Request<{}, unknown, ResearchRequestBody>,
+    res: Response,
+    next: NextFunction,
+  ): void => {
+    const { topic, urls = [] } = req.body;
+
+    try {
+      req.body = normalizeResearchHttpRequest({ topic, urls });
+      next();
+    } catch (error) {
+      if (!isResearchRequestValidationError(error)) {
+        throw error;
+      }
+
+      //audit Assumption: research limits are a public validation contract; risk: downstream amplification and confirmation-state churn; invariant: invalid requests stop before confirmation and bridge work; handling: standardized non-echoing 400.
+      res
+        .status(400)
+        .json(
+          formatUrlValidationError(
+            buildValidationErrorResponse([error.message]),
+          ),
+        );
+    }
+  };
 
   router.post(
     options.path,
-    confirmGate,
     createValidationMiddleware(researchSchema),
+    validateResearchContract,
+    confirmGate,
     asyncHandler(async (req: Request<{}, unknown, ResearchRequestBody>, res) => {
       const { topic, urls = [] } = req.body;
+      const result = await researchBridge.requestResearch({
+        topic,
+        urls: urls as string[],
+      });
 
-      if (!Array.isArray(urls) || urls.some(url => typeof url !== 'string')) {
-        //audit Assumption: urls must be string array; risk: rejecting valid payloads; invariant: only strings allowed; handling: standardized validation error.
-        return res
-          .status(400)
-          .json(
-            formatUrlValidationError(
-              buildValidationErrorResponse(["Field 'urls' must be an array of strings"]),
-            ),
-          );
-      }
-
-      const result = await researchBridge.requestResearch({ topic, urls });
-
-      res.json({
+      return res.json({
         success: true,
         ...result,
       });

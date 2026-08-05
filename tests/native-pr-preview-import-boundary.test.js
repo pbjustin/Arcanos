@@ -10,6 +10,8 @@ const RAILWAY_LAUNCHER_URL =
   new URL('../scripts/start-railway-service.mjs', import.meta.url);
 const NATIVE_PREVIEW_CHILD_URL =
   new URL('../src/start-native-pr-preview.ts', import.meta.url);
+const RESEARCH_REQUEST_URL =
+  new URL('../src/shared/researchRequest.ts', import.meta.url);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -18,6 +20,11 @@ async function readRailwayLauncherSource() {
 
 async function readNativePreviewChildSource() {
   return (await readFile(NATIVE_PREVIEW_CHILD_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readResearchRequestSource() {
+  return (await readFile(RESEARCH_REQUEST_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -57,6 +64,57 @@ describe('native PR preview import boundary', () => {
         'scripts/register-esm-loader.mjs',
       ])
     );
+  });
+
+  it('pins the central Research helper and its one reviewed Reflect read', async () => {
+    const sourceText = await readResearchRequestSource();
+
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/researchRequest.ts',
+      sourceText
+    )).toEqual([]);
+
+    const broadenedReflectRead = replaceRequired(
+      sourceText,
+      'Reflect.ownKeys(descriptors)',
+      'Reflect.ownKeys({})'
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/researchRequest.ts',
+      broadenedReflectRead
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden runtime capability reference'),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
+  it('rejects a broader Research crypto binding or helper semantic drift', async () => {
+    const sourceText = await readResearchRequestSource();
+    const broaderCryptoImport = replaceRequired(
+      sourceText,
+      "import { createHash } from 'node:crypto';",
+      "import { createHash, randomBytes } from 'node:crypto';"
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/researchRequest.ts',
+      broaderCryptoImport
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining(
+        'forbidden runtime import binding "randomBytes:randomBytes"'
+      ),
+    ]));
+
+    const driftedScope = replaceRequired(
+      sourceText,
+      "const RESEARCH_STORAGE_HASH_SCOPE = 'research-topic-v1:utf16le\\0';",
+      "const RESEARCH_STORAGE_HASH_SCOPE = 'research-topic-v2:utf16le\\0';"
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/researchRequest.ts',
+      driftedScope
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
   });
 
   it.each([

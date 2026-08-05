@@ -89,6 +89,11 @@ import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canon
 import {
   backstageMutationConfirmationGate,
 } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
+import {
+  canonicalResearchGptAdmissionBoundary,
+  dispatchResearchGptAdmissionBoundary,
+  dispatchResearchGptPreflightBoundary,
+} from '@routes/_core/researchGptPreflight.js';
 import { startConfiguredWorkerRuntime } from '@platform/runtime/workerConfig.js';
 import {
   configureDefaultAppMetricsRuntimeProviders
@@ -279,7 +284,8 @@ export function createApp(): Express {
     '/dispatch',
     dispatchDagCompatibilityBoundary,
     backstageMutationHttpBoundary,
-    backstageMutationConfirmationGate
+    backstageMutationConfirmationGate,
+    dispatchResearchGptAdmissionBoundary
   );
   app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {
     if (req.body !== undefined) {
@@ -299,7 +305,8 @@ export function createApp(): Express {
     '/gpt/:gptId',
     canonicalGptIdentifierBoundary,
     backstageMutationHttpBoundary,
-    backstageMutationConfirmationGate
+    backstageMutationConfirmationGate,
+    canonicalResearchGptAdmissionBoundary
   );
   app.post(
     '/modules/:moduleRoute',
@@ -312,6 +319,7 @@ export function createApp(): Express {
     backstageMutationConfirmationGate
   );
   app.use(publicProviderAdmission);
+  app.post('/dispatch', dispatchResearchGptPreflightBoundary);
   app.post('/gpt/arcanos-gaming', gamingIngressAudit);
 
   app.use(unsafeExecutionGate);

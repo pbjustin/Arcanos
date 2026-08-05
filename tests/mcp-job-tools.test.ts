@@ -7,12 +7,21 @@ import {
   BackstageRosterPersistenceError,
   BackstageRosterValidationError,
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+  RESEARCH_TOPIC_MAX_LENGTH,
+  RESEARCH_URL_MAX_ITEMS,
+  RESEARCH_URL_MAX_LENGTH,
+  ResearchRequestValidationError,
+} from '../src/shared/researchRequest.js';
 
 const mockGetJobById = jest.fn();
 const mockRunThroughBrain = jest.fn();
 const mockRunARCANOS = jest.fn();
 const mockRunTrinity = jest.fn();
+const mockRequestResearch = jest.fn();
 const mockDispatchModuleAction = jest.fn();
+const mockGetModuleMetadata = jest.fn();
 const mockGetPublicModulesForRegistry =
   jest.fn<() => Array<Record<string, unknown>>>();
 const mockInitializeModuleRegistry = jest.fn<() => Promise<void>>();
@@ -131,7 +140,7 @@ jest.unstable_mockModule('../src/services/webRag.js', () => ({
 
 jest.unstable_mockModule('../src/services/researchHub.js', () => ({
   connectResearchBridge: jest.fn(() => ({
-    requestResearch: jest.fn(),
+    requestResearch: mockRequestResearch,
   })),
 }));
 
@@ -192,6 +201,7 @@ jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
 
 jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: mockDispatchModuleAction,
+  getModuleMetadata: mockGetModuleMetadata,
   getPublicModulesForRegistry: mockGetPublicModulesForRegistry,
   initializeModuleRegistry: mockInitializeModuleRegistry,
 }));
@@ -254,7 +264,28 @@ describe('createMcpServer job control tools', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetPublicModulesForRegistry.mockReturnValue([]);
+    mockRequestResearch.mockResolvedValue({
+      topic: 'bounded topic',
+      insight: 'bounded result',
+      sourcesProcessed: 0,
+      sources: [],
+      failedUrls: [],
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      model: 'mock',
+    });
     mockInitializeModuleRegistry.mockResolvedValue(undefined);
+    mockGetModuleMetadata.mockImplementation((moduleId: unknown) => {
+      if (moduleId !== 'ARCANOS:RESEARCH' && moduleId !== 'research') {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:RESEARCH',
+        description: 'Research',
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+      };
+    });
     mockClassifyGptFastPathRequest.mockReturnValue({
       path: 'fast_path',
       eligible: true,
@@ -339,6 +370,258 @@ describe('createMcpServer job control tools', () => {
 
     expect(mockRegisterResource).not.toHaveBeenCalled();
     expect(mockRegisterResourceTemplate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'supplied URL count',
+      urls: Array.from({ length: 11 }, (_, index) => `https://example.com/${index}`),
+    },
+    {
+      name: 'raw URL item length',
+      urls: [`https://example.com/${'u'.repeat(RESEARCH_URL_MAX_LENGTH - 19)}`],
+    },
+    {
+      name: 'aggregate raw URL length',
+      urls: [
+        ...Array.from({ length: 8 }, () => `https://example.com/${'u'.repeat(2_028)}`),
+        'https://x.example',
+      ],
+    },
+  ])('rejects an over-limit research.run $name in its executable schema', async ({ urls }) => {
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const tool = server.tools.get('research.run');
+    const schema = tool?.config.inputSchema as z.ZodTypeAny;
+
+    expect(schema.safeParse({ topic: 'bounded topic', urls }).success).toBe(false);
+    expect(mockRequestResearch).not.toHaveBeenCalled();
+  });
+
+  it('enforces the topic contract in the research.run executable schema', async () => {
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const schema = server.tools.get('research.run')?.config.inputSchema as z.ZodTypeAny;
+
+    expect(schema.safeParse({ topic: 't'.repeat(RESEARCH_TOPIC_MAX_LENGTH) }).success).toBe(true);
+    expect(schema.safeParse({ topic: 't'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1) }).success).toBe(false);
+    expect(schema.safeParse({ topic: '   ' }).success).toBe(false);
+  });
+
+  it('accepts inclusive URL boundaries in the research.run executable schema', async () => {
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const schema = server.tools.get('research.run')?.config.inputSchema as z.ZodTypeAny;
+    const exactAggregateUrls = Array.from(
+      { length: 8 },
+      () => `https://example.com/${'u'.repeat(RESEARCH_URL_MAX_LENGTH - 20)}`,
+    );
+    const exactCountUrls = Array.from(
+      { length: RESEARCH_URL_MAX_ITEMS },
+      (_, index) => `https://example.com/${index}`,
+    );
+
+    expect(schema.safeParse({ topic: 'bounded topic', urls: exactAggregateUrls }).success).toBe(true);
+    expect(schema.safeParse({ topic: 'bounded topic', urls: exactCountUrls }).success).toBe(true);
+  });
+
+  it('maps a typed research.run validation failure to a client-safe bad request', async () => {
+    mockRequestResearch.mockRejectedValueOnce(
+      new ResearchRequestValidationError('Research URLs must contain no more than 10 entries.'),
+    );
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const output = await server.tools.get('research.run')!.handler({
+      topic: 'bounded topic',
+      urls: [],
+    });
+
+    expect(output).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_BAD_REQUEST',
+          message: 'Research URLs must contain no more than 10 entries.',
+          details: {
+            tool: 'research.run',
+            category: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+          },
+          requestId: 'mcp-req-1',
+        },
+      },
+    }));
+  });
+
+  it('does not trust a spoofed research validation error shape', async () => {
+    mockRequestResearch.mockRejectedValueOnce({
+      name: 'ResearchRequestValidationError',
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'private attacker-controlled text',
+    });
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const output = await server.tools.get('research.run')!.handler({
+      topic: 'bounded topic',
+      urls: [],
+    });
+
+    expect(output).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_INTERNAL',
+          message: 'MCP operation failed.',
+          details: {
+            tool: 'research.run',
+            category: 'MCP_OPERATION_FAILED',
+          },
+          requestId: 'mcp-req-1',
+        },
+      },
+    }));
+    expect(JSON.stringify(output)).not.toContain('private attacker-controlled text');
+  });
+
+  it('maps a typed research modules.invoke validation failure to a client-safe bad request', async () => {
+    const previousAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+    process.env.MCP_ALLOW_MODULE_ACTIONS = 'ARCANOS:RESEARCH:run';
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new ResearchRequestValidationError('Research topic must be no more than 500 characters.'),
+    );
+
+    try {
+      const server = await createMcpServer(buildContext()) as FakeMcpServer;
+      const output = await server.tools.get('modules.invoke')!.handler({
+        module: 'ARCANOS:RESEARCH',
+        action: 'run',
+        payload: { topic: 'bounded topic' },
+      });
+
+      expect(output).toEqual(expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: 'ERR_BAD_REQUEST',
+            message: 'Research topic must be no more than 500 characters.',
+            details: {
+              tool: 'modules.invoke',
+              category: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+            },
+            requestId: 'mcp-req-1',
+          },
+        },
+      }));
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+      } else {
+        process.env.MCP_ALLOW_MODULE_ACTIONS = previousAllowlist;
+      }
+    }
+  });
+
+  it('preflights invalid research modules.invoke input before dispatch', async () => {
+    const previousAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+    process.env.MCP_ALLOW_MODULE_ACTIONS = 'ARCANOS:RESEARCH:run';
+
+    try {
+      const server = await createMcpServer(buildContext()) as FakeMcpServer;
+      const output = await server.tools.get('modules.invoke')!.handler({
+        module: 'ARCANOS:RESEARCH',
+        action: 'run',
+        payload: {
+          topic: 'bounded topic',
+          urls: Array.from({ length: RESEARCH_URL_MAX_ITEMS + 1 }, () => ' '),
+        },
+      });
+
+      expect(output).toEqual(expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_BAD_REQUEST',
+            details: expect.objectContaining({
+              category: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+            }),
+          }),
+        },
+      }));
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+      } else {
+        process.env.MCP_ALLOW_MODULE_ACTIONS = previousAllowlist;
+      }
+    }
+  });
+
+  it('preflights the Research route alias before nonce issuance or dispatch', async () => {
+    const previousAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+    process.env.MCP_ALLOW_MODULE_ACTIONS = 'research:run';
+
+    try {
+      const server = await createMcpServer(buildContext()) as FakeMcpServer;
+      const output = await server.tools.get('modules.invoke')!.handler({
+        module: 'research',
+        action: 'run',
+        payload: {
+          topic: 'bounded topic',
+          urls: Array.from({ length: RESEARCH_URL_MAX_ITEMS + 1 }, () => ' '),
+        },
+      });
+
+      expect(output).toEqual(expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_BAD_REQUEST',
+            details: expect.objectContaining({
+              category: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+            }),
+          }),
+        },
+      }));
+      expect(JSON.stringify(output)).not.toContain('confirmationNonce');
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+      } else {
+        process.env.MCP_ALLOW_MODULE_ACTIONS = previousAllowlist;
+      }
+    }
+  });
+
+  it('keeps typed research errors internal for non-research modules.invoke actions', async () => {
+    const previousAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+    process.env.MCP_ALLOW_MODULE_ACTIONS = 'ARCANOS:CORE:query';
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new ResearchRequestValidationError('private non-research failure'),
+    );
+
+    try {
+      const server = await createMcpServer(buildContext()) as FakeMcpServer;
+      const output = await server.tools.get('modules.invoke')!.handler({
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        payload: { prompt: 'bounded prompt' },
+      });
+
+      expect(output).toEqual(expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_INTERNAL',
+            message: 'MCP operation failed.',
+          }),
+        },
+      }));
+      expect(JSON.stringify(output)).not.toContain('private non-research failure');
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+      } else {
+        process.env.MCP_ALLOW_MODULE_ACTIONS = previousAllowlist;
+      }
+    }
   });
 
   it('serves modules.list from the safe public registry projection', async () => {

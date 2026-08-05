@@ -56,7 +56,10 @@ import {
 } from "@shared/gpt/gptDirectAction.js";
 import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
-import { extractPreparedGptDispatchPromptText } from '@shared/gpt/gptRequestAction.js';
+import {
+  extractGptDispatchPromptText,
+  extractPreparedGptDispatchPromptText,
+} from '@shared/gpt/gptRequestAction.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import {
   pickGptModuleAction,
@@ -71,6 +74,15 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
+import {
+  buildResearchModulePreflightPayload,
+  extractBoundedResearchDispatchPromptText,
+  inspectResearchPreAdmissionPromptText,
+  isResearchRequestValidationError,
+  normalizeResearchModulePayload,
+  RESEARCH_ACTION_NAME,
+  RESEARCH_MODULE_NAME,
+} from '@shared/researchRequest.js';
 import type {
   QueuedGptBackstageMutationAdmission,
 } from '@shared/gpt/asyncGptJob.js';
@@ -235,7 +247,10 @@ function mergeForwardedTopLevelPayloadFields(
  * Output: payload object passed to module action handlers.
  * Edge cases: when body.payload exists, it is forwarded verbatim for strict action contracts.
  */
-function buildDispatchPayload(body: unknown): unknown {
+function buildDispatchPayload(
+  body: unknown,
+  promptOverride?: { promptText: string | null },
+): unknown {
   //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
   if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
     const explicitPayload = body.payload;
@@ -247,7 +262,9 @@ function buildDispatchPayload(body: unknown): unknown {
     return explicitPayload;
   }
 
-  const prompt = extractGptPromptText(body);
+  const prompt = promptOverride
+    ? promptOverride.promptText
+    : extractGptPromptText(body);
 
   //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
   if (isRecord(body)) {
@@ -946,18 +963,112 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const requestEndpoint = request
     ? sanitizeRequestPath(request.originalUrl ?? request.url ?? request.path ?? '')
     : undefined;
+  const bodyRecord = isRecord(body) ? body : undefined;
+  const explicitDiagnosticRequest = isDiagnosticRequest(bodyRecord, null);
+  const preAdmissionPromptCandidate = inspectResearchPreAdmissionPromptText(body).promptText;
+  const boundedPromptCandidate = explicitDiagnosticRequest
+    ? preAdmissionPromptCandidate
+    : extractBoundedResearchDispatchPromptText(body);
+  const preliminaryPromptCandidate = preAdmissionPromptCandidate ?? boundedPromptCandidate;
+  const preliminaryDiagnosticRequest = explicitDiagnosticRequest
+    || isDiagnosticRequest(bodyRecord, preliminaryPromptCandidate);
+  const forcedDirectResolved = preliminaryDiagnosticRequest
+    ? null
+    : resolveForcedDirectGptEntry(trimmedGptId);
+  const forceDirectModuleRouting = Boolean(forcedDirectResolved) || bypassIntentRouting === true;
+  let gptModuleMap = preliminaryDiagnosticRequest || forcedDirectResolved
+    ? null
+    : await getGptModuleMap();
+  let resolved = forcedDirectResolved
+    ?? (
+      preliminaryDiagnosticRequest
+        ? null
+        : resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any)
+    );
+  const diagnosticPromptCandidate = resolved?.entry.module === RESEARCH_MODULE_NAME
+    ? boundedPromptCandidate
+    : preliminaryDiagnosticRequest
+      ? preliminaryPromptCandidate
+      : extractGptDispatchPromptText(body);
+  const boundedPromptOverride = preliminaryDiagnosticRequest
+    ? { promptText: diagnosticPromptCandidate }
+    : resolved?.entry.module === RESEARCH_MODULE_NAME
+      ? { promptText: boundedPromptCandidate }
+      : undefined;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
-    buildDispatchPayload(body),
+    buildDispatchPayload(body, boundedPromptOverride),
     runtimeExecutionMode
   );
   const suppressTimeoutFallback =
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
   const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
-  const diagnosticTextInput = extractPreparedGptDispatchPromptText(body, preDispatchPayload);
+  const diagnosticTextInput = boundedPromptOverride
+    ? boundedPromptOverride.promptText
+    : extractPreparedGptDispatchPromptText(body, preDispatchPayload);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
-  const rawPrompt = extractGptPromptText(body) ?? diagnosticTextInput ?? '';
-  const normalizedPrompt = extractGptPromptText(preDispatchPayload) ?? diagnosticTextInput ?? '';
+  const rawPrompt = boundedPromptOverride
+    ? boundedPromptOverride.promptText ?? ''
+    : extractGptPromptText(body) ?? diagnosticTextInput ?? '';
+  const normalizedPrompt = boundedPromptOverride
+    ? boundedPromptOverride.promptText ?? ''
+    : extractGptPromptText(preDispatchPayload) ?? diagnosticTextInput ?? '';
+  const rawRequestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
+  const validateResolvedResearchRun = (
+    researchResolution: NonNullable<typeof resolved>,
+  ): AskEnvelope | null => {
+    if (researchResolution.entry.module !== RESEARCH_MODULE_NAME) {
+      return null;
+    }
+
+    const researchMetadata = getModuleMetadata(researchResolution.entry.module);
+    const availableResearchActions = researchMetadata?.actions ?? [];
+    const requestedResearchAction = resolveGptModuleRequestedActionAlias(
+      rawRequestedAction,
+      availableResearchActions,
+    );
+    const researchAction = pickGptModuleAction(
+      availableResearchActions,
+      requestedResearchAction,
+      researchMetadata?.defaultAction ?? null,
+    );
+
+    if (researchAction === RESEARCH_ACTION_NAME) {
+      try {
+        normalizeResearchModulePayload(buildResearchModulePreflightPayload(body));
+      } catch (error: unknown) {
+        if (!isResearchRequestValidationError(error)) {
+          throw error;
+        }
+        return {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message,
+          },
+          _route: {
+            ...baseRoute,
+            module: RESEARCH_MODULE_NAME,
+            action: RESEARCH_ACTION_NAME,
+            matchMethod: researchResolution.matchMethod,
+            route: researchResolution.entry.route,
+            availableActions: availableResearchActions,
+            moduleVersion: (researchMetadata as any)?.version ?? null,
+          },
+        };
+      }
+    }
+
+    return null;
+  };
+
+  if (resolved && !preliminaryDiagnosticRequest) {
+    const researchValidationFailure = validateResolvedResearchRun(resolved);
+    if (researchValidationFailure) {
+      return researchValidationFailure;
+    }
+  }
+
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'ingress', {
     traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
@@ -1011,7 +1122,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  const rawRequestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const writePlaneClassification = classifyGptRequestPlane({
     body,
     promptText: normalizedPrompt || rawPrompt || null,
@@ -1062,10 +1172,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     action: writePlaneClassification.action ?? "query",
   });
 
-  const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
-  const forceDirectModuleRouting = Boolean(forcedDirectResolved) || bypassIntentRouting === true;
-  let gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
-  let resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
   if (!resolved) {
     const recovery = await recoverUnknownGptEntry({
       gptId: trimmedGptId,
@@ -1075,6 +1181,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     });
     gptModuleMap = recovery.gptModuleMap;
     resolved = resolveForcedDirectGptEntry(trimmedGptId) ?? recovery.resolved;
+    if (resolved) {
+      const researchValidationFailure = validateResolvedResearchRun(resolved);
+      if (researchValidationFailure) {
+        return researchValidationFailure;
+      }
+    }
   }
   if (!resolved) {
     logger?.warn?.("gpt.dispatch.lookup.unknown", {
@@ -1171,8 +1283,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     undefined,
     moduleMetadata?.defaultAction ?? null
   );
+  const memoryClassificationBody = activeEntry.module === RESEARCH_MODULE_NAME
+    ? {
+        action: rawRequestedAction,
+        prompt: boundedPromptCandidate,
+      }
+    : body;
   const memoryInterception = classifyGptMemoryInterception({
-    body,
+    body: memoryClassificationBody,
     availableActions,
     fallbackActionCandidate,
     forceDirectModuleRouting,
@@ -1717,6 +1835,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'updateRoster'
         && isBackstageRosterPersistenceError(err);
+      const isResearchValidationFailure =
+        activeEntry.module === RESEARCH_MODULE_NAME
+        && action === RESEARCH_ACTION_NAME
+        && isResearchRequestValidationError(err);
       const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
       const dispatchErrorMessage = isDispatchTimeout
         ? buildDispatchTimeoutMessage(timeoutMs)
@@ -1911,7 +2033,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: {
         code: isDispatchTimeout
           ? "MODULE_TIMEOUT"
-          : (isRosterValidationFailure || isRosterPersistenceFailure)
+          : (isRosterValidationFailure || isRosterPersistenceFailure || isResearchValidationFailure)
             ? err.code
             : "MODULE_ERROR",
         message: dispatchErrorMessage,
