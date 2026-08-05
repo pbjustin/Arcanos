@@ -645,9 +645,11 @@ describeWithDatabase('Backstage storyline lifecycle on PostgreSQL 18', () => {
         serialized_data: string;
         storage_sequence: string;
       }>(
-        `SELECT serialized_data, storage_sequence::TEXT AS storage_sequence
-         FROM backstage_story_beats
-         ORDER BY storage_sequence ASC, id ASC`
+        `SELECT
+           beat.serialized_data,
+           beat.storage_sequence::TEXT AS storage_sequence
+         FROM backstage_story_beats AS beat
+         ORDER BY beat.storage_sequence ASC, beat.id ASC`
       );
       expect(stored.rows.map(row => row.storage_sequence)).toEqual(
         Array.from({ length: 100 }, (_unused, index) => String(index + 1))
@@ -769,9 +771,11 @@ describeWithDatabase('Backstage storyline lifecycle on PostgreSQL 18', () => {
       serialized_data: string;
       storage_sequence: string;
     }>(
-      `SELECT serialized_data, storage_sequence::TEXT AS storage_sequence
-       FROM backstage_story_beats
-       ORDER BY storage_sequence ASC, id ASC`
+      `SELECT
+         beat.serialized_data,
+         beat.storage_sequence::TEXT AS storage_sequence
+       FROM backstage_story_beats AS beat
+       ORDER BY beat.storage_sequence ASC, beat.id ASC`
     );
     expect(stored.rows.map(row => row.storage_sequence)).toEqual(['1', '2', '3', '4']);
     expect(stored.rows.map(row => JSON.parse(row.serialized_data))).toEqual(
