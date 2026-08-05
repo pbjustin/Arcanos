@@ -40,6 +40,7 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES: Object.freeze({}),
   applyBackstageRosterMutation: jest.fn(),
   applyBackstageStorylineMutation: jest.fn(),
+  isTransactionCommitAmbiguousError: jest.fn(() => false),
   loadMemory: mockLoadMemory,
   query: mockQuery,
   saveMemory: mockSaveMemory,

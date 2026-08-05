@@ -140,7 +140,8 @@ isolated PostgreSQL 18 service with database
 `npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
 their dedicated test-only URL variables. The fencing command includes the
 Backstage storyline forward/runtime/rollback DDL, advisory-lock concurrency,
-retention-order, and legacy-containment suite. CI sets
+mixed-version table-writer fencing, retention order, and legacy-containment
+suite. CI sets
 `BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE=1`, so a missing storyline test
 URL fails instead of silently skipping. Local runs must likewise use an explicit
 disposable database; neither command should inherit an ambient `DATABASE_URL`.

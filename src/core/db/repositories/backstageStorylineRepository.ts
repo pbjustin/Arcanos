@@ -49,6 +49,11 @@ export async function applyBackstageStorylineMutation(
     ]
   );
 
+  //audit Assumption: mixed-version writers may still use the legacy INSERT without taking the advisory lock; failure risk: a paired-null row interleaves with cleanup or collides with authoritative ordering; expected invariant: every legacy write is either visible before containment starts or commits after this mutation; handling strategy: hold a relation writer fence while ranking, pruning, inserting, and reading, without blocking ordinary SELECTs.
+  await client.query(
+    'LOCK TABLE backstage_story_beats IN SHARE ROW EXCLUSIVE MODE'
+  );
+
   const revisionResult = await client.query<{ revision: string }>(
     'SELECT txid_current()::TEXT AS revision'
   );
@@ -57,7 +62,7 @@ export async function applyBackstageStorylineMutation(
     throw new Error('Backstage storyline transaction revision was unavailable.');
   }
 
-  //audit Assumption: pre-contract JSONB rows have no exact caller-byte evidence; failure risk: one legacy row defeats the new response bound; expected invariant: only object rows with a bounded deterministic serialization survive the first mutation; handling strategy: backfill at most the newest retained set from PostgreSQL text, then remove every uncontained row in this same transaction.
+  //audit Assumption: pre-contract and mixed-version JSONB rows have no exact caller-byte evidence; failure risk: one legacy row defeats the new response bound or collides with an existing sequence; expected invariant: only bounded object rows survive and every admitted legacy row follows authoritative state; handling strategy: densely rank authoritative rows first, then at most the newest retained legacy set, before removing every uncontained row in this same transaction.
   await client.query(
     `WITH newest_legacy AS MATERIALIZED (
        SELECT id, created_at
@@ -69,19 +74,50 @@ export async function applyBackstageStorylineMutation(
          AND octet_length(convert_to(data::TEXT, 'UTF8')) <= $1
        ORDER BY created_at DESC, id DESC
        LIMIT $2
-     ), legacy AS MATERIALIZED (
+     ), admitted AS MATERIALIZED (
+       SELECT
+         beat.id,
+         beat.serialized_data,
+         beat.storage_sequence,
+         beat.created_at,
+         FALSE AS is_legacy
+       FROM backstage_story_beats AS beat
+       WHERE beat.serialized_data IS NOT NULL
+
+       UNION ALL
+
+       SELECT
+         beat.id,
+         beat.data::TEXT AS serialized_data,
+         NULL::BIGINT AS storage_sequence,
+         newest_legacy.created_at,
+         TRUE AS is_legacy
+       FROM backstage_story_beats AS beat
+       INNER JOIN newest_legacy
+         ON newest_legacy.id = beat.id
+     ), ordered AS MATERIALIZED (
        SELECT
          id,
-         ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC)::BIGINT
-           AS storage_sequence
-       FROM newest_legacy
+         serialized_data,
+         ROW_NUMBER() OVER (
+           ORDER BY
+             is_legacy ASC,
+             CASE WHEN NOT is_legacy THEN storage_sequence END ASC,
+             CASE WHEN is_legacy THEN created_at END ASC,
+             id ASC
+         )::BIGINT AS storage_sequence
+       FROM admitted
      )
      UPDATE backstage_story_beats AS beat
      SET
-       serialized_data = beat.data::TEXT,
-       storage_sequence = legacy.storage_sequence
-     FROM legacy
-     WHERE beat.id = legacy.id`,
+       serialized_data = ordered.serialized_data,
+       storage_sequence = ordered.storage_sequence
+     FROM ordered
+     WHERE beat.id = ordered.id
+       AND (
+         beat.serialized_data IS DISTINCT FROM ordered.serialized_data
+         OR beat.storage_sequence IS DISTINCT FROM ordered.storage_sequence
+       )`,
     [BACKSTAGE_STORYLINE_MAX_BYTES, BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS]
   );
 

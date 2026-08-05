@@ -43,10 +43,14 @@ export {
 
 // Query exports
 export {
+  isTransactionCommitAmbiguousError,
   query,
   transaction,
+  TransactionCommitAmbiguousError,
+  TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE,
   type DbQueryOptions,
-  type DbQueryTraceContext
+  type DbQueryTraceContext,
+  type DbTransactionOptions
 } from './query.js';
 export {
   AUDITED_TRANSIENT_READ_QUERIES,

@@ -9,6 +9,23 @@ const mockTransactionClientQuery = jest.fn();
 const mockSaveMemory = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
+const MOCK_TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE =
+  'DB_TRANSACTION_COMMIT_OUTCOME_UNKNOWN';
+
+class MockTransactionCommitAmbiguousError extends Error {
+  readonly code = MOCK_TRANSACTION_COMMIT_AMBIGUOUS_ERROR_CODE;
+
+  constructor(cause: unknown) {
+    super('Database transaction commit outcome is unknown.', { cause });
+    this.name = 'TransactionCommitAmbiguousError';
+  }
+}
+
+function mockIsTransactionCommitAmbiguousError(
+  value: unknown
+): value is MockTransactionCommitAmbiguousError {
+  return value instanceof MockTransactionCommitAmbiguousError;
+}
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 const { applyBackstageStorylineMutation } =
@@ -37,6 +54,7 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES,
   applyBackstageRosterMutation: jest.fn(),
   applyBackstageStorylineMutation,
+  isTransactionCommitAmbiguousError: mockIsTransactionCommitAmbiguousError,
   query: mockQuery,
   transaction: mockTransaction,
   saveMemory: mockSaveMemory
@@ -275,6 +293,10 @@ describe('backstage-booker storyline lifecycle containment', () => {
     await expect(trackStoryline(insertedBeat)).resolves.toEqual(returnedBeats);
 
     expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { commitErrorMode: 'ambiguous' }
+    );
     expect(mockQuery).not.toHaveBeenCalled();
 
     const calls = transactionQueryCalls();
@@ -282,6 +304,10 @@ describe('backstage-booker storyline lifecycle containment', () => {
       normalizeSql(sql) === 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
     );
     const lockIndex = calls.findIndex(([sql]) => sql.includes('pg_advisory_xact_lock'));
+    const tableLockIndex = calls.findIndex(([sql]) =>
+      normalizeSql(sql)
+      === 'LOCK TABLE backstage_story_beats IN SHARE ROW EXCLUSIVE MODE'
+    );
     const revisionIndex = calls.findIndex(([sql]) => sql.includes('txid_current'));
     const legacyUpdateIndex = calls.findIndex(([sql]) => {
       const normalized = normalizeSql(sql);
@@ -313,7 +339,8 @@ describe('backstage-booker storyline lifecycle containment', () => {
 
     expect(isolationIndex).toBe(0);
     expect(lockIndex).toBeGreaterThan(isolationIndex);
-    expect(revisionIndex).toBeGreaterThan(lockIndex);
+    expect(tableLockIndex).toBeGreaterThan(lockIndex);
+    expect(revisionIndex).toBeGreaterThan(tableLockIndex);
     expect(legacyUpdateIndex).toBeGreaterThan(revisionIndex);
     expect(nullCleanupIndex).toBeGreaterThan(legacyUpdateIndex);
     expect(retentionDeleteIndex).toBeGreaterThan(nullCleanupIndex);
@@ -355,7 +382,12 @@ describe('backstage-booker storyline lifecycle containment', () => {
     );
 
     const legacySql = normalizeSql(legacyUpdateCall?.[0] ?? '');
-    expect(legacySql).toContain('ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC)');
+    expect(legacySql).toContain('FALSE AS is_legacy');
+    expect(legacySql).toContain('TRUE AS is_legacy');
+    expect(legacySql).toMatch(
+      /ROW_NUMBER\(\) OVER \( ORDER BY is_legacy ASC, CASE WHEN NOT is_legacy THEN storage_sequence END ASC, CASE WHEN is_legacy THEN created_at END ASC, id ASC \)::BIGINT/u
+    );
+    expect(legacySql).not.toContain('MAX(storage_sequence)');
     expect(legacySql).not.toMatch(/created_at\s*[<>]=?\s*(?:NOW|CURRENT_DATE)/iu);
     expect(normalizeSql(retentionDeleteCall?.[0] ?? '')).not.toContain('created_at');
 
@@ -382,6 +414,85 @@ describe('backstage-booker storyline lifecycle containment', () => {
 
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on a delayed ambiguous commit without duplicating later fallback state', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const seedBeat = { sequence: 'seed' };
+    const seedRevision = nextTransactionRevision += 1n;
+    configureSuccessfulStorylineTransaction(
+      storylineRows([seedBeat]),
+      seedRevision.toString()
+    );
+    await expect(trackStoryline(seedBeat)).resolves.toEqual([seedBeat]);
+
+    const ambiguousBeat = { sequence: 'ambiguous' };
+    configureSuccessfulStorylineTransaction(
+      storylineRows([seedBeat, ambiguousBeat]),
+      (seedRevision + 1n).toString()
+    );
+
+    let signalMutationPrepared: (() => void) | undefined;
+    const mutationPrepared = new Promise<void>(resolve => {
+      signalMutationPrepared = resolve;
+    });
+    let rejectCommit: ((error: unknown) => void) | undefined;
+    const commitAcknowledgement = new Promise<never>((_resolve, reject) => {
+      rejectCommit = reject;
+    });
+
+    mockTransaction.mockImplementationOnce(async (
+      callback: (client: { query: typeof mockTransactionClientQuery }) => Promise<unknown>
+    ) => {
+      await callback({ query: mockTransactionClientQuery });
+      signalMutationPrepared?.();
+      return commitAcknowledgement;
+    });
+
+    const ambiguousResult = trackStoryline(ambiguousBeat);
+    const ambiguousExpectation = expect(ambiguousResult).rejects.toMatchObject({
+      code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+      message: 'Storyline persistence could not be confirmed.'
+    });
+    await mutationPrepared;
+
+    const newerBeat = { sequence: 'newer' };
+    configureSuccessfulStorylineTransaction(
+      storylineRows([seedBeat, ambiguousBeat, newerBeat]),
+      (seedRevision + 2n).toString()
+    );
+    nextTransactionRevision = seedRevision + 2n;
+    await expect(trackStoryline(newerBeat)).resolves.toEqual([
+      seedBeat,
+      ambiguousBeat,
+      newerBeat
+    ]);
+    const snapshotCallsBeforeAmbiguousFailure = mockSaveMemory.mock.calls.length;
+
+    rejectCommit?.(new MockTransactionCommitAmbiguousError(
+      Object.assign(new Error('commit acknowledgement lost'), {
+        code: 'ECONNRESET'
+      })
+    ));
+    await ambiguousExpectation;
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(mockSaveMemory).toHaveBeenCalledTimes(
+      snapshotCallsBeforeAmbiguousFailure
+    );
+
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('database unavailable before commit'), {
+        code: '08006'
+      })
+    );
+    await expect(trackStoryline({ sequence: 'fallback' })).resolves.toEqual([
+      seedBeat,
+      ambiguousBeat,
+      newerBeat,
+      { sequence: 'fallback' }
+    ]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 
   it('caps the directly used volatile store at 100 without expiring old beats by age', () => {

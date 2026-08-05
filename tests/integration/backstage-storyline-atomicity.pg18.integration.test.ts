@@ -172,6 +172,29 @@ async function waitForBlockedAdvisoryLock(
   throw new Error('Second storyline connection did not block on the advisory lock.');
 }
 
+async function waitForBlockedStorylineTableWrite(
+  observer: Client,
+  blockedPid: number
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await observer.query<{ granted: boolean }>(
+      `SELECT granted
+       FROM pg_locks
+       WHERE locktype = 'relation'
+         AND relation = 'backstage_story_beats'::regclass
+         AND mode = 'RowExclusiveLock'
+         AND pid = $1`,
+      [blockedPid]
+    );
+    if (result.rows.some(row => row.granted === false)) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('Legacy storyline writer did not block on the table writer fence.');
+}
+
 async function createLegacyStoryBeatTable(client: Client): Promise<void> {
   await client.query(
     `CREATE TABLE backstage_story_beats (
@@ -537,6 +560,107 @@ describeWithDatabase('Backstage storyline lifecycle on PostgreSQL 18', () => {
       }
       if (secondTransactionOpen) {
         await second.query('ROLLBACK');
+      }
+    }
+  }, 15_000);
+
+  test('fences mixed-version writers and retains legacy beats after authoritative state', async () => {
+    const values: string[] = [];
+    const parameters: unknown[] = [];
+    for (let sequence = 1; sequence <= 98; sequence += 1) {
+      const offset = parameters.length;
+      values.push(
+        `($${offset + 1}::UUID, '{}'::JSONB, $${offset + 2}::TEXT, $${offset + 3}::BIGINT, NOW())`
+      );
+      parameters.push(
+        sequence === 1
+          ? 'ffffffff-ffff-4fff-bfff-ffffffffffff'
+          : `00000000-0000-4000-8000-${sequence.toString().padStart(12, '0')}`,
+        JSON.stringify({ sequence }),
+        sequence
+      );
+    }
+    await observer.query(
+      `INSERT INTO backstage_story_beats (
+         id,
+         data,
+         serialized_data,
+         storage_sequence,
+         created_at
+       )
+       VALUES ${values.join(', ')}`,
+      parameters
+    );
+
+    const beat99 = { sequence: 99 };
+    const legacyBeat = { sequence: 'legacy' };
+    const beat100 = { sequence: 100 };
+    let firstTransactionOpen = false;
+    let legacyInsert: Promise<unknown> | null = null;
+
+    try {
+      await first.query('BEGIN');
+      firstTransactionOpen = true;
+      const firstResult = await applyBackstageStorylineMutation(
+        first,
+        JSON.stringify(beat99)
+      );
+
+      legacyInsert = second.query(
+        `INSERT INTO backstage_story_beats (id, data, created_at)
+         VALUES (
+           '00000000-0000-4000-8000-000000000000'::UUID,
+           $1::JSONB,
+           clock_timestamp()
+         )`,
+        [JSON.stringify(legacyBeat)]
+      );
+      void legacyInsert.catch(() => undefined);
+      await waitForBlockedStorylineTableWrite(observer, secondPid);
+
+      await first.query('COMMIT');
+      firstTransactionOpen = false;
+      await legacyInsert;
+
+      expect(firstResult.retainedBeats.map(beat => beat.sequence)).toEqual(
+        Array.from({ length: 99 }, (_unused, index) => index + 1)
+      );
+
+      await first.query('BEGIN');
+      firstTransactionOpen = true;
+      const finalResult = await applyBackstageStorylineMutation(
+        first,
+        JSON.stringify(beat100)
+      );
+      await first.query('COMMIT');
+      firstTransactionOpen = false;
+
+      expect(finalResult.retainedBeats.map(beat => beat.sequence)).toEqual([
+        ...Array.from({ length: 98 }, (_unused, index) => index + 2),
+        'legacy',
+        100
+      ]);
+
+      const stored = await observer.query<{
+        serialized_data: string;
+        storage_sequence: string;
+      }>(
+        `SELECT serialized_data, storage_sequence::TEXT AS storage_sequence
+         FROM backstage_story_beats
+         ORDER BY storage_sequence ASC, id ASC`
+      );
+      expect(stored.rows.map(row => row.storage_sequence)).toEqual(
+        Array.from({ length: 100 }, (_unused, index) => String(index + 1))
+      );
+      expect(stored.rows.map(row => JSON.parse(row.serialized_data).sequence)).toEqual(
+        finalResult.retainedBeats.map(beat => beat.sequence)
+      );
+    } finally {
+      if (firstTransactionOpen) {
+        await first.query('ROLLBACK');
+      }
+      if (legacyInsert) {
+        await legacyInsert.catch(() => undefined);
       }
     }
   }, 15_000);

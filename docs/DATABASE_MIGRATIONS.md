@@ -102,13 +102,18 @@ PostgreSQL's canonical deparsed expression; same-named or reserved-verifier
 drift fails closed. No source-validation command applies this migration.
 
 The first successful post-upgrade storyline mutation runs under the shared
-storyline advisory transaction lock. It admits at most the newest 100 legacy
-JSON-object rows whose PostgreSQL serialization satisfies the byte contract,
-stores that serialization, inserts the new exact caller-validated serialization,
-removes every uncontained or non-finite legacy row, prunes to 100 total rows,
-and reads the bounded chronological state before commit. The transaction
-explicitly uses `READ COMMITTED` before taking its fixed advisory lock so a
-waiting writer observes the preceding committed mutation. This transition
+storyline advisory transaction lock and a `SHARE ROW EXCLUSIVE` relation lock.
+The relation lock lets ordinary reads continue while fencing legacy binaries
+that insert without taking the advisory lock: an older write is either visible
+before containment begins or commits after the current mutation. The mutation
+admits at most the newest 100 legacy JSON-object rows whose PostgreSQL
+serialization satisfies the byte contract, densely ranks existing authoritative
+rows before those admitted legacy rows without arithmetic on stored BIGINT
+extremes, stores each admitted serialization, inserts the new exact
+caller-validated serialization, removes every uncontained or non-finite legacy
+row, prunes to 100 total rows, and reads the bounded chronological state before
+commit. The transaction explicitly uses `READ COMMITTED` before taking its
+fixed locks so a waiting writer observes the preceding committed mutation. This transition
 intentionally makes oversized, non-object, non-finite, and out-of-retention
 pre-contract rows ineligible for the new public timeline rather than returning
 an unbounded legacy value.

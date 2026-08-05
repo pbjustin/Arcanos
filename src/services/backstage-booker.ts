@@ -12,6 +12,7 @@ import {
   AUDITED_TRANSIENT_READ_QUERIES,
   applyBackstageRosterMutation,
   applyBackstageStorylineMutation,
+  isTransactionCommitAmbiguousError,
   query,
   saveMemory,
   transaction
@@ -580,10 +581,14 @@ export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]>
   let mutationResult: Awaited<ReturnType<typeof applyBackstageStorylineMutation>>;
   try {
     mutationResult = await transaction(
-      client => applyBackstageStorylineMutation(client, serializedData)
+      client => applyBackstageStorylineMutation(client, serializedData),
+      { commitErrorMode: 'ambiguous' }
     );
   } catch (error: unknown) {
-    if (!isRetryableBackstageStorylinePersistenceCause(error)) {
+    if (
+      isTransactionCommitAmbiguousError(error)
+      || !isRetryableBackstageStorylinePersistenceCause(error)
+    ) {
       throw new BackstageStorylinePersistenceError(error);
     }
     console.warn(

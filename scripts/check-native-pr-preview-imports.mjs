@@ -446,7 +446,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/core/db/repositories/backstageStorylineRepository.ts',
-    '053c61698f2ad0116191f0558b6d405764b3557d94cf5cf7a6dce255dea9f4fc',
+    '7f0ce80fce04c46ab23fd10673fb21ac09b3daa2799fb9377657e4fac838dca7',
   ],
   [
     'scripts/start-railway-service.mjs',

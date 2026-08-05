@@ -111,6 +111,7 @@ interface StorylineFixtureRow {
 const STORYLINE_TRANSACTION_PHASES = Object.freeze([
   'isolation',
   'advisory-lock',
+  'table-write-fence',
   'revision',
   'legacy-backfill',
   'null-cleanup',
@@ -429,6 +430,17 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
         parameters.length === 2
         && parameters.every(value => Number.isSafeInteger(value)),
         'PREVIEW_BACKSTAGE_STORYLINE_LOCK_INVALID'
+      );
+      return { rows: [] };
+    }
+    if (
+      sql
+      === 'LOCK TABLE backstage_story_beats IN SHARE ROW EXCLUSIVE MODE'
+    ) {
+      recordPhase('table-write-fence');
+      requireStorylineFixtureInvariant(
+        parameters.length === 0,
+        'PREVIEW_BACKSTAGE_STORYLINE_TABLE_LOCK_INVALID'
       );
       return { rows: [] };
     }

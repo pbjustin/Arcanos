@@ -922,7 +922,7 @@ function expectedBackstageStorylineContractPayload(requestCase) {
       firstResponseLastSequence: 101,
       freshReadObservedPriorAcceptedBeat: true,
       mutationCount: 2,
-      queryPhaseCount: 18,
+      queryPhaseCount: 20,
       responseCount: 25,
       responseLimit: 25,
       retainedCount: 100,
