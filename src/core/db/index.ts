@@ -80,6 +80,11 @@ export {
 } from './repositories/backstageRosterRepository.js';
 
 export {
+  applyBackstageStorylineMutation,
+  type BackstageStorylineMutationResult
+} from './repositories/backstageStorylineRepository.js';
+
+export {
   logExecution,
   logExecutionBatch
 } from './repositories/executionLogRepository.js';

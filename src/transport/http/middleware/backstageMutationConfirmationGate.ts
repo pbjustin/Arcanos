@@ -1,7 +1,14 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { getRequestAuthenticatedActorKey } from '@platform/runtime/security.js';
-import { resolveBackstageMutationHttpOperation } from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import {
+  resolveBackstageMutationHttpOperation,
+  type BackstageMutationHttpOperation
+} from '@services/controlPlane/backstageMutationHttpBoundary.js';
+import {
+  isBackstageStorylineValidationError,
+  parseBackstageStorylinePayload
+} from '@shared/backstage/backstageStoryline.js';
 import { confirmGate } from './confirmGate.js';
 
 const BACKSTAGE_MUTATION_CONFIRMATION_WORKSPACE_ID =
@@ -11,6 +18,38 @@ const backstageMutationConfirmationApplied = Symbol('backstageMutationConfirmati
 type BackstageMutationConfirmationRequest = Request & {
   [backstageMutationConfirmationApplied]?: true;
 };
+
+function normalizeStorylineMutationBody(
+  req: Request,
+  operation: BackstageMutationHttpOperation
+): void {
+  if (operation.action !== 'trackStoryline') {
+    return;
+  }
+
+  if (operation.ingress === 'direct') {
+    req.body = parseBackstageStorylinePayload(req.body);
+    return;
+  }
+
+  const bodyRecord = req.body
+    && typeof req.body === 'object'
+    && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : null;
+  const storylinePayload = operation.ingress === 'dispatch'
+    ? bodyRecord && Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
+      ? bodyRecord.payload
+      : {}
+    : bodyRecord && Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
+      ? bodyRecord.payload
+      : req.body;
+  const normalizedPayload = parseBackstageStorylinePayload(storylinePayload);
+  req.body = {
+    ...(bodyRecord ?? {}),
+    payload: normalizedPayload
+  };
+}
 
 /** Require the existing confirmation contract only for admitted Backstage mutations. */
 export function createBackstageMutationConfirmationGate(): RequestHandler {
@@ -43,6 +82,19 @@ export function createBackstageMutationConfirmationGate(): RequestHandler {
               message: 'Control-plane operation is not permitted.',
             },
           });
+          return;
+        }
+
+        try {
+          normalizeStorylineMutationBody(req, operation);
+        } catch (error: unknown) {
+          if (!isBackstageStorylineValidationError(error)) {
+            throw error;
+          }
+
+          // Let the ingress-specific handler render its established validation shape,
+          // but never issue a confirmation challenge for an invalid storyline beat.
+          next();
           return;
         }
 

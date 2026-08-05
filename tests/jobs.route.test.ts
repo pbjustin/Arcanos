@@ -6,6 +6,8 @@ import {
   issueJobReadCapability,
 } from '../src/shared/jobs/jobReadCapability.js';
 import { buildGptIdempotencyScopeHash } from '../src/shared/gpt/gptIdempotency.js';
+import { buildQueuedGptBackstageMutationAdmission } from '../src/shared/gpt/asyncGptJob.js';
+import { BACKSTAGE_STORYLINE_MAX_BYTES } from '../src/shared/backstage/backstageStoryline.js';
 import { buildAuthenticatedCredentialActorKey } from '../src/shared/security/opaqueSecret.js';
 
 const getJobByIdMock = jest.fn();
@@ -53,6 +55,7 @@ const LOCAL_AGENT_JOB_ID = '99999999-9999-4999-8999-999999999999';
 const DAG_NODE_JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const GPT_ACCESS_JOB_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const BRIDGE_JOB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const STORYLINE_JOB_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const JOB_READ_SECRET = 'jobs-route-read-capability-secret-1234567890';
 const BRIDGE_SECRET = 'bridge-cancellation-actor-secret';
 const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
@@ -118,6 +121,14 @@ function expectNoStore(
   for (const response of responses) {
     expect(response.headers['cache-control']).toContain('no-store');
   }
+}
+
+function buildLargeStorylineBeats() {
+  return Array.from({ length: 25 }, (_value, index) => ({
+    sequence: index + 1,
+    summary: `storyline-beat-${index + 1}`,
+    detail: `${String(index + 1).padStart(2, '0')}:${'x'.repeat(11_000)}`,
+  }));
 }
 
 describe('/jobs routes', () => {
@@ -210,6 +221,146 @@ describe('/jobs routes', () => {
       },
       error: null
     });
+  });
+
+  it('preserves a valid large queued Backstage storyline result admitted before execution', async () => {
+    const beats = buildLargeStorylineBeats();
+    expect(Buffer.byteLength(JSON.stringify(beats), 'utf8')).toBeGreaterThan(256 * 1024);
+    expect(beats.every(
+      (beat) => Buffer.byteLength(JSON.stringify(beat), 'utf8') <= BACKSTAGE_STORYLINE_MAX_BYTES
+    )).toBe(true);
+
+    getJobByIdMock.mockResolvedValue({
+      id: STORYLINE_JOB_ID,
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-08-05T10:00:00.000Z',
+      updated_at: '2026-08-05T10:01:00.000Z',
+      completed_at: '2026-08-05T10:01:00.000Z',
+      retention_until: '2026-08-06T10:01:00.000Z',
+      idempotency_until: '2026-08-06T10:01:00.000Z',
+      expires_at: null,
+      error_message: null,
+      input: {
+        gptId: 'backstage',
+        body: {
+          action: 'trackStoryline',
+          payload: { sequence: 25, summary: 'Close the current rivalry chapter.' },
+        },
+        requestPath: '/gpt/backstage',
+        executionModeReason: 'explicit_async_request',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'trackStoryline',
+          principalId: 'operator:storyline-job-test',
+        }),
+      },
+      output: {
+        ok: true,
+        result: beats,
+        _route: {
+          gptId: 'backstage',
+          module: 'BACKSTAGE:BOOKER',
+          route: 'backstage-booker',
+          action: 'trackStoryline',
+          timestamp: '2026-08-05T10:01:00.000Z',
+        },
+      },
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+
+    const response = await getWithJobReadToken(
+      `/jobs/${STORYLINE_JOB_ID}/result`,
+      STORYLINE_JOB_ID
+    );
+
+    expect(response.status).toBe(200);
+    expectNoStore(response);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(Number(response.headers['x-response-bytes'])).toBeGreaterThan(256 * 1024);
+    expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(512 * 1024);
+    expect(response.body.result.result).toHaveLength(25);
+    expect(response.body.result.result).toEqual(beats);
+  });
+
+  it('returns the same non-duplicating large Backstage storyline status over JSON and SSE', async () => {
+    const beats = buildLargeStorylineBeats();
+    expect(Buffer.byteLength(JSON.stringify(beats), 'utf8')).toBeGreaterThan(256 * 1024);
+    expect(beats.every(
+      (beat) => Buffer.byteLength(JSON.stringify(beat), 'utf8') <= BACKSTAGE_STORYLINE_MAX_BYTES
+    )).toBe(true);
+
+    const storylineJob = {
+      id: STORYLINE_JOB_ID,
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-08-05T10:00:00.000Z',
+      updated_at: '2026-08-05T10:01:00.000Z',
+      completed_at: '2026-08-05T10:01:00.000Z',
+      retention_until: '2026-08-06T10:01:00.000Z',
+      idempotency_until: '2026-08-06T10:01:00.000Z',
+      expires_at: null,
+      error_message: null,
+      input: {
+        gptId: 'backstage',
+        body: {
+          action: 'trackStoryline',
+          payload: { sequence: 25, summary: 'Close the current rivalry chapter.' },
+        },
+        requestPath: '/gpt/backstage',
+        executionModeReason: 'explicit_async_request',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'trackStoryline',
+          principalId: 'operator:storyline-job-test',
+        }),
+      },
+      output: {
+        ok: true,
+        result: beats,
+        _route: {
+          gptId: 'backstage',
+          module: 'BACKSTAGE:BOOKER',
+          route: 'backstage-booker',
+          action: 'trackStoryline',
+          timestamp: '2026-08-05T10:01:00.000Z',
+        },
+      },
+      cancel_requested_at: null,
+      cancel_reason: null,
+    };
+    getJobByIdMock.mockResolvedValue(storylineJob);
+
+    const statusResponse = await getWithJobReadToken(
+      `/jobs/${STORYLINE_JOB_ID}`,
+      STORYLINE_JOB_ID
+    );
+    const streamResponse = await getWithJobReadToken(
+      `/jobs/${STORYLINE_JOB_ID}/stream`,
+      STORYLINE_JOB_ID
+    );
+
+    expect(statusResponse.status).toBe(200);
+    expectNoStore(statusResponse, streamResponse);
+    expect(statusResponse.headers['x-response-truncated']).toBeUndefined();
+    expect(Number(statusResponse.headers['x-response-bytes'])).toBeGreaterThan(256 * 1024);
+    expect(Number(statusResponse.headers['x-response-bytes'])).toBeLessThanOrEqual(512 * 1024);
+    expect(statusResponse.body.output).toBeNull();
+    expect(statusResponse.body.result.result).toEqual(beats);
+
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers['content-type']).toContain('text/event-stream');
+    const terminalBlock = streamResponse.text
+      .split('\n\n')
+      .find((block) => block.startsWith('event: terminal\n'));
+    expect(terminalBlock).toBeDefined();
+    const terminalData = JSON.parse(
+      terminalBlock!.split('\n').find((line) => line.startsWith('data: '))!.slice(6)
+    );
+    expect(terminalData).toEqual(statusResponse.body);
+    expect(terminalData.output).toBeNull();
+    expect(terminalData.result.result).toEqual(beats);
+    expect(getJobByIdMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).not.toHaveBeenCalled();
   });
 
   it('returns an explicit not_found payload for the canonical result route', async () => {

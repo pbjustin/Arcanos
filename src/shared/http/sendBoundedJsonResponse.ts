@@ -11,12 +11,14 @@ export function sendBoundedJsonResponse<T extends object>(
     logEvent: string;
     statusCode?: number;
     maxBytes?: number;
+    maxBytesCeiling?: number;
   }
 ) {
   const preparedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
     logger: req.logger,
     logEvent: options.logEvent,
     maxBytes: options.maxBytes,
+    maxBytesCeiling: options.maxBytesCeiling,
   });
 
   const targetResponse = options.statusCode === undefined

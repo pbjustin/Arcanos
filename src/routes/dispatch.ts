@@ -11,6 +11,7 @@ import { backstageMutationConfirmationGate } from '@transport/http/middleware/ba
 import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
+import { BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageStoryline.js';
 import {
   buildResolvedGptDispatchBody,
   isDagDispatchAction,
@@ -79,6 +80,9 @@ function gptStatusCode(envelope: AskEnvelope): number {
   }
   if (code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE) {
     return 503;
+  }
+  if (code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE) {
+    return 500;
   }
   if (code === 'SYSTEM_STATE_CONFLICT') {
     return 409;

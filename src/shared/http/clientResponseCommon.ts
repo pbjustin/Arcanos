@@ -3,6 +3,7 @@ import type { RequestScopedLogger } from './types.js';
 const DEFAULT_CLIENT_RESPONSE_MAX_BYTES = 32 * 1024;
 const MIN_CLIENT_RESPONSE_MAX_BYTES = 2 * 1024;
 const MAX_CLIENT_RESPONSE_MAX_BYTES = 256 * 1024;
+const ABSOLUTE_CLIENT_RESPONSE_MAX_BYTES = 512 * 1024;
 export const GAMING_RESPONSE_MAX_CHARACTERS = 4_096;
 export const STRING_PREVIEW_MAX_BYTES = 4 * 1024;
 const TRUNCATION_MARKER = '\n...[truncated]';
@@ -101,14 +102,23 @@ function readPositiveIntegerEnv(name: string): number | undefined {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-export function resolveClientResponseMaxBytes(explicitMaxBytes?: number): number {
+export function resolveClientResponseMaxBytes(
+  explicitMaxBytes?: number,
+  maximumBytes = MAX_CLIENT_RESPONSE_MAX_BYTES
+): number {
   const candidate = explicitMaxBytes ?? readPositiveIntegerEnv('CLIENT_RESPONSE_MAX_BYTES');
+  const boundedMaximum = Number.isFinite(maximumBytes) && maximumBytes > 0
+    ? Math.min(
+        ABSOLUTE_CLIENT_RESPONSE_MAX_BYTES,
+        Math.max(MIN_CLIENT_RESPONSE_MAX_BYTES, Math.trunc(maximumBytes))
+      )
+    : MAX_CLIENT_RESPONSE_MAX_BYTES;
 
   if (candidate === undefined || !Number.isFinite(candidate) || candidate <= 0) {
-    return DEFAULT_CLIENT_RESPONSE_MAX_BYTES;
+    return Math.min(DEFAULT_CLIENT_RESPONSE_MAX_BYTES, boundedMaximum);
   }
 
-  return Math.min(MAX_CLIENT_RESPONSE_MAX_BYTES, Math.max(MIN_CLIENT_RESPONSE_MAX_BYTES, candidate));
+  return Math.min(boundedMaximum, Math.max(MIN_CLIENT_RESPONSE_MAX_BYTES, candidate));
 }
 
 export function resolveGptPublicResponseMaxBytes(explicitMaxBytes?: number): number {

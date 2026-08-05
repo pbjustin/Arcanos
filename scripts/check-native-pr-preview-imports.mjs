@@ -25,6 +25,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
   'src/routes/genericJobsRouter.ts',
+  'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageStoryline.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',

@@ -15,6 +15,10 @@ import {
 import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import {
+  BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
+} from '@shared/backstage/backstageStoryline.js';
+import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
   JOB_READ_AUTH_UNAVAILABLE_CODE,
   JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
   JOB_READ_CAPABILITY_HEADER_NAME,
@@ -160,12 +164,48 @@ function sendJobsJsonResponse(
   res: express.Response,
   payload: object,
   logEvent: string,
-  statusCode = 200
+  statusCode = 200,
+  maxBytes?: number
 ) {
   return sendBoundedJsonResponse(req, res, payload, {
     logEvent,
     statusCode,
+    ...(maxBytes === undefined
+      ? {}
+      : { maxBytes, maxBytesCeiling: maxBytes }),
   });
+}
+
+function isBackstageStorylineJob(job: GenericJobData | null): boolean {
+  if (!job || typeof job.input !== 'object' || job.input === null || Array.isArray(job.input)) {
+    return false;
+  }
+
+  const admission = (job.input as Record<string, unknown>).backstageMutationAdmission;
+  if (typeof admission !== 'object' || admission === null || Array.isArray(admission)) {
+    return false;
+  }
+
+  const record = admission as Record<string, unknown>;
+  return record.module === BACKSTAGE_MODULE_NAME && record.action === 'trackStoryline';
+}
+
+function isCompletedBackstageStorylineJob(job: GenericJobData | null): job is GenericJobData {
+  return job?.status === 'completed' && isBackstageStorylineJob(job);
+}
+
+function buildPublicJobStatusPayload(job: GenericJobData) {
+  const payload = buildStoredJobStatusPayload(job);
+  if (!isCompletedBackstageStorylineJob(job)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    // The canonical result already contains the completed module envelope. Avoid
+    // serializing the same potentially large storyline beat array a second time.
+    output: null,
+  };
 }
 
 function sendJobRepositoryUnavailable(
@@ -366,8 +406,12 @@ router.get(
     sendJobsJsonResponse(
       req,
       res,
-      buildStoredJobStatusPayload(job),
-      'jobs.status.response'
+      buildPublicJobStatusPayload(job),
+      'jobs.status.response',
+      200,
+      isCompletedBackstageStorylineJob(job)
+        ? BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
+        : undefined
     );
   })
 );
@@ -428,7 +472,11 @@ router.get(
       req,
       res,
       jobLookup,
-      'jobs.result.response'
+      'jobs.result.response',
+      200,
+      isBackstageStorylineJob(publicJob)
+        ? BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
+        : undefined
     );
   })
 );
@@ -650,7 +698,7 @@ router.get(
           return;
         }
 
-        const payload = buildStoredJobStatusPayload(job);
+        const payload = buildPublicJobStatusPayload(job);
         if (job.status !== lastObservedStatus) {
           writeSseEvent(
             res,

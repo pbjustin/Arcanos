@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-05T00:09:52.700Z",
+  "generatedAt": "2026-08-05T18:34:59.788Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -438,6 +438,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/backstageRosterRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageStorylineRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/dagArtifactRepository.ts"
@@ -2315,6 +2318,9 @@
           "relativePath": "src/shared/backstage/backstageRoster.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageStoryline.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -3130,7 +3136,13 @@
           "relativePath": "tests/backstage-booker.roster.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker.storyline-lifecycle.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-storyline-schema.test.ts"
         },
         {
           "relativePath": "tests/backstage.route.test.ts"
@@ -3628,6 +3640,9 @@
           "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
         },
         {
@@ -3815,6 +3830,9 @@
         },
         {
           "relativePath": "tests/module-registry.test.ts"
+        },
+        {
+          "relativePath": "tests/moduleConversationPersistence.backstage-storyline-lifecycle.test.ts"
         },
         {
           "relativePath": "tests/moduleConversationPersistence.test.ts"

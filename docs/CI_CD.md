@@ -138,9 +138,12 @@ The required `PostgreSQL Fencing & Local Agent Concurrency` job provisions an
 isolated PostgreSQL 18 service with database
 `arcanos_audit_pg18_20260727`. It runs both
 `npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
-their dedicated test-only URL variables. Local runs must likewise use an
-explicit disposable database; neither command should inherit an ambient
-`DATABASE_URL`.
+their dedicated test-only URL variables. The fencing command includes the
+Backstage storyline forward/runtime/rollback DDL, advisory-lock concurrency,
+retention-order, and legacy-containment suite. CI sets
+`BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE=1`, so a missing storyline test
+URL fails instead of silently skipping. Local runs must likewise use an explicit
+disposable database; neither command should inherit an ambient `DATABASE_URL`.
 
 ## Deploy (Railway)
 Deployment workflows are repository-specific; verify current trigger and required

@@ -5,6 +5,8 @@ import type { McpRequestContext } from '../context.js';
 import { MCP_FLAGS } from '../registry.js';
 import { mcpError, mcpText } from '../errors.js';
 import { isModuleActionAllowed } from '../modulesAllowlist.js';
+import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import { parseBackstageStorylinePayload } from '@shared/backstage/backstageStoryline.js';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
@@ -82,6 +84,7 @@ import {
   notExposed,
   buildBackstageRosterPersistenceMcpError,
   buildBackstageRosterValidationMcpError,
+  buildBackstageStorylineValidationMcpError,
   buildResearchRequestValidationMcpError,
   buildClearRecheckInput,
   wrapTool
@@ -1339,6 +1342,8 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const invokedModuleMetadata = getModuleMetadata(args.module);
       const isResearchRun = invokedModuleMetadata?.name === RESEARCH_MODULE_NAME
         && args.action === RESEARCH_ACTION_NAME;
+      const isBackstageStorylineRun = invokedModuleMetadata?.name === BACKSTAGE_MODULE_NAME
+        && args.action === 'trackStoryline';
       if (isResearchRun) {
         try {
           normalizeResearchModulePayload(args.payload ?? {});
@@ -1347,6 +1352,23 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
             'modules.invoke',
             error,
             ctx,
+          );
+          if (!validationError) {
+            throw error;
+          }
+          return validationError;
+        }
+      }
+
+      if (isBackstageStorylineRun) {
+        try {
+          args.payload = parseBackstageStorylinePayload(args.payload);
+        } catch (error: unknown) {
+          const validationError = buildBackstageStorylineValidationMcpError(
+            invokedModuleMetadata?.name,
+            args.action,
+            error,
+            ctx
           );
           if (!validationError) {
             throw error;
@@ -1373,6 +1395,11 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           args.action,
           error,
           ctx
+        ) ?? buildBackstageStorylineValidationMcpError(
+          invokedModuleMetadata?.name,
+          args.action,
+          error,
+          ctx
         ) ?? buildBackstageRosterPersistenceMcpError(
           args.module,
           args.action,
@@ -1383,6 +1410,15 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           throw error;
         }
         return moduleError;
+      }
+      if (isBackstageStorylineRun && Array.isArray(out)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Tracked storyline beat; returning ${out.length} recent beats.`
+          }],
+          structuredContent: { value: out }
+        };
       }
       return mcpText(out);
     })

@@ -1,6 +1,12 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_STORYLINE_MAX_BYTES,
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+} from '../src/shared/backstage/backstageStoryline.js';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -67,6 +73,14 @@ function buildApp() {
   app.use(requestContext);
   app.use('/gpt', gptRouter);
   return app;
+}
+
+function buildLargeStorylineBeats() {
+  return Array.from({ length: 25 }, (_value, index) => ({
+    sequence: index + 1,
+    summary: `storyline-beat-${index + 1}`,
+    detail: `${String(index + 1).padStart(2, '0')}:${'x'.repeat(11_000)}`,
+  }));
 }
 
 function buildOversizedRuntimeInspectionResponse() {
@@ -571,6 +585,186 @@ describe('gpt router universal dispatch', () => {
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
+
+  it('preserves all 25 raw Backstage storyline beats beyond generic response shaping', async () => {
+    const controlPlaneToken = 'gpt-storyline-response-control-token-1234567890';
+    const controlPlaneEnvironment = [
+      'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+      'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+      'ARCANOS_CONTROL_PLANE_SCOPES',
+    ] as const;
+    const previousEnvironment = new Map(
+      controlPlaneEnvironment.map((name) => [name, process.env[name]] as const)
+    );
+    const beats = buildLargeStorylineBeats();
+
+    expect(Buffer.byteLength(JSON.stringify(beats), 'utf8')).toBeGreaterThan(256 * 1024);
+    expect(beats.every(
+      (beat) => Buffer.byteLength(JSON.stringify(beat), 'utf8') <= BACKSTAGE_STORYLINE_MAX_BYTES
+    )).toBe(true);
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: true,
+      plan: {
+        matchedId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'trackStoryline',
+        availableActions: ['trackStoryline'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact',
+      },
+      _route: {
+        gptId: 'backstage',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'trackStoryline',
+        timestamp: '2026-08-05T00:00:00.000Z',
+      },
+    });
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: beats,
+      _route: {
+        gptId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'trackStoryline',
+        timestamp: '2026-08-05T00:00:00.000Z',
+      },
+    });
+
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:gpt-storyline-response';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+
+    try {
+      const response = await request(buildApp())
+        .post('/gpt/backstage')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-Confirmed', 'yes')
+        .send({
+          action: 'trackStoryline',
+          payload: {
+            sequence: 25,
+            summary: 'Close the current rivalry chapter.',
+          },
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.headers['x-response-truncated']).toBeUndefined();
+      expect(Number(response.headers['x-response-bytes'])).toBeGreaterThan(256 * 1024);
+      expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(512 * 1024);
+      expect(response.body.result).toHaveLength(25);
+      expect(response.body.result).toEqual(beats);
+    } finally {
+      for (const name of controlPlaneEnvironment) {
+        const previousValue = previousEnvironment.get(name);
+        if (previousValue === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = previousValue;
+        }
+      }
+    }
+  });
+
+  it.each(['backstage', 'backstage-booker'])(
+    'maps a typed storyline persistence failure from /gpt/%s to a safe HTTP 500',
+    async (gptId) => {
+      const controlPlaneToken = 'gpt-storyline-failure-control-token-1234567890';
+      const controlPlaneEnvironment = [
+        'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+        'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+        'ARCANOS_CONTROL_PLANE_SCOPES',
+      ] as const;
+      const previousEnvironment = new Map(
+        controlPlaneEnvironment.map((name) => [name, process.env[name]] as const)
+      );
+      mockResolveGptRouting.mockResolvedValueOnce({
+        ok: true,
+        plan: {
+          matchedId: gptId,
+          module: 'BACKSTAGE:BOOKER',
+          route: 'backstage-booker',
+          action: 'trackStoryline',
+          availableActions: ['trackStoryline'],
+          moduleVersion: null,
+          moduleDescription: null,
+          matchMethod: 'exact',
+        },
+        _route: {
+          gptId,
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'trackStoryline',
+          timestamp: '2026-08-05T00:00:00.000Z',
+        },
+      });
+      mockRouteGptRequest.mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+          message: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+        },
+        _route: {
+          gptId,
+          module: 'BACKSTAGE:BOOKER',
+          route: 'backstage-booker',
+          action: 'trackStoryline',
+          timestamp: '2026-08-05T00:00:00.000Z',
+        },
+      });
+
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:gpt-storyline-failure';
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+
+      try {
+        const response = await request(buildApp())
+          .post(`/gpt/${gptId}`)
+          .set('Authorization', `Bearer ${controlPlaneToken}`)
+          .set('X-Confirmed', 'yes')
+          .send({
+            action: 'trackStoryline',
+            payload: { sequence: 25, summary: 'Close the rivalry chapter.' },
+          });
+
+        expect(response.status).toBe(500);
+        expect(response.body).toMatchObject({
+          ok: false,
+          error: {
+            code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+            message: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+          },
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action: 'trackStoryline',
+          },
+        });
+        expect(JSON.stringify(response.body)).not.toContain(
+          BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE
+        );
+        expect(response.headers['x-response-truncated']).toBeUndefined();
+        expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+        expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
+        expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
+        expect(mockGetWorkerControlStatus).not.toHaveBeenCalled();
+        expect(mockGetWorkerControlHealth).not.toHaveBeenCalled();
+        expect(mockBuildSafetySelfHealSnapshot).not.toHaveBeenCalled();
+        expect(mockGetDiagnosticsSnapshot).not.toHaveBeenCalled();
+      } finally {
+        for (const name of controlPlaneEnvironment) {
+          const previousValue = previousEnvironment.get(name);
+          if (previousValue === undefined) {
+            delete process.env[name];
+          } else {
+            process.env[name] = previousValue;
+          }
+        }
+      }
+    }
+  );
 
   it('routes explicit query actions directly through the module dispatcher without intent rewrites', async () => {
     const response = await request(buildApp())

@@ -43,6 +43,11 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
+import {
+  type BackstageStorylineValidationError,
+  isBackstageStorylineValidationError,
+  parseBackstageStorylinePayload
+} from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
   isResearchRequestValidationError,
@@ -566,6 +571,63 @@ function preflightResearchCapabilityRun(
   }
 }
 
+function preflightBackstageStorylineCapabilityRun(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (
+    req.params.id !== BACKSTAGE_MODULE_NAME
+    && req.params.id !== 'backstage-booker'
+    && req.params.id !== 'backstage'
+  ) {
+    next();
+    return;
+  }
+
+  const body = readCapabilityRunBody(req.body);
+  if (!body.ok || typeof body.action !== 'string') {
+    next();
+    return;
+  }
+
+  let metadata: CapabilityMetadata | null;
+  try {
+    metadata = getModuleMetadata(req.params.id);
+  } catch {
+    next();
+    return;
+  }
+  if (
+    metadata?.name !== BACKSTAGE_MODULE_NAME
+    || body.action.trim() !== 'trackStoryline'
+  ) {
+    next();
+    return;
+  }
+
+  try {
+    const normalizedPayload = parseBackstageStorylinePayload(body.payload);
+    (req.body as Record<string, unknown>).payload = normalizedPayload;
+    next();
+  } catch (error: unknown) {
+    if (!isBackstageStorylineValidationError(error)) {
+      throw error;
+    }
+
+    sendGptAccessResult(res, {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: error.message,
+        },
+      },
+    });
+  }
+}
+
 function resolveResearchDispatchValidationError(
   plan: DispatchPlan,
   policy: DispatchPolicyDecision,
@@ -593,6 +655,39 @@ function resolveResearchDispatchValidationError(
     return null;
   } catch (error: unknown) {
     if (!isResearchRequestValidationError(error)) {
+      throw error;
+    }
+    return error;
+  }
+}
+
+function resolveBackstageStorylineDispatchValidationError(
+  plan: DispatchPlan,
+  policy: DispatchPolicyDecision,
+): BackstageStorylineValidationError | null {
+  const runner = policy.registryAction?.runner;
+  if (
+    runner?.kind !== 'gpt-access-capability'
+    || runner.capabilityAction !== 'trackStoryline'
+  ) {
+    return null;
+  }
+
+  let metadata: CapabilityMetadata | null;
+  try {
+    metadata = getModuleMetadata(runner.capabilityId);
+  } catch {
+    return null;
+  }
+  if (metadata?.name !== BACKSTAGE_MODULE_NAME) {
+    return null;
+  }
+
+  try {
+    plan.payload = parseBackstageStorylinePayload(plan.payload);
+    return null;
+  } catch (error: unknown) {
+    if (!isBackstageStorylineValidationError(error)) {
       throw error;
     }
     return error;
@@ -1020,6 +1115,23 @@ async function runGptAccessCapabilityAction(input: {
     }
 
     if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && input.action === 'trackStoryline'
+      && isBackstageStorylineValidationError(error)
+    ) {
+      return {
+        statusCode: 400,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_VALIDATION_ERROR',
+            message: error.message
+          }
+        }
+      };
+    }
+
+    if (
       metadata.name === RESEARCH_MODULE_NAME
       && input.action === RESEARCH_ACTION_NAME
       && isResearchRequestValidationError(error)
@@ -1232,6 +1344,22 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
     return;
   }
 
+  const storylineValidationError =
+    resolveBackstageStorylineDispatchValidationError(plan, policy);
+  if (storylineValidationError) {
+    sendGptAccessResult(res, {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: storylineValidationError.message,
+        },
+      },
+    });
+    return;
+  }
+
   if (body.dryRun) {
     res.json({
       ok: true,
@@ -1333,6 +1461,7 @@ router.post(
   mapCapabilityRunConfirmationToken,
   validateCapabilityIdempotencyKey,
   preflightResearchCapabilityRun,
+  preflightBackstageStorylineCapabilityRun,
   confirmCapabilityRunWhenRequired,
   runGptAccessCapability
 );

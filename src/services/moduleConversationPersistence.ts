@@ -76,7 +76,7 @@ export async function persistModuleConversation(
     });
 
     if (input.moduleName === "BACKSTAGE:BOOKER") {
-      await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, input.responsePayload, now);
+      await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, now);
     }
     return;
   }
@@ -118,7 +118,7 @@ export async function persistModuleConversation(
   });
 
   if (input.moduleName === "BACKSTAGE:BOOKER") {
-    await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, input.responsePayload, now);
+    await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, now);
   }
 }
 
@@ -258,7 +258,6 @@ async function persistModuleSummary(key: string, snapshot: ModuleInteractionSnap
 async function persistBackstageBookerConvenienceKeys(
   action: string,
   requestPayload: unknown,
-  responsePayload: unknown,
   timestamp: string
 ): Promise<void> {
   const normalizedAction = action.trim();
@@ -292,20 +291,6 @@ async function persistBackstageBookerConvenienceKeys(
         });
       });
     }
-  }
-
-  //audit Assumption: trackStoryline returns chronological storyline collection; failure risk: no short-form recall in new chats; expected invariant: latest beat timeline mirrored; handling strategy: save when array result present.
-  if (normalizedAction === "trackStoryline" && Array.isArray(responsePayload)) {
-    await saveMemory("backstage-storybeats:latest", {
-      beats: responsePayload,
-      savedAt: timestamp
-    }).catch((error: unknown) => {
-      modulePersistenceLogger.warn("Failed to persist latest Backstage storyline beats convenience key", {
-        operation: "persistBackstageBookerConvenienceKeys",
-        key: "backstage-storybeats:latest",
-        error: resolveErrorMessage(error, "unknown")
-      });
-    });
   }
 }
 

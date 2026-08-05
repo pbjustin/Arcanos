@@ -5,6 +5,13 @@ import {
   BackstageRosterPersistenceError,
   BackstageRosterValidationError,
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+  BackstageStorylinePersistenceError,
+  BackstageStorylineValidationError,
+} from '../src/shared/backstage/backstageStoryline.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -311,6 +318,44 @@ describe('routeGptRequest backstage booker auto-routing', () => {
   );
 
   it.each(['backstage', 'backstage-booker'])(
+    'maps typed storyline validation failures for canonical alias %s without persistence',
+    async (gptId) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageStorylineValidationError(
+          'Storyline beat payload must be a JSON object.'
+        )
+      );
+
+      const envelope = await routeGptRequest({
+        gptId,
+        body: {
+          action: 'trackStoryline',
+          payload: [],
+        },
+        requestId: `req-${gptId}-invalid-storyline`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+          message: 'Storyline beat payload must be a JSON object.',
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'trackStoryline',
+        },
+      });
+      expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+        'BACKSTAGE:BOOKER',
+        'trackStoryline',
+        []
+      );
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['backstage', 'backstage-booker'])(
     'maps transactional roster failures for canonical alias %s to a retryable persistence code',
     async (gptId) => {
       mockDispatchModuleAction.mockRejectedValueOnce(
@@ -339,6 +384,45 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         },
       });
       expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['backstage', 'backstage-booker'])(
+    'maps non-transient storyline persistence failures for canonical alias %s without persistence side effects',
+    async (gptId) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageStorylinePersistenceError(
+          new Error('sensitive database invariant detail')
+        )
+      );
+
+      const envelope = await routeGptRequest({
+        gptId,
+        body: {
+          action: 'trackStoryline',
+          payload: { sequence: 25, summary: 'Close the rivalry chapter.' },
+        },
+        requestId: `req-${gptId}-storyline-persistence-failure`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+          message: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'trackStoryline',
+        },
+      });
+      expect(JSON.stringify(envelope)).not.toContain(
+        BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE
+      );
+      expect(JSON.stringify(envelope)).not.toContain('sensitive database invariant detail');
+      expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+      expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
     }
   );
 

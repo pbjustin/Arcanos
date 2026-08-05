@@ -640,6 +640,37 @@ describe('client response guards', () => {
     });
   });
 
+  it('keeps generic array shaping and the ordinary 256 KiB response ceiling unchanged', () => {
+    const shaped = shapeClientRouteResult(
+      Array.from({ length: 25 }, (_value, index) => ({ sequence: index + 1 }))
+    );
+    const prepared = prepareBoundedClientJsonPayload({
+      result: 'x'.repeat(300 * 1024),
+    }, {
+      maxBytes: 512 * 1024,
+    });
+
+    expect(shaped).toEqual(
+      Array.from({ length: 8 }, (_value, index) => ({ sequence: index + 1 }))
+    );
+    expect(prepared.maxResponseBytes).toBe(256 * 1024);
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  it('caps action-specific response ceilings at an absolute 512 KiB', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      result: 'x'.repeat(600 * 1024),
+    }, {
+      maxBytes: 1024 * 1024,
+      maxBytesCeiling: 1024 * 1024,
+    });
+
+    expect(prepared.maxResponseBytes).toBe(512 * 1024);
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(512 * 1024);
+  });
+
   it('drops malformed or unsafe Gaming evidence requests at the client boundary', () => {
     const shaped = shapeClientRouteResult({
       ok: true,

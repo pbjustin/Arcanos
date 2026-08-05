@@ -64,6 +64,10 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain("JOB_WORKER_BUDGET_REQUIRE_DATABASE: '1'");
     expect(workflow).toContain('JOB_STALE_RECOVERY_TEST_DATABASE_URL:');
     expect(workflow).toContain("JOB_STALE_RECOVERY_REQUIRE_DATABASE: '1'");
+    expect(workflow).toContain('BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL:');
+    expect(workflow).toContain(
+      "BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE: '1'"
+    );
     expect(readWorkflow('package.json')).toContain(
       'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts'
     );
@@ -71,6 +75,9 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain('run: npm run test:postgres-fencing');
     expect(readWorkflow('package.json')).toContain(
       'tests/integration/job-worker-budget-identity.pg18.integration.test.ts'
+    );
+    expect(readWorkflow('package.json')).toContain(
+      'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts'
     );
   });
 });

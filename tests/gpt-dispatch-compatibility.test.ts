@@ -5,11 +5,19 @@ import {
   RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
   ResearchRequestValidationError,
 } from '../src/shared/researchRequest.js';
+import {
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+  BackstageStorylinePersistenceError,
+  parseBackstageStorylinePayload,
+} from '../src/shared/backstage/backstageStoryline.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockDispatchModuleAction = jest.fn();
+const mockPersistModuleConversation = jest.fn(async () => undefined);
 const mockInitializeModuleRegistry = jest.fn(async () => undefined);
 const mockRecordDispatcherRoute = jest.fn();
 const mockRecordUnknownGpt = jest.fn();
@@ -58,7 +66,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/moduleConversationPersistence.js', () => ({
-  persistModuleConversation: jest.fn().mockResolvedValue(undefined),
+  persistModuleConversation: mockPersistModuleConversation,
 }));
 
 jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
@@ -115,6 +123,9 @@ const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core
 const { listPromptDebugTraces } = await import('../src/services/promptDebugTraceService.js');
 const { universalDispatch } = await import('../src/routes/dispatch.js');
 const {
+  backstageMutationConfirmationGate,
+} = await import('../src/transport/http/middleware/backstageMutationConfirmationGate.js');
+const {
   dispatchResearchGptAdmissionBoundary,
   dispatchResearchGptPreflightBoundary,
 } = await import('../src/routes/_core/researchGptPreflight.js');
@@ -144,6 +155,22 @@ function buildResearchDispatchApp(
     dispatchResearchGptPreflightBoundary,
     universalDispatch,
   );
+  return app;
+}
+
+function buildBackstageDispatchApp() {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.controlPlanePrincipal = {
+      audience: 'control-plane-http',
+      role: 'operator',
+      principalId: 'operator:storyline-dispatch-test',
+      scopes: ['mcp:invoke'],
+    };
+    next();
+  });
+  app.post('/dispatch', backstageMutationConfirmationGate, universalDispatch);
   return app;
 }
 
@@ -448,6 +475,115 @@ describe('gpt dispatch compatibility', () => {
       }),
     }));
   });
+
+  it.each([
+    ['array', []],
+    ['null', null],
+    ['scalar', 'not-a-storyline-object'],
+  ] as const)(
+    'preserves an invalid %s storyline payload through /dispatch without a confirmation challenge',
+    async (_shape, payload) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        backstage: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'trackStoryline',
+      });
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, _action: string, dispatchedPayload: unknown) =>
+          parseBackstageStorylinePayload(dispatchedPayload)
+      );
+
+      const response = await request(buildBackstageDispatchApp())
+        .post('/dispatch')
+        .send({
+          target: 'gpt',
+          gptId: 'backstage',
+          action: 'trackStoryline',
+          payload,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+          message: 'Storyline beat payload must be a JSON object.',
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'trackStoryline',
+        },
+      });
+      expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+      expect(response.headers['x-confirmation-status']).toBeUndefined();
+      expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+        'BACKSTAGE:BOOKER',
+        'trackStoryline',
+        payload
+      );
+    }
+  );
+
+  it.each(['backstage', 'backstage-booker'])(
+    'maps a non-transient storyline persistence failure for %s through /dispatch to a safe HTTP 500',
+    async (gptId) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        [gptId]: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'trackStoryline',
+      });
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageStorylinePersistenceError(
+          new Error('sensitive database invariant detail')
+        )
+      );
+
+      const response = await request(buildBackstageDispatchApp())
+        .post('/dispatch')
+        .set('X-Confirmed', 'yes')
+        .send({
+          target: 'gpt',
+          gptId,
+          action: 'trackStoryline',
+          payload: { sequence: 25, summary: 'Close the rivalry chapter.' },
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+          message: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'trackStoryline',
+        },
+        target: 'gpt',
+        routeFamily: 'dispatch',
+      });
+      expect(JSON.stringify(response.body)).not.toContain(
+        BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE
+      );
+      expect(JSON.stringify(response.body)).not.toContain(
+        'sensitive database invariant detail'
+      );
+      expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+      expect(mockRebuildGptModuleMap).not.toHaveBeenCalled();
+      expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects an over-limit Research /dispatch request after one admission and before work', async () => {
     mockGetGptModuleMap.mockResolvedValue({

@@ -8,6 +8,9 @@ import {
   BackstageRosterValidationError
 } from '../src/shared/backstage/backstageRoster.js';
 import {
+  BackstageStorylineValidationError,
+} from '../src/shared/backstage/backstageStoryline.js';
+import {
   ResearchRequestValidationError,
   RESEARCH_MODULE_NAME,
   RESEARCH_TOPIC_MAX_LENGTH,
@@ -2725,6 +2728,67 @@ describe('/gpt-access gateway', () => {
     expect(logExecutionMock).not.toHaveBeenCalled();
   });
 
+  it('rejects an invalid LLM-planned Backstage storyline before confirmation or execution', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:trackStoryline');
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    getModulesForRegistryMock.mockReturnValue([
+      {
+        id: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+      },
+    ]);
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    const invalidPlannedPayload = Object.assign(Object.create(Array.prototype), {
+      beat: 'hostile prototype must not become durable canon',
+    });
+    responsesCreateMock.mockResolvedValueOnce({
+      status: 'completed',
+      output_parsed: {
+        action: 'BACKSTAGE:BOOKER.trackStoryline',
+        payload: invalidPlannedPayload,
+        confidence: 0.96,
+        requiresConfirmation: true,
+        reason: 'track_storyline',
+        candidates: [
+          {
+            action: 'BACKSTAGE:BOOKER.trackStoryline',
+            confidence: 0.96,
+            reason: 'track_storyline',
+          },
+        ],
+      },
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({ utterance: "what's wrong with the backend?" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Storyline beat payload must be a JSON object.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(response.body).not.toHaveProperty('confirmationChallenge');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('maps worker recovery language to a privileged registered recovery action', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
     hasValidOpenAiKeyMock.mockReturnValue(true);
@@ -3101,6 +3165,80 @@ describe('/gpt-access gateway', () => {
       'updateRoster',
       { name: 'not-an-array', overall: 90 }
     );
+  });
+
+  it('maps typed Backstage storyline validation failures to capability client errors', async () => {
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:trackStoryline');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageStorylineValidationError(
+        'Storyline beat payload must be a JSON object.'
+      )
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run')
+    )).send({
+      action: 'trackStoryline',
+      payload: { beat: 'valid shape reaches the module boundary' },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Storyline beat payload must be a JSON object.',
+    });
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'trackStoryline',
+      { beat: 'valid shape reaches the module boundary' }
+    );
+  });
+
+  it('preflights invalid Backstage storyline payloads before capability confirmation', async () => {
+    allowCapabilityRun('capabilities.run', 'BACKSTAGE:BOOKER:trackStoryline');
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'BACKSTAGE:BOOKER' && capabilityId !== 'backstage-booker') {
+        return null;
+      }
+
+      return {
+        name: 'BACKSTAGE:BOOKER',
+        description: 'Backstage Booker',
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'generateBooking',
+        defaultTimeoutMs: 60_000,
+      };
+    });
+
+    const response = await authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'trackStoryline',
+      payload: [],
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Storyline beat payload must be a JSON object.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
   it('maps typed research validation failures to capability client errors', async () => {

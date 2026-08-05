@@ -66,6 +66,12 @@ import {
   isBackstageRosterValidationError,
   parseBackstageRosterPayload
 } from '@shared/backstage/backstageRoster.js';
+import {
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+  BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES,
+  isBackstageStorylineValidationError,
+  parseBackstageStorylinePayload
+} from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
   buildResearchModulePreflightPayload,
@@ -1077,6 +1083,20 @@ function normalizeBackstageRosterMutationBody(body: unknown): Record<string, unk
   };
 }
 
+function normalizeBackstageStorylineMutationBody(body: unknown): Record<string, unknown> {
+  const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const storylinePayload = Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
+    ? bodyRecord.payload
+    : body;
+
+  return {
+    ...bodyRecord,
+    payload: parseBackstageStorylinePayload(storylinePayload)
+  };
+}
+
 function validateResearchGptRequestBody(body: unknown): void {
   normalizeResearchModulePayload(
     buildResearchModulePreflightPayload(body),
@@ -1832,6 +1852,54 @@ router.post(
               res,
               errorPayload,
               'gpt.response.backstage_roster_validation',
+              400
+            );
+          }
+        }
+
+        if (
+          backstageMutationOperation?.action === 'trackStoryline'
+          && routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+        ) {
+          try {
+            effectiveBody = normalizeBackstageStorylineMutationBody(effectiveBody);
+          } catch (error: unknown) {
+            if (!isBackstageStorylineValidationError(error)) {
+              throw error;
+            }
+
+            requestLogger?.warn?.('gpt.request.backstage_storyline_validation_failed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              action: backstageMutationOperation.action,
+              errorCode: error.code
+            });
+            const errorPayload = buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: backstageMutationOperation.action,
+              code: error.code,
+              message: error.message,
+              route: 'backstage_storyline_validation'
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: backstageMutationOperation.action,
+              status: 400,
+              error: {
+                name: error.code,
+                message: error.message
+              }
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              errorPayload,
+              'gpt.response.backstage_storyline_validation',
               400
             );
           }
@@ -3014,6 +3082,10 @@ router.post(
                   });
                 }
 
+                const isBackstageStorylineResponse =
+                  completedEnvelope._route.module === BACKSTAGE_MODULE_NAME
+                  && completedEnvelope._route.action === 'trackStoryline'
+                  && Array.isArray(completedEnvelope.result);
                 const publicEnvelope = prepareBoundedClientJsonPayload({
                   ...completedEnvelope,
                   ...buildAsyncJobResponseMetadata({
@@ -3024,10 +3096,18 @@ router.post(
                     idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
                     idempotencySource: idempotencyDescriptor.source
                   }),
-                  result: shapeClientRouteResult(completedEnvelope.result),
+                  result: isBackstageStorylineResponse
+                    ? completedEnvelope.result
+                    : shapeClientRouteResult(completedEnvelope.result),
                 }, {
                   logger: req.logger,
                   logEvent: 'gpt.response.async_completed',
+                  ...(isBackstageStorylineResponse
+                    ? {
+                        maxBytes: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES,
+                        maxBytesCeiling: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
+                      }
+                    : {}),
                 });
                 return sendPreparedJsonResponse(res, publicEnvelope);
               }
@@ -3313,6 +3393,8 @@ router.post(
               ? 503
               : envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
               ? 503
+              : envelope.error.code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE
+              ? 500
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
               : unexpectedGamingRouteFailure
@@ -3487,6 +3569,10 @@ router.post(
         }
 
         const responseSerializationStartedAt = Date.now();
+        const isBackstageStorylineResponse =
+          envelope._route.module === BACKSTAGE_MODULE_NAME
+          && envelope._route.action === 'trackStoryline'
+          && Array.isArray(envelope.result);
         const publicEnvelope = prepareBoundedClientJsonPayload({
           ...envelope,
           ...(isDirectModuleQueryGpt(incomingGptId)
@@ -3500,10 +3586,18 @@ router.post(
                 }
               }
             : {}),
-          result: shapeClientRouteResult(envelope.result),
+          result: isBackstageStorylineResponse
+            ? envelope.result
+            : shapeClientRouteResult(envelope.result),
         }, {
           logger: req.logger,
           logEvent: 'gpt.response',
+          ...(isBackstageStorylineResponse
+            ? {
+                maxBytes: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES,
+                maxBytesCeiling: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
+              }
+            : {}),
         });
         requestLogger?.info?.('gpt.response.serialization', {
           endpoint: req.originalUrl,

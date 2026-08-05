@@ -81,6 +81,48 @@ node scripts/run-jest.mjs --testPathPatterns=<db-or-route-pattern> --coverage=fa
 npm run validate:railway
 ```
 
+### Backstage storyline serialized-beat migration
+
+`migrations/20260805_backstage_storyline_serialized_data.sql` adds nullable
+`backstage_story_beats.serialized_data` plus nullable BIGINT
+`storage_sequence`. A validated paired-component constraint requires every
+populated serialization to parse as a JSON object, occupy at most 16,384 bytes
+when converted to UTF-8, carry a positive storage sequence, and retain a finite
+non-null legacy timestamp. The serialized text is the authoritative exact beat
+representation so JSON escapes such as `\\u0000` and unpaired UTF-16 surrogates
+never pass through PostgreSQL's stricter JSONB conversion. New rows retain `{}`
+in the legacy `data` JSONB column only as a compatibility placeholder.
+
+`storage_sequence`, not the caller-visible timestamp, is the deterministic
+append and retention order. Each mutation first compacts the bounded retained
+set to a dense order before appending, so extreme finite timestamps and manual
+BIGINT extremes cannot poison or overflow later writes. Runtime initialization
+verifies both exact additive columns and compares the named constraint through
+PostgreSQL's canonical deparsed expression; same-named or reserved-verifier
+drift fails closed. No source-validation command applies this migration.
+
+The first successful post-upgrade storyline mutation runs under the shared
+storyline advisory transaction lock. It admits at most the newest 100 legacy
+JSON-object rows whose PostgreSQL serialization satisfies the byte contract,
+stores that serialization, inserts the new exact caller-validated serialization,
+removes every uncontained or non-finite legacy row, prunes to 100 total rows,
+and reads the bounded chronological state before commit. The transaction
+explicitly uses `READ COMMITTED` before taking its fixed advisory lock so a
+waiting writer observes the preceding committed mutation. This transition
+intentionally makes oversized, non-object, non-finite, and out-of-retention
+pre-contract rows ineligible for the new public timeline rather than returning
+an unbounded legacy value.
+
+`migrations/20260805_backstage_storyline_serialized_data.rollback.sql` removes
+only the exactly verified named constraint and two nullable storage columns,
+and only before any exact storyline content has been written. Because the text
+column is authoritative while the legacy JSONB value is `{}` for new beats,
+populated storage makes rollback destructive; the rollback therefore refuses
+that state rather than discarding canon. It also fails closed when an owned
+definition has drifted, the constraint is missing, or another object depends on
+the columns. It is provided for reviewed rollback planning and is never run as
+routine validation.
+
 ### Local-agent hardening migration
 
 The additive
