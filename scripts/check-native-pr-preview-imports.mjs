@@ -451,7 +451,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/researchRequest.ts',
-    '807813ff0656608e087dc0966f02d7b307627e8462be191793ab8883424e08a0',
+    '3fc92f358952e766e3bfd3b69018906759b01ad88c642d9ca6aa730926367761',
   ],
 ]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([

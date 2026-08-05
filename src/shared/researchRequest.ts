@@ -12,6 +12,8 @@ export const RESEARCH_STORAGE_TOPIC_COMPONENT_MAX_BYTES = 97;
 
 const RESEARCH_STORAGE_TOPIC_SLUG_MAX_LENGTH = 32;
 const RESEARCH_STORAGE_HASH_SCOPE = 'research-topic-v1:utf16le\0';
+const RESEARCH_REQUEST_INSPECTION_ERROR_MESSAGE =
+  'Research request fields could not be safely inspected.';
 const RESEARCH_PRE_ADMISSION_STRING_SCAN_MAX_LENGTH =
   (RESEARCH_TOPIC_MAX_LENGTH * 2) + 2;
 const RESEARCH_PROMPT_OVER_LIMIT_SENTINEL = 'x'.repeat(
@@ -122,13 +124,62 @@ interface ResearchUrlAssertionOptions {
   requireArray?: boolean;
 }
 
+function inspectResearchRequestValue<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error: unknown) {
+    if (isResearchRequestValidationError(error)) {
+      throw error;
+    }
+    throw new ResearchRequestValidationError(
+      RESEARCH_REQUEST_INSPECTION_ERROR_MESSAGE,
+    );
+  }
+}
+
+function isResearchArray(value: unknown): value is unknown[] {
+  return inspectResearchRequestValue(() => Array.isArray(value));
+}
+
+function researchOwnPropertyDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  return inspectResearchRequestValue(
+    () => Object.getOwnPropertyDescriptor(value, key),
+  );
+}
+
+function researchOwnPropertyDescriptors(value: object): PropertyDescriptorMap {
+  return inspectResearchRequestValue(
+    () => Object.getOwnPropertyDescriptors(value),
+  );
+}
+
+function researchArrayLength(value: unknown[]): number {
+  const descriptor = researchOwnPropertyDescriptor(value, 'length');
+  const length = descriptor && 'value' in descriptor
+    ? descriptor.value
+    : undefined;
+  if (
+    typeof length !== 'number'
+    || !Number.isSafeInteger(length)
+    || length < 0
+  ) {
+    throw new ResearchRequestValidationError(
+      RESEARCH_REQUEST_INSPECTION_ERROR_MESSAGE,
+    );
+  }
+  return length;
+}
+
 function ownDataProperty(value: object, key: PropertyKey): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  const descriptor = researchOwnPropertyDescriptor(value, key);
   return descriptor && 'value' in descriptor ? descriptor.value : undefined;
 }
 
 function hasOwnDataProperty(value: object, key: PropertyKey): boolean {
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  const descriptor = researchOwnPropertyDescriptor(value, key);
   return Boolean(descriptor && 'value' in descriptor);
 }
 
@@ -136,41 +187,71 @@ function copyOwnDataProperties(
   value: object,
   keys: readonly PropertyKey[],
 ): Record<string, unknown> {
-  const copy: Record<string, unknown> = {};
+  const entries: Array<readonly [string, unknown]> = [];
   for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const descriptor = researchOwnPropertyDescriptor(value, key);
     if (descriptor && 'value' in descriptor && typeof key === 'string') {
-      copy[key] = descriptor.value;
+      entries.push([key, descriptor.value]);
     }
   }
-  return copy;
+  return Object.fromEntries(entries);
 }
 
 function copyExplicitResearchPayloadDataProperties(
   value: object,
-  keys: readonly PropertyKey[],
+  keys: readonly PropertyKey[] | null,
+  accessorErrorMessage = 'Research explicit payload fields must be plain data properties.',
 ): Record<string, unknown> {
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  for (const key of Reflect.ownKeys(descriptors)) {
+  const descriptors = researchOwnPropertyDescriptors(value);
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  for (const key of descriptorKeys) {
     const descriptor = descriptors[key as keyof typeof descriptors];
     if (descriptor?.enumerable && !('value' in descriptor)) {
       throw new ResearchRequestValidationError(
-        'Research explicit payload fields must be plain data properties.',
+        accessorErrorMessage,
       );
     }
   }
 
-  const copy: Record<string, unknown> = {};
-  for (const key of keys) {
+  const entries: Array<readonly [string, unknown]> = [];
+  for (const key of keys ?? descriptorKeys) {
     if (typeof key !== 'string') {
       continue;
     }
     const descriptor = descriptors[key];
     if (descriptor?.enumerable && 'value' in descriptor) {
-      copy[key] = descriptor.value;
+      entries.push([key, descriptor.value]);
     }
   }
-  return copy;
+  return Object.fromEntries(entries);
+}
+
+/**
+ * Produces the descriptor-only body consumed by Research GPT preflight before
+ * generic GPT normalization can enumerate request properties.
+ */
+export function snapshotResearchGptPreflightBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || isResearchArray(body)) {
+    return body;
+  }
+
+  const snapshot = copyExplicitResearchPayloadDataProperties(
+    body,
+    null,
+    'Research request fields must be plain data properties.',
+  );
+  const explicitPayload = snapshot.payload;
+  if (
+    explicitPayload
+    && typeof explicitPayload === 'object'
+    && !isResearchArray(explicitPayload)
+  ) {
+    snapshot.payload = copyExplicitResearchPayloadDataProperties(
+      explicitPayload,
+      null,
+    );
+  }
+  return snapshot;
 }
 
 function hasNonWhitespace(value: string): boolean {
@@ -185,13 +266,13 @@ function extractRawLastUserMessageText(
   messages: unknown,
   options: RawResearchPromptOptions,
 ): string | undefined {
-  if (!Array.isArray(messages)) {
+  if (!isResearchArray(messages)) {
     return undefined;
   }
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+  for (let index = researchArrayLength(messages) - 1; index >= 0; index -= 1) {
     const message = ownDataProperty(messages, String(index));
-    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    if (!message || typeof message !== 'object' || isResearchArray(message)) {
       continue;
     }
     if (ownDataProperty(message, 'role') !== 'user') {
@@ -210,19 +291,20 @@ function extractRawLastUserMessageText(
       }
       continue;
     }
-    if (!Array.isArray(content)) {
+    if (!isResearchArray(content)) {
       continue;
     }
 
     let rawLength = 0;
     let rawLengthOverLimit = false;
     const normalizedParts: string[] = [];
-    for (let partIndex = 0; partIndex < content.length; partIndex += 1) {
+    const contentLength = researchArrayLength(content);
+    for (let partIndex = 0; partIndex < contentLength; partIndex += 1) {
       const part = ownDataProperty(content, String(partIndex));
       let text: string | undefined;
       if (typeof part === 'string') {
         text = part;
-      } else if (part && typeof part === 'object' && !Array.isArray(part)) {
+      } else if (part && typeof part === 'object' && !isResearchArray(part)) {
         const textValue = ownDataProperty(part, 'text');
         if (typeof textValue === 'string') {
           text = textValue;
@@ -384,7 +466,7 @@ function inspectBoundedDirectPromptCandidate(
 export function inspectResearchPreAdmissionPromptText(
   body: unknown,
 ): ResearchDispatchPromptInspection {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!body || typeof body !== 'object' || isResearchArray(body)) {
     return inspectRawResearchPromptCandidate(undefined);
   }
 
@@ -397,7 +479,7 @@ export function inspectResearchPreAdmissionPromptText(
   }
 
   const explicitPayload = ownDataProperty(body, 'payload');
-  if (explicitPayload && typeof explicitPayload === 'object' && !Array.isArray(explicitPayload)) {
+  if (explicitPayload && typeof explicitPayload === 'object' && !isResearchArray(explicitPayload)) {
     const explicitInspection = inspectBoundedDirectPromptCandidate(
       explicitPayload,
       RESEARCH_DISPATCH_PROMPT_FIELDS,
@@ -427,13 +509,13 @@ export function buildResearchModulePreflightPayload(
   body: unknown,
   promptFallback?: string,
 ): unknown {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!body || typeof body !== 'object' || isResearchArray(body)) {
     return body;
   }
 
   if (hasOwnDataProperty(body, 'payload')) {
     const explicitPayload = ownDataProperty(body, 'payload');
-    if (!explicitPayload || typeof explicitPayload !== 'object' || Array.isArray(explicitPayload)) {
+    if (!explicitPayload || typeof explicitPayload !== 'object' || isResearchArray(explicitPayload)) {
       return explicitPayload;
     }
 
@@ -442,7 +524,7 @@ export function buildResearchModulePreflightPayload(
       RESEARCH_PREFLIGHT_PAYLOAD_KEYS,
     );
     const hasExplicitPromptAlias = RESEARCH_DISPATCH_PROMPT_ALIAS_KEYS
-      .some((field) => Object.getOwnPropertyDescriptor(explicitPayload, field) !== undefined);
+      .some((field) => researchOwnPropertyDescriptor(explicitPayload, field) !== undefined);
     if (!hasExplicitPromptAlias) {
       for (const field of RESEARCH_DISPATCH_PROMPT_FIELDS) {
         const forwardedValue = ownDataProperty(body, field);
@@ -488,7 +570,7 @@ export function buildResearchModulePreflightPayload(
 }
 
 function buildResearchPromptInspectionPayload(body: unknown): unknown {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!body || typeof body !== 'object' || isResearchArray(body)) {
     return body;
   }
   if (!hasOwnDataProperty(body, 'payload')) {
@@ -496,7 +578,7 @@ function buildResearchPromptInspectionPayload(body: unknown): unknown {
   }
 
   const explicitPayload = ownDataProperty(body, 'payload');
-  if (!explicitPayload || typeof explicitPayload !== 'object' || Array.isArray(explicitPayload)) {
+  if (!explicitPayload || typeof explicitPayload !== 'object' || isResearchArray(explicitPayload)) {
     return explicitPayload;
   }
 
@@ -531,7 +613,7 @@ export function inspectBoundedResearchDispatchPromptText(
   options: ResearchPromptInspectionOptions = {},
 ): ResearchDispatchPromptInspection {
   const payload = buildResearchPromptInspectionPayload(body);
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+  if (!payload || typeof payload !== 'object' || isResearchArray(payload)) {
     return inspectRawResearchPromptCandidate(undefined);
   }
 
@@ -547,7 +629,7 @@ export function inspectBoundedResearchDispatchPromptText(
   if (
     body
     && typeof body === 'object'
-    && !Array.isArray(body)
+    && !isResearchArray(body)
     && hasOwnDataProperty(body, 'payload')
   ) {
     return inspectRawResearchPromptCandidate(
@@ -584,14 +666,14 @@ function snapshotResearchUrlsPreNormalization(
     return null;
   }
 
-  if (!Array.isArray(value)) {
+  if (!isResearchArray(value)) {
     if (options.requireArray) {
       throw new ResearchRequestValidationError('Research URLs must be an array.');
     }
     return null;
   }
 
-  const suppliedLength = value.length;
+  const suppliedLength = researchArrayLength(value);
   if (suppliedLength > RESEARCH_URL_MAX_ITEMS) {
     throw new ResearchRequestValidationError(
       `Research URLs must contain no more than ${RESEARCH_URL_MAX_ITEMS} entries.`,
@@ -668,7 +750,7 @@ export function normalizeResearchRequest(
 
   const metadata = rawMetadata
     && typeof rawMetadata === 'object'
-    && !Array.isArray(rawMetadata)
+    && !isResearchArray(rawMetadata)
     ? rawMetadata as Record<string, unknown>
     : undefined;
 
@@ -706,7 +788,7 @@ export function normalizeResearchModulePayload(
     return normalizeResearchRequest({ topic: payload });
   }
 
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+  if (!payload || typeof payload !== 'object' || isResearchArray(payload)) {
     return normalizeResearchRequest({ topic: undefined });
   }
 

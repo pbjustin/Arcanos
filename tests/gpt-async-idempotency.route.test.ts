@@ -700,6 +700,56 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects an accessor-backed top-level Research body without invoking its getter', async () => {
+    configureResearchRoutingMock();
+    const topicGetter = jest.fn(() => {
+      throw new Error('top-level Research getter must not run');
+    });
+    const body: Record<string, unknown> = {};
+    Object.defineProperty(body, 'topic', {
+      configurable: true,
+      enumerable: true,
+      get: topicGetter,
+    });
+
+    const response = await request(buildApp({ bodyOverride: body }))
+      .post('/gpt/research')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research request fields must be plain data properties.',
+    });
+    expect(topicGetter).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('maps a revoked top-level Research proxy to the typed validation response', async () => {
+    configureResearchRoutingMock();
+    const revokedBody = Proxy.revocable<Record<string, unknown>>({}, {});
+    revokedBody.revoke();
+
+    const response = await request(buildApp({ bodyOverride: revokedBody.proxy }))
+      .post('/gpt/research')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-ratelimit-limit']).toBe('1000000');
+    expect(response.body.error).toMatchObject({
+      code: RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
+      message: 'Research request fields could not be safely inspected.',
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('validates canonical research payloads without reshaping dispatch fields', async () => {
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
     configureResearchRoutingMock();

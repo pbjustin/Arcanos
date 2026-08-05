@@ -690,7 +690,7 @@ export async function executeCustomGptBridgeRequest(
 ): Promise<ExecuteBridgeRequestResult> {
   const startedAtMs = Date.now();
   if (
-    input.request.action === GPT_QUERY_AND_WAIT_ACTION
+    !isGptBridgeSmokeAction(input.request.action)
     && await isRegisteredResearchGptId(input.request.gptId)
   ) {
     try {

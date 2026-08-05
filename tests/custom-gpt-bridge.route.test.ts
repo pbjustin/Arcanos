@@ -323,9 +323,16 @@ describe('Custom GPT bridge route', () => {
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
-  it.each(['/api/bridge/gpt', '/api/openai/gpt-action'])(
-    'rejects an eventual Research run before bridge planning at %s',
-    async (path) => {
+  it.each([
+    ['/api/bridge/gpt', 'default query', undefined],
+    ['/api/bridge/gpt', 'explicit query', 'query'],
+    ['/api/bridge/gpt', 'query_and_wait', 'query_and_wait'],
+    ['/api/openai/gpt-action', 'default query', undefined],
+    ['/api/openai/gpt-action', 'explicit query', 'query'],
+    ['/api/openai/gpt-action', 'query_and_wait', 'query_and_wait'],
+  ] as const)(
+    'rejects an eventual Research run before bridge planning at %s for %s',
+    async (path, _actionName, action) => {
       isRegisteredResearchGptIdMock.mockResolvedValue(true);
 
       const response = await request(buildApp())
@@ -334,7 +341,7 @@ describe('Custom GPT bridge route', () => {
         .send({
           gptId: 'custom-research-alias',
           prompt: `${' '.repeat(500)}x`,
-          action: 'query_and_wait',
+          ...(action ? { action } : {}),
         });
 
       expect(response.status).toBe(400);

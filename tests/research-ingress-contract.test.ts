@@ -28,6 +28,7 @@ const {
   normalizeResearchHttpRequest,
   normalizeResearchModulePayload,
   ResearchRequestValidationError,
+  snapshotResearchGptPreflightBody,
 } = await import('../src/shared/researchRequest.js');
 
 const RESEARCH_URL_MAX_ITEMS = 10;
@@ -359,6 +360,79 @@ describe('ARCANOS research module pre-normalization contract', () => {
 });
 
 describe('canonical GPT research payload preflight', () => {
+  it('preserves ordinary JSON while creating a descriptor-safe preflight snapshot', () => {
+    const body = JSON.parse(`{
+      "__proto__": {"polluted": true},
+      "action": "run",
+      "payload": {
+        "__proto__": {"nestedPolluted": true},
+        "topic": "bounded topic",
+        "urls": ["https://example.com/source"],
+        "metadata": {"source": "fixture"}
+      }
+    }`) as Record<string, unknown>;
+
+    const snapshot = snapshotResearchGptPreflightBody(body);
+
+    expect(snapshot).toEqual(body);
+    expect(snapshot).not.toBe(body);
+    expect((snapshot as { payload: unknown }).payload).not.toBe(body.payload);
+    expect(Object.getPrototypeOf(snapshot)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(snapshot, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf((snapshot as { payload: object }).payload))
+      .toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(
+      (snapshot as { payload: object }).payload,
+      '__proto__',
+    )).toBe(true);
+    expect(({} as { polluted?: boolean; nestedPolluted?: boolean }).polluted).toBeUndefined();
+    expect(({} as { polluted?: boolean; nestedPolluted?: boolean }).nestedPolluted).toBeUndefined();
+  });
+
+  it('translates revoked request and URL proxies into typed validation failures', () => {
+    const revokedBody = Proxy.revocable<Record<string, unknown>>({}, {});
+    const revokedUrls = Proxy.revocable<unknown[]>([], {});
+    revokedBody.revoke();
+    revokedUrls.revoke();
+
+    expect(() => normalizeResearchModulePayload(revokedBody.proxy))
+      .toThrow(ResearchRequestValidationError);
+    expect(() => normalizeResearchModulePayload({
+      topic: 'bounded topic',
+      urls: revokedUrls.proxy,
+    })).toThrow(ResearchRequestValidationError);
+  });
+
+  it('translates hostile descriptor, ownKeys, and array reflection traps', () => {
+    const descriptorPayload = new Proxy({ topic: 'bounded topic' }, {
+      getOwnPropertyDescriptor() {
+        throw new Error('descriptor trap failed');
+      },
+    });
+    const ownKeysPayload = new Proxy({ topic: 'bounded topic' }, {
+      ownKeys() {
+        throw new Error('ownKeys trap failed');
+      },
+    });
+    const urls = new Proxy(['https://example.com/source'], {
+      getOwnPropertyDescriptor(target, property) {
+        if (property === 'length') {
+          throw new Error('array descriptor trap failed');
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+
+    expect(() => normalizeResearchModulePayload(descriptorPayload))
+      .toThrow(ResearchRequestValidationError);
+    expect(() => buildResearchModulePreflightPayload({ payload: ownKeysPayload }))
+      .toThrow(ResearchRequestValidationError);
+    expect(() => normalizeResearchModulePayload({
+      topic: 'bounded topic',
+      urls,
+    })).toThrow(ResearchRequestValidationError);
+  });
+
   it('uses Research module alias order inside an explicit payload', () => {
     const payload = buildResearchModulePreflightPayload({
       payload: {

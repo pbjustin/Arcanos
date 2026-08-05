@@ -11,11 +11,12 @@ import {
   GPT_QUERY_ACTION,
   GPT_QUERY_AND_WAIT_ACTION,
 } from '@shared/gpt/gptJobResult.js';
-import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
+import { resolveRequestedGptAction } from '@shared/gpt/gptRequestAction.js';
 import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 import {
   buildResearchModulePreflightPayload,
   extractBoundedResearchDispatchPromptText,
+  getResearchGptPromptPreflight,
   inspectBoundedResearchDispatchPromptText,
   inspectResearchPreAdmissionPromptText,
   isResearchRequestValidationError,
@@ -24,6 +25,7 @@ import {
   RESEARCH_TOPIC_MAX_LENGTH,
   ResearchRequestValidationError,
   setResearchGptPromptPreflight,
+  snapshotResearchGptPreflightBody,
 } from '@shared/researchRequest.js';
 
 const DEFAULT_DISPATCH_GPT_ID = 'arcanos-core';
@@ -41,6 +43,51 @@ function asRequestRecord(body: unknown): Record<string, unknown> | undefined {
 function ownDataProperty(value: object, key: PropertyKey): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+}
+
+function prepareDescriptorSafeCanonicalBody(req: Request): {
+  normalizedBody: unknown;
+  normalizedBodyRecord: Record<string, unknown> | null;
+} {
+  const bodySnapshot = snapshotResearchGptPreflightBody(req.body);
+  const normalizedBodyRecord = normalizeGptRequestBody(bodySnapshot);
+  const normalizedBody = normalizedBodyRecord ?? bodySnapshot;
+  req.body = normalizedBody;
+  return { normalizedBody, normalizedBodyRecord };
+}
+
+function resolveCanonicalRequestedAction(req: Request, body: unknown): string | null {
+  return resolveRequestedGptAction({
+    body,
+    query: req.query as Record<string, unknown>,
+    gptActionHeader: typeof req.header === 'function'
+      ? req.header('x-gpt-action')
+      : undefined,
+    arcanosActionHeader: typeof req.header === 'function'
+      ? req.header('x-arcanos-action')
+      : undefined,
+  });
+}
+
+function recordCanonicalInspectionFailure(
+  req: Request,
+  error: unknown,
+  validationComplete: boolean,
+): boolean {
+  if (!isResearchRequestValidationError(error)) {
+    return false;
+  }
+
+  // Keep later generic GPT helpers away from the invalid object. The typed
+  // preflight result remains the source of the eventual validation response.
+  req.body = {};
+  setResearchGptPromptPreflight(req, {
+    promptText: null,
+    validationError: error,
+    providerIntended: true,
+    validationComplete,
+  });
+  return true;
 }
 
 /** Mirrors the top-level action that routeGptRequest ultimately consumes. */
@@ -176,8 +223,21 @@ async function prepareCanonicalResearchAdmission(req: Request): Promise<void> {
   }
   canonicalResearchAdmissionAttempted.add(req);
 
-  const normalizedBody = normalizeGptRequestBody(req.body) ?? req.body;
-  const requestedAction = resolveRequestedGptActionFromRequest(req);
+  if (!await isRegisteredResearchGptId(req.params.gptId)) {
+    return;
+  }
+
+  let normalizedBody: unknown;
+  try {
+    ({ normalizedBody } = prepareDescriptorSafeCanonicalBody(req));
+  } catch (error: unknown) {
+    if (recordCanonicalInspectionFailure(req, error, false)) {
+      return;
+    }
+    throw error;
+  }
+
+  const requestedAction = resolveCanonicalRequestedAction(req, normalizedBody);
   const queryAndWaitDefaultsToRun = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const routeQueryDefaultsToRun = requestedAction === GPT_QUERY_ACTION
     || queryAndWaitDefaultsToRun;
@@ -185,10 +245,6 @@ async function prepareCanonicalResearchAdmission(req: Request): Promise<void> {
     normalizedBody,
     routeQueryDefaultsToRun,
   );
-  if (!await isRegisteredResearchGptId(req.params.gptId)) {
-    return;
-  }
-
   const explicitDiagnosticRequest = isDiagnosticRequest(
     asRequestRecord(normalizedBody),
     null,
@@ -214,9 +270,31 @@ async function prepareCanonicalResearchPrompt(req: Request): Promise<void> {
   }
   canonicalResearchValidationAttempted.add(req);
 
-  const normalizedBodyRecord = normalizeGptRequestBody(req.body);
-  const normalizedBody = normalizedBodyRecord ?? req.body;
-  const requestedAction = resolveRequestedGptActionFromRequest(req);
+  if (!await isRegisteredResearchGptId(req.params.gptId)) {
+    return;
+  }
+
+  const admissionPreflight = getResearchGptPromptPreflight(req);
+  if (admissionPreflight?.validationError) {
+    setResearchGptPromptPreflight(req, {
+      ...admissionPreflight,
+      validationComplete: true,
+    });
+    return;
+  }
+
+  let normalizedBody: unknown;
+  let normalizedBodyRecord: Record<string, unknown> | null;
+  try {
+    ({ normalizedBody, normalizedBodyRecord } = prepareDescriptorSafeCanonicalBody(req));
+  } catch (error: unknown) {
+    if (recordCanonicalInspectionFailure(req, error, true)) {
+      return;
+    }
+    throw error;
+  }
+
+  const requestedAction = resolveCanonicalRequestedAction(req, normalizedBody);
   const queryAndWaitDefaultsToRun = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const routeQueryDefaultsToRun = requestedAction === GPT_QUERY_ACTION
     || queryAndWaitDefaultsToRun;
@@ -224,10 +302,6 @@ async function prepareCanonicalResearchPrompt(req: Request): Promise<void> {
     normalizedBody,
     routeQueryDefaultsToRun,
   );
-  if (!await isRegisteredResearchGptId(req.params.gptId)) {
-    return;
-  }
-
   if (queryAndWaitDefaultsToRun && !normalizedBodyRecord) {
     setResearchGptPromptPreflight(req, {
       promptText: null,

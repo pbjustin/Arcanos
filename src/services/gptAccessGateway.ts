@@ -21,6 +21,11 @@ import {
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
+import {
+  isResearchRequestValidationError,
+  normalizeResearchRequest,
+  RESEARCH_MODULE_NAME
+} from '@shared/researchRequest.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { hasConfiguredPurposeBoundCredentialCollision } from '@shared/security/purposeBoundCredential.js';
@@ -1337,6 +1342,9 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     };
   }
 
+  const rawTask = body && typeof body === 'object' && !Array.isArray(body)
+    ? Object.getOwnPropertyDescriptor(body, 'task')?.value
+    : undefined;
   const parsed = createAiJobRequestSchema.safeParse(body);
   if (!parsed.success) {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
@@ -1423,6 +1431,34 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
         }
       }
     };
+  }
+
+  if (routeResolution.plan.module === RESEARCH_MODULE_NAME) {
+    try {
+      normalizeResearchRequest({ topic: rawTask });
+    } catch (error: unknown) {
+      if (!isResearchRequestValidationError(error)) {
+        throw error;
+      }
+
+      context.logger?.warn?.('gpt_access.ai_job.rejected', {
+        traceId,
+        requestType: 'createAiJob',
+        gptId: canonicalGptId,
+        status: 'validation_failed',
+        reason: 'research_request_invalid'
+      });
+      return {
+        statusCode: 400,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_VALIDATION_ERROR',
+            message: error.message
+          }
+        }
+      };
+    }
   }
 
   const aiJobBody = buildGatewayAiJobBody(request);

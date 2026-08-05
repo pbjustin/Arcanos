@@ -9,6 +9,8 @@ import {
 } from '../src/shared/backstage/backstageRoster.js';
 import {
   ResearchRequestValidationError,
+  RESEARCH_MODULE_NAME,
+  RESEARCH_TOPIC_MAX_LENGTH,
 } from '../src/shared/researchRequest.js';
 
 const writePublicHealthResponseMock = jest.fn();
@@ -197,6 +199,29 @@ function confirmed(requestBuilder: request.Test): request.Test {
 
 function allowCreateJobs(scopes = 'jobs.create,jobs.result'): void {
   process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
+}
+
+function routeJobsToResearch(): void {
+  resolveGptRoutingMock.mockResolvedValue({
+    ok: true,
+    plan: {
+      matchedId: 'research',
+      module: RESEARCH_MODULE_NAME,
+      route: 'research',
+      action: 'run',
+      availableActions: ['run'],
+      moduleVersion: null,
+      moduleDescription: null,
+      matchMethod: 'exact'
+    },
+    _route: {
+      gptId: 'research',
+      route: 'research',
+      module: RESEARCH_MODULE_NAME,
+      action: 'run',
+      timestamp: '2026-04-27T10:00:00.000Z'
+    }
+  });
 }
 
 function allowCapabilityRead(scopes = 'capabilities.read'): void {
@@ -3622,6 +3647,87 @@ describe('/gpt-access gateway', () => {
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['raw padded', `${' '.repeat(RESEARCH_TOPIC_MAX_LENGTH)}x`],
+    ['non-whitespace', 'x'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1)]
+  ])('rejects %s overlong Research topics before direct job planning or persistence', async (_label, task) => {
+    routeJobsToResearch();
+    const actorKeyTrimMock = jest.fn(() => {
+      throw new Error('idempotency descriptor construction must not run');
+    });
+    const actorKeySentry = { trim: actorKeyTrimMock } as unknown as string;
+
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'research',
+        task
+      },
+      {
+        actorKey: actorKeySentry,
+        traceId: 'trace-research-overlimit-direct'
+      }
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: `Research topic must be no more than ${RESEARCH_TOPIC_MAX_LENGTH} JavaScript String.length units.`
+    });
+    expect(resolveGptRoutingMock).toHaveBeenCalledWith(
+      'research',
+      'trace-research-overlimit-direct'
+    );
+    expect(actorKeyTrimMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['raw padded', `${' '.repeat(RESEARCH_TOPIC_MAX_LENGTH)}x`],
+    ['non-whitespace', 'x'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1)]
+  ])('rejects %s overlong Research topics at the route before job planning or persistence', async (_label, task) => {
+    allowCreateJobs();
+    routeJobsToResearch();
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+      .send({
+        gptId: 'research',
+        task
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: `Research topic must be no more than ${RESEARCH_TOPIC_MAX_LENGTH} JavaScript String.length units.`
+    });
+    expect(resolveGptRoutingMock).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the existing task limit for non-Research GPT job creation', async () => {
+    const task = 'x'.repeat(RESEARCH_TOPIC_MAX_LENGTH + 1);
+
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'arcanos-core',
+        task
+      },
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-core-above-research-limit'
+      }
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      gptId: 'arcanos-core',
+      prompt: task
+    }));
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
   });
 
   it('rejects unsafe extra properties before enqueueing AI jobs', async () => {
