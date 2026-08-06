@@ -3,7 +3,7 @@ import {
   createLinkedAbortController,
   runWithRequestAbortContext,
   type RequestAbortContext,
-} from '@arcanos/runtime';
+} from '@arcanos/runtime/requestAbort';
 
 export interface ResearchAbortDrainOptions {
   timeoutMs: number;

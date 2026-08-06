@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises';
 import {
   NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES,
   findNativePrPreviewImportViolations,
+  findNativePrPreviewBuildScriptViolations,
+  findPreviewDistImportCheckerDigestViolations,
+  findRuntimeRequestAbortExportViolations,
+  findRuntimeRequestAbortTypeResolutionViolations,
   findUnsafeRuntimeSyntax,
 } from '../scripts/check-native-pr-preview-imports.mjs';
 
@@ -10,6 +14,24 @@ const RAILWAY_LAUNCHER_URL =
   new URL('../scripts/start-railway-service.mjs', import.meta.url);
 const NATIVE_PREVIEW_CHILD_URL =
   new URL('../src/start-native-pr-preview.ts', import.meta.url);
+const REQUEST_ABORT_URL = new URL(
+  '../packages/arcanos-runtime/src/requestAbort.ts',
+  import.meta.url
+);
+const RUNTIME_PACKAGE_MANIFEST_URL = new URL(
+  '../packages/arcanos-runtime/package.json',
+  import.meta.url
+);
+const ROOT_PACKAGE_MANIFEST_URL = new URL('../package.json', import.meta.url);
+const ROOT_TSCONFIG_URL = new URL('../tsconfig.json', import.meta.url);
+const PREVIEW_DIST_IMPORT_CHECKER_URL = new URL(
+  '../scripts/check-native-pr-preview-dist-imports.mjs',
+  import.meta.url
+);
+const RESEARCH_ABORT_DRAIN_URL = new URL(
+  '../src/routes/_core/researchAbortDrain.ts',
+  import.meta.url
+);
 const RESEARCH_REQUEST_URL =
   new URL('../src/shared/researchRequest.ts', import.meta.url);
 const STORYLINE_REPOSITORY_URL = new URL(
@@ -28,6 +50,16 @@ async function readRailwayLauncherSource() {
 
 async function readNativePreviewChildSource() {
   return (await readFile(NATIVE_PREVIEW_CHILD_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readRequestAbortSource() {
+  return (await readFile(REQUEST_ABORT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readResearchAbortDrainSource() {
+  return (await readFile(RESEARCH_ABORT_DRAIN_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -109,6 +141,10 @@ describe('native PR preview import boundary', () => {
       'src/shared/backstage/backstageStoryline.ts',
       sharedSource
     )).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(
+      'src/core/db/repositories/backstageStorylineRepository.ts',
+      repositorySource.replace(/\n/gu, '\r\n')
+    )).toEqual([]);
 
     const driftedRepository = replaceRequired(
       repositorySource,
@@ -183,6 +219,132 @@ describe('native PR preview import boundary', () => {
     )).toEqual(expect.arrayContaining([
       expect.stringContaining('critical entry file semantic digest'),
     ]));
+  });
+
+  it('pins the Research drain wrapper and its narrow request-abort runtime', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining([
+        'packages/arcanos-runtime/src/requestAbort.ts',
+        'src/routes/_core/researchAbortDrain.ts',
+      ])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'packages/arcanos-runtime/dist/requestAbort.d.ts',
+        'src/services/research.ts',
+        'src/services/memory.ts',
+        'src/shared/webFetcher.ts',
+        'src/core/logic/trinityWritingPipeline.ts',
+      ])
+    );
+
+    const requestAbortSource = await readRequestAbortSource();
+    const researchAbortDrainSource = await readResearchAbortDrainSource();
+    expect(findUnsafeRuntimeSyntax(
+      'packages/arcanos-runtime/src/requestAbort.ts',
+      requestAbortSource
+    )).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(
+      'src/routes/_core/researchAbortDrain.ts',
+      researchAbortDrainSource
+    )).toEqual([]);
+
+    const broadenedTimer = replaceRequired(
+      requestAbortSource,
+      'const timeoutHandle = setTimeout(',
+      'const timeoutHandle = setInterval('
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'packages/arcanos-runtime/src/requestAbort.ts',
+      broadenedTimer
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden setInterval call'),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+
+    const racedCallback = replaceRequired(
+      researchAbortDrainSource,
+      'const value = await runWithRequestAbortContext(context, callback);',
+      'const value = await Promise.race([runWithRequestAbortContext(context, callback)]);'
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/routes/_core/researchAbortDrain.ts',
+      racedCallback
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+
+    const runtimePackageManifest = JSON.parse(await readFile(
+      RUNTIME_PACKAGE_MANIFEST_URL,
+      'utf8'
+    ));
+    expect(findRuntimeRequestAbortExportViolations(
+      runtimePackageManifest
+    )).toEqual([]);
+    expect(findRuntimeRequestAbortExportViolations({
+      ...runtimePackageManifest,
+      exports: {
+        ...runtimePackageManifest.exports,
+        './requestAbort': {
+          ...runtimePackageManifest.exports['./requestAbort'],
+          import: './dist/unreviewed.js',
+        },
+      },
+    })).toEqual([
+      'packages/arcanos-runtime/package.json: requestAbort export must match the reviewed ESM runtime surface',
+    ]);
+
+    const rootTsconfig = JSON.parse(await readFile(ROOT_TSCONFIG_URL, 'utf8'));
+    expect(findRuntimeRequestAbortTypeResolutionViolations(
+      rootTsconfig
+    )).toEqual([]);
+    expect(findRuntimeRequestAbortTypeResolutionViolations({
+      ...rootTsconfig,
+      compilerOptions: {
+        ...rootTsconfig.compilerOptions,
+        paths: {
+          ...rootTsconfig.compilerOptions.paths,
+          '@arcanos/runtime/requestAbort': [
+            'packages/arcanos-runtime/dist/unreviewed.d.ts',
+          ],
+        },
+      },
+    })).toEqual([
+      'tsconfig.json: requestAbort path must match the reviewed build target',
+    ]);
+
+    const rootPackageManifest = JSON.parse(await readFile(
+      ROOT_PACKAGE_MANIFEST_URL,
+      'utf8'
+    ));
+    expect(findNativePrPreviewBuildScriptViolations(
+      rootPackageManifest
+    )).toEqual([]);
+    expect(findNativePrPreviewBuildScriptViolations({
+      ...rootPackageManifest,
+      scripts: {
+        ...rootPackageManifest.scripts,
+        build: rootPackageManifest.scripts.build.replace(
+          ' && npm run check:native-pr-preview-dist-imports',
+          ''
+        ),
+      },
+    })).toEqual([
+      'package.json: build must run the reviewed preview dist-import check after alias repair',
+    ]);
+
+    const previewDistImportCheckerSource = await readFile(
+      PREVIEW_DIST_IMPORT_CHECKER_URL,
+      'utf8'
+    );
+    expect(findPreviewDistImportCheckerDigestViolations(
+      previewDistImportCheckerSource
+    )).toEqual([]);
+    expect(findPreviewDistImportCheckerDigestViolations(
+      `${previewDistImportCheckerSource}\n// unreviewed drift`
+    )).toEqual([
+      'scripts/check-native-pr-preview-dist-imports.mjs: content digest must match the reviewed emitted-import check',
+    ]);
   });
 
   it.each([

@@ -1,9 +1,12 @@
 import express from 'express';
+import { getRequestAbortContext } from '@arcanos/runtime/requestAbort';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   createGenericJobsRouter,
   type GenericJobData,
 } from './routes/genericJobsRouter.js';
+import { runResearchWithAbortDrain } from './routes/_core/researchAbortDrain.js';
 import {
   applyBackstageStorylineMutation,
 } from './core/db/repositories/backstageStorylineRepository.js';
@@ -70,6 +73,19 @@ const STORYLINE_FIXTURE_NAMES = new Set<string>(
 const SNAPSHOT_FIRST_URL = 'https://example.invalid/first-snapshot';
 const SNAPSHOT_SECOND_URL = 'https://example.invalid/second-snapshot';
 const STORAGE_COMPONENT_TOPIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const RESEARCH_CANCELLATION_TIMEOUT_MS = 150;
+const RESEARCH_CANCELLATION_PARENT_TIMEOUT_MS = 1_000;
+const RESEARCH_CANCELLATION_DRAIN_DELAY_MS = 50;
+const RESEARCH_CANCELLATION_STAGES = [
+  'dns',
+  'fetch',
+  'model',
+  'persistence',
+] as const;
+
+type ResearchCancellationStage =
+  (typeof RESEARCH_CANCELLATION_STAGES)[number];
+type ResearchCancellationTrigger = 'parent-abort' | 'timeout';
 
 export interface NativePrPreviewReadinessState {
   applicationImported: boolean;
@@ -95,6 +111,29 @@ interface SyntheticResearchFixture {
 interface SyntheticResearchResult {
   payload: Record<string, unknown>;
   statusCode: number;
+}
+
+interface SyntheticResearchCancellationScenario {
+  abortStage: ResearchCancellationStage;
+  name: string;
+  trigger: ResearchCancellationTrigger;
+}
+
+interface SyntheticResearchCancellationState {
+  abortObserved: boolean;
+  abortReason?: unknown;
+  activeWork: number;
+  activeWorkAtAbortObservation?: number;
+  callbackSettled: boolean;
+  drainCompleted: boolean;
+  laterStageStarts: number;
+  mutationCount: number;
+  sameWorkflowDeadlineAcrossStages: boolean;
+  sameWorkflowSignalAcrossStages: boolean;
+  settledStages: ResearchCancellationStage[];
+  startedStages: ResearchCancellationStage[];
+  workflowDeadlineAt?: number;
+  workflowSignal?: AbortSignal;
 }
 
 interface SyntheticStorylineResult {
@@ -266,7 +305,268 @@ function summarizeNormalizedResearchRequest(
   };
 }
 
-function runSyntheticResearchFixture(fixture: string): SyntheticResearchResult {
+function requireResearchCancellationFixtureInvariant(
+  condition: boolean,
+  code: string,
+): asserts condition {
+  if (!condition) {
+    throw new Error(code);
+  }
+}
+
+function resolveResearchCancellationReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Research cancellation fixture aborted', 'AbortError');
+}
+
+function observeResearchCancellationContext(
+  state: SyntheticResearchCancellationState,
+): NonNullable<ReturnType<typeof getRequestAbortContext>> {
+  const context = getRequestAbortContext();
+  requireResearchCancellationFixtureInvariant(
+    context !== null,
+    'PREVIEW_RESEARCH_CANCELLATION_CONTEXT_MISSING',
+  );
+  if (!state.workflowSignal) {
+    state.workflowSignal = context.signal;
+    state.workflowDeadlineAt = context.deadlineAt;
+  } else {
+    state.sameWorkflowSignalAcrossStages =
+      state.sameWorkflowSignalAcrossStages
+      && state.workflowSignal === context.signal;
+    state.sameWorkflowDeadlineAcrossStages =
+      state.sameWorkflowDeadlineAcrossStages
+      && state.workflowDeadlineAt === context.deadlineAt;
+  }
+  return context;
+}
+
+async function runSyntheticResearchCancellationStages(
+  scenario: SyntheticResearchCancellationScenario,
+  state: SyntheticResearchCancellationState,
+  parentController: AbortController | undefined,
+  parentAbortReason: Error | undefined,
+): Promise<void> {
+  for (const stage of RESEARCH_CANCELLATION_STAGES) {
+    const context = observeResearchCancellationContext(state);
+    if (context.signal.aborted) {
+      state.laterStageStarts += 1;
+      throw resolveResearchCancellationReason(context.signal);
+    }
+    state.startedStages.push(stage);
+
+    if (stage !== scenario.abortStage) {
+      await Promise.resolve();
+      if (context.signal.aborted) {
+        throw resolveResearchCancellationReason(context.signal);
+      }
+      state.settledStages.push(stage);
+      continue;
+    }
+
+    state.activeWork += 1;
+    await new Promise<void>((_resolve, reject) => {
+      let abortHandled = false;
+      const onAbort = () => {
+        if (abortHandled) {
+          return;
+        }
+        abortHandled = true;
+        context.signal.removeEventListener('abort', onAbort);
+        state.abortObserved = true;
+        state.abortReason = context.signal.reason;
+        state.activeWorkAtAbortObservation = state.activeWork;
+        void delay(RESEARCH_CANCELLATION_DRAIN_DELAY_MS)
+          .then(() => {
+            state.activeWork -= 1;
+            state.drainCompleted = true;
+            state.mutationCount += 1;
+            state.settledStages.push(stage);
+            reject(resolveResearchCancellationReason(context.signal));
+          });
+      };
+
+      if (context.signal.aborted) {
+        onAbort();
+        return;
+      }
+      context.signal.addEventListener('abort', onAbort, { once: true });
+      if (scenario.trigger === 'parent-abort') {
+        requireResearchCancellationFixtureInvariant(
+          parentController !== undefined && parentAbortReason !== undefined,
+          'PREVIEW_RESEARCH_CANCELLATION_PARENT_MISSING',
+        );
+        void Promise.resolve().then(
+          () => parentController.abort(parentAbortReason),
+        );
+      }
+    });
+  }
+}
+
+async function runSyntheticResearchCancellationScenario(
+  scenario: SyntheticResearchCancellationScenario,
+): Promise<Record<string, unknown>> {
+  const parentController = scenario.trigger === 'parent-abort'
+    ? new AbortController()
+    : undefined;
+  const parentAbortReason = scenario.trigger === 'parent-abort'
+    ? new Error('Research cancellation fixture parent aborted')
+    : undefined;
+  if (parentAbortReason) {
+    parentAbortReason.name = 'AbortError';
+  }
+  const state: SyntheticResearchCancellationState = {
+    abortObserved: false,
+    activeWork: 0,
+    callbackSettled: false,
+    drainCompleted: false,
+    laterStageStarts: 0,
+    mutationCount: 0,
+    sameWorkflowDeadlineAcrossStages: true,
+    sameWorkflowSignalAcrossStages: true,
+    settledStages: [],
+    startedStages: [],
+  };
+  let outwardError: unknown;
+
+  try {
+    await runResearchWithAbortDrain(
+      {
+        abortMessage: 'Research cancellation fixture timed out',
+        parentSignal: parentController?.signal,
+        requestId: `native-pr-preview-${scenario.name}`,
+        timeoutMs:
+          scenario.trigger === 'timeout'
+            ? RESEARCH_CANCELLATION_TIMEOUT_MS
+            : RESEARCH_CANCELLATION_PARENT_TIMEOUT_MS,
+      },
+      async () => {
+        try {
+          await runSyntheticResearchCancellationStages(
+            scenario,
+            state,
+            parentController,
+            parentAbortReason,
+          );
+        } finally {
+          state.callbackSettled = true;
+        }
+      },
+    );
+  } catch (error) {
+    outwardError = error;
+  }
+
+  const activeWorkAtOutwardSettlement = state.activeWork;
+  const callbackSettledAtOutwardSettlement = state.callbackSettled;
+  const drainCompletedAtOutwardSettlement = state.drainCompleted;
+  const mutationCountAtOutwardSettlement = state.mutationCount;
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  requireResearchCancellationFixtureInvariant(
+    outwardError instanceof Error
+    && outwardError.name === 'AbortError'
+    && outwardError === state.abortReason
+    && state.abortObserved
+    && state.activeWorkAtAbortObservation === 1
+    && activeWorkAtOutwardSettlement === 0
+    && callbackSettledAtOutwardSettlement
+    && drainCompletedAtOutwardSettlement
+    && state.activeWork === activeWorkAtOutwardSettlement
+    && state.laterStageStarts === 0
+    && state.mutationCount === mutationCountAtOutwardSettlement
+    && state.sameWorkflowDeadlineAcrossStages
+    && state.sameWorkflowSignalAcrossStages
+    && state.workflowSignal?.aborted === true
+    && state.startedStages.length
+      === RESEARCH_CANCELLATION_STAGES.indexOf(scenario.abortStage) + 1
+    && state.startedStages.every(
+      (stage, index) => stage === RESEARCH_CANCELLATION_STAGES[index],
+    )
+    && state.settledStages.length === state.startedStages.length
+    && state.settledStages.every(
+      (stage, index) => stage === state.startedStages[index],
+    ),
+    'PREVIEW_RESEARCH_CANCELLATION_INVARIANT_FAILED',
+  );
+
+  return {
+    abortObserved: true,
+    abortReasonName: 'AbortError',
+    abortStage: scenario.abortStage,
+    activeWorkAtAbortObservation: 1,
+    activeWorkAtOutwardSettlement: 0,
+    callbackSettledAtOutwardSettlement: true,
+    drainCompletedAtOutwardSettlement: true,
+    laterStageStarts: 0,
+    name: scenario.name,
+    noPostOutwardSettlementMutation: true,
+    sameWorkflowDeadlineAcrossStages: true,
+    sameWorkflowSignalAcrossStages: true,
+    settledStages: [...state.settledStages],
+    startedStages: [...state.startedStages],
+    trigger: scenario.trigger,
+  };
+}
+
+async function runSyntheticResearchCancellationFixture(
+  fixture: string,
+): Promise<SyntheticResearchResult> {
+  const scenarios: readonly SyntheticResearchCancellationScenario[] = [
+    { abortStage: 'dns', name: 'timeout-dns', trigger: 'timeout' },
+    { abortStage: 'fetch', name: 'parent-abort-fetch', trigger: 'parent-abort' },
+    { abortStage: 'model', name: 'parent-abort-model', trigger: 'parent-abort' },
+    {
+      abortStage: 'persistence',
+      name: 'parent-abort-persistence',
+      trigger: 'parent-abort',
+    },
+  ];
+  const results: Record<string, unknown>[] = [];
+  for (const scenario of scenarios) {
+    results.push(await runSyntheticResearchCancellationScenario(scenario));
+  }
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      fixture,
+      memoryBoundaryReached: false,
+      networkBoundaryReached: false,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      cancellation: {
+        componentExecuted: true,
+        noDetachedWorkAtOutwardSettlement: true,
+        scenarioCount: results.length,
+        scenarios: results,
+        syntheticSeams: [...RESEARCH_CANCELLATION_STAGES],
+      },
+    },
+  };
+}
+
+async function runSyntheticResearchFixture(
+  fixture: string,
+): Promise<SyntheticResearchResult> {
+  if (
+    fixture
+    === NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures
+      .workflowCancellationDrain
+  ) {
+    return runSyntheticResearchCancellationFixture(fixture);
+  }
   const syntheticFixture = buildSyntheticResearchFixture(fixture);
   let normalized: NormalizedResearchRequest;
   try {
@@ -1029,7 +1329,7 @@ export function createNativePrPreviewApplication(
 
   app.post(
     NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path,
-    (request, response) => {
+    (request, response, next) => {
       const body = request.body as unknown;
       const bodyKeys =
         body && typeof body === 'object' && !Array.isArray(body)
@@ -1055,17 +1355,19 @@ export function createNativePrPreviewApplication(
         );
       }
 
-      const result = runSyntheticResearchFixture(fixture);
-      return sendBoundedJsonResponse(
-        request,
-        response,
-        result.payload,
-        {
-          logEvent: 'native_pr_preview.research_fixture',
-          maxBytes: MAX_RESEARCH_RESPONSE_BYTES,
-          statusCode: result.statusCode,
-        }
-      );
+      void runSyntheticResearchFixture(fixture)
+        .then(result => sendBoundedJsonResponse(
+          request,
+          response,
+          result.payload,
+          {
+            logEvent: 'native_pr_preview.research_fixture',
+            maxBytes: MAX_RESEARCH_RESPONSE_BYTES,
+            statusCode: result.statusCode,
+          }
+        ))
+        .catch(next);
+      return undefined;
     }
   );
 

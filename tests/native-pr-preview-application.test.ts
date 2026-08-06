@@ -149,6 +149,72 @@ function expectedResearchInvalid(fixture: string) {
   };
 }
 
+function expectedResearchCancellationDrain(fixture: string) {
+  const scenario = (
+    name: string,
+    trigger: 'parent-abort' | 'timeout',
+    abortStage: string,
+    startedStages: string[],
+  ) => ({
+    abortObserved: true,
+    abortReasonName: 'AbortError',
+    abortStage,
+    activeWorkAtAbortObservation: 1,
+    activeWorkAtOutwardSettlement: 0,
+    callbackSettledAtOutwardSettlement: true,
+    drainCompletedAtOutwardSettlement: true,
+    laterStageStarts: 0,
+    name,
+    noPostOutwardSettlementMutation: true,
+    sameWorkflowDeadlineAcrossStages: true,
+    sameWorkflowSignalAcrossStages: true,
+    settledStages: [...startedStages],
+    startedStages,
+    trigger,
+  });
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture,
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    cancellation: {
+      componentExecuted: true,
+      noDetachedWorkAtOutwardSettlement: true,
+      scenarioCount: 4,
+      scenarios: [
+        scenario('timeout-dns', 'timeout', 'dns', ['dns']),
+        scenario(
+          'parent-abort-fetch',
+          'parent-abort',
+          'fetch',
+          ['dns', 'fetch'],
+        ),
+        scenario(
+          'parent-abort-model',
+          'parent-abort',
+          'model',
+          ['dns', 'fetch', 'model'],
+        ),
+        scenario(
+          'parent-abort-persistence',
+          'parent-abort',
+          'persistence',
+          ['dns', 'fetch', 'model', 'persistence'],
+        ),
+      ],
+      syntheticSeams: ['dns', 'fetch', 'model', 'persistence'],
+    },
+  };
+}
+
 function expectedStorylineLifecycle(fixture: string) {
   return {
     accepted: true,
@@ -475,6 +541,13 @@ describe('native PR contained application', () => {
           }
         ),
       },
+      {
+        fixture: fixtures.workflowCancellationDrain,
+        status: 200,
+        body: expectedResearchCancellationDrain(
+          fixtures.workflowCancellationDrain,
+        ),
+      },
     ];
 
     for (const requestCase of cases) {
@@ -515,6 +588,33 @@ describe('native PR contained application', () => {
       });
       expectNoStore(response);
     }
+  });
+
+  it('keeps the Research cancellation-drain proof isolated across requests', async () => {
+    const { app } = buildApplication();
+    const fixture =
+      NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.fixtures.workflowCancellationDrain;
+    const [first, second] = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path)
+        .send({ fixture }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body).toEqual(expectedResearchCancellationDrain(fixture));
+    expect(second.body).toEqual(first.body);
+    expect(first.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(first.text, 'utf8'))
+    );
+    expect(second.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(second.text, 'utf8'))
+    );
+    expectNoStore(first);
+    expectNoStore(second);
   });
 
   it('keeps the Research fixture selector behind transport and credential boundaries', async () => {

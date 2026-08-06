@@ -88,6 +88,9 @@
       "@arcanos/runtime": [
         "packages/arcanos-runtime/dist/index.d.ts"
       ],
+      "@arcanos/runtime/requestAbort": [
+        "packages/arcanos-runtime/dist/requestAbort.d.ts"
+      ],
       "@arcanos/runtime/*": [
         "packages/arcanos-runtime/dist/*"
       ]

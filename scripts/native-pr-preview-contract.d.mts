@@ -17,6 +17,7 @@ export interface NativePrPreviewE2eContract {
       urlAggregateOver: 'url-aggregate-over';
       urlSnapshot: 'url-snapshot';
       storageComponent: 'storage-component';
+      workflowCancellationDrain: 'workflow-cancellation-drain';
     }>;
   }>;
   readonly backstageStoryline: Readonly<{

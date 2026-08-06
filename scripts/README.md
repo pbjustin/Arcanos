@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 65-request plan without network access.
+untracked worktree, limits, and the fixed 66-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -47,21 +47,35 @@ cookie, or session credential. Its attestation scope is the identity served by
 the two pre-confirmed public hosts. It does not independently prove Railway
 project/service/deployment ownership.
 
-The 65 checks retain the original 50 health/readiness and synthetic generic-job
-cases, add ten server-owned Research web contract fixtures and three Backstage
+The 66 checks retain the original 50 health/readiness and synthetic generic-job
+cases, add eleven server-owned Research web contract fixtures and three Backstage
 storyline web requests (two `lifecycle-exact` requests plus `payload-over`), and
 prove the worker role denies both contract paths. Each fixture request body
 contains only
 `{ "fixture": "<sealed-name>" }`; no raw URL or credential is
 sent. For the Research fixtures, the contained application imports only the
-central `src/shared/researchRequest.ts` validator/storage-component helper, not
+central `src/shared/researchRequest.ts` validator/storage-component helper plus
+the real Research abort-drain wrapper and its narrow request-abort runtime, not
 the normal Research route, confirmation middleware, hub, provider, fetcher,
-database, memory, or persistence code. The fixtures cover inclusive and
+database, memory, or persistence code. Ten fixtures cover inclusive and
 over-limit non-BMP topic, URL count, URL item, and aggregate bounds, a normalized
 URL snapshot isolated from later source mutation, and a deterministic ASCII
-storage component of at most 97 UTF-8 bytes. They do not attempt confirmation or
-effects. The descriptor probe is constructed inside the server-owned fixture and
+storage component of at most 97 UTF-8 bytes. The sealed
+`workflow-cancellation-drain` fixture executes one wrapper-owned timeout and
+three parent-abort scenarios across synthetic DNS, fetch, model, and persistence
+seams. It returns only after the active seam drains, verifies later seams never
+start, records one active operation at abort and zero at outward settlement,
+and observes no post-settlement mutation. The live runner rejects a response
+before the bounded 300 ms aggregate drain-proof window. Parent abort is a deterministic
+disconnect-equivalent component proof, not a literal TCP disconnect. No fixture
+attempts confirmation or effects. The descriptor probe is constructed inside
+the server-owned fixture and
 does not claim that caller JSON can carry accessors or property descriptors.
+The source graph resolves the request-abort subpath to reviewed source without
+requiring ignored build output; the normal build then verifies the exact
+post-alias imports and bindings resolve to the built request-abort runtime.
+That built runtime is also semantic-digest pinned after comments and line-ending
+normalization.
 
 The sealed `POST /backstage/storyline-contract` selectors are
 `lifecycle-exact` and `payload-over`. `lifecycle-exact` calls the real storyline

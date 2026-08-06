@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "baseUrl": "..",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "paths": {
+      "@arcanos/runtime/requestAbort": [
+        "packages/arcanos-runtime/src/requestAbort.ts"
+      ],
+      "@core/lib/*.js": [
+        "src/lib/*.ts"
+      ],
+      "@core/lib/*": [
+        "src/lib/*"
+      ],
+      "@core/*": [
+        "src/core/*"
+      ],
+      "@shared/*": [
+        "src/shared/*"
+      ],
+      "@transport/*": [
+        "src/transport/*"
+      ]
+    }
+  }
+}

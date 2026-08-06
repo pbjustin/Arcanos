@@ -155,17 +155,28 @@ Railway-native PR deployments use the tracked
 credential-empty, deny-by-default synthetic generic-jobs application plus
 sealed Research and Backstage storyline contract fixture surfaces; the worker
 role stays passive and denies both contract paths. The
-Research surface imports only the central `src/shared/researchRequest.ts`
-validator and storage-component helper. It does not import the normal Research
+Research surface imports the central `src/shared/researchRequest.ts`
+validator and storage-component helper plus the real Research abort-drain
+wrapper and its narrow request-abort runtime. It does not import the normal Research
 route, confirmation middleware, hub, provider, fetcher, database, memory, or
-persistence code. Its ten server-owned fixtures cover exact and over-limit
+persistence code. Ten server-owned fixtures cover exact and over-limit
 topic, URL count, URL item, and aggregate boundaries in JavaScript
 `String.length` units, one normalized URL descriptor snapshot, and the
-deterministic ASCII storage component capped at 97 UTF-8 bytes. Requests contain
+deterministic ASCII storage component capped at 97 UTF-8 bytes. An eleventh
+`workflow-cancellation-drain` fixture executes one wrapper-owned timeout and
+three server-simulated parent-abort cases across synthetic DNS, fetch, model,
+and persistence seams. It proves the active seam drains before outward
+settlement, later seams do not start, the same signal and deadline reach every
+admitted seam, and no post-settlement mutation remains. Each abort is observed
+with one active operation and the response is withheld until that operation
+reaches zero; the live probe rejects a response that arrives before the bounded
+300 ms aggregate drain-proof window. The parent-abort cases
+are deterministic disconnect-equivalent component evidence, not literal TCP
+disconnects. Requests contain
 only `{ "fixture": "<sealed-name>" }`; they never carry raw Research URLs or
 credentials. The descriptor probe is constructed by the server-owned fixture;
 it does not claim that caller JSON can carry accessors or property descriptors.
-Accepted fixtures are reported only as eligible for confirmation;
+Accepted request-validation fixtures are reported only as eligible for confirmation;
 the surface never attempts confirmation or crosses an effects boundary.
 
 The exact `POST /backstage/storyline-contract` surface accepts only the
@@ -213,13 +224,21 @@ edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
 format-only edits do not. The central Research helper is likewise
 semantic-digest pinned, with only its exact `createHash` import and pure
-`Reflect.ownKeys(descriptors)` read admitted to the contained graph. Both
+`Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
+Research abort-drain wrapper and exact request-abort runtime source are also
+semantic-digest pinned; only the reviewed timeout and AsyncLocalStorage
+capabilities are admitted. A tracked checker-only TypeScript resolver points the
+contained graph at that reviewed source without depending on ignored build
+output. An exact package-manifest assertion pins the public subpath, and a
+content-pinned post-alias build gate verifies both emitted preview imports and
+their bindings resolve to `packages/arcanos-runtime/dist/requestAbort.js`, whose
+comment-normalized semantic digest must match the reviewed compiled runtime. Both
 required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 65-request plan is the
-original 50 checks, ten Research web fixtures, three storyline web requests (two
+evidence, not Railway control-plane provenance. The fixed 66-request plan is the
+original 50 checks, eleven Research web fixtures, three storyline web requests (two
 `lifecycle-exact` requests plus `payload-over`), and
 one worker-role denial for each contract path.
 
