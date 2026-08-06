@@ -33,6 +33,7 @@ import {
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 const DEFAULT_CHAT_COMPLETION_TIMEOUT_MS = 8_000;
+const PRESERVED_AGGREGATE_ABORT_REASON = Symbol('preservedAggregateAbortReason');
 
 type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
   model?: string;
@@ -41,6 +42,38 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   timeoutMs?: number;
   preserveAggregateAbortContext?: boolean;
 };
+
+function resolvePreservedAggregateSignal(
+  params: Pick<ChatCompletionParams, 'preserveAggregateAbortContext' | 'signal'>
+): AbortSignal | undefined {
+  return params.preserveAggregateAbortContext
+    ? params.signal ?? getRequestAbortSignal()
+    : undefined;
+}
+
+function shouldCountCompletionFailure(
+  error: unknown,
+  aggregateSignal: AbortSignal | undefined
+): boolean {
+  if (!aggregateSignal?.aborted || !isAbortError(error)) {
+    return true;
+  }
+  if (error === aggregateSignal.reason) {
+    return false;
+  }
+  if (typeof error !== 'object' || error === null) {
+    return true;
+  }
+
+  // Non-AbortError caller reasons are normalized before escaping the provider
+  // boundary. Preserve that provenance so a provider-originated AbortError
+  // that merely races with a later caller abort still counts as a failure.
+  return !(
+    Object.prototype.hasOwnProperty.call(error, PRESERVED_AGGREGATE_ABORT_REASON)
+    && (error as Record<PropertyKey, unknown>)[PRESERVED_AGGREGATE_ABORT_REASON]
+      === aggregateSignal.reason
+  );
+}
 
 function isOpenAIAdapter(candidate: OpenAI | OpenAIAdapter): candidate is OpenAIAdapter {
   return typeof (candidate as OpenAIAdapter).getClient === 'function';
@@ -51,11 +84,15 @@ function resolveChatAbortReason(signal: AbortSignal): Error {
     return signal.reason;
   }
 
-  return createAbortError(
+  const normalizedReason = createAbortError(
     signal.reason instanceof Error
       ? signal.reason.message
       : 'OpenAI chat completion aborted'
   );
+  Object.defineProperty(normalizedReason, PRESERVED_AGGREGATE_ABORT_REASON, {
+    value: signal.reason
+  });
+  return normalizedReason;
 }
 
 async function createResponsesWithBoundary(
@@ -244,6 +281,10 @@ const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ChatCompletionParams & { model: string },
 ): Promise<ChatCompletionResponse> => {
+  const requestSignal = payload.signal ?? getRequestAbortSignal();
+  if (payload.preserveAggregateAbortContext && requestSignal?.aborted) {
+    throw resolveChatAbortReason(requestSignal);
+  }
   throwIfRequestAborted();
 
   const requestPayload = buildResponsesRequest({
@@ -260,7 +301,6 @@ const executeChatCompletionRequest = async (
     includeRoutingMessage: true
   });
 
-  const requestSignal = payload.signal ?? getRequestAbortSignal();
   const remainingRequestMs = getRequestRemainingMs();
   const configuredTimeoutMs =
     typeof payload.timeoutMs === 'number' &&
@@ -317,12 +357,16 @@ async function attemptModelCall(
   logPrefix: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
   const startedAt = Date.now();
+  const aggregateSignal = resolvePreservedAggregateSignal(params);
   aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
-  const response = await executeWithResilience(() =>
-    executeChatCompletionRequest(clientOrAdapter, {
+  const response = await executeWithResilience(
+    () => executeChatCompletionRequest(clientOrAdapter, {
       ...params,
       model,
-    })
+    }),
+    {
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+    }
   );
   const logContext = buildCompletionLogContext(model, startedAt, response);
   try {
@@ -349,9 +393,13 @@ async function attemptGPT5Call(
     model: gpt5Model,
     ...tokenParams,
   }) as ChatCompletionParams & { model: string };
+  const aggregateSignal = resolvePreservedAggregateSignal(gpt5Payload);
 
-  const response = await executeWithResilience(() =>
-    executeChatCompletionRequest(clientOrAdapter, gpt5Payload)
+  const response = await executeWithResilience(
+    () => executeChatCompletionRequest(clientOrAdapter, gpt5Payload),
+    {
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+    }
   );
   const logContext = buildCompletionLogContext(gpt5Model, startedAt, response);
   try {

@@ -65,14 +65,14 @@ export async function dispatchLegacyRouteToGpt(
     );
     let envelope: Awaited<ReturnType<typeof routeGptRequest>>;
     try {
-      envelope = await abortScope.run(parentAbortSignal => routeGptRequest({
+      envelope = await routeGptRequest({
         gptId: options.gptId,
         body: effectiveBody,
         requestId: req.requestId,
         logger: req.logger,
         request: req,
-        parentAbortSignal,
-      }));
+        researchClientAbortSignal: abortScope.signal,
+      });
     } finally {
       abortScope.cleanup();
     }

@@ -73,8 +73,11 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 }));
 
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
-const { createRuntimeBudget } = await import('@platform/resilience/runtimeBudget.js');
+const { acquireTierSlot } = await import('../src/core/logic/trinityGuards.js');
+const { detectTier } = await import('../src/core/logic/trinityTier.js');
+const { createRuntimeBudget, createRuntimeBudgetWithLimit } = await import('@platform/resilience/runtimeBudget.js');
 const { getRequestAbortSignal, runWithRequestAbortContext } = await import('@arcanos/runtime');
+const { runResearchWithAbortDrain } = await import('../src/routes/_core/researchAbortDrain.js');
 
 const client = {
   models: {
@@ -142,6 +145,28 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+function createCountdown(target: number): { promise: Promise<void>; advance: () => void } {
+  const completed = createDeferred();
+  let count = 0;
+  return {
+    promise: completed.promise,
+    advance: () => {
+      count++;
+      if (count === target) {
+        completed.resolve();
+      }
+    }
+  };
+}
+
+const CRITICAL_DIRECT_PROMPT = [
+  'Answer directly about this security architecture and concurrency failure mode.',
+  ...Array.from(
+    { length: 8 },
+    () => 'Assess infrastructure threat boundaries, multi-tenant isolation, watchdog behavior, and bounded recovery without claiming external verification.'
+  )
+].join(' ');
 
 describe('Trinity cancellation and optional side effects', () => {
   beforeEach(() => {
@@ -422,5 +447,279 @@ describe('Trinity cancellation and optional side effects', () => {
     expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
     expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(2);
     expect(mockRecordTrinityStageFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a deadline-expired tier waiter and recovers every critical-tier permit', async () => {
+    jest.useFakeTimers();
+    const heldReleases: Array<() => void> = [];
+    const recoveredReleases: Array<() => void> = [];
+
+    try {
+      const heldSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      heldReleases.push(...heldSlots.map(([release]) => release));
+
+      expect(detectTier(CRITICAL_DIRECT_PROMPT)).toBe('critical');
+      const queuedTrinity = runThroughBrain(
+        client,
+        CRITICAL_DIRECT_PROMPT,
+        undefined,
+        undefined,
+        { answerMode: 'direct', disableOptionalSideEffects: true },
+        createRuntimeBudgetWithLimit(50, 0)
+      );
+      const queuedExpectation = expect(queuedTrinity).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Trinity concurrency admission deadline exceeded'
+      });
+
+      await jest.advanceTimersByTimeAsync(50);
+      await queuedExpectation;
+      expect(mockCreateSingleChatCompletion).not.toHaveBeenCalled();
+
+      heldReleases.forEach((release) => release());
+      const recoveredSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      recoveredReleases.push(...recoveredSlots.map(([release]) => release));
+      expect(recoveredSlots).toHaveLength(10);
+    } finally {
+      heldReleases.forEach((release) => release());
+      recoveredReleases.forEach((release) => release());
+      jest.useRealTimers();
+    }
+  });
+
+  it('clamps long admission deadlines without immediate abort or warning', async () => {
+    jest.useFakeTimers();
+    const timerSpy = jest.spyOn(globalThis, 'setTimeout');
+    const warningSpy = jest.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+    const heldReleases: Array<() => void> = [];
+    let queuedRelease: (() => void) | undefined;
+
+    try {
+      const heldSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      heldReleases.push(...heldSlots.map(([release]) => release));
+
+      let queuedSettled = false;
+      const queuedSlot = acquireTierSlot('critical', {
+        deadlineAt: Number.MAX_SAFE_INTEGER
+      });
+      void queuedSlot.then(
+        () => { queuedSettled = true; },
+        () => { queuedSettled = true; }
+      );
+
+      expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(queuedSettled).toBe(false);
+      expect(warningSpy).not.toHaveBeenCalled();
+
+      const dispatchPermit = heldReleases[0];
+      if (!dispatchPermit) {
+        throw new Error('Expected one held critical-tier permit for long-deadline coverage');
+      }
+      dispatchPermit();
+      [queuedRelease] = await queuedSlot;
+      expect(queuedSettled).toBe(true);
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      queuedRelease?.();
+      heldReleases.forEach((release) => release());
+      warningSpy.mockRestore();
+      timerSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases an acquired permit when the budget expires before watchdog setup', async () => {
+    jest.useFakeTimers();
+    const recoveredReleases: Array<() => void> = [];
+
+    try {
+      const startedAt = Date.now();
+      const expiredDuringAdmission = runThroughBrain(
+        client,
+        CRITICAL_DIRECT_PROMPT,
+        undefined,
+        undefined,
+        { answerMode: 'direct', disableOptionalSideEffects: true },
+        createRuntimeBudgetWithLimit(1, 0)
+      );
+
+      // acquireTierSlot resolves on a microtask. Move the clock to the budget
+      // boundary before Trinity resumes into watchdog construction.
+      jest.setSystemTime(startedAt + 1);
+      await expect(expiredDuringAdmission).rejects.toMatchObject({
+        name: 'RuntimeBudgetExceededError',
+        message: 'runtime_budget_exhausted'
+      });
+      expect(mockCreateSingleChatCompletion).not.toHaveBeenCalled();
+
+      const recoveredSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      recoveredReleases.push(...recoveredSlots.map(([release]) => release));
+      expect(recoveredSlots).toHaveLength(10);
+    } finally {
+      recoveredReleases.forEach((release) => release());
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases a permit when admission wins immediately before aggregate disconnect', async () => {
+    const heldReleases: Array<() => void> = [];
+    const recoveredReleases: Array<() => void> = [];
+    const controller = new AbortController();
+    const aggregateAbort = Object.assign(new Error('research aggregate disconnected after admission'), {
+      name: 'AbortError'
+    });
+    let queuedRun: Promise<unknown> | undefined;
+
+    try {
+      const heldSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      heldReleases.push(...heldSlots.map(([release]) => release));
+
+      queuedRun = runResearchWithAbortDrain(
+        {
+          timeoutMs: 30_000,
+          parentSignal: controller.signal,
+          abortMessage: 'Research aggregate timed out during Trinity admission'
+        },
+        () => runThroughBrain(
+          client,
+          CRITICAL_DIRECT_PROMPT,
+          undefined,
+          undefined,
+          {
+            answerMode: 'direct',
+            disableOptionalSideEffects: true,
+            preserveAggregateAbortContext: true
+          },
+          createRuntimeBudget()
+        )
+      );
+      expect(mockCreateSingleChatCompletion).not.toHaveBeenCalled();
+
+      // Releasing is synchronous: the queued waiter owns this permit before
+      // its await continuation can observe the immediately following abort.
+      const dispatchPermit = heldReleases[0];
+      if (!dispatchPermit) {
+        throw new Error('Expected one held critical-tier permit for race coverage');
+      }
+      dispatchPermit();
+      controller.abort(aggregateAbort);
+
+      await expect(queuedRun).rejects.toBe(aggregateAbort);
+      expect(mockCreateSingleChatCompletion).not.toHaveBeenCalled();
+
+      heldReleases.forEach((release) => release());
+      const recoveredSlots = await Promise.all(
+        Array.from({ length: 10 }, () => acquireTierSlot('critical'))
+      );
+      recoveredReleases.push(...recoveredSlots.map(([release]) => release));
+      expect(recoveredSlots).toHaveLength(10);
+    } finally {
+      controller.abort(aggregateAbort);
+      heldReleases.forEach((release) => release());
+      recoveredReleases.forEach((release) => release());
+      if (queuedRun) {
+        await Promise.allSettled([queuedRun]);
+      }
+    }
+  });
+
+  it('cancels queued aggregate work without starting detached provider work', async () => {
+    expect(detectTier(CRITICAL_DIRECT_PROMPT)).toBe('critical');
+
+    const initialProviderStarts = createCountdown(10);
+    const recoveryProviderStarts = createCountdown(10);
+    const releaseInitialProviders = createDeferred();
+    const releaseRecoveryProviders = createDeferred();
+    const initialRuns: Array<Promise<unknown>> = [];
+    const recoveryRuns: Array<Promise<unknown>> = [];
+    let providerWave: 'initial' | 'recovery' = 'initial';
+
+    mockCreateSingleChatCompletion.mockImplementation(async () => {
+      if (providerWave === 'initial') {
+        initialProviderStarts.advance();
+        await releaseInitialProviders.promise;
+      } else {
+        recoveryProviderStarts.advance();
+        await releaseRecoveryProviders.promise;
+      }
+      return completion('The bounded conclusion is ready.', 'gpt-4.1');
+    });
+
+    const runCriticalDirectAnswer = () => runThroughBrain(
+      client,
+      CRITICAL_DIRECT_PROMPT,
+      undefined,
+      undefined,
+      {
+        answerMode: 'direct',
+        disableOptionalSideEffects: true,
+        preserveAggregateAbortContext: true
+      },
+      createRuntimeBudget()
+    );
+
+    try {
+      initialRuns.push(
+        ...Array.from({ length: 10 }, () => runCriticalDirectAnswer())
+      );
+      await initialProviderStarts.promise;
+      expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(10);
+
+      const controller = new AbortController();
+      const aggregateAbort = Object.assign(new Error('research aggregate disconnected'), {
+        name: 'AbortError'
+      });
+      let queuedSettled = false;
+      const queuedRun = runResearchWithAbortDrain(
+        {
+          timeoutMs: 30_000,
+          parentSignal: controller.signal,
+          abortMessage: 'Research aggregate timed out during Trinity admission'
+        },
+        runCriticalDirectAnswer
+      ).finally(() => {
+        queuedSettled = true;
+      });
+
+      await Promise.resolve();
+      expect(queuedSettled).toBe(false);
+      expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(10);
+
+      controller.abort(aggregateAbort);
+      await expect(queuedRun).rejects.toBe(aggregateAbort);
+      expect(queuedSettled).toBe(true);
+      expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(10);
+
+      releaseInitialProviders.resolve();
+      await Promise.all(initialRuns);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(10);
+
+      providerWave = 'recovery';
+      recoveryRuns.push(
+        ...Array.from({ length: 10 }, () => runCriticalDirectAnswer())
+      );
+      await recoveryProviderStarts.promise;
+      expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(20);
+
+      releaseRecoveryProviders.resolve();
+      await Promise.all(recoveryRuns);
+    } finally {
+      releaseInitialProviders.resolve();
+      releaseRecoveryProviders.resolve();
+      await Promise.allSettled([...initialRuns, ...recoveryRuns]);
+    }
   });
 });

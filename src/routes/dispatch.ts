@@ -117,15 +117,15 @@ async function runGptDispatch(
   );
   let envelope: AskEnvelope;
   try {
-    envelope = await abortScope.run(parentAbortSignal => routeGptRequest({
+    envelope = await routeGptRequest({
       gptId,
       body: buildResolvedGptDispatchBody(input),
       requestId: requestContext.requestId,
       logger: requestContext.logger,
       request: req,
       bypassIntentRouting: true,
-      parentAbortSignal,
-    }));
+      researchClientAbortSignal: abortScope.signal,
+    });
   } finally {
     abortScope.cleanup();
   }

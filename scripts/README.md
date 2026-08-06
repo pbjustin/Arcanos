@@ -66,10 +66,11 @@ three parent-abort scenarios across synthetic DNS, fetch, model, and persistence
 seams. It returns only after the active seam drains, verifies later seams never
 start, records one active operation at abort and zero at outward settlement,
 and observes no post-settlement mutation. The live runner rejects a response
-before the bounded 300 ms aggregate drain-proof window. Parent abort is a deterministic
-disconnect-equivalent component proof, not a literal TCP disconnect. No fixture
-attempts confirmation or effects. The descriptor probe is constructed inside
-the server-owned fixture and
+before the bounded 300 ms aggregate drain-proof window. The parent-abort
+scenarios are deterministic disconnect-equivalent component proofs, not literal
+TCP disconnects. No fixture attempts confirmation, protected effects, or
+external effects. The descriptor probe is constructed inside the server-owned
+fixture and
 does not claim that caller JSON can carry accessors or property descriptors.
 The source graph resolves the request-abort subpath to reviewed source without
 requiring ignored build output; the normal build then verifies the exact

@@ -128,6 +128,11 @@ When the branch runs:
 - memory commands can succeed even when module actions are ambiguous
 - after the result, the dispatcher attempts best-effort conversation persistence; explicit session scope can write conversation/history even for recall, while interception without explicit session scope is skipped by the persistence service
 
+This interception contract is distinct from a normal Research `run` dispatch.
+Research owns deterministic `research/<topic-component>/...` result persistence
+inside its aggregate deadline and does not additionally write generic module
+conversation transcripts or history, even when `sessionId` is present.
+
 ## Command Baseline for Users
 Use these command patterns when talking to the AI.
 Except for exact key, record, or tag selectors, these examples assume the caller supplies `sessionId` in the request or includes an inline session/storage label.

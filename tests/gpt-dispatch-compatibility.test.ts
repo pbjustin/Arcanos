@@ -1,4 +1,9 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
+import {
+  createServer,
+  request as createHttpRequest,
+  type Server,
+} from 'node:http';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
@@ -120,6 +125,7 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { dispatchLegacyRouteToGpt } = await import('../src/routes/_core/legacyGptCompat.js');
 const {
   createAbortError,
   getRequestAbortSignal,
@@ -185,6 +191,51 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function listenOnEphemeralPort(app: express.Express): Promise<{
+  port: number;
+  server: Server;
+}> {
+  const server = createServer(app);
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Ephemeral dispatch test server address unavailable');
+  }
+  return { port: address.port, server };
+}
+
+async function closeTestServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+  });
+}
+
+function startJsonRequest(input: {
+  body: Record<string, unknown>;
+  headers?: Record<string, string>;
+  path: string;
+  port: number;
+}) {
+  const payload = JSON.stringify(input.body);
+  const clientRequest = createHttpRequest({
+    host: '127.0.0.1',
+    port: input.port,
+    path: input.path,
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(payload),
+      ...input.headers,
+    },
+  });
+  clientRequest.on('error', () => undefined);
+  clientRequest.end(payload);
+  return clientRequest;
 }
 
 describe('gpt dispatch compatibility', () => {
@@ -596,6 +647,259 @@ describe('gpt dispatch compatibility', () => {
       expect(mockRebuildGptModuleMap).not.toHaveBeenCalled();
       expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
     }
+  );
+
+  it.each(['universal', 'legacy'] as const)(
+    'propagates a %s Research disconnect and waits for cooperative drain',
+    async (ingress) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'ARCANOS:RESEARCH',
+        description: null,
+        route: 'research',
+        actions: ['run'],
+        defaultAction: 'run',
+        defaultTimeoutMs: 5_000,
+      });
+      const started = createDeferred();
+      const aborted = createDeferred();
+      const releaseDrain = createDeferred();
+      const responseClosed = createDeferred();
+      const routeFinished = createDeferred();
+      let drained = false;
+      let routeSettled = false;
+      mockDispatchModuleAction.mockImplementationOnce(async () => {
+        const signal = getRequestAbortSignal();
+        expect(signal).toBeDefined();
+        started.resolve();
+        if (!signal?.aborted) {
+          await new Promise<void>((resolve) => {
+            signal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+        }
+        aborted.resolve();
+        await releaseDrain.promise;
+        drained = true;
+        throw signal?.reason ?? createAbortError('Research client disconnected');
+      });
+
+      const app = express();
+      app.use(express.json());
+      app.use((_req, res, next) => {
+        res.once('close', responseClosed.resolve);
+        next();
+      });
+      const trackedUniversalDispatch = async (
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) => {
+        try {
+          await universalDispatch(req, res);
+        } catch (error) {
+          next(error);
+        } finally {
+          routeSettled = true;
+          routeFinished.resolve();
+        }
+      };
+      const trackedLegacyDispatch = async (
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) => {
+        try {
+          await dispatchLegacyRouteToGpt(req, res, next, {
+            legacyRoute: '/modules/research',
+            gptId: 'research',
+            applyDeprecationHeaders: false,
+          });
+        } finally {
+          routeSettled = true;
+          routeFinished.resolve();
+        }
+      };
+      if (ingress === 'universal') {
+        app.post(
+          '/dispatch',
+          dispatchDagCompatibilityBoundary,
+          dispatchResearchGptAdmissionBoundary,
+        );
+        app.post(
+          '/dispatch',
+          dispatchResearchGptPreflightBoundary,
+          trackedUniversalDispatch,
+        );
+      } else {
+        app.post('/modules/research', trackedLegacyDispatch);
+      }
+
+      const { port, server } = await listenOnEphemeralPort(app);
+      try {
+        const clientRequest = startJsonRequest({
+          port,
+          path: ingress === 'universal' ? '/dispatch' : '/modules/research',
+          body: ingress === 'universal'
+            ? {
+                target: 'gpt',
+                gptId: 'research',
+                action: 'run',
+                payload: { topic: `${ingress} disconnect drain` },
+              }
+            : {
+                action: 'run',
+                payload: { topic: `${ingress} disconnect drain` },
+              },
+        });
+
+        await started.promise;
+        clientRequest.destroy();
+        await responseClosed.promise;
+        await aborted.promise;
+        await Promise.resolve();
+
+        expect(routeSettled).toBe(false);
+        expect(drained).toBe(false);
+
+        releaseDrain.resolve();
+        await routeFinished.promise;
+
+        expect(drained).toBe(true);
+      } finally {
+        releaseDrain.resolve();
+        await closeTestServer(server);
+      }
+    },
+  );
+
+  it.each(['universal', 'legacy'] as const)(
+    'does not abort or detach a confirmed Backstage mutation after a %s client disconnect',
+    async (ingress) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        backstage: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['trackStoryline'],
+        defaultAction: 'trackStoryline',
+        defaultTimeoutMs: 5_000,
+      });
+      const started = createDeferred();
+      const releaseMutation = createDeferred();
+      const responseClosed = createDeferred();
+      const routeFinished = createDeferred();
+      let mutationCompleted = false;
+      let operationSignal: AbortSignal | undefined;
+      let operationAbortObserved = false;
+      let routeSettled = false;
+      mockDispatchModuleAction.mockImplementationOnce(async () => {
+        operationSignal = getRequestAbortSignal();
+        operationSignal?.addEventListener('abort', () => {
+          operationAbortObserved = true;
+        }, { once: true });
+        started.resolve();
+        await releaseMutation.promise;
+        mutationCompleted = true;
+        return [{ sequence: 25, summary: 'Close the rivalry chapter.' }];
+      });
+
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        req.controlPlanePrincipal = {
+          audience: 'control-plane-http',
+          role: 'operator',
+          principalId: 'operator:disconnect-scope-test',
+          scopes: ['mcp:invoke'],
+        };
+        next();
+      });
+      app.use((_req, res, next) => {
+        res.once('close', responseClosed.resolve);
+        next();
+      });
+      const trackedUniversalDispatch = async (
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) => {
+        try {
+          await universalDispatch(req, res);
+        } catch (error) {
+          next(error);
+        } finally {
+          routeSettled = true;
+          routeFinished.resolve();
+        }
+      };
+      const trackedLegacyDispatch = async (
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) => {
+        try {
+          await dispatchLegacyRouteToGpt(req, res, next, {
+            legacyRoute: '/modules/backstage-booker',
+            gptId: 'backstage',
+            applyDeprecationHeaders: false,
+          });
+        } finally {
+          routeSettled = true;
+          routeFinished.resolve();
+        }
+      };
+      app.post(
+        ingress === 'universal' ? '/dispatch' : '/modules/backstage-booker',
+        backstageMutationConfirmationGate,
+        ingress === 'universal'
+          ? trackedUniversalDispatch
+          : trackedLegacyDispatch,
+      );
+
+      const { port, server } = await listenOnEphemeralPort(app);
+      try {
+        const clientRequest = startJsonRequest({
+          port,
+          path: ingress === 'universal' ? '/dispatch' : '/modules/backstage-booker',
+          headers: { 'x-confirmed': 'yes' },
+          body: ingress === 'universal'
+            ? {
+                target: 'gpt',
+                gptId: 'backstage',
+                action: 'trackStoryline',
+                payload: { sequence: 25, summary: 'Close the rivalry chapter.' },
+              }
+            : {
+                action: 'trackStoryline',
+                payload: { sequence: 25, summary: 'Close the rivalry chapter.' },
+              },
+        });
+
+        await started.promise;
+        expect(operationSignal).toBeDefined();
+        clientRequest.destroy();
+        await responseClosed.promise;
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        expect(operationSignal?.aborted).toBe(false);
+        expect(operationAbortObserved).toBe(false);
+        expect(routeSettled).toBe(false);
+        expect(mutationCompleted).toBe(false);
+
+        releaseMutation.resolve();
+        await routeFinished.promise;
+
+        expect(mutationCompleted).toBe(true);
+        expect(operationAbortObserved).toBe(false);
+      } finally {
+        releaseMutation.resolve();
+        await closeTestServer(server);
+      }
+    },
   );
 
   it('does not start Research work for a pre-aborted parent request', async () => {

@@ -752,13 +752,20 @@ paths.
 Each accepted Research execution is governed by one service-owned aggregate
 deadline (`RESEARCH_WORKFLOW_TIMEOUT_MS`, default 60 seconds), capped by any
 shorter caller deadline. The same runtime budget and cooperative cancellation
-signal span DNS resolution, HTTP fetches, every source-summary, synthesis, and
-audit model call, and persistence. Direct HTTP, SDK, GPT/module aliases,
+signal span DNS resolution, HTTP fetches, all source-summary, synthesis, and
+audit model calls, and persistence. Direct HTTP, SDK, GPT/module aliases,
 dispatch, GPT Access, and MCP callers propagate disconnect or protocol
 cancellation into that scope. Once cancelled, the workflow admits no new URL,
 model, or write stage and waits for already-started cooperative work to settle
 before its own promise completes; ordinary non-cancellation source failures
 remain recorded in `failedUrls` and do not abort later sources.
+
+Successful Research `run` dispatches own their deterministic
+`research/<topic-component>/...` persistence inside that aggregate scope. They
+do not also create generic module-conversation transcript/history writes, even
+when a caller supplies `sessionId`; natural-language memory interception remains
+a separate dispatcher path with the behavior documented in
+`docs/MEMORY_BACKEND_USAGE.md`.
 
 The exact command/agent CEF boundary authenticates before body allocation,
 returns `Cache-Control: no-store`, and uses separate authenticated-principal

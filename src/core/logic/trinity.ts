@@ -69,8 +69,14 @@ import { getClearMinThreshold, recordRun } from '@analytics/clearAutoTuner.js';
 import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
 import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
-import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import {
+  BUDGET_DISABLED,
+  createRuntimeBudget,
+  assertBudgetAvailable,
+  getSafeRemainingMs
+} from '@platform/resilience/runtimeBudget.js';
+import {
+  getRequestAbortContext,
   getRequestAbortSignal,
   getRequestRemainingMs,
   isAbortError,
@@ -840,27 +846,41 @@ export async function runThroughBrain(
   }
 
   // --- Concurrency governor + watchdog ---
-  const [release] = await acquireTierSlot(tier);
-  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
-    tier,
-    runtimeBudget,
-    getGPT5Model(),
-    options.watchdogModelTimeoutMs
-  );
-  const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
-  const stageTimeoutOverrideMs =
-    typeof modelStageTimeoutMs === 'number' &&
-    Number.isFinite(modelStageTimeoutMs) &&
-    modelStageTimeoutMs > 0
-      ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
-      : undefined;
-  const checkWatchdog = () => {
-    throwIfRequestAborted();
-    assertBudgetAvailable(runtimeBudget);
-    watchdog.check();
-  };
-
+  let releaseTierSlot: (() => void) | undefined;
   try {
+    const activeAbortContext = getRequestAbortContext();
+    const runtimeDeadlineAt = BUDGET_DISABLED
+      ? Number.POSITIVE_INFINITY
+      : runtimeBudget.hardDeadline - runtimeBudget.safetyBuffer;
+    const admissionDeadlineAt = Math.min(
+      runtimeDeadlineAt,
+      activeAbortContext?.deadlineAt ?? Number.POSITIVE_INFINITY
+    );
+    [releaseTierSlot] = await acquireTierSlot(tier, {
+      signal: activeAbortContext?.signal,
+      deadlineAt: admissionDeadlineAt
+    });
+    throwIfRequestAborted();
+
+    const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
+      tier,
+      runtimeBudget,
+      getGPT5Model(),
+      options.watchdogModelTimeoutMs
+    );
+    const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
+    const stageTimeoutOverrideMs =
+      typeof modelStageTimeoutMs === 'number' &&
+      Number.isFinite(modelStageTimeoutMs) &&
+      modelStageTimeoutMs > 0
+        ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
+        : undefined;
+    const checkWatchdog = () => {
+      throwIfRequestAborted();
+      assertBudgetAvailable(runtimeBudget);
+      watchdog.check();
+    };
+
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
     const selfHealingMitigation = getTrinitySelfHealingMitigation({
@@ -1728,6 +1748,6 @@ export async function runThroughBrain(
     return result;
 
   } finally {
-    release();
+    releaseTierSlot?.();
   }
 }

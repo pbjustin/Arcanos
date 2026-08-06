@@ -119,6 +119,8 @@ export type RouteGptRequestInput = {
   bypassIntentRouting?: boolean;
   runtimeExecutionMode?: 'request' | 'background';
   parentAbortSignal?: AbortSignal;
+  /** HTTP disconnect cancellation admitted only by the drain-aware Research action. */
+  researchClientAbortSignal?: AbortSignal;
   suppressTimeoutFallback?: boolean;
   memoryPlaneAuthorized?: true;
   enforceQueuedBackstageMutationAdmission?: boolean;
@@ -946,6 +948,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     bypassIntentRouting,
     runtimeExecutionMode,
     parentAbortSignal,
+    researchClientAbortSignal,
     suppressTimeoutFallback: suppressTimeoutFallbackInput,
     memoryPlaneAuthorized,
     enforceQueuedBackstageMutationAdmission = false,
@@ -1773,7 +1776,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       timeoutMs,
       deadlineAt: activeAbortContext?.deadlineAt,
       requestId,
-      parentSignal: parentAbortSignal ?? activeAbortContext?.signal,
+      parentSignal: isResearchRun
+        ? researchClientAbortSignal ?? parentAbortSignal ?? activeAbortContext?.signal
+        : parentAbortSignal ?? activeAbortContext?.signal,
       abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
     };
     const executeModuleAction = () =>
