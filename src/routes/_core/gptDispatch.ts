@@ -90,6 +90,7 @@ import {
 import type {
   QueuedGptBackstageMutationAdmission,
 } from '@shared/gpt/asyncGptJob.js';
+import { runResearchWithAbortDrain } from './researchAbortDrain.js';
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -1762,39 +1763,49 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   }
 
   const dispatchStartedAt = Date.now();
+  const isResearchRun =
+    activeEntry.module === RESEARCH_MODULE_NAME
+    && action === RESEARCH_ACTION_NAME;
 
   try {
-      const activeAbortContext = getRequestAbortContext();
-      const result = await runWithRequestAbortTimeout(
-        {
-          timeoutMs,
-          requestId,
-          parentSignal: parentAbortSignal ?? activeAbortContext?.signal,
-          abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
-        },
-      () => dispatchModuleAction(activeEntry.module, action, payload)
-    );
-
-    const resolvedSessionId = resolveSessionId(body, payload);
-    await persistModuleConversation({
-      moduleName: activeEntry.module,
-      route: activeEntry.route,
-      action,
-      gptId: trimmedGptId,
-      sessionId: resolvedSessionId,
+    const activeAbortContext = getRequestAbortContext();
+    const abortOptions = {
+      timeoutMs,
+      deadlineAt: activeAbortContext?.deadlineAt,
       requestId,
-      requestPayload: payload,
-      responsePayload: result
-    }).catch((error: unknown) => {
-      //audit Assumption: persistence failures should not fail successful module responses; failure risk: dropped conversation history; expected invariant: user still receives module output; handling strategy: warn and continue.
-      logger?.warn?.("gpt.dispatch.persistence_failed", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
+      parentSignal: parentAbortSignal ?? activeAbortContext?.signal,
+      abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
+    };
+    const executeModuleAction = () =>
+      dispatchModuleAction(activeEntry.module, action, payload);
+    const result = isResearchRun
+      ? await runResearchWithAbortDrain(abortOptions, executeModuleAction)
+      : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
+
+    // Research owns and fences its persistence inside its aggregate workflow.
+    // Starting generic transcript writes here would escape that deadline/signal.
+    if (!isResearchRun) {
+      const resolvedSessionId = resolveSessionId(body, payload);
+      await persistModuleConversation({
+        moduleName: activeEntry.module,
+        route: activeEntry.route,
         action,
-        error: String((error as Error)?.message ?? error),
+        gptId: trimmedGptId,
+        sessionId: resolvedSessionId,
+        requestId,
+        requestPayload: payload,
+        responsePayload: result
+      }).catch((error: unknown) => {
+        //audit Assumption: persistence failures should not fail successful module responses; failure risk: dropped conversation history; expected invariant: user still receives module output; handling strategy: warn and continue.
+        logger?.warn?.("gpt.dispatch.persistence_failed", {
+          requestId,
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          action,
+          error: String((error as Error)?.message ?? error),
+        });
       });
-    });
+    }
 
     logger?.info?.("gpt.dispatch.ok", {
       requestId,

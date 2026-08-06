@@ -6,7 +6,10 @@ import {
   getGPT5Model,
   getFallbackModel
 } from '../src/services/openai.js';
-import { runWithRequestAbortTimeout } from '@arcanos/runtime';
+import {
+  runWithRequestAbortContext,
+  runWithRequestAbortTimeout
+} from '@arcanos/runtime';
 
 describe('createChatCompletionWithFallback', () => {
   beforeEach(() => {
@@ -122,6 +125,85 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy.mock.calls[1][0].model).not.toBe(gpt5Model);
     expect(result.choices[0]?.message.content).toBe('Complete guide answer.');
     expect(result.choices[0]?.finish_reason).toBe('stop');
+  });
+
+  it('uses the exact aggregate signal and waits for provider drain when requested', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('caller disconnected');
+    let startProvider!: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      startProvider = resolve;
+    });
+    let releaseProvider!: () => void;
+    const providerRelease = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let providerSignal: AbortSignal | undefined;
+    let providerObservedAbort = false;
+    let providerSettled = false;
+    let completionSettled = false;
+    const createSpy = jest.fn().mockImplementation(
+      (_payload, options?: { signal?: AbortSignal }) => {
+        providerSignal = options?.signal;
+        startProvider();
+        return new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            providerObservedAbort = true;
+            void providerRelease.then(() => {
+              providerSettled = true;
+              reject(new Error('provider transport closed after abort'));
+            });
+          };
+          if (options?.signal?.aborted) {
+            onAbort();
+          } else {
+            options?.signal?.addEventListener('abort', onAbort, { once: true });
+          }
+        });
+      }
+    );
+    const client = {
+      responses: {
+        create: createSpy
+      }
+    } as any;
+
+    const completionPromise = Promise.resolve(runWithRequestAbortContext(
+      {
+        requestId: 'aggregate-provider-signal',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 30_000,
+        timeoutMs: 30_000
+      },
+      () => createSingleChatCompletion(client, {
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'Summarize the bounded research.' }],
+        signal: controller.signal,
+        preserveAggregateAbortContext: true
+      })
+    ));
+    void completionPromise.then(
+      () => { completionSettled = true; },
+      () => { completionSettled = true; },
+    );
+
+    await providerStarted;
+    expect(providerSignal).toBe(controller.signal);
+    controller.abort(abortReason);
+    await Promise.resolve();
+    expect(providerObservedAbort).toBe(true);
+    expect(providerSettled).toBe(false);
+    expect(completionSettled).toBe(false);
+
+    releaseProvider();
+    await expect(completionPromise).rejects.toMatchObject({
+      name: 'AbortError',
+      message: abortReason.message
+    });
+    expect(providerSettled).toBe(true);
+    expect(completionSettled).toBe(true);
+    expect(createSpy).toHaveBeenCalledTimes(1);
   });
 
   it('stops fallback expansion once the active request is aborted', async () => {

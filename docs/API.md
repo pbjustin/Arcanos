@@ -749,6 +749,17 @@ digest. The component is capped at 97 UTF-8 bytes. New writes use this bounded
 component; the storage contract does not promise a dual write to legacy topic
 paths.
 
+Each accepted Research execution is governed by one service-owned aggregate
+deadline (`RESEARCH_WORKFLOW_TIMEOUT_MS`, default 60 seconds), capped by any
+shorter caller deadline. The same runtime budget and cooperative cancellation
+signal span DNS resolution, HTTP fetches, every source-summary, synthesis, and
+audit model call, and persistence. Direct HTTP, SDK, GPT/module aliases,
+dispatch, GPT Access, and MCP callers propagate disconnect or protocol
+cancellation into that scope. Once cancelled, the workflow admits no new URL,
+model, or write stage and waits for already-started cooperative work to settle
+before its own promise completes; ordinary non-cancellation source failures
+remain recorded in `failedUrls` and do not abort later sources.
+
 The exact command/agent CEF boundary authenticates before body allocation,
 returns `Cache-Control: no-store`, and uses separate authenticated-principal
 budgets for registry reads and execution. `GET` and `HEAD` command registry

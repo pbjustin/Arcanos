@@ -2,13 +2,23 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
 import { normalizeResearchRequest } from '@shared/researchRequest.js';
-import { researchTopic, ResearchResult } from './research.js';
+import { createAbortError, getRequestAbortContext } from '@arcanos/runtime';
+import {
+  researchTopic,
+  type ResearchExecutionOptions,
+  type ResearchResult,
+} from './research.js';
 
 export interface ResearchHubRequest {
   topic: string;
   urls?: string[];
   metadata?: Record<string, unknown>;
 }
+
+export type ResearchHubExecutionOptions = Omit<
+  ResearchExecutionOptions,
+  'requestId'
+>;
 
 export type ResearchHubEventType = 'started' | 'completed' | 'failed';
 
@@ -40,6 +50,25 @@ export type ResearchHubEvent =
 
 type ResearchHubListener = (event: ResearchHubEvent) => void;
 
+function throwIfResearchHubAborted(...signals: Array<AbortSignal | undefined>): void {
+  const abortedSignal = signals.find(signal => signal?.aborted);
+  if (!abortedSignal) {
+    return;
+  }
+
+  throw abortedSignal.reason instanceof Error
+    ? abortedSignal.reason
+    : createAbortError('Research request aborted');
+}
+
+function throwIfResearchHubDeadlineExpired(deadlineAt: number | undefined): void {
+  if (typeof deadlineAt !== 'number' || Date.now() < deadlineAt) {
+    return;
+  }
+
+  throw createAbortError('Research request parent deadline already expired');
+}
+
 function buildEventRequest(
   request: ResearchHubEventBase['request'],
 ): ResearchHubEventBase['request'] {
@@ -53,7 +82,15 @@ function buildEventRequest(
 class ResearchHub {
   private emitter = new EventEmitter();
 
-  async request(requester: string, request: ResearchHubRequest): Promise<ResearchResult> {
+  async request(
+    requester: string,
+    request: ResearchHubRequest,
+    executionOptions: ResearchHubExecutionOptions = {},
+  ): Promise<ResearchResult> {
+    const ambientContext = getRequestAbortContext();
+    const ambientSignal = ambientContext?.signal;
+    throwIfResearchHubAborted(executionOptions.signal, ambientSignal);
+    throwIfResearchHubDeadlineExpired(ambientContext?.deadlineAt);
     const normalized = normalizeResearchRequest(request);
     const executionUrls: readonly string[] = Object.freeze([...normalized.urls]);
     const requestId = randomUUID();
@@ -68,7 +105,18 @@ class ResearchHub {
     });
 
     try {
-      const result = await researchTopic(normalized.topic, executionUrls);
+      // A synchronous event listener can consume the remaining request time.
+      // Recheck before admitting provider, fetch, or persistence work.
+      throwIfResearchHubAborted(executionOptions.signal, ambientSignal);
+      throwIfResearchHubDeadlineExpired(ambientContext?.deadlineAt);
+      const result = await researchTopic(normalized.topic, executionUrls, {
+        ...executionOptions,
+        requestId,
+      });
+      // Do not emit a successful completion when caller cancellation wins the
+      // continuation race immediately after the workflow itself drains.
+      throwIfResearchHubAborted(executionOptions.signal, ambientSignal);
+      throwIfResearchHubDeadlineExpired(ambientContext?.deadlineAt);
       const completedEvent: ResearchHubCompletedEvent = {
         type: 'completed',
         requestId,
@@ -117,13 +165,17 @@ class ResearchHub {
 const hub = new ResearchHub();
 
 export interface ResearchBridge {
-  requestResearch: (request: ResearchHubRequest) => Promise<ResearchResult>;
+  requestResearch: (
+    request: ResearchHubRequest,
+    executionOptions?: ResearchHubExecutionOptions,
+  ) => Promise<ResearchResult>;
   subscribe: (listener: ResearchHubListener, options?: { includeForeign?: boolean }) => () => void;
 }
 
 export function connectResearchBridge(moduleName: string): ResearchBridge {
   return {
-    requestResearch: request => hub.request(moduleName, request),
+    requestResearch: (request, executionOptions) =>
+      hub.request(moduleName, request, executionOptions),
     subscribe: (listener, options) => hub.subscribe(moduleName, listener, options)
   };
 }
@@ -134,8 +186,9 @@ export function observeResearchEvents(listener: ResearchHubListener): () => void
 
 export async function requestResearchViaHub(
   requester: string,
-  request: ResearchHubRequest
+  request: ResearchHubRequest,
+  executionOptions?: ResearchHubExecutionOptions,
 ): Promise<ResearchResult> {
-  return hub.request(requester, request);
+  return hub.request(requester, request, executionOptions);
 }
 

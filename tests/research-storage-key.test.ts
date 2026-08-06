@@ -22,7 +22,16 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
-  createRuntimeBudget: jest.fn(() => ({})),
+  createRuntimeBudgetWithLimit: jest.fn((watchdogLimit: number, safetyBuffer = 0) => {
+    const startedAt = Date.now();
+    return {
+      startedAt,
+      hardDeadline: startedAt + watchdogLimit,
+      watchdogLimit,
+      safetyBuffer
+    };
+  }),
+  getRemainingMs: jest.fn((budget: { hardDeadline: number }) => budget.hardDeadline - Date.now()),
 }));
 
 jest.unstable_mockModule('../src/services/openai.js', () => ({
@@ -39,6 +48,7 @@ jest.unstable_mockModule('../src/services/memory.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnvNumber: jest.fn((_name: string, fallback: number) => fallback),
+  getEnvIntegerAtLeast: jest.fn((_name: string, fallback: number) => fallback),
   getEnv: jest.fn((name: string) => (
     name === 'OPENAI_API_KEY' ? 'test_key_for_mocking' : undefined
   )),
@@ -123,10 +133,12 @@ describe('research storage topic component', () => {
     expect(mockSetMemory).toHaveBeenCalledWith(
       `research/${component}/summary`,
       expect.objectContaining({ topic }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(mockSetMemory).toHaveBeenCalledWith(
       `research/${component}/sources/1`,
       expect.objectContaining({ url }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(mockMkdir).toHaveBeenCalledWith(
       path.join('memory', 'research', component, 'sources'),

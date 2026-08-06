@@ -624,7 +624,8 @@ export async function runDirectAnswerStage(
   runtimeBudget?: RuntimeBudget,
   requestId?: string,
   directAnswerModelOverride?: string,
-  explicitTimeoutMs?: number
+  explicitTimeoutMs?: number,
+  preserveAggregateAbortContext = false
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -640,34 +641,44 @@ export async function runDirectAnswerStage(
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
   const stageTimeoutMs = resolveDirectAnswerStageTimeoutMs(runtimeBudget, explicitTimeoutMs);
+  const aggregateSignal = preserveAggregateAbortContext
+    ? getRequestAbortSignal()
+    : undefined;
+  const useAggregateAbortContext = aggregateSignal !== undefined;
 
   logger.info('trinity.direct_answer.execution_plan', {
     module: 'trinity',
     operation: 'direct-answer-stage',
     requestId,
     model: directAnswerModel,
-    timeoutMs: stageTimeoutMs,
+    timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
+    aggregateAbortContext: useAggregateAbortContext,
     tokenLimit: cappedTokenLimit
   });
 
   let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
   try {
-    directAnswerResponse = await runWithRequestAbortTimeout(
-      {
-        timeoutMs: stageTimeoutMs,
-        requestId,
-        parentSignal: getRequestAbortSignal(),
-        abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
-      },
-      () =>
-        createSingleChatCompletion(client, {
-          messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
-          temperature,
-          model: directAnswerModel,
-          signal: getRequestAbortSignal(),
-          ...directAnswerTokenParams
-        })
-    );
+    const executeDirectAnswer = () =>
+      createSingleChatCompletion(client, {
+        messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+        temperature,
+        model: directAnswerModel,
+        signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
+        preserveAggregateAbortContext: useAggregateAbortContext,
+        ...directAnswerTokenParams
+      });
+
+    directAnswerResponse = useAggregateAbortContext
+      ? await executeDirectAnswer()
+      : await runWithRequestAbortTimeout(
+          {
+            timeoutMs: stageTimeoutMs,
+            requestId,
+            parentSignal: getRequestAbortSignal(),
+            abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
+          },
+          executeDirectAnswer
+        );
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     logger.warn(
@@ -679,7 +690,8 @@ export async function runDirectAnswerStage(
         operation: 'direct-answer-stage',
         requestId,
         model: directAnswerModel,
-        timeoutMs: stageTimeoutMs,
+        timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
+        aggregateAbortContext: useAggregateAbortContext,
         promptLength: auditSafePrompt.length,
         error: errorMessage
       }

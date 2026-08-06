@@ -12,6 +12,7 @@ import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageStoryline.js';
+import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import {
   buildResolvedGptDispatchBody,
   isDagDispatchAction,
@@ -109,14 +110,25 @@ async function runGptDispatch(
 ) {
   const gptId = input.gptId ?? DEFAULT_DISPATCH_GPT_ID;
   const requestContext = dispatchRequestContext(req);
-  const envelope = await routeGptRequest({
-    gptId,
-    body: buildResolvedGptDispatchBody(input),
-    requestId: requestContext.requestId,
-    logger: requestContext.logger,
-    request: req,
-    bypassIntentRouting: true,
-  });
+  const abortScope = createClientDisconnectAbortScope(
+    req,
+    res,
+    'Universal GPT dispatch client disconnected',
+  );
+  let envelope: AskEnvelope;
+  try {
+    envelope = await abortScope.run(parentAbortSignal => routeGptRequest({
+      gptId,
+      body: buildResolvedGptDispatchBody(input),
+      requestId: requestContext.requestId,
+      logger: requestContext.logger,
+      request: req,
+      bypassIntentRouting: true,
+      parentAbortSignal,
+    }));
+  } finally {
+    abortScope.cleanup();
+  }
 
   return res.status(gptStatusCode(envelope)).json({
     ...envelope,

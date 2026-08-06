@@ -209,6 +209,13 @@ export interface TrinityResult {
 export interface TrinityRunOptions {
   dryRun?: boolean;
   dryRunReason?: string;
+  /** Disable non-essential feedback and self-improvement writes for tightly bounded workflows. */
+  disableOptionalSideEffects?: boolean;
+  /**
+   * Preserve the caller-owned ambient AbortSignal/deadline as the sole
+   * cancellation context and await cooperative stage drain on abort.
+   */
+  preserveAggregateAbortContext?: boolean;
   cognitiveDomain?: import('@shared/types/cognitiveDomain.js').CognitiveDomain;
   internalMode?: boolean;
   sourceEndpoint?: string;

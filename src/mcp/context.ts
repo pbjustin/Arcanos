@@ -23,6 +23,7 @@ export interface McpRequestContext {
   req: Request;
   logger: McpLogger;
   transport: McpTransportKind;
+  signal?: AbortSignal;
   actionPlanPrincipal?: ActionPlanPrincipal;
 }
 

@@ -10,6 +10,7 @@ const {
   observeResearchEvents,
   requestResearchViaHub,
 } = await import('../src/services/researchHub.js');
+const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 
 const RESEARCH_TOPIC_MAX_LENGTH = 500;
 const RESEARCH_URL_MAX_ITEMS = 10;
@@ -103,11 +104,13 @@ describe('research request contract', () => {
       1,
       't'.repeat(RESEARCH_TOPIC_MAX_LENGTH),
       exactAggregateUrls,
+      { requestId: expect.any(String) },
     );
     expect(mockResearchTopic).toHaveBeenNthCalledWith(
       2,
       'exact count',
       exactCountUrls,
+      { requestId: expect.any(String) },
     );
   });
 
@@ -182,6 +185,7 @@ describe('research request contract', () => {
     expect(mockResearchTopic).toHaveBeenCalledWith(
       'single URL snapshot',
       ['https://example.com/first-snapshot'],
+      { requestId: expect.any(String) },
     );
   });
 
@@ -213,7 +217,11 @@ describe('research request contract', () => {
     });
 
     expect(urlGetter).not.toHaveBeenCalled();
-    expect(mockResearchTopic).toHaveBeenCalledWith('accessor URL safety', []);
+    expect(mockResearchTopic).toHaveBeenCalledWith(
+      'accessor URL safety',
+      [],
+      { requestId: expect.any(String) },
+    );
   });
 
   it('keeps the validated execution URLs isolated from started-event listeners', async () => {
@@ -236,6 +244,7 @@ describe('research request contract', () => {
     expect(mockResearchTopic).toHaveBeenCalledWith(
       'listener isolation',
       ['https://example.com/original'],
+      { requestId: expect.any(String) },
     );
     expect(originalUrls).toEqual(['https://example.com/original']);
   });
@@ -254,6 +263,111 @@ describe('research request contract', () => {
     expect(mockResearchTopic).toHaveBeenCalledWith(
       'invalid URL compatibility',
       ['not-a-url', 'not-a-url', 'https://example.com/valid'],
+      { requestId: expect.any(String) },
     );
+  });
+
+  it('rejects a pre-aborted request before hub events or research work', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('caller disconnected before admission'));
+    const events: unknown[] = [];
+    const unsubscribe = observeResearchEvents(event => events.push(event));
+
+    try {
+      await expect(requestResearchViaHub(
+        'contract-test',
+        { topic: 'must not start', urls: [] },
+        { signal: controller.signal },
+      )).rejects.toThrow('caller disconnected before admission');
+      expect(events).toEqual([]);
+      expect(mockResearchTopic).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('rejects an expired ambient deadline before hub events or research work', async () => {
+    const controller = new AbortController();
+    const events: unknown[] = [];
+    const unsubscribe = observeResearchEvents(event => events.push(event));
+
+    try {
+      const request = runWithRequestAbortContext(
+        {
+          requestId: 'expired-hub-deadline',
+          controller,
+          signal: controller.signal,
+          deadlineAt: Date.now() - 1,
+          timeoutMs: 1_000,
+        },
+        () => requestResearchViaHub(
+          'contract-test',
+          { topic: 'must not enter the hub', urls: [] },
+        ),
+      );
+
+      await expect(Promise.resolve(request)).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Research request parent deadline already expired',
+      });
+      expect(events).toEqual([]);
+      expect(mockResearchTopic).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('forwards one signal and the hub request id to the workflow', async () => {
+    const controller = new AbortController();
+    const events: Array<{ type: string; requestId: string }> = [];
+    const unsubscribe = observeResearchEvents(event => {
+      events.push({ type: event.type, requestId: event.requestId });
+    });
+
+    try {
+      await requestResearchViaHub(
+        'contract-test',
+        { topic: 'linked execution', urls: [] },
+        { signal: controller.signal, timeoutMs: 3210 },
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events.map(event => event.type)).toEqual(['started', 'completed']);
+    expect(mockResearchTopic).toHaveBeenCalledWith(
+      'linked execution',
+      [],
+      {
+        requestId: events[0]!.requestId,
+        signal: controller.signal,
+        timeoutMs: 3210,
+      },
+    );
+  });
+
+  it('emits failure rather than completion when cancellation wins the post-workflow race', async () => {
+    const controller = new AbortController();
+    const cancellation = Object.assign(new Error('caller disconnected after drain'), {
+      name: 'AbortError',
+    });
+    mockResearchTopic.mockImplementationOnce(async (topic: string, urls: string[]) => {
+      controller.abort(cancellation);
+      return buildResult(topic, urls);
+    });
+    const events: Array<{ type: string }> = [];
+    const unsubscribe = observeResearchEvents(event => events.push({ type: event.type }));
+
+    try {
+      await expect(requestResearchViaHub(
+        'contract-test',
+        { topic: 'completion race', urls: [] },
+        { signal: controller.signal },
+      )).rejects.toThrow('caller disconnected after drain');
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events.map(event => event.type)).toEqual(['started', 'failed']);
   });
 });

@@ -1,4 +1,10 @@
 import type { McpRequestContext } from '../context.js';
+import {
+  createAbortError,
+  getRequestAbortContext,
+  runWithRequestAbortContext,
+  type RequestAbortContext,
+} from '@arcanos/runtime';
 import { MCP_FLAGS } from '../registry.js';
 import { mcpError } from '../errors.js';
 import { issueConfirmationNonce, verifyAndConsumeNonce } from '../confirm.js';
@@ -214,13 +220,97 @@ export function buildClearRecheckInput(plan: ActionPlanRecord) {
   };
 }
 
-export function wrapTool(toolName: string, ctx: McpRequestContext, handler: (args: any) => Promise<any>) {
-  return async (args: any) => {
+export interface McpToolExecutionExtra {
+  signal?: AbortSignal;
+  [key: string]: unknown;
+}
+
+function createMcpToolAbortScope(
+  ctx: McpRequestContext,
+  sdkSignal: AbortSignal | undefined,
+): {
+  signal: AbortSignal;
+  run<T>(callback: () => Promise<T> | T): Promise<T> | T;
+  cleanup(): void;
+} {
+  const controller = new AbortController();
+  const activeContext = getRequestAbortContext();
+  const parentSignals = Array.from(new Set(
+    [ctx.signal, sdkSignal, activeContext?.signal].filter(
+      (signal): signal is AbortSignal => Boolean(signal),
+    ),
+  ));
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  const abortFrom = (signal: AbortSignal) => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(
+      signal.reason instanceof Error
+        ? signal.reason
+        : createAbortError('MCP tool execution aborted'),
+    );
+  };
+
+  for (const signal of parentSignals) {
+    if (signal.aborted) {
+      abortFrom(signal);
+      break;
+    }
+    const listener = () => abortFrom(signal);
+    listeners.push({ signal, listener });
+    signal.addEventListener('abort', listener, { once: true });
+  }
+
+  const runtimeDeadline = Number.isFinite(ctx.runtimeBudget?.hardDeadline)
+    ? ctx.runtimeBudget.hardDeadline
+    : Number.MAX_SAFE_INTEGER;
+  const deadlineAt = Math.min(
+    runtimeDeadline,
+    activeContext?.deadlineAt ?? Number.MAX_SAFE_INTEGER,
+  );
+  const requestAbortContext: RequestAbortContext = {
+    requestId: ctx.requestId,
+    controller,
+    signal: controller.signal,
+    deadlineAt,
+    timeoutMs: Math.max(1, deadlineAt - Date.now()),
+  };
+
+  return {
+    signal: controller.signal,
+    run: callback => runWithRequestAbortContext(requestAbortContext, callback),
+    cleanup: () => {
+      for (const { signal, listener } of listeners) {
+        signal.removeEventListener('abort', listener);
+      }
+    },
+  };
+}
+
+export function wrapTool(
+  toolName: string,
+  ctx: McpRequestContext,
+  handler: (args: any, extra: McpToolExecutionExtra) => Promise<any>,
+) {
+  return async (args: any, extra?: any) => {
     const start = Date.now();
     logBestEffort(ctx, 'info', 'mcp.tool.start', { tool: toolName });
+    const abortScope = createMcpToolAbortScope(ctx, extra?.signal);
+    const handlerExtra: McpToolExecutionExtra = {
+      ...(extra && typeof extra === 'object' ? extra : {}),
+      signal: abortScope.signal,
+    };
 
     try {
-      const out = await handler(args);
+      const out = await abortScope.run(async () => {
+        if (abortScope.signal.aborted) {
+          throw abortScope.signal.reason instanceof Error
+            ? abortScope.signal.reason
+            : createAbortError('MCP tool execution aborted');
+        }
+        return handler(args, handlerExtra);
+      });
       const durationMs = Date.now() - start;
       logBestEffort(ctx, 'info', 'mcp.tool.end', {
         tool: toolName,
@@ -246,6 +336,8 @@ export function wrapTool(toolName: string, ctx: McpRequestContext, handler: (arg
         details: { tool: toolName, category: MCP_OPERATION_ERROR.category },
         requestId: ctx.requestId,
       });
+    } finally {
+      abortScope.cleanup();
     }
   };
 }

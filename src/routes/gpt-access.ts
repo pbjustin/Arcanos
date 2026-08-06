@@ -38,6 +38,8 @@ import {
   sendBadRequestPayload,
   sendInternalErrorPayload
 } from '@shared/http/index.js';
+import { throwIfRequestAborted } from '@arcanos/runtime';
+import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import type { ModuleHandlerContext } from '@services/moduleLoader.js';
 import {
   isBackstageRosterPersistenceError,
@@ -1249,15 +1251,22 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
     return;
   }
 
-  sendGptAccessResult(
+  const abortScope = createClientDisconnectAbortScope(
+    req,
     res,
-    await runGptAccessCapabilityAction({
+    'GPT Access capability client disconnected',
+  );
+  try {
+    const result = await abortScope.run(() => runGptAccessCapabilityAction({
       capabilityId: req.params.id,
       action: action.trim(),
       payload,
       moduleContext: buildGptAccessModuleHandlerContext(req)
-    })
-  );
+    }));
+    sendGptAccessResult(res, result);
+  } finally {
+    abortScope.cleanup();
+  }
 });
 
 function sendDispatchPolicyBlock(
@@ -1312,7 +1321,10 @@ async function executeDispatchRun(
   });
 }
 
-const runGptAccessDispatch = asyncHandler(async (req, res) => {
+async function executeGptAccessDispatchRequest(
+  req: express.Request,
+  res: express.Response,
+): Promise<void> {
   const body = readDispatchRunBody(req.body);
   if (!body.ok) {
     sendGptAccessBadRequest(res, body.message);
@@ -1322,12 +1334,14 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
   const registry = createGptAccessDispatchRegistry(
     getModulesForRegistry({ includeActionMetadata: true })
   );
+  throwIfRequestAborted();
   const { plan, policy } = await resolveGptAccessNaturalLanguageDispatch({
     utterance: body.utterance,
     registry,
     context: body.context,
     isModuleActionAllowed
   });
+  throwIfRequestAborted();
 
   const researchValidationError = resolveResearchDispatchValidationError(plan, policy);
   if (researchValidationError) {
@@ -1391,6 +1405,7 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
           : null
       }
     };
+    let confirmedExecution: Promise<void> | null = null;
     confirmGate(req, res, () => {
       const confirmedPolicy: DispatchPolicyDecision = {
         ...policy,
@@ -1399,7 +1414,7 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
         shouldExecute: true,
         reason: 'confirmation_satisfied'
       };
-      void executeDispatchRun(req, res, plan, confirmedPolicy).catch((error) => {
+      confirmedExecution = executeDispatchRun(req, res, plan, confirmedPolicy).catch((error) => {
         req.logger?.error?.('gpt_access.dispatch.failed', {
           error: error instanceof Error ? error.message : String(error)
         });
@@ -1412,10 +1427,26 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
       requestFingerprintBody: confirmationFingerprintBody,
       requireChallengeToken: true
     });
+    if (confirmedExecution) {
+      await confirmedExecution;
+    }
     return;
   }
 
   await executeDispatchRun(req, res, plan, policy);
+}
+
+const runGptAccessDispatch = asyncHandler(async (req, res) => {
+  const abortScope = createClientDisconnectAbortScope(
+    req,
+    res,
+    'GPT Access dispatch client disconnected',
+  );
+  try {
+    await abortScope.run(() => executeGptAccessDispatchRequest(req, res));
+  } finally {
+    abortScope.cleanup();
+  }
 });
 
 router.use('/gpt-access', securityHeaders);
@@ -1625,7 +1656,17 @@ router.post(
   '/gpt-access/mcp',
   requireGptAccessScope('mcp.approved_readonly'),
   asyncHandler(async (req, res) => {
-    sendGptAccessResult(res, await runGptAccessMcpTool(req.body));
+    const abortScope = createClientDisconnectAbortScope(
+      req,
+      res,
+      'GPT Access MCP client disconnected',
+    );
+    try {
+      const result = await abortScope.run(() => runGptAccessMcpTool(req.body));
+      sendGptAccessResult(res, result);
+    } finally {
+      abortScope.cleanup();
+    }
   })
 );
 

@@ -7,6 +7,7 @@ import {
 } from '@shared/http/aiDegradedHeaders.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
+import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
 type SuccessBodyTransform = (
@@ -57,13 +58,24 @@ export async function dispatchLegacyRouteToGpt(
       requestId: req.requestId
     });
 
-    const envelope = await routeGptRequest({
-      gptId: options.gptId,
-      body: effectiveBody,
-      requestId: req.requestId,
-      logger: req.logger,
-      request: req,
-    });
+    const abortScope = createClientDisconnectAbortScope(
+      req,
+      res,
+      'Legacy GPT compatibility client disconnected',
+    );
+    let envelope: Awaited<ReturnType<typeof routeGptRequest>>;
+    try {
+      envelope = await abortScope.run(parentAbortSignal => routeGptRequest({
+        gptId: options.gptId,
+        body: effectiveBody,
+        requestId: req.requestId,
+        logger: req.logger,
+        request: req,
+        parentAbortSignal,
+      }));
+    } finally {
+      abortScope.cleanup();
+    }
 
     if (!envelope.ok) {
       applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));

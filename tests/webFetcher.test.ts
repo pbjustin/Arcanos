@@ -182,6 +182,12 @@ describe('fetchAndClean', () => {
     expect(cleaned).toContain('Hello World!');
   });
 
+  it('preserves explicit localhost development fetches without relying on external DNS', async () => {
+    const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
+    const cleaned = await fetchAndClean(localhostUrl);
+    expect(cleaned).toContain('Hello World!');
+  });
+
   it('provides bounded raw HTML to explicit callers before script removal', async () => {
     let rawDocument: { body: string; contentType: string; truncated: boolean } | undefined;
     const document = await fetchAndCleanDocument(`${baseUrl}/metrics`, 12000, {

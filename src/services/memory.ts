@@ -7,6 +7,29 @@ import {
 
 const MEMORY_ROOT = path.resolve('memory');
 
+export interface MemoryWriteOptions {
+  signal?: AbortSignal;
+  deadlineAt?: number;
+}
+
+function createMemoryAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfMemoryWriteCancelled(options: MemoryWriteOptions): void {
+  if (options.signal?.aborted) {
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : createMemoryAbortError('memory write aborted');
+  }
+
+  if (typeof options.deadlineAt === 'number' && Date.now() >= options.deadlineAt) {
+    throw createMemoryAbortError('memory write deadline exceeded');
+  }
+}
+
 function sanitizeSegment(segment: string): string {
   return segment
     .replace(/\.\.+/g, '')
@@ -26,18 +49,31 @@ function resolveMemoryPath(key: string): string {
   return filePath;
 }
 
-async function ensureDirectory(filePath: string): Promise<void> {
+async function ensureDirectory(filePath: string, options: MemoryWriteOptions): Promise<void> {
   const dir = path.dirname(filePath);
+  throwIfMemoryWriteCancelled(options);
   await fs.mkdir(dir, { recursive: true });
+  throwIfMemoryWriteCancelled(options);
 }
 
-export async function setMemory(key: string, value: unknown): Promise<void> {
+export async function setMemory(
+  key: string,
+  value: unknown,
+  options: MemoryWriteOptions = {}
+): Promise<void> {
+  throwIfMemoryWriteCancelled(options);
   const filePath = resolveMemoryPath(key);
-  await ensureDirectory(filePath);
+  await ensureDirectory(filePath, options);
+  throwIfMemoryWriteCancelled(options);
   const envelope = createVersionedMemoryEnvelope(value, {
     prefix: 'file-memory'
   });
-  await fs.writeFile(filePath, JSON.stringify(envelope, null, 2), 'utf-8');
+  throwIfMemoryWriteCancelled(options);
+  await fs.writeFile(filePath, JSON.stringify(envelope, null, 2), {
+    encoding: 'utf-8',
+    signal: options.signal
+  });
+  throwIfMemoryWriteCancelled(options);
 }
 
 export async function getMemory<T = unknown>(key: string): Promise<T | null> {

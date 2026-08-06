@@ -120,6 +120,11 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const {
+  createAbortError,
+  getRequestAbortSignal,
+  runWithRequestAbortContext,
+} = await import('@arcanos/runtime');
 const { listPromptDebugTraces } = await import('../src/services/promptDebugTraceService.js');
 const { universalDispatch } = await import('../src/routes/dispatch.js');
 const {
@@ -172,6 +177,14 @@ function buildBackstageDispatchApp() {
   });
   app.post('/dispatch', backstageMutationConfirmationGate, universalDispatch);
   return app;
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe('gpt dispatch compatibility', () => {
@@ -584,6 +597,214 @@ describe('gpt dispatch compatibility', () => {
       expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
     }
   );
+
+  it('does not start Research work for a pre-aborted parent request', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+      defaultTimeoutMs: 1_000,
+    });
+    const parentController = new AbortController();
+    parentController.abort(createAbortError('Research client disconnected'));
+
+    const response = await routeGptRequest({
+      gptId: 'research',
+      body: { topic: 'pre-aborted request' },
+      requestId: 'req_research_pre_aborted',
+      parentAbortSignal: parentController.signal,
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'REQUEST_ABORTED' }),
+    }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('does not renew Research work after an ambient absolute deadline expires', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+      defaultTimeoutMs: 1_000,
+    });
+    const ambientController = new AbortController();
+
+    const response = await runWithRequestAbortContext(
+      {
+        requestId: 'req_research_expired_deadline',
+        controller: ambientController,
+        signal: ambientController.signal,
+        deadlineAt: Date.now() - 1,
+        timeoutMs: 1_000,
+      },
+      () => routeGptRequest({
+        gptId: 'research',
+        body: { topic: 'expired workflow deadline' },
+        requestId: 'req_research_expired_deadline',
+      }),
+    );
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'MODULE_TIMEOUT' }),
+    }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('waits for cancelled Research work to drain before returning a disconnect envelope', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+      defaultTimeoutMs: 1_000,
+    });
+    const started = createDeferred();
+    const aborted = createDeferred();
+    const releaseDrain = createDeferred();
+    let drained = false;
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      const signal = getRequestAbortSignal();
+      expect(signal).toBeDefined();
+      started.resolve();
+      if (!signal?.aborted) {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }
+      aborted.resolve();
+      await releaseDrain.promise;
+      drained = true;
+      throw signal?.reason ?? createAbortError('Research client disconnected');
+    });
+    const parentController = new AbortController();
+    let settled = false;
+
+    const pending = routeGptRequest({
+      gptId: 'research',
+      body: { topic: 'disconnect drain' },
+      requestId: 'req_research_disconnect_drain',
+      parentAbortSignal: parentController.signal,
+    });
+    void pending.then(() => {
+      settled = true;
+    });
+    await started.promise;
+    parentController.abort(createAbortError('Research client disconnected'));
+    await aborted.promise;
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(drained).toBe(false);
+
+    releaseDrain.resolve();
+    const response = await pending;
+
+    expect(drained).toBe(true);
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'REQUEST_ABORTED' }),
+    }));
+  });
+
+  it('waits for timed-out Research work to drain before returning a timeout envelope', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+      defaultTimeoutMs: 20,
+    });
+    const started = createDeferred();
+    const aborted = createDeferred();
+    const releaseDrain = createDeferred();
+    let drained = false;
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      const signal = getRequestAbortSignal();
+      expect(signal).toBeDefined();
+      started.resolve();
+      if (!signal?.aborted) {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }
+      aborted.resolve();
+      await releaseDrain.promise;
+      drained = true;
+      throw signal?.reason ?? createAbortError('Research workflow timed out');
+    });
+    let settled = false;
+
+    const pending = routeGptRequest({
+      gptId: 'research',
+      body: { topic: 'timeout drain' },
+      requestId: 'req_research_timeout_drain',
+    });
+    void pending.then(() => {
+      settled = true;
+    });
+    await started.promise;
+    await aborted.promise;
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(drained).toBe(false);
+
+    releaseDrain.resolve();
+    const response = await pending;
+
+    expect(drained).toBe(true);
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'MODULE_TIMEOUT' }),
+    }));
+  });
+
+  it('does not start generic transcript persistence after a Research run', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      research: { route: 'research', module: 'ARCANOS:RESEARCH' },
+    });
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'ARCANOS:RESEARCH',
+      description: null,
+      route: 'research',
+      actions: ['run'],
+      defaultAction: 'run',
+      defaultTimeoutMs: 1_000,
+    });
+
+    const response = await routeGptRequest({
+      gptId: 'research',
+      body: {
+        topic: 'workflow-owned persistence',
+        sessionId: 'research-session',
+      },
+      requestId: 'req_research_persistence_fence',
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
 
   it('rejects an over-limit Research /dispatch request after one admission and before work', async () => {
     mockGetGptModuleMap.mockResolvedValue({

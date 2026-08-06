@@ -39,10 +39,23 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   max_completion_tokens?: number | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  preserveAggregateAbortContext?: boolean;
 };
 
 function isOpenAIAdapter(candidate: OpenAI | OpenAIAdapter): candidate is OpenAIAdapter {
   return typeof (candidate as OpenAIAdapter).getClient === 'function';
+}
+
+function resolveChatAbortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error && signal.reason.name === 'AbortError') {
+    return signal.reason;
+  }
+
+  return createAbortError(
+    signal.reason instanceof Error
+      ? signal.reason.message
+      : 'OpenAI chat completion aborted'
+  );
 }
 
 async function createResponsesWithBoundary(
@@ -259,6 +272,29 @@ const executeChatCompletionRequest = async (
     remainingRequestMs === null
       ? configuredTimeoutMs
       : Math.max(1, Math.min(configuredTimeoutMs, remainingRequestMs));
+
+  if (payload.preserveAggregateAbortContext && requestSignal) {
+    try {
+      if (requestSignal?.aborted) {
+        throw resolveChatAbortReason(requestSignal);
+      }
+      const response = await createResponsesWithBoundary(
+        clientOrAdapter,
+        requestPayload,
+        { signal: requestSignal }
+      );
+      if (requestSignal?.aborted) {
+        throw resolveChatAbortReason(requestSignal);
+      }
+      return convertResponseToLegacyChatCompletion(response, payload.model);
+    } catch (error: unknown) {
+      if (requestSignal?.aborted) {
+        throw resolveChatAbortReason(requestSignal);
+      }
+      throw error;
+    }
+  }
+
   const requestScope = createLinkedAbortController({
     timeoutMs: requestTimeoutMs,
     parentSignal: requestSignal,

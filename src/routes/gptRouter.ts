@@ -174,6 +174,7 @@ import {
   type GptExecutionMode,
   type GptExecutionPlan,
 } from './_core/gptRouteExecutionPolicy.js';
+import { runResearchWithAbortDrain } from './_core/researchAbortDrain.js';
 import {
   JOB_READ_AUTH_UNAVAILABLE_CODE,
   JOB_READ_AUTH_UNAVAILABLE_MESSAGE,
@@ -1370,7 +1371,10 @@ router.post(
   res.on('close', abortForClosedClient);
 
   try {
-    return await runWithRequestAbortTimeout(
+    const runRouteWithAbort = researchGptPreflight
+      ? runResearchWithAbortDrain
+      : runWithRequestAbortTimeout;
+    return await runRouteWithAbort(
       {
         timeoutMs: routeTimeoutMs,
         requestId,
@@ -3312,6 +3316,12 @@ router.post(
           bypassIntentRouting,
           memoryPlaneAuthorized,
         });
+        const routeAbortSignal = getRequestAbortSignal();
+        if (routeAbortSignal?.aborted) {
+          throw routeAbortSignal.reason instanceof Error
+            ? routeAbortSignal.reason
+            : createAbortError(timeoutMessage);
+        }
 
         if (!envelope.ok) {
           if (
