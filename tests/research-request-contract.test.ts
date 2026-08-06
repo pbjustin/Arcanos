@@ -286,6 +286,38 @@ describe('research request contract', () => {
     }
   });
 
+  it('rejects a normalization-time abort before hub events or research work', async () => {
+    const controller = new AbortController();
+    const cancellation = Object.assign(new Error('caller disconnected during normalization'), {
+      name: 'AbortError',
+    });
+    const events: unknown[] = [];
+    const unsubscribe = observeResearchEvents(event => events.push(event));
+    const request = new Proxy(
+      { topic: 'must not start', urls: [] },
+      {
+        getOwnPropertyDescriptor(target, property) {
+          if (property === 'topic' && !controller.signal.aborted) {
+            controller.abort(cancellation);
+          }
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      },
+    );
+
+    try {
+      await expect(requestResearchViaHub(
+        'contract-test',
+        request,
+        { signal: controller.signal },
+      )).rejects.toBe(cancellation);
+      expect(events).toEqual([]);
+      expect(mockResearchTopic).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('rejects an expired ambient deadline before hub events or research work', async () => {
     const controller = new AbortController();
     const events: unknown[] = [];
@@ -313,6 +345,42 @@ describe('research request contract', () => {
       expect(events).toEqual([]);
       expect(mockResearchTopic).not.toHaveBeenCalled();
     } finally {
+      unsubscribe();
+    }
+  });
+
+  it('rejects a deadline that expires during normalization before hub events or research work', async () => {
+    const controller = new AbortController();
+    const events: unknown[] = [];
+    const unsubscribe = observeResearchEvents(event => events.push(event));
+    const deadlineAt = 10_000;
+    const now = jest.spyOn(Date, 'now')
+      .mockReturnValueOnce(deadlineAt - 1)
+      .mockReturnValue(deadlineAt);
+
+    try {
+      const request = runWithRequestAbortContext(
+        {
+          requestId: 'rolling-hub-deadline',
+          controller,
+          signal: controller.signal,
+          deadlineAt,
+          timeoutMs: 1_000,
+        },
+        () => requestResearchViaHub(
+          'contract-test',
+          { topic: 'must not start after deadline rollover', urls: [] },
+        ),
+      );
+
+      await expect(Promise.resolve(request)).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Research request parent deadline already expired',
+      });
+      expect(events).toEqual([]);
+      expect(mockResearchTopic).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
       unsubscribe();
     }
   });

@@ -96,6 +96,10 @@ class ResearchHub {
     const requestId = randomUUID();
     const startedAt = new Date().toISOString();
 
+    // Normalization can synchronously invoke Proxy descriptor traps, and the
+    // absolute parent deadline can elapse before the admission event is built.
+    throwIfResearchHubAborted(executionOptions.signal, ambientSignal);
+    throwIfResearchHubDeadlineExpired(ambientContext?.deadlineAt);
     this.emit({
       type: 'started',
       requestId,

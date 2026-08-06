@@ -15,6 +15,7 @@ const HARD_MAX_CHARS = 100_000;
 const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const MAX_EXTRACTION_SELECTORS = 24;
 const MAX_EXTRACTION_CANDIDATES = 48;
 const MAX_CANDIDATE_SCORE_CHARS = 24000;
@@ -416,6 +417,11 @@ export async function fetchAndCleanDocument(
       Accept: 'text/html,text/plain;q=0.9,*/*;q=0.8'
     },
     httpsAgent
+  }).catch((error: unknown) => {
+    // Axios wraps signal cancellation in its own error. Restore the caller's
+    // exact abort reason, or the canonical deadline error, before returning.
+    throwIfFetchCancelled(options);
+    throw error;
   });
   throwIfFetchCancelled(options);
   const fetchElapsedMs = Date.now() - fetchStartedAt;
@@ -795,11 +801,46 @@ async function resolveHostnameAddresses(
 ): Promise<Array<{ address: string; family: IpFamily }>> {
   throwIfFetchCancelled(options);
   const resolver = new Resolver();
-  const onAbort = () => resolver.cancel();
+  let cancellationReason: Error | undefined;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelResolver = (reason: Error): void => {
+    if (cancellationReason) {
+      return;
+    }
+
+    cancellationReason = reason;
+    resolver.cancel();
+  };
+  const onAbort = (): void => {
+    cancelResolver(
+      options.signal?.reason instanceof Error
+        ? options.signal.reason
+        : createFetchAbortError('web fetch aborted')
+    );
+  };
+  const scheduleDeadlineCancellation = (): void => {
+    if (typeof options.deadlineAt !== 'number' || !Number.isFinite(options.deadlineAt)) {
+      return;
+    }
+
+    const remainingMs = options.deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      cancelResolver(createFetchAbortError('web fetch deadline exceeded'));
+      return;
+    }
+
+    deadlineTimer = setTimeout(
+      scheduleDeadlineCancellation,
+      Math.min(remainingMs, MAX_TIMER_DELAY_MS)
+    );
+    deadlineTimer.unref();
+  };
 
   if (options.signal) {
     options.signal.addEventListener('abort', onAbort, { once: true });
   }
+  scheduleDeadlineCancellation();
 
   try {
     throwIfFetchCancelled(options);
@@ -807,6 +848,9 @@ async function resolveHostnameAddresses(
       resolver.resolve4(hostname),
       resolver.resolve6(hostname)
     ]);
+    if (cancellationReason) {
+      throw cancellationReason;
+    }
     throwIfFetchCancelled(options);
 
     const addresses: Array<{ address: string; family: IpFamily }> = [];
@@ -828,6 +872,9 @@ async function resolveHostnameAddresses(
 
     return addresses;
   } finally {
+    if (deadlineTimer) {
+      clearTimeout(deadlineTimer);
+    }
     if (options.signal) {
       options.signal.removeEventListener('abort', onAbort);
     }
