@@ -6,13 +6,15 @@ import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { Client } from 'pg';
 import { verifyDatabaseSchemaWithClient } from '../../scripts/local-agent-hardening-migration.mjs';
 import { buildJobEventTimelineQuery } from '../../src/core/db/repositories/jobEventRepository.js';
+import {
+  assertDisposablePostgresTestDatabaseUrl,
+  resolvePostgresTestDatabaseUrl,
+} from './postgresTestDatabase.js';
 
-const connectionString =
-  process.env.LOCAL_AGENT_HARDENING_TEST_DATABASE_URL?.trim() ?? '';
-const databaseRequired =
-  process.env.LOCAL_AGENT_HARDENING_REQUIRE_DATABASE === '1';
-if (databaseRequired && !connectionString) {
-  throw new Error('LOCAL_AGENT_HARDENING_TEST_DATABASE_URL_REQUIRED');
+const TEST_DATABASE_ENV = 'LOCAL_AGENT_HARDENING_TEST_DATABASE_URL';
+const connectionString = resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
+if (connectionString) {
+  assertDisposablePostgresTestDatabaseUrl(connectionString, TEST_DATABASE_ENV);
 }
 const describeWithDatabase = connectionString ? describe : describe.skip;
 const schemaName = `local_agent_hardening_${randomUUID().replaceAll('-', '')}`;

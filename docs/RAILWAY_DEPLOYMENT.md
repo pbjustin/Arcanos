@@ -21,6 +21,12 @@ npm run validate:railway
 ```
 
 `npm run validate:railway` validates tracked configuration locally. It does not inspect or validate a live Railway environment.
+The ordinary local list also does not prove PostgreSQL-backed migrations,
+locking, or atomicity: broad Jest runs may intentionally skip those suites when
+their dedicated disposable-database URLs are absent. The authoritative tracked
+proof is the required PostgreSQL 18 CI job under
+`ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1`, followed by the fail-closed
+`All Checks Complete` aggregate.
 
 Railway project setup is an operator-only remote configuration change:
 1. Create/select a Railway project.
@@ -158,6 +164,12 @@ service after successful CI on `main` or by manual dispatch. It skips automatic
 CLI deployment when its Railway credentials or identifiers are absent.
 Repository-connected Railway deployment and current web/worker service coverage
 are environment-dependent and must be confirmed separately.
+
+Successful CI means the aggregate verifier observed the exact required job set
+with every result equal to `success`, including the seven-suite PostgreSQL job.
+It is not proof of current production topology, deployed revision, live database
+schema, writer compatibility, or drain readiness; those remain separately
+verified promotion conditions.
 
 GitHub must provide `RAILWAY_PRODUCTION_PROJECT_TOKEN` as a Railway project
 token dedicated to the exact production project/environment; an

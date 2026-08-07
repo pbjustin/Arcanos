@@ -2,16 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { Client, Pool, type PoolClient } from 'pg';
+import { resolvePostgresTestDatabaseUrl } from './postgresTestDatabase.js';
 
 const TEST_DATABASE_ENV = 'JOB_STALE_RECOVERY_TEST_DATABASE_URL';
-const REQUIRE_DATABASE_ENV = 'JOB_STALE_RECOVERY_REQUIRE_DATABASE';
 const EXPECTED_DATABASE_NAME = 'arcanos_audit_pg18_20260727';
-const configuredConnectionString = process.env[TEST_DATABASE_ENV]?.trim() ?? '';
-const databaseRequired = process.env[REQUIRE_DATABASE_ENV] === '1';
-
-if (databaseRequired && !configuredConnectionString) {
-  throw new Error(`${REQUIRE_DATABASE_ENV}=1 requires ${TEST_DATABASE_ENV}.`);
-}
+const configuredConnectionString =
+  resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
 
 interface DisposableDatabaseConfig {
   host: string;
