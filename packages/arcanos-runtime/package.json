@@ -17,6 +17,10 @@
       "types": "./dist/runtimeErrors.d.ts",
       "import": "./dist/runtimeErrors.js"
     },
+    "./requestAbort": {
+      "types": "./dist/requestAbort.d.ts",
+      "import": "./dist/requestAbort.js"
+    },
     "./redaction": {
       "types": "./dist/redaction.d.ts",
       "import": "./dist/redaction.js"

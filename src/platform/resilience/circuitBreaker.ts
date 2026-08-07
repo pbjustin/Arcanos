@@ -11,6 +11,10 @@ export interface CircuitBreakerOptions {
   monitoringPeriodMs: number;
 }
 
+export interface CircuitBreakerExecutionOptions {
+  shouldCountFailure?: (error: unknown) => boolean;
+}
+
 export enum CircuitBreakerState {
   CLOSED = 'CLOSED',
   OPEN = 'OPEN', 
@@ -29,7 +33,10 @@ export class CircuitBreaker {
   
   constructor(private options: CircuitBreakerOptions) {}
 
-  async execute<T>(operation: () => Promise<T>): Promise<T> {
+  async execute<T>(
+    operation: () => Promise<T>,
+    executionOptions: CircuitBreakerExecutionOptions = {}
+  ): Promise<T> {
     if (this.state === CircuitBreakerState.OPEN) {
       if (this.shouldAttemptReset()) {
         this.transitionTo(CircuitBreakerState.HALF_OPEN);
@@ -44,7 +51,15 @@ export class CircuitBreaker {
       this.onSuccess();
       return result;
     } catch (error) {
-      this.onFailure();
+      let shouldCountFailure = true;
+      try {
+        shouldCountFailure = executionOptions.shouldCountFailure?.(error) ?? true;
+      } catch {
+        // Failure classification must fail closed so breaker protection remains active.
+      }
+      if (shouldCountFailure) {
+        this.onFailure();
+      }
       throw error;
     }
   }

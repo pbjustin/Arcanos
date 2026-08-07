@@ -1186,13 +1186,16 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         confirmationNonce: z.string().optional(),
       }),
     },
-    wrapTool('research.run', ctx, async (args: any) => {
+    wrapTool('research.run', ctx, async (args: any, extra) => {
       const gate = requireNonceOrIssue(args, 'research.run', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
       const bridge = connectResearchBridge('mcp');
       try {
-        const out = await bridge.requestResearch({ topic: args.topic, urls: args.urls });
+        const out = await bridge.requestResearch(
+          { topic: args.topic, urls: args.urls },
+          { signal: extra.signal },
+        );
         return mcpText(out);
       } catch (error: unknown) {
         const validationError = buildResearchRequestValidationMcpError(

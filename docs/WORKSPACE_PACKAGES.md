@@ -96,7 +96,7 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
   opaque markers before recursively sanitizing values.
 - `src/platform/resilience/runtimeBudget.ts` and `src/platform/resilience/runtimeErrors.ts` are backend compatibility facades that re-export package APIs. Do not add a second implementation there.
 - `arcanos-ai-runtime/src/runtime/runtimeBudget.ts` and `runtimeErrors.ts` are likewise compatibility facades over the workspace package.
-- New consumers should use package exports such as `@arcanos/runtime`, `@arcanos/runtime/runtimeBudget`, `@arcanos/runtime/runtimeErrors`, and `@arcanos/runtime/redaction`.
+- New consumers should use package exports such as `@arcanos/runtime`, `@arcanos/runtime/requestAbort`, `@arcanos/runtime/runtimeBudget`, `@arcanos/runtime/runtimeErrors`, and `@arcanos/runtime/redaction`.
 
 ### OpenAI integration
 

@@ -17,6 +17,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       urlAggregateOver: 'url-aggregate-over',
       urlSnapshot: 'url-snapshot',
       storageComponent: 'storage-component',
+      workflowCancellationDrain: 'workflow-cancellation-drain',
     }),
   }),
   backstageStoryline: Object.freeze({

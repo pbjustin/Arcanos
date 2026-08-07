@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-05T18:34:59.788Z",
+  "generatedAt": "2026-08-06T04:24:08.654Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1089,6 +1089,9 @@
         },
         {
           "relativePath": "src/routes/_core/promptShortcutResponse.ts"
+        },
+        {
+          "relativePath": "src/routes/_core/researchAbortDrain.ts"
         },
         {
           "relativePath": "src/routes/_core/researchGptPreflight.ts"
@@ -2409,6 +2412,9 @@
         },
         {
           "relativePath": "src/shared/http/asyncHandler.ts"
+        },
+        {
+          "relativePath": "src/shared/http/clientDisconnectAbort.ts"
         },
         {
           "relativePath": "src/shared/http/clientJsonPayload.ts"
@@ -3811,6 +3817,9 @@
           "relativePath": "tests/memory-plane-http-auth.test.ts"
         },
         {
+          "relativePath": "tests/memory-write-cancellation.test.ts"
+        },
+        {
           "relativePath": "tests/memoryRepository.ttl.test.ts"
         },
         {
@@ -4093,6 +4102,9 @@
           "relativePath": "tests/requestPathSanitizer.test.ts"
         },
         {
+          "relativePath": "tests/research-abort-drain.test.ts"
+        },
+        {
           "relativePath": "tests/research-dispatch-preflight.test.ts"
         },
         {
@@ -4106,6 +4118,9 @@
         },
         {
           "relativePath": "tests/research-storage-key.test.ts"
+        },
+        {
+          "relativePath": "tests/research-workflow-budget.test.ts"
         },
         {
           "relativePath": "tests/reusable-code-audit-audit-safe.characterization.test.ts"
@@ -4345,6 +4360,9 @@
           "relativePath": "tests/transport-unsafe-execution-gate.test.ts"
         },
         {
+          "relativePath": "tests/trinity-cancellation.test.ts"
+        },
+        {
           "relativePath": "tests/trinity-direct-answer-mode.test.ts"
         },
         {
@@ -4403,6 +4421,9 @@
         },
         {
           "relativePath": "tests/vector-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/web-fetcher-cancellation.test.ts"
         },
         {
           "relativePath": "tests/web-search-agent.test.ts"

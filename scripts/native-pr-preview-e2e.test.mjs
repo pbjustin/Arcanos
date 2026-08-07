@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   NativePrPreviewE2eError,
@@ -9,6 +10,10 @@ import {
   parseNativePrPreviewE2eArguments,
   runNativePrPreviewE2e,
 } from './native-pr-preview-e2e.mjs';
+import {
+  NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT,
+  findNativePrPreviewDistImportSourceViolations,
+} from './check-native-pr-preview-dist-imports.mjs';
 
 const COMMIT_SHA = 'a'.repeat(40);
 const PR_NUMBER = 1413;
@@ -49,6 +54,67 @@ function responseBodyForCase(requestCase) {
     : JSON.stringify(expectedBody);
 }
 
+function expectedResearchCancellationPayload() {
+  const scenario = (name, trigger, abortStage, startedStages) => ({
+    abortObserved: true,
+    abortReasonName: 'AbortError',
+    abortStage,
+    activeWorkAtAbortObservation: 1,
+    activeWorkAtOutwardSettlement: 0,
+    callbackSettledAtOutwardSettlement: true,
+    drainCompletedAtOutwardSettlement: true,
+    laterStageStarts: 0,
+    name,
+    noPostOutwardSettlementMutation: true,
+    sameWorkflowDeadlineAcrossStages: true,
+    sameWorkflowSignalAcrossStages: true,
+    settledStages: [...startedStages],
+    startedStages,
+    trigger,
+  });
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture: 'workflow-cancellation-drain',
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    cancellation: {
+      componentExecuted: true,
+      noDetachedWorkAtOutwardSettlement: true,
+      scenarioCount: 4,
+      scenarios: [
+        scenario('timeout-dns', 'timeout', 'dns', ['dns']),
+        scenario(
+          'parent-abort-fetch',
+          'parent-abort',
+          'fetch',
+          ['dns', 'fetch']
+        ),
+        scenario(
+          'parent-abort-model',
+          'parent-abort',
+          'model',
+          ['dns', 'fetch', 'model']
+        ),
+        scenario(
+          'parent-abort-persistence',
+          'parent-abort',
+          'persistence',
+          ['dns', 'fetch', 'model', 'persistence']
+        ),
+      ],
+      syntheticSeams: ['dns', 'fetch', 'model', 'persistence'],
+    },
+  };
+}
+
 function buildMockFetch(requestPlan, override = undefined) {
   let requestIndex = 0;
   const calls = [];
@@ -65,6 +131,9 @@ function buildMockFetch(requestPlan, override = undefined) {
     const overriddenResponse = override?.(requestCase, requestIndex);
     if (overriddenResponse) {
       return overriddenResponse;
+    }
+    if (requestCase.caseId === 'research-workflow-cancellation-drain') {
+      await delay(325);
     }
     const body = responseBodyForCase(requestCase);
     const bodyBytes = Buffer.byteLength(body ?? '');
@@ -197,7 +266,7 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 65);
+  assert.equal(requestPlan.length, 66);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -211,7 +280,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'research-contract'
     ).length,
-    10
+    11
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -239,6 +308,17 @@ test('executes the bounded credential-free matrix and detects identity stability
   );
   assert.ok(lifecycleCase);
   assert.ok(repeatedLifecycleCase);
+  const cancellationCase = requestPlan.find(({ caseId }) =>
+    caseId === 'research-workflow-cancellation-drain'
+  );
+  assert.ok(cancellationCase);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(cancellationCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    expectedResearchCancellationPayload()
+  );
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(repeatedLifecycleCase, {
       commitSha: COMMIT_SHA,
@@ -330,16 +410,16 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 65);
-  assert.equal(result.checks.length, 65);
-  assert.equal(mock.requestCount, 65);
+  assert.equal(result.summary.requestsMade, 66);
+  assert.equal(result.checks.length, 66);
+  assert.equal(mock.requestCount, 66);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
-  assert.equal(researchCalls.length, 11);
+  assert.equal(researchCalls.length, 12);
   assert.equal(
     researchCalls.filter(({ url }) => url.startsWith(WEB_BASE_URL)).length,
-    10
+    11
   );
   assert.equal(
     researchCalls.filter(({ url }) => url.startsWith(WORKER_BASE_URL)).length,
@@ -384,6 +464,90 @@ test('executes the bounded credential-free matrix and detects identity stability
       )
     ),
     false
+  );
+});
+
+test('pins the emitted preview imports to the built request-abort runtime', () => {
+  const [applicationContract, drainContract] =
+    NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT;
+  const applicationSource =
+    `import { getRequestAbortContext } from '${applicationContract.specifier}';`;
+  const drainSource = [
+    'import {',
+    '  createAbortError,',
+    '  createLinkedAbortController,',
+    '  runWithRequestAbortContext,',
+    `} from '${drainContract.specifier}';`,
+  ].join('\n');
+
+  assert.deepEqual(
+    findNativePrPreviewDistImportSourceViolations(
+      applicationContract,
+      applicationSource
+    ),
+    []
+  );
+  assert.deepEqual(
+    findNativePrPreviewDistImportSourceViolations(
+      drainContract,
+      drainSource
+    ),
+    []
+  );
+  assert.deepEqual(
+    findNativePrPreviewDistImportSourceViolations(
+      applicationContract,
+      applicationSource.replace('requestAbort.js', 'unreviewed.js')
+    ),
+    [
+      `${applicationContract.filePath}: runtime package import must target ${applicationContract.specifier}`,
+    ]
+  );
+  assert.deepEqual(
+    findNativePrPreviewDistImportSourceViolations(
+      applicationContract,
+      applicationSource.replace(
+        'getRequestAbortContext }',
+        'getRequestAbortContext, createAbortError }'
+      )
+    ),
+    [
+      `${applicationContract.filePath}: runtime package import bindings must match the reviewed surface`,
+    ]
+  );
+});
+
+test('rejects a cancellation proof that returns before its drain window', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const mock = buildMockFetch(requestPlan, (requestCase) => {
+    if (requestCase.caseId !== 'research-workflow-cancellation-drain') {
+      return undefined;
+    }
+    const body = responseBodyForCase(requestCase);
+    const response = new Response(body, {
+      headers: {
+        'cache-control': 'no-store',
+        'content-type': expectedNativePrPreviewContentType(requestCase),
+        'x-response-bytes': String(Buffer.byteLength(body)),
+      },
+      status: requestCase.expectedStatus,
+    });
+    Object.defineProperty(response, 'url', {
+      value: `${WEB_BASE_URL}${requestCase.path}`,
+    });
+    return response;
+  });
+
+  await assert.rejects(
+    runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      fetchImpl: mock.fetchImpl,
+      localGitState: LOCAL_GIT_STATE,
+    }),
+    (error) =>
+      error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_CANCELLATION_DRAIN_TOO_EARLY'
+      && error.caseId === 'research-workflow-cancellation-drain'
   );
 });
 

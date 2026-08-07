@@ -7,6 +7,7 @@ import {
   type OpenAIResponsesClientLike
 } from '@arcanos/openai/responses';
 import { getOrCreateClient } from '@arcanos/openai/unifiedClient';
+import { createAbortError, getRequestAbortSignal } from '@arcanos/runtime';
 import { getEnv } from '@platform/runtime/env.js';
 import { hasValidAPIKey } from '@services/openai/credentialProvider.js';
 
@@ -97,6 +98,14 @@ function buildClarificationPlan(reason: string, confidence = 0): DispatchPlan {
     requiresConfirmation: false,
     reason
   };
+}
+
+function throwIfDispatchPlanningAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : createAbortError('GPT Access dispatch planning aborted');
 }
 
 export function getLlmDispatchModel(): string {
@@ -442,6 +451,9 @@ export function shouldFallBackToRulePlanAfterLlm(plan: DispatchPlan): boolean {
 }
 
 export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput): Promise<DispatchPlan> {
+  const parentSignal = getRequestAbortSignal();
+  throwIfDispatchPlanningAborted(parentSignal);
+
   const actions = input.registry.listActions();
   if (actions.length === 0) {
     return buildClarificationPlan('llm_no_registered_actions');
@@ -464,6 +476,9 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = parentSignal
+    ? AbortSignal.any([controller.signal, parentSignal])
+    : controller.signal;
 
   try {
     const { outputParsed } = await callStructuredResponse<LlmDispatchResponse>(
@@ -488,12 +503,13 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
           }
         }
       },
-      { signal: controller.signal },
+      { signal },
       {
         validate: (value): value is LlmDispatchResponse => isLlmDispatchResponse(value, actionNamesSet),
         source: 'GPT Access natural-language dispatch'
       }
     );
+    throwIfDispatchPlanningAborted(parentSignal);
 
     if (outputParsed.action === INTENT_CLARIFICATION_REQUIRED) {
       return {
@@ -539,6 +555,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
       candidates: toPlanCandidates(outputParsed.candidates)
     };
   } catch (error) {
+    throwIfDispatchPlanningAborted(parentSignal);
     return buildClarificationPlan(controller.signal.aborted ? 'llm_dispatch_timeout' : toOutputInvalidReason(error));
   } finally {
     clearTimeout(timeout);

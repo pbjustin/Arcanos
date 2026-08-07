@@ -27,6 +27,10 @@ const {
   resolveDispatchPlan,
   resolveLlmDispatchPlan
 } = await import('../src/dispatcher/naturalLanguage/index.js');
+const {
+  createAbortError,
+  runWithRequestAbortContext,
+} = await import('@arcanos/runtime');
 
 const savedEnv = {
   GPT_ACCESS_NL_DISPATCH_MODE: process.env.GPT_ACCESS_NL_DISPATCH_MODE,
@@ -749,5 +753,133 @@ describe('LLM natural-language dispatch resolver', () => {
 
     expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
     expect(plan.reason).toBe('llm_dispatch_timeout');
+  });
+
+  it('does not call the planner for a pre-aborted ambient request', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    const controller = new AbortController();
+    const reason = createAbortError('GPT Access dispatch client disconnected');
+    controller.abort(reason);
+
+    const pending = runWithRequestAbortContext(
+      {
+        requestId: 'req_dispatch_planner_pre_aborted',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 1_000,
+        timeoutMs: 1_000,
+      },
+      () => resolveLlmDispatchPlan({
+        utterance: 'inspect the queue',
+        registry,
+        client: fakeOpenAIClient,
+      }),
+    );
+
+    await expect(pending).rejects.toBe(reason);
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('links an in-flight planner call to ambient request cancellation', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    const controller = new AbortController();
+    const reason = createAbortError('GPT Access dispatch client disconnected');
+    let plannerSignal: AbortSignal | undefined;
+    let markPlannerStarted!: () => void;
+    const plannerStarted = new Promise<void>((resolve) => {
+      markPlannerStarted = resolve;
+    });
+    let markPlannerAborted!: () => void;
+    const plannerAborted = new Promise<void>((resolve) => {
+      markPlannerAborted = resolve;
+    });
+    responsesCreateMock.mockImplementationOnce(
+      (_params: unknown, options?: { signal?: AbortSignal }) => {
+        plannerSignal = options?.signal;
+        markPlannerStarted();
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            markPlannerAborted();
+            reject(options.signal?.reason ?? createAbortError());
+          }, { once: true });
+        });
+      },
+    );
+
+    const pending = runWithRequestAbortContext(
+      {
+        requestId: 'req_dispatch_planner_inflight_abort',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 1_000,
+        timeoutMs: 1_000,
+      },
+      () => resolveLlmDispatchPlan({
+        utterance: 'interpret this operator request',
+        registry,
+        client: fakeOpenAIClient,
+      }),
+    );
+
+    await plannerStarted;
+    controller.abort(reason);
+    await plannerAborted;
+
+    await expect(pending).rejects.toBe(reason);
+    expect(plannerSignal?.aborted).toBe(true);
+  });
+
+  it('does not fall back to or execute Research after GPT Access planning is aborted', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
+    const registry = createCapabilityRegistry([{
+      action: 'ARCANOS:RESEARCH.run',
+      risk: 'readonly',
+      runner: {
+        kind: 'gpt-access-capability',
+        capabilityId: 'ARCANOS:RESEARCH',
+        capabilityAction: 'run',
+      },
+    }]);
+    const executeResearch = jest.fn();
+    const controller = new AbortController();
+    const reason = createAbortError('GPT Access dispatch client disconnected');
+    let markPlannerStarted!: () => void;
+    const plannerStarted = new Promise<void>((resolve) => {
+      markPlannerStarted = resolve;
+    });
+    responsesCreateMock.mockImplementationOnce(
+      (_params: unknown, options?: { signal?: AbortSignal }) => {
+        markPlannerStarted();
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            reject(options.signal?.reason ?? createAbortError());
+          }, { once: true });
+        });
+      },
+    );
+
+    const pending = runWithRequestAbortContext(
+      {
+        requestId: 'req_gpt_access_research_planner_abort',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 1_000,
+        timeoutMs: 1_000,
+      },
+      async () => {
+        const plan = await resolveDispatchPlan({
+          utterance: 'ARCANOS:RESEARCH.run',
+          registry,
+        });
+        await executeResearch(plan);
+        return plan;
+      },
+    );
+
+    await plannerStarted;
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(executeResearch).not.toHaveBeenCalled();
   });
 });

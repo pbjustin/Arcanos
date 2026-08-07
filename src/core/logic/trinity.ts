@@ -69,8 +69,20 @@ import { getClearMinThreshold, recordRun } from '@analytics/clearAutoTuner.js';
 import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
 import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
-import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
-import { getRequestAbortSignal, getRequestRemainingMs, isAbortError, runWithRequestAbortTimeout } from '@arcanos/runtime';
+import {
+  BUDGET_DISABLED,
+  createRuntimeBudget,
+  assertBudgetAvailable,
+  getSafeRemainingMs
+} from '@platform/resilience/runtimeBudget.js';
+import {
+  getRequestAbortContext,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  isAbortError,
+  runWithRequestAbortTimeout,
+  throwIfRequestAborted
+} from '@arcanos/runtime';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
   createDefaultTrinityReasoningHonesty,
@@ -102,6 +114,37 @@ const EXACT_LITERAL_AUDIT_FLAG = 'EXACT_LITERAL_SHORTCUT_ACTIVE';
 const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
 const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
+const OPTIONAL_SIDE_EFFECTS_DISABLED_REASON = 'disabled_by_caller';
+
+function buildDisabledJudgedFeedback(): NonNullable<TrinityResult['judgedFeedback']> {
+  return {
+    enabled: false,
+    attempted: false,
+    source: 'clear_audit',
+    reason: OPTIONAL_SIDE_EFFECTS_DISABLED_REASON
+  };
+}
+
+async function runOptionalJudgedFeedback(
+  options: TrinityRunOptions,
+  operation: () => Promise<NonNullable<TrinityResult['judgedFeedback']>>
+): Promise<NonNullable<TrinityResult['judgedFeedback']>> {
+  if (options.disableOptionalSideEffects) {
+    return buildDisabledJudgedFeedback();
+  }
+
+  try {
+    return await operation();
+  } catch (error) {
+    throwIfRequestAborted();
+    return {
+      enabled: true,
+      attempted: false,
+      source: 'clear_audit',
+      reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
+    };
+  }
+}
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -367,7 +410,11 @@ async function runLoggedStage<T>(params: {
   operation: () => Promise<T>;
   timeoutMs?: number;
   sourceEndpoint?: string;
+  preserveAggregateAbortContext?: boolean;
 }): Promise<T> {
+  throwIfRequestAborted();
+  const preserveAggregateAbortContext =
+    params.preserveAggregateAbortContext === true && getRequestAbortSignal() !== undefined;
   const startedAt = Date.now();
   const remainingBudgetAtStartMs = getSafeRemainingMs(params.runtimeBudget);
   logCoreExecution(`before ${params.stage}`, {
@@ -387,7 +434,7 @@ async function runLoggedStage<T>(params: {
 
   try {
     const result =
-      typeof params.timeoutMs === 'number'
+      typeof params.timeoutMs === 'number' && !preserveAggregateAbortContext
         ? await runWithRequestAbortTimeout(
             {
               timeoutMs: params.timeoutMs,
@@ -398,6 +445,8 @@ async function runLoggedStage<T>(params: {
             params.operation
           )
         : await params.operation();
+
+    throwIfRequestAborted();
 
     const durationMs = Date.now() - startedAt;
     logCoreExecution(`after ${params.stage}`, {
@@ -637,6 +686,7 @@ export async function runThroughBrain(
   runtimeBudget: RuntimeBudget = createRuntimeBudget(),
   internalContext?: { escalated: boolean; originalTier: Tier }
 ): Promise<TrinityResult> {
+  throwIfRequestAborted();
   assertBudgetAvailable(runtimeBudget);
 
   const requestId = generateRequestId('trinity');
@@ -761,36 +811,31 @@ export async function runThroughBrain(
       internalMode,
       clarificationAllowed
     });
-    try {
-      shortcutResult.judgedFeedback = await runLoggedStage({
-        requestId,
-        stage: 'judged-feedback',
-        runtimeBudget,
-        timeoutMs: resolveAuxiliaryStageTimeoutMs(
-          'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
-          DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
-          runtimeBudget
-        ),
-        operation: () =>
-          recordTrinityJudgedFeedback({
-            requestId,
-            prompt,
-            response: exactLiteralShortcut.literal,
-            tier,
-            sessionId: effectiveMemorySessionId,
-            sourceEndpoint: options.sourceEndpoint,
-            internalMode,
-            remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
-          })
-      });
-    } catch (error) {
-      shortcutResult.judgedFeedback = {
-        enabled: true,
-        attempted: false,
-        source: 'clear_audit',
-        reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
-      };
-    }
+    shortcutResult.judgedFeedback = await runOptionalJudgedFeedback(
+      options,
+      () => runLoggedStage({
+          requestId,
+          stage: 'judged-feedback',
+          runtimeBudget,
+          preserveAggregateAbortContext: options.preserveAggregateAbortContext,
+          timeoutMs: resolveAuxiliaryStageTimeoutMs(
+            'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+            DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+            runtimeBudget
+          ),
+          operation: () =>
+            recordTrinityJudgedFeedback({
+              requestId,
+              prompt,
+              response: exactLiteralShortcut.literal,
+              tier,
+              sessionId: effectiveMemorySessionId,
+              sourceEndpoint: options.sourceEndpoint,
+              internalMode,
+              remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
+            })
+        })
+    );
     logCoreExecution('returning result', {
       requestId,
       sourceEndpoint: options.sourceEndpoint,
@@ -801,26 +846,41 @@ export async function runThroughBrain(
   }
 
   // --- Concurrency governor + watchdog ---
-  const [release] = await acquireTierSlot(tier);
-  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
-    tier,
-    runtimeBudget,
-    getGPT5Model(),
-    options.watchdogModelTimeoutMs
-  );
-  const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
-  const stageTimeoutOverrideMs =
-    typeof modelStageTimeoutMs === 'number' &&
-    Number.isFinite(modelStageTimeoutMs) &&
-    modelStageTimeoutMs > 0
-      ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
-      : undefined;
-  const checkWatchdog = () => {
-    assertBudgetAvailable(runtimeBudget);
-    watchdog.check();
-  };
-
+  let releaseTierSlot: (() => void) | undefined;
   try {
+    const activeAbortContext = getRequestAbortContext();
+    const runtimeDeadlineAt = BUDGET_DISABLED
+      ? Number.POSITIVE_INFINITY
+      : runtimeBudget.hardDeadline - runtimeBudget.safetyBuffer;
+    const admissionDeadlineAt = Math.min(
+      runtimeDeadlineAt,
+      activeAbortContext?.deadlineAt ?? Number.POSITIVE_INFINITY
+    );
+    [releaseTierSlot] = await acquireTierSlot(tier, {
+      signal: activeAbortContext?.signal,
+      deadlineAt: admissionDeadlineAt
+    });
+    throwIfRequestAborted();
+
+    const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
+      tier,
+      runtimeBudget,
+      getGPT5Model(),
+      options.watchdogModelTimeoutMs
+    );
+    const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
+    const stageTimeoutOverrideMs =
+      typeof modelStageTimeoutMs === 'number' &&
+      Number.isFinite(modelStageTimeoutMs) &&
+      modelStageTimeoutMs > 0
+        ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
+        : undefined;
+    const checkWatchdog = () => {
+      throwIfRequestAborted();
+      assertBudgetAvailable(runtimeBudget);
+      watchdog.check();
+    };
+
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
     const selfHealingMitigation = getTrinitySelfHealingMitigation({
@@ -886,6 +946,7 @@ export async function runThroughBrain(
           requestId,
           stage: directAnswerOptions.recovery ? 'direct-answer-recovery' : 'direct-answer',
           runtimeBudget,
+          preserveAggregateAbortContext: options.preserveAggregateAbortContext,
           timeoutMs: recoveryTimeoutMs,
           sourceEndpoint: options.sourceEndpoint,
           operation: () =>
@@ -897,7 +958,8 @@ export async function runThroughBrain(
               runtimeBudget,
               requestId,
               options.directAnswerModelOverride,
-              stageTimeoutOverrideMs
+              stageTimeoutOverrideMs,
+              options.preserveAggregateAbortContext
             )
         });
       } catch (error) {
@@ -1084,36 +1146,31 @@ export async function runThroughBrain(
         latencyDriftDetected
       };
       const directAnswerRemainingBudgetMs = result.guardInfo?.remainingBudgetMs;
-      try {
-        result.judgedFeedback = await runLoggedStage({
-          requestId,
-          stage: 'judged-feedback',
-          runtimeBudget,
-          timeoutMs: resolveAuxiliaryStageTimeoutMs(
-            'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
-            DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
-            runtimeBudget
-          ),
-          operation: () =>
-            recordTrinityJudgedFeedback({
-              requestId,
-              prompt: auditSafePrompt,
-              response: finalText,
-              tier,
-              sessionId: effectiveMemorySessionId,
-              sourceEndpoint: options.sourceEndpoint,
-              internalMode,
-              remainingBudgetMs: directAnswerRemainingBudgetMs
-            })
-        });
-      } catch (error) {
-        result.judgedFeedback = {
-          enabled: true,
-          attempted: false,
-          source: 'clear_audit',
-          reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
-        };
-      }
+      result.judgedFeedback = await runOptionalJudgedFeedback(
+        options,
+        () => runLoggedStage({
+            requestId,
+            stage: 'judged-feedback',
+            runtimeBudget,
+            preserveAggregateAbortContext: options.preserveAggregateAbortContext,
+            timeoutMs: resolveAuxiliaryStageTimeoutMs(
+              'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+              DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+              runtimeBudget
+            ),
+            operation: () =>
+              recordTrinityJudgedFeedback({
+                requestId,
+                prompt: auditSafePrompt,
+                response: finalText,
+                tier,
+                sessionId: effectiveMemorySessionId,
+                sourceEndpoint: options.sourceEndpoint,
+                internalMode,
+                remainingBudgetMs: directAnswerRemainingBudgetMs
+              })
+          })
+      );
 
       logCoreExecution('returning result', {
         requestId,
@@ -1180,6 +1237,7 @@ export async function runThroughBrain(
           )
       });
     } catch (error) {
+      throwIfRequestAborted();
       if (tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = recordTrinityStageFailure({
           stage: 'intake',
@@ -1231,6 +1289,7 @@ export async function runThroughBrain(
           )
       });
     } catch (error) {
+      throwIfRequestAborted();
       if (tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = recordTrinityStageFailure({
           stage: 'reasoning',
@@ -1273,6 +1332,7 @@ export async function runThroughBrain(
           stage: 'clear-audit',
           runtimeBudget,
           sourceEndpoint: options.sourceEndpoint,
+          preserveAggregateAbortContext: options.preserveAggregateAbortContext,
           timeoutMs: resolveAuxiliaryStageTimeoutMs(
             'TRINITY_CLEAR_AUDIT_TIMEOUT_MS',
             DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
@@ -1281,6 +1341,7 @@ export async function runThroughBrain(
           operation: () => runClearAudit(client, reasoningLedger, runtimeBudget)
         });
       } catch (error) {
+        throwIfRequestAborted();
         logger.warn('[core] clear-audit skipped', {
           module: 'ARCANOS:CORE',
           requestId,
@@ -1288,7 +1349,7 @@ export async function runThroughBrain(
         });
       }
       // Self-improve loop trigger (non-blocking): feed CLEAR into controller.
-      if (clearAudit) {
+      if (clearAudit && !options.disableOptionalSideEffects) {
         try {
           void runSelfImproveCycle({
             trigger: 'clear',
@@ -1421,6 +1482,7 @@ export async function runThroughBrain(
             )
         });
       } catch (error) {
+        throwIfRequestAborted();
         if (tier === 'simple' && isAbortError(error)) {
           finalRecoveryAction = recordTrinityStageFailure({
             stage: 'final',
@@ -1609,37 +1671,32 @@ export async function runThroughBrain(
     };
     const finalStageRemainingBudgetMs = result.guardInfo?.remainingBudgetMs;
 
-    try {
-      result.judgedFeedback = await runLoggedStage({
-        requestId,
-        stage: 'judged-feedback',
-        runtimeBudget,
-        timeoutMs: resolveAuxiliaryStageTimeoutMs(
-          'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
-          DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
-          runtimeBudget
-        ),
-        operation: () =>
-          recordTrinityJudgedFeedback({
-            requestId,
-            prompt: auditSafePrompt,
-            response: finalText,
-            clearAudit,
-            tier,
-            sessionId: effectiveMemorySessionId,
-            sourceEndpoint: options.sourceEndpoint,
-            internalMode,
-            remainingBudgetMs: finalStageRemainingBudgetMs
-          })
-      });
-    } catch (error) {
-      result.judgedFeedback = {
-        enabled: true,
-        attempted: false,
-        source: 'clear_audit',
-        reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
-      };
-    }
+    result.judgedFeedback = await runOptionalJudgedFeedback(
+      options,
+      () => runLoggedStage({
+          requestId,
+          stage: 'judged-feedback',
+          runtimeBudget,
+          preserveAggregateAbortContext: options.preserveAggregateAbortContext,
+          timeoutMs: resolveAuxiliaryStageTimeoutMs(
+            'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+            DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+            runtimeBudget
+          ),
+          operation: () =>
+            recordTrinityJudgedFeedback({
+              requestId,
+              prompt: auditSafePrompt,
+              response: finalText,
+              clearAudit,
+              tier,
+              sessionId: effectiveMemorySessionId,
+              sourceEndpoint: options.sourceEndpoint,
+              internalMode,
+              remainingBudgetMs: finalStageRemainingBudgetMs
+            })
+        })
+    );
 
     if (outputControls.debugPipeline) {
       result.pipelineDebug = {
@@ -1691,6 +1748,6 @@ export async function runThroughBrain(
     return result;
 
   } finally {
-    release();
+    releaseTierSlot?.();
   }
 }

@@ -27,7 +27,14 @@ const backoffStrategy = new ExponentialBackoff(
   RESILIENCE_CONSTANTS.BACKOFF_JITTER_MAX_MS
 );
 
-export async function executeWithResilience<T>(operation: () => Promise<T>): Promise<T> {
+export interface ResilienceExecutionOptions {
+  shouldCountFailure?: (error: unknown) => boolean;
+}
+
+export async function executeWithResilience<T>(
+  operation: () => Promise<T>,
+  executionOptions: ResilienceExecutionOptions = {}
+): Promise<T> {
   recordTraceEvent('openai.resilience.execute', {
     state: circuitBreaker.getState()
   });
@@ -48,7 +55,7 @@ export async function executeWithResilience<T>(operation: () => Promise<T>): Pro
       });
       throw error;
     }
-  });
+  }, executionOptions);
 }
 
 export function calculateRetryDelay(attempt: number, error: unknown): number {

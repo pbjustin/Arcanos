@@ -15,7 +15,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 65;
+const MAX_REQUESTS = 66;
+const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
@@ -574,6 +575,11 @@ export function buildNativePrPreviewRequestPlan() {
     ),
     researchCase('research-url-snapshot', 'urlSnapshot', 200),
     researchCase('research-storage-component', 'storageComponent', 200),
+    researchCase(
+      'research-workflow-cancellation-drain',
+      'workflowCancellationDrain',
+      200
+    ),
     backstageStorylineCase(
       'backstage-storyline-lifecycle-exact',
       'lifecycleExact',
@@ -781,6 +787,69 @@ function expectedResearchContractPayload(requestCase) {
     protectedEffectsEnabled: false,
     schemaVersion: 1,
   };
+  if (requestCase.fixtureName === 'workflowCancellationDrain') {
+    const scenario = (
+      name,
+      trigger,
+      abortStage,
+      startedStages
+    ) => ({
+      abortObserved: true,
+      abortReasonName: 'AbortError',
+      abortStage,
+      activeWorkAtAbortObservation: 1,
+      activeWorkAtOutwardSettlement: 0,
+      callbackSettledAtOutwardSettlement: true,
+      drainCompletedAtOutwardSettlement: true,
+      laterStageStarts: 0,
+      name,
+      noPostOutwardSettlementMutation: true,
+      sameWorkflowDeadlineAcrossStages: true,
+      sameWorkflowSignalAcrossStages: true,
+      settledStages: [...startedStages],
+      startedStages,
+      trigger,
+    });
+    return {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      ...base,
+      memoryBoundaryReached: false,
+      networkBoundaryReached: false,
+      providerBoundaryReached: false,
+      cancellation: {
+        componentExecuted: true,
+        noDetachedWorkAtOutwardSettlement: true,
+        scenarioCount: 4,
+        scenarios: [
+          scenario('timeout-dns', 'timeout', 'dns', ['dns']),
+          scenario(
+            'parent-abort-fetch',
+            'parent-abort',
+            'fetch',
+            ['dns', 'fetch']
+          ),
+          scenario(
+            'parent-abort-model',
+            'parent-abort',
+            'model',
+            ['dns', 'fetch', 'model']
+          ),
+          scenario(
+            'parent-abort-persistence',
+            'parent-abort',
+            'persistence',
+            ['dns', 'fetch', 'model', 'persistence']
+          ),
+        ],
+        syntheticSeams: ['dns', 'fetch', 'model', 'persistence'],
+      },
+    };
+  }
   if (requestCase.expectedStatus === 400) {
     return {
       accepted: false,
@@ -1108,6 +1177,10 @@ async function executeRequestCase(
   deadlineMs,
   aggregateState
 ) {
+  const cancellationProofStartedAt =
+    requestCase.caseId === 'research-workflow-cancellation-drain'
+      ? performance.now()
+      : null;
   const baseUrl =
     requestCase.role === 'web' ? options.webBaseUrl : options.workerBaseUrl;
   const requestUrl = `${baseUrl}${requestCase.path}`;
@@ -1179,6 +1252,16 @@ async function executeRequestCase(
     }
   }
   validateResponseBody(requestCase, bodyBytes, options);
+  if (
+    cancellationProofStartedAt !== null
+    && performance.now() - cancellationProofStartedAt
+      < RESEARCH_CANCELLATION_MIN_RESPONSE_MS
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_CANCELLATION_DRAIN_TOO_EARLY',
+      requestCase.caseId
+    );
+  }
   return {
     bodySha256: createHash('sha256').update(bodyBytes).digest('hex'),
     caseId: requestCase.caseId,

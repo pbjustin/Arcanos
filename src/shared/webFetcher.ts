@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { load } from 'cheerio';
-import { lookup } from 'node:dns/promises';
+import { Resolver } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { isIP } from 'node:net';
 import { getEnv, getEnvIntegerAtLeast } from '@platform/runtime/env.js';
@@ -15,6 +15,7 @@ const HARD_MAX_CHARS = 100_000;
 const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const MAX_EXTRACTION_SELECTORS = 24;
 const MAX_EXTRACTION_CANDIDATES = 48;
 const MAX_CANDIDATE_SCORE_CHARS = 24000;
@@ -112,6 +113,7 @@ export interface FetchAndCleanRawDocument {
 
 export interface FetchAndCleanOptions {
   signal?: AbortSignal;
+  deadlineAt?: number;
   timeoutMs?: number;
   preferredContentSelectors?: readonly string[];
   preferredContentTerms?: readonly string[];
@@ -120,6 +122,24 @@ export interface FetchAndCleanOptions {
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
   rawDocumentMaxChars?: number;
   onRawDocument?: (document: FetchAndCleanRawDocument) => void;
+}
+
+function createFetchAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfFetchCancelled(options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt'>): void {
+  if (options.signal?.aborted) {
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : createFetchAbortError('web fetch aborted');
+  }
+
+  if (typeof options.deadlineAt === 'number' && Date.now() >= options.deadlineAt) {
+    throw createFetchAbortError('web fetch deadline exceeded');
+  }
 }
 
 export interface FetchAndCleanExtractionMetrics {
@@ -357,13 +377,19 @@ export async function fetchAndCleanDocument(
   maxChars = getConfiguredMaxChars(),
   options: FetchAndCleanOptions = {}
 ): Promise<FetchAndCleanDocument> {
+  throwIfFetchCancelled(options);
   const fetchStartedAt = Date.now();
-  const target = await resolveFetchTarget(url);
+  const target = await resolveFetchTarget(url, options);
+  throwIfFetchCancelled(options);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
   const boundedMaxChars = Math.min(Math.max(0, maxChars), HARD_MAX_CHARS);
+  const deadlineRemainingMs = typeof options.deadlineAt === 'number'
+    ? Math.max(1, Math.trunc(options.deadlineAt - Date.now()))
+    : HARD_MAX_FETCH_TIMEOUT_MS;
   const fetchTimeoutMs = Math.min(
     Math.max(1, options.timeoutMs ?? getConfiguredFetchTimeoutMs()),
-    HARD_MAX_FETCH_TIMEOUT_MS
+    HARD_MAX_FETCH_TIMEOUT_MS,
+    deadlineRemainingMs
   );
   const httpsAgent =
     target.parsedUrl.protocol === 'https:'
@@ -373,6 +399,7 @@ export async function fetchAndCleanDocument(
         })
       : undefined;
 
+  throwIfFetchCancelled(options);
   const response = await axios.get<string>(target.requestUrl.toString(), {
     data: undefined,
     timeout: fetchTimeoutMs,
@@ -390,7 +417,13 @@ export async function fetchAndCleanDocument(
       Accept: 'text/html,text/plain;q=0.9,*/*;q=0.8'
     },
     httpsAgent
+  }).catch((error: unknown) => {
+    // Axios wraps signal cancellation in its own error. Restore the caller's
+    // exact abort reason, or the canonical deadline error, before returning.
+    throwIfFetchCancelled(options);
+    throw error;
   });
+  throwIfFetchCancelled(options);
   const fetchElapsedMs = Date.now() - fetchStartedAt;
 
   const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
@@ -418,8 +451,10 @@ export async function fetchAndCleanDocument(
     } catch {
       // Optional caller-owned raw-document inspection must not break the safe article fallback.
     }
+    throwIfFetchCancelled(options);
   }
 
+  throwIfFetchCancelled(options);
   const extractionStartedAt = Date.now();
   const $ = load(responseText);
   $('script, style, noscript').remove();
@@ -545,6 +580,7 @@ export async function fetchAndCleanDocument(
     ? []
     : links.slice(0, getConfiguredWebFetchMaxLinks());
 
+  throwIfFetchCancelled(options);
   return {
     text: cleanedText,
     links: limitedLinks,
@@ -562,7 +598,9 @@ export async function fetchAndClean(
   maxChars = getConfiguredMaxChars(),
   options: FetchAndCleanOptions = {}
 ): Promise<string> {
+  throwIfFetchCancelled(options);
   const document = await fetchAndCleanDocument(url, maxChars, options);
+  throwIfFetchCancelled(options);
   return document.combined;
 }
 
@@ -757,16 +795,114 @@ function formatPinnedHostname(address: string, family: IpFamily): string {
   return family === 6 ? `[${normalizedAddress}]` : normalizedAddress;
 }
 
-async function resolveFetchTarget(rawUrl: string): Promise<ResolvedFetchTarget> {
+async function resolveHostnameAddresses(
+  hostname: string,
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt'>
+): Promise<Array<{ address: string; family: IpFamily }>> {
+  throwIfFetchCancelled(options);
+  const resolver = new Resolver();
+  let cancellationReason: Error | undefined;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelResolver = (reason: Error): void => {
+    if (cancellationReason) {
+      return;
+    }
+
+    cancellationReason = reason;
+    resolver.cancel();
+  };
+  const onAbort = (): void => {
+    cancelResolver(
+      options.signal?.reason instanceof Error
+        ? options.signal.reason
+        : createFetchAbortError('web fetch aborted')
+    );
+  };
+  const scheduleDeadlineCancellation = (): void => {
+    if (typeof options.deadlineAt !== 'number' || !Number.isFinite(options.deadlineAt)) {
+      return;
+    }
+
+    const remainingMs = options.deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      cancelResolver(createFetchAbortError('web fetch deadline exceeded'));
+      return;
+    }
+
+    deadlineTimer = setTimeout(
+      scheduleDeadlineCancellation,
+      Math.min(remainingMs, MAX_TIMER_DELAY_MS)
+    );
+    deadlineTimer.unref();
+  };
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  scheduleDeadlineCancellation();
+
+  try {
+    throwIfFetchCancelled(options);
+    const results = await Promise.allSettled([
+      resolver.resolve4(hostname),
+      resolver.resolve6(hostname)
+    ]);
+    if (cancellationReason) {
+      throw cancellationReason;
+    }
+    throwIfFetchCancelled(options);
+
+    const addresses: Array<{ address: string; family: IpFamily }> = [];
+    if (results[0].status === 'fulfilled') {
+      addresses.push(...results[0].value.map((address) => ({ address, family: 4 as const })));
+    }
+    if (results[1].status === 'fulfilled') {
+      addresses.push(...results[1].value.map((address) => ({ address, family: 6 as const })));
+    }
+
+    if (addresses.length === 0) {
+      const firstFailure = results.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected'
+      );
+      throw firstFailure?.reason instanceof Error
+        ? firstFailure.reason
+        : new Error('Failed to resolve URL hostname to an IP address');
+    }
+
+    return addresses;
+  } finally {
+    if (deadlineTimer) {
+      clearTimeout(deadlineTimer);
+    }
+    if (options.signal) {
+      options.signal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
+async function resolveFetchTarget(
+  rawUrl: string,
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt'> = {}
+): Promise<ResolvedFetchTarget> {
+  throwIfFetchCancelled(options);
   const parsedUrl = assertHttpUrl(rawUrl);
   const normalizedHostname = normalizeIpAddress(parsedUrl.hostname).toLowerCase();
   const allowLoopbackForLocalDevelopment = isLocalDevelopmentBypassEnabled(normalizedHostname);
 
   const ipFamily = isIP(normalizedHostname);
-  const resolvedAddresses: Array<{ address: string; family: IpFamily }> =
-    ipFamily === 0
-      ? (await lookup(normalizedHostname, { all: true, verbatim: true }) as Array<{ address: string; family: IpFamily }>)
-      : [{ address: normalizedHostname, family: ipFamily as IpFamily }];
+  let resolvedAddresses: Array<{ address: string; family: IpFamily }>;
+  if (normalizedHostname === 'localhost') {
+    resolvedAddresses = [
+      { address: '127.0.0.1', family: 4 },
+      { address: '::1', family: 6 }
+    ];
+  } else if (ipFamily === 0) {
+    resolvedAddresses = await resolveHostnameAddresses(normalizedHostname, options);
+  } else {
+    resolvedAddresses = [{ address: normalizedHostname, family: ipFamily as IpFamily }];
+  }
+  throwIfFetchCancelled(options);
 
   //audit assumption: DNS lookup must yield at least one concrete address; failure risk: empty resolution bypasses validation path; expected invariant: one or more resolved addresses; handling strategy: hard fail on empty result.
   if (resolvedAddresses.length === 0) {

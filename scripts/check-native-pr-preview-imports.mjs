@@ -10,7 +10,18 @@ import ts from 'typescript';
 
 const currentScriptPath = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = path.resolve(path.dirname(currentScriptPath), '..');
+const PREVIEW_IMPORT_TSCONFIG_FILE =
+  'scripts/native-pr-preview-imports-tsconfig.json';
+const PREVIEW_DIST_IMPORT_CHECKER_FILE =
+  'scripts/check-native-pr-preview-dist-imports.mjs';
+const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
+  'c77e452f9b9d0f76e4d45cc3e8edea59f62434ca986c5c26c1de5c30e813066d';
+const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
+const ROOT_TSCONFIG_FILE = 'tsconfig.json';
+const RUNTIME_PACKAGE_MANIFEST_FILE =
+  'packages/arcanos-runtime/package.json';
 const PREVIEW_ENTRY_FILES = [
+  'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
   'src/nativePrPreviewApplication.ts',
@@ -18,6 +29,7 @@ const PREVIEW_ENTRY_FILES = [
   'src/start-native-pr-preview.ts',
 ];
 export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
+  'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
@@ -25,6 +37,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/lib/errors/responses.ts',
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
+  'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
   'src/shared/backstage/backstageStoryline.ts',
@@ -83,11 +96,20 @@ const LOCAL_IMPORT_PREFIXES = [
   '@workers/',
 ];
 const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
+  '@arcanos/runtime/requestAbort',
   'express',
   'node:crypto',
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  [
+    'packages/arcanos-runtime/src/requestAbort.ts',
+    new Set(['node:async_hooks']),
+  ],
+  [
+    'src/nativePrPreviewApplication.ts',
+    new Set(['node:timers/promises']),
+  ],
   [
     'scripts/start-railway-service.mjs',
     new Set([
@@ -100,6 +122,15 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  [
+    'packages/arcanos-runtime/src/requestAbort.ts',
+    new Map([
+      [
+        'node:async_hooks',
+        new Set(['AsyncLocalStorage:AsyncLocalStorage']),
+      ],
+    ]),
+  ],
   [
     'scripts/start-railway-service.mjs',
     new Map([
@@ -131,7 +162,27 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
   [
     'src/nativePrPreviewApplication.ts',
     new Map([
+      [
+        '@arcanos/runtime/requestAbort',
+        new Set([
+          'getRequestAbortContext:getRequestAbortContext',
+        ]),
+      ],
       ['express', new Set(['default:express'])],
+      ['node:timers/promises', new Set(['setTimeout:delay'])],
+    ]),
+  ],
+  [
+    'src/routes/_core/researchAbortDrain.ts',
+    new Map([
+      [
+        '@arcanos/runtime/requestAbort',
+        new Set([
+          'createAbortError:createAbortError',
+          'createLinkedAbortController:createLinkedAbortController',
+          'runWithRequestAbortContext:runWithRequestAbortContext',
+        ]),
+      ],
     ]),
   ],
   [
@@ -445,6 +496,10 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
+    'packages/arcanos-runtime/src/requestAbort.ts',
+    'ca6e8019c919d83c67f37f7dccb14aff6d8a7456df3fae9f2d51ae63d203cdc4',
+  ],
+  [
     'src/core/db/repositories/backstageStorylineRepository.ts',
     '7f0ce80fce04c46ab23fd10673fb21ac09b3daa2799fb9377657e4fac838dca7',
   ],
@@ -463,6 +518,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/researchRequest.ts',
     '3fc92f358952e766e3bfd3b69018906759b01ad88c642d9ca6aa730926367761',
+  ],
+  [
+    'src/routes/_core/researchAbortDrain.ts',
+    '0f8ca2e91c799218e3fa873bd3f247ef7eec9061924f1ce0c92e71f9a8b7521c',
   ],
 ]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([
@@ -1017,6 +1076,15 @@ function isReviewedResearchOwnKeysReference(filePath, node) {
     && call.arguments.length === 1
     && ts.isIdentifier(call.arguments[0])
     && call.arguments[0].text === 'descriptors'
+  );
+}
+
+function isReviewedRequestAbortTimeoutCall(filePath, node) {
+  return (
+    filePath === 'packages/arcanos-runtime/src/requestAbort.ts'
+    && ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === 'setTimeout'
   );
 }
 
@@ -4267,9 +4335,10 @@ function isAllowedSensitiveLauncherHelperUse(node, launcherContract) {
 
 export function findUnsafeRuntimeSyntax(filePath, sourceText) {
   const violations = [];
+  const normalizedSourceText = sourceText.replace(/\r\n?/gu, '\n');
   const sourceFile = ts.createSourceFile(
     filePath,
-    sourceText,
+    normalizedSourceText,
     ts.ScriptTarget.ES2022,
     true,
     ts.ScriptKind.TS
@@ -4540,6 +4609,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       ts.isCallExpression(node)
       && ts.isIdentifier(node.expression)
       && FORBIDDEN_RUNTIME_BINDING_NAMES.has(node.expression.text)
+      && !isReviewedRequestAbortTimeoutCall(filePath, node)
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden ${node.expression.text} call`
@@ -4896,6 +4966,97 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
   return violations;
 }
 
+export function findRuntimeRequestAbortExportViolations(manifest) {
+  const manifestObject = (
+    manifest
+    && typeof manifest === 'object'
+    && !Array.isArray(manifest)
+  ) ? manifest : null;
+  const exportsObject = (
+    manifestObject?.exports
+    && typeof manifestObject.exports === 'object'
+    && !Array.isArray(manifestObject.exports)
+  ) ? manifestObject.exports : null;
+  const requestAbortExport = (
+    exportsObject?.['./requestAbort']
+    && typeof exportsObject['./requestAbort'] === 'object'
+    && !Array.isArray(exportsObject['./requestAbort'])
+  ) ? exportsObject['./requestAbort'] : null;
+  const requestAbortExportKeys = requestAbortExport
+    ? Object.keys(requestAbortExport).sort()
+    : [];
+  if (
+    manifestObject?.name === '@arcanos/runtime'
+    && manifestObject.type === 'module'
+    && requestAbortExport?.types === './dist/requestAbort.d.ts'
+    && requestAbortExport?.import === './dist/requestAbort.js'
+    && requestAbortExportKeys.length === 2
+    && requestAbortExportKeys[0] === 'import'
+    && requestAbortExportKeys[1] === 'types'
+  ) {
+    return [];
+  }
+  return [
+    `${RUNTIME_PACKAGE_MANIFEST_FILE}: requestAbort export must match the reviewed ESM runtime surface`,
+  ];
+}
+
+export function findRuntimeRequestAbortTypeResolutionViolations(tsconfig) {
+  const requestAbortPaths = tsconfig?.compilerOptions?.paths
+    ?.['@arcanos/runtime/requestAbort'];
+  if (
+    Array.isArray(requestAbortPaths)
+    && requestAbortPaths.length === 1
+    && requestAbortPaths[0]
+      === 'packages/arcanos-runtime/dist/requestAbort.d.ts'
+  ) {
+    return [];
+  }
+  return [
+    `${ROOT_TSCONFIG_FILE}: requestAbort path must match the reviewed build target`,
+  ];
+}
+
+export function findNativePrPreviewBuildScriptViolations(manifest) {
+  const scripts = manifest?.scripts;
+  const buildScript = typeof scripts?.build === 'string'
+    ? scripts.build
+    : '';
+  const buildSteps = buildScript.split('&&').map(step => step.trim());
+  const aliasCheckIndex = buildSteps.indexOf('npm run dist:check-aliases');
+  const previewDistCheckIndex = buildSteps.indexOf(
+    'npm run check:native-pr-preview-dist-imports'
+  );
+  const copyAssetsIndex = buildSteps.indexOf('npm run build:copy-assets');
+  if (
+    scripts?.['check:native-pr-preview-dist-imports']
+      === 'node scripts/check-native-pr-preview-dist-imports.mjs'
+    && aliasCheckIndex >= 0
+    && previewDistCheckIndex === aliasCheckIndex + 1
+    && copyAssetsIndex === previewDistCheckIndex + 1
+    && buildSteps.filter(
+      step => step === 'npm run check:native-pr-preview-dist-imports'
+    ).length === 1
+  ) {
+    return [];
+  }
+  return [
+    `${ROOT_PACKAGE_MANIFEST_FILE}: build must run the reviewed preview dist-import check after alias repair`,
+  ];
+}
+
+export function findPreviewDistImportCheckerDigestViolations(sourceText) {
+  const observedDigest = createHash('sha256')
+    .update(sourceText.replace(/\r\n?/gu, '\n'))
+    .digest('hex');
+  if (observedDigest === PREVIEW_DIST_IMPORT_CHECKER_DIGEST) {
+    return [];
+  }
+  return [
+    `${PREVIEW_DIST_IMPORT_CHECKER_FILE}: content digest must match the reviewed emitted-import check`,
+  ];
+}
+
 export async function findNativePrPreviewImportViolations({
   repositoryRoot = REPOSITORY_ROOT,
   analyzeDependencies = madge,
@@ -4906,11 +5067,66 @@ export async function findNativePrPreviewImportViolations({
       ts: { skipTypeImports: true },
     },
     fileExtensions: ['mjs', 'ts'],
-    tsConfig: path.join(repositoryRoot, 'tsconfig.json'),
+    tsConfig: path.join(repositoryRoot, PREVIEW_IMPORT_TSCONFIG_FILE),
   });
   const graphFiles = Object.keys(graph.obj()).sort();
   const violations = [];
   const skippedImports = graph.warnings().skipped ?? [];
+
+  try {
+    const runtimePackageManifest = JSON.parse(await fs.readFile(
+      path.join(repositoryRoot, RUNTIME_PACKAGE_MANIFEST_FILE),
+      'utf8'
+    ));
+    violations.push(
+      ...findRuntimeRequestAbortExportViolations(runtimePackageManifest)
+    );
+  } catch {
+    violations.push(
+      `${RUNTIME_PACKAGE_MANIFEST_FILE}: requestAbort export manifest is unreadable`
+    );
+  }
+  try {
+    const rootTsconfig = JSON.parse(await fs.readFile(
+      path.join(repositoryRoot, ROOT_TSCONFIG_FILE),
+      'utf8'
+    ));
+    violations.push(
+      ...findRuntimeRequestAbortTypeResolutionViolations(rootTsconfig)
+    );
+  } catch {
+    violations.push(
+      `${ROOT_TSCONFIG_FILE}: requestAbort path configuration is unreadable`
+    );
+  }
+  try {
+    const rootPackageManifest = JSON.parse(await fs.readFile(
+      path.join(repositoryRoot, ROOT_PACKAGE_MANIFEST_FILE),
+      'utf8'
+    ));
+    violations.push(
+      ...findNativePrPreviewBuildScriptViolations(rootPackageManifest)
+    );
+  } catch {
+    violations.push(
+      `${ROOT_PACKAGE_MANIFEST_FILE}: preview dist-import build contract is unreadable`
+    );
+  }
+  try {
+    const previewDistImportCheckerSource = await fs.readFile(
+      path.join(repositoryRoot, PREVIEW_DIST_IMPORT_CHECKER_FILE),
+      'utf8'
+    );
+    violations.push(
+      ...findPreviewDistImportCheckerDigestViolations(
+        previewDistImportCheckerSource
+      )
+    );
+  } catch {
+    violations.push(
+      `${PREVIEW_DIST_IMPORT_CHECKER_FILE}: emitted-import checker is unreadable`
+    );
+  }
 
   for (const skippedImport of skippedImports) {
     violations.push(`unresolved import: ${skippedImport}`);

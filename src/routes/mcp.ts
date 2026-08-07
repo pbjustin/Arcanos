@@ -12,6 +12,7 @@ import {
 } from '@platform/runtime/security.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
+import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 
 const router = express.Router();
 const mcpHttpClientRateLimit = createRateLimitMiddleware({
@@ -77,12 +78,22 @@ router.post('/mcp', (_req, res, next) => {
   res.setHeader('Pragma', 'no-cache');
   next();
 }, mcpHttpClientRateLimit, mcpHttpCredentialRateLimit, mcpAuthMiddleware, async (req: Request, res: Response) => {
+  const abortScope = createClientDisconnectAbortScope(
+    req,
+    res,
+    'MCP HTTP client disconnected',
+  );
   try {
-    const ctx = buildMcpRequestContext(req);
-    await runWithMcpRequestContext(ctx, async () => {
-      //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair inside the authenticated request context.
-      const { transport } = await buildMcpServerForRequest();
-      await transport.handleRequest(req, res, req.body);
+    await abortScope.run(async signal => {
+      const ctx = {
+        ...buildMcpRequestContext(req),
+        signal,
+      };
+      await runWithMcpRequestContext(ctx, async () => {
+        //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair inside the authenticated request context.
+        const { transport } = await buildMcpServerForRequest();
+        await transport.handleRequest(req, res, req.body);
+      });
     });
   } catch (error) {
     logMcpTransportFailure(req, error);
@@ -92,6 +103,8 @@ router.post('/mcp', (_req, res, next) => {
         message: 'MCP operation failed.',
       });
     }
+  } finally {
+    abortScope.cleanup();
   }
 });
 

@@ -930,6 +930,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | `24000` (commented) | Guide-mode Gaming provider stage/model timeout; clamped below the guide pipeline timeout with request headroom. |
 | `ARCANOS_GAMING_WEB_CONTEXT_CHARS` | `5000` (commented) | Per-guide snippet size used by Gaming guide URL enrichment. |
 | `ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS` | `15` (commented) | Maximum user-provided guide URLs fetched concurrently for Gaming guide enrichment. |
+| `RESEARCH_WORKFLOW_TIMEOUT_MS` | `60000` (commented) | Service-owned aggregate Research deadline in milliseconds. Missing, blank, nonnumeric, or sub-1 values use the 60,000 ms default; values above 300,000 are capped. One effective deadline and cancellation signal cover DNS/fetch, every Trinity/model stage, and persistence; a shorter caller deadline caps this value. |
 | `WEB_FETCH_MAX_LINKS` | `15` (commented) | Maximum discovered page links included by the shared web fetch path. |
 | `RAILWAY_API_TOKEN` | `` | Railway API token used by optional automation/ops routes. |
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Filesystem path for logs (if file logging enabled). |

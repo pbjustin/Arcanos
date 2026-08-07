@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
+import { createServer, request as createHttpRequest } from 'node:http';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
 
@@ -162,7 +163,74 @@ describe('research HTTP ingress contract', () => {
 
     expect(response.status).toBe(200);
     expect(mockConfirmGate).toHaveBeenCalledTimes(1);
-    expect(mockBridgeResearch).toHaveBeenCalledWith({ topic, urls: [] });
+    expect(mockBridgeResearch).toHaveBeenCalledWith(
+      { topic, urls: [] },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('aborts and drains in-flight bridge work when the HTTP caller disconnects', async () => {
+    let markStarted!: () => void;
+    let markAborted!: () => void;
+    let markDrained!: () => void;
+    const started = new Promise<void>(resolve => {
+      markStarted = resolve;
+    });
+    const aborted = new Promise<void>(resolve => {
+      markAborted = resolve;
+    });
+    const drained = new Promise<void>(resolve => {
+      markDrained = resolve;
+    });
+    mockBridgeResearch.mockImplementationOnce(
+      async (_request: unknown, options: { signal: AbortSignal }) => {
+        markStarted();
+        try {
+          return await new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => {
+              markAborted();
+              reject(options.signal.reason);
+            }, { once: true });
+          });
+        } finally {
+          markDrained();
+        }
+      },
+    );
+    const server = createServer(buildApp('/commands/research'));
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Ephemeral research test server address unavailable');
+      }
+      const payload = JSON.stringify({ topic: 'disconnect race', urls: [] });
+      const clientRequest = createHttpRequest({
+        host: '127.0.0.1',
+        port: address.port,
+        path: '/commands/research',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+        },
+      });
+      clientRequest.on('error', () => undefined);
+      clientRequest.end(payload);
+
+      await started;
+      clientRequest.destroy();
+      await aborted;
+      await drained;
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it('counts non-BMP topics in JavaScript String.length units', async () => {
@@ -181,7 +249,10 @@ describe('research HTTP ingress contract', () => {
     expect(rejected.status).toBe(400);
     expect(mockConfirmGate).toHaveBeenCalledTimes(1);
     expect(mockBridgeResearch).toHaveBeenCalledTimes(1);
-    expect(mockBridgeResearch).toHaveBeenCalledWith({ topic: exactTopic, urls: [] });
+    expect(mockBridgeResearch).toHaveBeenCalledWith(
+      { topic: exactTopic, urls: [] },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it('preserves distinct Unicode topic input without lossy sanitization', async () => {
@@ -194,8 +265,16 @@ describe('research HTTP ingress contract', () => {
       .post('/commands/research')
       .send({ topic: 'caf', urls: [] })).status).toBe(200);
 
-    expect(mockBridgeResearch).toHaveBeenNthCalledWith(1, { topic: 'café', urls: [] });
-    expect(mockBridgeResearch).toHaveBeenNthCalledWith(2, { topic: 'caf', urls: [] });
+    expect(mockBridgeResearch).toHaveBeenNthCalledWith(
+      1,
+      { topic: 'café', urls: [] },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(mockBridgeResearch).toHaveBeenNthCalledWith(
+      2,
+      { topic: 'caf', urls: [] },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it('enforces exact and over-limit non-BMP URL item and aggregate boundaries', async () => {
@@ -302,6 +381,8 @@ describe('research HTTP ingress contract', () => {
     expect(mockBridgeResearch).toHaveBeenCalledWith({
       topic: 'bounded topic',
       urls,
+    }, {
+      signal: expect.any(AbortSignal),
     });
   });
 });

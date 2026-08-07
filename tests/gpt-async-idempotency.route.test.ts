@@ -37,12 +37,22 @@ const resolveAsyncGptPollIntervalMsMock = jest.fn(() => 250);
 const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => requested ?? 3500);
 const tryAcquirePriorityGptDirectExecutionSlotMock = jest.fn(() => null);
 const startReservedPriorityGptDirectExecutionMock = jest.fn();
+const runResearchWithAbortDrainMock = jest.fn(
+  async (
+    _options: unknown,
+    callback: () => Promise<unknown> | unknown,
+  ) => callback(),
+);
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
+}));
+
+jest.unstable_mockModule('../src/routes/_core/researchAbortDrain.js', () => ({
+  runResearchWithAbortDrain: runResearchWithAbortDrainMock,
 }));
 
 jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
@@ -476,6 +486,32 @@ describe('async /gpt idempotency', () => {
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('selects the drain-aware outer wrapper for a configured Research alias', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureResearchRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: { topic: 'bounded alias topic', insight: 'bounded result' },
+      _route: {
+        gptId: 'custom-research-alias',
+        module: 'ARCANOS:RESEARCH',
+        route: 'research',
+        action: 'run',
+        availableActions: ['run'],
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/custom-research-alias')
+      .send({ topic: 'bounded alias topic', executionMode: 'sync' });
+
+    expect(response.status).toBe(200);
+    expect(runResearchWithAbortDrainMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'custom-research-alias',
+    }));
   });
 
   it('rejects Research query_and_wait before job planning after its action is removed', async () => {

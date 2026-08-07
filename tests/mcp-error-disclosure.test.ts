@@ -189,6 +189,27 @@ describe('MCP external error disclosure contract', () => {
     await expect(handler({})).resolves.toEqual({ ok: true });
   });
 
+  it('links MCP SDK cancellation into the tool execution signal', async () => {
+    const context = buildContext();
+    let observedSignal: AbortSignal | undefined;
+    const handler = wrapTool('research.run', context, async (_args, extra) => {
+      observedSignal = extra.signal;
+      return new Promise((_resolve, reject) => {
+        extra.signal?.addEventListener('abort', () => {
+          reject(extra.signal?.reason);
+        }, { once: true });
+      });
+    });
+    const controller = new AbortController();
+
+    const pending = handler({}, { signal: controller.signal });
+    controller.abort(new Error('SDK request cancelled'));
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({ isError: true }));
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
   it('maps only Backstage updateRoster validation failures to a safe bad request', () => {
     const context = buildContext();
     const validationError = new BackstageRosterValidationError(

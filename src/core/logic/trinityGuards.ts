@@ -4,7 +4,6 @@
  * Integrated from standalone trinity module into the core pipeline.
  */
 
-import { Semaphore } from 'async-mutex';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
@@ -12,6 +11,7 @@ import type { Tier } from './trinityTier.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
+import { createAbortError } from '@arcanos/runtime';
 
 function readNumberEnv(name: string, fallback: number): number {
   const value = process.env[name];
@@ -25,16 +25,196 @@ function readNumberEnv(name: string, fallback: number): number {
 
 // --- Concurrency Governor ---
 
-const tierSemaphores: Record<Tier, Semaphore> = {
-  simple: new Semaphore(100),
-  complex: new Semaphore(40),
-  critical: new Semaphore(10)
+const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
+
+interface TierSlotAdmissionOptions {
+  signal?: AbortSignal;
+  deadlineAt?: number;
+}
+
+interface TierSlotWaiter {
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  deadlineAt?: number;
+  onAbort?: () => void;
+  deadlineHandle?: ReturnType<typeof setTimeout>;
+  settled: boolean;
+}
+
+function resolveAdmissionAbortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : createAbortError('Trinity concurrency admission aborted');
+}
+
+class CancellationAwareTierSemaphore {
+  private available: number;
+  private readonly waiters: TierSlotWaiter[] = [];
+
+  constructor(private readonly capacity: number) {
+    this.available = capacity;
+  }
+
+  acquire(options: TierSlotAdmissionOptions = {}): Promise<() => void> {
+    if (options.signal?.aborted) {
+      return Promise.reject(resolveAdmissionAbortReason(options.signal));
+    }
+    if (this.hasExpired(options.deadlineAt)) {
+      return Promise.reject(createAbortError('Trinity concurrency admission deadline exceeded'));
+    }
+    if (this.available > 0 && this.waiters.length === 0) {
+      this.available--;
+      return Promise.resolve(this.createReleaser());
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      const waiter: TierSlotWaiter = {
+        resolve,
+        reject,
+        signal: options.signal,
+        deadlineAt: options.deadlineAt,
+        settled: false
+      };
+      this.waiters.push(waiter);
+
+      if (waiter.signal) {
+        waiter.onAbort = () => {
+          this.cancelWaiter(waiter, resolveAdmissionAbortReason(waiter.signal as AbortSignal));
+        };
+        waiter.signal.addEventListener('abort', waiter.onAbort, { once: true });
+      }
+
+      this.scheduleDeadline(waiter);
+
+      // Close the synchronous gap between the initial checks and listener setup.
+      if (waiter.signal?.aborted) {
+        this.cancelWaiter(waiter, resolveAdmissionAbortReason(waiter.signal));
+      } else if (this.hasExpired(waiter.deadlineAt)) {
+        this.cancelWaiter(
+          waiter,
+          createAbortError('Trinity concurrency admission deadline exceeded')
+        );
+      }
+    });
+  }
+
+  private hasExpired(deadlineAt: number | undefined): boolean {
+    return Number.isFinite(deadlineAt) && Date.now() >= (deadlineAt as number);
+  }
+
+  private scheduleDeadline(waiter: TierSlotWaiter): void {
+    if (waiter.settled || !Number.isFinite(waiter.deadlineAt)) {
+      return;
+    }
+
+    const remainingMs = (waiter.deadlineAt as number) - Date.now();
+    if (remainingMs <= 0) {
+      this.cancelWaiter(
+        waiter,
+        createAbortError('Trinity concurrency admission deadline exceeded')
+      );
+      return;
+    }
+
+    const timerDelayMs = Math.max(
+      1,
+      Math.min(MAX_NODE_TIMER_DELAY_MS, Math.trunc(remainingMs))
+    );
+    waiter.deadlineHandle = setTimeout(() => {
+      waiter.deadlineHandle = undefined;
+      if (this.hasExpired(waiter.deadlineAt)) {
+        this.cancelWaiter(
+          waiter,
+          createAbortError('Trinity concurrency admission deadline exceeded')
+        );
+        return;
+      }
+      this.scheduleDeadline(waiter);
+    }, timerDelayMs);
+    waiter.deadlineHandle.unref?.();
+  }
+
+  private cancelWaiter(waiter: TierSlotWaiter, error: Error): void {
+    if (waiter.settled) {
+      return;
+    }
+
+    const waiterIndex = this.waiters.indexOf(waiter);
+    if (waiterIndex >= 0) {
+      this.waiters.splice(waiterIndex, 1);
+    }
+    waiter.settled = true;
+    this.cleanupWaiter(waiter);
+    waiter.reject(error);
+  }
+
+  private dispatch(): void {
+    while (this.available > 0 && this.waiters.length > 0) {
+      const waiter = this.waiters.shift() as TierSlotWaiter;
+      if (waiter.settled) {
+        continue;
+      }
+      if (waiter.signal?.aborted) {
+        waiter.settled = true;
+        this.cleanupWaiter(waiter);
+        waiter.reject(resolveAdmissionAbortReason(waiter.signal));
+        continue;
+      }
+      if (this.hasExpired(waiter.deadlineAt)) {
+        waiter.settled = true;
+        this.cleanupWaiter(waiter);
+        waiter.reject(createAbortError('Trinity concurrency admission deadline exceeded'));
+        continue;
+      }
+
+      waiter.settled = true;
+      this.cleanupWaiter(waiter);
+      this.available--;
+      waiter.resolve(this.createReleaser());
+    }
+  }
+
+  private cleanupWaiter(waiter: TierSlotWaiter): void {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+    }
+    if (waiter.deadlineHandle) {
+      clearTimeout(waiter.deadlineHandle);
+    }
+  }
+
+  private createReleaser(): () => void {
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.available = Math.min(this.capacity, this.available + 1);
+      this.dispatch();
+    };
+  }
+}
+
+const tierSemaphores: Record<Tier, CancellationAwareTierSemaphore> = {
+  simple: new CancellationAwareTierSemaphore(100),
+  complex: new CancellationAwareTierSemaphore(40),
+  critical: new CancellationAwareTierSemaphore(10)
 };
 
-export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
-  const [, release] = await tierSemaphores[tier].acquire();
-  recordTraceEvent('trinity.concurrency.acquired', { tier });
-  return [release];
+export async function acquireTierSlot(
+  tier: Tier,
+  options: TierSlotAdmissionOptions = {}
+): Promise<[() => void]> {
+  const release = await tierSemaphores[tier].acquire(options);
+  try {
+    recordTraceEvent('trinity.concurrency.acquired', { tier });
+    return [release];
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 // --- Watchdog ---

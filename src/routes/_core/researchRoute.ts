@@ -3,6 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { createValidationMiddleware } from '@platform/runtime/security.js';
 import { connectResearchBridge } from '@services/researchHub.js';
 import { asyncHandler } from '@shared/http/index.js';
+import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import {
   isResearchRequestValidationError,
   normalizeResearchHttpRequest,
@@ -86,10 +87,23 @@ export function createResearchRouter(options: CreateResearchRouterOptions) {
     confirmGate,
     asyncHandler(async (req: Request<{}, unknown, ResearchRequestBody>, res) => {
       const { topic, urls = [] } = req.body;
-      const result = await researchBridge.requestResearch({
-        topic,
-        urls: urls as string[],
-      });
+      const abortScope = createClientDisconnectAbortScope(
+        req,
+        res,
+        'Research HTTP client disconnected',
+      );
+      let result: Awaited<ReturnType<typeof researchBridge.requestResearch>>;
+      try {
+        result = await abortScope.run(signal => researchBridge.requestResearch(
+          {
+            topic,
+            urls: urls as string[],
+          },
+          { signal },
+        ));
+      } finally {
+        abortScope.cleanup();
+      }
 
       return res.json({
         success: true,
