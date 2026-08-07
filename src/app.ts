@@ -101,6 +101,7 @@ import {
 import {
   configureDefaultArcanosCoreRuntimeProviders
 } from '@services/arcanosCoreRuntimeProviders.js';
+import { mcpHttpBodyParser } from './mcp/httpBodyParser.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -278,6 +279,10 @@ export function createApp(): Express {
       });
     });
   });
+  // MCP retains a hard 1 MiB ceiling while also honoring a stricter broad JSON
+  // limit. Parse only the exact POST transport here, then reuse the idempotent
+  // parser at the standalone router seam.
+  app.post('/mcp', mcpHttpBodyParser);
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
   app.post(

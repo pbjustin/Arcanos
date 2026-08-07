@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-06T04:24:08.654Z",
+  "generatedAt": "2026-08-07T05:22:05.236Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -720,6 +720,12 @@
         },
         {
           "relativePath": "src/mcp/errors.ts"
+        },
+        {
+          "relativePath": "src/mcp/httpBodyParser.ts"
+        },
+        {
+          "relativePath": "src/mcp/httpBodyParserCore.ts"
         },
         {
           "relativePath": "src/mcp/log.ts"
@@ -3788,6 +3794,12 @@
         },
         {
           "relativePath": "tests/mcp-error-disclosure.test.ts"
+        },
+        {
+          "relativePath": "tests/mcp-http-body-cap.test.ts"
+        },
+        {
+          "relativePath": "tests/mcp-http-global-json-limit.test.ts"
         },
         {
           "relativePath": "tests/mcp-http-transport-deps.test.ts"

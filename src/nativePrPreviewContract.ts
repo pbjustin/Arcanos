@@ -17,6 +17,9 @@ export const NATIVE_PR_PREVIEW_RESEARCH_CONTRACT =
 export const NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT =
   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline;
 
+export const NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT =
+  NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap;
+
 export interface NativePrPreviewIdentity {
   prNumber: number;
   sourceCommit: string;

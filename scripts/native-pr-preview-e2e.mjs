@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 66;
+const MAX_REQUESTS = 68;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
@@ -364,6 +364,24 @@ function backstageStorylineCase(caseId, fixtureName, status) {
   };
 }
 
+function mcpBodyCapCase(caseId, fixtureName, status) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: status,
+    expectedType: 'mcp-body-cap-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
+    role: 'web',
+  };
+}
+
 export function buildNativePrPreviewRequestPlan() {
   const cases = [
     {
@@ -595,6 +613,11 @@ export function buildNativePrPreviewRequestPlan() {
       'payloadOver',
       400
     ),
+    mcpBodyCapCase(
+      'mcp-body-cap-effective-limits',
+      'effectiveLimits',
+      200
+    ),
     {
       body: {
         fixture:
@@ -620,6 +643,20 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'POST',
       path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
+      role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.fixtures
+            .effectiveLimits,
+      },
+      caseId: 'worker-mcp-body-cap-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
       role: 'worker',
     },
     {
@@ -1004,6 +1041,79 @@ function expectedBackstageStorylineContractPayload(requestCase) {
   };
 }
 
+function expectedMcpBodyCapContractPayload(requestCase) {
+  if (requestCase.fixtureName !== 'effectiveLimits') {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  const profiles = [
+    {
+      configuredMcpLimit: '8mb',
+      effectiveLimitBytes: 1024 * 1024,
+      globalJsonLimit: '10mb',
+      name: 'hard-maximum',
+    },
+    {
+      configuredMcpLimit: '512kb',
+      effectiveLimitBytes: 512 * 1024,
+      globalJsonLimit: '10mb',
+      name: 'mcp-configured',
+    },
+    {
+      configuredMcpLimit: '1mb',
+      effectiveLimitBytes: 256 * 1024,
+      globalJsonLimit: '256kb',
+      name: 'global-json',
+    },
+  ];
+  const cases = profiles.flatMap(profile => [0, 1].map(delta => {
+    const accepted = delta === 0;
+    const bodyBytes = profile.effectiveLimitBytes + delta;
+    return {
+      accepted,
+      bodyBytes,
+      cacheControl: 'no-store',
+      configuredMcpLimit: profile.configuredMcpLimit,
+      effectiveLimitBytes: profile.effectiveLimitBytes,
+      globalJsonLimit: profile.globalJsonLimit,
+      name: `${profile.name}-${accepted ? 'exact' : 'over'}`,
+      nextCalls: accepted ? 1 : 0,
+      parsedPaddingLength: accepted ? bodyBytes - 14 : null,
+      pragma: 'no-cache',
+      rejection: accepted
+        ? null
+        : {
+            error: 'MCP_REQUEST_TOO_LARGE',
+            message: 'MCP request body is too large.',
+          },
+      statusCode: accepted ? 200 : 413,
+      streamedWithoutContentLength: true,
+    };
+  }));
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture: requestCase.fixture,
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    bodyCap: {
+      callerBodyControlsProbe: false,
+      caseCount: 6,
+      cases,
+      componentExecuted: true,
+      hardMaximumBytes: 1024 * 1024,
+      profileCount: 3,
+      serverOwnedBodies: true,
+    },
+  };
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
   if (
     requestCase.expectedType === 'health'
@@ -1110,6 +1220,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedResearchContractPayload(requestCase);
     case 'backstage-storyline-contract':
       return expectedBackstageStorylineContractPayload(requestCase);
+    case 'mcp-body-cap-contract':
+      return expectedMcpBodyCapContractPayload(requestCase);
     default:
       fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
   }

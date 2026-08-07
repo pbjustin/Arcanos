@@ -27,6 +27,12 @@ export interface NativePrPreviewE2eContract {
       payloadOver: 'payload-over';
     }>;
   }>;
+  readonly mcpBodyCap: Readonly<{
+    path: '/mcp/body-cap-contract';
+    fixtures: Readonly<{
+      effectiveLimits: 'effective-limits';
+    }>;
+  }>;
   readonly fixtures: Readonly<{
     completed: '11111111-1111-4111-8111-111111111111';
     failed: '22222222-2222-4222-8222-222222222222';

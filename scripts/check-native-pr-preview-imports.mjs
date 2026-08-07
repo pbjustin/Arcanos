@@ -35,6 +35,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'scripts/start-railway-service.mjs',
   'src/core/db/repositories/backstageStorylineRepository.ts',
   'src/lib/errors/responses.ts',
+  'src/mcp/httpBodyParserCore.ts',
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
   'src/routes/_core/researchAbortDrain.ts',
@@ -108,7 +109,7 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ],
   [
     'src/nativePrPreviewApplication.ts',
-    new Set(['node:timers/promises']),
+    new Set(['node:stream', 'node:timers/promises']),
   ],
   [
     'scripts/start-railway-service.mjs',
@@ -160,6 +161,12 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     ]),
   ],
   [
+    'src/mcp/httpBodyParserCore.ts',
+    new Map([
+      ['express', new Set(['default:express'])],
+    ]),
+  ],
+  [
     'src/nativePrPreviewApplication.ts',
     new Map([
       [
@@ -169,6 +176,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
         ]),
       ],
       ['express', new Set(['default:express'])],
+      ['node:stream', new Set(['Readable:Readable'])],
       ['node:timers/promises', new Set(['setTimeout:delay'])],
     ]),
   ],
@@ -518,6 +526,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/researchRequest.ts',
     '3fc92f358952e766e3bfd3b69018906759b01ad88c642d9ca6aa730926367761',
+  ],
+  [
+    'src/mcp/httpBodyParserCore.ts',
+    '31a5ac406ecd6517f3d8163663fb30d9b65f285d7c09f93e2f824742e13fed20',
   ],
   [
     'src/routes/_core/researchAbortDrain.ts',

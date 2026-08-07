@@ -27,6 +27,12 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       payloadOver: 'payload-over',
     }),
   }),
+  mcpBodyCap: Object.freeze({
+    path: '/mcp/body-cap-contract',
+    fixtures: Object.freeze({
+      effectiveLimits: 'effective-limits',
+    }),
+  }),
   fixtures: Object.freeze({
     completed: '11111111-1111-4111-8111-111111111111',
     failed: '22222222-2222-4222-8222-222222222222',

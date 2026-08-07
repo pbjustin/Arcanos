@@ -42,6 +42,10 @@ const STORYLINE_SHARED_URL = new URL(
   '../src/shared/backstage/backstageStoryline.ts',
   import.meta.url
 );
+const MCP_HTTP_BODY_PARSER_CORE_URL = new URL(
+  '../src/mcp/httpBodyParserCore.ts',
+  import.meta.url
+);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -75,6 +79,11 @@ async function readStorylineRepositorySource() {
 
 async function readStorylineSharedSource() {
   return (await readFile(STORYLINE_SHARED_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readMcpHttpBodyParserCoreSource() {
+  return (await readFile(MCP_HTTP_BODY_PARSER_CORE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -219,6 +228,44 @@ describe('native PR preview import boundary', () => {
     )).toEqual(expect.arrayContaining([
       expect.stringContaining('critical entry file semantic digest'),
     ]));
+  });
+
+  it('pins only the config-free production MCP pre-parser core', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(['src/mcp/httpBodyParserCore.ts'])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/mcp/httpBodyParser.ts',
+        'src/routes/mcp.ts',
+        'src/platform/runtime/config.ts',
+      ])
+    );
+
+    const sourceText = await readMcpHttpBodyParserCoreSource();
+    expect(findUnsafeRuntimeSyntax(
+      'src/mcp/httpBodyParserCore.ts',
+      sourceText
+    )).toEqual([]);
+
+    const widenedHardLimit = replaceRequired(
+      sourceText,
+      'export const MCP_HTTP_BODY_LIMIT_BYTES = 1024 * 1024;',
+      'export const MCP_HTTP_BODY_LIMIT_BYTES = 2 * 1024 * 1024;'
+    );
+    const relaxedJsonParser = replaceRequired(
+      sourceText,
+      '    strict: true,',
+      '    strict: false,'
+    );
+    for (const driftedSource of [widenedHardLimit, relaxedJsonParser]) {
+      expect(findUnsafeRuntimeSyntax(
+        'src/mcp/httpBodyParserCore.ts',
+        driftedSource
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
+    }
   });
 
   it('pins the Research drain wrapper and its narrow request-abort runtime', async () => {

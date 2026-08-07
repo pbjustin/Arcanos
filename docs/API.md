@@ -830,7 +830,7 @@ reroute middleware; their own authentication, authorization, and confirmation
 checks remain authoritative.
 
 ### Daemon, debug, and registry paths
-- `POST /mcp` (MCP Streamable HTTP, bearer token required, origin-restricted when configured)
+- `POST /mcp` (MCP Streamable HTTP, bearer token required, origin-restricted when configured; decoded `application/json` is capped before the broad parser at the strictest of `JSON_LIMIT`, `MCP_HTTP_BODY_LIMIT`, and the non-widenable 1 MiB maximum, with oversized bodies returning fixed HTTP `413` `MCP_REQUEST_TOO_LARGE` JSON)
 - `GET /mcp` (always `405 Method Not Allowed`)
 - `POST /api/daemon/heartbeat` (daemon auth required)
 - `GET /api/daemon/commands` (daemon auth required)

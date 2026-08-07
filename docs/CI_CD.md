@@ -153,8 +153,8 @@ secrets in each workflow file before enabling auto-deploy.
 Railway-native PR deployments use the tracked
 `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
 credential-empty, deny-by-default synthetic generic-jobs application plus
-sealed Research and Backstage storyline contract fixture surfaces; the worker
-role stays passive and denies both contract paths. The
+sealed Research, Backstage storyline, and MCP body-cap contract fixture
+surfaces; the worker role stays passive and denies all three contract paths. The
 Research surface imports the central `src/shared/researchRequest.ts`
 validator and storage-component helper plus the real Research abort-drain
 wrapper and its narrow request-abort runtime. It does not import the normal Research
@@ -192,6 +192,19 @@ The PostgreSQL 18 CI suite remains authoritative for those properties. The
 storyline fixtures carry no credentials, contact no provider, and do not reach
 memory, confirmation, persistence effects, or any other protected effect.
 
+The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
+`effective-limits` selector. It imports the config-free core used by the
+production MCP pre-parser and feeds it six deterministic, chunked,
+no-`Content-Length` JSON streams: exact and one byte over the hard 1 MiB
+maximum, a downward 512 KiB MCP setting, and a stricter 256 KiB global JSON
+setting. Each exact body reaches the synthetic downstream sentinel once; each
+over-limit body returns the fixed 413 `MCP_REQUEST_TOO_LARGE` response with
+`no-store`/`no-cache` headers and never reaches that sentinel. The caller sends
+only the small sealed selector. This is contained component evidence, not a
+literal oversized public upload, the normal `/mcp` route composition,
+authentication, compression, or slow-upload proof; focused assembled-app tests
+remain authoritative for those behaviors.
+
 `npm run check:native-pr-preview-imports` is part of both
 type-check and build, and `npm run test:native-pr-preview-e2e` validates the
 credential-free runner without network access. The import gate fails closed on
@@ -222,8 +235,9 @@ contract in the same PR. The complete launcher and contained-child entry files
 are also pinned by comment/format-normalized semantic digests: every semantic
 edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
-format-only edits do not. The central Research helper is likewise
-semantic-digest pinned, with only its exact `createHash` import and pure
+format-only edits do not. The central Research helper and config-free
+production MCP pre-parser core are likewise semantic-digest pinned. The
+Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
 Research abort-drain wrapper and exact request-abort runtime source are also
 semantic-digest pinned; only the reviewed timeout and AsyncLocalStorage
@@ -237,10 +251,10 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 66-request plan is the
-original 50 checks, eleven Research web fixtures, three storyline web requests (two
-`lifecycle-exact` requests plus `payload-over`), and
-one worker-role denial for each contract path.
+evidence, not Railway control-plane provenance. The fixed 68-request plan is the
+original 50 checks, eleven Research web fixtures, three storyline web requests
+(two `lifecycle-exact` requests plus `payload-over`), one MCP body-cap web
+fixture, and one worker-role denial for each of the three contract paths.
 
 This repository containment is for trusted same-repository PRs and accidental
 effects only. A PR controls its own launcher code, so untrusted or forked code

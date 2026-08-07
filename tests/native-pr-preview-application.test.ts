@@ -8,6 +8,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
 } from '../src/nativePrPreviewContract.js';
@@ -272,6 +273,76 @@ function expectedStorylinePayloadOver(fixture: string) {
     transactionComponentExecuted: false,
     validationCompleted: true,
     validationCode: 'BACKSTAGE_STORYLINE_INVALID',
+  };
+}
+
+function expectedMcpBodyCap(fixture: string) {
+  const profiles = [
+    {
+      configuredMcpLimit: '8mb',
+      effectiveLimitBytes: 1024 * 1024,
+      globalJsonLimit: '10mb',
+      name: 'hard-maximum',
+    },
+    {
+      configuredMcpLimit: '512kb',
+      effectiveLimitBytes: 512 * 1024,
+      globalJsonLimit: '10mb',
+      name: 'mcp-configured',
+    },
+    {
+      configuredMcpLimit: '1mb',
+      effectiveLimitBytes: 256 * 1024,
+      globalJsonLimit: '256kb',
+      name: 'global-json',
+    },
+  ];
+  const cases = profiles.flatMap(profile => [0, 1].map(delta => {
+    const accepted = delta === 0;
+    const bodyBytes = profile.effectiveLimitBytes + delta;
+    return {
+      accepted,
+      bodyBytes,
+      cacheControl: 'no-store',
+      configuredMcpLimit: profile.configuredMcpLimit,
+      effectiveLimitBytes: profile.effectiveLimitBytes,
+      globalJsonLimit: profile.globalJsonLimit,
+      name: `${profile.name}-${accepted ? 'exact' : 'over'}`,
+      nextCalls: accepted ? 1 : 0,
+      parsedPaddingLength: accepted ? bodyBytes - 14 : null,
+      pragma: 'no-cache',
+      rejection: accepted
+        ? null
+        : {
+            error: 'MCP_REQUEST_TOO_LARGE',
+            message: 'MCP request body is too large.',
+          },
+      statusCode: accepted ? 200 : 413,
+      streamedWithoutContentLength: true,
+    };
+  }));
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: false,
+    fixture,
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    bodyCap: {
+      callerBodyControlsProbe: false,
+      caseCount: 6,
+      cases,
+      componentExecuted: true,
+      hardMaximumBytes: 1024 * 1024,
+      profileCount: 3,
+      serverOwnedBodies: true,
+    },
   };
 }
 
@@ -756,6 +827,76 @@ describe('native PR contained application', () => {
         .send({ sequence: 1 }),
     ]);
 
+    for (const response of deniedResponses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('executes the production MCP pre-parser core against sealed streamed body boundaries', async () => {
+    const { app } = buildApplication();
+    const fixture =
+      NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures.effectiveLimits;
+    const response = await request(app)
+      .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+      .send({ fixture });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expectedMcpBodyCap(fixture));
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expectNoStore(response);
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('keeps the MCP body-cap fixture sealed behind the preview transport boundary', async () => {
+    const { app } = buildApplication();
+    const fixture =
+      NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures.effectiveLimits;
+    const invalidResponses = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+        .send({ fixture: 'unlisted' }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+        .send({ fixture, extra: true }),
+    ]);
+    for (const response of invalidResponses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_MCP_BODY_CAP_FIXTURE_INVALID',
+      });
+      expectNoStore(response);
+    }
+
+    const deniedResponses = await Promise.all([
+      request(app)
+        .post(`${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}?fixture=${fixture}`)
+        .send({ fixture }),
+      request(app)
+        .post('/mcp%2fbody-cap-contract')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture }),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path)
+        .send({ fixture: 'x'.repeat(4_097) }),
+      request(app)
+        .post('/mcp')
+        .send({ fixture }),
+    ]);
     for (const response of deniedResponses) {
       expect(response.status).toBe(404);
       expect(response.text).toBe('not found');

@@ -1,5 +1,6 @@
 import express from 'express';
 import { getRequestAbortContext } from '@arcanos/runtime/requestAbort';
+import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
@@ -13,11 +14,17 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
 } from './nativePrPreviewContract.js';
+import {
+  createMcpHttpBodyParser,
+  MCP_HTTP_BODY_LIMIT_BYTES,
+  resolveConfiguredMcpHttpBodyLimitBytes,
+} from './mcp/httpBodyParserCore.js';
 import {
   buildResearchStorageTopicComponent,
   isResearchRequestValidationError,
@@ -47,6 +54,7 @@ import {
 const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
+const MAX_MCP_BODY_CAP_RESPONSE_BYTES = 8 * 1024;
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9]\d*)$/u;
 const FIXTURE_ACTOR_KEY = 'operator:native-pr-preview-fixture';
 const FIXTURE_TIMESTAMP = new Date('2026-07-30T00:00:00.000Z');
@@ -69,6 +77,9 @@ const RESEARCH_FIXTURE_NAMES = new Set<string>(
 );
 const STORYLINE_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures)
+);
+const MCP_BODY_CAP_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures)
 );
 const SNAPSHOT_FIRST_URL = 'https://example.invalid/first-snapshot';
 const SNAPSHOT_SECOND_URL = 'https://example.invalid/second-snapshot';
@@ -141,6 +152,21 @@ interface SyntheticStorylineResult {
   statusCode: number;
 }
 
+interface SyntheticMcpBodyCapProfile {
+  configuredMcpLimit: string;
+  expectedEffectiveLimitBytes: number;
+  globalJsonLimit: string;
+  name: string;
+}
+
+interface SyntheticMcpParserOutcome {
+  accepted: boolean;
+  nextCalls: number;
+  parsedPaddingLength: number | null;
+  rejection: unknown;
+  statusCode: number;
+}
+
 interface StorylineFixtureRow {
   id: string;
   serializedData: string;
@@ -159,6 +185,27 @@ const STORYLINE_TRANSACTION_PHASES = Object.freeze([
   'insert',
   'fresh-read',
 ]);
+const MCP_BODY_CAP_PROFILES: readonly SyntheticMcpBodyCapProfile[] =
+  Object.freeze([
+    Object.freeze({
+      configuredMcpLimit: '8mb',
+      expectedEffectiveLimitBytes: MCP_HTTP_BODY_LIMIT_BYTES,
+      globalJsonLimit: '10mb',
+      name: 'hard-maximum',
+    }),
+    Object.freeze({
+      configuredMcpLimit: '512kb',
+      expectedEffectiveLimitBytes: 512 * 1024,
+      globalJsonLimit: '10mb',
+      name: 'mcp-configured',
+    }),
+    Object.freeze({
+      configuredMcpLimit: '1mb',
+      expectedEffectiveLimitBytes: 256 * 1024,
+      globalJsonLimit: '256kb',
+      name: 'global-json',
+    }),
+  ]);
 
 function buildSyntheticResearchFixture(
   fixture: string
@@ -631,6 +678,206 @@ async function runSyntheticResearchFixture(
   }
 
   return { payload, statusCode: 200 };
+}
+
+function requireMcpBodyCapFixtureInvariant(
+  condition: boolean,
+  code: string
+): asserts condition {
+  if (!condition) {
+    throw new Error(code);
+  }
+}
+
+function buildMcpBodyAtByteLength(targetBytes: number): Buffer {
+  const emptyBody = JSON.stringify({ padding: '' });
+  const paddingLength = targetBytes - Buffer.byteLength(emptyBody, 'utf8');
+  requireMcpBodyCapFixtureInvariant(
+    paddingLength >= 0,
+    'PREVIEW_MCP_BODY_CAP_TARGET_INVALID'
+  );
+  const body = Buffer.from(JSON.stringify({
+    padding: 'x'.repeat(paddingLength),
+  }), 'utf8');
+  requireMcpBodyCapFixtureInvariant(
+    body.length === targetBytes,
+    'PREVIEW_MCP_BODY_CAP_BODY_LENGTH_INVALID'
+  );
+  return body;
+}
+
+async function runMcpParserAgainstServerOwnedBody(
+  limitBytes: number,
+  bodyBytes: number
+): Promise<{
+  outcome: SyntheticMcpParserOutcome;
+  responseHeaders: Record<string, string>;
+}> {
+  const body = buildMcpBodyAtByteLength(bodyBytes);
+  const firstBoundary = Math.floor(body.length / 3);
+  const secondBoundary = Math.floor((body.length * 2) / 3);
+  const request = Readable.from([
+    body.subarray(0, firstBoundary),
+    body.subarray(firstBoundary, secondBoundary),
+    body.subarray(secondBoundary),
+  ]) as unknown as express.Request;
+  request.headers = {
+    'content-type': 'application/json',
+    'transfer-encoding': 'chunked',
+  };
+  request.method = 'POST';
+  request.url = '/mcp';
+
+  const responseHeaders: Record<string, string> = {};
+  const parser = createMcpHttpBodyParser(limitBytes);
+  const outcome = await new Promise<SyntheticMcpParserOutcome>((
+    resolve,
+    reject
+  ) => {
+    let nextCalls = 0;
+    let settled = false;
+    let statusCode = 200;
+    const finish = (result: SyntheticMcpParserOutcome): void => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
+    const response = {
+      setHeader(name: string, value: unknown) {
+        responseHeaders[name.toLowerCase()] = String(value);
+        return this;
+      },
+      status(value: number) {
+        statusCode = value;
+        return this;
+      },
+      json(value: unknown) {
+        finish({
+          accepted: false,
+          nextCalls,
+          parsedPaddingLength: null,
+          rejection: value,
+          statusCode,
+        });
+        return this;
+      },
+    } as unknown as express.Response;
+
+    parser(request, response, (error?: unknown) => {
+      if (error !== undefined) {
+        settled = true;
+        reject(error);
+        return;
+      }
+      nextCalls += 1;
+      const parsedBody = request.body as { padding?: unknown } | undefined;
+      finish({
+        accepted: true,
+        nextCalls,
+        parsedPaddingLength: typeof parsedBody?.padding === 'string'
+          ? parsedBody.padding.length
+          : null,
+        rejection: null,
+        statusCode,
+      });
+    });
+  });
+
+  return { outcome, responseHeaders };
+}
+
+async function runMcpBodyCapFixture(
+  fixture: string
+): Promise<SyntheticResearchResult> {
+  requireMcpBodyCapFixtureInvariant(
+    fixture
+      === NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures.effectiveLimits,
+    'PREVIEW_MCP_BODY_CAP_FIXTURE_INVALID'
+  );
+  const cases: Record<string, unknown>[] = [];
+  for (const profile of MCP_BODY_CAP_PROFILES) {
+    const effectiveLimitBytes = resolveConfiguredMcpHttpBodyLimitBytes(
+      profile.configuredMcpLimit,
+      profile.globalJsonLimit
+    );
+    requireMcpBodyCapFixtureInvariant(
+      effectiveLimitBytes === profile.expectedEffectiveLimitBytes,
+      'PREVIEW_MCP_BODY_CAP_EFFECTIVE_LIMIT_INVALID'
+    );
+
+    for (const delta of [0, 1] as const) {
+      const accepted = delta === 0;
+      const bodyBytes = effectiveLimitBytes + delta;
+      const { outcome, responseHeaders } =
+        await runMcpParserAgainstServerOwnedBody(
+          effectiveLimitBytes,
+          bodyBytes
+        );
+      const rejection = outcome.rejection as {
+        error?: unknown;
+        message?: unknown;
+      } | null;
+      requireMcpBodyCapFixtureInvariant(
+        outcome.accepted === accepted
+          && outcome.statusCode === (accepted ? 200 : 413)
+          && outcome.nextCalls === (accepted ? 1 : 0)
+          && outcome.parsedPaddingLength
+            === (accepted ? bodyBytes - 14 : null)
+          && responseHeaders['cache-control'] === 'no-store'
+          && responseHeaders.pragma === 'no-cache'
+          && (
+            accepted
+              ? rejection === null
+              : rejection?.error === 'MCP_REQUEST_TOO_LARGE'
+                && rejection.message === 'MCP request body is too large.'
+          ),
+        'PREVIEW_MCP_BODY_CAP_PARSER_OUTCOME_INVALID'
+      );
+      cases.push({
+        accepted,
+        bodyBytes,
+        cacheControl: responseHeaders['cache-control'],
+        configuredMcpLimit: profile.configuredMcpLimit,
+        effectiveLimitBytes,
+        globalJsonLimit: profile.globalJsonLimit,
+        name: `${profile.name}-${accepted ? 'exact' : 'over'}`,
+        nextCalls: outcome.nextCalls,
+        parsedPaddingLength: outcome.parsedPaddingLength,
+        pragma: responseHeaders.pragma,
+        rejection,
+        statusCode: outcome.statusCode,
+        streamedWithoutContentLength: true,
+      });
+    }
+  }
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: false,
+      fixture,
+      memoryBoundaryReached: false,
+      networkBoundaryReached: false,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      bodyCap: {
+        callerBodyControlsProbe: false,
+        caseCount: cases.length,
+        cases,
+        componentExecuted: true,
+        hardMaximumBytes: MCP_HTTP_BODY_LIMIT_BYTES,
+        profileCount: MCP_BODY_CAP_PROFILES.length,
+        serverOwnedBodies: true,
+      },
+    },
+  };
 }
 
 function requireStorylineFixtureInvariant(
@@ -1196,6 +1443,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'GET /readyz',
     'HEAD /readyz',
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     'GET /jobs/not-a-uuid',
     'GET /jobs/not-a-uuid/result',
@@ -1407,6 +1655,50 @@ export function createNativePrPreviewApplication(
           {
             logEvent: 'native_pr_preview.backstage_storyline_fixture',
             maxBytes: MAX_STORYLINE_RESPONSE_BYTES,
+            statusCode: result.statusCode,
+          }
+        ))
+        .catch(next);
+      return undefined;
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path,
+    (request, response, next) => {
+      const body = request.body as unknown;
+      const bodyKeys =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body)
+          : [];
+      const fixture =
+        bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+          ? (body as { fixture?: unknown }).fixture
+          : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !MCP_BODY_CAP_FIXTURE_NAMES.has(fixture)
+      ) {
+        return sendBoundedJsonResponse(
+          request,
+          response,
+          { error: 'PREVIEW_MCP_BODY_CAP_FIXTURE_INVALID' },
+          {
+            logEvent: 'native_pr_preview.mcp_body_cap_fixture_invalid',
+            maxBytes: MAX_MCP_BODY_CAP_RESPONSE_BYTES,
+            statusCode: 400,
+          }
+        );
+      }
+
+      void runMcpBodyCapFixture(fixture)
+        .then(result => sendBoundedJsonResponse(
+          request,
+          response,
+          result.payload,
+          {
+            logEvent: 'native_pr_preview.mcp_body_cap_fixture',
+            maxBytes: MAX_MCP_BODY_CAP_RESPONSE_BYTES,
             statusCode: result.statusCode,
           }
         ))
