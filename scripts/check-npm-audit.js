@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Temporary exceptions for advisories published on 2026-08-03 whose patched
-// releases are not yet available from npm. Review no later than 2026-08-10 and
-// remove each exception as soon as its patched release is published.
+// Temporary exceptions for advisories published on 2026-08-03 whose accepted
+// repository remediation remains temporary. Review no later than 2026-08-10
+// and remove each exception as soon as a stable patched path is available.
 const temporaryDirectExceptions = {
   'brace-expansion': {
     severity: 'high',
@@ -45,27 +45,6 @@ const temporaryDirectExceptions = {
       isSemVerMajor: true,
     },
   },
-  hono: {
-    severity: 'moderate',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-8j4g-w8fx-2239',
-        severity: 'moderate',
-      },
-    ],
-    identity: {
-      node: 'node_modules/hono',
-      version: '4.12.32',
-      resolved: 'https://registry.npmjs.org/hono/-/hono-4.12.32.tgz',
-      integrity:
-        'sha512-XcuyW9qE2kJn07PkecMOBd5Vq/hMy7mmGw+idz1yblbg9N17ijJODrvPkn7/dwL3Kulj8LcRJ69DLOWf91dRUg==',
-    },
-    fixAvailable: {
-      name: '@modelcontextprotocol/sdk',
-      version: '1.25.3',
-      isSemVerMajor: true,
-    },
-  },
   'ip-address': {
     severity: 'high',
     advisories: [
@@ -90,7 +69,11 @@ const temporaryDirectExceptions = {
       integrity:
         'sha512-1FMu8/N15Ck1BL551Jf42NYIoin2unWjLQ2Fze/DXryJRl5twqtwNHlO39qERGbIOcKYWHdgRryhOC+NG4eaLw==',
     },
-    fixAvailable: true,
+    fixAvailable: {
+      name: '@modelcontextprotocol/sdk',
+      version: '1.20.2',
+      isSemVerMajor: true,
+    },
   },
   undici: {
     severity: 'high',
@@ -132,26 +115,9 @@ const temporaryDirectExceptions = {
 };
 
 const temporaryPropagatedExceptions = {
-  '@hono/node-server': {
-    severity: 'moderate',
-    via: ['hono'],
-    identity: {
-      node: 'node_modules/@hono/node-server',
-      version: '2.0.12',
-      resolved:
-        'https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.12.tgz',
-      integrity:
-        'sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==',
-    },
-    fixAvailable: {
-      name: '@modelcontextprotocol/sdk',
-      version: '1.25.3',
-      isSemVerMajor: true,
-    },
-  },
   '@modelcontextprotocol/sdk': {
     severity: 'high',
-    via: ['@hono/node-server', 'ajv', 'express-rate-limit', 'hono'],
+    via: ['ajv', 'express-rate-limit'],
     identity: {
       node: 'node_modules/@modelcontextprotocol/sdk',
       version: '1.30.0',
@@ -162,7 +128,7 @@ const temporaryPropagatedExceptions = {
     },
     fixAvailable: {
       name: '@modelcontextprotocol/sdk',
-      version: '1.25.3',
+      version: '1.20.2',
       isSemVerMajor: true,
     },
   },
@@ -210,7 +176,11 @@ const temporaryPropagatedExceptions = {
       integrity:
         'sha512-qWCW0wv8JTa9dqgeZCYUbnGbF8W/DXcKXhLuyl+NkxEjxfMWuGJVejPZiXg68o+pUOjixaCAuhJ9FqHSkbBYxg==',
     },
-    fixAvailable: true,
+    fixAvailable: {
+      name: '@modelcontextprotocol/sdk',
+      version: '1.20.2',
+      isSemVerMajor: true,
+    },
   },
 };
 
@@ -225,7 +195,7 @@ const temporaryExceptionIdentities = [
   ...Object.values(temporaryDirectExceptions),
   ...Object.values(temporaryPropagatedExceptions),
 ].map(exception => exception.identity);
-// npm 10.8.2 on the Linux CI runner emits a coherent eight-record graph with
+// npm 10.8.2 on the Linux CI runner emits a coherent six-record graph with
 // different remediation metadata and SDK propagation than npm 10 on Windows.
 // npm 11 on Windows additionally reports the vendored brace-expansion node.
 // Select one whole profile so field-level variants cannot be mixed and matched.
@@ -239,14 +209,12 @@ const requiredTemporaryExceptionNames = new Set([
 ].filter(name => !platformOptionalTemporaryExceptionNames.has(name)));
 const linuxNpm10DirectExpectations = {
   'fast-uri': { fixAvailable: true },
-  hono: { fixAvailable: true },
   'ip-address': { fixAvailable: true },
   undici: { fixAvailable: true },
 };
 const linuxNpm10PropagatedExpectations = {
-  '@hono/node-server': { via: ['hono'], fixAvailable: true },
   '@modelcontextprotocol/sdk': {
-    via: ['express-rate-limit', 'hono'],
+    via: ['express-rate-limit'],
     fixAvailable: true,
   },
   ajv: { via: ['fast-uri'], fixAvailable: true },
