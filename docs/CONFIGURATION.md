@@ -227,7 +227,7 @@ and never calls `FLUSHDB`. That job must pass before activation.
 | `LOG_LEVEL` | `info` | Logging verbosity for the structured logger. |
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Directory for logs and audit output. |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
-| `JSON_LIMIT` | `10mb` | JSON payload size limit. |
+| `JSON_LIMIT` | `10mb` | Broad JSON payload size limit. Route-specific parsers may impose a stricter bound; exact `POST /mcp` never exceeds this value. |
 | `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_MAX` | `100` | Deployment-wide HTTP admissions allowed across all public provider-capable routes during the shared window. Valid range: `1` through `1000000`. Invalid or out-of-range values fall back to `100`; there is no disable value. The legacy hard ceiling of `1` remains valid. |
 | `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX` | `20` | Maximum admissions for one established actor or network cohort in the shared window. It must be at least `1` and is strictly below the global maximum when the global maximum exceeds `1`; both limits are `1` for the compatibility ceiling of `1`. Invalid values fall back to the smaller of `20` and `max(1, global maximum - 1)`. |
@@ -776,7 +776,7 @@ Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --out
 | `MCP_BEARER_TOKEN` | none | Required bearer token for `POST /mcp`. |
 | `ACTION_PLAN_MCP_REQUEST_PRINCIPAL_ID` | none | Required, alongside a valid `MCP_BEARER_TOKEN` and valid ActionPlan auth configuration, to expose requester-owned ActionPlan tools on HTTP MCP. Binds the authenticated MCP credential to one fixed requester principal; invalid, conflicting, or already-configured principal IDs leave those tools unexposed. |
 | `MCP_ALLOWED_ORIGINS` | empty | Comma-separated browser origin allowlist for MCP HTTP requests. |
-| `MCP_HTTP_BODY_LIMIT` | `1mb` | JSON body size limit for MCP transport route. |
+| `MCP_HTTP_BODY_LIMIT` | `1mb` | Downward-only decoded JSON body limit for exact `POST /mcp`, applied before the broad application parser. The effective limit is the strictest of `JSON_LIMIT`, this value, and the hard 1 MiB (1,048,576-byte) maximum. Larger valid MCP values clamp to that maximum, `0` rejects every non-empty JSON entity, and invalid non-empty values fail startup. Supported MCP suffixes are `b`, `kb`/`kib`, `mb`/`mib`, `gb`/`gib`, and `tb`/`tib`; no suffix means bytes. |
 | `MCP_REQUIRE_CONFIRMATION` | `true` | Require nonce confirmation for gated MCP tools. |
 | `MCP_CONFIRM_TTL_MS` | `60000` | Nonce expiration window for MCP confirmation flow. |
 | `MCP_EXPOSE_DESTRUCTIVE` | `false` | Expose destructive MCP tools when set to true. |

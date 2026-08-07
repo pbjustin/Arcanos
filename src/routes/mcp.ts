@@ -13,6 +13,7 @@ import {
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
+import { mcpHttpBodyParser } from '../mcp/httpBodyParser.js';
 
 const router = express.Router();
 const mcpHttpClientRateLimit = createRateLimitMiddleware({
@@ -57,8 +58,8 @@ function logMcpTransportFailure(req: Request, error: unknown): void {
   }
 }
 
-// The MCP transport handler needs raw JSON body.
-router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
+// Keep the standalone router safe when it is composed outside createApp().
+router.post('/mcp', mcpHttpBodyParser);
 
 /**
  * Build an isolated MCP server/transport pair for a single HTTP request.

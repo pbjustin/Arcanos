@@ -20,14 +20,27 @@ Routing boundary:
 
 For `POST /mcp`:
 
-1. Per-client and per-credential rate limits allow 300 requests per 15 minutes.
-2. `mcpAuthMiddleware` verifies the bearer token and optional origin allowlist.
-3. `buildMcpRequestContext(req)` creates request-local context, including request/trace identifiers, runtime budget, optional session ID, and an optional fixed ActionPlan requester principal.
-4. A fresh MCP server and streamable HTTP transport are built for the request.
-5. `runWithMcpRequestContext(...)` binds the context with `AsyncLocalStorage`.
-6. The MCP SDK handles the JSON-RPC payload.
+1. The exact HTTP transport pre-parses `application/json` before the broad
+   application JSON parser, using the strictest of `JSON_LIMIT`,
+   `MCP_HTTP_BODY_LIMIT`, and the hard 1 MiB decoded-body ceiling.
+2. Per-client and per-credential rate limits allow 300 requests per 15 minutes.
+3. `mcpAuthMiddleware` verifies the bearer token and optional origin allowlist.
+4. `buildMcpRequestContext(req)` creates request-local context, including request/trace identifiers, runtime budget, optional session ID, and an optional fixed ActionPlan requester principal.
+5. A fresh MCP server and streamable HTTP transport are built for the request.
+6. `runWithMcpRequestContext(...)` binds the context with `AsyncLocalStorage`.
+7. The MCP SDK handles the JSON-RPC payload.
 
-The route uses `MCP_HTTP_BODY_LIMIT` (default `1mb`), disables response caching, and rejects `GET /mcp` with `405` and `Allow: POST`.
+`MCP_HTTP_BODY_LIMIT` may lower but cannot raise either `JSON_LIMIT` or the
+1 MiB maximum. The limit counts the decoded entity, so compressed JSON that
+inflates beyond the effective bound is rejected. An oversized body returns HTTP `413` with fixed
+`MCP_REQUEST_TOO_LARGE` JSON before safety, authentication, context, server, or
+transport work. Malformed and non-JSON media behavior remains unchanged. The
+route disables response caching and rejects `GET /mcp` with `405` and
+`Allow: POST`.
+
+This cap bounds per-request JSON allocation, including chunked requests without
+`Content-Length`. It does not move authentication ahead of parsing or provide a
+slow-upload timeout; those are separate admission concerns.
 
 ## Stdio flow
 
@@ -221,7 +234,7 @@ exposure is disabled. The category is not a top-level MCP error code.
 | --- | --- | --- |
 | `MCP_BEARER_TOKEN` | none | Required for HTTP MCP authentication. Use a strong token; ActionPlan principal binding also requires it. |
 | `MCP_ALLOWED_ORIGINS` | empty | Comma-separated browser origin allowlist. |
-| `MCP_HTTP_BODY_LIMIT` | `1mb` | JSON body limit for `/mcp`. |
+| `MCP_HTTP_BODY_LIMIT` | `1mb` | Downward-only decoded JSON limit for exact `POST /mcp`. The effective limit is the strictest of `JSON_LIMIT`, this value, and the hard 1 MiB maximum; larger MCP values clamp, `0` rejects non-empty JSON, and invalid non-empty values fail startup. |
 | `MCP_REQUIRE_CONFIRMATION` | `true` | Enables nonce confirmation for the gated tools listed above. |
 | `MCP_CONFIRM_TTL_MS` | `60000` | Nonce expiration in milliseconds. |
 | `MCP_EXPOSE_DESTRUCTIVE` | `false` | Enables registered destructive/approval-requiring operations that consult this flag. |
