@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 66-request plan without network access.
+untracked worktree, limits, and the fixed 68-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -47,10 +47,11 @@ cookie, or session credential. Its attestation scope is the identity served by
 the two pre-confirmed public hosts. It does not independently prove Railway
 project/service/deployment ownership.
 
-The 66 checks retain the original 50 health/readiness and synthetic generic-job
+The 68 checks retain the original 50 health/readiness and synthetic generic-job
 cases, add eleven server-owned Research web contract fixtures and three Backstage
-storyline web requests (two `lifecycle-exact` requests plus `payload-over`), and
-prove the worker role denies both contract paths. Each fixture request body
+storyline web requests (two `lifecycle-exact` requests plus `payload-over`), add
+one sealed MCP body-cap web fixture, and prove the worker role denies all three
+contract paths. Each fixture request body
 contains only
 `{ "fixture": "<sealed-name>" }`; no raw URL or credential is
 sent. For the Research fixtures, the contained application imports only the
@@ -89,6 +90,18 @@ E2E only: it does not reach PostgreSQL or prove SQL-engine locking or atomicity;
 the PostgreSQL 18 CI suite remains authoritative. The fixtures use no
 credentials, provider, memory, confirmation, persistence effect, or protected
 effect.
+
+The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
+executes the config-free core used by the production MCP pre-parser against six
+server-owned chunked JSON streams without `Content-Length`: exact and one byte
+over the hard 1 MiB maximum, a downward 512 KiB MCP setting, and a stricter
+256 KiB global JSON setting. Exact bodies reach the synthetic downstream
+sentinel once; over-limit bodies return the fixed 413
+`MCP_REQUEST_TOO_LARGE` response with `no-store`/`no-cache` headers and never
+reach that sentinel. This is contained component evidence. The caller sends no
+large body, and the fixture does not expose or prove the normal `/mcp` route,
+authentication, compression, or slow-upload behavior; focused assembled-app
+tests remain authoritative for those properties.
 
 Native contained application previews protect trusted PRs against accidental
 effects. They do not protect inherited secrets from malicious PR code; untrusted

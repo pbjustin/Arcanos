@@ -68,6 +68,8 @@ const {
   mcpHttpBodyParser,
   resolveMcpHttpBodyLimitBytes,
 } = await import('../src/mcp/httpBodyParser.js');
+const { createMcpHttpBodyParser } =
+  await import('../src/mcp/httpBodyParserCore.js');
 const { createApp } = await import('../src/app.js');
 
 type McpHttpBodyParserModule = typeof import('../src/mcp/httpBodyParser.js');
@@ -337,6 +339,9 @@ describe('MCP HTTP body cap in the production application composition', () => {
     expect(() => resolveMcpHttpBodyLimitBytes('1mb', 'not-a-byte-limit')).toThrow(
       'option limit "not-a-byte-limit" is invalid'
     );
+    expect(() => createMcpHttpBodyParser(
+      MCP_HTTP_BODY_LIMIT_BYTES + 1
+    )).toThrow('between zero and the 1 MiB hard maximum');
   });
 
   it('constructs the parser with a valid configured limit below 1 MiB', async () => {

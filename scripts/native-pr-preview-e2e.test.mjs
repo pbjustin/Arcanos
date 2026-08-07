@@ -266,13 +266,15 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 66);
+  assert.equal(requestPlan.length, 68);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
       && expectedType !== 'backstage-storyline-contract'
+      && expectedType !== 'mcp-body-cap-contract'
       && caseId !== 'worker-research-denied'
       && caseId !== 'worker-backstage-storyline-denied'
+      && caseId !== 'worker-mcp-body-cap-denied'
     ).length,
     50
   );
@@ -289,6 +291,12 @@ test('executes the bounded credential-free matrix and detects identity stability
     3
   );
   assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'mcp-body-cap-contract'
+    ).length,
+    1
+  );
+  assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-research-denied'
     ).length,
@@ -297,6 +305,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-backstage-storyline-denied'
+    ).length,
+    1
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-mcp-body-cap-denied'
     ).length,
     1
   );
@@ -399,6 +413,69 @@ test('executes the bounded credential-free matrix and detects identity stability
       validationCode: 'BACKSTAGE_STORYLINE_INVALID',
     }
   );
+  const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
+    caseId === 'mcp-body-cap-effective-limits'
+  );
+  assert.ok(mcpBodyCapCase);
+  const mcpBodyCapPayload = expectedNativePrPreviewResponseBody(
+    mcpBodyCapCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.equal(mcpBodyCapPayload.bodyCap.componentExecuted, true);
+  assert.equal(mcpBodyCapPayload.bodyCap.caseCount, 6);
+  assert.deepEqual(
+    mcpBodyCapPayload.bodyCap.cases.map((entry) => ({
+      accepted: entry.accepted,
+      bodyBytes: entry.bodyBytes,
+      effectiveLimitBytes: entry.effectiveLimitBytes,
+      name: entry.name,
+      statusCode: entry.statusCode,
+    })),
+    [
+      {
+        accepted: true,
+        bodyBytes: 1_048_576,
+        effectiveLimitBytes: 1_048_576,
+        name: 'hard-maximum-exact',
+        statusCode: 200,
+      },
+      {
+        accepted: false,
+        bodyBytes: 1_048_577,
+        effectiveLimitBytes: 1_048_576,
+        name: 'hard-maximum-over',
+        statusCode: 413,
+      },
+      {
+        accepted: true,
+        bodyBytes: 524_288,
+        effectiveLimitBytes: 524_288,
+        name: 'mcp-configured-exact',
+        statusCode: 200,
+      },
+      {
+        accepted: false,
+        bodyBytes: 524_289,
+        effectiveLimitBytes: 524_288,
+        name: 'mcp-configured-over',
+        statusCode: 413,
+      },
+      {
+        accepted: true,
+        bodyBytes: 262_144,
+        effectiveLimitBytes: 262_144,
+        name: 'global-json-exact',
+        statusCode: 200,
+      },
+      {
+        accepted: false,
+        bodyBytes: 262_145,
+        effectiveLimitBytes: 262_144,
+        name: 'global-json-over',
+        statusCode: 413,
+      },
+    ]
+  );
   const mock = buildMockFetch(requestPlan);
 
   const result = await runNativePrPreviewE2e({
@@ -410,9 +487,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 66);
-  assert.equal(result.checks.length, 66);
-  assert.equal(mock.requestCount, 66);
+  assert.equal(result.summary.requestsMade, 68);
+  assert.equal(result.checks.length, 68);
+  assert.equal(mock.requestCount, 68);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -450,6 +527,26 @@ test('executes the bounded credential-free matrix and detects identity stability
     1
   );
   for (const { init } of backstageStorylineCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
+    assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const mcpBodyCapCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/mcp/body-cap-contract')
+  );
+  assert.equal(mcpBodyCapCalls.length, 2);
+  assert.equal(
+    mcpBodyCapCalls.filter(({ url }) => url.startsWith(WEB_BASE_URL)).length,
+    1
+  );
+  assert.equal(
+    mcpBodyCapCalls.filter(({ url }) => url.startsWith(WORKER_BASE_URL)).length,
+    1
+  );
+  for (const { init } of mcpBodyCapCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
     assert.equal(
