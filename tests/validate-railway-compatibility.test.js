@@ -40,7 +40,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
       },
       pr: {
         deploy: {
-          startCommand: 'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1',
+          startCommand: 'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1',
           preDeployCommand: null,
           healthcheckPath: '/readyz',
           healthcheckTimeout: 300,
@@ -102,7 +102,7 @@ describe('validate-railway-compatibility', () => {
           },
           pr: {
             deploy: {
-              startCommand: 'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1',
+              startCommand: 'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1',
               preDeployCommand: null,
               healthcheckPath: '/readyz',
               healthcheckTimeout: 300,
@@ -270,6 +270,22 @@ describe('validate-railway-compatibility', () => {
     expect(missingPreviewErrors).toEqual(expect.arrayContaining([
       expect.stringContaining('environments.pr.deploy'),
     ]));
+
+    for (const startCommand of [
+      'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1',
+      'node scripts/start-railway-service-with-integrity.mjs',
+      'node scripts/start-railway-service-with-integrity.mjs --pr-preview-safe',
+      'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1 --extra',
+    ]) {
+      const config = buildMinimalRailwayConfig();
+      config.environments.pr.deploy.startCommand = startCommand;
+
+      expect(validateConfig(config)).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1',
+        ),
+      ]));
+    }
 
     const weakenedPreviewErrors = validateConfig(buildMinimalRailwayConfig({
       environments: {

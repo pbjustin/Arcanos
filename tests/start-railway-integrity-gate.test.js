@@ -22,7 +22,7 @@ describe('Railway protected-digest startup gate', () => {
       .mockImplementationOnce(() => createChild(0));
 
     await expect(runRailwayServiceWithIntegrity({
-      argv: ['--example'],
+      argv: ['--pr-preview-app-safe-v1'],
       spawnChild
     })).resolves.toBe(0);
 
@@ -32,7 +32,7 @@ describe('Railway protected-digest startup gate', () => {
     );
     expect(spawnChild).toHaveBeenNthCalledWith(2, [
       'scripts/start-railway-service.mjs',
-      '--example'
+      '--pr-preview-app-safe-v1'
     ]);
   });
 
@@ -40,7 +40,10 @@ describe('Railway protected-digest startup gate', () => {
     const spawnChild = jest.fn().mockImplementationOnce(() => createChild(1));
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(runRailwayServiceWithIntegrity({ spawnChild })).resolves.toBe(1);
+    await expect(runRailwayServiceWithIntegrity({
+      argv: ['--pr-preview-app-safe-v1'],
+      spawnChild
+    })).resolves.toBe(1);
 
     expect(spawnChild).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(
@@ -48,6 +51,39 @@ describe('Railway protected-digest startup gate', () => {
     );
     errorSpy.mockRestore();
   });
+
+  it.each(['SIGTERM', 'SIGINT'])(
+    'forwards %s to the sealed preview launcher after the gate',
+    async signal => {
+      const signalTarget = new EventEmitter();
+      const launcherChild = new EventEmitter();
+      launcherChild.exitCode = null;
+      launcherChild.signalCode = null;
+      launcherChild.kill = jest.fn(receivedSignal => {
+        queueMicrotask(() => launcherChild.emit('exit', null, receivedSignal));
+      });
+      const spawnChild = jest.fn()
+        .mockImplementationOnce(() => createChild(0))
+        .mockReturnValueOnce(launcherChild);
+
+      const result = runRailwayServiceWithIntegrity({
+        argv: ['--pr-preview-app-safe-v1'],
+        signalTarget,
+        spawnChild
+      });
+      await new Promise(resolve => setImmediate(resolve));
+      signalTarget.emit(signal);
+
+      await expect(result).resolves.toBe(1);
+      expect(spawnChild).toHaveBeenNthCalledWith(2, [
+        'scripts/start-railway-service.mjs',
+        '--pr-preview-app-safe-v1'
+      ]);
+      expect(launcherChild.kill).toHaveBeenCalledWith(signal);
+      expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
+      expect(signalTarget.listenerCount('SIGINT')).toBe(0);
+    }
+  );
 
   it.each(['SIGTERM', 'SIGINT'])(
     'does not cross the gate-to-launcher boundary after %s',

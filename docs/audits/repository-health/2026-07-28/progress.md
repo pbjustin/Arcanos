@@ -57,8 +57,9 @@ already-built runtime images use the direct compiled command.
 
 Normal tracked Railway web and worker startup now runs the digest comparison
 after mounted volumes are available and before the role launcher. The automatic
-gate skips only when none of the six runtime-owned pins is configured. The exact sealed native-PR preview
-launcher remains direct and unchanged. Automatic reports omit candidate and
+gate skips only when none of the six runtime-owned pins is configured. Native
+PR previews now run that same gate before the exact sealed-preview launcher.
+Automatic reports omit candidate and
 expected digest values, and signal handling prevents an interrupted comparison
 from racing into service startup.
 

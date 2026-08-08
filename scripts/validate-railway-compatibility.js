@@ -26,7 +26,7 @@ const RAILWAYIGNORE_PATH = path.join(PROJECT_ROOT, '.railwayignore');
 const EXPECTED_START_COMMAND =
   'node scripts/start-railway-service-with-integrity.mjs';
 const EXPECTED_PR_START_COMMAND =
-  'node scripts/start-railway-service.mjs --pr-preview-app-safe-v1';
+  'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1';
 const EXPECTED_HEALTHCHECK_PATH = '/readyz';
 const EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS = 300;
 const EXPECTED_DRAINING_SECONDS = 60;
@@ -310,7 +310,7 @@ export function validateConfig(config) {
     }
   }
 
-  //audit Assumption: Railway applies the special `environments.pr` override to every native PR service; risk: inherited production configuration starts providers, workers, bridges, schedulers, or migrations before preview isolation is reviewed; invariant: native PR deploys enter the health-only launcher with no pre-deploy command, cron, or restart loop; handling: schema-lock the exact passive override.
+  //audit Assumption: Railway applies the special `environments.pr` override to every native PR service; risk: inherited production configuration starts providers, workers, bridges, schedulers, or migrations before preview isolation is reviewed, or a direct role-launcher override bypasses protected-digest comparison; invariant: native PR deploys run the integrity wrapper before the sealed preview launcher, with no pre-deploy command, cron, or restart loop; handling: schema-lock the exact gated override.
   if (!prDeploy || typeof prDeploy !== 'object' || Array.isArray(prDeploy)) {
     errors.push('environments.pr.deploy must be an object');
   } else {

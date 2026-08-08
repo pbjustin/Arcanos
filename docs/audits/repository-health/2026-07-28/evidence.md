@@ -51,8 +51,8 @@ mounts and before the existing role launcher. The wrapper latches termination
 signals across the gate-to-launch transition. The source-workspace npm commands
 build before invoking compiled code so stale `dist` cannot yield manual green
 evidence; direct compiled commands remain available for the identified,
-already-built pruned runtime image. The exact direct native-PR preview override
-is preserved.
+already-built pruned runtime image. Native PR preview startup now runs the same
+gate before forwarding the exact sealed-preview argument to the role launcher.
 
 ### Local validation
 

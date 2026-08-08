@@ -12,10 +12,11 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   for canonical semantic generation and fail-closed comparison of every
   explicit integrity pin before cutover, including bounded schema-validated
   file candidates and the dispatch/declared-GPT routing projections. Normal
-  Railway startup now compares the six runtime-owned pins after volume mounts
-  and before the web or worker launcher; no runtime-owned pin is the only
-  automatic skip. The seventh tooling-only generic pin remains an explicit
-  manual comparison because it has no runtime source or caller.
+  Railway startup now compares configured runtime-owned pins after volume
+  mounts and before the web or worker launcher, including sealed native PR
+  previews; no runtime-owned pin is the only automatic skip. The seventh
+  tooling-only generic pin remains an explicit manual comparison because it has
+  no runtime source or caller.
 
 ### Changed
 

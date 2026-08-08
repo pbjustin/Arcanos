@@ -502,10 +502,13 @@ runtime filesystem, that wrapper runs the already-built protected-digest
 command directly in `--precutover` mode before the canonical role launcher. It
 skips candidate reads only when no runtime-owned pin is configured; any invalid,
 missing, or mismatched runtime-owned pinned candidate prevents startup. The
-tooling-only generic pin is outside this automatic gate. Native PR previews
-retain their separate sealed launcher override and do not inherit this normal
-runtime path. Railway pre-deploy commands are not a substitute because Railway
-does not mount service volumes in the pre-deploy container.
+tooling-only generic pin is outside this automatic gate. Native PR previews use
+the same wrapper and then forward the exact `--pr-preview-app-safe-v1` argument
+to the sealed role launcher. The digest gate runs read-only in the parent
+service environment before that launcher validates preview identity and creates
+the credential-empty contained child. Railway pre-deploy commands are not a
+substitute because Railway does not mount service volumes in the pre-deploy
+container.
 
 | Protected ID | Pin | Candidate used by the command |
 | --- | --- | --- |
