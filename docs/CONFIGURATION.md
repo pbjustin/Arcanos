@@ -808,8 +808,8 @@ The semantic planner can only propose one registered action plus a JSON-object p
 | `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
 | `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
-| `BACKEND_REQUEST_TIMEOUT` | `15` | Python daemon timeout, in seconds, for outbound backend HTTP requests. |
-| `REQUEST_TIMEOUT` | `30` | Python daemon timeout, in seconds, supplied to non-streaming and fallback-stream OpenAI requests, vision and transcription requests, and confirmed terminal command execution. It is not a Node/backend HTTP-server deadline. |
+| `BACKEND_REQUEST_TIMEOUT` | `15` | Python daemon timeout, in seconds, used by its main backend API and protocol clients. |
+| `REQUEST_TIMEOUT` | `30` | Python daemon timeout, in seconds, supplied to non-streaming chat, fallback chat streaming, vision, transcription, and inline agentic confirmed command execution. It is not a Node/backend HTTP-server deadline. |
 | `AGENTIC_ENABLED` | `true` | Enables multi-step reasoning loop (ask → propose → approve → apply/run → continue). |
 | `AGENT_MAX_STEPS` | `6` | Max loop iterations per user request. |
 | `REPO_INDEX_ENABLED` | `true` | Enables lightweight repo indexing context injection. |
