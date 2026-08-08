@@ -22,6 +22,7 @@ def test_chat_completion_uses_adapter_boundary(monkeypatch):
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
+    monkeypatch.setattr(openai_adapter.Config, "REQUEST_TIMEOUT", 37)
 
     result = openai_adapter.chat_completion(
         user_message="hello",
@@ -35,7 +36,7 @@ def test_chat_completion_uses_adapter_boundary(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-test"
     assert calls[0]["input"][-1]["content"][0]["text"] == "hello"
-    assert calls[0]["timeout"] > 0
+    assert calls[0]["timeout"] == 37
 
 
 def test_vision_completion_uses_adapter_boundary(monkeypatch):
