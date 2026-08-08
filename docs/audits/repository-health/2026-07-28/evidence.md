@@ -1,11 +1,12 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest
-draft PR #1424 was published
+Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest PR
+#1424 implementation commit `703c58e5` reached terminal review evidence
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
-source, required CI, and freshly read provider state remain authoritative.
+tracked source, live PR metadata, required CI, and freshly read provider state
+remain authoritative.
 
 ## Evidence levels
 
@@ -18,7 +19,7 @@ source, required CI, and freshly read provider state remain authoritative.
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
 
-## Draft PR #1424 — protected-digest tooling
+## PR #1424 reviewed implementation — protected-digest tooling
 
 ### Candidate identity and scope
 
@@ -26,11 +27,12 @@ source, required CI, and freshly read provider state remain authoritative.
 | --- | --- |
 | Base | PR #1423 merge `6a3ef8763e3d97ef10e5345d3061268527d87373` |
 | Branch | `codex/repository-health-progress-1423` |
-| Published implementation commit | `51b7bfb117f6a6632f3244628c6b950f71a20559` |
-| Draft PR | [#1424](https://github.com/pbjustin/Arcanos/pull/1424), opened 2026-08-08 UTC against `main` |
-| External state | GitHub branch push and draft-PR creation only; no Railway/provider, database, live-memory, or production mutation |
+| Initial published implementation | `51b7bfb117f6a6632f3244628c6b950f71a20559` |
+| Reviewed implementation commit | `703c58e57e5f3555759c3f6a818c91eb0693d20f` |
+| Pull request | [#1424](https://github.com/pbjustin/Arcanos/pull/1424), opened 2026-08-08 UTC against `main`; it was ready, open, `CLEAN`, and `MERGEABLE` at the reviewed implementation commit, while live PR metadata is authoritative afterward |
+| External state | GitHub branch/PR updates and the automatic Railway PR preview occurred. No manual Railway/provider-settings mutation, database action, live-memory action, merge, production deployment, or production credit is recorded |
 
-The published implementation commit extracts the established version-one
+The reviewed implementation extracts the established version-one
 semantic serializer and SHA-256 implementation into a shared runtime/tooling
 owner. It adds deterministic
 generate, single-check, complete pinned-check, and startup-precutover modes; all
@@ -43,8 +45,9 @@ registry validation. Complete checks reject arbitrary source substitution,
 symbolic links, source-identity changes, BOM-prefixed or malformed JSON, schema
 violations, malformed pins, and mismatches. GPT map projection uses null-
 prototype records, own-property lookup, declared/loaded catalog parity under a
-pin, and strict validation of every configured override. Automatic startup
-output redacts both expected and candidate digests.
+pin, and strict validation of every configured override. Non-finite JSON number
+values now fail schema validation instead of colliding semantically with
+`null`. Automatic startup output redacts both expected and candidate digests.
 
 Tracked normal Railway startup invokes the compiled comparison after volume
 mounts and before the existing role launcher. The wrapper latches termination
@@ -53,6 +56,9 @@ build before invoking compiled code so stale `dist` cannot yield manual green
 evidence; direct compiled commands remain available for the identified,
 already-built pruned runtime image. Native PR preview startup now runs the same
 gate before forwarding the exact sealed-preview argument to the role launcher.
+The CI/CD Deployment Readiness job exercises that canonical wrapper with
+an explicit safe web role and `RUN_WORKERS=false`, while retaining its readiness
+probe and SIGTERM cleanup.
 
 ### Local validation
 
@@ -61,7 +67,8 @@ gate before forwarding the exact sealed-preview argument to the role launcher.
 | Node `20.19.0` `npm run build` | Passed |
 | Node `20.19.0` `npm run type-check` | Passed |
 | Node `20.19.0` `npm run lint` | Passed with zero errors and 76 warnings |
-| Focused protected-digest, startup-wrapper, Railway, GPT-routing, integrity, module-loader, and Research suites | Passed 82/82 across eight suites |
+| Initial focused protected-digest, startup-wrapper, Railway, GPT-routing, integrity, module-loader, and Research suites | Passed 82/82 across eight suites |
+| Final focused protected-digest, startup-wrapper/workflow, Railway, and role-launcher matrix | Passed 115/115 |
 | Direct compiled generation and isolated pinned `--precutover` smoke | Passed; automatic output exposed no expected or candidate digest |
 | `npm run validate:railway` and native-PR import-boundary check | Passed |
 | Generated indexes | All four regenerated together; `reindex-codebase.js --check` passed |
@@ -70,8 +77,40 @@ gate before forwarding the exact sealed-preview argument to the role launcher.
 
 The broad-suite exceptions are not in modified protected-digest paths. No
 GPT-OSS correction is included because that program remains explicitly outside
-this queue. Local results do not establish a reviewed head, required CI,
-contained preview, merge, deployment, or production behavior.
+this queue. These local results alone did not establish a reviewed head,
+required CI, contained preview, merge, deployment, or production behavior.
+
+### Reviewed implementation and contained preview evidence
+
+| Evidence | Result |
+| --- | --- |
+| [CI/CD Pipeline `31282568774`](https://github.com/pbjustin/Arcanos/actions/runs/31282568774) | Passed, including the repaired canonical-wrapper `Deployment Readiness` job and fail-closed `All Checks Complete` |
+| [API Endpoint Tests `31282568765`](https://github.com/pbjustin/Arcanos/actions/runs/31282568765) | Passed |
+| [Documentation Audit `31282568767`](https://github.com/pbjustin/Arcanos/actions/runs/31282568767) | Passed with current generated indexes; `docs:check` was the branch-protection-required context |
+| [PR CI `31282568828`](https://github.com/pbjustin/Arcanos/actions/runs/31282568828) | Passed |
+| [Require Human Approval `31282568159`](https://github.com/pbjustin/Arcanos/actions/runs/31282568159) | Passed |
+| Aggregate PR state | All 20 surfaced contexts passed; GitHub reported `CLEAN` and `MERGEABLE`, with zero unresolved review threads |
+| Copilot correction | The startup signal race was repaired and its review thread was resolved |
+| Final agent-review corrections | Non-finite JSON acceptance and the CI readiness-wrapper bypass were repaired |
+
+The automatic Railway PR preview served exact head
+`703c58e57e5f3555759c3f6a818c91eb0693d20f` from environment
+`275ef5a6-1c59-4820-9330-40ef34465ec3`. Web deployment
+`61284fcc-3583-4bbd-ae65-b314af62d9e7` and passive-worker deployment
+`ea629c3c-e88c-4e14-a741-76318cefc911` both succeeded. The bounded native
+runner passed 68/68 sequential requests with stable initial/final served-head
+identity.
+
+This is automatic contained-preview and served-public-identity evidence. It
+proves the no-pin integrity wrapper can hand off to the sealed preview and that
+the existing component matrix remains compatible. It does not establish a
+configured-pin match count, ordinary provider/database routes, merge,
+production deployment, or production state.
+
+This dashboard reconciliation follows the reviewed implementation commit and
+therefore cannot name its own later documentation-only commit. Current tracked
+source, live PR metadata, and live exact-head checks remain authoritative for a
+final merge decision.
 
 ## Delivery ledger
 

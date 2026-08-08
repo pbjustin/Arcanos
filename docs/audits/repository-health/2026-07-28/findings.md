@@ -1,7 +1,7 @@
 # Repository health-audit finding register
 
-Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest
-draft PR #1424 was published
+Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest PR
+#1424 implementation commit `703c58e5` reached terminal review evidence
 
 This register distinguishes source closure from deployment and production
 verification. `Merged` never means `deployed`. Current source and tests remain
@@ -14,6 +14,7 @@ authoritative. GPT-OSS is explicitly excluded from the active non-GPT queue.
 | Open | No accepted current-main implementation closes the finding |
 | Local candidate | A current-base working-tree implementation exists but is not yet published, reviewed in CI, or merged |
 | Draft PR | A published candidate identity exists, but exact-head review, required CI, and merge are not complete |
+| Reviewed PR | A named implementation commit has complete review, required CI, and bounded preview evidence, but merge remains open and live exact-head state still governs merge |
 | Local-only | A historical isolated candidate exists but must be re-integrated and revalidated on current `main` |
 | Closed in merged source | The reviewed correction is present on `main`; production rollout is a separate state |
 | Production-verified | Exact deployed revision and the relevant live contract were attested within a dated authorized operation |
@@ -25,7 +26,7 @@ The order here matches the current queue in [progress.md](progress.md#active-imp
 
 | Order | Finding | Priority | Status | Current evidence | Next action |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Protected-digest generation and pre-cutover comparison | Older ranked | Draft PR | Draft PR #1424 at published implementation commit `51b7bfb117f6a6632f3244628c6b950f71a20559` shares the versioned runtime digest, covers all seven manifest candidates, and automatically gates the six runtime-owned pins at normal startup; focused Node 20 checks pass and no deployment exists | Complete exact-head review and required CI, then merge before moving this finding to closed source |
+| 1 | Protected-digest generation and pre-cutover comparison | Older ranked | Reviewed PR | PR #1424 implementation commit `703c58e57e5f3555759c3f6a818c91eb0693d20f` shares the versioned runtime digest, rejects non-finite JSON, covers all seven manifest candidates, automatically gates the six runtime-owned pins at normal startup, and makes CI Deployment Readiness exercise the canonical wrapper. All 20 surfaced contexts, both automatic Railway preview services, and the contained 68/68 matrix passed; GitHub reported `CLEAN`, `MERGEABLE`, and zero unresolved review threads, without configured-pin match, merge, or production credit | Use live PR metadata and exact-head checks for the documentation-only reconciliation, then merge before moving this finding to closed source |
 | 2 | Successful non-GPT terminal retention | Older ranked | Local-only | An isolated candidate passed focused checks on an older base and was not published | Re-integrate on current `main` and rerun the required database suites |
 | 3 | Predictive/reactive self-heal approval | Older ranked | Local-only | An isolated explicit-approval candidate exists on an older base and was not published | Re-integrate on current `main` and prove predictive paths cannot perform unapproved effects |
 | 4 | Hard versus advisory worker-budget semantics | Older ranked | Open | Worker identity/accounting is merged, but enforcement meaning is not ratified consistently | Decide the product contract, implement at the owner seam, and align readiness/diagnostics |
@@ -68,7 +69,7 @@ The order here matches the current queue in [progress.md](progress.md#active-imp
 | Temporary npm-audit platform-profile exception | Re-review/remove by 2026-08-10; silent extension is not authorized |
 | Coordinated-writer rollout hold `20260727-dag-snapshot-generation-v1` | Remains material until a separately authorized, freshly verified promotion |
 | Production topology, old replicas, retained jobs, drain rehearsal, edge controls, log retention, and stale non-production environments | Dated unknowns until reverified. The #1420–#1423 merge status histories each record 18 Railway repository-integration service deployments across nine non-production environment IDs outside the last verified production and the corresponding preview target; each ended with six successes and 12 non-success (failed/stopped) outcomes. Status history does not prove current provider state or cleanup |
-| Preview teardown | The #1422 preview was previously read back as deleted. A read-only 2026-08-08 Railway project inventory did not contain #1423 preview `b9067c39-49b8-49f6-bffe-148e5b2de058`; that attests environment absence, not cleanup of every historical deployment or artifact |
+| Preview teardown | The #1422 preview was previously read back as deleted. A read-only 2026-08-08 Railway project inventory did not contain #1423 preview `b9067c39-49b8-49f6-bffe-148e5b2de058`; that attests environment absence, not cleanup of every historical deployment or artifact. PR #1424 automatic preview environment `275ef5a6-1c59-4820-9330-40ef34465ec3` served reviewed implementation commit `703c58e57e5f3555759c3f6a818c91eb0693d20f` successfully; no teardown is credited |
 
 ## Deferred program
 

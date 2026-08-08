@@ -2,7 +2,8 @@
 
 Status: current non-GPT-OSS dashboard through merged PR
 [#1423](https://github.com/pbjustin/Arcanos/pull/1423), plus protected-digest
-tooling draft PR [#1424](https://github.com/pbjustin/Arcanos/pull/1424)
+tooling PR [#1424](https://github.com/pbjustin/Arcanos/pull/1424) at reviewed
+implementation commit `703c58e5`; live PR head metadata remains authoritative
 
 Original audit capture: 2026-07-28
 
@@ -18,9 +19,9 @@ action. GPT-OSS is explicitly excluded from the active queue.
 
 - This file is the compact current dashboard and implementation order.
 - [findings.md](findings.md) is the normalized open/closed finding register
-  through PR #1423 plus the current protected-digest draft.
+  through PR #1423 plus PR #1424's reviewed implementation.
 - [evidence.md](evidence.md) is the PR and validation ledger through PR #1423,
-  with separately bounded draft-candidate evidence.
+  with separately bounded reviewed-implementation and contained-preview evidence.
 - [history-through-2026-07-31.md](history-through-2026-07-31.md) preserves the
   former long-form tracked narrative and its dated anchors.
 
@@ -35,16 +36,16 @@ dossier; they should not append another full chronological audit.
 | Remote `main` at reconciliation | PR #1423 merge `6a3ef8763e3d97ef10e5345d3061268527d87373`; tree `55fe0200366bf7a06ad9f752b05e6c9e65b54093` |
 | PR #1423 source identity | Base `7bc83f469e571cd19626dbd2fa9360a8596b38e7`; reviewed head `58754e5632bd4bea4640ba83fc79b3a5f9a551e2`; the reviewed head and merge commit are tree-identical |
 | Latest closed product slice | Backend `REQUEST_TIMEOUT` truthfulness: removed the parsed-but-unused Node/backend `config.limits.requestTimeout` and its millisecond-valued backend claims without inventing a server property or response-only race; preserved the Python daemon's distinct live seconds-valued timeout controls |
-| Current draft candidate | Protected-digest tooling draft [#1424](https://github.com/pbjustin/Arcanos/pull/1424) on branch `codex/repository-health-progress-1423`, rooted at #1423 merge `6a3ef8763e3d97ef10e5345d3061268527d87373`; published implementation commit `51b7bfb117f6a6632f3244628c6b950f71a20559` adds canonical generation/comparison, exact runtime-candidate adapters, and the six-runtime-pin startup gate |
-| Required PR-head evidence | CI/CD run `31240522180` passed all 13 jobs and the fail-closed aggregate; API, Documentation Audit, PR CI, Codecov, Copilot review, approval-policy, and both exact-head Railway preview contexts passed. The contained native preview passed 68/68 application checks at the exact reviewed head |
-| Exact-merge evidence | CI/CD run `31245091797` passed all 13 jobs and verified all 11 aggregate dependencies; Documentation Audit passed 311/311 with current indexes; repository-registration workflow passed although its non-critical backend registration request returned HTTP 400; the known auxiliary documentation-analysis fixture failed again. Railway Auto Deploy run `31245615516` enforced the coordinated-writer hold and skipped production, while repository integration separately started 18 deployments across nine environments marked non-production, ending with six successes and 12 failures |
-| Production credit | Production was last reconciled on 2026-08-02 at the PR #1415 generation. A 2026-08-08 Railway CLI readback found the same web deployment at commit `8bb0b80350d39a663c5dde0eefd81abfe27e4bf8` and its paired worker deployment healthy; no production rollout is credited for PRs #1416–#1423 |
+| Reviewed PR #1424 implementation | Protected-digest tooling [#1424](https://github.com/pbjustin/Arcanos/pull/1424) on branch `codex/repository-health-progress-1423`, rooted at #1423 merge `6a3ef8763e3d97ef10e5345d3061268527d87373`; implementation commit `703c58e57e5f3555759c3f6a818c91eb0693d20f` adds canonical generation/comparison, exact runtime-candidate adapters, the six-runtime-pin startup gate, sealed-preview gate coverage, startup-signal handoff, non-finite JSON rejection, and canonical-wrapper CI readiness coverage |
+| PR #1424 reviewed implementation evidence | CI/CD run `31282568774` passed, including repaired-wrapper `Deployment Readiness` and `All Checks Complete`; API Endpoint Tests `31282568765`, Documentation Audit `31282568767`, PR CI `31282568828`, approval run `31282568159`, Codecov patch, and both Railway contexts passed at implementation commit `703c58e5`. All 20 surfaced contexts were green; GitHub reported `CLEAN`, `MERGEABLE`, and zero unresolved review threads. The contained native preview passed 68/68 application checks; no configured-pin match count is inferred |
+| PR #1423 exact-merge evidence | CI/CD run `31245091797` passed all 13 jobs and verified all 11 aggregate dependencies; Documentation Audit passed 311/311 with current indexes; repository-registration workflow passed although its non-critical backend registration request returned HTTP 400; the known auxiliary documentation-analysis fixture failed again. Railway Auto Deploy run `31245615516` enforced the coordinated-writer hold and skipped production, while repository integration separately started 18 deployments across nine environments marked non-production, ending with six successes and 12 failures |
+| Production credit | Production was last reconciled on 2026-08-02 at the PR #1415 generation. A 2026-08-08 Railway CLI readback found the same web deployment at commit `8bb0b80350d39a663c5dde0eefd81abfe27e4bf8` and its paired worker deployment healthy; no production rollout is credited for PRs #1416–#1424, and #1424's automatic preview is not production |
 | Promotion control | Exact-merge rollout run `31245615516` enforced coordinated-writer hold `20260727-dag-snapshot-generation-v1` and skipped production job `93073631689`. The hold does not govern every Railway repository-connected environment; a green merge or preview does not imply production promotion |
-| Current implementation slice | Review draft PR #1424; exact-head CI, review disposition, and merge remain required before source closure |
+| Current implementation slice | Implementation commit `703c58e57e5f3555759c3f6a818c91eb0693d20f` is reviewed and terminal-green. This documentation-only reconciliation cannot name its own resulting commit, so live PR metadata, current tracked source, and live exact-head checks remain authoritative before merge |
 | Next untouched implementation slice | Successful non-GPT terminal retention |
 | Explicit exclusion | GPT-OSS remains outside this queue and is not made ready by any result in this report |
 
-## Protected-digest tooling draft PR #1424
+## Protected-digest tooling PR #1424 — reviewed implementation
 
 The current working tree implements one versioned semantic-digest owner shared
 by runtime integrity checks and operator tooling. The command covers all seven
@@ -54,29 +55,49 @@ substitute during complete checks, and fails closed on malformed pins,
 candidate data, environment overrides, source changes, and mismatches. Explicit
 source-workspace commands build before evaluating compiled code; identified
 already-built runtime images use the direct compiled command.
+Non-finite JSON numbers fail schema validation instead of collapsing to the same
+semantic digest as `null`.
 
 Normal tracked Railway web and worker startup now runs the digest comparison
 after mounted volumes are available and before the role launcher. The automatic
 gate skips only when none of the six runtime-owned pins is configured. Native
 PR previews now run that same gate before the exact sealed-preview launcher.
-Automatic reports omit candidate and
-expected digest values, and signal handling prevents an interrupted comparison
-from racing into service startup.
+Automatic reports omit candidate and expected digest values, and signal
+handling prevents an interrupted comparison from racing into service startup.
+The CI/CD Deployment Readiness job now invokes the canonical integrity
+wrapper under an explicit safe web role with `RUN_WORKERS=false`, preserving its
+readiness probe and SIGTERM cleanup.
 
 Local Node 20.19.0 evidence includes successful build, type-check, lint with no
-errors, 82/82 focused protected-digest/startup/Railway/GPT/runtime tests, Railway
-configuration validation, native-preview import-boundary validation, generated-
-index verification, and direct compiled generation/pre-cutover smoke checks.
+errors, an initial 82/82 focused protected-digest/startup/Railway/GPT/runtime
+matrix, and a final 115/115 focused protected-digest/startup/workflow/Railway
+matrix. Railway configuration validation, native-preview import-boundary
+validation, generated-index verification, and direct compiled generation/
+pre-cutover smoke checks also passed.
+
 The broad non-GPT sweep passed 7,600 tests and reported two load-sensitive
 Windows process-timing failures; both affected suites then passed 28/28 in an
 isolated rerun. The only failure in the unfiltered root suite was an unchanged,
 explicitly excluded GPT-OSS CRLF fixture. None of those unrelated failures is
 treated as protected-digest evidence or repaired in this slice.
 
-This is published draft evidence at implementation commit
-`51b7bfb117f6a6632f3244628c6b950f71a20559`. It establishes a GitHub branch
-and draft PR identity, not a reviewed exact head, terminal CI result, preview,
-merge, deployment, provider change, database action, or production credit.
+This is bounded reviewed-implementation evidence at
+`703c58e57e5f3555759c3f6a818c91eb0693d20f`. CI/CD run `31282568774`
+passed, including the repaired canonical-wrapper `Deployment Readiness` job and
+fail-closed `All Checks Complete`. API run `31282568765`, documentation run
+`31282568767`, PR-CI run `31282568828`, approval run `31282568159`, Codecov,
+and both Railway service contexts passed. All 20 surfaced contexts were green;
+GitHub reported `CLEAN`, `MERGEABLE`, and zero unresolved review threads. The
+automatic Railway PR preview used environment
+`275ef5a6-1c59-4820-9330-40ef34465ec3`, web deployment
+`61284fcc-3583-4bbd-ae65-b314af62d9e7`, and passive-worker deployment
+`ea629c3c-e88c-4e14-a741-76318cefc911`. The contained runner passed 68/68
+requests with stable exact-head identity. This proves the no-pin gated startup
+and sealed component matrix only; it does not attest configured-pin match counts,
+normal provider/database behavior, merge, production rollout, or production
+state. This dashboard reconciliation cannot self-name its later documentation-
+only commit; live PR metadata, current tracked source, and live exact-head checks
+supersede this bounded implementation evidence for the final merge decision.
 
 ## PR #1423 closure
 
@@ -139,7 +160,7 @@ This order supersedes every older queue in the historical narrative.
 
 | Order | Priority | Slice | Completion contract |
 | --- | --- | --- | --- |
-| 1 | Older ranked | Protected-digest tooling | Draft PR #1424 publishes the canonical generator/validator and automatic pre-cutover comparison for all six runtime-owned pins; exact-head review/CI and merge remain open |
+| 1 | Older ranked | Protected-digest tooling | PR #1424 implementation commit `703c58e5` publishes the canonical generator/validator and automatic pre-cutover comparison for all six runtime-owned pins; its review, 20 surfaced contexts, and contained preview are green, while merge remains open and live PR metadata is authoritative |
 | 2 | Older ranked | Successful non-GPT terminal retention | Re-integrate the previously isolated candidate on current `main` and revalidate the five required database suites |
 | 3 | Older ranked | Predictive/reactive self-heal approval | Re-integrate the explicit-approval candidate on current `main`; preserve policy ownership and prove no predictive path performs an unapproved reactive effect |
 | 4 | Older ranked | Hard versus advisory worker budgets | Ratify the product semantics, implement them at the authoritative ownership seam, and align readiness/diagnostic claims |
@@ -196,8 +217,8 @@ behavior, provider configuration, and the coordinated-writer hold.
 | Dimension | Verdict |
 | --- | --- |
 | Architecture | Substantially improved. Executable dependency boundaries and cycle gates exist; remaining debt is localized to named coordination and transport seams rather than repository-wide spaghetti |
-| Correctness | Stronger database/job/DAG/Backstage/Research contracts and fail-closed required PostgreSQL/aggregate CI truth are merged. Protected-digest tooling is published only as draft PR #1424; successful non-GPT retention, self-heal approval, and worker-budget semantics remain explicit work |
-| Security | The scoped ingress, disclosure, admission, Backstage, Research, exact MCP body-cap, Hono-remediation, and backend-timeout truthfulness findings addressed by PRs #1409–#1423 are closed in merged source. Protected-digest generation and the six-runtime-pin startup gate are published in draft PR #1424 but not source-closed; broader dispatch/pre-admission parser, log/metric, Redis-integrity, and public-health residuals remain open in the finding register |
+| Correctness | Stronger database/job/DAG/Backstage/Research contracts and fail-closed required PostgreSQL/aggregate CI truth are merged. Protected-digest tooling has a reviewed terminal-green implementation commit in PR #1424 but is not yet merged. Successful non-GPT retention, self-heal approval, and worker-budget semantics remain explicit work |
+| Security | The scoped ingress, disclosure, admission, Backstage, Research, exact MCP body-cap, Hono-remediation, and backend-timeout truthfulness findings addressed by PRs #1409–#1423 are closed in merged source. Protected-digest generation and the six-runtime-pin startup gate have a reviewed terminal-green implementation commit in PR #1424 but are not source-closed; broader dispatch/pre-admission parser, log/metric, Redis-integrity, and public-health residuals remain open in the finding register |
 | Scalability | Public provider admission, bounded DAG/Backstage/Research persistence, stale-recovery batching, and Research aggregate cancellation are present. Replica-policy assumptions, successful non-GPT retention, and hard/advisory worker budgets still need explicit contracts and measured evidence |
 | Maintainability | Ownership and documentation improved materially. Large coordinators, duplicate transport contracts, warnings, and stale/manual tests remain isolated cleanup candidates |
 | Delivery and operations | Required CI and contained previews provide strong merge evidence. Production trails merged source, the writer hold governs the workflow-owned production job rather than all repository integrations, stale non-production fan-out needs lifecycle cleanup, and the auxiliary documentation-analysis workflow still has a known startup-fixture failure |
