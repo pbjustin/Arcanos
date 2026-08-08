@@ -53,6 +53,40 @@ describe('Railway protected-digest startup gate', () => {
   });
 
   it.each(['SIGTERM', 'SIGINT'])(
+    'latches %s raised synchronously while the digest gate is spawning',
+    async signal => {
+      const signalTarget = new EventEmitter();
+      const gateChild = new EventEmitter();
+      gateChild.exitCode = null;
+      gateChild.signalCode = null;
+      gateChild.kill = jest.fn(receivedSignal => {
+        gateChild.signalCode = receivedSignal;
+        queueMicrotask(() => gateChild.emit('exit', null, receivedSignal));
+      });
+      const spawnChild = jest.fn().mockImplementationOnce(() => {
+        signalTarget.emit(signal);
+        return gateChild;
+      });
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await expect(runRailwayServiceWithIntegrity({
+        signalTarget,
+        spawnChild
+      })).resolves.toBe(1);
+
+      expect(spawnChild).toHaveBeenCalledTimes(1);
+      expect(gateChild.kill).toHaveBeenCalledTimes(1);
+      expect(gateChild.kill).toHaveBeenCalledWith(signal);
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[railway-integrity-gate] startup interrupted'
+      );
+      expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
+      expect(signalTarget.listenerCount('SIGINT')).toBe(0);
+      errorSpy.mockRestore();
+    }
+  );
+
+  it.each(['SIGTERM', 'SIGINT'])(
     'forwards %s to the sealed preview launcher after the gate',
     async signal => {
       const signalTarget = new EventEmitter();
@@ -79,6 +113,40 @@ describe('Railway protected-digest startup gate', () => {
         'scripts/start-railway-service.mjs',
         '--pr-preview-app-safe-v1'
       ]);
+      expect(launcherChild.kill).toHaveBeenCalledWith(signal);
+      expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
+      expect(signalTarget.listenerCount('SIGINT')).toBe(0);
+    }
+  );
+
+  it.each(['SIGTERM', 'SIGINT'])(
+    'latches %s raised synchronously while the launcher is spawning',
+    async signal => {
+      const signalTarget = new EventEmitter();
+      const gateChild = createChild(0);
+      const launcherChild = new EventEmitter();
+      launcherChild.exitCode = null;
+      launcherChild.signalCode = null;
+      launcherChild.kill = jest.fn(receivedSignal => {
+        launcherChild.signalCode = receivedSignal;
+        queueMicrotask(() => launcherChild.emit('exit', null, receivedSignal));
+      });
+      const spawnChild = jest.fn()
+        .mockReturnValueOnce(gateChild)
+        .mockImplementationOnce(() => {
+          signalTarget.emit(signal);
+          return launcherChild;
+        });
+
+      await expect(runRailwayServiceWithIntegrity({
+        argv: ['--pr-preview-app-safe-v1'],
+        signalTarget,
+        spawnChild
+      })).resolves.toBe(1);
+
+      expect(spawnChild).toHaveBeenCalledTimes(2);
+      expect(gateChild.kill).not.toHaveBeenCalled();
+      expect(launcherChild.kill).toHaveBeenCalledTimes(1);
       expect(launcherChild.kill).toHaveBeenCalledWith(signal);
       expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
       expect(signalTarget.listenerCount('SIGINT')).toBe(0);

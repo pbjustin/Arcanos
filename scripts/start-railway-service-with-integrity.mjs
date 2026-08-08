@@ -56,9 +56,20 @@ export async function runRailwayServiceWithIntegrity(options = {}) {
   const signalTarget = options.signalTarget ?? process;
   let activeChild = null;
   let shutdownRequested = false;
+  let shutdownSignal = null;
   const forwardSignal = signal => {
     shutdownRequested = true;
+    shutdownSignal = signal;
     activeChild?.kill(signal);
+  };
+  const spawnTrackedChild = args => {
+    activeChild = null;
+    const child = spawnChild(args);
+    activeChild = child;
+    if (shutdownSignal) {
+      child.kill(shutdownSignal);
+    }
+    return child;
   };
   const signalHandlers = new Map(
     SHUTDOWN_SIGNALS.map(signal => [signal, () => forwardSignal(signal)])
@@ -68,22 +79,27 @@ export async function runRailwayServiceWithIntegrity(options = {}) {
   }
 
   try {
-    activeChild = spawnChild([...PROTECTED_DIGEST_GATE_ARGUMENTS]);
-    const gateExitCode = await waitForStartupChild(activeChild);
+    const gateChild = spawnTrackedChild([...PROTECTED_DIGEST_GATE_ARGUMENTS]);
+    const gateExitCode = await waitForStartupChild(gateChild);
+    if (activeChild === gateChild) {
+      activeChild = null;
+    }
+    if (gateExitCode !== 0) {
+      console.error(shutdownRequested
+        ? '[railway-integrity-gate] startup interrupted'
+        : '[railway-integrity-gate] protected digest comparison failed');
+      return 1;
+    }
+
     if (shutdownRequested) {
       console.error('[railway-integrity-gate] startup interrupted');
       return 1;
     }
-    if (gateExitCode !== 0) {
-      console.error('[railway-integrity-gate] protected digest comparison failed');
-      return 1;
-    }
-
-    activeChild = spawnChild([
+    const launcherChild = spawnTrackedChild([
       'scripts/start-railway-service.mjs',
       ...(options.argv ?? process.argv.slice(2))
     ]);
-    return await waitForStartupChild(activeChild);
+    return await waitForStartupChild(launcherChild);
   } catch {
     console.error('[railway-integrity-gate] startup child failed');
     return 1;
