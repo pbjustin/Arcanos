@@ -462,6 +462,40 @@ describe('canonical protected-config digests', () => {
     expect(execution.report.summary.evaluated).toBe(1);
   });
 
+  it.each(['generate', 'check'] as const)(
+    'rejects an overflowing JSON number in %s mode instead of colliding with null',
+    async mode => {
+      const directory = createTemporaryDirectory();
+      const source = join(directory, 'overflowing-number.json');
+      writeFileSync(source, '1e400\n', 'utf8');
+      const nullDigest = computeIntegrityHash(null);
+      expect(computeIntegrityHash(JSON.parse('1e400'))).toBe(nullDigest);
+
+      const execution = await executeProtectedDigestCommand(
+        {
+          mode,
+          id: 'protected_json_file',
+          sources: new Map([['protected_json_file', source]]),
+          ...(mode === 'check' ? { expectedHash: nullDigest } : {})
+        },
+        {
+          cwd: directory,
+          readEnvironment: readEnvironment(isolatedEnvironment())
+        }
+      );
+
+      expect(execution.exitCode).toBe(1);
+      expect(execution.report.results).toEqual([
+        expect.objectContaining({
+          id: 'protected_json_file',
+          status: 'invalid',
+          errorCode: 'schema_invalid'
+        })
+      ]);
+      expect(execution.report.results[0]).not.toHaveProperty('candidateDigest');
+    }
+  );
+
   it.each([
     {
       id: 'prompts_config',

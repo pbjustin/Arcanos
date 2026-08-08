@@ -397,6 +397,12 @@ function assertStructureBounds(
     if (current.depth > maxDepth) {
       throw new ProtectedDigestCommandError('structure_too_deep');
     }
+    if (
+      typeof current.value === 'number'
+      && !Number.isFinite(current.value)
+    ) {
+      throw new ProtectedDigestCommandError('schema_invalid');
+    }
     if (!current.value || typeof current.value !== 'object') {
       continue;
     }
