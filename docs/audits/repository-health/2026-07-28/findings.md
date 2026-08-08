@@ -1,7 +1,7 @@
 # Repository health-audit finding register
 
-Last reconciled: 2026-08-08 UTC, after PR #1423 merged and the protected-digest
-local candidate was implemented
+Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest
+draft PR #1424 was published
 
 This register distinguishes source closure from deployment and production
 verification. `Merged` never means `deployed`. Current source and tests remain
@@ -13,6 +13,7 @@ authoritative. GPT-OSS is explicitly excluded from the active non-GPT queue.
 | --- | --- |
 | Open | No accepted current-main implementation closes the finding |
 | Local candidate | A current-base working-tree implementation exists but is not yet published, reviewed in CI, or merged |
+| Draft PR | A published candidate identity exists, but exact-head review, required CI, and merge are not complete |
 | Local-only | A historical isolated candidate exists but must be re-integrated and revalidated on current `main` |
 | Closed in merged source | The reviewed correction is present on `main`; production rollout is a separate state |
 | Production-verified | Exact deployed revision and the relevant live contract were attested within a dated authorized operation |
@@ -24,7 +25,7 @@ The order here matches the current queue in [progress.md](progress.md#active-imp
 
 | Order | Finding | Priority | Status | Current evidence | Next action |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Protected-digest generation and pre-cutover comparison | Older ranked | Local candidate | A current-#1423-base working tree shares the versioned runtime digest, covers all seven manifest candidates, and automatically gates the six runtime-owned pins at normal startup; focused Node 20 checks pass and no commit, PR, or deployment exists | Publish for exact-head review and required CI, then merge before moving this finding to closed source |
+| 1 | Protected-digest generation and pre-cutover comparison | Older ranked | Draft PR | Draft PR #1424 at published implementation commit `51b7bfb117f6a6632f3244628c6b950f71a20559` shares the versioned runtime digest, covers all seven manifest candidates, and automatically gates the six runtime-owned pins at normal startup; focused Node 20 checks pass and no deployment exists | Complete exact-head review and required CI, then merge before moving this finding to closed source |
 | 2 | Successful non-GPT terminal retention | Older ranked | Local-only | An isolated candidate passed focused checks on an older base and was not published | Re-integrate on current `main` and rerun the required database suites |
 | 3 | Predictive/reactive self-heal approval | Older ranked | Local-only | An isolated explicit-approval candidate exists on an older base and was not published | Re-integrate on current `main` and prove predictive paths cannot perform unapproved effects |
 | 4 | Hard versus advisory worker-budget semantics | Older ranked | Open | Worker identity/accounting is merged, but enforcement meaning is not ratified consistently | Decide the product contract, implement at the owner seam, and align readiness/diagnostics |

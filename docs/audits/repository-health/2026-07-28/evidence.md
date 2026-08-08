@@ -1,7 +1,7 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-08 UTC, after PR #1423 merged and the protected-digest
-local candidate was implemented
+Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest
+draft PR #1424 was published
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -12,12 +12,13 @@ source, required CI, and freshly read provider state remain authoritative.
 | Level | What it can establish | What it cannot establish |
 | --- | --- | --- |
 | Local candidate | Source behavior under the named commands and environment | Publication, merge, deployment, or live provider behavior |
+| Published draft | Branch, commit, and draft-PR identity | Completed review, terminal required CI, merge, deployment, or production behavior |
 | Reviewed PR head | Exact published source plus surfaced PR checks/reviews | Merge or production rollout |
 | Contained preview | Served commit identity and the explicitly exposed sealed/read-only contract | Normal production handlers, credentials, provider calls, PostgreSQL behavior unless specifically connected, or production state |
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
 
-## Local candidate — protected-digest tooling
+## Draft PR #1424 — protected-digest tooling
 
 ### Candidate identity and scope
 
@@ -25,11 +26,13 @@ source, required CI, and freshly read provider state remain authoritative.
 | --- | --- |
 | Base | PR #1423 merge `6a3ef8763e3d97ef10e5345d3061268527d87373` |
 | Branch | `codex/repository-health-progress-1423` |
-| Publication identity | None; the candidate is uncommitted and unpublished |
-| External state | No GitHub, Railway/provider, database, live-memory, or production mutation |
+| Published implementation commit | `51b7bfb117f6a6632f3244628c6b950f71a20559` |
+| Draft PR | [#1424](https://github.com/pbjustin/Arcanos/pull/1424), opened 2026-08-08 UTC against `main` |
+| External state | GitHub branch push and draft-PR creation only; no Railway/provider, database, live-memory, or production mutation |
 
-The working tree extracts the established version-one semantic serializer and
-SHA-256 implementation into a shared runtime/tooling owner. It adds deterministic
+The published implementation commit extracts the established version-one
+semantic serializer and SHA-256 implementation into a shared runtime/tooling
+owner. It adds deterministic
 generate, single-check, complete pinned-check, and startup-precutover modes; all
 seven manifest entries have explicit candidate adapters, while only the six
 maintained runtime-owned pins participate in automatic startup. The generic
