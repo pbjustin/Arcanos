@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-07T18:27:49.010Z",
+  "generatedAt": "2026-08-08T03:11:09.458Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4109,6 +4109,9 @@
         },
         {
           "relativePath": "tests/request-handler.feedback.test.ts"
+        },
+        {
+          "relativePath": "tests/request-timeout-contract.test.ts"
         },
         {
           "relativePath": "tests/requestContext-security-logging.test.ts"

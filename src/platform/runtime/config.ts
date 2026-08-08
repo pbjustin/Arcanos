@@ -101,7 +101,6 @@ export const config = {
   // Request limits
   limits: {
     jsonLimit: getEnv('JSON_LIMIT') || '10mb',
-    requestTimeout: Number(getEnv('REQUEST_TIMEOUT')) || 30000,
     publicProviderClientRateLimitMax,
     publicProviderRateLimitMax,
     publicProviderRateLimitWindowMs,

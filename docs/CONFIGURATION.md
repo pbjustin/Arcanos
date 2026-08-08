@@ -228,7 +228,6 @@ and never calls `FLUSHDB`. That job must pass before activation.
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Directory for logs and audit output. |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 | `JSON_LIMIT` | `10mb` | Broad JSON payload size limit. Route-specific parsers may impose a stricter bound; exact `POST /mcp` never exceeds this value. |
-| `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_MAX` | `100` | Deployment-wide HTTP admissions allowed across all public provider-capable routes during the shared window. Valid range: `1` through `1000000`. Invalid or out-of-range values fall back to `100`; there is no disable value. The legacy hard ceiling of `1` remains valid. |
 | `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX` | `20` | Maximum admissions for one established actor or network cohort in the shared window. It must be at least `1` and is strictly below the global maximum when the global maximum exceeds `1`; both limits are `1` for the compatibility ceiling of `1`. Invalid values fall back to the smaller of `20` and `max(1, global maximum - 1)`. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS` | `900000` | Shared caller/global public-provider admission window in milliseconds. Valid range: `1000` through `2592000000` (30 days). Invalid or out-of-range values fall back to 15 minutes. |
@@ -809,6 +808,8 @@ The semantic planner can only propose one registered action plus a JSON-object p
 | `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
 | `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
+| `BACKEND_REQUEST_TIMEOUT` | `15` | Python daemon timeout, in seconds, for outbound backend HTTP requests. |
+| `REQUEST_TIMEOUT` | `30` | Python daemon timeout, in seconds, supplied to non-streaming and fallback-stream OpenAI requests, vision and transcription requests, and confirmed terminal command execution. It is not a Node/backend HTTP-server deadline. |
 | `AGENTIC_ENABLED` | `true` | Enables multi-step reasoning loop (ask → propose → approve → apply/run → continue). |
 | `AGENT_MAX_STEPS` | `6` | Max loop iterations per user request. |
 | `REPO_INDEX_ENABLED` | `true` | Enables lightweight repo indexing context injection. |
