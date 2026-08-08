@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-07T05:22:05.236Z",
+  "generatedAt": "2026-08-07T18:27:49.010Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3670,6 +3670,9 @@
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/postgresTestDatabase.ts"
+        },
+        {
           "relativePath": "tests/integration/public-provider-rate-limit-redis.integration.test.ts"
         },
         {
@@ -3968,6 +3971,9 @@
         },
         {
           "relativePath": "tests/port-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/postgres-test-database-guard.test.ts"
         },
         {
           "relativePath": "tests/pr-assistant-command-utils.test.ts"

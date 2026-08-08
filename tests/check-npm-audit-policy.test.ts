@@ -55,17 +55,6 @@ const temporaryDirectExceptions = [
     node: 'node_modules/fast-uri',
   },
   {
-    name: 'hono',
-    severity: 'moderate',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-8j4g-w8fx-2239',
-        severity: 'moderate',
-      },
-    ],
-    node: 'node_modules/hono',
-  },
-  {
     name: 'ip-address',
     severity: 'high',
     advisories: [
@@ -114,14 +103,12 @@ const temporaryDirectExceptions = [
 ] as const;
 
 const expectedSeverityByPackage = {
-  '@hono/node-server': 'moderate',
   '@modelcontextprotocol/sdk': 'high',
   ajv: 'high',
   'brace-expansion': 'high',
   cheerio: 'moderate',
   'express-rate-limit': 'high',
   'fast-uri': 'high',
-  hono: 'moderate',
   'ip-address': 'high',
   undici: 'high',
 } as const;
@@ -139,14 +126,9 @@ const directAdvisorySeverityCases = temporaryDirectExceptions.flatMap(
 );
 
 const expectedFixAvailableByPackage = {
-  '@hono/node-server': {
-    name: '@modelcontextprotocol/sdk',
-    version: '1.25.3',
-    isSemVerMajor: true,
-  },
   '@modelcontextprotocol/sdk': {
     name: '@modelcontextprotocol/sdk',
-    version: '1.25.3',
+    version: '1.20.2',
     isSemVerMajor: true,
   },
   ajv: {
@@ -160,18 +142,21 @@ const expectedFixAvailableByPackage = {
     version: '1.0.0',
     isSemVerMajor: true,
   },
-  'express-rate-limit': true,
+  'express-rate-limit': {
+    name: '@modelcontextprotocol/sdk',
+    version: '1.20.2',
+    isSemVerMajor: true,
+  },
   'fast-uri': {
     name: 'ajv',
     version: '8.16.0',
     isSemVerMajor: true,
   },
-  hono: {
+  'ip-address': {
     name: '@modelcontextprotocol/sdk',
-    version: '1.25.3',
+    version: '1.20.2',
     isSemVerMajor: true,
   },
-  'ip-address': true,
   undici: {
     name: 'cheerio',
     version: '1.0.0',
@@ -180,14 +165,12 @@ const expectedFixAvailableByPackage = {
 } as const;
 
 const temporaryExceptionLockNodes = [
-  'node_modules/@hono/node-server',
   'node_modules/@modelcontextprotocol/sdk',
   'node_modules/ajv',
   'vendor/minimatch-9.0.7/node_modules/brace-expansion',
   'node_modules/cheerio',
   'node_modules/express-rate-limit',
   'node_modules/fast-uri',
-  'node_modules/hono',
   'node_modules/ip-address',
   'node_modules/undici',
 ] as const;
@@ -380,16 +363,10 @@ function currentVulnerabilityGraph(): Record<string, AuditVulnerability> {
   );
 
   return {
-    '@hono/node-server': propagatedVulnerability(
-      '@hono/node-server',
-      'moderate',
-      ['hono'],
-      'node_modules/@hono/node-server',
-    ),
     '@modelcontextprotocol/sdk': propagatedVulnerability(
       '@modelcontextprotocol/sdk',
       'high',
-      ['@hono/node-server', 'ajv', 'express-rate-limit', 'hono'],
+      ['ajv', 'express-rate-limit'],
       'node_modules/@modelcontextprotocol/sdk',
     ),
     ajv: propagatedVulnerability(
@@ -426,12 +403,10 @@ function linuxNpm10VulnerabilityGraph(): Record<string, AuditVulnerability> {
   delete vulnerabilities.cheerio;
 
   for (const name of [
-    '@hono/node-server',
     '@modelcontextprotocol/sdk',
     'ajv',
     'express-rate-limit',
     'fast-uri',
-    'hono',
     'ip-address',
     'undici',
   ]) {
@@ -439,7 +414,6 @@ function linuxNpm10VulnerabilityGraph(): Record<string, AuditVulnerability> {
   }
   vulnerabilities['@modelcontextprotocol/sdk'].via = [
     'express-rate-limit',
-    'hono',
   ];
 
   return vulnerabilities;
@@ -488,6 +462,23 @@ describe('npm audit policy', () => {
     expect(target?.severity).toBe(severity);
   });
 
+  it('pins the patched SDK-scoped Hono release without an audit exception', () => {
+    const packageJson = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
+    );
+    const candidateLock = readCandidateLock();
+
+    expect(packageJson.overrides['@modelcontextprotocol/sdk'].hono).toBe(
+      '4.12.34',
+    );
+    expect(candidateLock.packages?.['node_modules/hono']).toMatchObject({
+      version: '4.12.34',
+      resolved: 'https://registry.npmjs.org/hono/-/hono-4.12.34.tgz',
+      integrity:
+        'sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==',
+    });
+  });
+
   it.each(temporaryDirectExceptions)(
     'temporarily accepts only the registered advisory URLs and node for $name',
     exception => {
@@ -508,26 +499,26 @@ describe('npm audit policy', () => {
 
   it('keeps a new advisory on an excepted package actionable', () => {
     const exception = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'hono',
+      candidate => candidate.name === 'fast-uri',
     )!;
     const vulnerability = exactDirectVulnerability(exception);
     vulnerability.via.push({
-      name: 'hono',
-      dependency: 'hono',
+      name: 'fast-uri',
+      dependency: 'fast-uri',
       severity: 'moderate',
       source: 9_100_000,
       url: 'https://github.com/advisories/GHSA-new1-new2-new3',
     });
 
     const result = runAuditPolicy(
-      completeVulnerabilityGraph({ hono: vulnerability }),
+      completeVulnerabilityGraph({ 'fast-uri': vulnerability }),
     );
     const output = parseStdout(result);
 
     expect(result.status).toBe(1);
     expect(
       output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('hono');
+    ).toContain('fast-uri');
   });
 
   it.each(temporaryDirectExceptions)(
@@ -550,7 +541,7 @@ describe('npm audit policy', () => {
 
   it('keeps an exact advisory URL actionable when its dependency identity differs', () => {
     const exception = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'hono',
+      candidate => candidate.name === 'fast-uri',
     )!;
     const vulnerability = exactDirectVulnerability(exception);
     const directAdvisory = vulnerability.via[0];
@@ -559,14 +550,14 @@ describe('npm audit policy', () => {
     }
 
     const result = runAuditPolicy(
-      completeVulnerabilityGraph({ hono: vulnerability }),
+      completeVulnerabilityGraph({ 'fast-uri': vulnerability }),
     );
     const output = parseStdout(result);
 
     expect(result.status).toBe(1);
     expect(
       output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('hono');
+    ).toContain('fast-uri');
   });
 
   it.each(temporaryDirectExceptions)(
@@ -609,7 +600,7 @@ describe('npm audit policy', () => {
 
     expect(result.status).toBe(0);
     expect(output.actionable).toEqual([]);
-    expect(output.ignored).toHaveLength(9);
+    expect(output.ignored).toHaveLength(7);
   });
 
   it('accepts the Linux npm 10 graph that also omits propagated cheerio', () => {
@@ -620,7 +611,7 @@ describe('npm audit policy', () => {
 
     expect(result.status).toBe(0);
     expect(output.actionable).toEqual([]);
-    expect(output.ignored).toHaveLength(8);
+    expect(output.ignored).toHaveLength(6);
     expect(
       output.ignored.map((entry: { name: string }) => entry.name),
     ).toContain('undici');
@@ -645,11 +636,11 @@ describe('npm audit policy', () => {
   });
 
   it.each([
-    '@hono/node-server',
     '@modelcontextprotocol/sdk',
     'ajv',
+    'express-rate-limit',
     'fast-uri',
-    'hono',
+    'ip-address',
     'undici',
   ])('requires the exact Linux npm 10 remediation metadata for %s', name => {
     const vulnerabilities = linuxNpm10VulnerabilityGraph();
@@ -667,10 +658,8 @@ describe('npm audit policy', () => {
   it('requires the exact Linux npm 10 SDK propagation set', () => {
     const vulnerabilities = linuxNpm10VulnerabilityGraph();
     vulnerabilities['@modelcontextprotocol/sdk'].via = [
-      '@hono/node-server',
       'ajv',
       'express-rate-limit',
-      'hono',
     ];
 
     const result = runAuditPolicy(vulnerabilities);
@@ -778,10 +767,8 @@ describe('npm audit policy', () => {
   );
 
   it.each([
-    '@hono/node-server',
     'ajv',
     'express-rate-limit',
-    'hono',
   ])(
     'requires the complete SDK propagation set when %s is missing',
     missingVia => {
@@ -855,16 +842,16 @@ describe('npm audit policy', () => {
   });
 
   it('keeps propagated findings actionable unless every via edge is ignored', () => {
-    const honoException = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'hono',
+    const undiciException = temporaryDirectExceptions.find(
+      candidate => candidate.name === 'undici',
     )!;
     const vulnerabilities = completeVulnerabilityGraph({
-      hono: exactDirectVulnerability(honoException),
-      '@hono/node-server': propagatedVulnerability(
-        '@hono/node-server',
+      undici: exactDirectVulnerability(undiciException),
+      cheerio: propagatedVulnerability(
+        'cheerio',
         'moderate',
-        ['hono', 'unexpected-package'],
-        'node_modules/@hono/node-server',
+        ['undici', 'unexpected-package'],
+        'node_modules/cheerio',
       ),
     });
 
@@ -874,10 +861,10 @@ describe('npm audit policy', () => {
     expect(result.status).toBe(1);
     expect(
       output.ignored.map((entry: { name: string }) => entry.name),
-    ).toContain('hono');
+    ).toContain('undici');
     expect(
       output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('@hono/node-server');
+    ).toContain('cheerio');
   });
 
   it('does not waive a propagated finding without its matching ignored dependency', () => {
@@ -1022,10 +1009,10 @@ describe('npm audit policy', () => {
         vulnerabilities: {
           info: 0,
           low: 0,
-          moderate: 2,
+          moderate: 0,
           high: 8,
           critical: 0,
-          total: 10,
+          total: 8,
         },
       },
     });

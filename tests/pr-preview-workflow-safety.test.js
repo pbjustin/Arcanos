@@ -58,16 +58,14 @@ describe('native PR workflow safety', () => {
 
     expect(workflow).toContain('image: postgres:18-alpine');
     expect(workflow).toContain('POSTGRES_DB: arcanos_audit_pg18_20260727');
+    expect(workflow).toContain("ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE: '1'");
+    expect(workflow).toContain('LOCAL_AGENT_HARDENING_TEST_DATABASE_URL:');
     expect(workflow).toContain('JOB_CLAIM_FENCING_TEST_DATABASE_URL:');
     expect(workflow).toContain('DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL:');
     expect(workflow).toContain('JOB_WORKER_BUDGET_TEST_DATABASE_URL:');
-    expect(workflow).toContain("JOB_WORKER_BUDGET_REQUIRE_DATABASE: '1'");
     expect(workflow).toContain('JOB_STALE_RECOVERY_TEST_DATABASE_URL:');
-    expect(workflow).toContain("JOB_STALE_RECOVERY_REQUIRE_DATABASE: '1'");
+    expect(workflow).toContain('BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL:');
     expect(workflow).toContain('BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL:');
-    expect(workflow).toContain(
-      "BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE: '1'"
-    );
     expect(readWorkflow('package.json')).toContain(
       'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts'
     );
@@ -78,6 +76,9 @@ describe('native PR workflow safety', () => {
     );
     expect(readWorkflow('package.json')).toContain(
       'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts'
+    );
+    expect(workflow).toContain(
+      'needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]'
     );
   });
 });

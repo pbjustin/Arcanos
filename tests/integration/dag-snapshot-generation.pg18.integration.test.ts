@@ -4,11 +4,12 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { Client } from 'pg';
+import { resolvePostgresTestDatabaseUrl } from './postgresTestDatabase.js';
 
 const TEST_DATABASE_ENV = 'DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL';
 const EXPECTED_DATABASE_NAME = 'arcanos_audit_pg18_20260727';
 const configuredConnectionString =
-  process.env[TEST_DATABASE_ENV]?.trim() ?? '';
+  resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
 
 interface DisposableDatabaseConfig {
   host: string;

@@ -159,14 +159,24 @@ CI runs the two-connection migration, schema-drift, parity, and uniqueness
 tests against an isolated PostgreSQL 18 service:
 
 ```bash
-LOCAL_AGENT_HARDENING_REQUIRE_DATABASE=1 \
+ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1 \
 LOCAL_AGENT_HARDENING_TEST_DATABASE_URL=postgresql://... \
 npm run test:local-agent-postgres
 ```
 
-The required flag prevents a missing CI database variable from turning the
-database suite into a silent skip. Never point this test command at production
-or a retained preview database.
+The shared required flag governs both required PostgreSQL package commands and
+all seven suites. `npm run test:postgres-fencing` additionally requires
+`JOB_CLAIM_FENCING_TEST_DATABASE_URL`,
+`DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`,
+`JOB_WORKER_BUDGET_TEST_DATABASE_URL`,
+`JOB_STALE_RECOVERY_TEST_DATABASE_URL`,
+`BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL`, and
+`BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`. With the sentinel set, a
+missing dedicated URL fails before `describe.skip`; without it, an absent URL
+retains the intentional local skip. No suite reads ambient `DATABASE_URL`.
+Every configured target must use credentials, an explicit loopback port, and
+the exact disposable database `arcanos_audit_pg18_20260727`. Never point either
+test command at production or a retained preview database.
 
 ### Generic queue claim-generation fencing migration
 
@@ -188,7 +198,8 @@ and named constraint before destructive DDL, then removes only that fencing
 contract. Validate this migration only against an explicitly created disposable
 PostgreSQL 18 database by setting
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`; the guarded test never reads an
-inherited `DATABASE_URL`.
+inherited `DATABASE_URL`. Required runs also set the shared
+`ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` sentinel described above.
 
 ### Generic worker stats-identity migration
 
@@ -238,9 +249,8 @@ bootstrap/readiness verification before releasing the remaining compatible
 writers. Prefix inference is intentionally unsupported because
 `JOB_WORKER_STATS_ID` can differ from `JOB_WORKER_ID`. The guarded PostgreSQL 18
 suite uses only `JOB_WORKER_BUDGET_TEST_DATABASE_URL` and refuses non-loopback or
-unexpected database targets. Required CI also sets
-`JOB_WORKER_BUDGET_REQUIRE_DATABASE=1`, which turns a missing database URL into
-a hard failure instead of a skipped database suite.
+unexpected database targets. The shared required-PostgreSQL sentinel turns a
+missing database URL into a hard failure instead of a skipped database suite.
 
 ### DAG snapshot-generation fencing migration
 
@@ -293,6 +303,8 @@ PostgreSQL 18 database selected through
 `DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`. The guarded integration test
 requires an explicit loopback host and port plus the exact disposable database
 name, rejects URL overrides, and never reads an inherited `DATABASE_URL`.
+Required runs also set the shared `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1`
+sentinel described above.
 
 ### Productivity core migration
 

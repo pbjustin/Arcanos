@@ -59,7 +59,10 @@ Release automation boundaries:
 - The exact candidate commit must already have a successful run of
   `.github/workflows/ci-cd.yml` named `CI/CD Pipeline`. The release workflow
   queries that evidence with read-only Actions access before running candidate
-  validation.
+  validation. That workflow's `All Checks Complete` job runs even after a
+  failed, cancelled, or skipped dependency and accepts only the exact direct
+  dependency set with every result equal to `success`; release validation does
+  not reinterpret a skipped PostgreSQL suite as successful evidence.
 - Full and patch releases run the same Node and Python production dependency
   policies before `npm ci --ignore-scripts`, followed by type-check, lint, build,
   Railway compatibility, and Jest gates. A missing, malformed, incomplete, or
@@ -103,6 +106,11 @@ npm run docs:links -- --local-only
 npm run validate:railway
 ```
 
+The broad local `npm test` and `npm run test:integration` commands intentionally
+leave disposable-database suites optional when no dedicated test URL is
+configured. A green run without the required PostgreSQL mode is not PostgreSQL
+engine, locking, migration, or atomicity evidence.
+
 The standalone runtime's real Redis admission suite is intentionally separate:
 
 ```bash
@@ -138,13 +146,27 @@ The required `PostgreSQL Fencing & Local Agent Concurrency` job provisions an
 isolated PostgreSQL 18 service with database
 `arcanos_audit_pg18_20260727`. It runs both
 `npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
-their dedicated test-only URL variables. The fencing command includes the
-Backstage storyline forward/runtime/rollback DDL, advisory-lock concurrency,
-mixed-version table-writer fencing, retention order, and legacy-containment
-suite. CI sets
-`BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE=1`, so a missing storyline test
-URL fails instead of silently skipping. Local runs must likewise use an explicit
-disposable database; neither command should inherit an ambient `DATABASE_URL`.
+seven dedicated test-only URL variables: local-agent hardening, job-claim
+fencing, DAG-snapshot fencing, worker-budget identity, stale-recovery batching,
+Backstage roster atomicity, and Backstage storyline atomicity. The fencing
+command includes the storyline forward/runtime/rollback DDL, advisory-lock
+concurrency, mixed-version table-writer fencing, retention order, and
+legacy-containment suite.
+
+CI sets the single sentinel `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` for both
+package commands. Every one of the seven suites resolves its own dedicated URL
+before it can select `describe.skip`; a missing or blank URL, or a nonempty
+sentinel value other than `1`, fails before database work. The URLs never fall
+back to ambient `DATABASE_URL`, and each suite is guarded to the exact
+credentialed loopback database. Local runs may omit the sentinel to retain an
+intentional no-database skip, but such a run is not required-suite evidence.
+
+The stable `All Checks Complete` context uses `if: always()` and
+`scripts/verify-required-ci-results.mjs` to inspect the exact direct `needs`
+set. Any failed, cancelled, skipped, missing, or unexpected dependency makes
+the aggregate fail. Its success means the tracked required CI jobs reported
+success; production promotion and live readiness remain separate rollout
+decisions.
 
 ## Deploy (Railway)
 Deployment workflows are repository-specific; verify current trigger and required

@@ -11,18 +11,12 @@ import {
   BACKSTAGE_STORYLINE_MAX_BYTES,
   BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
 } from '../../src/shared/backstage/backstageStoryline.js';
+import { resolvePostgresTestDatabaseUrl } from './postgresTestDatabase.js';
 
 const TEST_DATABASE_ENV = 'BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL';
-const REQUIRE_DATABASE_ENV = 'BACKSTAGE_STORYLINE_ATOMICITY_REQUIRE_DATABASE';
 const EXPECTED_DATABASE_NAME = 'arcanos_audit_pg18_20260727';
-const configuredConnectionString = process.env[TEST_DATABASE_ENV]?.trim() ?? '';
-const databaseRequired = process.env[REQUIRE_DATABASE_ENV]?.trim() === '1';
-
-if (databaseRequired && !configuredConnectionString) {
-  throw new Error(
-    `${TEST_DATABASE_ENV} is required when ${REQUIRE_DATABASE_ENV}=1.`
-  );
-}
+const configuredConnectionString =
+  resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
 
 const forwardMigration = readFileSync(
   join(process.cwd(), 'migrations', '20260805_backstage_storyline_serialized_data.sql'),

@@ -6,10 +6,12 @@ import { Client } from 'pg';
 import { applyBackstageRosterMutation } from '../../src/core/db/repositories/backstageRosterRepository.js';
 import { CONDITIONAL_MEMORY_UPSERT_SQL } from '../../src/core/db/repositories/memoryRepository.js';
 import { createVersionedMemoryEnvelope } from '../../src/services/safety/memoryEnvelope.js';
+import { resolvePostgresTestDatabaseUrl } from './postgresTestDatabase.js';
 
 const TEST_DATABASE_ENV = 'BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL';
 const EXPECTED_DATABASE_NAME = 'arcanos_audit_pg18_20260727';
-const configuredConnectionString = process.env[TEST_DATABASE_ENV]?.trim() ?? '';
+const configuredConnectionString =
+  resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
 
 interface DisposableDatabaseConfig {
   host: string;
