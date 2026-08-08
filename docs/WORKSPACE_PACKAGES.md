@@ -72,7 +72,7 @@ provides that service. Never point this suite at shared, developer, staging, or
 production Redis.
 
 ## Deploy (Railway)
-Railway builds from the root package and uses `scripts/start-railway-service.mjs`. Workspace package changes must be built into `dist/` before deploy.
+Railway builds from the root package and uses `scripts/start-railway-service-with-integrity.mjs`, which validates configured runtime-owned protected digests before invoking the role launcher. Workspace package changes must be built into `dist/` before deploy.
 
 ## Troubleshooting
 - Package import fails after a change: run `npm run build:packages` and then `npm run build`.

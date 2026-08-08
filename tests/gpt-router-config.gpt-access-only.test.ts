@@ -4,7 +4,8 @@ const ROUTING_OVERRIDE_KEYS = [
   'GPT_MODULE_MAP',
   'GPTID_ARCANOS_GAMING',
   'GPTID_ARCANOS_TUTOR',
-  'GPTID_BACKSTAGE_BOOKER'
+  'GPTID_BACKSTAGE_BOOKER',
+  'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG'
 ] as const;
 const originalRoutingOverrides = Object.fromEntries(
   ROUTING_OVERRIDE_KEYS.map((key) => [key, process.env[key]])
@@ -219,5 +220,24 @@ describe('GPT router GPT Access-only isolation', () => {
     await expect(
       initializeModuleRegistryMock.mock.results[1]?.value
     ).resolves.toBe(moduleRegistryMock);
+  });
+
+  it('fails closed when a pin would attest more public modules than registered', async () => {
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = 'a'.repeat(64);
+
+    await expect(loadGptModuleMap()).rejects.toThrow(
+      'Pinned GPT router configuration requires the complete public module catalog.'
+    );
+  });
+
+  it('fails closed on an invalid override whenever the router is pinned', async () => {
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = 'a'.repeat(64);
+    process.env.GPT_MODULE_MAP = JSON.stringify({
+      invalid: { route: 'missing', module: 'ARCANOS:MISSING' }
+    });
+
+    await expect(loadGptModuleMap()).rejects.toThrow(
+      'Pinned GPT router configuration contains an invalid override.'
+    );
   });
 });

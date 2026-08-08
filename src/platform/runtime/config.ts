@@ -4,11 +4,11 @@
  */
 
 import dotenv from 'dotenv';
-import path from 'path';
 import type { ReinforcementMode } from "@shared/types/reinforcement.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import { resolveRuntimeCorsConfig } from '@platform/runtime/corsConfig.js';
+import { resolveAssistantRegistryPath } from '@platform/runtime/protectedConfigCandidatePaths.js';
 import {
   normalizePublicProviderClientRateLimitMax,
   normalizePublicProviderRateLimitMax,
@@ -130,16 +130,7 @@ export const config = {
     quarantineCooldownMs: parseNumber(getEnv('SAFETY_QUARANTINE_COOLDOWN_MS'), 120000, 0),
     workerRestartThreshold: parseNumber(getEnv('SAFETY_WORKER_RESTART_THRESHOLD'), 5, 1),
     workerRestartWindowMs: parseNumber(getEnv('SAFETY_WORKER_RESTART_WINDOW_MS'), 300000, 1),
-    failClosedIntegrity: getEnv('SAFETY_FAIL_CLOSED_INTEGRITY') !== 'false',
-    expectedHashes: {
-      dispatchPatterns: getEnv('SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS'),
-      prompts: getEnv('SAFETY_EXPECTED_HASH_PROMPTS'),
-      fallbackMessages: getEnv('SAFETY_EXPECTED_HASH_FALLBACK_MESSAGES'),
-      gptRouterConfig: getEnv('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG'),
-      assistantRegistry: getEnv('SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY'),
-      daemonTokens: getEnv('SAFETY_EXPECTED_HASH_DAEMON_TOKENS'),
-      protectedJson: getEnv('SAFETY_EXPECTED_HASH_PROTECTED_JSON')
-    }
+    failClosedIntegrity: getEnv('SAFETY_FAIL_CLOSED_INTEGRITY') !== 'false'
   },
 
   // Logging configuration
@@ -159,8 +150,7 @@ export const config = {
   },
 
   assistantSync: {
-    registryPath:
-      getEnv('ASSISTANT_REGISTRY_PATH') || path.join(process.cwd(), 'config', 'assistants.json')
+    registryPath: resolveAssistantRegistryPath(getEnv('ASSISTANT_REGISTRY_PATH'))
   },
 
   reinforcement: {

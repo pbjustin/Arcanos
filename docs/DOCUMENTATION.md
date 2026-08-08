@@ -80,7 +80,7 @@ generated indexes as substitutes for correcting source organization.
 `npm run reindex:check` verifies all four artifacts without rewriting them, and
 the required `npm run docs:check` workflow includes that drift check.
 
-## Historical evidence
+## Current audit dashboards and historical evidence
 
 Canonical and companion guides describe current supported behavior. Test
 results, approval records, proposals, incident timelines, point-in-time
@@ -89,6 +89,14 @@ were produced during work on a canonical guide. Put the durable conclusion or
 current procedure in the canonical guide and keep the supporting snapshot
 under [audits/](audits/). Do not turn a maintained guide into a chronological
 evidence log.
+
+A dated audit directory may contain a clearly labeled current dashboard,
+finding register, or delivery ledger beside captured historical evidence. A
+current audit artifact remains advisory rather than canonical product or
+operational documentation: it must identify its authority, lifecycle, update
+discipline, and any immutable companion evidence. Update only those maintained
+surfaces and sections; never rewrite a captured result to make the current
+dashboard look cleaner.
 
 Use this layout for new tracked documentation evidence sets:
 
@@ -101,10 +109,10 @@ docs/audits/<topic>/YYYY-MM-DD/<optional-scope>/
   not every filename.
 - For incidents, use `docs/audits/incidents/YYYY-MM-DD/<incident-slug>/`.
 - A single small artifact may live directly in the dated directory. Give a
-  multi-file evidence set a `README.md` that identifies its historical
-  lifecycle, purpose, capture boundary, validation status, relevant canonical
-  guide, and whether any included action was merely proposed or actually
-  authorized and executed.
+  multi-file evidence set a `README.md` or clearly indexed dashboard entrypoint
+  that identifies each artifact's current or historical lifecycle, purpose,
+  capture boundary, validation status, relevant canonical guide, and whether
+  any included action was merely proposed or actually authorized and executed.
 - Keep machine-readable results in stable formats such as JSON or CSV and
   redact credentials, tokens, personal data, and sensitive payloads before
   tracking them.
@@ -118,7 +126,10 @@ match this convention. Apply the layout to new evidence sets, and normalize an
 old set only when a scoped change already requires moving it and all inbound
 references can be updated. Tracked historical evidence should otherwise remain
 immutable; add a new dated artifact or an explicitly identified correction
-instead of silently rewriting a captured result.
+instead of silently rewriting a captured result. Maintained dashboards,
+registers, and ledgers may be reconciled only under their explicit update
+discipline and must continue to distinguish merged source, deployment, and
+production verification.
 
 Untracked audit artifacts belong to their creator until explicitly brought into
 scope. Do not rewrite or delete them as incidental documentation cleanup.
@@ -169,9 +180,12 @@ The read-only [Documentation Link Audit](../.github/workflows/documentation-link
 runs every Monday at 13:17 UTC and on manual dispatch. It checks external links
 with bounded concurrency, redirects, retries, and timeouts, then uploads a
 redacted JSON report. Definitive broken links fail the scheduled run;
-access-restricted or transient network results remain warnings. Historical
-evidence under `docs/audits/` is excluded because it is an immutable snapshot,
-not maintained navigation.
+access-restricted or transient network results remain warnings. Dated material
+under `docs/audits/` is excluded from scheduled external-link navigation checks
+because it is evidence rather than primary maintained navigation, even when a
+clearly labeled dashboard there is current. `npm run docs:check` still verifies
+local Markdown targets in tracked audit material; run it whenever a maintained
+audit dashboard, register, ledger, or index entry changes.
 
 Use real Markdown links for navigation. Backticked paths are appropriate for
 copyable source locations and commands, but they are not substitutes for links

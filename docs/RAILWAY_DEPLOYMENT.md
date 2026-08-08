@@ -28,6 +28,38 @@ proof is the required PostgreSQL 18 CI job under
 `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1`, followed by the fail-closed
 `All Checks Complete` aggregate.
 
+If any of the six runtime-owned `SAFETY_EXPECTED_HASH_*` pins is set on a
+target service, the protected digest comparison is a required pre-cutover
+gate. The tracked startup wrapper is authoritative because it evaluates the
+already-built artifact inside the resolved service environment after real
+candidate files are mounted. For a bounded manual readback inside that same
+identified runtime, use
+`npm run integrity:protected-digest:check:compiled`; do not run the self-building
+source-workspace entrypoint in a pruned or live candidate runtime.
+Runtime-owned candidates derive their exact application path and reject source
+substitution; only the reserved `protected_json_file` manifest entry accepts an
+explicit mapped source in a complete manual comparison. That tooling-only
+entry has no runtime caller and is deliberately outside the automatic startup
+gate; setting it requires a separate manual `--check-pinned` comparison and
+does not create runtime enforcement. Proceed only when the
+command exits zero and emits
+`preCutoverComplete: true`. The digest evaluation never rotates pins or runtime
+trust state. A GitHub checkout, ordinary CI, raw file checksum, or comparison
+against copied sample files cannot attest provider variables or live volume
+contents. See [Protected configuration digests](CONFIGURATION.md#protected-configuration-digests)
+for the complete source and failure contract.
+
+The tracked normal start command enforces the same comparison through
+`scripts/start-railway-service-with-integrity.mjs` after service volumes are
+mounted and before the web/worker role launcher runs. Its conditional
+`--precutover` mode evaluates the six runtime-owned entries and skips only when
+none of those pins is configured. Do not move this to a
+Railway pre-deploy command: pre-deploy containers receive variables but do not
+mount service volumes, so they cannot attest volume-backed candidates. Native
+PR previews retain their sealed direct-launcher override. Automatic gate output
+omits candidate and expected digests from service logs while preserving fixed
+per-entry statuses, error codes, and aggregate counts.
+
 Railway project setup is an operator-only remote configuration change:
 1. Create/select a Railway project.
 2. Connect this GitHub repository.
@@ -38,14 +70,15 @@ Apply the operational approval gate below before changing project or repository 
 ## Configuration
 Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
-- Start: `node scripts/start-railway-service.mjs`
+- Start: `node scripts/start-railway-service-with-integrity.mjs`
 - Deploy activation path: `/readyz`
 - Health check timeout: `300`
 - SIGTERM-to-SIGKILL drain ceiling: `60` seconds
 - Restart policy: `ON_FAILURE` (`restartPolicyMaxRetries=10`)
 
 Launcher behavior:
-- `node scripts/start-railway-service.mjs` is the canonical normal Railway start command.
+- `node scripts/start-railway-service-with-integrity.mjs` is the canonical normal Railway start command. It completes the read-only configured-pin gate before invoking the role launcher.
+- `node scripts/start-railway-service.mjs` remains the canonical role launcher behind that gate.
 - Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-app-safe-v1` override. The launcher accepts only the exact `Arcanos-pr-<positive integer>` or `pr-<six hexadecimal characters>-<positive integer>` environment names and validates Railway project, environment, service, deployment, source-commit, role, and public-domain identity before importing application code.
 - The native PR web role starts `dist/start-native-pr-preview.js` directly, without registering runtime loader hooks, and gives it a nine-name child-environment allowlist containing only the version marker, derived PR/commit identity, role, listener, production mode, disabled-worker flag, and UTC timezone. It imports the real dependency-injected generic jobs router with immutable synthetic fixtures, the central `src/shared/researchRequest.ts` validator and storage-component helper, the real Research abort-drain wrapper with its narrow request-abort runtime, the contained Backstage storyline component helpers, and the config-free core used by the production MCP pre-parser. It does not import the normal Research, Backstage, or MCP route, the configured MCP wrapper, confirmation middleware, hub, provider, fetcher, database connection, memory subsystem, or external persistence/effects integration. Only fixed health/readiness, synthetic status/result/cancellation cases, and the exact `POST /research/contract`, `POST /backstage/storyline-contract`, and `POST /mcp/body-cap-contract` fixture selectors are reachable; queries, content encodings, external credential carriers, streams, and every other route fail before parsing. Requests contain only `{ "fixture": "<sealed-name>" }`, never raw URLs, payloads, or credentials. Ten server-owned Research fixtures exercise exact and over-limit non-BMP topic, URL count, URL item, and aggregate boundaries in JavaScript `String.length` units, a one-read normalized URL descriptor snapshot isolated from later source mutation, and the deterministic ASCII storage component capped at 97 UTF-8 bytes. The eleventh `workflow-cancellation-drain` fixture executes one real wrapper-owned timeout and three deterministic parent-abort scenarios across synthetic DNS, fetch, model, and persistence seams. It observes one active operation at abort, verifies that operation reaches zero before outward settlement, proves later seams never start and the same signal/deadline reaches every admitted seam, and detects post-settlement mutation. The live probe also rejects a response before the bounded 300 ms aggregate drain-proof window. Parent abort is disconnect-equivalent component evidence, not a literal TCP-disconnect test. The descriptor probe is constructed inside the server-owned fixture and does not claim that caller JSON can carry accessors or property descriptors. The storyline `lifecycle-exact` fixture calls the real validator, response selector, and repository transaction helper through a fresh per-request in-memory query adapter; two mutations prove the exact 16,384-byte beat boundary, 100-beat retention, fresh-read response, chronological newest-25 selection, and accepted-beat inclusion. The `payload-over` fixture proves a 16,385-byte beat is rejected before the repository helper. The MCP `effective-limits` fixture executes six server-owned, chunked, no-`Content-Length` JSON streams against the production parser core: exact and one byte over the hard 1 MiB maximum, a downward 512 KiB MCP setting, and a stricter 256 KiB global JSON setting. Exact bodies reach the synthetic downstream sentinel once; over-limit bodies return the fixed 413 `MCP_REQUEST_TOO_LARGE` response with `no-store`/`no-cache` headers and never reach that sentinel. These are component E2Es: the storyline surface does not reach PostgreSQL or prove SQL-engine locking or atomicity, for which the PostgreSQL 18 CI suite remains authoritative; the MCP surface is not a literal oversized public upload and does not prove normal `/mcp` composition, authentication, compression, or slow-upload behavior, for which focused assembled-app tests remain authoritative. No fixture uses credentials, providers, memory, confirmation, or protected effects. Successful Research validation is reported only as eligible for confirmation; confirmation is never attempted and no effects boundary is crossed. The import graph is build-gated against database connections, unreviewed database modules, provider, worker, metrics, confirmation, broad route registry, and other production side-effect modules. Its fail-closed syntax gate also rejects ambient capability aliases, dynamic/rest namespace access, listener aliases, unreviewed external bindings, mutable `process` state (including scalar-member writes) and whole-object escapes, unreviewed process effects, sensitive-helper extraction/export/reassignment, pre-validation local runtime import/re-export edges, and launcher declaration or spawn-spec drift. Whole-process-object calls are tied to unique declarations, containing functions, exact counts, and full-call AST digests; direct mutable-object receiver calls are conservative, the child `Object.keys` receiver is identity-constrained, the launcher-relative repository root is immutable, and the normal-runtime environment spread plus critical resolver/environment/listener/output helpers remain digest-pinned reviewed exceptions. The complete launcher and contained-child entry files, the central Research helper, the exact request-abort runtime and Research drain wrapper, the exact storyline shared/repository component seam, and the config-free production MCP pre-parser core are additionally pinned by comment/format-normalized semantic digests: any semantic edit anywhere in those reviewed files requires a digest and focused-test update, while comment-only and format-only edits do not. A tracked checker-only resolver targets the reviewed request-abort source without requiring ignored `dist` output. The gate pins the public package export and build path, then a content-pinned post-alias check verifies the emitted preview imports and bindings resolve to `packages/arcanos-runtime/dist/requestAbort.js` and its comment-normalized semantic digest matches the reviewed compiled runtime. The Research helper admits only its exact `createHash` binding and pure `Reflect.ownKeys(descriptors)` read.
 - The native PR worker role remains the passive health-only server. The historical `--pr-preview-safe` flag remains available as an explicit passive fallback for both roles.
@@ -103,7 +136,7 @@ Environment variables:
 | `NODE_ENV` | Railway-managed | Set to `production` by config. |
 | `ALLOWED_ORIGINS` | Optional | Comma-separated exact HTTP(S) browser origins permitted to call the web service. Inventory every browser API and SSE caller before rollout. Omit to disable cross-origin browser access; same-origin and server-to-server requests remain available. |
 | `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
-| `RUN_WORKERS` | Launcher-managed | Set by `scripts/start-railway-service.mjs` from `ARCANOS_PROCESS_KIND`. |
+| `RUN_WORKERS` | Launcher-managed | Set by the role launcher from `ARCANOS_PROCESS_KIND` after the protected-digest gate passes. |
 | `DATABASE_URL` or complete `PG*` set | Required for production web activation and async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. The complete fallback is `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE`. |
 | `REDIS_URL`, `REDISHOST`, or `REDIS_HOST` | Required for production web activation | Configure the shared Redis lifecycle. The URL is preferred; either host name enables the runtime-supported discrete form. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_MAX`, `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX`, `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS` | Recommended explicit production policy | Deployment ceiling (default `100`), lower caller/cohort ceiling (default `20`), and shared window (default `900000` ms). A compatibility global ceiling of `1` uses a caller ceiling of `1`; otherwise the caller ceiling must be strictly lower. Production atomically stores both counters in Redis. |

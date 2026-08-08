@@ -14,7 +14,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
       buildCommand: 'npm run build',
     },
     deploy: {
-      startCommand: 'node scripts/start-railway-service.mjs',
+      startCommand: 'node scripts/start-railway-service-with-integrity.mjs',
       healthcheckPath: '/readyz',
       healthcheckTimeout: 300,
       drainingSeconds: 60,
@@ -76,7 +76,7 @@ describe('validate-railway-compatibility', () => {
     const validationErrors = validateConfig(
       buildMinimalRailwayConfig({
         deploy: {
-          startCommand: 'node scripts/start-railway-service.mjs',
+          startCommand: 'node scripts/start-railway-service-with-integrity.mjs',
           healthcheckPath: '/readyz',
           healthcheckTimeout: 300,
           drainingSeconds: 60,
@@ -176,8 +176,12 @@ describe('validate-railway-compatibility', () => {
     }
   });
 
-  it('requires production and PR deploy overrides to inherit the root readiness and drain contract', () => {
+  it('requires non-PR deploys to inherit root deploy fields and the PR override to inherit drain', () => {
     for (const [field, values] of [
+      ['startCommand', [
+        'node scripts/start-railway-service-with-integrity.mjs',
+        'node scripts/start-railway-service.mjs',
+      ]],
       ['healthcheckPath', ['/readyz', '/health']],
       ['healthcheckTimeout', [300, 1]],
       ['drainingSeconds', [60, 0]],
@@ -273,7 +277,7 @@ describe('validate-railway-compatibility', () => {
         pr: {
           variables: { FORCE_MOCK: 'true' },
           deploy: {
-            startCommand: 'node scripts/start-railway-service.mjs',
+            startCommand: 'node scripts/start-railway-service-with-integrity.mjs',
             preDeployCommand: 'node scripts/action-plan-execution-migration.mjs --apply',
             healthcheckPath: '/healthz',
             cronSchedule: '*/5 * * * *',
@@ -327,7 +331,9 @@ describe('validate-railway-compatibility', () => {
     expect(
       validateDockerfile('CMD ["sh", "-c", "NODE_OPTIONS=\'--max-old-space-size=7168\' npm start"]')
     ).toEqual([
-      expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
+      expect.stringContaining(
+        'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]'
+      ),
       expect.stringContaining('COPY prisma/ ./prisma/'),
       expect.stringContaining('COPY vendor/ ./vendor/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
@@ -348,7 +354,7 @@ describe('validate-railway-compatibility', () => {
         'RUN npm install --include=dev --no-audit --no-fund && \\',
         '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
         '    npm run build',
-        'CMD ["node", "scripts/start-railway-service.mjs"]',
+        'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]',
       ].join('\n'))
     ).toEqual([]);
   });

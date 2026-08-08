@@ -1,18 +1,24 @@
+import { getEnv } from '@platform/runtime/env.js';
+import { INTEGRITY_MANIFEST } from '@platform/runtime/integrityManifest.js';
+import {
+  buildGptModuleMapCandidate,
+  type GptModuleEntry
+} from '@platform/runtime/gptRouterCandidate.js';
+import {
+  MODULE_CATALOG,
+  isPublicGptModule
+} from '@services/moduleCatalog.js';
+import { assertProtectedConfigIntegrity } from '@services/safety/configIntegrity.js';
 import {
   initializeModuleRegistry,
   type RegisteredModule
 } from '@services/moduleRegistry.js';
-import {
-  isProtectedModuleIdentifier,
-  isPublicGptModule
-} from '@services/moduleCatalog.js';
-import { getEnv } from "@platform/runtime/env.js";
-import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
-export interface GptModuleEntry {
-  route: string;
-  module: string;
-}
+export {
+  buildGptModuleMapCandidate,
+  type GptModuleEntry,
+  type GptModuleMapCandidateOptions
+} from '@platform/runtime/gptRouterCandidate.js';
 
 export interface GptRegistryValidation {
   requiredGptIds: string[];
@@ -77,137 +83,68 @@ export function validateGptRegistry(
   };
 }
 
-/**
- * Purpose: Register both raw and normalized GPT ID bindings in the lookup map.
- * Inputs/Outputs: Accepts mutable map + GPT ID + module entry; mutates map in-place.
- * Edge cases: Ignores empty/whitespace GPT IDs.
- */
-function addBinding(
-  map: Record<string, GptModuleEntry>,
-  gptId: string,
-  entry: GptModuleEntry
+function hasImmutableGptRouterPin(): boolean {
+  const entry = INTEGRITY_MANIFEST.gpt_router_config;
+  return Boolean(
+    getEnv(entry.expectedHashEnv)?.trim()
+    || entry.builtInExpectedHash?.trim()
+  );
+}
+
+function assertPinnedPublicCatalogIsRegistered(
+  registeredModules: readonly RegisteredModule[]
 ): void {
-  const raw = gptId.trim();
-  //audit Assumption: blank GPT IDs are invalid routing keys; failure risk: accidental empty map key collisions; expected invariant: only non-empty IDs are stored; handling strategy: ignore blank IDs.
-  if (!raw || isProtectedModuleIdentifier(raw)) {
+  if (!hasImmutableGptRouterPin()) {
     return;
   }
-  const lower = raw.toLowerCase();
-  map[raw] = { ...entry };
-  map[lower] = { ...entry };
-}
 
-function buildDefaultBindings(
-  modules: readonly RegisteredModule[]
-): Record<string, GptModuleEntry> {
-  const defaults: Record<string, GptModuleEntry> = {};
+  const expectedIdentities = MODULE_CATALOG
+    .filter(isPublicGptModule)
+    .map(({ route, name }) => `${route}\u0000${name}`)
+    .sort((left, right) => left.localeCompare(right));
+  const registeredIdentities = registeredModules
+    .filter(({ definition }) => isPublicGptModule(definition))
+    .map(({ route, definition }) => `${route}\u0000${definition.name}`)
+    .sort((left, right) => left.localeCompare(right));
 
-  for (const { route, definition } of modules) {
-    if (!isPublicGptModule(definition)) {
-      continue;
-    }
-    const entry: GptModuleEntry = { route, module: definition.name };
-    const ids = Array.isArray(definition.gptIds) && definition.gptIds.length > 0
-      ? definition.gptIds
-      : [route];
-
-    const normalizedIds = new Set<string>(ids.map((id: string) => id.trim()).filter(Boolean));
-    normalizedIds.add(route);
-
-    for (const gptId of normalizedIds) {
-      addBinding(defaults, gptId, entry);
-    }
+  if (
+    expectedIdentities.length !== registeredIdentities.length
+    || expectedIdentities.some(
+      (identity, index) => identity !== registeredIdentities[index]
+    )
+  ) {
+    throw new Error(
+      'Pinned GPT router configuration requires the complete public module catalog.'
+    );
   }
-
-  return defaults;
 }
 
-/**
- * Builds a mapping of GPT IDs to module routes and names.
- *
- * Builds default bindings from the definitions registered in the explicit
- * `src/services/moduleCatalog.ts` inventory. Cataloged definitions that declare
- * `gptIds` are routable unless they are marked GPT Access-only. The
- * `GPT_MODULE_MAP` environment variable can still override or extend the
- * mapping by providing a JSON object where each key is a GPT ID and the value
- * is an object with the exact registered `route` and `module` pair. It cannot
- * target an absent, mismatched, or protected catalog module. Example:
- *
- * ```bash
- * GPT_MODULE_MAP='{"gpt-1":{"route":"tutor","module":"ARCANOS:TUTOR"}}'
- * ```
- *
- * For backwards compatibility, legacy `GPTID_*` environment variables are also
- * supported. These mappings can be removed once all deployments adopt the new
- * configuration format.
- */
 export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
-  const loadedModules = (
+  const registeredModules = (
     await initializeModuleRegistry()
   ).listRegisteredModules();
-  const defaults = buildDefaultBindings(loadedModules);
-
-  const map: Record<string, GptModuleEntry> = { ...defaults };
-  const moduleRoutesByName = new Map<string, string>();
-  const publicModuleRoutesByName = new Map<string, string>();
-  for (const { route, definition } of loadedModules) {
-    moduleRoutesByName.set(definition.name, route);
-    if (isPublicGptModule(definition)) {
-      publicModuleRoutesByName.set(definition.name, route);
-    }
-  }
-
-  // Use config layer for env access (adapter boundary pattern)
-  const raw = getEnv('GPT_MODULE_MAP');
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('GPT_MODULE_MAP must be a JSON object.');
-      }
-      for (const [gptId, candidate] of Object.entries(parsed)) {
-        if (
-          !candidate
-          || typeof candidate !== 'object'
-          || Array.isArray(candidate)
-        ) {
-          continue;
+  const map = await buildGptModuleMapCandidate({
+    availableModules: registeredModules.map(({ route, definition }) => ({
+      route,
+      name: definition.name,
+      gptIds: definition.gptIds,
+      gptAccessOnly: definition.gptAccessOnly
+    }))
+  });
+  const immutablePinConfigured = hasImmutableGptRouterPin();
+  const integrityCandidate = await buildGptModuleMapCandidate({
+    onInvalidOverride: immutablePinConfigured
+      ? () => {
+          throw new Error(
+            'Pinned GPT router configuration contains an invalid override.'
+          );
         }
-        const entry = candidate as Record<string, unknown>;
-        if (
-          typeof entry.route === 'string'
-          && typeof entry.module === 'string'
-          && !isProtectedModuleIdentifier(entry.module)
-          && !isProtectedModuleIdentifier(entry.route)
-          && publicModuleRoutesByName.get(entry.module) === entry.route
-        ) {
-          addBinding(map, gptId, {
-            route: entry.route,
-            module: entry.module
-          });
-        }
-      }
-    } catch {
-      console.warn('Failed to parse GPT_MODULE_MAP');
-    }
-  }
-
-  const legacyEntries: Array<[string | undefined, string]> = [
-    [getEnv('GPTID_BACKSTAGE_BOOKER'), 'BACKSTAGE:BOOKER'],
-    [getEnv('GPTID_ARCANOS_GAMING'), 'ARCANOS:GAMING'],
-    [getEnv('GPTID_ARCANOS_TUTOR'), 'ARCANOS:TUTOR'],
-  ];
-
-  for (const [id, moduleName] of legacyEntries) {
-    if (!id) continue;
-    const route = moduleRoutesByName.get(moduleName);
-    if (!route) continue;
-    addBinding(map, id, { route, module: moduleName });
-  }
-
-  assertProtectedConfigIntegrity('gpt_router_config', map, {
+      : () => undefined
+  });
+  assertProtectedConfigIntegrity('gpt_router_config', integrityCandidate, {
     source: 'src/platform/runtime/gptRouterConfig.ts'
   });
+  assertPinnedPublicCatalogIsRegistered(registeredModules);
   return map;
 }
 
