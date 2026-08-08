@@ -7,11 +7,17 @@ import path from 'path';
 import { config } from '@platform/runtime/config.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
 import {
+  normalizeAssistantName,
+  validateAssistantRegistryCandidate
+} from '@platform/runtime/assistantRegistryCandidate.js';
+import {
   assertProtectedConfigIntegrity,
   prepareAssistantRegistryIntegrityUpdate,
 } from '@services/safety/configIntegrity.js';
 
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
+
+export { normalizeAssistantName };
 
 export interface AssistantInfo {
   id: string;
@@ -50,14 +56,6 @@ const ASSISTANT_REGISTRY_MAX_BYTES = 16 * 1024 * 1024;
 const REGISTRY_PATH_MAX_LENGTH = 4_096;
 const ASSISTANT_TOOLS_MAX_DEPTH = 32;
 const ASSISTANT_TOOLS_MAX_NODES = 4_096;
-const ASSISTANT_RECORD_FIELDS = new Set([
-  'id',
-  'instructions',
-  'model',
-  'name',
-  'normalizedName',
-  'tools',
-]);
 
 let liveRegistry: AssistantRegistry | null = null;
 let registryOperationTail: Promise<void> = Promise.resolve();
@@ -464,109 +462,21 @@ function isJsonSafeAssistantTools(value: unknown): boolean {
 function validateLoadedAssistantRegistry(
   value: unknown
 ): AssistantRegistry {
-  if (!isRecord(value)) {
+  try {
+    const validatedEntries = validateAssistantRegistryCandidate(value).map(
+      ([key, record]): [string, AssistantRecord] => [
+        key,
+        {
+          ...record,
+          tools: record.tools as
+            OpenAI.Beta.Assistants.Assistant['tools'] | null
+        }
+      ]
+    );
+    return createRegistry(validatedEntries);
+  } catch {
     throw new AssistantRegistryUnavailableError();
   }
-  const rawEntries = Object.entries(value);
-  if (rawEntries.length > ASSISTANT_LIST_MAX_RECORDS) {
-    throw new AssistantRegistryUnavailableError();
-  }
-
-  const assistantIds = new Set<string>();
-  const validatedEntries: Array<[string, AssistantRecord]> = [];
-  for (const [key, rawRecord] of rawEntries) {
-    if (
-      key.length === 0
-      || key.length > ASSISTANT_NAME_MAX_LENGTH
-      || /[\u0000-\u001F\u007F]/u.test(key)
-    ) {
-      throw new AssistantRegistryUnavailableError();
-    }
-    if (
-      !isRecord(rawRecord)
-      || Object.keys(rawRecord).some(
-        (field) => !ASSISTANT_RECORD_FIELDS.has(field)
-      )
-    ) {
-      throw new AssistantRegistryUnavailableError();
-    }
-
-    let id: string | null;
-    let name: string | null;
-    let instructions: string | null;
-    let model: string | null;
-    try {
-      id = readBoundedString(
-        rawRecord.id,
-        ASSISTANT_ID_MAX_LENGTH,
-        false
-      );
-      name = readBoundedString(
-        rawRecord.name,
-        ASSISTANT_NAME_MAX_LENGTH,
-        false
-      );
-      instructions = rawRecord.instructions === null
-        ? null
-        : readBoundedString(
-          rawRecord.instructions,
-          ASSISTANT_INSTRUCTIONS_MAX_LENGTH,
-          false,
-          true
-        );
-      model = rawRecord.model === undefined || rawRecord.model === null
-        ? null
-        : readBoundedString(
-          rawRecord.model,
-          ASSISTANT_MODEL_MAX_LENGTH,
-          false
-        );
-    } catch {
-      throw new AssistantRegistryUnavailableError();
-    }
-    if (
-      typeof rawRecord.normalizedName !== 'string'
-      || rawRecord.normalizedName !== key
-      || normalizeAssistantName(name) !== key
-      || assistantIds.has(id as string)
-      || (
-        rawRecord.tools !== null
-        && !Array.isArray(rawRecord.tools)
-      )
-      || !isJsonSafeAssistantTools(rawRecord.tools)
-    ) {
-      throw new AssistantRegistryUnavailableError();
-    }
-
-    let toolsJson: string;
-    try {
-      toolsJson = JSON.stringify(rawRecord.tools);
-    } catch {
-      throw new AssistantRegistryUnavailableError();
-    }
-    if (Buffer.byteLength(toolsJson, 'utf8') > ASSISTANT_TOOLS_MAX_BYTES) {
-      throw new AssistantRegistryUnavailableError();
-    }
-    const record: AssistantRecord = {
-      id: id as string,
-      name,
-      instructions,
-      tools: JSON.parse(toolsJson) as
-        OpenAI.Beta.Assistants.Assistant['tools'] | null,
-      model,
-      normalizedName: key,
-    };
-    if (
-      Buffer.byteLength(JSON.stringify(record), 'utf8')
-      > ASSISTANT_RECORD_MAX_BYTES
-    ) {
-      throw new AssistantRegistryUnavailableError();
-    }
-    assistantIds.add(record.id);
-    validatedEntries.push([key, record]);
-  }
-  validatedEntries.sort(([left], [right]) => compareStrings(left, right));
-  return createRegistry(validatedEntries);
 }
 
 async function readAssistantRegistryFromDisk(
@@ -786,26 +696,6 @@ async function getAllAssistantsForConfirmedSync(): Promise<AssistantInfo[]> {
   }
 
   throw new AssistantRegistrySyncError();
-}
-
-export function normalizeAssistantName(
-  name: string | null | undefined
-): string | null {
-  if (!name) {
-    return null;
-  }
-  const sanitized = name
-    .normalize('NFKD')
-    .replace(/[^a-zA-Z0-9_\s]/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
-
-  if (!sanitized) {
-    return null;
-  }
-
-  const normalized = sanitized.replace(/\s+/gu, '_').toUpperCase();
-  return normalized.length <= ASSISTANT_NAME_MAX_LENGTH ? normalized : null;
 }
 
 function mapAssistantsToRegistry(

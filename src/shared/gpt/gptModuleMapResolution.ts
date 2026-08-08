@@ -88,7 +88,12 @@ export function resolveGptModuleMapEntry<TEntry extends GptModuleMapEntry>(
   }
 
   const normalizedIncomingGptId = normalizeGptId(validatedIncomingGptId);
-  const normalizedEntry = gptModuleMap[normalizedIncomingGptId];
+  const normalizedEntry = Object.prototype.hasOwnProperty.call(
+    gptModuleMap,
+    normalizedIncomingGptId
+  )
+    ? gptModuleMap[normalizedIncomingGptId]
+    : undefined;
   if (normalizedEntry) {
     return {
       entry: normalizedEntry,

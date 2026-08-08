@@ -39,7 +39,7 @@ cp .env.example .env
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
 | `ARCANOS_GPT_ACCESS_PRINCIPAL_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled principal for capabilities such as `ARCANOS:PRODUCTIVITY`; never source it from action payloads. |
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
-| `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
+| `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using the normal protected-digest startup wrapper and role launcher; omit for direct local `npm start`. |
 | `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
 | `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
 | `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
@@ -423,6 +423,108 @@ replacement rather than deletion. Older files are not proactively removed and
 may require a separately approved operator rotation if they predate metadata-
 only persistence.
 
+### Protected configuration digests
+
+Six `SAFETY_EXPECTED_HASH_*` variables are optional immutable runtime-owned
+deployment pins over canonical semantic JSON. The seventh manifest entry,
+`SAFETY_EXPECTED_HASH_PROTECTED_JSON`, is reserved for explicit tooling and has
+no maintained runtime caller. These are not raw file SHA-256 values:
+formatting and ordinary object-key insertion order do not change the digest,
+while array order and semantic values do. The established v1 serializer sorts
+keys with JavaScript `localeCompare` and does not Unicode-normalize them, so
+canonically equivalent key spellings are not interchangeable. Runtime
+enforcement and the operator command share the versioned
+`arcanos-semantic-json-v1` serializer and SHA-256 implementation.
+`DISPATCH_BINDINGS_VERSION` is a separate bindings-only protocol version and
+must not be used as the protected dispatch digest.
+
+The operator-facing npm command first runs the repository build so stale
+compiled code cannot attest a newer checkout. That build writes ordinary
+compiled/package artifacts; the subsequent digest evaluation is read-only and
+never writes candidates, pins, trust state, or provider state:
+
+```bash
+# Generate one candidate digest.
+npm run integrity:protected-digest -- --id dispatch_patterns
+
+# Compare one candidate with an explicit digest or its ambient pin.
+npm run integrity:protected-digest -- \
+  --id prompts_config \
+  --check \
+  --expected-hash <lowercase-64-character-sha256>
+
+# Required immediately before cutover when any runtime-owned pin is set.
+npm run integrity:protected-digest:check
+```
+
+Those self-building commands are for source workspaces. In an identified,
+already-built runtime image, use
+`npm run integrity:protected-digest:check:compiled` to compare that deployed
+artifact without attempting another build. Do not use the compiled-only entry
+in a source workspace unless the artifact's exact build identity has already
+been established.
+
+For individual candidate generation or comparison, `--source <path>` can select
+an offline file. Complete `--check-pinned` comparisons reject source overrides
+for runtime-owned entries: they derive the same search path or path variable as
+the runtime so copied known-good bytes cannot attest a different live file.
+Only the tooling-only `protected_json_file` accepts
+`--source protected_json_file=<path>` in complete manual comparisons.
+Because that reserved entry has no runtime-owned source or maintained caller,
+the automatic `--precutover` startup gate deliberately excludes it. A generic
+pin must be checked manually with `--check-pinned` and its explicit source; it
+does not become runtime-enforced merely by being set.
+
+`--check-pinned` derives the pin inventory from the runtime integrity manifest,
+evaluates every pin explicitly present in the effective environment, and emits
+one complete deterministic JSON report. It exits nonzero for no explicit pins,
+an invalid pin, a missing/unsupported/changing candidate, unsafe or oversized
+file input, invalid JSON/schema, or any mismatch. A successful pre-cutover gate
+has exit code zero and `preCutoverComplete: true`; unpinned manifest entries
+remain explicit in the report. Do not treat a sparse hand-written pin list as
+the live environment. Manual generation/comparison reports include digest
+values for operator use. Automatic `--precutover` reports retain only each
+entry's identifier, status, fixed error code, and aggregate counts so service
+startup logs do not publish verifier fingerprints.
+
+Run the gate against the exact candidate revision, environment variables, and
+mounted files immediately before cutover. Ordinary CI can prove tooling and
+tracked-candidate behavior, but it cannot attest provider-owned variables or
+volume contents. File-backed candidates use bounded, schema-validated reads
+that reject symlinks and detect source replacement; their paths/content are
+never included in output. The command does not write candidates, pins,
+process-owned trusted hashes,
+quarantine/audit state, provider state, databases, or network resources.
+
+Normal Railway web and worker startup uses
+`scripts/start-railway-service-with-integrity.mjs`. After Railway mounts the
+runtime filesystem, that wrapper runs the already-built protected-digest
+command directly in `--precutover` mode before the canonical role launcher. It
+skips candidate reads only when no runtime-owned pin is configured; any invalid,
+missing, or mismatched runtime-owned pinned candidate prevents startup. The
+tooling-only generic pin is outside this automatic gate. Native PR previews use
+the same wrapper and then forward the exact `--pr-preview-app-safe-v1` argument
+to the sealed role launcher. The digest gate runs read-only in the parent
+service environment before that launcher validates preview identity and creates
+the credential-empty contained child. Railway pre-deploy commands are not a
+substitute because Railway does not mount service volumes in the pre-deploy
+container.
+
+| Protected ID | Pin | Candidate used by the command |
+| --- | --- | --- |
+| `dispatch_patterns` | `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` | The complete code-owned bindings plus exempt routes; `--source` is rejected. |
+| `prompts_config` | `SAFETY_EXPECTED_HASH_PROMPTS` | The first runtime search-path candidate, beginning with `config/prompts.json`; complete comparisons reject source substitution. |
+| `fallback_messages` | `SAFETY_EXPECTED_HASH_FALLBACK_MESSAGES` | The first runtime search-path candidate, beginning with `config/fallbackMessages.json`; complete comparisons reject source substitution. |
+| `gpt_router_config` | `SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG` | The declared immutable catalog projection plus effective `GPT_MODULE_MAP` and legacy `GPTID_*` values; `--source` is rejected. When this pin is set, runtime also requires the complete public catalog to register before returning a routing map. Protected-module and broader readiness checks remain independent availability evidence. |
+| `assistant_registry` | `SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY` | `ASSISTANT_REGISTRY_PATH`, then `config/assistants.json`, using the exact runtime path and shared runtime validator. |
+| `daemon_tokens` | `SAFETY_EXPECTED_HASH_DAEMON_TOKENS` | `DAEMON_TOKENS_FILE`, then `memory/daemon_tokens.json`, preserving the runtime's exact nonblank path value. |
+| `protected_json_file` | `SAFETY_EXPECTED_HASH_PROTECTED_JSON` | An explicit source is required. No maintained production caller or canonical source currently exists, so tooling support alone does not make this pin live. |
+
+This gate does not change the separate runtime lifecycle: all current manifest
+entries still permit trust on first load when no immutable pin is set, and
+daemon-token persistence does not perform pin-aware rotation. Do not describe
+the command as closing either residual.
+
 Assistant-registry HTTP limits are fixed. Reads reject bodies, require
 `arcanos:read`, and allow 120 starts per authenticated principal per 5 minutes.
 `POST /api/assistants/sync` requires `mcp:invoke`, accepts only an uncompressed
@@ -563,8 +665,8 @@ validates but discards target-controlled message text and generates a local
 ### Railway service role
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `ARCANOS_PROCESS_KIND=web` | Railway web service | Starts the compiled API runtime with `RUN_WORKERS=false` through `scripts/start-railway-service.mjs`. |
-| `ARCANOS_PROCESS_KIND=worker` | Railway worker service | Starts `dist/workers/jobRunner.js` and exposes a minimal health server on `/health`, `/healthz`, and `/readyz`. |
+| `ARCANOS_PROCESS_KIND=web` | Railway web service | Runs the protected-digest startup wrapper, then starts the compiled API runtime with `RUN_WORKERS=false` through the role launcher. |
+| `ARCANOS_PROCESS_KIND=worker` | Railway worker service | Runs the protected-digest startup wrapper, then starts `dist/workers/jobRunner.js` and exposes a minimal health server on `/health`, `/healthz`, and `/readyz`. |
 
 If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
 
@@ -965,6 +1067,13 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `SAFETY_WORKER_RESTART_WINDOW_MS` | `300000` | Window for counting worker restarts. |
 | `DISPATCH_V9_POLICY_TIMEOUT_MS` | `5000` | Timeout for dispatch policy evaluation. |
 | `SAFETY_FAIL_CLOSED_INTEGRITY` | `true` | Fail closed when integrity checks cannot be satisfied. |
+| `SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS` | unset | Optional lowercase canonical semantic digest pin for complete dispatch bindings and exemptions. |
+| `SAFETY_EXPECTED_HASH_PROMPTS` | unset | Optional lowercase canonical semantic digest pin for the selected prompt configuration. |
+| `SAFETY_EXPECTED_HASH_FALLBACK_MESSAGES` | unset | Optional lowercase canonical semantic digest pin for the selected fallback-message configuration. |
+| `SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG` | unset | Optional lowercase canonical semantic digest pin for the declared catalog/environment GPT route projection; registered-module availability is checked separately. |
+| `SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY` | unset | Optional lowercase canonical semantic digest pin for the selected assistant registry. |
+| `SAFETY_EXPECTED_HASH_DAEMON_TOKENS` | unset | Optional lowercase canonical semantic digest pin for the selected daemon-token map. |
+| `SAFETY_EXPECTED_HASH_PROTECTED_JSON` | unset | Optional lowercase canonical semantic digest pin for an explicitly sourced generic JSON candidate; no production caller currently owns it. |
 | `OPENAI_STORE` | `false` | If true, allow OpenAI to store Responses; default false (stateless). |
 | `MCP_BEARER_TOKEN` | commented placeholder | Required for `POST /mcp`. |
 | `ACTION_PLAN_MCP_REQUEST_PRINCIPAL_ID` | unset | Fixed requester identity required to expose requester-owned ActionPlan tools through authenticated HTTP MCP. |

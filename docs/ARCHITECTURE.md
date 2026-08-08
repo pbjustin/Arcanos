@@ -247,6 +247,7 @@ npm start
 ## Deploy (Railway)
 Deployment control lives in:
 - `railway.json`
+- `scripts/start-railway-service-with-integrity.mjs`
 - `scripts/start-railway-service.mjs`
 - `docs/RAILWAY_DEPLOYMENT.md`
 

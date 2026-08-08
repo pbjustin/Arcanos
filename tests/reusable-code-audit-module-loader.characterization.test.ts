@@ -105,6 +105,9 @@ describe('explicit module catalog', () => {
 
     for (const entry of MODULE_CATALOG) {
       expect(Object.isFrozen(entry)).toBe(true);
+      if (entry.gptIds) {
+        expect(Object.isFrozen(entry.gptIds)).toBe(true);
+      }
       const sourceFile = entry.source
         .replace(/^\.\//, '')
         .replace(/\.js$/, '.ts');
@@ -186,6 +189,12 @@ describe('explicit module catalog', () => {
     ])).toThrow(
       'Invalid module catalog diagnostics key: unsafe-key'
     );
+    expect(() => defineModuleCatalog([
+      {
+        ...catalogEntry('safe', 'TEST:SAFE'),
+        gptIds: ['Unsafe GPT ID']
+      }
+    ])).toThrow('Invalid module catalog GPT IDs: TEST:SAFE');
 
     const first = catalogEntry('first', 'TEST:FIRST');
     expect(() => defineModuleCatalog([
@@ -207,6 +216,14 @@ describe('explicit module catalog', () => {
         diagnosticsKey: first.diagnosticsKey
       }
     ])).toThrow('Duplicate module catalog diagnostics key: FIRST');
+    expect(() => defineModuleCatalog([
+      { ...first, gptIds: ['shared-gpt'] },
+      { ...catalogEntry('second', 'TEST:SECOND'), gptIds: ['shared-gpt'] }
+    ])).toThrow('Duplicate module catalog GPT ID: shared-gpt');
+    expect(() => defineModuleCatalog([
+      first,
+      { ...catalogEntry('second', 'TEST:SECOND'), gptIds: ['first'] }
+    ])).toThrow('Duplicate module catalog GPT ID: first');
   });
 });
 
@@ -258,6 +275,10 @@ describe('catalog-backed module loader', () => {
       {
         ...catalogEntry('legacy-exposed', 'TEST:LEGACY_EXPOSED'),
         gptAccessOnly: true
+      },
+      {
+        ...catalogEntry('gpt-ids-mismatch', 'TEST:GPT_IDS_MISMATCH'),
+        gptIds: ['expected-gpt-id']
       },
       catalogEntry('accepted', 'TEST:ACCEPTED')
     ];
@@ -311,6 +332,10 @@ describe('catalog-backed module loader', () => {
               gptAccessOnly: true
             }
           };
+        case './gpt-ids-mismatch.js':
+          return {
+            default: moduleDefinition('TEST:GPT_IDS_MISMATCH')
+          };
         default:
           return { default: moduleDefinition('TEST:ACCEPTED') };
       }
@@ -319,7 +344,7 @@ describe('catalog-backed module loader', () => {
     const loaded = await loader.load();
 
     expect(loaded.map(({ route }) => route)).toEqual(['accepted']);
-    expect(errorSpy).toHaveBeenCalledTimes(10);
+    expect(errorSpy).toHaveBeenCalledTimes(11);
     expect(
       errorSpy.mock.calls.map(([, context]) => context?.reason)
     ).toEqual([
@@ -332,7 +357,8 @@ describe('catalog-backed module loader', () => {
       'invalid_actions',
       'exposure_mismatch',
       'exposure_mismatch',
-      'exposure_mismatch'
+      'exposure_mismatch',
+      'gpt_ids_mismatch'
     ]);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(
       'sensitive initialization details'
@@ -340,7 +366,10 @@ describe('catalog-backed module loader', () => {
   });
 
   it('coalesces concurrent cold loads and returns defensive array entries', async () => {
-    const catalog = [catalogEntry('coalesced', 'TEST:COALESCED')];
+    const catalog = [{
+      ...catalogEntry('coalesced', 'TEST:COALESCED'),
+      gptIds: ['test-coalesced']
+    }];
     let releaseImport!: () => void;
     const importGate = new Promise<void>((resolve) => {
       releaseImport = resolve;

@@ -98,7 +98,7 @@ Run `npm run guard:commit` before committing. The expensive broad readiness swee
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
 - Build in build phase (`npm ci --include=dev --no-audit --no-fund && npm run build`)
-- Start runs the shared launcher only (`node scripts/start-railway-service.mjs`)
+- Start runs the integrity wrapper (`node scripts/start-railway-service-with-integrity.mjs`), which gates the shared role launcher before normal web/worker startup
 - Railway services must set `ARCANOS_PROCESS_KIND=web` or `ARCANOS_PROCESS_KIND=worker`
 
 Validate Railway compatibility before merge:

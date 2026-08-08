@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { z } from 'zod';
 import { getEnv } from '@platform/runtime/env.js';
 import { config } from '@platform/runtime/config.js';
@@ -14,6 +13,10 @@ import {
   type ProtectedConfigId,
   type ProtectedConfigManifestEntry
 } from '@platform/runtime/integrityManifest.js';
+import {
+  assertIntegrityPayloadSchema,
+  computeIntegrityHash
+} from '@platform/runtime/integrityDigest.js';
 
 export class IntegrityValidationError extends Error {
   constructor(
@@ -24,23 +27,6 @@ export class IntegrityValidationError extends Error {
     super(message);
     this.name = 'IntegrityValidationError';
   }
-}
-
-function stableSerialize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(item => stableSerialize(item)).join(',')}]`;
-  }
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, val]) => `${JSON.stringify(key)}:${stableSerialize(val)}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function computeIntegrityHash(value: unknown): string {
-  return createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 
 function normalizeIntegritySource(protectedId: ProtectedConfigId, source: string): string {
@@ -67,12 +53,7 @@ function ensureSchema(
     return;
   }
 
-  const result = schema.safeParse(payload);
-  if (!result.success) {
-    throw new Error(
-      `Schema validation failed: ${result.error.issues.map(issue => issue.message).join('; ')}`
-    );
-  }
+  assertIntegrityPayloadSchema(schema, payload);
 }
 
 function resolveExpectedHash(entry: ProtectedConfigManifestEntry): string | undefined {

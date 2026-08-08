@@ -172,8 +172,8 @@ decisions.
 Deployment workflows are repository-specific; verify current trigger and required
 secrets in each workflow file before enabling auto-deploy.
 
-Railway-native PR deployments use the tracked
-`--pr-preview-app-safe-v1` launcher contract. The web role imports only a
+Railway-native PR deployments run the protected-digest wrapper before the
+tracked `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
 credential-empty, deny-by-default synthetic generic-jobs application plus
 sealed Research, Backstage storyline, and MCP body-cap contract fixture
 surfaces; the worker role stays passive and denies all three contract paths. The

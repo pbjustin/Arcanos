@@ -3,6 +3,7 @@ export interface ModuleCatalogEntry {
   readonly route: string;
   readonly name: string;
   readonly diagnosticsKey: string;
+  readonly gptIds?: readonly string[];
   readonly gptAccessOnly?: true;
 }
 
@@ -33,6 +34,8 @@ export function defineModuleCatalog(
   const routes = new Set<string>();
   const names = new Set<string>();
   const diagnosticsKeys = new Set<string>();
+  const gptIds = new Set<string>();
+  const catalogRoutes = new Set(entries.map(({ route }) => route));
 
   for (const entry of entries) {
     if (!MODULE_SOURCE_PATTERN.test(entry.source)) {
@@ -55,6 +58,16 @@ export function defineModuleCatalog(
     ) {
       throw new Error(`Invalid module catalog exposure: ${entry.name}`);
     }
+    if (
+      entry.gptIds !== undefined
+      && (
+        entry.gptAccessOnly === true
+        || entry.gptIds.length === 0
+        || entry.gptIds.some(gptId => !MODULE_ROUTE_PATTERN.test(gptId))
+      )
+    ) {
+      throw new Error(`Invalid module catalog GPT IDs: ${entry.name}`);
+    }
     if (sources.has(entry.source)) {
       throw new Error(`Duplicate module catalog source: ${entry.source}`);
     }
@@ -74,10 +87,24 @@ export function defineModuleCatalog(
     routes.add(entry.route);
     names.add(entry.name);
     diagnosticsKeys.add(entry.diagnosticsKey);
+    for (const gptId of entry.gptIds ?? []) {
+      if (
+        gptIds.has(gptId)
+        || (gptId !== entry.route && catalogRoutes.has(gptId))
+      ) {
+        throw new Error(`Duplicate module catalog GPT ID: ${gptId}`);
+      }
+      gptIds.add(gptId);
+    }
   }
 
   return Object.freeze(
-    entries.map((entry) => Object.freeze({ ...entry }))
+    entries.map((entry) => Object.freeze({
+      ...entry,
+      ...(entry.gptIds
+        ? { gptIds: Object.freeze([...entry.gptIds]) }
+        : {})
+    }))
   );
 }
 
@@ -86,13 +113,15 @@ export const MODULE_CATALOG = defineModuleCatalog([
     source: './arcanos-audit.js',
     route: 'audit',
     name: 'ARCANOS:AUDIT',
-    diagnosticsKey: 'AUDIT'
+    diagnosticsKey: 'AUDIT',
+    gptIds: ['arcanos-audit', 'audit']
   },
   {
     source: './arcanos-build.js',
     route: 'build',
     name: 'ARCANOS:BUILD',
-    diagnosticsKey: 'BUILD'
+    diagnosticsKey: 'BUILD',
+    gptIds: ['arcanos-build', 'build']
   },
   {
     source: './arcanos-cli.js',
@@ -105,19 +134,22 @@ export const MODULE_CATALOG = defineModuleCatalog([
     source: './arcanos-core.js',
     route: 'core',
     name: 'ARCANOS:CORE',
-    diagnosticsKey: 'CORE'
+    diagnosticsKey: 'CORE',
+    gptIds: ['arcanos-core', 'core', 'arcanos-daemon']
   },
   {
     source: './arcanos-gaming.js',
     route: 'gaming',
     name: 'ARCANOS:GAMING',
-    diagnosticsKey: 'GAMING'
+    diagnosticsKey: 'GAMING',
+    gptIds: ['arcanos-gaming', 'gaming']
   },
   {
     source: './arcanos-guide.js',
     route: 'guide',
     name: 'ARCANOS:GUIDE',
-    diagnosticsKey: 'GUIDE'
+    diagnosticsKey: 'GUIDE',
+    gptIds: ['arcanos-guide', 'guide']
   },
   {
     source: './arcanos-local-agent.js',
@@ -137,43 +169,50 @@ export const MODULE_CATALOG = defineModuleCatalog([
     source: './arcanos-research.js',
     route: 'research',
     name: 'ARCANOS:RESEARCH',
-    diagnosticsKey: 'RESEARCH'
+    diagnosticsKey: 'RESEARCH',
+    gptIds: ['arcanos-research', 'research']
   },
   {
     source: './arcanos-sim.js',
     route: 'sim',
     name: 'ARCANOS:SIM',
-    diagnosticsKey: 'SIM'
+    diagnosticsKey: 'SIM',
+    gptIds: ['arcanos-sim', 'sim']
   },
   {
     source: './arcanos-tracker.js',
     route: 'tracker',
     name: 'ARCANOS:TRACKER',
-    diagnosticsKey: 'TRACKER'
+    diagnosticsKey: 'TRACKER',
+    gptIds: ['arcanos-tracker', 'tracker']
   },
   {
     source: './arcanos-tutor.js',
     route: 'tutor',
     name: 'ARCANOS:TUTOR',
-    diagnosticsKey: 'TUTOR'
+    diagnosticsKey: 'TUTOR',
+    gptIds: ['arcanos-tutor', 'tutor']
   },
   {
     source: './arcanos-write.js',
     route: 'write',
     name: 'ARCANOS:WRITE',
-    diagnosticsKey: 'WRITE'
+    diagnosticsKey: 'WRITE',
+    gptIds: ['arcanos-write', 'write']
   },
   {
     source: './backstage-booker.js',
     route: 'backstage-booker',
     name: 'BACKSTAGE:BOOKER',
-    diagnosticsKey: 'BOOKING'
+    diagnosticsKey: 'BOOKING',
+    gptIds: ['backstage-booker', 'backstage']
   },
   {
     source: './hrc.js',
     route: 'hrc',
     name: 'HRC',
-    diagnosticsKey: 'HRC'
+    diagnosticsKey: 'HRC',
+    gptIds: ['hrc']
   }
 ] as const);
 

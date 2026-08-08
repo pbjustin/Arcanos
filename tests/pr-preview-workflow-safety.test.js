@@ -44,6 +44,26 @@ describe('native PR workflow safety', () => {
     );
   });
 
+  it('runs deployment readiness through the canonical integrity-gated web launcher', () => {
+    const workflow = readWorkflow('.github/workflows/ci-cd.yml');
+    const jobStart = workflow.indexOf('  validate-deployment-readiness:\n');
+    const jobEnd = workflow.indexOf('\n  security-audit:', jobStart);
+
+    expect(jobStart).toBeGreaterThan(-1);
+    expect(jobEnd).toBeGreaterThan(jobStart);
+    const deploymentReadinessJob = workflow.slice(jobStart, jobEnd);
+    expect(deploymentReadinessJob).toContain('export ARCANOS_PROCESS_KIND=web');
+    expect(deploymentReadinessJob).toContain('export RUN_WORKERS=false');
+    expect(deploymentReadinessJob).toContain(
+      'timeout 30s node scripts/start-railway-service-with-integrity.mjs &'
+    );
+    expect(deploymentReadinessJob).toContain(
+      'curl -f http://localhost:8080/health || exit 1'
+    );
+    expect(deploymentReadinessJob).toContain('kill $SERVER_PID || true');
+    expect(deploymentReadinessJob).not.toContain('timeout 30s npm start &');
+  });
+
   it('keeps pull-request API endpoint startup isolated from providers', () => {
     const workflow = readWorkflow('.github/workflows/api-endpoint-tests.yml');
 

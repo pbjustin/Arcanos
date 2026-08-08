@@ -4,15 +4,10 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { resolvePromptsConfigSearchPaths } from '@platform/runtime/protectedConfigCandidatePaths.js';
 
 interface PromptsConfig {
   backstage: {
@@ -78,13 +73,7 @@ const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
 let promptsConfig: PromptsConfig | null = null;
 const PROMPTS_CONFIG_SOURCE = 'protected-config:prompts_config';
 
-const CONFIG_SEARCH_PATHS = [
-  join(process.cwd(), 'config', 'prompts.json'),
-  join(__dirname, 'prompts.json'),
-  join(__dirname, '..', '..', 'config', 'prompts.json'),
-  join(__dirname, '..', '..', '..', 'config', 'prompts.json'),
-  join(process.cwd(), 'src', 'config', 'prompts.json')
-];
+const CONFIG_SEARCH_PATHS = resolvePromptsConfigSearchPaths();
 
 const PROMPT_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const PROMPT_ROLE_OVERRIDE_PATTERN = /(^|\n)\s*(system|developer|assistant)\s*:/gi;
@@ -190,7 +179,7 @@ function loadPromptsConfig(): PromptsConfig {
       const searchedPaths = CONFIG_SEARCH_PATHS.map(p => `  ${p} (exists: ${existsSync(p)})`).join('\n');
       throw new Error(
         `Prompts configuration file not found in expected locations.\n` +
-        `cwd: ${process.cwd()}, __dirname: ${__dirname}\n` +
+        `cwd: ${process.cwd()}\n` +
         `Searched:\n${searchedPaths}`
       );
     }

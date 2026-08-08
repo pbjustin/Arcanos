@@ -218,7 +218,9 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export ARCANOS_GPT_ACCESS_TOKEN=ci-gpt-access-token-for-local-workflow-only
           export ARCANOS_JOB_READ_CAPABILITY_SECRET=ci-job-read-capability-key-for-local-workflow-only
-          timeout 30s npm start &
+          export ARCANOS_PROCESS_KIND=web
+          export RUN_WORKERS=false
+          timeout 30s node scripts/start-railway-service-with-integrity.mjs &
           SERVER_PID=$!
           
           # Wait for server to start

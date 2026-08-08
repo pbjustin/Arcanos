@@ -23,13 +23,16 @@ const RAILWAY_CONFIG_PATH = path.join(PROJECT_ROOT, 'railway.json');
 const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
 const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
 const RAILWAYIGNORE_PATH = path.join(PROJECT_ROOT, '.railwayignore');
-const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
-const EXPECTED_PR_START_COMMAND = `${EXPECTED_START_COMMAND} --pr-preview-app-safe-v1`;
+const EXPECTED_START_COMMAND =
+  'node scripts/start-railway-service-with-integrity.mjs';
+const EXPECTED_PR_START_COMMAND =
+  'node scripts/start-railway-service-with-integrity.mjs --pr-preview-app-safe-v1';
 const EXPECTED_HEALTHCHECK_PATH = '/readyz';
 const EXPECTED_HEALTHCHECK_TIMEOUT_SECONDS = 300;
 const EXPECTED_DRAINING_SECONDS = 60;
 const RAILWAY_DRAINING_SECONDS_VARIABLE = 'RAILWAY_DEPLOYMENT_DRAINING_SECONDS';
-const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
+const EXPECTED_DOCKERFILE_CMD =
+  'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_VENDOR_COPY = 'COPY vendor/ ./vendor/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
@@ -231,7 +234,7 @@ export function validateConfig(config) {
     }
   }
 
-  //audit Assumption: every exact-named Railway environment takes precedence over root config; risk: a workflow target other than literal production can silently restore liveness activation or zero-second teardown while the root validator remains green; invariant: every non-PR environment inherits the root readiness path, timeout, and drain budget without redeclaring them; handling: reject those fields and the provider-native drain variable in every named environment deploy override.
+  //audit Assumption: every exact-named Railway environment takes precedence over root config; risk: a workflow target other than literal production can bypass the integrity wrapper, restore liveness activation, or zero the teardown budget while the root validator remains green; invariant: every non-PR environment inherits the root startup, readiness path, timeout, and drain budget without redeclaring them; handling: reject those fields and the provider-native drain variable in every named environment deploy override.
   if (environments && typeof environments === 'object' && !Array.isArray(environments)) {
     for (const [environmentName, environmentConfig] of Object.entries(environments)) {
       if (environmentName === 'pr') {
@@ -255,7 +258,12 @@ export function validateConfig(config) {
         errors.push(`environments.${environmentName}.deploy must be an object when defined`);
         continue;
       }
-      for (const field of ['healthcheckPath', 'healthcheckTimeout', 'drainingSeconds']) {
+      for (const field of [
+        'startCommand',
+        'healthcheckPath',
+        'healthcheckTimeout',
+        'drainingSeconds'
+      ]) {
         if (Object.hasOwn(environmentDeploy, field)) {
           errors.push(`environments.${environmentName}.deploy.${field} must be omitted so ${environmentName} inherits deploy.${field}`);
         }
@@ -302,7 +310,7 @@ export function validateConfig(config) {
     }
   }
 
-  //audit Assumption: Railway applies the special `environments.pr` override to every native PR service; risk: inherited production configuration starts providers, workers, bridges, schedulers, or migrations before preview isolation is reviewed; invariant: native PR deploys enter the health-only launcher with no pre-deploy command, cron, or restart loop; handling: schema-lock the exact passive override.
+  //audit Assumption: Railway applies the special `environments.pr` override to every native PR service; risk: inherited production configuration starts providers, workers, bridges, schedulers, or migrations before preview isolation is reviewed, or a direct role-launcher override bypasses protected-digest comparison; invariant: native PR deploys run the integrity wrapper before the sealed preview launcher, with no pre-deploy command, cron, or restart loop; handling: schema-lock the exact gated override.
   if (!prDeploy || typeof prDeploy !== 'object' || Array.isArray(prDeploy)) {
     errors.push('environments.pr.deploy must be an object');
   } else {

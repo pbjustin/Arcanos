@@ -1,21 +1,13 @@
 import { existsSync, readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
+import { resolveFallbackMessagesSearchPaths } from '@platform/runtime/protectedConfigCandidatePaths.js';
 
 export type FallbackMessagesConfig = Record<string, string> & { default: string };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const SEARCH_PATHS = [
-  join(process.cwd(), 'config', 'fallbackMessages.json'),
-  join(__dirname, 'fallbackMessages.json'),
-  join(process.cwd(), 'src', 'config', 'fallbackMessages.json')
-];
+const SEARCH_PATHS = resolveFallbackMessagesSearchPaths();
 
 const DEFAULT_FALLBACK_MESSAGES: FallbackMessagesConfig = {
   arcanos:

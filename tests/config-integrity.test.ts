@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { afterAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { z } from 'zod';
@@ -18,23 +17,7 @@ import {
   getTelemetrySnapshot,
   resetTelemetry
 } from '../src/platform/logging/telemetry.js';
-
-function stableSerialize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(item => stableSerialize(item)).join(',')}]`;
-  }
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function computeHash(value: unknown): string {
-  return createHash('sha256').update(stableSerialize(value)).digest('hex');
-}
+import { computeIntegrityHash } from '../src/platform/runtime/integrityDigest.js';
 
 describe('config integrity safety', () => {
   const expectedHashEnvName = 'SAFETY_EXPECTED_HASH_PROTECTED_JSON';
@@ -103,7 +86,7 @@ describe('config integrity safety', () => {
       mode: z.string().min(1),
       priority: z.number().int().min(0)
     });
-    process.env[expectedHashEnvName] = computeHash(payload);
+    process.env[expectedHashEnvName] = computeIntegrityHash(payload);
 
     const computedHash = assertProtectedConfigIntegrity('protected_json_file', payload, {
       source: 'tests/config-integrity.valid',
@@ -134,7 +117,7 @@ describe('config integrity safety', () => {
 
   it('quarantines and rejects payload on schema mismatch', () => {
     const payload = { mode: 'strict', priority: 'not-a-number' };
-    process.env[expectedHashEnvName] = computeHash(payload);
+    process.env[expectedHashEnvName] = computeIntegrityHash(payload);
 
     expect(() =>
       assertProtectedConfigIntegrity('protected_json_file', payload, {
@@ -195,7 +178,7 @@ describe('config integrity safety', () => {
       source: 'tests/config-integrity.assistant-registry-update'
     });
 
-    expect(prepared.hash).toBe(computeHash(registry));
+    expect(prepared.hash).toBe(computeIntegrityHash(registry));
     expect(getTrustedHash('assistant_registry')).toBeUndefined();
 
     prepared.commit();
