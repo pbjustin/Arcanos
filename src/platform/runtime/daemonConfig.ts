@@ -2,22 +2,8 @@
  * Daemon configuration derived from environment settings.
  */
 
-import path from 'path';
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
-
-const DEFAULT_DAEMON_TOKENS_FILE = 'memory/daemon_tokens.json';
-
-function resolveDaemonTokensFilePath(setting?: string): string {
-  if (!setting) {
-    return path.join(process.cwd(), DEFAULT_DAEMON_TOKENS_FILE);
-  }
-
-  if (path.isAbsolute(setting)) {
-    return setting;
-  }
-
-  return path.join(process.cwd(), setting);
-}
+import { resolveDaemonTokensFilePath } from '@platform/runtime/protectedConfigCandidatePaths.js';
 
 export const DAEMON_TOKENS_FILE = resolveDaemonTokensFilePath(getEnv('DAEMON_TOKENS_FILE'));
 export const DAEMON_RATE_LIMIT_MAX = getEnvNumber('DAEMON_RATE_LIMIT_MAX', 400);

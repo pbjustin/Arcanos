@@ -64,6 +64,20 @@ describe('Research GPT routing admission', () => {
     expect(getGptModuleMapMock).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves a prototype-named Research alias through pre-admission', async () => {
+    process.env.GPT_MODULE_MAP =
+      '{"__proto__":{"route":"research","module":"ARCANOS:RESEARCH"}}';
+    const authoritativeMap = Object.create(null) as GptModuleMap;
+    authoritativeMap.__proto__ = {
+      route: 'research',
+      module: 'ARCANOS:RESEARCH',
+    };
+    getGptModuleMapMock.mockResolvedValue(authoritativeMap);
+
+    await expect(isRegisteredResearchGptId('__proto__')).resolves.toBe(true);
+    expect(getGptModuleMapMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an exact non-Research alias before fuzzy Research matching loads the map', async () => {
     process.env.GPT_MODULE_MAP = JSON.stringify({
       'research-helper': { route: 'core', module: 'ARCANOS:CORE' },

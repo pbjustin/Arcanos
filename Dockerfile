@@ -76,4 +76,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start through the Railway launcher so each Railway service enforces the
 # explicit ARCANOS_PROCESS_KIND contract at runtime.
-CMD ["node", "scripts/start-railway-service.mjs"]
+CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]

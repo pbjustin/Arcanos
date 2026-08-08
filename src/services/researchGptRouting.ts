@@ -70,7 +70,7 @@ function buildResearchCandidateState(): {
   candidates: Record<string, ResearchCandidateEntry>;
   configuredBindings: Map<string, ConfiguredBindingDisposition>;
 } {
-  const candidates: Record<string, ResearchCandidateEntry> = {};
+  const candidates = Object.create(null) as Record<string, ResearchCandidateEntry>;
   const configuredBindings = new Map<string, ConfiguredBindingDisposition>();
   for (const gptId of BUILT_IN_RESEARCH_GPT_IDS) {
     addResearchCandidate(candidates, gptId);

@@ -82,7 +82,7 @@ This gate is a Railway mutation and is **not authorized or executed by preparati
 4. Remove the Redis public TCP proxy in Networking. Confirm Redis has no public domain or TCP proxy before continuing.
 5. Add one empty web service sourced from the exact reviewed repository commit.
 6. Set only the variables listed above. Use a private Railway reference for `REDIS_URL`; never paste a Redis URL into the shell or evidence file.
-7. Confirm the web deploy settings resolve to `node scripts/start-railway-service.mjs` and `/readyz`, as declared in `railway.json`.
+7. Confirm the web deploy settings resolve to `node scripts/start-railway-service-with-integrity.mjs` and `/readyz`, as declared in `railway.json`.
 8. Generate one temporary Railway HTTPS domain for the web service. Record only its origin, with no path, query, credentials, or fragment.
 
 If CLI is preferred after the empty environment has been approved and created, use explicit IDs on every command and inspect `--help` for the installed CLI version first. The examples assume the current CLI's global project/environment selectors. If the installed command does not support every required selector, stop and use the dashboard against the recorded IDs; do not drop an identity flag or rely on the currently linked environment. Example command shapes, intentionally unexecuted:

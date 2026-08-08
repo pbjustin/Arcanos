@@ -6,6 +6,18 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ## [Unreleased]
 
+### Added
+
+- Added one manifest-driven, read-only protected-configuration digest command
+  for canonical semantic generation and fail-closed comparison of every
+  explicit integrity pin before cutover, including bounded schema-validated
+  file candidates and the dispatch/declared-GPT routing projections. Normal
+  Railway startup now compares configured runtime-owned pins after volume
+  mounts and before the web or worker launcher, including sealed native PR
+  previews; no runtime-owned pin is the only automatic skip. The seventh
+  tooling-only generic pin remains an explicit manual comparison because it has
+  no runtime source or caller.
+
 ### Changed
 
 - Scoped the trusted worker-diagnostics cleanup credential to the pinned
@@ -323,6 +335,10 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Removed
 
+- Removed the parsed-but-unused Node/backend `REQUEST_TIMEOUT` configuration
+  and its unenforced HTTP-deadline claims while preserving the Python daemon's
+  separate seconds-valued `REQUEST_TIMEOUT` and `BACKEND_REQUEST_TIMEOUT`
+  controls.
 - Retired the legacy root probe command and implementation because it exposed
   credential prefixes and depended on a missing test artifact; maintained
   build, subsystem validation, Railway validation, and health checks replace it.

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assistantRegistryCandidateSchema } from '@platform/runtime/assistantRegistryCandidate.js';
 
 export type ProtectedConfigId =
   | 'dispatch_patterns'
@@ -9,14 +10,45 @@ export type ProtectedConfigId =
   | 'daemon_tokens'
   | 'protected_json_file';
 
+export interface ProtectedConfigCandidateBounds {
+  maxDepth: number;
+  maxNodes: number;
+  maxBytes?: number;
+}
+
+export type ProtectedConfigCandidateSource =
+  | {
+      kind: 'dispatch_runtime';
+      bounds: ProtectedConfigCandidateBounds;
+    }
+  | {
+      kind: 'gpt_router_catalog';
+      bounds: ProtectedConfigCandidateBounds;
+    }
+  | {
+      kind: 'runtime_json_file';
+      bounds: ProtectedConfigCandidateBounds & { maxBytes: number };
+      resolver:
+        | 'assistant_registry'
+        | 'daemon_tokens'
+        | 'fallback_messages'
+        | 'prompts_config';
+    }
+  | {
+      kind: 'explicit_json_file';
+      bounds: ProtectedConfigCandidateBounds & { maxBytes: number };
+    };
+
 export interface ProtectedConfigManifestEntry {
   id: ProtectedConfigId;
   description: string;
   expectedHashEnv: string;
   builtInExpectedHash?: string;
+  runtimeOwned: boolean;
   allowTrustOnFirstLoad: boolean;
   requireOperatorReleaseOnFailure: boolean;
   schema: z.ZodType<unknown>;
+  candidateSource: ProtectedConfigCandidateSource;
 }
 
 const dispatchPatternBindingSchema = z.object({
@@ -57,59 +89,6 @@ const gptRouterMapSchema = z.record(
   })
 );
 
-function normalizeAssistantRegistryName(name: string): string | null {
-  const sanitized = name
-    .normalize('NFKD')
-    .replace(/[^a-zA-Z0-9_\s]/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
-  if (!sanitized) {
-    return null;
-  }
-  const normalized = sanitized.replace(/\s+/gu, '_').toUpperCase();
-  return normalized.length <= 256 ? normalized : null;
-}
-
-const assistantRegistrySchema = z.record(
-  z.object({
-    id: z.string().min(1).max(256),
-    name: z.string().min(1).max(256),
-    instructions: z.string().max(131_072).nullable(),
-    tools: z.unknown().nullable(),
-    model: z.string().max(256).nullable().optional(),
-    normalizedName: z.string().min(1).max(256)
-  }).strict()
-).superRefine((registry, context) => {
-  if (Object.keys(registry).length > 1_000) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Assistant registry exceeds the record limit'
-    });
-  }
-  const assistantIds = new Set<string>();
-  for (const [key, record] of Object.entries(registry)) {
-    const expectedNormalizedName = normalizeAssistantRegistryName(record.name);
-    if (
-      key !== record.normalizedName
-      || expectedNormalizedName !== record.normalizedName
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key, 'normalizedName'],
-        message: 'Assistant registry key and normalized name are inconsistent'
-      });
-    }
-    if (assistantIds.has(record.id)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key, 'id'],
-        message: 'Assistant registry contains a duplicate provider ID'
-      });
-    }
-    assistantIds.add(record.id);
-  }
-});
-
 const daemonTokensSchema = z.record(z.string().min(1));
 
 export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManifestEntry> = {
@@ -118,8 +97,13 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
     description: 'Dispatch v9 route pattern bindings and exemptions',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'dispatch_runtime',
+      bounds: { maxDepth: 16, maxNodes: 10_000 }
+    },
     schema: z.object({
       bindings: z.array(dispatchPatternBindingSchema),
       exemptRoutes: z.array(dispatchExemptRouteSchema)
@@ -130,8 +114,14 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
     description: 'Prompt template configuration',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_PROMPTS',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'runtime_json_file',
+      resolver: 'prompts_config',
+      bounds: { maxBytes: 1_048_576, maxDepth: 32, maxNodes: 50_000 }
+    },
     schema: promptsSchema
   },
   fallback_messages: {
@@ -139,17 +129,28 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
     description: 'Fallback response message configuration',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_FALLBACK_MESSAGES',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'runtime_json_file',
+      resolver: 'fallback_messages',
+      bounds: { maxBytes: 262_144, maxDepth: 16, maxNodes: 10_000 }
+    },
     schema: z.record(z.string())
   },
   gpt_router_config: {
     id: 'gpt_router_config',
-    description: 'GPT route/module mapping',
+    description: 'Declared GPT route/module mapping',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'gpt_router_catalog',
+      bounds: { maxDepth: 16, maxNodes: 50_000 }
+    },
     schema: gptRouterMapSchema
   },
   assistant_registry: {
@@ -157,17 +158,29 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
     description: 'Assistant registry cache file',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
-    schema: assistantRegistrySchema
+    candidateSource: {
+      kind: 'runtime_json_file',
+      resolver: 'assistant_registry',
+      bounds: { maxBytes: 16_777_216, maxDepth: 64, maxNodes: 200_000 }
+    },
+    schema: assistantRegistryCandidateSchema
   },
   daemon_tokens: {
     id: 'daemon_tokens',
     description: 'Daemon token mapping file',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_DAEMON_TOKENS',
     builtInExpectedHash: '',
+    runtimeOwned: true,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'runtime_json_file',
+      resolver: 'daemon_tokens',
+      bounds: { maxBytes: 1_048_576, maxDepth: 16, maxNodes: 100_000 }
+    },
     schema: daemonTokensSchema
   },
   protected_json_file: {
@@ -175,8 +188,13 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
     description: 'Generic protected JSON file',
     expectedHashEnv: 'SAFETY_EXPECTED_HASH_PROTECTED_JSON',
     builtInExpectedHash: '',
+    runtimeOwned: false,
     allowTrustOnFirstLoad: true,
     requireOperatorReleaseOnFailure: true,
+    candidateSource: {
+      kind: 'explicit_json_file',
+      bounds: { maxBytes: 10_485_760, maxDepth: 64, maxNodes: 200_000 }
+    },
     schema: z.unknown()
   }
 };

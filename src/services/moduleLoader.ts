@@ -69,7 +69,8 @@ type ModuleDefinitionRejection =
   | 'missing_default'
   | 'name_mismatch'
   | 'invalid_actions'
-  | 'exposure_mismatch';
+  | 'exposure_mismatch'
+  | 'gpt_ids_mismatch';
 
 type LoadedModuleSnapshot = Readonly<LoadedModule>;
 
@@ -105,6 +106,14 @@ function getModuleDefinitionRejection(
     )
   ) {
     return 'exposure_mismatch';
+  }
+  const actualGptIds = Array.isArray(value.gptIds) ? value.gptIds : [];
+  const expectedGptIds = entry.gptIds ?? [];
+  if (
+    actualGptIds.length !== expectedGptIds.length
+    || actualGptIds.some((gptId, index) => gptId !== expectedGptIds[index])
+  ) {
+    return 'gpt_ids_mismatch';
   }
 
   return null;

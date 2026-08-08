@@ -127,7 +127,7 @@ npm run mcp:stdio
 Use the MCP client’s normal `tools/list` flow to discover `gpt.generate`.
 
 ## Railway CLI Workflow
-The active Railway deployment still uses `railway.json` and `scripts/start-railway-service.mjs`. Railway CLI 4.x supports browser login via `railway login`, environment linking through `railway env`, local command execution with Railway variables through `railway run`, deployments with `railway up`, logs with `railway logs`, and variables through `railway variable` (`variables`, `vars`, and `var` are aliases).
+The tracked Railway configuration uses the protected-digest startup wrapper from `railway.json`, which invokes `scripts/start-railway-service.mjs` only after all configured runtime-owned pins match. Railway CLI 4.x supports browser login via `railway login`, environment linking through `railway env`, local command execution with Railway variables through `railway run`, deployments with `railway up`, logs with `railway logs`, and variables through `railway variable` (`variables`, `vars`, and `var` are aliases).
 
 Interactive setup:
 

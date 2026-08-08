@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-08T03:11:09.458Z",
+  "generatedAt": "2026-08-08T09:17:48.855Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -411,6 +411,9 @@
         },
         {
           "relativePath": "src/core/commands/arcanos/audit_override.ts"
+        },
+        {
+          "relativePath": "src/core/commands/protectedDigest.ts"
         },
         {
           "relativePath": "src/core/commands/runDailySummary.ts"
@@ -893,6 +896,9 @@
           "relativePath": "src/platform/runtime/arcanosPrompts.ts"
         },
         {
+          "relativePath": "src/platform/runtime/assistantRegistryCandidate.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/asyncFileWriters.ts"
         },
         {
@@ -932,6 +938,9 @@
           "relativePath": "src/platform/runtime/dispatchMessages.ts"
         },
         {
+          "relativePath": "src/platform/runtime/dispatchPatternPayload.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/dispatchPatterns.ts"
         },
         {
@@ -956,6 +965,9 @@
           "relativePath": "src/platform/runtime/fallbackMessages.ts"
         },
         {
+          "relativePath": "src/platform/runtime/gptRouterCandidate.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/gptRouterConfig.ts"
         },
         {
@@ -966,6 +978,9 @@
         },
         {
           "relativePath": "src/platform/runtime/hrcPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/integrityDigest.ts"
         },
         {
           "relativePath": "src/platform/runtime/integrityManifest.ts"
@@ -999,6 +1014,9 @@
         },
         {
           "relativePath": "src/platform/runtime/prompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/protectedConfigCandidatePaths.ts"
         },
         {
           "relativePath": "src/platform/runtime/publicProviderRateLimitPolicy.ts"
@@ -4028,6 +4046,9 @@
         },
         {
           "relativePath": "tests/prompts-system.test.ts"
+        },
+        {
+          "relativePath": "tests/protected-config-digests.test.ts"
         },
         {
           "relativePath": "tests/public-gaming-canary.test.ts"
