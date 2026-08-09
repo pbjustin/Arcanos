@@ -397,6 +397,46 @@ describe('client response guards', () => {
     });
   });
 
+  it('omits malformed Gaming source IDs from client-visible route results', () => {
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        sources: [
+          {
+            url: 'https://example.com/wrong-dash-placement',
+            sourceId: '019fe3cd-8c0-17f01-8d2d-caa951bc4ba0',
+            origin: 'stored'
+          },
+          {
+            url: 'https://example.com/invalid-version',
+            sourceId: '019fe3cd-8c01-0f01-8d2d-caa951bc4ba0',
+            origin: 'stored'
+          },
+          {
+            url: 'https://example.com/invalid-variant',
+            sourceId: '019fe3cd-8c01-7f01-7d2d-caa951bc4ba0',
+            origin: 'stored'
+          }
+        ]
+      }
+    }) as Record<string, unknown>;
+
+    expect(shaped).toEqual({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        sources: [
+          { url: 'https://example.com/wrong-dash-placement', origin: 'stored' },
+          { url: 'https://example.com/invalid-version', origin: 'stored' },
+          { url: 'https://example.com/invalid-variant', origin: 'stored' }
+        ]
+      }
+    });
+  });
+
   it('preserves contract-valid multibyte Gaming responses above 4 KiB', () => {
     const response = '🎮'.repeat(3_000);
     const shaped = shapeClientRouteResult({

@@ -12,6 +12,8 @@ import {
 } from './clientResponseCommon.js';
 import { redactString } from '@shared/redaction.js';
 
+const GAMING_SOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
 function pickTrinitySummary(value: Record<string, unknown>): Record<string, unknown> | null {
   const result = readString(value.result);
   const moduleName = readString(value.module);
@@ -788,7 +790,7 @@ function shapeGamingSource(value: unknown): Record<string, unknown> | null {
     url,
     ...(readString(value.snippet) ? { snippet: truncateText(readString(value.snippet) as string, 1_200) } : {}),
     ...(readString(value.error) ? { error: truncateText(readString(value.error) as string, 600) } : {}),
-    ...(sourceId && /^[0-9a-f-]{36}$/iu.test(sourceId) ? { sourceId } : {}),
+    ...(sourceId && GAMING_SOURCE_ID_PATTERN.test(sourceId) ? { sourceId } : {}),
     ...(sourceType && /^[a-z][a-z0-9_-]{0,63}$/u.test(sourceType) ? { sourceType } : {}),
     ...(patchVersion && patchVersion.length <= 64 ? { patchVersion } : {}),
     ...(fetchedAt && Number.isFinite(Date.parse(fetchedAt)) ? { fetchedAt } : {}),
