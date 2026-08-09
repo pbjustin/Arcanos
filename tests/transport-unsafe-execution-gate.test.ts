@@ -348,6 +348,29 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
   });
 
+  it('omits unavailable correlation IDs from the unsafe Gaming-source envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt-access/gaming/sources/ingestions',
+      body: { action: 'ingest' }
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith({
+      ok: false,
+      error: {
+        code: 'UNSAFE_EXECUTION_DISABLED',
+        message: 'Gaming-source mutations are temporarily unavailable because runtime integrity checks did not pass.'
+      }
+    });
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
   it('contains an unsafe Gaming request in the public Gaming envelope', () => {
     const next = jest.fn();
     const response = createResponse();
