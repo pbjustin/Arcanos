@@ -417,7 +417,7 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       ok: false,
       action: 'canary',
       scope: 'public_pipeline',
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.5.0',
       intent: 'public_canary',
       route: 'public_canary',
       requestId: 'req-canary-unsafe',

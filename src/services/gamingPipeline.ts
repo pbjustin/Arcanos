@@ -37,6 +37,7 @@ import {
   isGamingFreshnessSensitive,
   isCitableGamingWebSource
 } from "@services/gamingWebContext.js";
+import { buildStoredGamingKnowledgeContext } from "@services/gamingSourceIngestion.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -100,6 +101,14 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
 
 const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
 const PURE_CAPABILITY_REFUSAL_MAX_CHARS = 320;
+const MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS = 120;
+const MAX_GAMING_INTEGRITY_OUTPUT_CHARS = 1_000_000;
+const MAX_GAMING_INTEGRITY_ISSUES = 8;
+const GAMING_INTEGRITY_ISSUES = new Set([
+  "abrupt_mid_sentence_ending",
+  "broken_numbering",
+  "fallback_spliced_mid_answer"
+]);
 
 type GamingCitationNormalization = {
   response: string;
@@ -128,6 +137,53 @@ function isGamingProviderTimeoutError(error: unknown): boolean {
 
 function isGamingProviderCompletionIncompleteError(error: unknown): boolean {
   return readErrorString(error, "code") === "OPENAI_COMPLETION_INCOMPLETE";
+}
+
+function readBoundedGamingIntegrityString(error: unknown, key: string): string | undefined {
+  const value = readErrorString(error, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function readGamingIntegrityBoolean(error: unknown, key: string): boolean | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readGamingIntegrityOutputChars(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>).outputChars;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, MAX_GAMING_INTEGRITY_OUTPUT_CHARS)
+    : undefined;
+}
+
+function readGamingIntegrityIssues(error: unknown): string[] {
+  if (!error || typeof error !== "object") {
+    return [];
+  }
+  const issues = (error as Record<string, unknown>).integrityIssues;
+  return Array.isArray(issues)
+    ? Array.from(new Set(
+        issues.filter(
+          (issue): issue is string => typeof issue === "string" && GAMING_INTEGRITY_ISSUES.has(issue)
+        )
+      )).slice(0, MAX_GAMING_INTEGRITY_ISSUES)
+    : [];
 }
 
 function isPureGamingProviderCapabilityRefusal(value: string): boolean {
@@ -687,6 +743,63 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     throw createGamingGameRequiredError(resolvedParams.mode);
   }
 
+  if (resolvedParams.game) {
+    const storedRetrievalStartedAt = Date.now();
+    const storedKnowledge = await buildStoredGamingKnowledgeContext({
+      game: resolvedParams.game,
+      prompt: resolvedParams.prompt,
+      mode: resolvedParams.mode,
+      limit: 4,
+      sourceIndexOffset: sources.length
+    });
+    if (storedKnowledge.sources.length > 0) {
+      const existingUrls = new Set(sources.map((source) => source.url));
+      const storedSources: GamingWebSource[] = storedKnowledge.sources
+        .filter((source) => !existingUrls.has(source.url))
+        .map((source) => ({
+          url: source.url,
+          snippet: source.snippet,
+          sourceId: source.sourceId,
+          sourceType: source.sourceType,
+          ...(source.patchVersion ? { patchVersion: source.patchVersion } : {}),
+          fetchedAt: source.fetchedAt,
+          ...(source.title ? { title: source.title } : {}),
+          origin: "stored"
+        }));
+      if (storedSources.length > 0) {
+        const storedContext = storedSources.map((source, index) => [
+          `[Source ${sources.length + index + 1}]`,
+          "Origin: stored gaming knowledge",
+          `URL: ${source.url}`,
+          source.sourceId ? `Source ID: ${source.sourceId}` : "",
+          source.sourceType ? `Type: ${source.sourceType}` : "",
+          source.patchVersion ? `Patch: ${source.patchVersion}` : "",
+          source.title ? `Title: ${source.title}` : "",
+          source.snippet ?? ""
+        ].filter(Boolean).join("\n")).join("\n\n");
+        webContext = [webContext, storedContext].filter(Boolean).join("\n\n");
+        sources = [...sources, ...storedSources];
+        retrievalAttempted = true;
+        retrievalHadUsableSources = true;
+        retrievedSourceCount += storedSources.length;
+        publicSourceCount = sources.length;
+        const currentThresholdMs = Date.now() - (24 * 60 * 60_000);
+        if (storedSources.some((source) => {
+          const fetchedAtMs = source.fetchedAt ? Date.parse(source.fetchedAt) : Number.NaN;
+          return Number.isFinite(fetchedAtMs) && fetchedAtMs >= currentThresholdMs;
+        })) {
+          currentEvidenceAvailable = true;
+        }
+      }
+    }
+    logger.info("gaming.stored_retrieval", {
+      ...baseLogContext,
+      elapsedMs: Date.now() - storedRetrievalStartedAt,
+      sourceCount: storedKnowledge.sources.length,
+      mergedSourceCount: sources.filter((source) => source.origin === "stored").length
+    });
+  }
+
   if (freshnessSensitive && !currentEvidenceAvailable) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
     logger.warn("gaming.fallback.used", {
@@ -940,6 +1053,44 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     }
 
     if (readErrorString(error, "code") === "TRINITY_OUTPUT_INTEGRITY_FAILED") {
+      const integrityIssues = readGamingIntegrityIssues(error);
+      const outputChars = readGamingIntegrityOutputChars(error);
+      const selectionReason = readBoundedGamingIntegrityString(error, "selectionReason");
+      const trinityStage = readBoundedGamingIntegrityString(error, "trinityStage");
+      const recoveryFromStage = readBoundedGamingIntegrityString(error, "recoveryFromStage");
+      const activeModel = readBoundedGamingIntegrityString(error, "activeModel");
+      const finishReason = readBoundedGamingIntegrityString(error, "finishReason");
+      const responseStatus = readBoundedGamingIntegrityString(error, "responseStatus");
+      const incompleteReason = readBoundedGamingIntegrityString(error, "incompleteReason");
+      const recovery = readGamingIntegrityBoolean(error, "recovery");
+      const incomplete = readGamingIntegrityBoolean(error, "incomplete");
+      const emptyOutput = readGamingIntegrityBoolean(error, "emptyOutput");
+      const truncated = readGamingIntegrityBoolean(error, "truncated");
+      const lengthTruncated = readGamingIntegrityBoolean(error, "lengthTruncated");
+      const contentFiltered = readGamingIntegrityBoolean(error, "contentFiltered");
+      logger.warn("gaming.provider.integrity_failed", {
+        ...baseLogContext,
+        provider: "trinity",
+        elapsedMs,
+        generationElapsedMs: elapsedMs,
+        upstreamModelLatencyMs: elapsedMs,
+        errorCode: "TRINITY_OUTPUT_INTEGRITY_FAILED",
+        integrityIssues,
+        ...(outputChars !== undefined ? { outputChars } : {}),
+        ...(selectionReason ? { selectionReason } : {}),
+        ...(recovery !== undefined ? { recovery } : {}),
+        ...(trinityStage ? { trinityStage } : {}),
+        ...(recoveryFromStage ? { recoveryFromStage } : {}),
+        ...(activeModel ? { activeModel } : {}),
+        ...(finishReason ? { finishReason } : {}),
+        ...(responseStatus ? { responseStatus } : {}),
+        ...(incompleteReason ? { incompleteReason } : {}),
+        ...(incomplete !== undefined ? { incomplete } : {}),
+        ...(emptyOutput !== undefined ? { emptyOutput } : {}),
+        ...(truncated !== undefined ? { truncated } : {}),
+        ...(lengthTruncated !== undefined ? { lengthTruncated } : {}),
+        ...(contentFiltered !== undefined ? { contentFiltered } : {})
+      });
       throw error;
     }
 

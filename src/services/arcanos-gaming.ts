@@ -125,6 +125,10 @@ function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingE
         truncated: readSafeErrorBoolean(error, "truncated"),
         lengthTruncated: readSafeErrorBoolean(error, "lengthTruncated"),
         contentFiltered: readSafeErrorBoolean(error, "contentFiltered"),
+        outputChars: readSafeErrorNumber(error, "outputChars"),
+        selectionReason: readSafeErrorString(error, "selectionReason"),
+        recovery: readSafeErrorBoolean(error, "recovery"),
+        trinityStage: readSafeErrorString(error, "trinityStage"),
         integrityIssues: Array.isArray((error as { integrityIssues?: unknown }).integrityIssues)
           ? (error as { integrityIssues: unknown[] }).integrityIssues.filter((issue): issue is string => typeof issue === "string")
           : undefined

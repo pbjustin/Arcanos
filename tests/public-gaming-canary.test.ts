@@ -113,7 +113,7 @@ describe('public Gaming deterministic canary', () => {
       ok: true,
       action: 'canary',
       scope: 'public_pipeline',
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.5.0',
       intent: 'public_canary',
       route: 'public_canary',
       message: 'Public ARCANOS Gaming Action pipeline canary passed.',
@@ -418,10 +418,10 @@ describe('public Gaming deterministic canary', () => {
     expect(guardPublicGamingCanaryResponse(value)).toBe(false);
   });
 
-  it('keeps the runtime and served protocol on schema version 1.4.0', () => {
+  it('keeps the runtime and served protocol on schema version 1.5.0', () => {
     const info = (contract.info as Record<string, unknown>);
 
-    expect(PUBLIC_GAMING_CANARY_SCHEMA_VERSION).toBe('1.4.0');
+    expect(PUBLIC_GAMING_CANARY_SCHEMA_VERSION).toBe('1.5.0');
     expect(info.version).toBe(PUBLIC_GAMING_CANARY_SCHEMA_VERSION);
     expect(validateSuccessSchema).toBeDefined();
     expect(validateFailureSchema).toBeDefined();

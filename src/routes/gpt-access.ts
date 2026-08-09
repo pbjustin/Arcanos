@@ -90,6 +90,11 @@ import {
 import localAgentProtocolRouter from './gpt-access-local-agent.js';
 import { configureLocalAgentActionExecutor } from '@services/localAgent/executor.js';
 import { executeLocalAgentActionAsJob } from '@services/localAgent/service.js';
+import {
+  createGamingSourceIngestion,
+  getGamingSourceIngestionStatus,
+  refreshGamingSources
+} from '@services/gamingSourceIngestion.js';
 
 const router = express.Router();
 configureLocalAgentActionExecutor(executeLocalAgentActionAsJob);
@@ -1456,6 +1461,9 @@ router.use(
     '/gpt-access/worker-helper/health',
     '/gpt-access/jobs/create',
     '/gpt-access/jobs/result',
+    '/gpt-access/gaming/sources/ingestions',
+    '/gpt-access/gaming/sources/refreshes',
+    '/gpt-access/gaming/sources/ingestions/:ingestionId',
   ],
   noStoreResponse
 );
@@ -1623,6 +1631,56 @@ router.post(
       await queryJobEventTimeline(req.body, {
         principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
         workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
+      })
+    );
+  })
+);
+
+router.post(
+  '/gpt-access/gaming/sources/ingestions',
+  requireGptAccessScope('gaming.sources.write'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await createGamingSourceIngestion(req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        idempotencyKey: req.header('idempotency-key') ?? null,
+        logger: req.logger
+      })
+    );
+  })
+);
+
+router.post(
+  '/gpt-access/gaming/sources/refreshes',
+  requireGptAccessScope('gaming.sources.write'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await refreshGamingSources(req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        idempotencyKey: req.header('idempotency-key') ?? null,
+        logger: req.logger
+      })
+    );
+  })
+);
+
+router.get(
+  '/gpt-access/gaming/sources/ingestions/:ingestionId',
+  requireGptAccessScope('gaming.sources.read'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await getGamingSourceIngestionStatus(req.params.ingestionId, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        logger: req.logger
       })
     );
   })

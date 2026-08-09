@@ -777,10 +777,23 @@ function shapeGamingSource(value: unknown): Record<string, unknown> | null {
     return null;
   }
 
+  const sourceId = readString(value.sourceId);
+  const sourceType = readString(value.sourceType);
+  const patchVersion = readString(value.patchVersion);
+  const fetchedAt = readString(value.fetchedAt);
+  const title = readString(value.title);
+  const origin = readString(value.origin);
+
   return {
     url,
     ...(readString(value.snippet) ? { snippet: truncateText(readString(value.snippet) as string, 1_200) } : {}),
     ...(readString(value.error) ? { error: truncateText(readString(value.error) as string, 600) } : {}),
+    ...(sourceId && /^[0-9a-f-]{36}$/iu.test(sourceId) ? { sourceId } : {}),
+    ...(sourceType && /^[a-z][a-z0-9_-]{0,63}$/u.test(sourceType) ? { sourceType } : {}),
+    ...(patchVersion && patchVersion.length <= 64 ? { patchVersion } : {}),
+    ...(fetchedAt && Number.isFinite(Date.parse(fetchedAt)) ? { fetchedAt } : {}),
+    ...(title ? { title: truncateText(title, 240) } : {}),
+    ...(origin === 'stored' || origin === 'live' ? { origin } : {}),
   };
 }
 
@@ -845,7 +858,49 @@ function shapeGamingEvidenceRequest(value: unknown): Record<string, unknown> | n
 }
 
 function shapeGamingResult(value: Record<string, unknown>): Record<string, unknown> | null {
-  if (value.ok !== true || readString(value.route) !== 'gaming' || !isRecord(value.data)) {
+  if (readString(value.route) !== 'gaming') {
+    return null;
+  }
+
+  if (
+    value.ok === false
+    && isRecord(value.error)
+    && readString(value.error.code) === 'GENERATION_INTEGRITY_FAILED'
+  ) {
+    const code = readString(value.error.code);
+    const message = readString(value.error.message);
+    const details = isRecord(value.error.details) ? value.error.details : null;
+    const allowedIntegrityIssues = new Set([
+      'abrupt_mid_sentence_ending',
+      'broken_numbering',
+      'fallback_spliced_mid_answer'
+    ]);
+    const integrityIssues = Array.isArray(details?.integrityIssues)
+      ? details.integrityIssues
+        .filter((issue): issue is string => typeof issue === 'string' && allowedIntegrityIssues.has(issue))
+        .slice(0, 8)
+      : [];
+    const outputChars = readNumber(details?.outputChars);
+    return {
+      ok: false,
+      route: 'gaming',
+      ...(readString(value.mode) ? { mode: readString(value.mode) } : {}),
+      error: {
+        ...(code ? { code } : {}),
+        ...(message ? { message: truncateText(message, 600) } : {}),
+        ...(details && (integrityIssues.length > 0 || outputChars !== undefined)
+          ? {
+              details: {
+                ...(integrityIssues.length > 0 ? { integrityIssues } : {}),
+                ...(outputChars !== undefined ? { outputChars } : {})
+              }
+            }
+          : {})
+      }
+    };
+  }
+
+  if (value.ok !== true || !isRecord(value.data)) {
     return null;
   }
 

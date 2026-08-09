@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-08T09:17:48.855Z",
+  "generatedAt": "2026-08-09T02:25:16.180Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -453,6 +453,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/executionLogRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/gamingSourceRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/jobEventRepository.ts"
@@ -1758,6 +1761,9 @@
         },
         {
           "relativePath": "src/services/gamingSourceDiscovery.ts"
+        },
+        {
+          "relativePath": "src/services/gamingSourceIngestion.ts"
         },
         {
           "relativePath": "src/services/gamingVersion.ts"
@@ -3452,6 +3458,15 @@
         },
         {
           "relativePath": "tests/gaming-source-discovery.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-ingestion.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-schema-parity.test.ts"
         },
         {
           "relativePath": "tests/gaming-structured-resources.test.ts"

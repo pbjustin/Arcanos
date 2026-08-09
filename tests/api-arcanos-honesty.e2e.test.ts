@@ -111,6 +111,8 @@ jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos.js')).default;
+const { runThroughBrain } = await import('../src/core/logic/trinity.js');
+const { createRuntimeBudget } = await import('@platform/resilience/runtimeBudget.js');
 
 function buildApp() {
   const app = express();
@@ -425,6 +427,76 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.body.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
     expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(1);
     expect(mockRunStructuredReasoning).not.toHaveBeenCalled();
+  });
+
+  it('attaches safe bounded diagnostics to direct-answer integrity failures without output text', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback.mockResolvedValueOnce({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: { content: 'The tank should' }
+        }
+      ],
+      provider_metadata: {
+        finish_reason: 'stop',
+        status: 'completed',
+        incomplete_details: { reason: 'none' },
+        incomplete: false,
+        truncated: false,
+        length_truncated: false,
+        content_filtered: false
+      },
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      usage: {
+        prompt_tokens: 8,
+        completion_tokens: 3,
+        total_tokens: 11
+      },
+      id: 'direct-answer-integrity-response-1',
+      created: 1773339300250
+    });
+
+    let capturedError: unknown;
+    try {
+      await runThroughBrain(
+        {} as Parameters<typeof runThroughBrain>[0],
+        'Answer directly: give one tank positioning tip.',
+        undefined,
+        undefined,
+        {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          sourceEndpoint: 'test.direct-answer-integrity'
+        },
+        createRuntimeBudget()
+      );
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError).toMatchObject({
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      integrityIssues: ['abrupt_mid_sentence_ending'],
+      outputChars: 15,
+      selectionReason: 'explicit_answer_mode',
+      recovery: false,
+      trinityStage: 'direct-answer',
+      activeModel: 'gpt-4.1',
+      finishReason: 'stop',
+      responseStatus: 'completed',
+      incompleteReason: 'none',
+      incomplete: false,
+      emptyOutput: false,
+      truncated: false,
+      lengthTruncated: false,
+      contentFiltered: false
+    });
+    expect(capturedError).not.toHaveProperty('output');
+    expect(capturedError).not.toHaveProperty('partialOutput');
+    expect(JSON.stringify(capturedError)).not.toContain('The tank should');
   });
 
   it('normalizes duplicate limitations and scope drift at the route boundary', async () => {

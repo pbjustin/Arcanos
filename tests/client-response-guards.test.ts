@@ -331,7 +331,16 @@ describe('client response guards', () => {
           queries: ['"Palworld" version 1.0 latest patch']
         },
         sources: [
-          { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
+          {
+            url: 'https://example.com/guide-1',
+            snippet: 'First source snippet.',
+            sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+            sourceType: 'supplied',
+            patchVersion: '1.2',
+            fetchedAt: '2026-08-08T12:00:00.000Z',
+            title: 'Stored guide',
+            origin: 'stored'
+          },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
           { snippet: 'missing url' },
           ...Array.from({ length: 8 }, (_value, index) => ({
@@ -366,7 +375,16 @@ describe('client response guards', () => {
           queries: ['"Palworld" version 1.0 latest patch']
         },
         sources: [
-          { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
+          {
+            url: 'https://example.com/guide-1',
+            snippet: 'First source snippet.',
+            sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+            sourceType: 'supplied',
+            patchVersion: '1.2',
+            fetchedAt: '2026-08-08T12:00:00.000Z',
+            title: 'Stored guide',
+            origin: 'stored'
+          },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
           { url: 'https://example.com/extra-0', snippet: 'Extra source snippet.' },
           { url: 'https://example.com/extra-1', snippet: 'Extra source snippet.' },
@@ -394,6 +412,70 @@ describe('client response guards', () => {
     expect((shaped.data as Record<string, unknown>).response).toBe(response);
     expect(Buffer.byteLength(response, 'utf8')).toBeGreaterThan(4 * 1_024);
     expect(Array.from(response).length).toBeLessThanOrEqual(4_096);
+  });
+
+  it('preserves only allowlisted Gaming integrity diagnostics', () => {
+    const shaped = shapeClientRouteResult({
+      ok: false,
+      route: 'gaming',
+      mode: 'build',
+      error: {
+        code: 'GENERATION_INTEGRITY_FAILED',
+        message: 'Gaming generation did not complete cleanly; no partial answer was returned.',
+        details: {
+          integrityIssues: ['broken_numbering', 'untrusted_issue'],
+          outputChars: 432,
+          rawOutput: 'must not escape'
+        }
+      }
+    });
+
+    expect(shaped).toEqual({
+      ok: false,
+      route: 'gaming',
+      mode: 'build',
+      error: {
+        code: 'GENERATION_INTEGRITY_FAILED',
+        message: 'Gaming generation did not complete cleanly; no partial answer was returned.',
+        details: {
+          integrityIssues: ['broken_numbering'],
+          outputChars: 432
+        }
+      }
+    });
+    expect(JSON.stringify(shaped)).not.toContain('must not escape');
+  });
+
+  it('preserves existing non-integrity Gaming diagnostics', () => {
+    const shaped = shapeClientRouteResult({
+      ok: false,
+      route: 'gaming',
+      mode: 'guide',
+      error: {
+        code: 'GENERATION_TIMEOUT',
+        message: 'Gaming generation exceeded its bounded runtime.',
+        details: {
+          timeoutMs: 37_000,
+          stageTimeoutMs: 8_000,
+          timeoutPhase: 'final'
+        }
+      }
+    });
+
+    expect(shaped).toEqual({
+      ok: false,
+      route: 'gaming',
+      mode: 'guide',
+      error: {
+        code: 'GENERATION_TIMEOUT',
+        message: 'Gaming generation exceeded its bounded runtime.',
+        details: {
+          timeoutMs: 37_000,
+          stageTimeoutMs: 8_000,
+          timeoutPhase: 'final'
+        }
+      }
+    });
   });
 
   it('caps bypassed Gaming responses at the contract character limit', () => {

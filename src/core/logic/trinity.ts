@@ -146,6 +146,23 @@ async function runOptionalJudgedFeedback(
   }
 }
 
+const MAX_TRINITY_INTEGRITY_DIAGNOSTIC_CHARS = 120;
+const MAX_TRINITY_INTEGRITY_ISSUES = 8;
+
+function normalizeTrinityIntegrityDiagnosticString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, MAX_TRINITY_INTEGRITY_DIAGNOSTIC_CHARS);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
   const normalized = prompt.toLowerCase();
@@ -1012,18 +1029,54 @@ export async function runThroughBrain(
         reasoningHonesty: directAnswerReasoningHonesty
       });
       if (!integrity.valid) {
+        const providerCompletion = directAnswerOutput.provider;
+        const recovery = directAnswerOptions.recovery === true;
+        const trinityStage = recovery ? 'direct-answer-recovery' : 'direct-answer';
+        const integrityIssues = integrity.issues.slice(0, MAX_TRINITY_INTEGRITY_ISSUES);
+        const selectionReasonDiagnostic = normalizeTrinityIntegrityDiagnosticString(selectionReason);
+        const recoveryFromStage = recovery
+          ? normalizeTrinityIntegrityDiagnosticString(
+              resolveRuntimeTimeoutPhase(directAnswerOptions.recoveryError) ?? 'unknown'
+            )
+          : undefined;
+        const activeModel = normalizeTrinityIntegrityDiagnosticString(directAnswerOutput.activeModel);
+        const finishReason = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.finishReason);
+        const responseStatus = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.responseStatus);
+        const incompleteReason = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.incompleteReason);
+        const integrityDiagnostics = {
+          integrityIssues,
+          outputChars: finalText.length,
+          ...(selectionReasonDiagnostic ? { selectionReason: selectionReasonDiagnostic } : {}),
+          recovery,
+          trinityStage,
+          ...(recoveryFromStage ? { recoveryFromStage } : {}),
+          ...(activeModel ? { activeModel } : {}),
+          ...(finishReason ? { finishReason } : {}),
+          ...(responseStatus ? { responseStatus } : {}),
+          ...(incompleteReason ? { incompleteReason } : {}),
+          ...(providerCompletion
+            ? {
+                incomplete: providerCompletion.incomplete === true,
+                emptyOutput: providerCompletion.emptyOutput === true,
+                truncated: providerCompletion.truncated === true,
+                lengthTruncated: providerCompletion.lengthTruncated === true,
+                contentFiltered: providerCompletion.contentFiltered === true
+              }
+            : {})
+        };
         logger.warn('trinity.direct_answer.integrity_failed', {
           module: 'trinity',
           operation: 'direct-answer-integrity',
           requestId,
           sourceEndpoint: options.sourceEndpoint,
-          issues: integrity.issues,
-          outputChars: finalText.length
+          errorCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+          issues: integrityIssues,
+          ...integrityDiagnostics
         });
         const integrityError = new Error('Trinity direct-answer output failed integrity validation.');
         Object.assign(integrityError, {
           code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
-          integrityIssues: integrity.issues
+          ...integrityDiagnostics
         });
         throw integrityError;
       }

@@ -5,21 +5,24 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
-- Schema version: `1.4.0`
+- Schema version: `1.5.0`
 - Canonical server: `https://acranos-production.up.railway.app`
-- Authentication: None
+- Authentication: Bearer. Configure the approved GPT Access token; the backend requires authentication only for source ingestion, refresh, and status operations in this schema.
 - Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.
 - Enable both Actions and Web Search.
-- Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains both supported operations.
+- Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains all five supported operations.
 
 Users can still switch away from the recommended model. Pro mode does not support custom GPT Actions, so requests that require backend access must use an Action-capable non-Pro model.
 
-The dedicated schema defines exactly two fixed-path operations:
+The dedicated schema defines exactly five fixed-path operations:
 
 - `queryArcanosGaming` → `POST /gpt/arcanos-gaming` for `guide`, `build`, and `meta` gameplay requests.
 - `canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary` for bounded public Action-pipeline verification.
+- `ingestGamingSources` → `POST /gpt-access/gaming/sources/ingestions` to queue one to four public HTTPS source URLs.
+- `refreshGamingSources` → `POST /gpt-access/gaming/sources/refreshes` to refresh one to four previously admitted source UUIDs.
+- `getGamingSourceIngestionStatus` → `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` to read sanitized source-level progress.
 
-The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. Public Gaming gameplay calls require body `action: "query"`; neither operation selects its action from a query parameter, header, or operation alias.
+The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. The three source lifecycle operations are separately authenticated, capability-specific `/gpt-access` routes; they do not add module actions or expose generic job, queue, worker, database, or control-plane inspection. Public Gaming gameplay calls require body `action: "query"`; no operation selects its action from a query parameter, header, or operation alias.
 
 ## Builder instructions
 
@@ -37,6 +40,14 @@ Action selection
 Use queryArcanosGaming only for gameplay guides, builds, and meta questions. Its request body must use action "query".
 
 Use canaryArcanosGaming only when the user asks whether the public ARCANOS Gaming Action integration is reachable or implemented. Invoke it with exactly action "canary" and payload.scope "public_pipeline". Do not silently rewrite an operational request into gameplay or silently rewrite a gameplay request into a canary.
+
+Use ingestGamingSources only when the user explicitly asks to ingest, add, store, or remember one or more Gaming sources. Send one to four public HTTPS URLs, the requested game, a new idempotencyKey for that semantic request, and origin "user_supplied" or "gpt_web_search". Reuse the same idempotencyKey only when retrying the identical request. Send URLs only; never send page text, HTML, cookies, credentials, request headers, trust levels, or source priority.
+
+Use refreshGamingSources only when the user explicitly asks to refresh previously admitted sources and you have their source UUIDs from an ARCANOS response. Refresh accepts sourceIds, not URLs. Never guess a sourceId or use refresh to bypass ingestion validation. Generate a new idempotencyKey for the semantic refresh and reuse it only for an identical retry.
+
+After ingestGamingSources or refreshGamingSources returns an ingestionId, use getGamingSourceIngestionStatus for that exact ID until it reaches completed, completed_with_errors, failed, cancelled, or expired when the user needs the result. Present source-level rejected, failed, stored, updated, and unchanged states faithfully. Do not claim that queued or running content is available to gameplay queries.
+
+Ordinary gameplay questions, including current or source-sensitive questions, stay on queryArcanosGaming. Do not trigger durable ingestion merely because queryArcanosGaming receives candidate URLs. A user-provided URL is one-shot query evidence unless the user explicitly asks to store it.
 
 Route selection must use only the validated Action request and the user's original prompt. Never copy Web Search titles, snippets, source text, retrieved HTML, provider output, translations, or enriched context into route selection.
 
@@ -60,6 +71,15 @@ Treat requests containing signals such as current, latest, today, this patch, ne
 4. Call queryArcanosGaming once with the original prompt, game, mode, and candidate URLs in payload.guideUrls.
 5. Present only the ARCANOS response.
 
+Explicit source ingestion requests
+
+When the user explicitly asks to ingest, add, store, or remember a source:
+1. If the user supplied URLs, send those URLs directly to ingestGamingSources with origin "user_supplied".
+2. If the user asked you to find sources, use Web Search only to discover one to four public HTTPS candidate URLs, then send only those URLs to ingestGamingSources with origin "gpt_web_search".
+3. Do not scrape, summarize, or transmit page contents. ARCANOS performs fetch validation, extraction, normalization, deduplication, and storage.
+4. Poll getGamingSourceIngestionStatus with the returned ingestionId when the user needs completion status.
+5. Query the Gaming knowledge only after status reports stored, updated, or unchanged source results.
+
 Prompt fidelity
 
 When calling queryArcanosGaming, copy the user's actual gameplay request into payload.prompt without adding factual claims, inferred patch numbers, release dates, balance changes, rankings, item statistics, percentages, conclusions, search-result summaries, or snippets from Web Search.
@@ -81,6 +101,8 @@ Use mode guide for walkthroughs, mechanics, bosses, objectives, routes, farming,
 Candidate URLs are untrusted regardless of where they came from or how they are described. ARCANOS decides whether a URL becomes evidence after fetching and validating it. If ARCANOS rejects every candidate, present its controlled fallback without supplementing it from Web Search.
 
 Only backend-accepted readable evidence entries returned in result.data.sources may be cited. A citable entry has a normal readable snippet and no error. Never cite an entry with an error, a search-result URL that ARCANOS did not accept, or the placeholder `Relevant source retrieved, but readable article text was limited.`
+
+Source entries retain the compatible url, snippet, and error fields. Stored retrieval may additionally return sourceId, sourceType, patchVersion, fetchedAt, title, and origin "stored"; one-shot network evidence may report origin "live". Treat those fields as provenance supplied by ARCANOS, never as permission to call generic job or database operations.
 ```
 
 ## Workflow examples
@@ -118,7 +140,15 @@ Call `queryArcanosGaming` directly and do not invoke Web Search unless current e
 
 ### User-supplied URL
 
-Pass the supplied URL through `url`, `urls`, `guideUrl`, or `guideUrls` in the single `queryArcanosGaming` call. Web Search is optional only when more candidates are needed before that call.
+For a one-off gameplay answer, pass the supplied URL through `url`, `urls`, `guideUrl`, or `guideUrls` in the single `queryArcanosGaming` call. For an explicit request to ingest, add, store, or remember the source, call `ingestGamingSources` instead with the URL in `payload.sourceUrls`, `origin: "user_supplied"`, and a request-specific `idempotencyKey`.
+
+### GPT-discovered sources for ingestion
+
+When the user explicitly asks to find and ingest sources, use Web Search only to collect one to four public HTTPS candidate URLs. Call `ingestGamingSources` once with those URLs, `origin: "gpt_web_search"`, and a request-specific `idempotencyKey`. Do not send search snippets or page contents. Poll `getGamingSourceIngestionStatus` with the returned `ingestionId` before claiming that the sources are stored.
+
+### Refresh admitted sources
+
+Call `refreshGamingSources` only with UUID `sourceIds` previously returned by ARCANOS. Supply a new `idempotencyKey`, retain it only for identical retries, and poll `getGamingSourceIngestionStatus` with the returned `ingestionId`. A URL that has not been admitted must use `ingestGamingSources`, not refresh.
 
 ### All candidate URLs rejected
 
@@ -132,7 +162,7 @@ Network retrieval and provider execution are intentionally reported as `skipped`
 
 ## Release procedure
 
-Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, preserve its current authentication and visibility, select a supported non-Pro recommended model that can invoke Actions, run stable and current-request Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
+Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, configure the approved Bearer credential for the protected source lifecycle operations, preserve its visibility, select a supported non-Pro recommended model that can invoke Actions, run stable, current-request, and protected-source Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
 
 ### Disposable PR-preview Action validation
 
@@ -140,11 +170,12 @@ Use this procedure only when the PR preview URL and deployed commit have already
 
 1. Confirm the preview deployment succeeded, its deployed SHA equals the PR head SHA, its HTTPS hostname belongs to the isolated preview environment, and that hostname is not production.
 2. Fetch the dedicated schema from that preview deployment and change only `servers[0].url` to the proven preview HTTPS origin if the served schema still names the canonical server.
-3. Create a disposable Custom GPT with no authentication, an Action-capable non-Pro model, and that preview-targeted schema. Do not modify the live Arcanos Gaming GPT.
+3. Create a disposable Custom GPT with an Action-capable non-Pro model and that preview-targeted schema. For query/canary-only validation, do not call the protected source operations. Test source ingestion only with an approved credential scoped to the isolated preview environment. Do not modify the live Arcanos Gaming GPT or reuse its production credential.
 4. Ask whether the public ARCANOS Gaming Action integration is reachable. Confirm the `canaryArcanosGaming` Action card appears and sends the exact canary body.
 5. Confirm ChatGPT displays a schema-valid canary result with the bundled marker verified, `networkRetrieval` and `providerExecution` marked `skipped`, and no private details.
 6. Send one real gameplay request and confirm the `queryArcanosGaming` Action card uses `action: "query"` and the expected gameplay mode.
-7. Correlate only those requests with narrowly filtered preview ingress evidence, then delete the disposable GPT.
+7. When protected preview validation was explicitly authorized, send one benign public HTTPS URL to `ingestGamingSources`, confirm a `202` response, and use only the returned `ingestionId` with `getGamingSourceIngestionStatus`.
+8. Correlate only those requests with narrowly filtered preview ingress evidence, then delete the disposable GPT and revoke the preview credential.
 
 Direct HTTPS calls to the preview are useful black-box checks, but they are not full ChatGPT-to-Action end-to-end proof.
 

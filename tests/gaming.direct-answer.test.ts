@@ -7,6 +7,7 @@ const mockGetDefaultModel = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGenerateMockResponse = jest.fn();
 const mockFetchAndClean = jest.fn();
+const mockFetchAndCleanDocument = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvIntegerAtLeast = jest.fn();
@@ -52,7 +53,8 @@ jest.unstable_mockModule('@platform/runtime/prompts.js', () => ({
 }));
 
 jest.unstable_mockModule('@shared/webFetcher.js', () => ({
-  fetchAndClean: mockFetchAndClean
+  fetchAndClean: mockFetchAndClean,
+  fetchAndCleanDocument: mockFetchAndCleanDocument
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
@@ -936,18 +938,63 @@ describe('gaming guide output hardening', () => {
   });
 
   it('preserves genuine output-integrity failures for the module formatter', async () => {
-    const integrityError = Object.assign(new Error('secret provider integrity detail'), {
-      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
-      integrityIssues: ['broken_numbering']
-    });
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(integrityError);
+    const warnSpy = jest.spyOn(logger, 'warn');
+    try {
+      const integrityError = Object.assign(new Error('secret provider integrity detail'), {
+        code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+        integrityIssues: ['broken_numbering', 'unsupported_issue'],
+        outputChars: 27,
+        selectionReason: 'explicit_answer_mode',
+        recovery: false,
+        trinityStage: 'direct-answer',
+        activeModel: 'gpt-test',
+        finishReason: 'stop',
+        responseStatus: 'completed',
+        incompleteReason: 'none',
+        incomplete: false,
+        emptyOutput: false,
+        truncated: false,
+        lengthTruncated: false,
+        contentFiltered: false,
+        partialOutput: 'secret provider partial output'
+      });
+      mockRunTrinityWritingPipeline.mockRejectedValueOnce(integrityError);
 
-    await expect(runGuidePipeline({
-      game: 'Elden Ring',
-      prompt: 'Look up a guide for Elden Ring.',
-      guideUrls: [],
-      auditEnabled: false
-    })).rejects.toBe(integrityError);
+      await expect(runGuidePipeline({
+        game: 'Elden Ring',
+        prompt: 'Look up a guide for Elden Ring.',
+        guideUrls: [],
+        auditEnabled: false
+      })).rejects.toBe(integrityError);
+
+      const integrityLog = warnSpy.mock.calls.find(([event]) => event === 'gaming.provider.integrity_failed');
+      expect(integrityLog?.[1]).toEqual(expect.objectContaining({
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        mode: 'guide',
+        provider: 'trinity',
+        errorCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+        integrityIssues: ['broken_numbering'],
+        outputChars: 27,
+        selectionReason: 'explicit_answer_mode',
+        recovery: false,
+        trinityStage: 'direct-answer',
+        activeModel: 'gpt-test',
+        finishReason: 'stop',
+        responseStatus: 'completed',
+        incompleteReason: 'none',
+        incomplete: false,
+        emptyOutput: false,
+        truncated: false,
+        lengthTruncated: false,
+        contentFiltered: false
+      }));
+      expect(JSON.stringify(integrityLog?.[1])).not.toContain('secret provider integrity detail');
+      expect(JSON.stringify(integrityLog?.[1])).not.toContain('secret provider partial output');
+      expect(integrityLog?.[1]).not.toHaveProperty('partialOutput');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it.each([

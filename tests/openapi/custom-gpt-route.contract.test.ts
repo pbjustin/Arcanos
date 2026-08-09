@@ -154,7 +154,7 @@ describe('custom GPT route OpenAPI contract', () => {
     );
     const canaryPath = '/gpt/arcanos-gaming/canary';
 
-    expect(contract.info.version).toBe('1.4.0');
+    expect(contract.info.version).toBe('1.5.0');
     expect(contract.info.version).toBe(gamingContract.info.version);
     expect(Object.keys(contract.paths)).toEqual(['/gpt/{gptId}', canaryPath]);
     expect(contract.paths[canaryPath].post.operationId).toBe('canaryArcanosGaming');
@@ -225,7 +225,7 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(JSON.stringify(contract.servers)).not.toContain('arcanos-v2-production');
 
     const schemas = contract.components?.schemas;
-    expect(contract.info?.version).toBe('1.4.0');
+    expect(contract.info?.version).toBe('1.5.0');
     expect(schemas?.GptRouteSuccessResponse?.anyOf).toEqual(
       expect.arrayContaining([
         { $ref: '#/components/schemas/GamingPublicResponse' },

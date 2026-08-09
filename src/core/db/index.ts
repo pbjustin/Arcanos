@@ -89,6 +89,33 @@ export {
 } from './repositories/backstageStorylineRepository.js';
 
 export {
+  createGamingSourceRepository,
+  findGamingSourceById,
+  getGamingSourceById,
+  persistGamingSourceRevision,
+  queryActiveGamingKnowledge,
+  searchActiveGamingKnowledge,
+  GamingSourceCanonicalHashCollisionError,
+  GamingSourceRepositoryUnavailableError,
+  PostgresGamingSourceRepository,
+  GAMING_KNOWLEDGE_RECORD_TYPES,
+  GAMING_SOURCE_TYPES,
+  type GamingDateInput,
+  type GamingKnowledgeProvenanceRecord,
+  type GamingKnowledgeRecordStatus,
+  type GamingKnowledgeRecordType,
+  type GamingSourceLatestRevision,
+  type GamingSourceRecord,
+  type GamingSourceRevisionState,
+  type GamingSourceStatus,
+  type GamingSourceType,
+  type PersistGamingKnowledgeRecordInput,
+  type PersistGamingSourceRevisionInput,
+  type PersistGamingSourceRevisionResult,
+  type QueryActiveGamingKnowledgeInput
+} from './repositories/gamingSourceRepository.js';
+
+export {
   logExecution,
   logExecutionBatch
 } from './repositories/executionLogRepository.js';
