@@ -246,10 +246,10 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(schemas.GamingSourceRefreshPayload.properties).not.toHaveProperty('sourceUrls');
 
     expect(Object.keys(ingest.responses)).toEqual([
-      '202', '400', '401', '403', '409', '422', '429', '500', '503',
+      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
     ]);
     expect(Object.keys(refresh.responses)).toEqual([
-      '202', '400', '401', '403', '409', '422', '429', '500', '503',
+      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
     ]);
     expect(Object.keys(status.responses)).toEqual([
       '200', '400', '401', '403', '404', '429', '500', '503',
@@ -268,6 +268,13 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
         $ref: '#/components/schemas/GamingSourceRateLimitResponse',
       });
     }
+    for (const operation of [ingest, refresh]) {
+      for (const statusCode of ['413', '415']) {
+        expect(operation.responses[statusCode].content['application/json'].schema).toEqual({
+          $ref: '#/components/schemas/GamingSourceOperationErrorResponse',
+        });
+      }
+    }
 
     for (const schemaName of [
       'GamingSourceAdmission',
@@ -284,6 +291,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     }
     expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
       'GPT_ACCESS_SCOPE_DENIED'
+    );
+    expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
+      'GAMING_SOURCE_STORAGE_UNAVAILABLE'
     );
     expect(schemas.GamingSourceRateLimitResponse).toEqual(expect.objectContaining({
       required: ['error', 'message', 'retryAfter'],
@@ -319,6 +329,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'rejected',
       'failed',
     ]);
+    expect(
+      schemas.GamingSourceIngestionItemStatus.properties.patchVersion
+    ).toEqual(expect.objectContaining({
+      type: 'string',
+      maxLength: 64,
+    }));
 
     const protectedSchemaText = JSON.stringify({
       ingestRequest: schemas.GamingSourceIngestionRequest,

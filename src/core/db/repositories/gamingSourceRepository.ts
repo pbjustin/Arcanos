@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool, PoolClient, QueryResult } from 'pg';
 
 import { getPool, isDatabaseConnected } from '../client.js';
 
@@ -107,6 +107,11 @@ export interface QueryActiveGamingKnowledgeInput {
   query: string;
   limit?: number;
   mode?: GamingKnowledgeRecordType;
+}
+
+export interface QueryActiveGamingKnowledgeOptions {
+  queryTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface GamingKnowledgeProvenanceRecord {
@@ -273,6 +278,7 @@ const SENSITIVE_URL_PARAMETER_PATTERN = /(?:^|[_-])(?:api[_-]?key|auth|credentia
 const MAX_RECORDS_PER_REVISION = 500;
 const DEFAULT_QUERY_LIMIT = 12;
 const MAX_QUERY_LIMIT = 50;
+const MAX_QUERY_TIMEOUT_MS = 30_000;
 
 export class GamingSourceCanonicalHashCollisionError extends Error {
   constructor() {
@@ -318,6 +324,30 @@ function optionalString(
     return null;
   }
   return requiredString(value, label, maxLength);
+}
+
+function normalizeQueryTimeoutMs(value: number | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value < 1 || value > MAX_QUERY_TIMEOUT_MS) {
+    throw new TypeError(
+      `queryTimeoutMs must be an integer between 1 and ${MAX_QUERY_TIMEOUT_MS}.`
+    );
+  }
+  return value;
+}
+
+function throwIfQueryAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  if (signal.reason instanceof Error) {
+    throw signal.reason;
+  }
+  const error = new Error('Gaming knowledge query aborted.');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function sha256(value: string): string {
@@ -930,7 +960,8 @@ export class PostgresGamingSourceRepository {
   }
 
   async queryActiveGamingKnowledge(
-    input: QueryActiveGamingKnowledgeInput
+    input: QueryActiveGamingKnowledgeInput,
+    options: QueryActiveGamingKnowledgeOptions = {}
   ): Promise<GamingKnowledgeProvenanceRecord[]> {
     const gameKey = requiredString(input.gameKey, 'gameKey', 120).toLowerCase();
     if (typeof input.query !== 'string' || input.query.length > 2000) {
@@ -944,11 +975,11 @@ export class PostgresGamingSourceRepository {
       throw new TypeError('limit must be a positive integer.');
     }
     const limit = Math.min(requestedLimit, MAX_QUERY_LIMIT);
-    const result = await this.pool.query<GamingKnowledgeQueryRow>(
-      `WITH search_input AS (
+    const queryTimeoutMs = normalizeQueryTimeoutMs(options.queryTimeoutMs);
+    const queryText = `WITH search_input AS (
          SELECT CASE
-           WHEN NULLIF(btrim($2::text), '') IS NULL THEN NULL
-           ELSE websearch_to_tsquery('simple'::regconfig, $2::text)
+            WHEN NULLIF(btrim($2::text), '') IS NULL THEN NULL
+            ELSE websearch_to_tsquery('simple'::regconfig, $2::text)
          END AS query
        )
        SELECT
@@ -1003,13 +1034,52 @@ export class PostgresGamingSourceRepository {
          )
        ORDER BY
          relevance DESC,
-         source.trust_score DESC,
-         revision.fetched_at DESC,
-         knowledge.created_at DESC,
-         knowledge.id ASC
-       LIMIT $4`,
-      [gameKey, input.query, input.mode ?? null, limit]
-    );
+          source.trust_score DESC,
+          revision.fetched_at DESC,
+          knowledge.created_at DESC,
+          knowledge.id ASC
+        LIMIT $4`;
+    const queryValues = [gameKey, input.query, input.mode ?? null, limit];
+    let result: QueryResult<GamingKnowledgeQueryRow>;
+    if (queryTimeoutMs === null && options.signal === undefined) {
+      result = await this.pool.query<GamingKnowledgeQueryRow>(queryText, queryValues);
+    } else {
+      throwIfQueryAborted(options.signal);
+      const client = await this.pool.connect();
+      let transactionStarted = false;
+      let releaseError: Error | undefined;
+      try {
+        // A request can time out while waiting for a pool slot. Never let that
+        // stale waiter begin database work after it finally acquires a client.
+        throwIfQueryAborted(options.signal);
+        await client.query('BEGIN');
+        transactionStarted = true;
+        if (queryTimeoutMs !== null) {
+          await client.query(
+            "SELECT set_config('statement_timeout', $1, true)",
+            [`${queryTimeoutMs}ms`]
+          );
+        }
+        throwIfQueryAborted(options.signal);
+        result = await client.query<GamingKnowledgeQueryRow>(queryText, queryValues);
+        throwIfQueryAborted(options.signal);
+        await client.query('COMMIT');
+        transactionStarted = false;
+      } catch (error) {
+        if (transactionStarted) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            releaseError = rollbackError instanceof Error
+              ? rollbackError
+              : new Error('Gaming knowledge query rollback failed.');
+          }
+        }
+        throw error;
+      } finally {
+        client.release(releaseError);
+      }
+    }
 
     return result.rows.map(row => ({
       recordId: row.record_id,
@@ -1073,9 +1143,10 @@ export async function findGamingSourceById(id: string): Promise<GamingSourceReco
 export const getGamingSourceById = findGamingSourceById;
 
 export async function queryActiveGamingKnowledge(
-  input: QueryActiveGamingKnowledgeInput
+  input: QueryActiveGamingKnowledgeInput,
+  options: QueryActiveGamingKnowledgeOptions = {}
 ): Promise<GamingKnowledgeProvenanceRecord[]> {
-  return createGamingSourceRepository().queryActiveGamingKnowledge(input);
+  return createGamingSourceRepository().queryActiveGamingKnowledge(input, options);
 }
 
 export const searchActiveGamingKnowledge = queryActiveGamingKnowledge;

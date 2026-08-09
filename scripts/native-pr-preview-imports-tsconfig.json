@@ -7,6 +7,9 @@
       "@arcanos/runtime/requestAbort": [
         "packages/arcanos-runtime/src/requestAbort.ts"
       ],
+      "@arcanos/runtime/redaction": [
+        "packages/arcanos-runtime/src/redaction.ts"
+      ],
       "@core/lib/*.js": [
         "src/lib/*.ts"
       ],
@@ -16,8 +19,17 @@
       "@core/*": [
         "src/core/*"
       ],
+      "@shared/redaction.js": [
+        "packages/arcanos-runtime/src/redaction.ts"
+      ],
       "@shared/*": [
         "src/shared/*"
+      ],
+      "@services/gamingModes.js": [
+        "src/services/gamingModes.ts"
+      ],
+      "@services/publicGamingCanaryFixture.js": [
+        "src/services/publicGamingCanaryFixture.ts"
       ],
       "@transport/*": [
         "src/transport/*"

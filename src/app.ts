@@ -101,6 +101,8 @@ import {
 import {
   configureDefaultArcanosCoreRuntimeProviders
 } from '@services/arcanosCoreRuntimeProviders.js';
+import { gamingSourceHttpBoundary } from '@services/gamingSourceHttpBoundary.js';
+import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { mcpHttpBodyParser } from './mcp/httpBodyParser.js';
 
 const SERVICE_NAME = 'arcanos-backend';
@@ -171,6 +173,12 @@ export function createApp(): Express {
   // exact namespace before CORS or broad application parsing.
   app.use('/api/assistants', assistantRegistryHttpBoundary);
   app.use('/api/assistants', assistantRegistryBodyParser);
+  // Gaming source operations are a narrow GPT-access control plane. Establish
+  // bearer identity, Gaming scope, client throttling, no-store policy, and the
+  // route-specific JSON ceiling before CORS, the broad application parser, or
+  // the unsafe execution gate can inspect or short-circuit these paths.
+  app.use('/gpt-access/gaming/sources', gamingSourceHttpBoundary);
+  app.use('/gpt-access/gaming/sources', gamingSourceBodyParser);
   app.use(cors(config.cors));
   // Memory and durable-session payloads share one trust domain. Authenticate
   // every HTTP prefix before broad parsers can allocate or expose stored data.

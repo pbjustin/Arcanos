@@ -61,6 +61,13 @@ jest.unstable_mockModule('@services/arcanosCoreRuntimeProviders.js', () => ({
 jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
   arcanosMcpService: {},
 }));
+jest.unstable_mockModule('@services/gptAccessGateway.js', () => {
+  const passThrough = (_req: unknown, _res: unknown, next: () => void) => next();
+  return {
+    gptAccessAuthMiddleware: passThrough,
+    requireGptAccessScope: () => passThrough,
+  };
+});
 jest.unstable_mockModule(
   '@transport/http/middleware/fallbackHandler.js',
   () => ({

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-09T02:25:16.180Z",
+  "generatedAt": "2026-08-09T17:47:04.382Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1760,7 +1760,16 @@
           "relativePath": "src/services/gamingPublicDispatcher.ts"
         },
         {
+          "relativePath": "src/services/gamingSourceBodyParser.ts"
+        },
+        {
           "relativePath": "src/services/gamingSourceDiscovery.ts"
+        },
+        {
+          "relativePath": "src/services/gamingSourceHttpBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/gamingSourceHttpRoutes.ts"
         },
         {
           "relativePath": "src/services/gamingSourceIngestion.ts"
@@ -1788,6 +1797,9 @@
         },
         {
           "relativePath": "src/services/gptAccessNaturalLanguageDispatch.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessRateLimit.ts"
         },
         {
           "relativePath": "src/services/gptAccessSanitization.ts"
@@ -3458,6 +3470,9 @@
         },
         {
           "relativePath": "tests/gaming-source-discovery.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-http-boundary.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-ingestion.test.ts"

@@ -250,6 +250,26 @@
               }
             }
           },
+          "413": {
+            "description": "The Gaming source ingestion request exceeds the route-specific JSON body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The Gaming source ingestion request is not uncompressed application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "No submitted source passed admission validation.",
             "content": {
@@ -372,6 +392,26 @@
           },
           "409": {
             "description": "The idempotency key is already bound to a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The Gaming source refresh request exceeds the route-specific JSON body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The Gaming source refresh request is not uncompressed application/json.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1543,6 +1583,7 @@
               "GAMING_SOURCE_ADMISSION_REJECTED",
               "GAMING_SOURCE_IDEMPOTENCY_CONFLICT",
               "GAMING_SOURCE_JOBS_UNAVAILABLE",
+              "GAMING_SOURCE_STORAGE_UNAVAILABLE",
               "GAMING_SOURCE_INTERNAL_ERROR",
               "GAMING_SOURCE_INGESTION_NOT_FOUND",
               "UNAUTHORIZED_GPT_ACCESS",

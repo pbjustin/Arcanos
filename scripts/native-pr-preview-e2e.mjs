@@ -15,13 +15,23 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 68;
+const MAX_REQUESTS = 105;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const INTEGER_PATTERN = /^(?:0|[1-9]\d*)$/u;
 const CANONICAL_REPOSITORY = 'pbjustin/Arcanos';
+const WEB_RESPONSE_HEADER_CONTRACT = Object.freeze({
+  'content-security-policy':
+    "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  'cross-origin-resource-policy': 'same-origin',
+  'permissions-policy': 'camera=(), geolocation=(), microphone=()',
+  'referrer-policy': 'no-referrer',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+});
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const VALUE_ARGUMENTS = new Set([
   '--commit-sha',
@@ -382,6 +392,113 @@ function mcpBodyCapCase(caseId, fixtureName, status) {
   };
 }
 
+function gamingQueryBody(mode, prompt, extraPayload = undefined) {
+  return {
+    action: 'query',
+    payload: {
+      mode,
+      game: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.game,
+      prompt,
+      ...(extraPayload ?? {}),
+    },
+  };
+}
+
+function gamingCase(
+  caseId,
+  body,
+  status,
+  expectedType,
+  extra = undefined
+) {
+  return {
+    body,
+    boundedResponse: true,
+    caseId,
+    expectedStatus: status,
+    expectedType,
+    method: 'POST',
+    path: expectedType.startsWith('gaming-canary')
+      ? NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.canaryPath
+      : NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.queryPath,
+    pathTemplate: expectedType.startsWith('gaming-canary')
+      ? NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.canaryPath
+      : NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.queryPath,
+    role: 'web',
+    ...(extra ?? {}),
+  };
+}
+
+function gamingSourceIngestionBody(idempotencyKey, extraPayload = undefined) {
+  return {
+    action: 'ingest',
+    payload: {
+      game: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.game,
+      sourceUrls: ['https://example.invalid/palworld/guide'],
+      origin: 'user_supplied',
+      idempotencyKey,
+      ...(extraPayload ?? {}),
+    },
+  };
+}
+
+function gamingSourceRefreshBody(idempotencyKey, extraPayload = undefined) {
+  return {
+    action: 'refresh',
+    payload: {
+      sourceIds: [NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.sourceId],
+      idempotencyKey,
+      reason: 'user_requested',
+      ...(extraPayload ?? {}),
+    },
+  };
+}
+
+function percentEncodeEveryAsciiCharacter(value) {
+  return [...value].map((character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  )).join('');
+}
+
+function simulatedGamingSourceCase({
+  body,
+  caseId,
+  expectedStatus,
+  fixture,
+  headers = undefined,
+  method = 'POST',
+  path,
+  pathTemplate = path,
+  rawBody = undefined,
+  sourceScenario,
+}) {
+  return {
+    ...(body === undefined ? {} : { body }),
+    ...(rawBody === undefined ? {} : { rawBody }),
+    boundedResponse: true,
+    caseId,
+    expectedStatus,
+    expectedType: 'gaming-source',
+    headers: {
+      [NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtureHeader]: fixture,
+      ...(headers ?? {}),
+    },
+    method,
+    path,
+    pathTemplate,
+    role: 'web',
+    simulatedAuth: true,
+    sourceScenario,
+  };
+}
+
+export function nativePrPreviewCaseCorrelation(requestCase) {
+  return {
+    requestId: `native-pr-${requestCase.caseId}`,
+    traceId: `native-pr-trace-${requestCase.caseId}`,
+  };
+}
+
 export function buildNativePrPreviewRequestPlan() {
   const cases = [
     {
@@ -618,6 +735,413 @@ export function buildNativePrPreviewRequestPlan() {
       'effectiveLimits',
       200
     ),
+    gamingCase(
+      'gaming-canary-success',
+      { action: 'canary', payload: { scope: 'public_pipeline' } },
+      200,
+      'gaming-canary'
+    ),
+    gamingCase(
+      'gaming-canary-closed-schema',
+      {
+        action: 'canary',
+        payload: { scope: 'public_pipeline', unexpected: true },
+      },
+      400,
+      'gaming-canary-invalid'
+    ),
+    ...(['guide', 'build', 'meta'].map((mode) => gamingCase(
+      `gaming-query-${mode}`,
+      gamingQueryBody(
+        mode,
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.fixtures[mode]
+      ),
+      200,
+      'gaming-query',
+      { gamingMode: mode }
+    ))),
+    gamingCase(
+      'gaming-query-mode-required',
+      {
+        action: 'query',
+        payload: {
+          game: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.game,
+          prompt: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.fixtures.guide,
+        },
+      },
+      400,
+      'gaming-query-validation',
+      {
+        validation: {
+          code: 'GAMEPLAY_MODE_REQUIRED',
+          message:
+            "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+        },
+      }
+    ),
+    gamingCase(
+      'gaming-query-operational-guard',
+      gamingQueryBody(
+        'guide',
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.fixtures.operational
+      ),
+      400,
+      'gaming-query-operational'
+    ),
+    {
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .unauthorized
+      ),
+      boundedResponse: true,
+      caseId: 'gaming-source-ingestion-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      pathTemplate:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-ingestion-malformed-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath}:malformed`,
+      rawBody: '{"action":',
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-ingestion-oversized-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath}:oversized`,
+      rawBody: 'x'.repeat(16_385),
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      body: gamingSourceRefreshBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .refreshUnauthorized
+      ),
+      boundedResponse: true,
+      caseId: 'gaming-source-refresh-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      pathTemplate:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-status-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.unauthorized}`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:unauthorized`,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-status-encoded-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${percentEncodeEveryAsciiCharacter(NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.created)}`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:encoded-unauthorized`,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-status-noncanonical-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.created}%2Fextra`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:noncanonical-unauthorized`,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .validation,
+        {
+          unexpected: 'x'.repeat(
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources
+              .validationPaddingChars
+          ),
+        }
+      ),
+      caseId: 'gaming-source-ingestion-validation',
+      expectedStatus: 400,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.validation,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'validation',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-ingestion-parser-oversized',
+      expectedStatus: 413,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.validation,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      rawBody: 'x'.repeat(16_385),
+      sourceScenario: 'parser-validation',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-ingestion-parser-media-type',
+      expectedStatus: 415,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.validation,
+      headers: { 'content-type': 'text/plain' },
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      rawBody: 'sealed-preview-non-json',
+      sourceScenario: 'parser-validation',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys.unsafe
+      ),
+      caseId: 'gaming-source-ingestion-unsafe',
+      expectedStatus: 503,
+      fixture: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.unsafe,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'unsafe',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys.outage
+      ),
+      caseId: 'gaming-source-ingestion-outage',
+      expectedStatus: 503,
+      fixture: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.outage,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'outage',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys.created
+      ),
+      caseId: 'gaming-source-ingestion-created',
+      expectedStatus: 202,
+      fixture: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.created,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'created',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys.replay
+      ),
+      caseId: 'gaming-source-ingestion-replay',
+      expectedStatus: 202,
+      fixture: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.replay,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'replay',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys.conflict
+      ),
+      caseId: 'gaming-source-ingestion-conflict',
+      expectedStatus: 409,
+      fixture: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.conflict,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      sourceScenario: 'conflict',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceRefreshBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .refreshValidation,
+        { unexpected: true }
+      ),
+      caseId: 'gaming-source-refresh-validation',
+      expectedStatus: 400,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures
+          .refreshValidation,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      sourceScenario: 'validation',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceRefreshBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .refreshUnsafe
+      ),
+      caseId: 'gaming-source-refresh-unsafe',
+      expectedStatus: 503,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.refreshUnsafe,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      sourceScenario: 'unsafe',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceRefreshBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .refreshOutage
+      ),
+      caseId: 'gaming-source-refresh-outage',
+      expectedStatus: 503,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.refreshOutage,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      sourceScenario: 'refresh-outage',
+    }),
+    simulatedGamingSourceCase({
+      body: gamingSourceRefreshBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .refreshCreated
+      ),
+      caseId: 'gaming-source-refresh-created',
+      expectedStatus: 202,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.refreshCreated,
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.refreshPath,
+      sourceScenario: 'refresh-created',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-status-validation',
+      expectedStatus: 400,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures
+          .statusValidation,
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}not-a-uuid`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:invalid`,
+      sourceScenario: 'status-validation',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-status-encoded-queued',
+      expectedStatus: 200,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.statusQueued,
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${percentEncodeEveryAsciiCharacter(NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.created)}`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:encoded-queued`,
+      sourceScenario: 'status-queued',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-status-noncanonical-validation',
+      expectedStatus: 400,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.statusValidation,
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.created}%2Fextra`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:noncanonical-validation`,
+      sourceScenario: 'parser-validation',
+    }),
+    ...([
+      ['queued', 'created', 'statusQueued'],
+      ['running', 'running', 'statusRunning'],
+      ['completed', 'completed', 'statusCompleted'],
+    ].map(([status, ingestionIdName, fixtureName]) =>
+      simulatedGamingSourceCase({
+        caseId: `gaming-source-status-${status}`,
+        expectedStatus: 200,
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures[fixtureName],
+        method: 'GET',
+        path:
+          `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds[ingestionIdName]}`,
+        pathTemplate:
+          `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:${status}`,
+        sourceScenario: `status-${status}`,
+      })
+    )),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-status-missing',
+      expectedStatus: 404,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.statusMissing,
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.missing}`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:missing`,
+      sourceScenario: 'status-missing',
+    }),
+    simulatedGamingSourceCase({
+      caseId: 'gaming-source-status-outage',
+      expectedStatus: 503,
+      fixture:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtures.statusOutage,
+      method: 'GET',
+      path:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds.outage}`,
+      pathTemplate:
+        `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.statusPathPrefix}:outage`,
+      sourceScenario: 'status-outage',
+    }),
+    {
+      boundedResponse: true,
+      caseId: 'gaming-source-options-unauthorized',
+      expectedStatus: 401,
+      expectedType: 'gaming-source',
+      forbidCors: true,
+      headers: {
+        'access-control-request-method': 'POST',
+        origin: 'https://example.com',
+      },
+      method: 'OPTIONS',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      pathTemplate:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      role: 'web',
+      sourceScenario: 'unauthorized',
+    },
+    {
+      body: { action: 'canary', payload: { scope: 'public_pipeline' } },
+      caseId: 'worker-gaming-canary-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.canaryPath,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.canaryPath,
+      role: 'worker',
+    },
+    {
+      body: gamingSourceIngestionBody(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.idempotencyKeys
+          .unauthorized
+      ),
+      caseId: 'worker-gaming-source-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      pathTemplate:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath,
+      role: 'worker',
+    },
     {
       body: {
         fixture:
@@ -1114,6 +1638,329 @@ function expectedMcpBodyCapContractPayload(requestCase) {
   };
 }
 
+function expectedGamingCanaryPayload(requestCase) {
+  const valid = requestCase.expectedType === 'gaming-canary';
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  const common = {
+    action: 'canary',
+    scope: 'public_pipeline',
+    schemaVersion: '1.5.0',
+    intent: 'public_canary',
+    route: 'public_canary',
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+    checks: valid
+      ? {
+          requestValidation: 'passed',
+          dispatcher: 'passed',
+          publicRoute: 'passed',
+          fixtureValidation: 'passed',
+          grounding: 'passed',
+          networkRetrieval: 'skipped',
+          providerExecution: 'skipped',
+          responseConstruction: 'passed',
+          responseGuard: 'passed',
+        }
+      : {
+          requestValidation: 'failed',
+          dispatcher: 'skipped',
+          publicRoute: 'passed',
+          fixtureValidation: 'skipped',
+          grounding: 'skipped',
+          networkRetrieval: 'skipped',
+          providerExecution: 'skipped',
+          responseConstruction: 'passed',
+          responseGuard: 'passed',
+        },
+    usedFallback: false,
+    acceptedSources: valid ? 1 : 0,
+    durationMs: 0,
+  };
+  return valid
+    ? {
+        ok: true,
+        ...common,
+        message: 'Public ARCANOS Gaming Action pipeline canary passed.',
+        fixture: {
+          source: 'bundled',
+          marker: 'ARCANOS_PUBLIC_CANARY_7F31',
+          markerVerified: true,
+        },
+      }
+    : {
+        ok: false,
+        ...common,
+        message:
+          "Public canary requests require action 'canary' and scope 'public_pipeline'.",
+        code: 'BAD_REQUEST',
+      };
+}
+
+function expectedGamingQueryPayload(requestCase) {
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  if (requestCase.expectedType === 'gaming-query') {
+    return {
+      ok: true,
+      requestId: correlation.requestId,
+      traceId: correlation.traceId,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: requestCase.gamingMode,
+        data: {
+          response: `Sealed preview ${requestCase.gamingMode} response.`,
+          sources: [],
+        },
+      },
+      _route: {
+        requestId: correlation.requestId,
+        traceId: correlation.traceId,
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        timestamp: FIXTURE_CREATED_AT,
+      },
+    };
+  }
+  const operational = requestCase.expectedType === 'gaming-query-operational';
+  const validation = operational
+    ? {
+        code: 'OPERATIONAL_REQUEST_NOT_GAMEPLAY',
+        message:
+          'This request asks about the public integration rather than gameplay. Use the public canary operation.',
+      }
+    : requestCase.validation;
+  return {
+    ok: false,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+    gptId: 'arcanos-gaming',
+    action: 'query',
+    route: '/gpt/:gptId',
+    error: validation,
+    _route: {
+      requestId: correlation.requestId,
+      traceId: correlation.traceId,
+      gptId: 'arcanos-gaming',
+      action: 'query',
+      route: operational
+        ? 'gaming_operational_guard'
+        : 'gaming_validation',
+      timestamp: FIXTURE_CREATED_AT,
+    },
+  };
+}
+
+function expectedGamingSourceQueued(
+  requestCase,
+  action,
+  ingestionId,
+  deduplicated
+) {
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  return {
+    ok: true,
+    action,
+    ingestionId,
+    status: 'queued',
+    deduplicated,
+    statusUrl:
+      `${NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath}/${ingestionId}`,
+    sources: [
+      {
+        submittedIndex: 0,
+        status: 'queued',
+        canonicalUrl: 'https://example.invalid/palworld/guide',
+        ...(action === 'refresh'
+          ? { sourceId: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.sourceId }
+          : {}),
+        recordsCreated: 0,
+        recordsUpdated: 0,
+      },
+    ],
+    createdAt: FIXTURE_CREATED_AT,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function expectedGamingSourceStatus(requestCase, status) {
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  const ingestionId = NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources
+    .ingestionIds[status === 'queued' ? 'created' : status];
+  const completed = status === 'completed';
+  const running = status === 'running';
+  return {
+    ok: true,
+    action: 'status',
+    ingestionId,
+    status,
+    counts: {
+      total: 1,
+      queued: status === 'queued' ? 1 : 0,
+      succeeded: completed ? 1 : 0,
+      rejected: 0,
+      failed: 0,
+      recordsCreated: completed ? 1 : 0,
+      recordsUpdated: 0,
+    },
+    sources: [
+      completed
+        ? {
+            submittedIndex: 0,
+            status: 'stored',
+            canonicalUrl: 'https://example.invalid/palworld/guide',
+            sourceId: NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.sourceId,
+            sourceType: 'wiki',
+            recordsCreated: 1,
+            recordsUpdated: 0,
+            fetchedAt: FIXTURE_COMPLETED_AT,
+            completedAt: FIXTURE_COMPLETED_AT,
+            warnings: [],
+          }
+        : {
+            submittedIndex: 0,
+            status: running ? 'running' : 'queued',
+            canonicalUrl: 'https://example.invalid/palworld/guide',
+            recordsCreated: 0,
+            recordsUpdated: 0,
+          },
+    ],
+    createdAt: FIXTURE_CREATED_AT,
+    updatedAt: completed
+      ? FIXTURE_COMPLETED_AT
+      : running
+        ? '2026-07-30T00:00:00.500Z'
+        : FIXTURE_CREATED_AT,
+    ...(completed ? { completedAt: FIXTURE_COMPLETED_AT } : {}),
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function expectedGamingSourcePayload(requestCase) {
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  const ids = NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionIds;
+  switch (requestCase.sourceScenario) {
+    case 'unauthorized':
+      return {
+        ok: false,
+        error: {
+          code: 'UNAUTHORIZED_GPT_ACCESS',
+          message: 'Missing GPT access bearer token.',
+        },
+      };
+    case 'validation':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_VALIDATION_ERROR',
+          message: 'Invalid gaming-source request.',
+        },
+      };
+    case 'parser-validation':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_VALIDATION_ERROR',
+          message: 'The Gaming source request is invalid.',
+        },
+        requestId: correlation.requestId,
+        traceId: correlation.traceId,
+      };
+    case 'unsafe':
+      return {
+        ok: false,
+        error: {
+          code: 'UNSAFE_EXECUTION_DISABLED',
+          message:
+            'Gaming-source mutations are temporarily unavailable because runtime integrity checks did not pass.',
+        },
+        requestId: correlation.requestId,
+        traceId: correlation.traceId,
+      };
+    case 'outage':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_JOBS_UNAVAILABLE',
+          message: 'Durable gaming-source ingestion is unavailable.',
+        },
+      };
+    case 'created':
+      return expectedGamingSourceQueued(
+        requestCase,
+        'ingest',
+        ids.created,
+        false
+      );
+    case 'replay':
+      return expectedGamingSourceQueued(
+        requestCase,
+        'ingest',
+        ids.created,
+        true
+      );
+    case 'conflict':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_IDEMPOTENCY_CONFLICT',
+          message:
+            'The idempotency key is already bound to a different ingestion request.',
+        },
+      };
+    case 'refresh-outage':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_STORAGE_UNAVAILABLE',
+          message: 'Gaming-source refresh storage is unavailable.',
+        },
+      };
+    case 'refresh-created':
+      return expectedGamingSourceQueued(
+        requestCase,
+        'refresh',
+        ids.refresh,
+        false
+      );
+    case 'status-validation':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_VALIDATION_ERROR',
+          message: 'ingestionId must be a UUID.',
+        },
+      };
+    case 'status-queued':
+      return expectedGamingSourceStatus(requestCase, 'queued');
+    case 'status-running':
+      return expectedGamingSourceStatus(requestCase, 'running');
+    case 'status-completed':
+      return expectedGamingSourceStatus(requestCase, 'completed');
+    case 'status-missing':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_INGESTION_NOT_FOUND',
+          message: 'The gaming-source ingestion was not found.',
+        },
+      };
+    case 'status-outage':
+      return {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_JOBS_UNAVAILABLE',
+          message: 'Gaming-source ingestion status is unavailable.',
+        },
+      };
+    default:
+      fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
   if (
     requestCase.expectedType === 'health'
@@ -1222,6 +2069,15 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedBackstageStorylineContractPayload(requestCase);
     case 'mcp-body-cap-contract':
       return expectedMcpBodyCapContractPayload(requestCase);
+    case 'gaming-canary':
+    case 'gaming-canary-invalid':
+      return expectedGamingCanaryPayload(requestCase);
+    case 'gaming-query':
+    case 'gaming-query-validation':
+    case 'gaming-query-operational':
+      return expectedGamingQueryPayload(requestCase);
+    case 'gaming-source':
+      return expectedGamingSourcePayload(requestCase);
     default:
       fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
   }
@@ -1304,18 +2160,30 @@ async function executeRequestCase(
     1,
     Math.min(options.requestTimeoutMs, remainingMs)
   );
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  const requestHeaders = {
+    accept: requestCase.body === undefined && requestCase.rawBody === undefined
+      ? 'application/json, text/plain'
+      : 'application/json',
+    ...(requestCase.body === undefined && requestCase.rawBody === undefined
+      ? {}
+      : { 'content-type': 'application/json' }),
+    ...(requestCase.role === 'web'
+      ? {
+          'x-request-id': correlation.requestId,
+          'x-trace-id': correlation.traceId,
+        }
+      : {}),
+    ...(requestCase.headers ?? {}),
+  };
   let response;
   try {
     response = await fetchImpl(requestUrl, {
-      body: requestCase.body === undefined
-        ? undefined
-        : JSON.stringify(requestCase.body),
-      headers: requestCase.body === undefined
-        ? { accept: 'application/json, text/plain' }
-        : {
-            accept: 'application/json',
-            'content-type': 'application/json',
-          },
+      body: requestCase.rawBody
+        ?? (requestCase.body === undefined
+          ? undefined
+          : JSON.stringify(requestCase.body)),
+      headers: requestHeaders,
       method: requestCase.method,
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
@@ -1333,6 +2201,12 @@ async function executeRequestCase(
   ) {
     fail('NATIVE_PR_PREVIEW_RESPONSE_BOUNDARY_INVALID', requestCase.caseId);
   }
+  if (
+    requestCase.forbidCors === true
+    && response.headers.has('access-control-allow-origin')
+  ) {
+    fail('NATIVE_PR_PREVIEW_CORS_BOUNDARY_INVALID', requestCase.caseId);
+  }
   if (response.status !== requestCase.expectedStatus) {
     fail('NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH', requestCase.caseId);
   }
@@ -1346,6 +2220,39 @@ async function executeRequestCase(
     !== expectedNativePrPreviewContentType(requestCase)
   ) {
     fail('NATIVE_PR_PREVIEW_CONTENT_TYPE_INVALID', requestCase.caseId);
+  }
+  if (requestCase.role === 'web') {
+    if (
+      response.headers.get('x-request-id') !== correlation.requestId
+      || response.headers.get('x-trace-id') !== correlation.traceId
+    ) {
+      fail('NATIVE_PR_PREVIEW_CORRELATION_INVALID', requestCase.caseId);
+    }
+    for (const [headerName, expectedValue] of Object.entries(
+      WEB_RESPONSE_HEADER_CONTRACT
+    )) {
+      if (response.headers.get(headerName) !== expectedValue) {
+        fail('NATIVE_PR_PREVIEW_SECURITY_HEADERS_INVALID', requestCase.caseId);
+      }
+    }
+  }
+  if (
+    requestCase.expectedType === 'gaming-source'
+    && response.headers.get('pragma') !== 'no-cache'
+  ) {
+    fail('NATIVE_PR_PREVIEW_NO_CACHE_MISSING', requestCase.caseId);
+  }
+  if (
+    (
+      requestCase.expectedType.startsWith('gaming-canary')
+      || requestCase.expectedType.startsWith('gaming-query')
+      || requestCase.expectedType === 'gaming-source'
+    )
+    && response.headers.get(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+    ) !== NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value
+  ) {
+    fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
   }
 
   const bodyBytes = await readBoundedResponseBody(
@@ -1382,6 +2289,7 @@ async function executeRequestCase(
     pathTemplate: requestCase.pathTemplate,
     responseBytes: bodyBytes.length,
     role: requestCase.role,
+    simulatedAuth: requestCase.simulatedAuth === true,
   };
 }
 
@@ -1432,6 +2340,9 @@ export async function runNativePrPreviewE2e({
         checksPassed: 0,
         plannedRequests: requestPlan.length,
         requestsMade: 0,
+        simulatedAuthRequests: requestPlan.filter(
+          (requestCase) => requestCase.simulatedAuth === true
+        ).length,
       },
     };
   }
@@ -1486,6 +2397,9 @@ export async function runNativePrPreviewE2e({
       plannedRequests: requestPlan.length,
       requestsMade: checks.length,
       responseBytes: aggregateState.bytes,
+      simulatedAuthRequests: checks.filter(
+        (check) => check.simulatedAuth
+      ).length,
     },
   };
 }

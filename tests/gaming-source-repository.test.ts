@@ -386,4 +386,92 @@ describe('PostgresGamingSourceRepository reads', () => {
     expect(query?.sql).toContain("to_tsvector('simple'::regconfig, knowledge.search_text)");
     expect(query?.values).toEqual(['destiny 2', 'solar hunter', 'build', 50]);
   });
+
+  test('bounds a public knowledge query with a transaction-local statement timeout', async () => {
+    const harness = new GamingRepositoryHarness((sql, values) => {
+      if (sql.startsWith("SELECT set_config('statement_timeout'")) {
+        expect(values).toEqual(['750ms']);
+        return result([{ set_config: '750ms' }]);
+      }
+      if (sql.startsWith('WITH search_input AS')) {
+        return result();
+      }
+      throw new Error(`Unhandled query: ${sql}`);
+    });
+
+    await expect(
+      new PostgresGamingSourceRepository(harness.pool)
+        .queryActiveGamingKnowledge({
+          gameKey: 'Destiny 2',
+          query: 'solar hunter',
+          mode: 'build',
+          limit: 4
+        }, { queryTimeoutMs: 750 })
+    ).resolves.toEqual([]);
+
+    expect(harness.queries.map(({ sql }) => sql)).toEqual([
+      'BEGIN',
+      "SELECT set_config('statement_timeout', $1, true)",
+      expect.stringMatching(/^WITH search_input AS/u),
+      'COMMIT'
+    ]);
+    expect(harness.query).not.toHaveBeenCalled();
+    expect(harness.release).toHaveBeenCalledTimes(1);
+  });
+
+  test('rolls back and releases the checked-out client when a bounded query fails', async () => {
+    const queryError = new Error('canceling statement due to statement timeout');
+    const harness = new GamingRepositoryHarness((sql) => {
+      if (sql.startsWith("SELECT set_config('statement_timeout'")) {
+        return result([{ set_config: '25ms' }]);
+      }
+      if (sql.startsWith('WITH search_input AS')) {
+        throw queryError;
+      }
+      throw new Error(`Unhandled query: ${sql}`);
+    });
+
+    await expect(
+      new PostgresGamingSourceRepository(harness.pool)
+        .queryActiveGamingKnowledge({
+          gameKey: 'Destiny 2',
+          query: 'solar hunter'
+        }, { queryTimeoutMs: 25 })
+    ).rejects.toBe(queryError);
+
+    expect(harness.queries.at(-1)?.sql).toBe('ROLLBACK');
+    expect(harness.release).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not execute a query after its pool waiter has been aborted', async () => {
+    let resolveConnect: ((client: PoolClient) => void) | undefined;
+    const release = jest.fn();
+    const client = {
+      query: jest.fn(),
+      release
+    } as unknown as PoolClient;
+    const connect = jest.fn(() => new Promise<PoolClient>((resolve) => {
+      resolveConnect = resolve;
+    }));
+    const pool = { connect } as unknown as Pool;
+    const controller = new AbortController();
+    const abortReason = Object.assign(new Error('public lookup timed out in pool'), {
+      name: 'AbortError'
+    });
+    const queryPromise = new PostgresGamingSourceRepository(pool)
+      .queryActiveGamingKnowledge({
+        gameKey: 'Destiny 2',
+        query: 'solar hunter'
+      }, {
+        queryTimeoutMs: 100,
+        signal: controller.signal
+      });
+
+    controller.abort(abortReason);
+    resolveConnect?.(client);
+
+    await expect(queryPromise).rejects.toBe(abortReason);
+    expect(client.query).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
 });

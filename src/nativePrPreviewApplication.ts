@@ -14,9 +14,12 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_GAMING_CONTRACT,
+  NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
+  NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
 } from './nativePrPreviewContract.js';
@@ -50,16 +53,41 @@ import {
 import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
+import {
+  dispatchPublicGamingRequest,
+} from './services/gamingPublicDispatcher.js';
+import {
+  buildPublicGamingCanaryFailure,
+  executePublicGamingCanary,
+  prepareGuardedPublicGamingCanaryResponse,
+} from './services/publicGamingCanary.js';
 
 const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
 const MAX_MCP_BODY_CAP_RESPONSE_BYTES = 8 * 1024;
+const MAX_GAMING_CANARY_RESPONSE_BYTES = 2 * 1024;
+const MAX_GAMING_QUERY_RESPONSE_BYTES = 4 * 1024;
+const MAX_GAMING_SOURCE_RESPONSE_BYTES = 8 * 1024;
+const MAX_GAMING_SOURCE_REQUEST_BYTES = 16 * 1024;
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9]\d*)$/u;
 const FIXTURE_ACTOR_KEY = 'operator:native-pr-preview-fixture';
 const FIXTURE_TIMESTAMP = new Date('2026-07-30T00:00:00.000Z');
 const FIXTURE_COMPLETED_TIMESTAMP = new Date('2026-07-30T00:00:01.000Z');
 const SAFE_SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const SAFE_CORRELATION_ID_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const PREVIEW_DEFAULT_REQUEST_ID = 'native-pr-preview';
+const PREVIEW_SECURITY_HEADERS = Object.freeze({
+  'Content-Security-Policy':
+    "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
+  'Referrer-Policy': 'no-referrer',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+});
 const FORBIDDEN_HEADER_NAMES = new Set([
   'authorization',
   'cookie',
@@ -81,6 +109,9 @@ const STORYLINE_FIXTURE_NAMES = new Set<string>(
 const MCP_BODY_CAP_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures)
 );
+const GAMING_SOURCE_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures)
+);
 const SNAPSHOT_FIRST_URL = 'https://example.invalid/first-snapshot';
 const SNAPSHOT_SECOND_URL = 'https://example.invalid/second-snapshot';
 const STORAGE_COMPONENT_TOPIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -93,6 +124,22 @@ const RESEARCH_CANCELLATION_STAGES = [
   'model',
   'persistence',
 ] as const;
+const GAMING_SOURCE_CANONICAL_URL =
+  'https://example.invalid/palworld/guide';
+const GAMING_SOURCE_VALIDATION_PADDING = 'x'.repeat(
+  NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.validationPaddingChars
+);
+const GAMING_SOURCE_CREATED_AT = '2026-07-30T00:00:00.000Z';
+const GAMING_SOURCE_RUNNING_AT = '2026-07-30T00:00:00.500Z';
+const GAMING_SOURCE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
+
+type SyntheticGamingMode = 'guide' | 'build' | 'meta';
+type PreviewGamingSourceTargetKind = 'ingestion' | 'refresh' | 'status';
+
+interface PreviewGamingSourceResolution {
+  canonical: boolean;
+  kind: PreviewGamingSourceTargetKind;
+}
 
 type ResearchCancellationStage =
   (typeof RESEARCH_CANCELLATION_STAGES)[number];
@@ -1434,6 +1481,604 @@ function isCredentialCarrierPresent(request: express.Request): boolean {
   });
 }
 
+function isPreviewRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactPreviewKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[]
+): boolean {
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every((key) => expectedKeys.includes(key));
+}
+
+function normalizePreviewCorrelationId(
+  value: string | undefined,
+  fallback: string
+): string {
+  const trimmed = value?.trim() ?? '';
+  return SAFE_CORRELATION_ID_PATTERN.test(trimmed) ? trimmed : fallback;
+}
+
+function applyPreviewResponseHeaders(
+  request: express.Request,
+  response: express.Response
+): void {
+  const requestId = normalizePreviewCorrelationId(
+    request.header('x-request-id'),
+    PREVIEW_DEFAULT_REQUEST_ID
+  );
+  const traceId = normalizePreviewCorrelationId(
+    request.header('x-trace-id'),
+    requestId
+  );
+  response.setHeader('Cache-Control', 'no-store');
+  response.setHeader(
+    'Content-Security-Policy',
+    PREVIEW_SECURITY_HEADERS['Content-Security-Policy']
+  );
+  response.setHeader(
+    'Cross-Origin-Resource-Policy',
+    PREVIEW_SECURITY_HEADERS['Cross-Origin-Resource-Policy']
+  );
+  response.setHeader(
+    'Permissions-Policy',
+    PREVIEW_SECURITY_HEADERS['Permissions-Policy']
+  );
+  response.setHeader(
+    'Referrer-Policy',
+    PREVIEW_SECURITY_HEADERS['Referrer-Policy']
+  );
+  response.setHeader(
+    'Strict-Transport-Security',
+    PREVIEW_SECURITY_HEADERS['Strict-Transport-Security']
+  );
+  response.setHeader(
+    'X-Content-Type-Options',
+    PREVIEW_SECURITY_HEADERS['X-Content-Type-Options']
+  );
+  response.setHeader(
+    'X-Frame-Options',
+    PREVIEW_SECURITY_HEADERS['X-Frame-Options']
+  );
+  response.setHeader('X-Request-Id', requestId);
+  response.setHeader('X-Trace-Id', traceId);
+  (response.locals as Record<string, unknown>).nativePreviewRequestId =
+    requestId;
+  (response.locals as Record<string, unknown>).nativePreviewTraceId = traceId;
+}
+
+function readPreviewCorrelation(response: express.Response): {
+  requestId: string;
+  traceId: string;
+} {
+  const locals = response.locals as Record<string, unknown>;
+  const requestId = typeof locals.nativePreviewRequestId === 'string'
+    ? locals.nativePreviewRequestId
+    : PREVIEW_DEFAULT_REQUEST_ID;
+  const traceId = typeof locals.nativePreviewTraceId === 'string'
+    ? locals.nativePreviewTraceId
+    : requestId;
+  return { requestId, traceId };
+}
+
+function sendPreviewJson(
+  request: express.Request,
+  response: express.Response,
+  payload: Record<string, unknown>,
+  statusCode: number,
+  maxBytes: number,
+  logEvent: string
+): void {
+  response.setHeader(
+    NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
+    NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value
+  );
+  sendBoundedJsonResponse(request, response, payload, {
+    logEvent,
+    maxBytes,
+    statusCode,
+  });
+}
+
+function runSealedGamingCanary(
+  body: unknown,
+  correlation: { requestId: string; traceId: string }
+): { payload: Record<string, unknown>; statusCode: 200 | 400 | 500 | 503 } {
+  const dispatch = dispatchPublicGamingRequest(body, 'canary');
+  const result = dispatch.ok
+    ? executePublicGamingCanary({
+        requestId: correlation.requestId,
+        traceId: correlation.traceId,
+        startedAtMs: 0,
+        dependencies: { now: () => 0 },
+      })
+    : {
+        statusCode: 400 as const,
+        response: buildPublicGamingCanaryFailure({
+          code: 'BAD_REQUEST',
+          requestId: correlation.requestId,
+          traceId: correlation.traceId,
+          durationMs: 0,
+        }),
+      };
+  const guarded = prepareGuardedPublicGamingCanaryResponse({
+    response: result.response,
+    statusCode: result.statusCode,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  });
+  return {
+    payload: guarded.response as unknown as Record<string, unknown>,
+    statusCode: guarded.statusCode,
+  };
+}
+
+function resolveGamingQueryFixture(body: unknown):
+  | { kind: 'success'; mode: SyntheticGamingMode }
+  | { kind: 'operational' }
+  | { kind: 'validation'; code: string; message: string } {
+  if (!isPreviewRecord(body) || body.action !== 'query') {
+    return {
+      kind: 'validation',
+      code: isPreviewRecord(body) && body.action !== undefined
+        ? 'BAD_REQUEST'
+        : 'GPT_ACTION_REQUIRED',
+      message: "Gaming requests require action 'query'.",
+    };
+  }
+  if (!isPreviewRecord(body.payload)) {
+    return {
+      kind: 'validation',
+      code: 'BAD_REQUEST',
+      message: 'Gaming query requests require a payload object.',
+    };
+  }
+  const payload = body.payload;
+  if (!hasExactPreviewKeys(body, ['action', 'payload'])) {
+    return {
+      kind: 'validation',
+      code: 'BAD_REQUEST',
+      message: 'Gaming query request exceeds the published field limits.',
+    };
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'mode')) {
+    return {
+      kind: 'validation',
+      code: 'GAMEPLAY_MODE_REQUIRED',
+      message:
+        "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+    };
+  }
+  if (!hasExactPreviewKeys(payload, ['mode', 'game', 'prompt'])) {
+    return {
+      kind: 'validation',
+      code: 'BAD_REQUEST',
+      message: 'Gaming query request exceeds the published field limits.',
+    };
+  }
+  if (payload.game !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.game) {
+    return {
+      kind: 'validation',
+      code: 'BAD_REQUEST',
+      message: 'The sealed Gaming preview accepts only its fixed game fixture.',
+    };
+  }
+  if (payload.prompt === NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.operational) {
+    return { kind: 'operational' };
+  }
+  for (const mode of ['guide', 'build', 'meta'] as const) {
+    if (
+      payload.mode === mode
+      && payload.prompt === NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures[mode]
+    ) {
+      return { kind: 'success', mode };
+    }
+  }
+  return {
+    kind: 'validation',
+    code: 'BAD_REQUEST',
+    message: 'The sealed Gaming preview accepts only fixed query fixtures.',
+  };
+}
+
+function buildGamingQuerySuccess(
+  mode: SyntheticGamingMode,
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  return {
+    ok: true,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+    result: {
+      ok: true,
+      route: 'gaming',
+      mode,
+      data: {
+        response: `Sealed preview ${mode} response.`,
+        sources: [],
+      },
+    },
+    _route: {
+      requestId: correlation.requestId,
+      traceId: correlation.traceId,
+      gptId: 'arcanos-gaming',
+      module: 'ARCANOS:GAMING',
+      action: 'query',
+      route: 'gaming',
+      timestamp: GAMING_SOURCE_CREATED_AT,
+    },
+  };
+}
+
+function buildGamingQueryError(
+  code: string,
+  message: string,
+  route: 'gaming_operational_guard' | 'gaming_validation',
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  return {
+    ok: false,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+    gptId: 'arcanos-gaming',
+    action: 'query',
+    route: '/gpt/:gptId',
+    error: { code, message },
+    _route: {
+      requestId: correlation.requestId,
+      traceId: correlation.traceId,
+      gptId: 'arcanos-gaming',
+      action: 'query',
+      route,
+      timestamp: GAMING_SOURCE_CREATED_AT,
+    },
+  };
+}
+
+function isExactGamingSourceIngestionBody(
+  body: unknown,
+  idempotencyKey: string,
+  validationFixture = false
+): boolean {
+  if (!isPreviewRecord(body) || !hasExactPreviewKeys(body, ['action', 'payload'])) {
+    return false;
+  }
+  const payload = body.payload;
+  return body.action === 'ingest'
+    && isPreviewRecord(payload)
+    && hasExactPreviewKeys(
+      payload,
+      validationFixture
+        ? ['game', 'sourceUrls', 'origin', 'idempotencyKey', 'unexpected']
+        : ['game', 'sourceUrls', 'origin', 'idempotencyKey']
+    )
+    && payload.game === NATIVE_PR_PREVIEW_GAMING_CONTRACT.game
+    && Array.isArray(payload.sourceUrls)
+    && payload.sourceUrls.length === 1
+    && payload.sourceUrls[0] === GAMING_SOURCE_CANONICAL_URL
+    && payload.origin === 'user_supplied'
+    && payload.idempotencyKey === idempotencyKey
+    && (
+      !validationFixture
+      || payload.unexpected === GAMING_SOURCE_VALIDATION_PADDING
+    );
+}
+
+function isExactGamingSourceRefreshBody(
+  body: unknown,
+  idempotencyKey: string,
+  validationFixture = false
+): boolean {
+  if (!isPreviewRecord(body) || !hasExactPreviewKeys(body, ['action', 'payload'])) {
+    return false;
+  }
+  const payload = body.payload;
+  return body.action === 'refresh'
+    && isPreviewRecord(payload)
+    && hasExactPreviewKeys(
+      payload,
+      validationFixture
+        ? ['sourceIds', 'idempotencyKey', 'reason', 'unexpected']
+        : ['sourceIds', 'idempotencyKey', 'reason']
+    )
+    && Array.isArray(payload.sourceIds)
+    && payload.sourceIds.length === 1
+    && payload.sourceIds[0] ===
+      NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.sourceId
+    && payload.idempotencyKey === idempotencyKey
+    && payload.reason === 'user_requested'
+    && (!validationFixture || payload.unexpected === true);
+}
+
+function buildGamingSourceUnauthorized(): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'UNAUTHORIZED_GPT_ACCESS',
+      message: 'Missing GPT access bearer token.',
+    },
+  };
+}
+
+function buildGamingSourceValidation(): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'GAMING_SOURCE_VALIDATION_ERROR',
+      message: 'Invalid gaming-source request.',
+    },
+  };
+}
+
+function buildGamingSourceParserValidation(
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'GAMING_SOURCE_VALIDATION_ERROR',
+      message: 'The Gaming source request is invalid.',
+    },
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function buildGamingSourceUnsafe(
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'UNSAFE_EXECUTION_DISABLED',
+      message:
+        'Gaming-source mutations are temporarily unavailable because runtime integrity checks did not pass.',
+    },
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function buildGamingSourceOutage(statusRequest = false): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'GAMING_SOURCE_JOBS_UNAVAILABLE',
+      message: statusRequest
+        ? 'Gaming-source ingestion status is unavailable.'
+        : 'Durable gaming-source ingestion is unavailable.',
+    },
+  };
+}
+
+function buildGamingSourceQueued(
+  action: 'ingest' | 'refresh',
+  ingestionId: string,
+  deduplicated: boolean,
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  return {
+    ok: true,
+    action,
+    ingestionId,
+    status: 'queued',
+    deduplicated,
+    statusUrl:
+      `${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}/${ingestionId}`,
+    sources: [
+      {
+        submittedIndex: 0,
+        status: 'queued',
+        canonicalUrl: GAMING_SOURCE_CANONICAL_URL,
+        ...(action === 'refresh'
+          ? { sourceId: NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.sourceId }
+          : {}),
+        recordsCreated: 0,
+        recordsUpdated: 0,
+      },
+    ],
+    createdAt: GAMING_SOURCE_CREATED_AT,
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function buildGamingSourceStatus(
+  ingestionId: string,
+  status: 'queued' | 'running' | 'completed',
+  correlation: { requestId: string; traceId: string }
+): Record<string, unknown> {
+  const completed = status === 'completed';
+  const running = status === 'running';
+  return {
+    ok: true,
+    action: 'status',
+    ingestionId,
+    status,
+    counts: {
+      total: 1,
+      queued: status === 'queued' ? 1 : 0,
+      succeeded: completed ? 1 : 0,
+      rejected: 0,
+      failed: 0,
+      recordsCreated: completed ? 1 : 0,
+      recordsUpdated: 0,
+    },
+    sources: [
+      completed
+        ? {
+            submittedIndex: 0,
+            status: 'stored',
+            canonicalUrl: GAMING_SOURCE_CANONICAL_URL,
+            sourceId: NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.sourceId,
+            sourceType: 'wiki',
+            recordsCreated: 1,
+            recordsUpdated: 0,
+            fetchedAt: GAMING_SOURCE_COMPLETED_AT,
+            completedAt: GAMING_SOURCE_COMPLETED_AT,
+            warnings: [],
+          }
+        : {
+            submittedIndex: 0,
+            status: running ? 'running' : 'queued',
+            canonicalUrl: GAMING_SOURCE_CANONICAL_URL,
+            recordsCreated: 0,
+            recordsUpdated: 0,
+          },
+    ],
+    createdAt: GAMING_SOURCE_CREATED_AT,
+    updatedAt: completed
+      ? GAMING_SOURCE_COMPLETED_AT
+      : running
+        ? GAMING_SOURCE_RUNNING_AT
+        : GAMING_SOURCE_CREATED_AT,
+    ...(completed ? { completedAt: GAMING_SOURCE_COMPLETED_AT } : {}),
+    requestId: correlation.requestId,
+    traceId: correlation.traceId,
+  };
+}
+
+function sendGamingSourceResponse(
+  request: express.Request,
+  response: express.Response,
+  statusCode: number,
+  payload: Record<string, unknown>,
+  logEvent: string
+): void {
+  response.setHeader('Pragma', 'no-cache');
+  sendPreviewJson(
+    request,
+    response,
+    payload,
+    statusCode,
+    MAX_GAMING_SOURCE_RESPONSE_BYTES,
+    logEvent
+  );
+}
+
+function stripSinglePreviewTrailingSlash(rawPath: string): string | null {
+  if (rawPath.length <= 1 || !rawPath.endsWith('/')) {
+    return rawPath;
+  }
+  return rawPath.endsWith('//') ? null : rawPath.slice(0, -1);
+}
+
+function isCanonicalPreviewGamingStatusId(rawId: string): boolean {
+  if (/%2f/iu.test(rawId)) {
+    return false;
+  }
+  let decodedId: string;
+  try {
+    decodedId = decodeURIComponent(rawId);
+  } catch {
+    return false;
+  }
+  return decodedId.length > 0
+    && decodedId.length <= 128
+    && !decodedId.includes('%')
+    && !decodedId.includes('/')
+    && !decodedId.includes('\\')
+    && !/[\u0000-\u001F\u007F]/u.test(decodedId);
+}
+
+function resolvePreviewGamingSourcePath(
+  rawPath: string
+): PreviewGamingSourceResolution | null {
+  const normalizedRawPath = stripSinglePreviewTrailingSlash(rawPath);
+  if (!normalizedRawPath) {
+    return null;
+  }
+  const normalizedLowerPath = normalizedRawPath.toLowerCase();
+  const ingestionPath =
+    NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath;
+  const refreshPath = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.refreshPath;
+  if (normalizedLowerPath === ingestionPath) {
+    return { canonical: true, kind: 'ingestion' };
+  }
+  if (normalizedLowerPath === refreshPath) {
+    return { canonical: true, kind: 'refresh' };
+  }
+  const statusPrefix =
+    NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.statusPathPrefix;
+  if (!normalizedLowerPath.startsWith(statusPrefix)) {
+    return null;
+  }
+  const rawId = normalizedRawPath.slice(statusPrefix.length);
+  if (rawId.length === 0 || rawId.includes('/')) {
+    return null;
+  }
+  return {
+    canonical: isCanonicalPreviewGamingStatusId(rawId),
+    kind: 'status',
+  };
+}
+
+function countPreviewRawHeaders(
+  request: express.Request,
+  headerName: string
+): number {
+  let count = 0;
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    if (request.rawHeaders[index]?.toLowerCase() === headerName) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function hasPreviewJsonContentType(request: express.Request): boolean {
+  return request.header('content-type')
+    ?.split(';', 1)[0]
+    ?.trim()
+    .toLowerCase() === 'application/json';
+}
+
+function hasUnsupportedPreviewContentEncoding(
+  request: express.Request
+): boolean {
+  const encoding = request.header('content-encoding')?.trim().toLowerCase();
+  return encoding !== undefined && encoding.length > 0 && encoding !== 'identity';
+}
+
+function resolvePreviewJsonParserStatus(
+  error: unknown
+): 400 | 413 | 415 | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const parserError = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    type?: unknown;
+  };
+  if (
+    parserError.type === 'entity.too.large'
+    || parserError.status === 413
+    || parserError.statusCode === 413
+  ) {
+    return 413;
+  }
+  if (
+    parserError.type === 'encoding.unsupported'
+    || parserError.status === 415
+    || parserError.statusCode === 415
+  ) {
+    return 415;
+  }
+  if (
+    parserError.type === 'entity.parse.failed'
+    || parserError.type === 'entity.verify.failed'
+    || parserError.type === 'request.aborted'
+    || parserError.type === 'request.size.invalid'
+  ) {
+    return 400;
+  }
+  return null;
+}
+
 function buildAllowedRouteKeys(): Set<string> {
   const allowed = new Set([
     'GET /health',
@@ -1445,6 +2090,11 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath}`,
+    `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath}`,
+    `POST ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}`,
+    `POST ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.refreshPath}`,
+    `OPTIONS ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}`,
     'GET /jobs/not-a-uuid',
     'GET /jobs/not-a-uuid/result',
     'POST /jobs/not-a-uuid/cancel',
@@ -1464,6 +2114,19 @@ function buildAllowedRouteKeys(): Set<string> {
   ]) {
     allowed.add(`POST /jobs/${jobId}/cancel`);
   }
+  for (
+    const ingestionId
+    of Object.values(
+      NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionIds
+    )
+  ) {
+    allowed.add(
+      `GET ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.statusPathPrefix}${ingestionId}`
+    );
+  }
+  allowed.add(
+    `GET ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.statusPathPrefix}not-a-uuid`
+  );
   return allowed;
 }
 
@@ -1494,16 +2157,25 @@ export function createNativePrPreviewApplication(
   const allowedRouteKeys = buildAllowedRouteKeys();
   const fixtureRepository = createSealedFixtureRepository();
   const jsonBodyParser = express.json({
-    limit: MAX_REQUEST_BYTES,
+    // The pre-parser allowlist retains the 4 KiB ceiling everywhere else.
+    // Gaming-source fixtures mirror the production route's 16 KiB ceiling.
+    inflate: false,
+    limit: MAX_GAMING_SOURCE_REQUEST_BYTES,
     strict: true,
+    type: 'application/json',
   });
 
   app.disable('x-powered-by');
   app.use((request, response, next) => {
-    response.setHeader('Cache-Control', 'no-store');
+    applyPreviewResponseHeaders(request, response);
     const rawUrl = request.url ?? '';
     const rawPath = rawUrl.split('?', 1)[0] ?? '';
     const routeKey = `${request.method ?? ''} ${rawPath}`;
+    const gamingSourceResolution = resolvePreviewGamingSourcePath(rawPath);
+    const gamingSourcePath = gamingSourceResolution !== null;
+    const sourceFixture = request.header(
+      NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
+    );
     const contentLength = request.header('content-length');
     const parsedContentLength = contentLength === undefined
       ? 0
@@ -1513,10 +2185,150 @@ export function createNativePrPreviewApplication(
 
     if (
       rawUrl.includes('?')
-      || rawPath.includes('%')
-      || !allowedRouteKeys.has(routeKey)
+      || (rawPath.includes('%') && !gamingSourcePath)
+      || (!gamingSourcePath && !allowedRouteKeys.has(routeKey))
       || isCredentialCarrierPresent(request)
-      || request.header('content-encoding') !== undefined
+      || (
+        sourceFixture !== undefined
+        && (
+          !gamingSourcePath
+          || !GAMING_SOURCE_FIXTURE_NAMES.has(sourceFixture)
+        )
+      )
+    ) {
+      sendFixedNotFound(request, response);
+      return;
+    }
+    if (
+      rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath
+      || rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath
+      || gamingSourcePath
+    ) {
+      response.setHeader(
+        NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
+        NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value
+      );
+    }
+    if (gamingSourcePath) {
+      response.setHeader('Pragma', 'no-cache');
+    }
+    const correlation = readPreviewCorrelation(response);
+    if (sourceFixture === undefined && gamingSourcePath) {
+      sendGamingSourceResponse(
+        request,
+        response,
+        401,
+        buildGamingSourceUnauthorized(),
+        'native_pr_preview.gaming_source_unauthorized'
+      );
+      return;
+    }
+    if (gamingSourceResolution?.canonical === false) {
+      sendGamingSourceResponse(
+        request,
+        response,
+        400,
+        buildGamingSourceParserValidation(correlation),
+        'native_pr_preview.gaming_status_non_canonical'
+      );
+      return;
+    }
+    if (gamingSourcePath) {
+      const invalidContentLength = contentLength !== undefined
+        && !CONTENT_LENGTH_PATTERN.test(contentLength);
+      if (
+        invalidContentLength
+        || !Number.isSafeInteger(parsedContentLength)
+        || parsedContentLength < 0
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          400,
+          buildGamingSourceParserValidation(correlation),
+          'native_pr_preview.gaming_source_content_length_invalid'
+        );
+        return;
+      }
+
+      if (request.method === 'GET') {
+        if (
+          request.header('transfer-encoding') !== undefined
+          || parsedContentLength !== 0
+        ) {
+          sendGamingSourceResponse(
+            request,
+            response,
+            400,
+            buildGamingSourceParserValidation(correlation),
+            'native_pr_preview.gaming_source_read_body_rejected'
+          );
+          return;
+        }
+        next();
+        return;
+      }
+
+      if (request.method === 'POST') {
+        if (
+          request.header('transfer-encoding') !== undefined
+          || parsedContentLength < 1
+        ) {
+          sendGamingSourceResponse(
+            request,
+            response,
+            400,
+            buildGamingSourceParserValidation(correlation),
+            'native_pr_preview.gaming_source_body_required'
+          );
+          return;
+        }
+        if (parsedContentLength > MAX_GAMING_SOURCE_REQUEST_BYTES) {
+          sendGamingSourceResponse(
+            request,
+            response,
+            413,
+            buildGamingSourceParserValidation(correlation),
+            'native_pr_preview.gaming_source_body_too_large'
+          );
+          return;
+        }
+        if (
+          hasUnsupportedPreviewContentEncoding(request)
+          || countPreviewRawHeaders(request, 'content-type') > 1
+          || !hasPreviewJsonContentType(request)
+        ) {
+          sendGamingSourceResponse(
+            request,
+            response,
+            415,
+            buildGamingSourceParserValidation(correlation),
+            'native_pr_preview.gaming_source_media_type_rejected'
+          );
+          return;
+        }
+        next();
+        return;
+      }
+
+      if (
+        request.header('transfer-encoding') !== undefined
+        || parsedContentLength !== 0
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          400,
+          buildGamingSourceParserValidation(correlation),
+          'native_pr_preview.gaming_source_method_body_rejected'
+        );
+        return;
+      }
+      next();
+      return;
+    }
+    if (
+      request.header('content-encoding') !== undefined
       || request.header('transfer-encoding') !== undefined
       || (
         contentLength !== undefined
@@ -1572,8 +2384,409 @@ export function createNativePrPreviewApplication(
       next();
       return;
     }
-    jsonBodyParser(request, response, next);
+    jsonBodyParser(request, response, (error?: unknown) => {
+      if (error === undefined) {
+        next();
+        return;
+      }
+      const rawPath = (request.url ?? '').split('?', 1)[0] ?? '';
+      const fixture = request.header(
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
+      );
+      const statusCode = resolvePreviewJsonParserStatus(error);
+      if (
+        statusCode !== null
+        && resolvePreviewGamingSourcePath(rawPath) !== null
+        && fixture !== undefined
+        && GAMING_SOURCE_FIXTURE_NAMES.has(fixture)
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          statusCode,
+          buildGamingSourceParserValidation(readPreviewCorrelation(response)),
+          'native_pr_preview.gaming_source_parser_rejected'
+        );
+        return;
+      }
+      next(error);
+    });
   });
+
+  app.post(
+    NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath,
+    (request, response) => {
+      const correlation = readPreviewCorrelation(response);
+      const result = runSealedGamingCanary(request.body, correlation);
+      sendPreviewJson(
+        request,
+        response,
+        result.payload,
+        result.statusCode,
+        MAX_GAMING_CANARY_RESPONSE_BYTES,
+        result.statusCode === 200
+          ? 'native_pr_preview.gaming_canary'
+          : 'native_pr_preview.gaming_canary_invalid'
+      );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath,
+    (request, response) => {
+      const correlation = readPreviewCorrelation(response);
+      const fixture = resolveGamingQueryFixture(request.body);
+      if (fixture.kind === 'success') {
+        sendPreviewJson(
+          request,
+          response,
+          buildGamingQuerySuccess(fixture.mode, correlation),
+          200,
+          MAX_GAMING_QUERY_RESPONSE_BYTES,
+          'native_pr_preview.gaming_query'
+        );
+        return;
+      }
+      if (fixture.kind === 'operational') {
+        sendPreviewJson(
+          request,
+          response,
+          buildGamingQueryError(
+            'OPERATIONAL_REQUEST_NOT_GAMEPLAY',
+            'This request asks about the public integration rather than gameplay. Use the public canary operation.',
+            'gaming_operational_guard',
+            correlation
+          ),
+          400,
+          MAX_GAMING_QUERY_RESPONSE_BYTES,
+          'native_pr_preview.gaming_query_operational'
+        );
+        return;
+      }
+      sendPreviewJson(
+        request,
+        response,
+        buildGamingQueryError(
+          fixture.code,
+          fixture.message,
+          'gaming_validation',
+          correlation
+        ),
+        400,
+        MAX_GAMING_QUERY_RESPONSE_BYTES,
+        'native_pr_preview.gaming_query_invalid'
+      );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath,
+    (request, response) => {
+      const fixture = request.header(
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
+      );
+      const correlation = readPreviewCorrelation(response);
+      const sourceFixtures =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures;
+      const idempotencyKeys =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.idempotencyKeys;
+      if (fixture === undefined) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          401,
+          buildGamingSourceUnauthorized(),
+          'native_pr_preview.gaming_source_unauthorized'
+        );
+        return;
+      }
+      if (fixture === sourceFixtures.validation) {
+        if (
+          !isExactGamingSourceIngestionBody(
+            request.body,
+            idempotencyKeys.validation,
+            true
+          )
+        ) {
+          sendFixedNotFound(request, response);
+          return;
+        }
+        sendGamingSourceResponse(
+          request,
+          response,
+          400,
+          buildGamingSourceValidation(),
+          'native_pr_preview.gaming_source_validation'
+        );
+        return;
+      }
+      const expectedKey = fixture === sourceFixtures.unsafe
+        ? idempotencyKeys.unsafe
+        : fixture === sourceFixtures.outage
+          ? idempotencyKeys.outage
+          : fixture === sourceFixtures.created
+            ? idempotencyKeys.created
+            : fixture === sourceFixtures.replay
+              ? idempotencyKeys.replay
+              : fixture === sourceFixtures.conflict
+                ? idempotencyKeys.conflict
+                : null;
+      if (
+        expectedKey === null
+        || !isExactGamingSourceIngestionBody(request.body, expectedKey)
+      ) {
+        sendFixedNotFound(request, response);
+        return;
+      }
+      if (fixture === sourceFixtures.unsafe) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          503,
+          buildGamingSourceUnsafe(correlation),
+          'native_pr_preview.gaming_source_unsafe'
+        );
+        return;
+      }
+      if (fixture === sourceFixtures.outage) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          503,
+          buildGamingSourceOutage(),
+          'native_pr_preview.gaming_source_outage'
+        );
+        return;
+      }
+      if (fixture === sourceFixtures.conflict) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          409,
+          {
+            ok: false,
+            error: {
+              code: 'GAMING_SOURCE_IDEMPOTENCY_CONFLICT',
+              message:
+                'The idempotency key is already bound to a different ingestion request.',
+            },
+          },
+          'native_pr_preview.gaming_source_conflict'
+        );
+        return;
+      }
+      sendGamingSourceResponse(
+        request,
+        response,
+        202,
+        buildGamingSourceQueued(
+          'ingest',
+          NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionIds.created,
+          fixture === sourceFixtures.replay,
+          correlation
+        ),
+        fixture === sourceFixtures.replay
+          ? 'native_pr_preview.gaming_source_replay'
+          : 'native_pr_preview.gaming_source_created'
+      );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.refreshPath,
+    (request, response) => {
+      const fixture = request.header(
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
+      );
+      const correlation = readPreviewCorrelation(response);
+      const sourceFixtures =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures;
+      const idempotencyKeys =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.idempotencyKeys;
+      if (fixture === undefined) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          401,
+          buildGamingSourceUnauthorized(),
+          'native_pr_preview.gaming_refresh_unauthorized'
+        );
+        return;
+      }
+      if (fixture === sourceFixtures.refreshValidation) {
+        if (
+          !isExactGamingSourceRefreshBody(
+            request.body,
+            idempotencyKeys.refreshValidation,
+            true
+          )
+        ) {
+          sendFixedNotFound(request, response);
+          return;
+        }
+        sendGamingSourceResponse(
+          request,
+          response,
+          400,
+          buildGamingSourceValidation(),
+          'native_pr_preview.gaming_refresh_validation'
+        );
+        return;
+      }
+      const expectedKey = fixture === sourceFixtures.refreshUnsafe
+        ? idempotencyKeys.refreshUnsafe
+        : fixture === sourceFixtures.refreshOutage
+          ? idempotencyKeys.refreshOutage
+          : fixture === sourceFixtures.refreshCreated
+            ? idempotencyKeys.refreshCreated
+            : null;
+      if (
+        expectedKey === null
+        || !isExactGamingSourceRefreshBody(request.body, expectedKey)
+      ) {
+        sendFixedNotFound(request, response);
+        return;
+      }
+      if (fixture === sourceFixtures.refreshUnsafe) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          503,
+          buildGamingSourceUnsafe(correlation),
+          'native_pr_preview.gaming_refresh_unsafe'
+        );
+        return;
+      }
+      if (fixture === sourceFixtures.refreshOutage) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          503,
+          {
+            ok: false,
+            error: {
+              code: 'GAMING_SOURCE_STORAGE_UNAVAILABLE',
+              message: 'Gaming-source refresh storage is unavailable.',
+            },
+          },
+          'native_pr_preview.gaming_refresh_outage'
+        );
+        return;
+      }
+      sendGamingSourceResponse(
+        request,
+        response,
+        202,
+        buildGamingSourceQueued(
+          'refresh',
+          NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionIds.refresh,
+          false,
+          correlation
+        ),
+        'native_pr_preview.gaming_refresh_created'
+      );
+    }
+  );
+
+  app.get(
+    `${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.statusPathPrefix}:ingestionId`,
+    (request, response) => {
+      const fixture = request.header(
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
+      );
+      const correlation = readPreviewCorrelation(response);
+      const sourceFixtures =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures;
+      const ingestionIds =
+        NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionIds;
+      if (fixture === undefined) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          401,
+          buildGamingSourceUnauthorized(),
+          'native_pr_preview.gaming_status_unauthorized'
+        );
+        return;
+      }
+      if (
+        fixture === sourceFixtures.statusValidation
+        && request.params.ingestionId === 'not-a-uuid'
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          400,
+          {
+            ok: false,
+            error: {
+              code: 'GAMING_SOURCE_VALIDATION_ERROR',
+              message: 'ingestionId must be a UUID.',
+            },
+          },
+          'native_pr_preview.gaming_status_validation'
+        );
+        return;
+      }
+      if (
+        fixture === sourceFixtures.statusMissing
+        && request.params.ingestionId === ingestionIds.missing
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          404,
+          {
+            ok: false,
+            error: {
+              code: 'GAMING_SOURCE_INGESTION_NOT_FOUND',
+              message: 'The gaming-source ingestion was not found.',
+            },
+          },
+          'native_pr_preview.gaming_status_missing'
+        );
+        return;
+      }
+      if (
+        fixture === sourceFixtures.statusOutage
+        && request.params.ingestionId === ingestionIds.outage
+      ) {
+        sendGamingSourceResponse(
+          request,
+          response,
+          503,
+          buildGamingSourceOutage(true),
+          'native_pr_preview.gaming_status_outage'
+        );
+        return;
+      }
+      const status = fixture === sourceFixtures.statusQueued
+        && request.params.ingestionId === ingestionIds.created
+        ? 'queued'
+        : fixture === sourceFixtures.statusRunning
+          && request.params.ingestionId === ingestionIds.running
+          ? 'running'
+          : fixture === sourceFixtures.statusCompleted
+            && request.params.ingestionId === ingestionIds.completed
+            ? 'completed'
+            : null;
+      if (status === null) {
+        sendFixedNotFound(request, response);
+        return;
+      }
+      sendGamingSourceResponse(
+        request,
+        response,
+        200,
+        buildGamingSourceStatus(
+          request.params.ingestionId,
+          status,
+          correlation
+        ),
+        `native_pr_preview.gaming_status_${status}`
+      );
+    }
+  );
 
   app.post(
     NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path,

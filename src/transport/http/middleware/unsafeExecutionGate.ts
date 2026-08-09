@@ -8,6 +8,7 @@ import {
 } from '@services/controlPlane/selfHealingControlHttpBoundary.js';
 import { validateGamingEvidenceRetryRequest } from '@services/gamingModes.js';
 import { dispatchPublicGamingRequest } from '@services/gamingPublicDispatcher.js';
+import { isGamingSourceMutationRequest } from '@services/gamingSourceHttpRoutes.js';
 import {
   buildPublicGamingCanaryFailure,
   prepareGuardedPublicGamingCanaryResponse,
@@ -106,6 +107,18 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
   const traceId = typeof req.traceId === 'string' && req.traceId.trim().length > 0
     ? req.traceId.trim()
     : requestId;
+  if (isGamingSourceMutationRequest(req)) {
+    res.status(503).json({
+      ok: false,
+      error: {
+        code: 'UNSAFE_EXECUTION_DISABLED',
+        message: 'Gaming-source mutations are temporarily unavailable because runtime integrity checks did not pass.'
+      },
+      ...(requestId ? { requestId } : {}),
+      ...(traceId ? { traceId } : {})
+    });
+    return;
+  }
   if (publicGamingPath) {
     const gamingRequestId = requestId ?? traceId ?? 'unknown';
     const gamingTraceId = traceId ?? gamingRequestId;

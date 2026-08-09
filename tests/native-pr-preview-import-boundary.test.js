@@ -46,6 +46,18 @@ const MCP_HTTP_BODY_PARSER_CORE_URL = new URL(
   '../src/mcp/httpBodyParserCore.ts',
   import.meta.url
 );
+const GAMING_PUBLIC_DISPATCHER_URL = new URL(
+  '../src/services/gamingPublicDispatcher.ts',
+  import.meta.url
+);
+const PUBLIC_GAMING_CANARY_URL = new URL(
+  '../src/services/publicGamingCanary.ts',
+  import.meta.url
+);
+const PUBLIC_GAMING_CANARY_FIXTURE_URL = new URL(
+  '../src/services/publicGamingCanaryFixture.ts',
+  import.meta.url
+);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -84,6 +96,21 @@ async function readStorylineSharedSource() {
 
 async function readMcpHttpBodyParserCoreSource() {
   return (await readFile(MCP_HTTP_BODY_PARSER_CORE_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readGamingPublicDispatcherSource() {
+  return (await readFile(GAMING_PUBLIC_DISPATCHER_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readPublicGamingCanarySource() {
+  return (await readFile(PUBLIC_GAMING_CANARY_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readPublicGamingCanaryFixtureSource() {
+  return (await readFile(PUBLIC_GAMING_CANARY_FIXTURE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -265,6 +292,68 @@ describe('native PR preview import boundary', () => {
       )).toEqual(expect.arrayContaining([
         expect.stringContaining('critical entry file semantic digest'),
       ]));
+    }
+  });
+
+  it('pins only the pure production public Gaming canary component seam', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining([
+        'src/services/gamingPublicDispatcher.ts',
+        'src/services/publicGamingCanary.ts',
+        'src/services/publicGamingCanaryFixture.ts',
+      ])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/routes/gptRouter.ts',
+        'src/services/gamingPipeline.ts',
+        'src/services/gamingSourceIngestion.ts',
+      ])
+    );
+
+    const dispatcherSource = await readGamingPublicDispatcherSource();
+    const canarySource = await readPublicGamingCanarySource();
+    const fixtureSource = await readPublicGamingCanaryFixtureSource();
+    for (const [filePath, sourceText] of [
+      ['src/services/gamingPublicDispatcher.ts', dispatcherSource],
+      ['src/services/publicGamingCanary.ts', canarySource],
+      ['src/services/publicGamingCanaryFixture.ts', fixtureSource],
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        'src/services/gamingPublicDispatcher.ts',
+        replaceRequired(
+          dispatcherSource,
+          "if (expectedAction === 'canary') {",
+          "if (expectedAction === 'query') {"
+        ),
+      ],
+      [
+        'src/services/publicGamingCanary.ts',
+        replaceRequired(
+          canarySource,
+          "    providerExecution: 'skipped',",
+          "    providerExecution: 'passed',"
+        ),
+      ],
+      [
+        'src/services/publicGamingCanaryFixture.ts',
+        replaceRequired(
+          fixtureSource,
+          "'ARCANOS_PUBLIC_CANARY_7F31'",
+          "'ARCANOS_PUBLIC_CANARY_DRIFT'"
+        ),
+      ],
+    ];
+    for (const [filePath, sourceText] of semanticDrifts) {
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
     }
   });
 

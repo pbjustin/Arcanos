@@ -9,12 +9,14 @@ import {
   JobRepositoryUnavailableError
 } from '@core/db/repositories/jobRepository.js';
 import {
+  GamingSourceRepositoryUnavailableError,
   getGamingSourceById,
   persistGamingSourceRevision,
   searchActiveGamingKnowledge
 } from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { fetchAndCleanDocument, type FetchAndCleanRawDocument } from '@shared/webFetcher.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -30,6 +32,7 @@ import {
   detectGamingGame
 } from './gamingGameDetection.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
+import { textContainsExactGamingVersion } from './gamingVersion.js';
 
 export const GAMING_SOURCE_INGESTION_REQUEST_PATH = '/gpt-access/gaming/sources/ingestions';
 export const GAMING_SOURCE_REFRESH_REQUEST_PATH = '/gpt-access/gaming/sources/refreshes';
@@ -41,7 +44,15 @@ const MAX_SOURCE_TEXT_CHARS = 100_000;
 const MAX_TITLE_CHARS = 240;
 const MIN_USEFUL_TEXT_CHARS = 120;
 const IDEMPOTENCY_KEY_MAX_CHARS = 240;
+const GAMING_SOURCE_OPERATION_ERROR_MAX_CHARS = 240;
+const GAMING_PATCH_VERSION_MAX_CHARS = 64;
 const SOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const MAX_CONCURRENT_STORED_GAMING_LOOKUPS = 4;
+const VERIFIED_PATCH_METHODS = new Set([
+  'extractor',
+  'fetched_content_exact_match'
+]);
+let activeStoredGamingLookups = 0;
 
 const allowedSourceTypeHints = GAMING_RESOURCE_TYPES.filter(
   (value): value is Exclude<GamingResourceType, 'unknown'> => value !== 'unknown'
@@ -195,7 +206,9 @@ export interface GamingStoredKnowledgeContext {
     title?: string;
     sourceType: string;
     patchVersion?: string;
+    verifiedPatchVersion?: string;
     fetchedAt: string;
+    publishedAt?: string;
     snippet: string;
   }>;
 }
@@ -349,6 +362,132 @@ function queuedSourceResults(body: QueuedGamingIngestionBody): GamingSourceInges
   ].sort((left, right) => left.submittedIndex - right.submittedIndex);
 }
 
+async function runWithStoredGamingLookupAdmission<T>(
+  callback: () => Promise<T>
+): Promise<T> {
+  if (activeStoredGamingLookups >= MAX_CONCURRENT_STORED_GAMING_LOOKUPS) {
+    const error = new Error('Stored Gaming knowledge lookup capacity is busy.');
+    error.name = 'GamingStoredKnowledgeLookupBusyError';
+    throw error;
+  }
+  activeStoredGamingLookups += 1;
+  try {
+    return await callback();
+  } finally {
+    activeStoredGamingLookups -= 1;
+  }
+}
+
+function resolveVerifiedPatch(input: {
+  claimedPatch?: string;
+  extractedPatch?: string;
+  fetchedEvidence: string;
+}): { version: string; method: 'extractor' | 'fetched_content_exact_match' } | null {
+  const extractedPatch = input.extractedPatch?.trim();
+  if (extractedPatch) {
+    if (extractedPatch.length > GAMING_PATCH_VERSION_MAX_CHARS) {
+      return null;
+    }
+    return { version: extractedPatch, method: 'extractor' };
+  }
+  const claimedPatch = input.claimedPatch?.trim();
+  if (
+    claimedPatch
+    && claimedPatch.length <= GAMING_PATCH_VERSION_MAX_CHARS
+    && textContainsExactGamingVersion(input.fetchedEvidence, claimedPatch)
+  ) {
+    return {
+      version: claimedPatch,
+      method: 'fetched_content_exact_match'
+    };
+  }
+  return null;
+}
+
+function readBoundedGamingPatchVersion(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0
+    && normalized.length <= GAMING_PATCH_VERSION_MAX_CHARS
+    ? normalized
+    : undefined;
+}
+
+function equalPatchVersion(left: unknown, right: string): boolean {
+  return typeof left === 'string'
+    && left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function resolveVerifiedStoredPatch(record: {
+  patch: string | null;
+  revisionPatch: string | null;
+  normalized?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+}): string | undefined {
+  const patchVersion = readBoundedGamingPatchVersion(
+    record.patch ?? record.revisionPatch
+  );
+  if (!patchVersion) {
+    return undefined;
+  }
+  const provenance = record.provenance ?? {};
+  const provenanceMethod = provenance.patchVerificationMethod;
+  if (
+    typeof provenanceMethod === 'string'
+    && VERIFIED_PATCH_METHODS.has(provenanceMethod)
+    && equalPatchVersion(provenance.verifiedPatchVersion, patchVersion)
+  ) {
+    return patchVersion;
+  }
+  // Compatibility for revisions written before explicit verification metadata:
+  // structured extractors already stored their independently parsed patch in
+  // the normalized record, while caller-only generic records did not.
+  return equalPatchVersion(record.normalized?.patch, patchVersion)
+    ? patchVersion
+    : undefined;
+}
+
+function projectBoundedPublicPatchVersion(
+  source: GamingSourceIngestionItemResult
+): GamingSourceIngestionItemResult {
+  const projectedSource = { ...source };
+  delete projectedSource.patchVersion;
+  const patchVersion = readBoundedGamingPatchVersion(source.patchVersion);
+  if (patchVersion) {
+    projectedSource.patchVersion = patchVersion;
+  }
+  return projectedSource;
+}
+
+function terminalSourceResults(
+  body: QueuedGamingIngestionBody,
+  status: 'cancelled' | 'expired' | 'failed'
+): GamingSourceIngestionItemResult[] {
+  const message = status === 'cancelled'
+    ? 'The ingestion was cancelled before a source result was recorded.'
+    : status === 'expired'
+      ? 'The ingestion expired before a source result was recorded.'
+      : 'The ingestion failed before a source result was recorded.';
+  return [
+    ...body.sources.map((source) => ({
+      submittedIndex: source.submittedIndex,
+      status: 'failed' as const,
+      canonicalUrl: source.canonicalUrl,
+      ...(source.sourceId ? { sourceId: source.sourceId } : {}),
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message,
+        retryable: false
+      }
+    })),
+    ...body.rejectedSources
+  ].sort((left, right) => left.submittedIndex - right.submittedIndex);
+}
+
 function mapStoredJobStatus(status: string): GamingSourceIngestionOutput['status'] {
   switch (status) {
     case 'pending':
@@ -414,6 +553,10 @@ export function isQueuedGamingSourceIngestion(input: {
 }
 
 function buildGatewayValidationError(message: string, sources?: RejectedGamingSource[]) {
+  const boundedMessage = truncateTextByCharacters(
+    message,
+    GAMING_SOURCE_OPERATION_ERROR_MAX_CHARS
+  );
   return {
     statusCode: sources && sources.length > 0 ? 422 : 400,
     payload: {
@@ -422,7 +565,7 @@ function buildGatewayValidationError(message: string, sources?: RejectedGamingSo
         code: sources && sources.length > 0
           ? 'GAMING_SOURCE_ADMISSION_REJECTED'
           : 'GAMING_SOURCE_VALIDATION_ERROR',
-        message
+        message: boundedMessage
       },
       ...(sources ? { sources } : {})
     }
@@ -615,40 +758,73 @@ export async function refreshGamingSources(
   const sources: QueuedGamingSource[] = [];
   const rejectedSources: RejectedGamingSource[] = [];
   const seenSourceIds = new Set<string>();
-  for (let submittedIndex = 0; submittedIndex < parsed.data.payload.sourceIds.length; submittedIndex += 1) {
-    const sourceId = parsed.data.payload.sourceIds[submittedIndex];
-    if (seenSourceIds.has(sourceId)) {
-      rejectedSources.push(rejectAdmission(
+  try {
+    for (let submittedIndex = 0; submittedIndex < parsed.data.payload.sourceIds.length; submittedIndex += 1) {
+      const sourceId = parsed.data.payload.sourceIds[submittedIndex];
+      if (seenSourceIds.has(sourceId)) {
+        rejectedSources.push(rejectAdmission(
+          submittedIndex,
+          'DUPLICATE_URL',
+          'The source identifier is duplicated in this request.'
+        ));
+        continue;
+      }
+      seenSourceIds.add(sourceId);
+      const source = await getGamingSourceById(sourceId);
+      if (!source) {
+        rejectedSources.push(rejectAdmission(
+          submittedIndex,
+          'SOURCE_NOT_FOUND',
+          'The gaming source was not found.'
+        ));
+        continue;
+      }
+      const refreshPatchVersion = readBoundedGamingPatchVersion(
+        source.latestRevision?.patch
+      );
+      sources.push({
         submittedIndex,
-        'DUPLICATE_URL',
-        'The source identifier is duplicated in this request.'
-      ));
-      continue;
+        canonicalUrl: source.canonicalUrl,
+        game: source.game,
+        gameKey: source.gameKey,
+        sourceId: source.id,
+        sourceTypeHint: source.sourceType === 'patch_notes' || source.sourceType === 'wiki'
+          ? source.sourceType
+          : 'article',
+        sourceTrustType: source.sourceType,
+        trustScore: source.trustScore,
+        ...(refreshPatchVersion ? { patchVersion: refreshPatchVersion } : {}),
+        origin: 'refresh'
+      });
     }
-    seenSourceIds.add(sourceId);
-    const source = await getGamingSourceById(sourceId);
-    if (!source) {
-      rejectedSources.push(rejectAdmission(
-        submittedIndex,
-        'SOURCE_NOT_FOUND',
-        'The gaming source was not found.'
-      ));
-      continue;
+  } catch (error: unknown) {
+    if (error instanceof GamingSourceRepositoryUnavailableError) {
+      return {
+        statusCode: 503,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GAMING_SOURCE_STORAGE_UNAVAILABLE',
+            message: 'Gaming-source refresh storage is unavailable.'
+          }
+        }
+      };
     }
-    sources.push({
-      submittedIndex,
-      canonicalUrl: source.canonicalUrl,
-      game: source.game,
-      gameKey: source.gameKey,
-      sourceId: source.id,
-      sourceTypeHint: source.sourceType === 'patch_notes' || source.sourceType === 'wiki'
-        ? source.sourceType
-        : 'article',
-      sourceTrustType: source.sourceType,
-      trustScore: source.trustScore,
-      ...(source.latestRevision?.patch ? { patchVersion: source.latestRevision.patch } : {}),
-      origin: 'refresh'
+    logger.error('gaming.source_refresh.lookup_failed', {
+      requestId: context.requestId,
+      traceId: context.traceId,
+      errorType: error instanceof Error ? error.name : 'unknown'
     });
+    return {
+      statusCode: 500,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_INTERNAL_ERROR',
+          message: 'Failed to refresh gaming sources.'
+        }
+      }
+    };
   }
   if (sources.length === 0) {
     return buildGatewayValidationError('Every requested gaming source was rejected.', rejectedSources);
@@ -877,8 +1053,19 @@ async function ingestOneSource(
     const sourceType = normalized.classification.type !== 'unknown'
       ? normalized.classification.type
       : source.sourceTypeHint ?? 'article';
-    const patchVersion = normalized.build?.patch ?? source.patchVersion;
     const title = normalized.build?.title ?? pageTitle;
+    const normalizedEvidence = normalized.evidenceText.trim();
+    const patchVerification = resolveVerifiedPatch({
+      claimedPatch: source.patchVersion,
+      extractedPatch: normalized.build?.patch,
+      fetchedEvidence: [
+        pageTitle,
+        pageHeadings,
+        normalizedEvidence,
+        cleanedText
+      ].filter(Boolean).join('\n\n')
+    });
+    const patchVersion = patchVerification?.version;
     const normalizedData: Record<string, unknown> = normalized.build
       ? { ...normalized.build }
       : {
@@ -888,7 +1075,10 @@ async function ingestOneSource(
           sourceType,
           summary: cleanedText.slice(0, 2_000)
         };
-    const normalizedEvidence = normalized.evidenceText.trim();
+    delete normalizedData.patch;
+    if (patchVersion) {
+      normalizedData.patch = patchVersion;
+    }
     const searchText = [
       title,
       source.game,
@@ -904,7 +1094,7 @@ async function ingestOneSource(
           role: normalized.build.role,
           archetype: normalized.build.archetype,
           activity: normalized.build.activity,
-          patch: normalized.build.patch,
+          patch: patchVersion,
           character: normalized.build.character,
           equipment: normalized.build.equipment,
           skills: normalized.build.skills
@@ -936,7 +1126,10 @@ async function ingestOneSource(
         canonicalUrl: source.canonicalUrl,
         origin: source.origin,
         sourceTypeHint: source.sourceTypeHint ?? null,
-        submittedIndex: source.submittedIndex
+        submittedIndex: source.submittedIndex,
+        claimedPatchVersion: source.patchVersion ?? null,
+        verifiedPatchVersion: patchVersion ?? null,
+        patchVerificationMethod: patchVerification?.method ?? null
       },
       extractionMetrics: {
         ...extractionMetrics,
@@ -1073,9 +1266,88 @@ export async function getGamingSourceIngestionStatus(
   if (!SOURCE_ID_PATTERN.test(ingestionId)) {
     return buildGatewayValidationError('ingestionId must be a UUID.');
   }
-  let job;
   try {
-    job = await getJobById(ingestionId);
+    const job = await getJobById(ingestionId);
+    if (
+      !job
+      || job.job_type !== 'gpt'
+      || !isGamingIngestionQueuedInput(job.input)
+      || job.idempotency_scope_hash !== gamingSourceActorScopeHash(context.actorKey)
+    ) {
+      return {
+        statusCode: 404,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GAMING_SOURCE_INGESTION_NOT_FOUND',
+            message: 'The gaming-source ingestion was not found.'
+          }
+        }
+      };
+    }
+    const input = job.input;
+    const parsedBody = queuedGamingIngestionBodySchema.parse(input.body);
+    const createdAt = new Date(job.created_at).toISOString();
+    const updatedAt = new Date(job.updated_at).toISOString();
+    const status = mapStoredJobStatus(job.status);
+    if (
+      (job.status === 'completed' || job.status === 'failed')
+      && job.output
+      && typeof job.output === 'object'
+      && !Array.isArray(job.output)
+      && (job.output as { ingestionId?: unknown }).ingestionId === ingestionId
+    ) {
+      const output = job.output as GamingSourceIngestionOutput;
+      return {
+        statusCode: 200,
+        payload: {
+          ...output,
+          action: 'status',
+          status: job.status === 'failed' ? 'failed' : output.status,
+          sources: output.sources.map(projectBoundedPublicPatchVersion),
+          createdAt,
+          updatedAt,
+          ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),
+          requestId: context.requestId ?? input.requestId,
+          traceId: context.traceId ?? input.traceId
+        }
+      };
+    }
+    const terminalStatus = status === 'cancelled' || status === 'expired' || status === 'failed'
+      ? status
+      : undefined;
+    const sources = terminalStatus
+      ? terminalSourceResults(parsedBody, terminalStatus)
+      : queuedSourceResults(parsedBody).map((source) => (
+        source.status === 'queued' && status === 'running'
+          ? { ...source, status: 'running' as const }
+          : source
+      ));
+    return {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        action: 'status',
+        ingestionId,
+        status,
+        counts: terminalStatus
+          ? {
+            ...buildQueuedCounts(parsedBody),
+            queued: 0,
+            failed: parsedBody.sources.length
+          }
+          : {
+            ...buildQueuedCounts(parsedBody),
+            queued: status === 'running' ? 0 : parsedBody.sources.length
+          },
+        sources,
+        createdAt,
+        updatedAt,
+        ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),
+        requestId: context.requestId ?? input.requestId,
+        traceId: context.traceId ?? input.traceId
+      }
+    };
   } catch (error: unknown) {
     if (error instanceof JobRepositoryUnavailableError) {
       return {
@@ -1089,76 +1361,22 @@ export async function getGamingSourceIngestionStatus(
         }
       };
     }
-    throw error;
-  }
-  if (
-    !job
-    || job.job_type !== 'gpt'
-    || !isGamingIngestionQueuedInput(job.input)
-    || job.idempotency_scope_hash !== gamingSourceActorScopeHash(context.actorKey)
-  ) {
+    logger.error('gaming.source_ingestion.status_failed', {
+      requestId: context.requestId,
+      traceId: context.traceId,
+      errorType: error instanceof Error ? error.name : 'unknown'
+    });
     return {
-      statusCode: 404,
+      statusCode: 500,
       payload: {
         ok: false,
         error: {
-          code: 'GAMING_SOURCE_INGESTION_NOT_FOUND',
-          message: 'The gaming-source ingestion was not found.'
+          code: 'GAMING_SOURCE_INTERNAL_ERROR',
+          message: 'Failed to read gaming-source ingestion status.'
         }
       }
     };
   }
-  const input = job.input;
-  const parsedBody = queuedGamingIngestionBodySchema.parse(input.body);
-  const createdAt = new Date(job.created_at).toISOString();
-  const updatedAt = new Date(job.updated_at).toISOString();
-  const status = mapStoredJobStatus(job.status);
-  if (
-    (job.status === 'completed' || job.status === 'failed')
-    && job.output
-    && typeof job.output === 'object'
-    && !Array.isArray(job.output)
-    && (job.output as { ingestionId?: unknown }).ingestionId === ingestionId
-  ) {
-    const output = job.output as GamingSourceIngestionOutput;
-    return {
-      statusCode: 200,
-      payload: {
-        ...output,
-        action: 'status',
-        status: job.status === 'failed' ? 'failed' : output.status,
-        createdAt,
-        updatedAt,
-        ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),
-        requestId: context.requestId ?? input.requestId,
-        traceId: context.traceId ?? input.traceId
-      }
-    };
-  }
-  const sources = queuedSourceResults(parsedBody).map((source) => (
-    source.status === 'queued' && status === 'running'
-      ? { ...source, status: 'running' as const }
-      : source
-  ));
-  return {
-    statusCode: 200,
-    payload: {
-      ok: true,
-      action: 'status',
-      ingestionId,
-      status,
-      counts: {
-        ...buildQueuedCounts(parsedBody),
-        queued: status === 'running' ? 0 : parsedBody.sources.length
-      },
-      sources,
-      createdAt,
-      updatedAt,
-      ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),
-      requestId: context.requestId ?? input.requestId,
-      traceId: context.traceId ?? input.traceId
-    }
-  };
 }
 
 export async function buildStoredGamingKnowledgeContext(input: {
@@ -1167,14 +1385,24 @@ export async function buildStoredGamingKnowledgeContext(input: {
   mode: 'guide' | 'build' | 'meta';
   limit?: number;
   sourceIndexOffset?: number;
+  queryTimeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<GamingStoredKnowledgeContext> {
   const gameKey = canonicalGameKey(input.game);
-  const records = await searchActiveGamingKnowledge({
-    gameKey,
-    query: input.prompt,
-    mode: input.mode,
-    limit: Math.min(Math.max(input.limit ?? 4, 1), 8)
-  }).catch((error: unknown) => {
+  const records = await runWithStoredGamingLookupAdmission(() =>
+    searchActiveGamingKnowledge({
+      gameKey,
+      query: input.prompt,
+      mode: input.mode,
+      limit: Math.min(Math.max(input.limit ?? 4, 1), 8)
+    }, {
+      queryTimeoutMs: input.queryTimeoutMs,
+      signal: input.signal
+    })
+  ).catch((error: unknown) => {
+    if (input.signal?.aborted) {
+      throw error;
+    }
     logger.warn('gaming.stored_retrieval_failed', {
       module: 'gaming-source-ingestion',
       gameKey,
@@ -1186,27 +1414,38 @@ export async function buildStoredGamingKnowledgeContext(input: {
   if (records.length === 0) {
     return { context: '', sources: [] };
   }
-  const sources = records.map((record) => ({
-    sourceId: record.sourceId,
-    url: record.publicUrl,
-    ...(record.title ? { title: record.title } : {}),
-    sourceType: record.sourceType,
-    ...(record.patch ?? record.revisionPatch
-      ? { patchVersion: record.patch ?? record.revisionPatch ?? undefined }
-      : {}),
-    fetchedAt: record.fetchedAt.toISOString(),
-    snippet: record.searchText.slice(0, 1_200)
-  }));
+  const sources = records.map((record) => {
+    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
+    return {
+      sourceId: record.sourceId,
+      url: record.publicUrl,
+      ...(record.title ? { title: record.title } : {}),
+      sourceType: record.sourceType,
+      ...(verifiedPatchVersion
+        ? {
+            patchVersion: verifiedPatchVersion,
+            verifiedPatchVersion
+          }
+        : {}),
+      fetchedAt: record.fetchedAt.toISOString(),
+      ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
+      snippet: record.searchText.slice(0, 1_200)
+    };
+  });
   const sourceIndexOffset = Math.max(0, Math.trunc(input.sourceIndexOffset ?? 0));
-  const context = records.map((record, index) => [
-    `[Source ${sourceIndexOffset + index + 1}]`,
-    'Origin: stored gaming knowledge',
-    `URL: ${record.publicUrl}`,
-    `Source ID: ${record.sourceId}`,
-    `Type: ${record.sourceType}`,
-    record.patch ?? record.revisionPatch ? `Patch: ${record.patch ?? record.revisionPatch}` : '',
-    record.title ? `Title: ${record.title}` : '',
-    record.searchText.slice(0, 1_200)
-  ].filter(Boolean).join('\n')).join('\n\n');
+  const context = records.map((record, index) => {
+    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
+    return [
+      `[Source ${sourceIndexOffset + index + 1}]`,
+      'Origin: stored gaming knowledge',
+      `URL: ${record.publicUrl}`,
+      `Source ID: ${record.sourceId}`,
+      `Type: ${record.sourceType}`,
+      verifiedPatchVersion ? `Patch: ${verifiedPatchVersion}` : '',
+      record.publishedAt ? `Published: ${record.publishedAt.toISOString()}` : '',
+      record.title ? `Title: ${record.title}` : '',
+      record.searchText.slice(0, 1_200)
+    ].filter(Boolean).join('\n');
+  }).join('\n\n');
   return { context, sources };
 }

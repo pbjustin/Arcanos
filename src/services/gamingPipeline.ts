@@ -27,7 +27,10 @@ import {
   type ValidatedGamingRequest
 } from "@services/gamingModes.js";
 import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
-import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
+import {
+  extractExplicitGamingVersions,
+  textContainsExactGamingVersion
+} from "@services/gamingVersion.js";
 import { redactString } from "@shared/redaction.js";
 import { hasVisibleContent } from "@shared/promptUtils.js";
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
@@ -37,7 +40,10 @@ import {
   isGamingFreshnessSensitive,
   isCitableGamingWebSource
 } from "@services/gamingWebContext.js";
-import { buildStoredGamingKnowledgeContext } from "@services/gamingSourceIngestion.js";
+import {
+  buildStoredGamingKnowledgeContext,
+  type GamingStoredKnowledgeContext
+} from "@services/gamingSourceIngestion.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -104,6 +110,9 @@ const PURE_CAPABILITY_REFUSAL_MAX_CHARS = 320;
 const MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS = 120;
 const MAX_GAMING_INTEGRITY_OUTPUT_CHARS = 1_000_000;
 const MAX_GAMING_INTEGRITY_ISSUES = 8;
+const GAMING_STORED_RETRIEVAL_TIMEOUT_MS = 1_000;
+// Fetch time says nothing about publication currency; keep unversioned claims to a narrow release window.
+const GAMING_RECENT_PUBLICATION_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 const GAMING_INTEGRITY_ISSUES = new Set([
   "abrupt_mid_sentence_ending",
   "broken_numbering",
@@ -115,6 +124,48 @@ type GamingCitationNormalization = {
   maxInlineSourceRef: number;
   applied: boolean;
 };
+
+function getGamingStoredRetrievalTimeoutMs(): number {
+  const remainingMs = getRequestRemainingMs();
+  return remainingMs === null
+    ? GAMING_STORED_RETRIEVAL_TIMEOUT_MS
+    : Math.max(1, Math.min(GAMING_STORED_RETRIEVAL_TIMEOUT_MS, remainingMs));
+}
+
+function hasCurrentStoredGamingEvidence(
+  sources: GamingStoredKnowledgeContext["sources"],
+  input: GamingPipelineInput
+): boolean {
+  const requestedVersions = Array.from(new Set([
+    ...(input.requestedVersion ? [input.requestedVersion] : []),
+    ...extractExplicitGamingVersions({ prompt: input.prompt, game: input.game })
+  ]));
+  if (requestedVersions.length > 0) {
+    return requestedVersions.every((version) =>
+      sources.some((source) =>
+        Boolean(source.verifiedPatchVersion)
+        && textContainsExactGamingVersion(
+          source.verifiedPatchVersion ?? "",
+          version
+        )
+      )
+    );
+  }
+
+  return sources.some((source) => {
+    if (
+      !source.publishedAt
+      || (source.sourceType !== "official" && source.sourceType !== "patch_notes")
+    ) {
+      return false;
+    }
+    const publishedAtMs = Date.parse(source.publishedAt);
+    const publicationAgeMs = Date.now() - publishedAtMs;
+    return Number.isFinite(publishedAtMs)
+      && publicationAgeMs >= 0
+      && publicationAgeMs <= GAMING_RECENT_PUBLICATION_MAX_AGE_MS;
+  });
+}
 
 function isGamingProviderTimeoutError(error: unknown): boolean {
   if (isAbortError(error)) {
@@ -645,65 +696,6 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       clearPassed: webContextResult.clear.passed,
       ...(webContextResult.fallbackReason ? { fallbackReason: webContextResult.fallbackReason } : {})
     });
-    if (
-      webContextResult.fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
-      && (params.game || (params.mode !== "build" && params.mode !== "meta"))
-    ) {
-      logger.warn("gaming.fallback.used", {
-        ...baseLogContext,
-        retrievalEnabled: webContextResult.retrievalEnabled,
-        retrievalReason: webContextResult.retrievalReason,
-        discoveryEnabled: webContextResult.discoveryEnabled,
-        discoveryTriggered: webContextResult.discoveryTriggered,
-        discoveryReason: webContextResult.discoveryReason,
-        ...(webContextResult.searchProvider ? { searchProvider: webContextResult.searchProvider } : {}),
-        searchResultCount: webContextResult.searchResultCount,
-        candidateCount: webContextResult.candidateCount,
-        rejectedCandidateCount: webContextResult.rejectedCandidateCount,
-        fetchedCandidateCount: webContextResult.fetchedCandidateCount,
-        acceptedSourceCount: webContextResult.acceptedSourceCount,
-        suppliedCandidateCount: webContextResult.suppliedCandidateCount,
-        acceptedSuppliedSourceCount: webContextResult.acceptedSuppliedSourceCount,
-        rejectedSuppliedCandidateCount: webContextResult.rejectedSuppliedCandidateCount,
-        discoveryCacheHit: webContextResult.discoveryCacheHit,
-        discoveryElapsedMs: webContextResult.discoveryElapsedMs,
-        candidateRankingElapsedMs: webContextResult.candidateRankingElapsedMs,
-        ...(webContextResult.discoveryFailureReason
-          ? { discoveryFailureReason: webContextResult.discoveryFailureReason }
-          : {}),
-        sourceCount: sources.length,
-        retrievedSourceCount,
-        publicSourceCount,
-        omittedSourceCount,
-        sourceDomains: webContextResult.sourceDomains,
-        cacheHit: webContextResult.cacheHit,
-        retrievalElapsedMs: webContextResult.retrievalElapsedMs,
-        rankingElapsedMs: webContextResult.rankingElapsedMs,
-        generationElapsedMs: 0,
-        fallbackReason: webContextResult.fallbackReason,
-        timeoutPhase: "retrieval"
-      });
-      return formatGameplaySuccessWithLogs({
-        mode: params.mode,
-        response: buildGamingProviderFallbackResponse({
-          input: params,
-          sources,
-          fallbackReason: webContextResult.fallbackReason,
-          timeoutPhase: "retrieval"
-        }),
-        sources,
-        logContext: baseLogContext,
-        requestStartedAt,
-        retrievedSourceCount,
-        omittedSourceCount,
-        fallbackReason: webContextResult.fallbackReason,
-        discoveryReason,
-        discoveryFailureReason,
-        ...(freshnessSensitive
-          ? { evidenceRequest: buildFrontendGamingEvidenceRequest(params) }
-          : {})
-      });
-    }
   } catch (error) {
     if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
       throw error;
@@ -743,19 +735,49 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     throw createGamingGameRequiredError(resolvedParams.mode);
   }
 
-  if (resolvedParams.game) {
+  const resolvedGame = resolvedParams.game;
+  if (resolvedGame) {
     const storedRetrievalStartedAt = Date.now();
-    const storedKnowledge = await buildStoredGamingKnowledgeContext({
-      game: resolvedParams.game,
-      prompt: resolvedParams.prompt,
-      mode: resolvedParams.mode,
-      limit: 4,
-      sourceIndexOffset: sources.length
-    });
+    const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
+    let storedKnowledge: GamingStoredKnowledgeContext = { context: "", sources: [] };
+    let storedRetrievalError: unknown;
+    try {
+      storedKnowledge = await runWithRequestAbortTimeout(
+        {
+          timeoutMs: storedRetrievalTimeoutMs,
+          requestId,
+          parentSignal: getRequestAbortSignal(),
+          abortMessage: `Gaming stored retrieval timed out after ${storedRetrievalTimeoutMs}ms`
+        },
+        () => buildStoredGamingKnowledgeContext({
+          game: resolvedGame,
+          prompt: resolvedParams.prompt,
+          mode: resolvedParams.mode,
+          limit: 4,
+          sourceIndexOffset: sources.length,
+          queryTimeoutMs: storedRetrievalTimeoutMs,
+          signal: getRequestAbortSignal() ?? undefined
+        })
+      );
+    } catch (error) {
+      if (getRequestAbortSignal()?.aborted) {
+        throw error;
+      }
+      storedRetrievalError = error;
+      logger.warn("gaming.stored_retrieval_failed", {
+        ...baseLogContext,
+        elapsedMs: Date.now() - storedRetrievalStartedAt,
+        timeoutMs: storedRetrievalTimeoutMs,
+        errorName: error instanceof Error ? error.name : typeof error
+      });
+    }
     if (storedKnowledge.sources.length > 0) {
-      const existingUrls = new Set(sources.map((source) => source.url));
-      const storedSources: GamingWebSource[] = storedKnowledge.sources
-        .filter((source) => !existingUrls.has(source.url))
+      const existingUrls = new Set(
+        sources.filter(isCitableGamingWebSource).map((source) => source.url)
+      );
+      const uniqueStoredSources = storedKnowledge.sources
+        .filter((source) => !existingUrls.has(source.url));
+      const storedSources: GamingWebSource[] = uniqueStoredSources
         .map((source) => ({
           url: source.url,
           snippet: source.snippet,
@@ -767,6 +789,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           origin: "stored"
         }));
       if (storedSources.length > 0) {
+        const storedUrls = new Set(storedSources.map((source) => source.url));
+        sources = sources.filter((source) =>
+          !storedUrls.has(source.url) || isCitableGamingWebSource(source)
+        );
         const storedContext = storedSources.map((source, index) => [
           `[Source ${sources.length + index + 1}]`,
           "Origin: stored gaming knowledge",
@@ -774,6 +800,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           source.sourceId ? `Source ID: ${source.sourceId}` : "",
           source.sourceType ? `Type: ${source.sourceType}` : "",
           source.patchVersion ? `Patch: ${source.patchVersion}` : "",
+          uniqueStoredSources[index]?.publishedAt
+            ? `Published: ${uniqueStoredSources[index]?.publishedAt}`
+            : "",
           source.title ? `Title: ${source.title}` : "",
           source.snippet ?? ""
         ].filter(Boolean).join("\n")).join("\n\n");
@@ -783,21 +812,58 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         retrievalHadUsableSources = true;
         retrievedSourceCount += storedSources.length;
         publicSourceCount = sources.length;
-        const currentThresholdMs = Date.now() - (24 * 60 * 60_000);
-        if (storedSources.some((source) => {
-          const fetchedAtMs = source.fetchedAt ? Date.parse(source.fetchedAt) : Number.NaN;
-          return Number.isFinite(fetchedAtMs) && fetchedAtMs >= currentThresholdMs;
-        })) {
+        if (hasCurrentStoredGamingEvidence(uniqueStoredSources, resolvedParams)) {
           currentEvidenceAvailable = true;
         }
       }
     }
     logger.info("gaming.stored_retrieval", {
       ...baseLogContext,
+      ok: storedRetrievalError === undefined,
       elapsedMs: Date.now() - storedRetrievalStartedAt,
+      timeoutMs: storedRetrievalTimeoutMs,
       sourceCount: storedKnowledge.sources.length,
       mergedSourceCount: sources.filter((source) => source.origin === "stored").length
     });
+  }
+
+  if (
+    fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
+    && (resolvedParams.game || (resolvedParams.mode !== "build" && resolvedParams.mode !== "meta"))
+  ) {
+    if (!retrievalHadUsableSources) {
+      logger.warn("gaming.fallback.used", {
+        ...baseLogContext,
+        sourceCount: sources.length,
+        retrievedSourceCount,
+        publicSourceCount,
+        omittedSourceCount,
+        generationElapsedMs: 0,
+        fallbackReason,
+        timeoutPhase: "retrieval"
+      });
+      return formatGameplaySuccessWithLogs({
+        mode: resolvedParams.mode,
+        response: buildGamingProviderFallbackResponse({
+          input: resolvedParams,
+          sources,
+          fallbackReason,
+          timeoutPhase: "retrieval"
+        }),
+        sources,
+        logContext: baseLogContext,
+        requestStartedAt,
+        retrievedSourceCount,
+        omittedSourceCount,
+        fallbackReason,
+        discoveryReason,
+        discoveryFailureReason,
+        ...(freshnessSensitive
+          ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) }
+          : {})
+      });
+    }
+    fallbackReason = undefined;
   }
 
   if (freshnessSensitive && !currentEvidenceAvailable) {

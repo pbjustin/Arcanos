@@ -316,6 +316,38 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     });
   });
 
+  it.each([
+    ['POST', '/gpt-access/gaming/sources/ingestions'],
+    ['POST', '/gpt-access/gaming/sources/refreshes'],
+    ['POST', '/GPT-ACCESS/GAMING/SOURCES/INGESTIONS/'],
+    ['DELETE', '/gpt-access/gaming/sources/ingestions/019fe3cd-8c01-7f01-8d2d-caa951bc4b9b']
+  ])('uses the closed Gaming-source error envelope for unsafe %s mutation %s', (method, path) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method,
+      path,
+      body: { action: 'ingest' },
+      requestId: ' req-gaming-source-unsafe ',
+      traceId: ' trace-gaming-source-unsafe '
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith({
+      ok: false,
+      error: {
+        code: 'UNSAFE_EXECUTION_DISABLED',
+        message: 'Gaming-source mutations are temporarily unavailable because runtime integrity checks did not pass.'
+      },
+      requestId: 'req-gaming-source-unsafe',
+      traceId: 'trace-gaming-source-unsafe'
+    });
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
   it('contains an unsafe Gaming request in the public Gaming envelope', () => {
     const next = jest.fn();
     const response = createResponse();

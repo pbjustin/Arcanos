@@ -2,6 +2,10 @@ export interface NativePrPreviewE2eContract {
   readonly schemaVersion: 1;
   readonly mode: 'native-pr-application-e2e-v1';
   readonly trustScope: 'trusted-pr-accidental-effects';
+  readonly syntheticResponseHeader: Readonly<{
+    name: 'x-arcanos-preview-fixture';
+    value: 'sealed-synthetic';
+  }>;
   readonly invalidJobId: 'not-a-uuid';
   readonly unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
   readonly research: Readonly<{
@@ -32,6 +36,66 @@ export interface NativePrPreviewE2eContract {
     fixtures: Readonly<{
       effectiveLimits: 'effective-limits';
     }>;
+  }>;
+  readonly gaming: Readonly<{
+    canaryPath: '/gpt/arcanos-gaming/canary';
+    queryPath: '/gpt/arcanos-gaming';
+    game: 'Palworld';
+    fixtures: Readonly<{
+      guide: 'sealed-preview-guide';
+      build: 'sealed-preview-build';
+      meta: 'sealed-preview-meta';
+      operational: 'Is the ARCANOS Action working?';
+    }>;
+  }>;
+  readonly gamingSources: Readonly<{
+    ingestionPath: '/gpt-access/gaming/sources/ingestions';
+    refreshPath: '/gpt-access/gaming/sources/refreshes';
+    statusPathPrefix: '/gpt-access/gaming/sources/ingestions/';
+    fixtureHeader: 'x-native-preview-fixture';
+    fixtures: Readonly<{
+      validation: 'source-validation';
+      unsafe: 'source-unsafe';
+      outage: 'source-outage';
+      created: 'source-created';
+      replay: 'source-replay';
+      conflict: 'source-conflict';
+      refreshValidation: 'refresh-validation';
+      refreshUnsafe: 'refresh-unsafe';
+      refreshOutage: 'refresh-outage';
+      refreshCreated: 'refresh-created';
+      statusQueued: 'status-queued';
+      statusRunning: 'status-running';
+      statusCompleted: 'status-completed';
+      statusValidation: 'status-validation';
+      statusMissing: 'status-missing';
+      statusOutage: 'status-outage';
+    }>;
+    idempotencyKeys: Readonly<{
+      unauthorized: 'preview-source-unauthorized-v1';
+      validation: 'preview-source-validation-v1';
+      unsafe: 'preview-source-unsafe-v1';
+      outage: 'preview-source-outage-v1';
+      created: 'preview-source-created-v1';
+      replay: 'preview-source-replay-v1';
+      conflict: 'preview-source-conflict-v1';
+      refreshUnauthorized: 'preview-refresh-unauthorized-v1';
+      refreshValidation: 'preview-refresh-validation-v1';
+      refreshUnsafe: 'preview-refresh-unsafe-v1';
+      refreshOutage: 'preview-refresh-outage-v1';
+      refreshCreated: 'preview-refresh-created-v1';
+    }>;
+    ingestionIds: Readonly<{
+      created: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+      refresh: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+      running: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+      completed: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4';
+      unauthorized: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5';
+      outage: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6';
+      missing: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7';
+    }>;
+    validationPaddingChars: 5000;
+    sourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
   }>;
   readonly fixtures: Readonly<{
     completed: '11111111-1111-4111-8111-111111111111';

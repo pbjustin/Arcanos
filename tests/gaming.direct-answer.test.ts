@@ -14,6 +14,7 @@ const mockGetEnvIntegerAtLeast = jest.fn();
 const mockGetOptionalEnvIntegerAtLeast = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
+const mockBuildStoredGamingKnowledgeContext = jest.fn();
 const DEFAULT_GUIDE_SNIPPET = 'Clean guide explains boss mechanics, route steps, and readable gameplay evidence.';
 
 function expectFetchOptions(timeoutMs = 5000) {
@@ -69,6 +70,10 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline
 }));
 
+jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
+  buildStoredGamingKnowledgeContext: mockBuildStoredGamingKnowledgeContext
+}));
+
 const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
@@ -117,6 +122,7 @@ describe('gaming guide output hardening', () => {
     mockGetPrompt.mockImplementation((_section: string, key: string) => `${key}-prompt`);
     mockFetchAndClean.mockResolvedValue(DEFAULT_GUIDE_SNIPPET);
     mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'Direct gameplay answer' });
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValue({ context: '', sources: [] });
     mockGetOpenAIClientOrAdapter.mockReturnValue({
       adapter: {
         responses: {
@@ -1029,6 +1035,223 @@ describe('gaming guide output hardening', () => {
     expect(result.data.evidenceRequest?.queries[0]).toContain(game.includes(' ') ? `"${game}"` : game);
     expect(result.data.evidenceRequest?.queries[0]).not.toContain(prompt);
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a recent stored fetch as current-version evidence by itself', async () => {
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+        url: 'https://example.com/clockwork-guide',
+        title: 'Clockwork guide',
+        sourceType: 'curated',
+        fetchedAt: new Date().toISOString(),
+        snippet: 'A stored beginner guide without patch or publication evidence.'
+      }]
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Clockwork Odyssey',
+      prompt: 'Look up a current beginner guide for Clockwork Odyssey 1.0.',
+      requestedVersion: '1.0',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.sources).toEqual([
+      expect.objectContaining({
+        url: 'https://example.com/clockwork-guide',
+        origin: 'stored'
+      })
+    ]);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('accepts stored evidence when its patch matches the requested version', async () => {
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+        url: 'https://example.com/clockwork-patch-guide',
+        sourceType: 'patch_notes',
+        patchVersion: 'Patch 1.0',
+        verifiedPatchVersion: 'Patch 1.0',
+        fetchedAt: '2024-01-01T00:00:00.000Z',
+        snippet: 'Patch 1.0 beginner route and progression notes.'
+      }]
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Clockwork Odyssey',
+      prompt: 'Look up a current beginner guide for Clockwork Odyssey 1.0.',
+      requestedVersion: '1.0',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Direct gameplay answer');
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not trust a stored caller patch claim without verification metadata', async () => {
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+        url: 'https://example.com/clockwork-claimed-patch',
+        sourceType: 'patch_notes',
+        patchVersion: '1.0',
+        fetchedAt: new Date().toISOString(),
+        snippet: 'Caller-labeled patch 1.0 content without independent verification.'
+      }]
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Clockwork Odyssey',
+      prompt: 'Look up a current beginner guide for Clockwork Odyssey 1.0.',
+      requestedVersion: '1.0',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('accepts recently published stored evidence when no patch was requested', async () => {
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+        url: 'https://example.com/clockwork-release-guide',
+        sourceType: 'official',
+        fetchedAt: '2024-01-01T00:00:00.000Z',
+        publishedAt: new Date().toISOString(),
+        snippet: 'Recently published official release progression notes.'
+      }]
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Clockwork Odyssey',
+      prompt: 'Give me a current beginner guide for the newly released Clockwork Odyssey game.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Direct gameplay answer');
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['official', new Date(Date.now() - (31 * 24 * 60 * 60_000)).toISOString()],
+    ['curated', new Date().toISOString()]
+  ])(
+    'does not accept insufficient stored publication evidence from %s',
+    async (sourceType, publishedAt) => {
+      mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+        context: '',
+        sources: [{
+          sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+          url: 'https://example.com/clockwork-publication',
+          sourceType,
+          fetchedAt: new Date().toISOString(),
+          publishedAt,
+          snippet: 'Stored publication evidence that cannot prove currentness.'
+        }]
+      });
+
+      const result = await runGuidePipeline({
+        game: 'Clockwork Odyssey',
+        prompt: 'Give me a current beginner guide for the newly released Clockwork Odyssey game.',
+        guideUrls: [],
+        auditEnabled: false
+      });
+
+      expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+      expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    }
+  );
+
+  it('uses safe stored evidence after live retrieval times out', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = '5';
+    mockFetchAndClean.mockImplementationOnce(async () => {
+      await new Promise(() => undefined);
+      return 'unreachable';
+    });
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+        url: 'https://example.com/clockwork-patch-guide',
+        sourceType: 'patch_notes',
+        patchVersion: '1.0',
+        verifiedPatchVersion: '1.0',
+        fetchedAt: new Date().toISOString(),
+        snippet: 'Stored patch 1.0 progression evidence remains available.'
+      }]
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Clockwork Odyssey',
+      prompt: 'Look up a current beginner guide for Clockwork Odyssey 1.0.',
+      requestedVersion: '1.0',
+      guideUrl: 'https://example.com/clockwork-patch-guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Direct gameplay answer');
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(result.data.sources).toEqual([
+      expect.objectContaining({
+        url: 'https://example.com/clockwork-patch-guide',
+        origin: 'stored'
+      })
+    ]);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a blocked stored lookup and drains its rejection after the timeout race', async () => {
+    let rejectStoredLookup: ((error: Error) => void) | undefined;
+    mockBuildStoredGamingKnowledgeContext.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectStoredLookup = reject;
+    }));
+    mockGetOpenAIClientOrAdapter.mockReturnValueOnce({ client: null });
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      const result = await runWithRequestAbortContext({
+        requestId: 'req-stored-lookup-budget',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 50,
+        timeoutMs: 50
+      }, () => runGuidePipeline({
+        game: 'Clockwork Odyssey',
+        prompt: 'Give me a stable beginner progression guide.',
+        guideUrls: [],
+        auditEnabled: false
+      }));
+
+      expect(Date.now() - startedAt).toBeLessThan(750);
+      expect(result.ok).toBe(true);
+      expect(mockBuildStoredGamingKnowledgeContext).toHaveBeenCalledTimes(1);
+      expect(rejectStoredLookup).toBeDefined();
+      rejectStoredLookup?.(new Error('late stored lookup rejection'));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 
   it('terminates a zero-candidate frontend evidence retry without requesting another search', async () => {

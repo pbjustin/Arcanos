@@ -175,8 +175,8 @@ secrets in each workflow file before enabling auto-deploy.
 Railway-native PR deployments run the protected-digest wrapper before the
 tracked `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
 credential-empty, deny-by-default synthetic generic-jobs application plus
-sealed Research, Backstage storyline, and MCP body-cap contract fixture
-surfaces; the worker role stays passive and denies all three contract paths. The
+sealed Research, Backstage storyline, MCP body-cap, and Gaming contract fixture
+surfaces; the worker role stays passive and denies the contract paths. The
 Research surface imports the central `src/shared/researchRequest.ts`
 validator and storage-component helper plus the real Research abort-drain
 wrapper and its narrow request-abort runtime. It does not import the normal Research
@@ -194,12 +194,39 @@ with one active operation and the response is withheld until that operation
 reaches zero; the live probe rejects a response that arrives before the bounded
 300 ms aggregate drain-proof window. The parent-abort cases
 are deterministic disconnect-equivalent component evidence, not literal TCP
-disconnects. Requests contain
-only `{ "fixture": "<sealed-name>" }`; they never carry raw Research URLs or
-credentials. The descriptor probe is constructed by the server-owned fixture;
+disconnects. Research requests contain only `{ "fixture": "<sealed-name>" }`;
+they never carry raw Research URLs or credentials. The descriptor probe is
+constructed by the server-owned fixture;
 it does not claim that caller JSON can carry accessors or property descriptors.
 Accepted request-validation fixtures are reported only as eligible for confirmation;
 the surface never attempts confirmation or crosses an effects boundary.
+
+The contained Gaming layer intentionally avoids the exact production route
+handlers, whose import graph reaches configured authentication, repositories,
+jobs, providers/fetching, and persistence capabilities excluded by the preview
+gate. The public canary instead executes a semantic-digest-pinned pure production
+dispatcher, bundled-fixture validator/grounding runner, and response guard; its
+success checks therefore reflect work actually performed while network and
+provider stages remain `skipped`. Contract-faithful synthetic fixtures cover
+guide/build/meta
+queries plus production-recognized Gaming-source unauthorized, closed
+validation, typed unsafe,
+storage/job outage, created/replay/conflict, and queued/running/completed status
+semantics. Recognized source targets without the fixed noncredential
+`x-native-preview-fixture` selector return the production-shaped 401 before body
+parsing, including malformed and 16,385-byte requests. After the selector, the
+source boundary mirrors the production 16 KiB cap and closed 413/415 parser
+responses, accepts exactly one safe status-ID decode, and rejects encoded
+separators, backslashes, controls, double encodings, and malformed escapes. The
+20 post-auth semantic cases are explicitly reported as `simulatedAuth`; they do
+not exercise or imply bearer authentication. All newly enabled Gaming responses
+identify themselves
+with `X-Arcanos-Preview-Fixture: sealed-synthetic`, and the canonical source URL
+uses `.invalid`. No fixture invokes a provider, fetch, database, queue, worker,
+repository, or persistence mutation. The strict canary body remains identical to
+the public schema and production guard, which admit no preview-only field;
+`X-Arcanos-Preview-Fixture: sealed-synthetic` is the mandatory machine-readable
+preview provenance.
 
 The exact `POST /backstage/storyline-contract` surface accepts only the
 server-owned `lifecycle-exact` and `payload-over` selectors. `lifecycle-exact`
@@ -257,8 +284,9 @@ contract in the same PR. The complete launcher and contained-child entry files
 are also pinned by comment/format-normalized semantic digests: every semantic
 edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
-format-only edits do not. The central Research helper and config-free
-production MCP pre-parser core are likewise semantic-digest pinned. The
+format-only edits do not. The central Research helper, pure public Gaming
+dispatcher/canary/fixture seam, and config-free production MCP pre-parser core
+are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
 Research abort-drain wrapper and exact request-abort runtime source are also
@@ -273,10 +301,14 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 68-request plan is the
-original 50 checks, eleven Research web fixtures, three storyline web requests
-(two `lifecycle-exact` requests plus `payload-over`), one MCP body-cap web
-fixture, and one worker-role denial for each of the three contract paths.
+evidence, not Railway control-plane provenance. The fixed 105-request plan is the
+original 68-request matrix plus seven public Gaming requests, 28 Gaming-source
+requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
+encoded-status cases, and 20 labeled `simulatedAuth` fixtures), and two
+worker-role Gaming denials. It
+checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
+synthetic-provenance headers; it is not real bearer-auth, provider, storage,
+queue, or worker-execution evidence.
 
 This repository containment is for trusted same-repository PRs and accidental
 effects only. A PR controls its own launcher code, so untrusted or forked code

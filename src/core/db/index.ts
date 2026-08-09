@@ -112,7 +112,8 @@ export {
   type PersistGamingKnowledgeRecordInput,
   type PersistGamingSourceRevisionInput,
   type PersistGamingSourceRevisionResult,
-  type QueryActiveGamingKnowledgeInput
+  type QueryActiveGamingKnowledgeInput,
+  type QueryActiveGamingKnowledgeOptions
 } from './repositories/gamingSourceRepository.js';
 
 export {
