@@ -229,7 +229,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
       ok: true,
       action: 'canary',
       scope: 'public_pipeline',
-      schemaVersion: '1.4.0',
+        schemaVersion: '1.5.0',
       intent: 'public_canary',
       route: 'public_canary',
       fixture: {
@@ -308,7 +308,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
       expect(response.body).toMatchObject({
         action: 'canary',
         code: 'BAD_REQUEST',
-        schemaVersion: '1.4.0',
+      schemaVersion: '1.5.0',
         route: 'public_canary',
         checks: {
           requestValidation: 'failed',
@@ -384,7 +384,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
       ok: false,
       action: 'canary',
       code: 'PUBLIC_CANARY_REQUEST_REJECTED',
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.5.0',
       route: 'public_canary',
       checks: {
         requestValidation: 'failed',
@@ -485,7 +485,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
       ok: false,
       action: 'canary',
       code,
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.5.0',
       route: 'public_canary',
       checks: code === 'BAD_REQUEST'
         ? {

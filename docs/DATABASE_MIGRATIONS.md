@@ -128,6 +128,22 @@ definition has drifted, the constraint is missing, or another object depends on
 the columns. It is provided for reviewed rollback planning and is never run as
 routine validation.
 
+### Gaming knowledge-source migration
+
+`migrations/20260808_gaming_knowledge_sources.sql` adds the durable Gaming
+source, revision, and knowledge-record tables used by the authenticated source
+ingestion workflow. Source identity is unique by normalized game key and a
+SHA-256 canonical-URL digest; the repository verifies the full canonical URL
+before treating a digest match as the same source. Successful refreshes append
+an immutable revision and atomically supersede only that source's prior active
+knowledge records. Unchanged content updates freshness timestamps without
+duplicating records.
+
+The rollback file is intended only for an explicitly confirmed disposable
+database because dropping these tables removes ingested Gaming knowledge. Do
+not apply either file as routine validation. Runtime startup mirrors the
+additive table and index definitions in `src/core/db/schema.ts`.
+
 ### Local-agent hardening migration
 
 The additive

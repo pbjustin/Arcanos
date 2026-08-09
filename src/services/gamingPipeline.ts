@@ -27,7 +27,10 @@ import {
   type ValidatedGamingRequest
 } from "@services/gamingModes.js";
 import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
-import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
+import {
+  extractExplicitGamingVersions,
+  textContainsExactGamingVersion
+} from "@services/gamingVersion.js";
 import { redactString } from "@shared/redaction.js";
 import { hasVisibleContent } from "@shared/promptUtils.js";
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
@@ -37,6 +40,10 @@ import {
   isGamingFreshnessSensitive,
   isCitableGamingWebSource
 } from "@services/gamingWebContext.js";
+import {
+  buildStoredGamingKnowledgeContext,
+  type GamingStoredKnowledgeContext
+} from "@services/gamingSourceIngestion.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -100,12 +107,65 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
 
 const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
 const PURE_CAPABILITY_REFUSAL_MAX_CHARS = 320;
+const MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS = 120;
+const MAX_GAMING_INTEGRITY_OUTPUT_CHARS = 1_000_000;
+const MAX_GAMING_INTEGRITY_ISSUES = 8;
+const GAMING_STORED_RETRIEVAL_TIMEOUT_MS = 1_000;
+// Fetch time says nothing about publication currency; keep unversioned claims to a narrow release window.
+const GAMING_RECENT_PUBLICATION_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+const GAMING_INTEGRITY_ISSUES = new Set([
+  "abrupt_mid_sentence_ending",
+  "broken_numbering",
+  "fallback_spliced_mid_answer"
+]);
 
 type GamingCitationNormalization = {
   response: string;
   maxInlineSourceRef: number;
   applied: boolean;
 };
+
+function getGamingStoredRetrievalTimeoutMs(): number {
+  const remainingMs = getRequestRemainingMs();
+  return remainingMs === null
+    ? GAMING_STORED_RETRIEVAL_TIMEOUT_MS
+    : Math.max(1, Math.min(GAMING_STORED_RETRIEVAL_TIMEOUT_MS, remainingMs));
+}
+
+function hasCurrentStoredGamingEvidence(
+  sources: GamingStoredKnowledgeContext["sources"],
+  input: GamingPipelineInput
+): boolean {
+  const requestedVersions = Array.from(new Set([
+    ...(input.requestedVersion ? [input.requestedVersion] : []),
+    ...extractExplicitGamingVersions({ prompt: input.prompt, game: input.game })
+  ]));
+  if (requestedVersions.length > 0) {
+    return requestedVersions.every((version) =>
+      sources.some((source) =>
+        Boolean(source.verifiedPatchVersion)
+        && textContainsExactGamingVersion(
+          source.verifiedPatchVersion ?? "",
+          version
+        )
+      )
+    );
+  }
+
+  return sources.some((source) => {
+    if (
+      !source.publishedAt
+      || (source.sourceType !== "official" && source.sourceType !== "patch_notes")
+    ) {
+      return false;
+    }
+    const publishedAtMs = Date.parse(source.publishedAt);
+    const publicationAgeMs = Date.now() - publishedAtMs;
+    return Number.isFinite(publishedAtMs)
+      && publicationAgeMs >= 0
+      && publicationAgeMs <= GAMING_RECENT_PUBLICATION_MAX_AGE_MS;
+  });
+}
 
 function isGamingProviderTimeoutError(error: unknown): boolean {
   if (isAbortError(error)) {
@@ -128,6 +188,53 @@ function isGamingProviderTimeoutError(error: unknown): boolean {
 
 function isGamingProviderCompletionIncompleteError(error: unknown): boolean {
   return readErrorString(error, "code") === "OPENAI_COMPLETION_INCOMPLETE";
+}
+
+function readBoundedGamingIntegrityString(error: unknown, key: string): string | undefined {
+  const value = readErrorString(error, key);
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function readGamingIntegrityBoolean(error: unknown, key: string): boolean | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readGamingIntegrityOutputChars(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>).outputChars;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, MAX_GAMING_INTEGRITY_OUTPUT_CHARS)
+    : undefined;
+}
+
+function readGamingIntegrityIssues(error: unknown): string[] {
+  if (!error || typeof error !== "object") {
+    return [];
+  }
+  const issues = (error as Record<string, unknown>).integrityIssues;
+  return Array.isArray(issues)
+    ? Array.from(new Set(
+        issues.filter(
+          (issue): issue is string => typeof issue === "string" && GAMING_INTEGRITY_ISSUES.has(issue)
+        )
+      )).slice(0, MAX_GAMING_INTEGRITY_ISSUES)
+    : [];
 }
 
 function isPureGamingProviderCapabilityRefusal(value: string): boolean {
@@ -589,65 +696,6 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       clearPassed: webContextResult.clear.passed,
       ...(webContextResult.fallbackReason ? { fallbackReason: webContextResult.fallbackReason } : {})
     });
-    if (
-      webContextResult.fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
-      && (params.game || (params.mode !== "build" && params.mode !== "meta"))
-    ) {
-      logger.warn("gaming.fallback.used", {
-        ...baseLogContext,
-        retrievalEnabled: webContextResult.retrievalEnabled,
-        retrievalReason: webContextResult.retrievalReason,
-        discoveryEnabled: webContextResult.discoveryEnabled,
-        discoveryTriggered: webContextResult.discoveryTriggered,
-        discoveryReason: webContextResult.discoveryReason,
-        ...(webContextResult.searchProvider ? { searchProvider: webContextResult.searchProvider } : {}),
-        searchResultCount: webContextResult.searchResultCount,
-        candidateCount: webContextResult.candidateCount,
-        rejectedCandidateCount: webContextResult.rejectedCandidateCount,
-        fetchedCandidateCount: webContextResult.fetchedCandidateCount,
-        acceptedSourceCount: webContextResult.acceptedSourceCount,
-        suppliedCandidateCount: webContextResult.suppliedCandidateCount,
-        acceptedSuppliedSourceCount: webContextResult.acceptedSuppliedSourceCount,
-        rejectedSuppliedCandidateCount: webContextResult.rejectedSuppliedCandidateCount,
-        discoveryCacheHit: webContextResult.discoveryCacheHit,
-        discoveryElapsedMs: webContextResult.discoveryElapsedMs,
-        candidateRankingElapsedMs: webContextResult.candidateRankingElapsedMs,
-        ...(webContextResult.discoveryFailureReason
-          ? { discoveryFailureReason: webContextResult.discoveryFailureReason }
-          : {}),
-        sourceCount: sources.length,
-        retrievedSourceCount,
-        publicSourceCount,
-        omittedSourceCount,
-        sourceDomains: webContextResult.sourceDomains,
-        cacheHit: webContextResult.cacheHit,
-        retrievalElapsedMs: webContextResult.retrievalElapsedMs,
-        rankingElapsedMs: webContextResult.rankingElapsedMs,
-        generationElapsedMs: 0,
-        fallbackReason: webContextResult.fallbackReason,
-        timeoutPhase: "retrieval"
-      });
-      return formatGameplaySuccessWithLogs({
-        mode: params.mode,
-        response: buildGamingProviderFallbackResponse({
-          input: params,
-          sources,
-          fallbackReason: webContextResult.fallbackReason,
-          timeoutPhase: "retrieval"
-        }),
-        sources,
-        logContext: baseLogContext,
-        requestStartedAt,
-        retrievedSourceCount,
-        omittedSourceCount,
-        fallbackReason: webContextResult.fallbackReason,
-        discoveryReason,
-        discoveryFailureReason,
-        ...(freshnessSensitive
-          ? { evidenceRequest: buildFrontendGamingEvidenceRequest(params) }
-          : {})
-      });
-    }
   } catch (error) {
     if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
       throw error;
@@ -685,6 +733,137 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     : params;
   if ((resolvedParams.mode === "build" || resolvedParams.mode === "meta") && !resolvedParams.game) {
     throw createGamingGameRequiredError(resolvedParams.mode);
+  }
+
+  const resolvedGame = resolvedParams.game;
+  if (resolvedGame) {
+    const storedRetrievalStartedAt = Date.now();
+    const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
+    let storedKnowledge: GamingStoredKnowledgeContext = { context: "", sources: [] };
+    let storedRetrievalError: unknown;
+    try {
+      storedKnowledge = await runWithRequestAbortTimeout(
+        {
+          timeoutMs: storedRetrievalTimeoutMs,
+          requestId,
+          parentSignal: getRequestAbortSignal(),
+          abortMessage: `Gaming stored retrieval timed out after ${storedRetrievalTimeoutMs}ms`
+        },
+        () => buildStoredGamingKnowledgeContext({
+          game: resolvedGame,
+          prompt: resolvedParams.prompt,
+          mode: resolvedParams.mode,
+          limit: 4,
+          sourceIndexOffset: sources.length,
+          queryTimeoutMs: storedRetrievalTimeoutMs,
+          signal: getRequestAbortSignal() ?? undefined
+        })
+      );
+    } catch (error) {
+      if (getRequestAbortSignal()?.aborted) {
+        throw error;
+      }
+      storedRetrievalError = error;
+      logger.warn("gaming.stored_retrieval_failed", {
+        ...baseLogContext,
+        elapsedMs: Date.now() - storedRetrievalStartedAt,
+        timeoutMs: storedRetrievalTimeoutMs,
+        errorName: error instanceof Error ? error.name : typeof error
+      });
+    }
+    if (storedKnowledge.sources.length > 0) {
+      const existingUrls = new Set(
+        sources.filter(isCitableGamingWebSource).map((source) => source.url)
+      );
+      const uniqueStoredSources = storedKnowledge.sources
+        .filter((source) => !existingUrls.has(source.url));
+      const storedSources: GamingWebSource[] = uniqueStoredSources
+        .map((source) => ({
+          url: source.url,
+          snippet: source.snippet,
+          sourceId: source.sourceId,
+          sourceType: source.sourceType,
+          ...(source.patchVersion ? { patchVersion: source.patchVersion } : {}),
+          fetchedAt: source.fetchedAt,
+          ...(source.title ? { title: source.title } : {}),
+          origin: "stored"
+        }));
+      if (storedSources.length > 0) {
+        const storedUrls = new Set(storedSources.map((source) => source.url));
+        sources = sources.filter((source) =>
+          !storedUrls.has(source.url) || isCitableGamingWebSource(source)
+        );
+        const storedContext = storedSources.map((source, index) => [
+          `[Source ${sources.length + index + 1}]`,
+          "Origin: stored gaming knowledge",
+          `URL: ${source.url}`,
+          source.sourceId ? `Source ID: ${source.sourceId}` : "",
+          source.sourceType ? `Type: ${source.sourceType}` : "",
+          source.patchVersion ? `Patch: ${source.patchVersion}` : "",
+          uniqueStoredSources[index]?.publishedAt
+            ? `Published: ${uniqueStoredSources[index]?.publishedAt}`
+            : "",
+          source.title ? `Title: ${source.title}` : "",
+          source.snippet ?? ""
+        ].filter(Boolean).join("\n")).join("\n\n");
+        webContext = [webContext, storedContext].filter(Boolean).join("\n\n");
+        sources = [...sources, ...storedSources];
+        retrievalAttempted = true;
+        retrievalHadUsableSources = true;
+        retrievedSourceCount += storedSources.length;
+        publicSourceCount = sources.length;
+        if (hasCurrentStoredGamingEvidence(uniqueStoredSources, resolvedParams)) {
+          currentEvidenceAvailable = true;
+        }
+      }
+    }
+    logger.info("gaming.stored_retrieval", {
+      ...baseLogContext,
+      ok: storedRetrievalError === undefined,
+      elapsedMs: Date.now() - storedRetrievalStartedAt,
+      timeoutMs: storedRetrievalTimeoutMs,
+      sourceCount: storedKnowledge.sources.length,
+      mergedSourceCount: sources.filter((source) => source.origin === "stored").length
+    });
+  }
+
+  if (
+    fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
+    && (resolvedParams.game || (resolvedParams.mode !== "build" && resolvedParams.mode !== "meta"))
+  ) {
+    if (!retrievalHadUsableSources) {
+      logger.warn("gaming.fallback.used", {
+        ...baseLogContext,
+        sourceCount: sources.length,
+        retrievedSourceCount,
+        publicSourceCount,
+        omittedSourceCount,
+        generationElapsedMs: 0,
+        fallbackReason,
+        timeoutPhase: "retrieval"
+      });
+      return formatGameplaySuccessWithLogs({
+        mode: resolvedParams.mode,
+        response: buildGamingProviderFallbackResponse({
+          input: resolvedParams,
+          sources,
+          fallbackReason,
+          timeoutPhase: "retrieval"
+        }),
+        sources,
+        logContext: baseLogContext,
+        requestStartedAt,
+        retrievedSourceCount,
+        omittedSourceCount,
+        fallbackReason,
+        discoveryReason,
+        discoveryFailureReason,
+        ...(freshnessSensitive
+          ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) }
+          : {})
+      });
+    }
+    fallbackReason = undefined;
   }
 
   if (freshnessSensitive && !currentEvidenceAvailable) {
@@ -940,6 +1119,44 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     }
 
     if (readErrorString(error, "code") === "TRINITY_OUTPUT_INTEGRITY_FAILED") {
+      const integrityIssues = readGamingIntegrityIssues(error);
+      const outputChars = readGamingIntegrityOutputChars(error);
+      const selectionReason = readBoundedGamingIntegrityString(error, "selectionReason");
+      const trinityStage = readBoundedGamingIntegrityString(error, "trinityStage");
+      const recoveryFromStage = readBoundedGamingIntegrityString(error, "recoveryFromStage");
+      const activeModel = readBoundedGamingIntegrityString(error, "activeModel");
+      const finishReason = readBoundedGamingIntegrityString(error, "finishReason");
+      const responseStatus = readBoundedGamingIntegrityString(error, "responseStatus");
+      const incompleteReason = readBoundedGamingIntegrityString(error, "incompleteReason");
+      const recovery = readGamingIntegrityBoolean(error, "recovery");
+      const incomplete = readGamingIntegrityBoolean(error, "incomplete");
+      const emptyOutput = readGamingIntegrityBoolean(error, "emptyOutput");
+      const truncated = readGamingIntegrityBoolean(error, "truncated");
+      const lengthTruncated = readGamingIntegrityBoolean(error, "lengthTruncated");
+      const contentFiltered = readGamingIntegrityBoolean(error, "contentFiltered");
+      logger.warn("gaming.provider.integrity_failed", {
+        ...baseLogContext,
+        provider: "trinity",
+        elapsedMs,
+        generationElapsedMs: elapsedMs,
+        upstreamModelLatencyMs: elapsedMs,
+        errorCode: "TRINITY_OUTPUT_INTEGRITY_FAILED",
+        integrityIssues,
+        ...(outputChars !== undefined ? { outputChars } : {}),
+        ...(selectionReason ? { selectionReason } : {}),
+        ...(recovery !== undefined ? { recovery } : {}),
+        ...(trinityStage ? { trinityStage } : {}),
+        ...(recoveryFromStage ? { recoveryFromStage } : {}),
+        ...(activeModel ? { activeModel } : {}),
+        ...(finishReason ? { finishReason } : {}),
+        ...(responseStatus ? { responseStatus } : {}),
+        ...(incompleteReason ? { incompleteReason } : {}),
+        ...(incomplete !== undefined ? { incomplete } : {}),
+        ...(emptyOutput !== undefined ? { emptyOutput } : {}),
+        ...(truncated !== undefined ? { truncated } : {}),
+        ...(lengthTruncated !== undefined ? { lengthTruncated } : {}),
+        ...(contentFiltered !== undefined ? { contentFiltered } : {})
+      });
       throw error;
     }
 

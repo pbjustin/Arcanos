@@ -7,9 +7,13 @@ import {
   buildNativePrPreviewRequestPlan,
   expectedNativePrPreviewContentType,
   expectedNativePrPreviewResponseBody,
+  nativePrPreviewCaseCorrelation,
   parseNativePrPreviewE2eArguments,
   runNativePrPreviewE2e,
 } from './native-pr-preview-e2e.mjs';
+import {
+  NATIVE_PR_PREVIEW_E2E_CONTRACT,
+} from './native-pr-preview-contract.mjs';
 import {
   NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT,
   findNativePrPreviewDistImportSourceViolations,
@@ -115,6 +119,50 @@ function expectedResearchCancellationPayload() {
   };
 }
 
+function responseHeadersForCase(
+  requestCase,
+  bodyBytes,
+  overrides = undefined
+) {
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  const syntheticResponse =
+    requestCase.expectedType.startsWith('gaming-canary')
+    || requestCase.expectedType.startsWith('gaming-query')
+    || requestCase.expectedType === 'gaming-source';
+  return {
+    'cache-control': 'no-store',
+    'content-type': expectedNativePrPreviewContentType(requestCase),
+    ...(requestCase.role === 'web'
+      ? {
+          'content-security-policy':
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+          'cross-origin-resource-policy': 'same-origin',
+          'permissions-policy': 'camera=(), geolocation=(), microphone=()',
+          'referrer-policy': 'no-referrer',
+          'strict-transport-security':
+            'max-age=31536000; includeSubDomains',
+          'x-content-type-options': 'nosniff',
+          'x-frame-options': 'DENY',
+          'x-request-id': correlation.requestId,
+          'x-trace-id': correlation.traceId,
+        }
+      : {}),
+    ...(requestCase.boundedResponse
+      ? { 'x-response-bytes': String(bodyBytes) }
+      : {}),
+    ...(syntheticResponse
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value,
+        }
+      : {}),
+    ...(requestCase.expectedType === 'gaming-source'
+      ? { pragma: 'no-cache' }
+      : {}),
+    ...(overrides ?? {}),
+  };
+}
+
 function buildMockFetch(requestPlan, override = undefined) {
   let requestIndex = 0;
   const calls = [];
@@ -127,6 +175,15 @@ function buildMockFetch(requestPlan, override = undefined) {
     assert.equal(init.headers.authorization, undefined);
     assert.equal(init.headers.cookie, undefined);
     assert.equal(init.headers['x-arcanos-job-read-token'], undefined);
+    if (requestCase.role === 'web') {
+      assert.deepEqual(
+        {
+          requestId: init.headers['x-request-id'],
+          traceId: init.headers['x-trace-id'],
+        },
+        nativePrPreviewCaseCorrelation(requestCase)
+      );
+    }
 
     const overriddenResponse = override?.(requestCase, requestIndex);
     if (overriddenResponse) {
@@ -137,13 +194,7 @@ function buildMockFetch(requestPlan, override = undefined) {
     }
     const body = responseBodyForCase(requestCase);
     const bodyBytes = Buffer.byteLength(body ?? '');
-    const headers = {
-      'cache-control': 'no-store',
-      'content-type': expectedNativePrPreviewContentType(requestCase),
-      ...(requestCase.boundedResponse
-        ? { 'x-response-bytes': String(bodyBytes) }
-        : {}),
-    };
+    const headers = responseHeadersForCase(requestCase, bodyBytes);
     const response = new Response(body, {
       headers,
       status: requestCase.expectedStatus,
@@ -266,12 +317,14 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 68);
+  assert.equal(requestPlan.length, 105);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
       && expectedType !== 'backstage-storyline-contract'
       && expectedType !== 'mcp-body-cap-contract'
+      && !caseId.startsWith('gaming-')
+      && !caseId.startsWith('worker-gaming-')
       && caseId !== 'worker-research-denied'
       && caseId !== 'worker-backstage-storyline-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
@@ -296,6 +349,64 @@ test('executes the bounded credential-free matrix and detects identity stability
     ).length,
     1
   );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'gaming-source'
+    ).length,
+    28
+  );
+  assert.equal(
+    requestPlan.filter(({ simulatedAuth }) => simulatedAuth === true).length,
+    20
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType, simulatedAuth }) =>
+      expectedType === 'gaming-source' && simulatedAuth !== true
+    ).length,
+    8
+  );
+  const unauthenticatedParserBoundaryCases = requestPlan.filter(({ caseId }) =>
+    caseId === 'gaming-source-ingestion-malformed-unauthorized'
+    || caseId === 'gaming-source-ingestion-oversized-unauthorized'
+  );
+  assert.equal(unauthenticatedParserBoundaryCases.length, 2);
+  assert.equal(
+    unauthenticatedParserBoundaryCases[0].rawBody,
+    '{"action":'
+  );
+  assert.equal(
+    Buffer.byteLength(unauthenticatedParserBoundaryCases[1].rawBody, 'utf8'),
+    16_385
+  );
+  const simulatedParserCases = requestPlan.filter(({ sourceScenario }) =>
+    sourceScenario === 'parser-validation'
+  );
+  assert.equal(simulatedParserCases.length, 3);
+  assert.deepEqual(
+    simulatedParserCases.map(({ expectedStatus }) => expectedStatus).sort(),
+    [400, 413, 415]
+  );
+  const sourceOptionsCase = requestPlan.find(({ caseId }) =>
+    caseId === 'gaming-source-options-unauthorized'
+  );
+  assert.ok(sourceOptionsCase);
+  assert.equal(sourceOptionsCase.expectedType, 'gaming-source');
+  assert.equal(sourceOptionsCase.expectedStatus, 401);
+  assert.equal(sourceOptionsCase.forbidCors, true);
+  assert.equal(sourceOptionsCase.headers.origin, 'https://example.com');
+  assert.equal(
+    sourceOptionsCase.headers['access-control-request-method'],
+    'POST'
+  );
+  assert.equal(sourceOptionsCase.simulatedAuth, undefined);
+  const sourceValidationCase = requestPlan.find(({ caseId }) =>
+    caseId === 'gaming-source-ingestion-validation'
+  );
+  assert.ok(sourceValidationCase);
+  assert.ok(Buffer.byteLength(
+    JSON.stringify(sourceValidationCase.body),
+    'utf8'
+  ) > 4 * 1024);
   assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-research-denied'
@@ -487,9 +598,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 68);
-  assert.equal(result.checks.length, 68);
-  assert.equal(mock.requestCount, 68);
+  assert.equal(result.summary.requestsMade, 105);
+  assert.equal(result.summary.simulatedAuthRequests, 20);
+  assert.equal(result.checks.length, 105);
+  assert.equal(
+    result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
+    20
+  );
+  assert.equal(mock.requestCount, 105);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -554,6 +670,41 @@ test('executes the bounded credential-free matrix and detects identity stability
       false
     );
   }
+  const simulatedSourceCalls = mock.calls.filter(({ init }) =>
+    init.headers[
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtureHeader
+    ] !== undefined
+  );
+  assert.equal(simulatedSourceCalls.length, 20);
+  for (const { init, url } of simulatedSourceCalls) {
+    assert.equal(init.headers.authorization, undefined);
+    assert.equal(init.headers.cookie, undefined);
+    assert.equal(url.startsWith(WEB_BASE_URL), true);
+    if (typeof init.body === 'string' && init.body.includes('sourceUrls')) {
+      assert.equal(
+        init.body.includes('https://example.invalid/palworld/guide'),
+        true
+      );
+    }
+  }
+  const unauthenticatedParserBoundaryCalls = mock.calls.filter(({ url }) =>
+    url.endsWith(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.ingestionPath
+    )
+  ).filter(({ init }) =>
+    init.headers[
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.gamingSources.fixtureHeader
+    ] === undefined
+    && (init.body === '{"action":' || init.body === 'x'.repeat(16_385))
+  );
+  assert.equal(unauthenticatedParserBoundaryCalls.length, 2);
+  assert.equal(
+    unauthenticatedParserBoundaryCalls.every(({ init }) =>
+      init.headers.authorization === undefined
+      && init.headers.cookie === undefined
+    ),
+    true
+  );
   assert.equal(
     mock.calls.some(({ init }) =>
       Object.keys(init.headers).some((headerName) =>
@@ -622,11 +773,10 @@ test('rejects a cancellation proof that returns before its drain window', async 
     }
     const body = responseBodyForCase(requestCase);
     const response = new Response(body, {
-      headers: {
-        'cache-control': 'no-store',
-        'content-type': expectedNativePrPreviewContentType(requestCase),
-        'x-response-bytes': String(Buffer.byteLength(body)),
-      },
+      headers: responseHeadersForCase(
+        requestCase,
+        Buffer.byteLength(body)
+      ),
       status: requestCase.expectedStatus,
     });
     Object.defineProperty(response, 'url', {
@@ -665,11 +815,10 @@ test('rejects extra response fields and an incorrect media type', async () => {
         unexpected: true,
       });
       const response = new Response(body, {
-        headers: {
-          'cache-control': 'no-store',
-          'content-type': expectedNativePrPreviewContentType(requestCase),
-          'x-response-bytes': String(Buffer.byteLength(body)),
-        },
+        headers: responseHeadersForCase(
+          requestCase,
+          Buffer.byteLength(body)
+        ),
         status: requestCase.expectedStatus,
       });
       Object.defineProperty(response, 'url', {
@@ -701,10 +850,11 @@ test('rejects extra response fields and an incorrect media type', async () => {
         { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
       ));
       const response = new Response(body, {
-        headers: {
-          'cache-control': 'no-store',
-          'content-type': 'text/plain; charset=utf-8',
-        },
+        headers: responseHeadersForCase(
+          requestCase,
+          Buffer.byteLength(body),
+          { 'content-type': 'text/plain; charset=utf-8' }
+        ),
         status: requestCase.expectedStatus,
       });
       Object.defineProperty(response, 'url', {
@@ -724,6 +874,76 @@ test('rejects extra response fields and an incorrect media type', async () => {
       && error.code === 'NATIVE_PR_PREVIEW_CONTENT_TYPE_INVALID'
       && error.caseId === 'web-readiness-initial'
   );
+});
+
+test('rejects missing synthetic provenance and correlation or security header drift', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const cases = [
+    {
+      caseId: 'gaming-canary-success',
+      code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+        ];
+      },
+    },
+    {
+      caseId: 'web-readiness-initial',
+      code: 'NATIVE_PR_PREVIEW_CORRELATION_INVALID',
+      mutate(headers) {
+        headers['x-request-id'] = 'wrong-request-id';
+      },
+    },
+    {
+      caseId: 'web-readiness-initial',
+      code: 'NATIVE_PR_PREVIEW_SECURITY_HEADERS_INVALID',
+      mutate(headers) {
+        delete headers['x-frame-options'];
+      },
+    },
+    {
+      caseId: 'gaming-source-ingestion-unauthorized',
+      code: 'NATIVE_PR_PREVIEW_NO_CACHE_MISSING',
+      mutate(headers) {
+        delete headers.pragma;
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const mock = buildMockFetch(requestPlan, (requestCase) => {
+      if (requestCase.caseId !== testCase.caseId) {
+        return undefined;
+      }
+      const body = responseBodyForCase(requestCase);
+      const headers = responseHeadersForCase(
+        requestCase,
+        Buffer.byteLength(body ?? '')
+      );
+      testCase.mutate(headers);
+      const response = new Response(body, {
+        headers,
+        status: requestCase.expectedStatus,
+      });
+      Object.defineProperty(response, 'url', {
+        value: `${WEB_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    });
+
+    await assert.rejects(
+      runNativePrPreviewE2e({
+        args: validArguments('--execute', '--allow-network'),
+        fetchImpl: mock.fetchImpl,
+        localGitState: LOCAL_GIT_STATE,
+      }),
+      (error) =>
+        error instanceof NativePrPreviewE2eError
+        && error.code === testCase.code
+        && error.caseId === testCase.caseId
+    );
+  }
 });
 
 test('returns a stable case-scoped failure without consuming a mismatched body', async () => {

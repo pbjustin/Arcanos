@@ -382,6 +382,10 @@ describe("ArcanosGaming mode routing", () => {
           truncated: undefined,
           lengthTruncated: undefined,
           contentFiltered: undefined,
+          outputChars: undefined,
+          selectionReason: undefined,
+          recovery: undefined,
+          trinityStage: undefined,
           integrityIssues: ["broken_numbering"]
         }
       }

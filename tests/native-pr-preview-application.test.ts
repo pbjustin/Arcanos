@@ -8,9 +8,12 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_GAMING_CONTRACT,
+  NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
+  NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
 } from '../src/nativePrPreviewContract.js';
 import {
   resolveNativePrPreviewChildEnvironment,
@@ -107,6 +110,72 @@ function buildApplication() {
 
 function expectNoStore(response: { headers: Record<string, string | undefined> }): void {
   expect(response.headers['cache-control']).toContain('no-store');
+}
+
+function expectContainedResponseHeaders(
+  response: { headers: Record<string, string | undefined> },
+  requestId: string,
+  traceId: string,
+  synthetic = false,
+): void {
+  expectNoStore(response);
+  expect(response.headers['x-request-id']).toBe(requestId);
+  expect(response.headers['x-trace-id']).toBe(traceId);
+  expect(response.headers['content-security-policy']).toBe(
+    "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+  );
+  expect(response.headers['cross-origin-resource-policy']).toBe('same-origin');
+  expect(response.headers['permissions-policy']).toBe(
+    'camera=(), geolocation=(), microphone=()'
+  );
+  expect(response.headers['referrer-policy']).toBe('no-referrer');
+  expect(response.headers['strict-transport-security']).toBe(
+    'max-age=31536000; includeSubDomains'
+  );
+  expect(response.headers['x-content-type-options']).toBe('nosniff');
+  expect(response.headers['x-frame-options']).toBe('DENY');
+  if (synthetic) {
+    expect(
+      response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]
+    ).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+  }
+}
+
+function gamingSourceIngestionBody(
+  idempotencyKey: string,
+  extraPayload: Record<string, unknown> = {},
+) {
+  return {
+    action: 'ingest',
+    payload: {
+      game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+      sourceUrls: ['https://example.invalid/palworld/guide'],
+      origin: 'user_supplied',
+      idempotencyKey,
+      ...extraPayload,
+    },
+  };
+}
+
+function gamingSourceRefreshBody(
+  idempotencyKey: string,
+  extraPayload: Record<string, unknown> = {},
+) {
+  return {
+    action: 'refresh',
+    payload: {
+      sourceIds: [NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.sourceId],
+      idempotencyKey,
+      reason: 'user_requested',
+      ...extraPayload,
+    },
+  };
+}
+
+function percentEncodeEveryAsciiCharacter(value: string): string {
+  return [...value].map((character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  )).join('');
 }
 
 function expectedResearchAccepted(
@@ -904,6 +973,761 @@ describe('native PR contained application', () => {
       expectNoStore(response);
       expect(response.headers.location).toBeUndefined();
       expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('serves closed, correlated, bounded public Gaming fixtures without provider execution', async () => {
+    const { app } = buildApplication();
+    const canaryRequestId = 'req-preview-gaming-canary';
+    const canaryTraceId = 'trace-preview-gaming-canary';
+    const canary = await request(app)
+      .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath)
+      .set('x-request-id', canaryRequestId)
+      .set('x-trace-id', canaryTraceId)
+      .send({ action: 'canary', payload: { scope: 'public_pipeline' } });
+
+    expect(canary.status).toBe(200);
+    expect(canary.body).toEqual({
+      ok: true,
+      action: 'canary',
+      scope: 'public_pipeline',
+      schemaVersion: '1.5.0',
+      intent: 'public_canary',
+      route: 'public_canary',
+      requestId: canaryRequestId,
+      traceId: canaryTraceId,
+      checks: {
+        requestValidation: 'passed',
+        dispatcher: 'passed',
+        publicRoute: 'passed',
+        fixtureValidation: 'passed',
+        grounding: 'passed',
+        networkRetrieval: 'skipped',
+        providerExecution: 'skipped',
+        responseConstruction: 'passed',
+        responseGuard: 'passed',
+      },
+      usedFallback: false,
+      acceptedSources: 1,
+      durationMs: 0,
+      message: 'Public ARCANOS Gaming Action pipeline canary passed.',
+      fixture: {
+        source: 'bundled',
+        marker: 'ARCANOS_PUBLIC_CANARY_7F31',
+        markerVerified: true,
+      },
+    });
+    expectContainedResponseHeaders(
+      canary,
+      canaryRequestId,
+      canaryTraceId,
+      true
+    );
+    expect(canary.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(canary.text, 'utf8'))
+    );
+
+    for (const mode of ['guide', 'build', 'meta'] as const) {
+      const requestId = `req-preview-gaming-${mode}`;
+      const traceId = `trace-preview-gaming-${mode}`;
+      const response = await request(app)
+        .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath)
+        .set('x-request-id', requestId)
+        .set('x-trace-id', traceId)
+        .send({
+          action: 'query',
+          payload: {
+            mode,
+            game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+            prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures[mode],
+          },
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        ok: true,
+        requestId,
+        traceId,
+        result: {
+          ok: true,
+          route: 'gaming',
+          mode,
+          data: {
+            response: `Sealed preview ${mode} response.`,
+            sources: [],
+          },
+        },
+        _route: {
+          gptId: 'arcanos-gaming',
+          module: 'ARCANOS:GAMING',
+          route: 'gaming',
+        },
+      });
+      expectContainedResponseHeaders(response, requestId, traceId, true);
+    }
+
+    const invalidCanary = await request(app)
+      .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath)
+      .set('x-request-id', 'req-preview-canary-invalid')
+      .set('x-trace-id', 'trace-preview-canary-invalid')
+      .send({
+        action: 'canary',
+        payload: { scope: 'public_pipeline', unexpected: true },
+      });
+    const missingMode = await request(app)
+      .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath)
+      .set('x-request-id', 'req-preview-mode-invalid')
+      .set('x-trace-id', 'trace-preview-mode-invalid')
+      .send({
+        action: 'query',
+        payload: {
+          game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+          prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide,
+        },
+      });
+    const operational = await request(app)
+      .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath)
+      .set('x-request-id', 'req-preview-operational')
+      .set('x-trace-id', 'trace-preview-operational')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+          prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.operational,
+        },
+      });
+
+    expect(invalidCanary.status).toBe(400);
+    expect(invalidCanary.body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      code: 'BAD_REQUEST',
+    });
+    expect(missingMode.status).toBe(400);
+    expect(missingMode.body.error).toEqual({
+      code: 'GAMEPLAY_MODE_REQUIRED',
+      message:
+        "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+    });
+    expect(operational.status).toBe(400);
+    expect(operational.body).toMatchObject({
+      error: { code: 'OPERATIONAL_REQUEST_NOT_GAMEPLAY' },
+      _route: { route: 'gaming_operational_guard' },
+    });
+    expectContainedResponseHeaders(
+      invalidCanary,
+      'req-preview-canary-invalid',
+      'trace-preview-canary-invalid',
+      true
+    );
+    expectContainedResponseHeaders(
+      missingMode,
+      'req-preview-mode-invalid',
+      'trace-preview-mode-invalid',
+      true
+    );
+    expectContainedResponseHeaders(
+      operational,
+      'req-preview-operational',
+      'trace-preview-operational',
+      true
+    );
+  });
+
+  it('keeps exact Gaming-source paths closed with production-shaped unauthenticated responses', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const cases = [
+      request(app)
+        .post(sources.ingestionPath)
+        .set('x-request-id', 'req-source-unauth-ingest')
+        .set('x-trace-id', 'trace-source-unauth-ingest')
+        .send(gamingSourceIngestionBody(sources.idempotencyKeys.unauthorized)),
+      request(app)
+        .post(sources.refreshPath)
+        .set('x-request-id', 'req-source-unauth-refresh')
+        .set('x-trace-id', 'trace-source-unauth-refresh')
+        .send(gamingSourceRefreshBody(
+          sources.idempotencyKeys.refreshUnauthorized
+        )),
+      request(app)
+        .get(`${sources.statusPathPrefix}${sources.ingestionIds.unauthorized}`)
+        .set('x-request-id', 'req-source-unauth-status')
+        .set('x-trace-id', 'trace-source-unauth-status'),
+      request(app)
+        .post(sources.ingestionPath)
+        .set('content-type', 'application/json')
+        .set('x-request-id', 'req-source-unauth-malformed')
+        .set('x-trace-id', 'trace-source-unauth-malformed')
+        .send('{"action":'),
+      request(app)
+        .post(sources.ingestionPath)
+        .set('content-type', 'application/json')
+        .set('x-request-id', 'req-source-unauth-oversized')
+        .set('x-trace-id', 'trace-source-unauth-oversized')
+        .send('x'.repeat(16_385)),
+      request(app)
+        .get(
+          `${sources.statusPathPrefix}${percentEncodeEveryAsciiCharacter(sources.ingestionIds.created)}`
+        )
+        .set('x-request-id', 'req-source-unauth-encoded')
+        .set('x-trace-id', 'trace-source-unauth-encoded'),
+      request(app)
+        .get(
+          `${sources.statusPathPrefix}${sources.ingestionIds.created}%2Fextra`
+        )
+        .set('x-request-id', 'req-source-unauth-noncanonical')
+        .set('x-trace-id', 'trace-source-unauth-noncanonical'),
+      request(app)
+        .options(sources.ingestionPath)
+        .set('origin', 'https://example.com')
+        .set('access-control-request-method', 'POST')
+        .set('x-request-id', 'req-source-unauth-options')
+        .set('x-trace-id', 'trace-source-unauth-options'),
+    ];
+    const responses = await Promise.all(cases);
+    const correlations = [
+      ['req-source-unauth-ingest', 'trace-source-unauth-ingest'],
+      ['req-source-unauth-refresh', 'trace-source-unauth-refresh'],
+      ['req-source-unauth-status', 'trace-source-unauth-status'],
+      ['req-source-unauth-malformed', 'trace-source-unauth-malformed'],
+      ['req-source-unauth-oversized', 'trace-source-unauth-oversized'],
+      ['req-source-unauth-encoded', 'trace-source-unauth-encoded'],
+      [
+        'req-source-unauth-noncanonical',
+        'trace-source-unauth-noncanonical',
+      ],
+      ['req-source-unauth-options', 'trace-source-unauth-options'],
+    ];
+    for (const [index, response] of responses.entries()) {
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({
+        ok: false,
+        error: {
+          code: 'UNAUTHORIZED_GPT_ACCESS',
+          message: 'Missing GPT access bearer token.',
+        },
+      });
+      expectContainedResponseHeaders(
+        response,
+        correlations[index]![0]!,
+        correlations[index]![1]!,
+        true
+      );
+      expect(response.headers['www-authenticate']).toBeUndefined();
+      expect(response.headers.pragma).toBe('no-cache');
+    }
+    expect(responses.at(-1)?.headers['access-control-allow-origin'])
+      .toBeUndefined();
+  });
+
+  it('admits one canonical status decode and closes non-canonical encodings after the simulated selector', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const encodedId = percentEncodeEveryAsciiCharacter(
+      sources.ingestionIds.created
+    );
+    const unauthenticatedEncodedBody = await request(app)
+      .get(`${sources.statusPathPrefix}${encodedId}`)
+      .set('content-type', 'application/json')
+      .set('x-request-id', 'req-source-encoded-body-unauth')
+      .set('x-trace-id', 'trace-source-encoded-body-unauth')
+      .send('x'.repeat(16_385));
+    expect(unauthenticatedEncodedBody.status).toBe(401);
+    expect(unauthenticatedEncodedBody.body).toEqual({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED_GPT_ACCESS',
+        message: 'Missing GPT access bearer token.',
+      },
+    });
+    expectContainedResponseHeaders(
+      unauthenticatedEncodedBody,
+      'req-source-encoded-body-unauth',
+      'trace-source-encoded-body-unauth',
+      true
+    );
+    const canonical = await request(app)
+      .get(`${sources.statusPathPrefix}${encodedId}`)
+      .set(sources.fixtureHeader, sources.fixtures.statusQueued)
+      .set('x-request-id', 'req-source-encoded-queued')
+      .set('x-trace-id', 'trace-source-encoded-queued');
+
+    expect(canonical.status).toBe(200);
+    expect(canonical.body).toMatchObject({
+      ok: true,
+      action: 'status',
+      ingestionId: sources.ingestionIds.created,
+      status: 'queued',
+      requestId: 'req-source-encoded-queued',
+      traceId: 'trace-source-encoded-queued',
+    });
+    expectContainedResponseHeaders(
+      canonical,
+      'req-source-encoded-queued',
+      'trace-source-encoded-queued',
+      true
+    );
+
+    const nonCanonicalPaths = [
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%2Fextra`,
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%5Cextra`,
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%00`,
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%7F`,
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%252Dextra`,
+      `${sources.statusPathPrefix}${sources.ingestionIds.created}%GG`,
+    ];
+    for (const [index, path] of nonCanonicalPaths.entries()) {
+      const requestId = `req-source-noncanonical-${index}`;
+      const traceId = `trace-source-noncanonical-${index}`;
+      const response = await request(app)
+        .get(path)
+        .set(sources.fixtureHeader, sources.fixtures.statusValidation)
+        .set('x-request-id', requestId)
+        .set('x-trace-id', traceId);
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_VALIDATION_ERROR',
+          message: 'The Gaming source request is invalid.',
+        },
+        requestId,
+        traceId,
+      });
+      expectContainedResponseHeaders(response, requestId, traceId, true);
+      expect(response.headers.pragma).toBe('no-cache');
+    }
+
+    const readWithBody = await request(app)
+      .get(`${sources.statusPathPrefix}${encodedId}`)
+      .set(sources.fixtureHeader, sources.fixtures.statusQueued)
+      .set('content-type', 'application/json')
+      .set('x-request-id', 'req-source-encoded-body')
+      .set('x-trace-id', 'trace-source-encoded-body')
+      .send('{"sentinel":');
+    expect(readWithBody.status).toBe(400);
+    expect(readWithBody.body).toEqual({
+      ok: false,
+      error: {
+        code: 'GAMING_SOURCE_VALIDATION_ERROR',
+        message: 'The Gaming source request is invalid.',
+      },
+      requestId: 'req-source-encoded-body',
+      traceId: 'trace-source-encoded-body',
+    });
+    expect(JSON.stringify(readWithBody.body)).not.toContain('sentinel');
+
+    const readWithOversizedBody = await request(app)
+      .get(`${sources.statusPathPrefix}${encodedId}`)
+      .set(sources.fixtureHeader, sources.fixtures.statusQueued)
+      .set('content-type', 'application/json')
+      .set('x-request-id', 'req-source-encoded-body-oversized')
+      .set('x-trace-id', 'trace-source-encoded-body-oversized')
+      .send('x'.repeat(16_385));
+    expect(readWithOversizedBody.status).toBe(400);
+    expect(readWithOversizedBody.body).toMatchObject({
+      error: { code: 'GAMING_SOURCE_VALIDATION_ERROR' },
+      requestId: 'req-source-encoded-body-oversized',
+      traceId: 'trace-source-encoded-body-oversized',
+    });
+  });
+
+  it('uses the closed 16 KiB Gaming-source parser boundary after the simulated selector', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const sendParserCase = (
+      caseId: string,
+      contentType: string,
+      body: string
+    ) => request(app)
+      .post(sources.ingestionPath)
+      .set(sources.fixtureHeader, sources.fixtures.validation)
+      .set('content-type', contentType)
+      .set('x-request-id', `req-${caseId}`)
+      .set('x-trace-id', `trace-${caseId}`)
+      .send(body);
+
+    const malformed = await sendParserCase(
+      'source-parser-malformed',
+      'application/json',
+      '{"sentinel":'
+    );
+    const oversized = await sendParserCase(
+      'source-parser-oversized',
+      'text/plain',
+      'x'.repeat(16_385)
+    );
+    const mediaType = await sendParserCase(
+      'source-parser-media-type',
+      'text/plain',
+      'sealed-preview-media-sentinel'
+    );
+
+    for (const [response, caseId, status] of [
+      [malformed, 'source-parser-malformed', 400],
+      [oversized, 'source-parser-oversized', 413],
+      [mediaType, 'source-parser-media-type', 415],
+    ] as const) {
+      expect(response.status).toBe(status);
+      expect(response.body).toEqual({
+        ok: false,
+        error: {
+          code: 'GAMING_SOURCE_VALIDATION_ERROR',
+          message: 'The Gaming source request is invalid.',
+        },
+        requestId: `req-${caseId}`,
+        traceId: `trace-${caseId}`,
+      });
+      expectContainedResponseHeaders(
+        response,
+        `req-${caseId}`,
+        `trace-${caseId}`,
+        true
+      );
+      expect(response.headers.pragma).toBe('no-cache');
+    }
+    expect(JSON.stringify(malformed.body)).not.toContain('sentinel');
+    expect(JSON.stringify(mediaType.body)).not.toContain(
+      'sealed-preview-media-sentinel'
+    );
+  });
+
+  it('serves labeled, side-effect-free source admission and idempotency simulations', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const postFixture = (
+      path: string,
+      fixture: string,
+      body: Record<string, unknown>,
+      caseId: string,
+    ) => request(app)
+      .post(path)
+      .set(sources.fixtureHeader, fixture)
+      .set('x-request-id', `req-${caseId}`)
+      .set('x-trace-id', `trace-${caseId}`)
+      .send(body);
+
+    const validationBody = gamingSourceIngestionBody(
+      sources.idempotencyKeys.validation,
+      {
+        unexpected: 'x'.repeat(sources.validationPaddingChars),
+      }
+    );
+    const validation = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.validation,
+      validationBody,
+      'source-validation'
+    );
+    const unsafe = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.unsafe,
+      gamingSourceIngestionBody(sources.idempotencyKeys.unsafe),
+      'source-unsafe'
+    );
+    const outage = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.outage,
+      gamingSourceIngestionBody(sources.idempotencyKeys.outage),
+      'source-outage'
+    );
+    const created = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.created,
+      gamingSourceIngestionBody(sources.idempotencyKeys.created),
+      'source-created'
+    );
+    const replay = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.replay,
+      gamingSourceIngestionBody(sources.idempotencyKeys.replay),
+      'source-replay'
+    );
+    const conflict = await postFixture(
+      sources.ingestionPath,
+      sources.fixtures.conflict,
+      gamingSourceIngestionBody(sources.idempotencyKeys.conflict),
+      'source-conflict'
+    );
+    const refreshValidation = await postFixture(
+      sources.refreshPath,
+      sources.fixtures.refreshValidation,
+      gamingSourceRefreshBody(
+        sources.idempotencyKeys.refreshValidation,
+        { unexpected: true }
+      ),
+      'refresh-validation'
+    );
+    const refreshUnsafe = await postFixture(
+      sources.refreshPath,
+      sources.fixtures.refreshUnsafe,
+      gamingSourceRefreshBody(sources.idempotencyKeys.refreshUnsafe),
+      'refresh-unsafe'
+    );
+    const refreshOutage = await postFixture(
+      sources.refreshPath,
+      sources.fixtures.refreshOutage,
+      gamingSourceRefreshBody(sources.idempotencyKeys.refreshOutage),
+      'refresh-outage'
+    );
+    const refreshCreated = await postFixture(
+      sources.refreshPath,
+      sources.fixtures.refreshCreated,
+      gamingSourceRefreshBody(sources.idempotencyKeys.refreshCreated),
+      'refresh-created'
+    );
+
+    expect(Buffer.byteLength(JSON.stringify(validationBody), 'utf8')).toBeGreaterThan(
+      4 * 1024
+    );
+    expect(validation.status).toBe(400);
+    expect(validation.body.error.code).toBe('GAMING_SOURCE_VALIDATION_ERROR');
+    expect(unsafe.status).toBe(503);
+    expect(unsafe.body).toMatchObject({
+      error: { code: 'UNSAFE_EXECUTION_DISABLED' },
+      requestId: 'req-source-unsafe',
+      traceId: 'trace-source-unsafe',
+    });
+    expect(outage.status).toBe(503);
+    expect(outage.body.error.code).toBe('GAMING_SOURCE_JOBS_UNAVAILABLE');
+    expect(created.status).toBe(202);
+    expect(replay.status).toBe(202);
+    expect(created.body).toMatchObject({
+      ok: true,
+      action: 'ingest',
+      ingestionId: sources.ingestionIds.created,
+      status: 'queued',
+      deduplicated: false,
+      sources: [{
+        canonicalUrl: 'https://example.invalid/palworld/guide',
+        status: 'queued',
+      }],
+    });
+    expect(replay.body).toMatchObject({
+      ingestionId: sources.ingestionIds.created,
+      deduplicated: true,
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.error.code).toBe(
+      'GAMING_SOURCE_IDEMPOTENCY_CONFLICT'
+    );
+    expect(refreshValidation.status).toBe(400);
+    expect(refreshUnsafe.status).toBe(503);
+    expect(refreshUnsafe.body.error.code).toBe('UNSAFE_EXECUTION_DISABLED');
+    expect(refreshOutage.status).toBe(503);
+    expect(refreshOutage.body).toEqual({
+      ok: false,
+      error: {
+        code: 'GAMING_SOURCE_STORAGE_UNAVAILABLE',
+        message: 'Gaming-source refresh storage is unavailable.',
+      },
+    });
+    expect(refreshCreated.status).toBe(202);
+    expect(refreshCreated.body).toMatchObject({
+      action: 'refresh',
+      ingestionId: sources.ingestionIds.refresh,
+      deduplicated: false,
+      sources: [{ sourceId: sources.sourceId }],
+    });
+
+    for (const [response, caseId] of [
+      [validation, 'source-validation'],
+      [unsafe, 'source-unsafe'],
+      [outage, 'source-outage'],
+      [created, 'source-created'],
+      [replay, 'source-replay'],
+      [conflict, 'source-conflict'],
+      [refreshValidation, 'refresh-validation'],
+      [refreshUnsafe, 'refresh-unsafe'],
+      [refreshOutage, 'refresh-outage'],
+      [refreshCreated, 'refresh-created'],
+    ] as const) {
+      expectContainedResponseHeaders(
+        response,
+        `req-${caseId}`,
+        `trace-${caseId}`,
+        true
+      );
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expect(response.headers.pragma).toBe('no-cache');
+    }
+  });
+
+  it('serves a deterministic source status lifecycle plus typed validation, absence, and outage', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const getFixture = (
+      ingestionId: string,
+      fixture: string,
+      caseId: string,
+    ) => request(app)
+      .get(`${sources.statusPathPrefix}${ingestionId}`)
+      .set(sources.fixtureHeader, fixture)
+      .set('x-request-id', `req-${caseId}`)
+      .set('x-trace-id', `trace-${caseId}`);
+
+    const validation = await getFixture(
+      'not-a-uuid',
+      sources.fixtures.statusValidation,
+      'status-validation'
+    );
+    const queued = await getFixture(
+      sources.ingestionIds.created,
+      sources.fixtures.statusQueued,
+      'status-queued'
+    );
+    const running = await getFixture(
+      sources.ingestionIds.running,
+      sources.fixtures.statusRunning,
+      'status-running'
+    );
+    const completed = await getFixture(
+      sources.ingestionIds.completed,
+      sources.fixtures.statusCompleted,
+      'status-completed'
+    );
+    const missing = await getFixture(
+      sources.ingestionIds.missing,
+      sources.fixtures.statusMissing,
+      'status-missing'
+    );
+    const outage = await getFixture(
+      sources.ingestionIds.outage,
+      sources.fixtures.statusOutage,
+      'status-outage'
+    );
+
+    expect(validation.status).toBe(400);
+    expect(validation.body.error).toEqual({
+      code: 'GAMING_SOURCE_VALIDATION_ERROR',
+      message: 'ingestionId must be a UUID.',
+    });
+    expect(queued.status).toBe(200);
+    expect(queued.body).toMatchObject({
+      action: 'status',
+      ingestionId: sources.ingestionIds.created,
+      status: 'queued',
+      counts: { total: 1, queued: 1, succeeded: 0 },
+      sources: [{ status: 'queued' }],
+    });
+    expect(running.status).toBe(200);
+    expect(running.body).toMatchObject({
+      ingestionId: sources.ingestionIds.running,
+      status: 'running',
+      counts: { queued: 0, succeeded: 0 },
+      sources: [{ status: 'running' }],
+    });
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({
+      ingestionId: sources.ingestionIds.completed,
+      status: 'completed',
+      counts: { queued: 0, succeeded: 1, recordsCreated: 1 },
+      sources: [{
+        status: 'stored',
+        sourceId: sources.sourceId,
+        sourceType: 'wiki',
+      }],
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.body.error.code).toBe(
+      'GAMING_SOURCE_INGESTION_NOT_FOUND'
+    );
+    expect(outage.status).toBe(503);
+    expect(outage.body.error.code).toBe('GAMING_SOURCE_JOBS_UNAVAILABLE');
+
+    for (const [response, caseId] of [
+      [validation, 'status-validation'],
+      [queued, 'status-queued'],
+      [running, 'status-running'],
+      [completed, 'status-completed'],
+      [missing, 'status-missing'],
+      [outage, 'status-outage'],
+    ] as const) {
+      expectContainedResponseHeaders(
+        response,
+        `req-${caseId}`,
+        `trace-${caseId}`,
+        true
+      );
+      expect(response.headers.pragma).toBe('no-cache');
+    }
+  });
+
+  it('preserves blanket credential rejection and seals the preview-only selector', async () => {
+    const { app } = buildApplication();
+    const sources = NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT;
+    const responses = await Promise.all([
+      request(app)
+        .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ action: 'canary', payload: { scope: 'public_pipeline' } }),
+      request(app)
+        .post(sources.ingestionPath)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .set(sources.fixtureHeader, sources.fixtures.created)
+        .send(gamingSourceIngestionBody(sources.idempotencyKeys.created)),
+      request(app)
+        .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath)
+        .set(sources.fixtureHeader, sources.fixtures.created)
+        .send({
+          action: 'query',
+          payload: {
+            mode: 'guide',
+            game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+            prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide,
+          },
+        }),
+      request(app)
+        .post(sources.ingestionPath)
+        .set(sources.fixtureHeader, 'unlisted')
+        .send(gamingSourceIngestionBody(sources.idempotencyKeys.created)),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(
+        response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]
+      ).toBeUndefined();
+    }
+
+    const unsealedValidationResponses = await Promise.all([
+      request(app)
+        .post(sources.ingestionPath)
+        .set(sources.fixtureHeader, sources.fixtures.validation)
+        .send(gamingSourceIngestionBody(
+          sources.idempotencyKeys.validation,
+          {
+            sourceUrls: ['https://unsealed.invalid/source'],
+            unexpected: 'x'.repeat(sources.validationPaddingChars),
+          }
+        )),
+      request(app)
+        .post(sources.refreshPath)
+        .set(sources.fixtureHeader, sources.fixtures.refreshValidation)
+        .send(gamingSourceRefreshBody(
+          sources.idempotencyKeys.refreshValidation,
+          {
+            sourceIds: ['cccccccc-cccc-4ccc-8ccc-cccccccccccc'],
+            unexpected: true,
+          }
+        )),
+    ]);
+    for (const response of unsealedValidationResponses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expectNoStore(response);
+      expect(response.headers.pragma).toBe('no-cache');
+      expect(
+        response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]
+      ).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
     }
   });
 

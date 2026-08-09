@@ -56,7 +56,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(response.body.info.version).toBe('1.4.0');
+    expect(response.body.info.version).toBe('1.5.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/{gptId}',
       '/gpt/arcanos-gaming/canary',
@@ -104,7 +104,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
-    expect(response.body.info.version).toBe('1.4.0');
+    expect(response.body.info.version).toBe('1.5.0');
     expect(response.body.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -115,10 +115,24 @@ describe('custom GPT OpenAPI contract route', () => {
       .toBe('queryArcanosGaming');
     expect(response.body.paths?.['/gpt/arcanos-gaming/canary']?.post?.operationId)
       .toBe('canaryArcanosGaming');
+    expect(response.body.paths?.['/gpt-access/gaming/sources/ingestions']?.post?.operationId)
+      .toBe('ingestGamingSources');
+    expect(response.body.paths?.['/gpt-access/gaming/sources/refreshes']?.post?.operationId)
+      .toBe('refreshGamingSources');
+    expect(response.body.paths?.[
+      '/gpt-access/gaming/sources/ingestions/{ingestionId}'
+    ]?.get?.operationId).toBe('getGamingSourceIngestionStatus');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/arcanos-gaming',
       '/gpt/arcanos-gaming/canary',
+      '/gpt-access/gaming/sources/ingestions',
+      '/gpt-access/gaming/sources/refreshes',
+      '/gpt-access/gaming/sources/ingestions/{ingestionId}',
     ]);
+    expect(response.body.paths?.['/gpt/arcanos-gaming']?.post?.security).toBeUndefined();
+    expect(response.body.paths?.['/gpt/arcanos-gaming/canary']?.post?.security).toBeUndefined();
+    expect(response.body.paths?.['/gpt-access/gaming/sources/ingestions']?.post?.security)
+      .toEqual([{ bearerAuth: [] }]);
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {

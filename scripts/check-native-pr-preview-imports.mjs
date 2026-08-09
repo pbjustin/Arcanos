@@ -29,6 +29,7 @@ const PREVIEW_ENTRY_FILES = [
   'src/start-native-pr-preview.ts',
 ];
 export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
+  'packages/arcanos-runtime/src/redaction.ts',
   'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
@@ -40,6 +41,10 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/nativePrPreviewContract.ts',
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
+  'src/services/gamingModes.ts',
+  'src/services/gamingPublicDispatcher.ts',
+  'src/services/publicGamingCanary.ts',
+  'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/gpt/gptIdempotency.ts',
@@ -56,8 +61,10 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/researchRequest.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
+  'src/shared/typeGuards.ts',
   'src/start-native-pr-preview.ts',
   'src/transport/http/asyncHandler.ts',
+  'src/transport/http/payloadNormalization.ts',
   'src/transport/http/responseHelpers.ts',
 ]);
 const ALLOWED_GRAPH_FILES =
@@ -73,7 +80,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\//u,
+  /^src\/services\/(?!(?:gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -503,6 +510,18 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  [
+    'src/services/gamingPublicDispatcher.ts',
+    'fae5727fc7b800cdda980172ee8739a3362cd6e91ecdcff7de8e229cb724f2f0',
+  ],
+  [
+    'src/services/publicGamingCanary.ts',
+    '49e0004c356dde1869e710a886c28e192146432d177d4ffc33dd5377b0292933',
+  ],
+  [
+    'src/services/publicGamingCanaryFixture.ts',
+    'fedbadf49cb5ed92661d494a6e8a232c2f8bb1d8f81f72feed9b05d82fe45acb',
+  ],
   [
     'packages/arcanos-runtime/src/requestAbort.ts',
     'ca6e8019c919d83c67f37f7dccb14aff6d8a7456df3fae9f2d51ae63d203cdc4',

@@ -34,6 +34,13 @@ jest.unstable_mockModule('@routes/register.js', () => ({
 jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
   arcanosMcpService: {}
 }));
+jest.unstable_mockModule('@services/gptAccessGateway.js', () => {
+  const passThrough = (_req: unknown, _res: unknown, next: () => void) => next();
+  return {
+    gptAccessAuthMiddleware: passThrough,
+    requireGptAccessScope: () => passThrough
+  };
+});
 
 const { startAppRuntimeOnce } = await import('../src/app.js');
 

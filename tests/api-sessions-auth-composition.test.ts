@@ -45,6 +45,13 @@ jest.unstable_mockModule('@core/diagnostics.js', () => ({
 jest.unstable_mockModule('@transport/http/middleware/unsafeExecutionGate.js', () => ({
   unsafeExecutionGate: (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
+jest.unstable_mockModule('@services/gptAccessGateway.js', () => {
+  const passThrough = (_req: unknown, _res: unknown, next: () => void) => next();
+  return {
+    gptAccessAuthMiddleware: passThrough,
+    requireGptAccessScope: () => passThrough,
+  };
+});
 jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
   startSelfHealingControlLoop: jest.fn(),
 }));

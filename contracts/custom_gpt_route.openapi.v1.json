@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Arcanos GPT Route API",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Durable async acknowledgements return a job-specific `jobReadToken` and the fixed `jobReadTokenHeader`; retain both and send the token only in that header when calling the generic jobs API. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp. The fixed /gpt/arcanos-gaming/canary operation verifies only public validation, dispatch, bundled fixture grounding, response construction, and guarding."
   },
   "servers": [
@@ -800,7 +800,7 @@
           "schemaVersion": {
             "type": "string",
             "enum": [
-              "1.4.0"
+              "1.5.0"
             ]
           },
           "intent": {
@@ -899,7 +899,7 @@
           "schemaVersion": {
             "type": "string",
             "enum": [
-              "1.4.0"
+              "1.5.0"
             ]
           },
           "intent": {

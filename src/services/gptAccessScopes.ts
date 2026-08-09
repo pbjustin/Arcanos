@@ -9,6 +9,8 @@ export const GPT_ACCESS_SCOPES = [
   'mcp.approved_readonly',
   'capabilities.read',
   'capabilities.run',
+  'gaming.sources.read',
+  'gaming.sources.write',
   'diagnostics.read',
   'workers.recover'
 ] as const;

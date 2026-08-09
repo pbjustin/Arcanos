@@ -96,6 +96,14 @@ import { initializeModuleRegistry } from '@services/moduleRegistry.js';
 import {
   configureDefaultArcanosCoreRuntimeProviders
 } from '@services/arcanosCoreRuntimeProviders.js';
+import {
+  executeQueuedGamingSourceIngestion,
+  GAMING_SOURCE_INGESTION_GPT_ID,
+  GAMING_SOURCE_INGESTION_REASON,
+  GAMING_SOURCE_INGESTION_REQUEST_PATH,
+  GAMING_SOURCE_REFRESH_REQUEST_PATH,
+  parseQueuedGamingSourceIngestionBody
+} from '@services/gamingSourceIngestion.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -730,6 +738,57 @@ export async function executeQueuedGptRequest(params: {
       errorMessage: latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
       retryable: false
     };
+  }
+
+  const isGamingSourceIngestion = gptId === GAMING_SOURCE_INGESTION_GPT_ID
+    && executionModeReason === GAMING_SOURCE_INGESTION_REASON
+    && (requestPath === GAMING_SOURCE_INGESTION_REQUEST_PATH
+      || requestPath === GAMING_SOURCE_REFRESH_REQUEST_PATH);
+  if (isGamingSourceIngestion) {
+    const parsedIngestionBody = parseQueuedGamingSourceIngestionBody(body);
+    if (!parsedIngestionBody.ok) {
+      return {
+        status: 'failed',
+        output: null,
+        errorMessage: `Invalid gaming-source ingestion job.input: ${parsedIngestionBody.error}`,
+        retryable: false
+      };
+    }
+    try {
+      const execution = await executeQueuedGamingSourceIngestion(
+        params.jobId,
+        parsedIngestionBody.value,
+        {
+          signal: params.cancellationSignal,
+          requestId,
+          traceId
+        }
+      );
+      if (execution.retryable) {
+        return {
+          status: 'failed',
+          output: execution.output,
+          errorMessage: 'All admitted gaming sources failed transiently.',
+          retryable: true
+        };
+      }
+      return {
+        status: 'completed',
+        output: execution.output
+      };
+    } catch (error: unknown) {
+      if (params.cancellationSignal?.aborted) {
+        return {
+          status: 'cancelled',
+          output: null,
+          errorMessage: params.cancellationSignal.reason instanceof Error
+            ? params.cancellationSignal.reason.message
+            : 'Gaming-source ingestion was cancelled.',
+          retryable: false
+        };
+      }
+      throw error;
+    }
   }
   const routeLogger = logger.child({
     module: 'worker-gpt',

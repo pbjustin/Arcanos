@@ -5,7 +5,7 @@ import {
 } from '@services/publicGamingCanaryFixture.js';
 import { isRecord } from '@shared/typeGuards.js';
 
-export const PUBLIC_GAMING_CANARY_SCHEMA_VERSION = '1.4.0';
+export const PUBLIC_GAMING_CANARY_SCHEMA_VERSION = '1.5.0';
 export const PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES = 2_048;
 
 const MAX_FIXTURE_BYTES = 512;
@@ -45,7 +45,7 @@ export type PublicGamingCanaryFailureCode =
 type PublicGamingCanaryCommonResponse = {
   action: 'canary';
   scope: 'public_pipeline';
-  schemaVersion: '1.4.0';
+  schemaVersion: '1.5.0';
   intent: 'public_canary';
   route: 'public_canary';
   message: string;

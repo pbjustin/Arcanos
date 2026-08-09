@@ -61,7 +61,17 @@ export type GamingSuccessEnvelope = {
   mode: GamingMode;
   data: {
     response: string;
-    sources: Array<{ url: string; snippet?: string; error?: string }>;
+    sources: Array<{
+      url: string;
+      snippet?: string;
+      error?: string;
+      sourceId?: string;
+      sourceType?: string;
+      patchVersion?: string;
+      fetchedAt?: string;
+      title?: string;
+      origin?: "stored" | "live";
+    }>;
     fallbackReason?: GamingFallbackReason;
     discoveryReason?: GamingDiscoveryReason;
     discoveryFailureReason?: GamingDiscoveryFailureReason;

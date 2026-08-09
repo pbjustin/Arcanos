@@ -50,6 +50,15 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   getWorkerAutonomySettings: jest.fn(),
 }));
 
+jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
+  executeQueuedGamingSourceIngestion: jest.fn(),
+  GAMING_SOURCE_INGESTION_GPT_ID: 'arcanos-gaming',
+  GAMING_SOURCE_INGESTION_REASON: 'gaming_source_ingestion',
+  GAMING_SOURCE_INGESTION_REQUEST_PATH: '/gpt-access/gaming/sources/ingestions',
+  GAMING_SOURCE_REFRESH_REQUEST_PATH: '/gpt-access/gaming/sources/refreshes',
+  parseQueuedGamingSourceIngestionBody: jest.fn(),
+}));
+
 jest.unstable_mockModule('../src/workers/taskRunners.js', () => ({
   runDagNodeJob: jest.fn(),
 }));

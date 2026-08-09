@@ -60,7 +60,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.4.0');
+    expect(contract.info.version).toBe('1.5.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -72,9 +72,17 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(Object.keys(contract.paths)).toEqual([
       '/gpt/arcanos-gaming',
       '/gpt/arcanos-gaming/canary',
+      '/gpt-access/gaming/sources/ingestions',
+      '/gpt-access/gaming/sources/refreshes',
+      '/gpt-access/gaming/sources/ingestions/{ingestionId}',
     ]);
     expect(Object.keys(contract.paths['/gpt/arcanos-gaming'])).toEqual(['post']);
     expect(Object.keys(contract.paths['/gpt/arcanos-gaming/canary'])).toEqual(['post']);
+    expect(Object.keys(contract.paths['/gpt-access/gaming/sources/ingestions'])).toEqual(['post']);
+    expect(Object.keys(contract.paths['/gpt-access/gaming/sources/refreshes'])).toEqual(['post']);
+    expect(Object.keys(
+      contract.paths['/gpt-access/gaming/sources/ingestions/{ingestionId}']
+    )).toEqual(['get']);
 
     const query = contract.paths['/gpt/arcanos-gaming'].post;
     expect(query.operationId).toBe('queryArcanosGaming');
@@ -92,6 +100,32 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       $ref: '#/components/schemas/PublicCanaryRequest',
     });
 
+    expect(contract.components.securitySchemes).toEqual({
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'Opaque GPT Access token',
+        description: 'Required only for Gaming source ingestion, refresh, and status operations.',
+      },
+    });
+
+    const protectedOperations = [
+      contract.paths['/gpt-access/gaming/sources/ingestions'].post,
+      contract.paths['/gpt-access/gaming/sources/refreshes'].post,
+      contract.paths['/gpt-access/gaming/sources/ingestions/{ingestionId}'].get,
+    ];
+    for (const operation of protectedOperations) {
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation.description.length).toBeLessThanOrEqual(300);
+    }
+    expect(
+      protectedOperations.map((operation) => operation['x-openai-isConsequential']),
+    ).toEqual([
+      true,
+      true,
+      false,
+    ]);
+
     const keys = collectKeys(contract);
     expect(keys).not.toContain('anyOf');
     expect(keys).not.toContain('oneOf');
@@ -101,6 +135,230 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const refs = collectLocalRefs(contract);
     expect(refs.length).toBeGreaterThan(0);
     refs.forEach((ref) => expect(resolveLocalRef(contract, ref)).toBeDefined());
+  });
+
+  it('defines narrow authenticated source ingestion, refresh, and status contracts', () => {
+    const contract = loadContract();
+    const schemas = contract.components.schemas;
+    const ingest = contract.paths['/gpt-access/gaming/sources/ingestions'].post;
+    const refresh = contract.paths['/gpt-access/gaming/sources/refreshes'].post;
+    const status = contract.paths[
+      '/gpt-access/gaming/sources/ingestions/{ingestionId}'
+    ].get;
+
+    expect(ingest.operationId).toBe('ingestGamingSources');
+    expect(refresh.operationId).toBe('refreshGamingSources');
+    expect(status.operationId).toBe('getGamingSourceIngestionStatus');
+    expect(ingest.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/GamingSourceIngestionRequest',
+    });
+    expect(refresh.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/GamingSourceRefreshRequest',
+    });
+    expect(status.parameters).toEqual([
+      expect.objectContaining({
+        name: 'ingestionId',
+        in: 'path',
+        required: true,
+        schema: { $ref: '#/components/schemas/GamingOpaqueIdentifier' },
+      }),
+    ]);
+
+    expect(schemas.GamingSourceIngestionRequest).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['action', 'payload'],
+    }));
+    expect(schemas.GamingSourceIngestionRequest.properties.action.enum).toEqual(['ingest']);
+    expect(schemas.GamingSourceIngestionPayload).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['game', 'sourceUrls', 'idempotencyKey'],
+    }));
+    expect(Object.keys(schemas.GamingSourceIngestionPayload.properties)).toEqual([
+      'game',
+      'sourceUrls',
+      'sourceTypeHint',
+      'patchVersion',
+      'origin',
+      'idempotencyKey',
+    ]);
+    expect(schemas.GamingSourceIngestionPayload.properties.sourceUrls).toEqual(
+      expect.objectContaining({
+        type: 'array',
+        minItems: 1,
+        maxItems: 4,
+        uniqueItems: true,
+      })
+    );
+    expect(schemas.GamingSourceIngestionPayload.properties.sourceUrls.items).toEqual(
+      expect.objectContaining({
+        type: 'string',
+        format: 'uri',
+        maxLength: 2048,
+        pattern: '^https://',
+      })
+    );
+    expect(schemas.GamingSourceIngestionPayload.properties.origin.enum).toEqual([
+      'user_supplied',
+      'gpt_web_search',
+    ]);
+    expect(schemas.GamingSourceIngestionPayload.properties.idempotencyKey).toEqual({
+      $ref: '#/components/schemas/GamingIdempotencyKey',
+    });
+    expect(schemas.GamingIdempotencyKey).toEqual(expect.objectContaining({
+      type: 'string',
+      minLength: 8,
+      maxLength: 240,
+    }));
+    expect(schemas.GamingOpaqueIdentifier).toEqual(expect.objectContaining({
+      type: 'string',
+      format: 'uuid',
+      minLength: 36,
+      maxLength: 36,
+    }));
+
+    expect(schemas.GamingSourceRefreshRequest).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['action', 'payload'],
+    }));
+    expect(schemas.GamingSourceRefreshRequest.properties.action.enum).toEqual(['refresh']);
+    expect(schemas.GamingSourceRefreshPayload).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['sourceIds', 'idempotencyKey'],
+    }));
+    expect(Object.keys(schemas.GamingSourceRefreshPayload.properties)).toEqual([
+      'sourceIds',
+      'reason',
+      'idempotencyKey',
+    ]);
+    expect(schemas.GamingSourceRefreshPayload.properties.sourceIds).toEqual(
+      expect.objectContaining({
+        type: 'array',
+        minItems: 1,
+        maxItems: 4,
+        uniqueItems: true,
+        items: { $ref: '#/components/schemas/GamingOpaqueIdentifier' },
+      })
+    );
+    expect(schemas.GamingSourceRefreshPayload.properties).not.toHaveProperty('sourceUrls');
+
+    expect(Object.keys(ingest.responses)).toEqual([
+      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
+    ]);
+    expect(Object.keys(refresh.responses)).toEqual([
+      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
+    ]);
+    expect(Object.keys(status.responses)).toEqual([
+      '200', '400', '401', '403', '404', '429', '500', '503',
+    ]);
+    expect(ingest.responses['202'].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/GamingSourceIngestionAcceptedResponse',
+    });
+    expect(status.responses['200'].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/GamingSourceIngestionStatusResponse',
+    });
+    for (const operation of [ingest, refresh, status]) {
+      expect(operation.responses['403'].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/GamingSourceOperationErrorResponse',
+      });
+      expect(operation.responses['429'].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/GamingSourceRateLimitResponse',
+      });
+    }
+    for (const operation of [ingest, refresh]) {
+      for (const statusCode of ['413', '415']) {
+        expect(operation.responses[statusCode].content['application/json'].schema).toEqual({
+          $ref: '#/components/schemas/GamingSourceOperationErrorResponse',
+        });
+      }
+    }
+
+    for (const schemaName of [
+      'GamingSourceAdmission',
+      'GamingSourceIngestionAcceptedResponse',
+      'GamingSourceIngestionCounts',
+      'GamingSourceItemError',
+      'GamingSourceIngestionItemStatus',
+      'GamingSourceIngestionStatusResponse',
+      'GamingSourceOperationError',
+      'GamingSourceOperationErrorResponse',
+      'GamingSourceRateLimitResponse',
+    ]) {
+      expect(schemas[schemaName].additionalProperties).toBe(false);
+    }
+    expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
+      'GPT_ACCESS_SCOPE_DENIED'
+    );
+    expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
+      'GAMING_SOURCE_STORAGE_UNAVAILABLE'
+    );
+    expect(schemas.GamingSourceRateLimitResponse).toEqual(expect.objectContaining({
+      required: ['error', 'message', 'retryAfter'],
+      properties: expect.objectContaining({
+        error: expect.objectContaining({ enum: ['Rate limit exceeded'] }),
+        retryAfter: expect.objectContaining({ type: 'integer', minimum: 1 }),
+      }),
+    }));
+    expect(schemas.GamingSourceIngestionAcceptedResponse.properties.status.enum).toEqual([
+      'queued',
+      'running',
+      'completed',
+      'completed_with_errors',
+      'failed',
+      'cancelled',
+      'expired',
+    ]);
+    expect(schemas.GamingSourceIngestionStatusResponse.properties.status.enum).toEqual([
+      'queued',
+      'running',
+      'completed',
+      'completed_with_errors',
+      'failed',
+      'cancelled',
+      'expired',
+    ]);
+    expect(schemas.GamingSourceIngestionItemStatus.properties.status.enum).toEqual([
+      'queued',
+      'running',
+      'stored',
+      'updated',
+      'unchanged',
+      'rejected',
+      'failed',
+    ]);
+    expect(
+      schemas.GamingSourceIngestionItemStatus.properties.patchVersion
+    ).toEqual(expect.objectContaining({
+      type: 'string',
+      maxLength: 64,
+    }));
+
+    const protectedSchemaText = JSON.stringify({
+      ingestRequest: schemas.GamingSourceIngestionRequest,
+      ingestPayload: schemas.GamingSourceIngestionPayload,
+      refreshRequest: schemas.GamingSourceRefreshRequest,
+      refreshPayload: schemas.GamingSourceRefreshPayload,
+      acceptedResponse: schemas.GamingSourceIngestionAcceptedResponse,
+      statusResponse: schemas.GamingSourceIngestionStatusResponse,
+      itemStatus: schemas.GamingSourceIngestionItemStatus,
+    });
+    for (const forbiddenField of [
+      'rawHtml',
+      'headers',
+      'cookies',
+      'credentials',
+      'database',
+      'jobId',
+      'queue',
+      'worker',
+      'trustLevel',
+      'sourcePriority',
+    ]) {
+      expect(protectedSchemaText).not.toContain(`\"${forbiddenField}\"`);
+    }
   });
 
   it('defines a closed and bounded public canary protocol without internal diagnostics', () => {
@@ -321,6 +579,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
   it('documents the evidence request inside the preserved Gaming envelope', () => {
     const schemas = loadContract().components.schemas;
     const evidenceRequest = schemas.GamingEvidenceRequest;
+    const gamingSource = schemas.GamingSource;
 
     expect(evidenceRequest.required).toEqual([
       'required',
@@ -362,6 +621,18 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       type: 'object',
       additionalProperties: true,
     });
+    expect(gamingSource.required).toEqual(['url']);
+    expect(gamingSource.properties).toEqual(expect.objectContaining({
+      url: expect.objectContaining({ type: 'string', minLength: 1 }),
+      snippet: { type: 'string' },
+      error: { type: 'string' },
+      sourceId: expect.objectContaining({ type: 'string', format: 'uuid' }),
+      sourceType: expect.objectContaining({ type: 'string' }),
+      patchVersion: expect.objectContaining({ type: 'string', maxLength: 64 }),
+      fetchedAt: expect.objectContaining({ type: 'string', format: 'date-time' }),
+      title: expect.objectContaining({ type: 'string', maxLength: 240 }),
+      origin: { type: 'string', enum: ['live', 'stored'] },
+    }));
     const responsePattern = new RegExp(schemas.GamingResponseData.properties.response.pattern, 'u');
     expect(responsePattern.test('   ')).toBe(false);
     expect(responsePattern.test('...')).toBe(false);
@@ -384,13 +655,23 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(runtimeQuery.length).toBe(contractMax);
   });
 
-  it('keeps builder instructions synchronized with two operations and one gameplay call', () => {
+  it('keeps builder instructions synchronized with five operations and one gameplay call', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
     const customGpts = readFileSync(customGptsPath, 'utf8');
 
-    expect(instructions).toContain('The dedicated schema defines exactly two fixed-path operations');
+    expect(instructions).toContain('The dedicated schema defines exactly five fixed-path operations');
     expect(instructions).toContain('queryArcanosGaming` → `POST /gpt/arcanos-gaming');
     expect(instructions).toContain('canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary');
+    expect(instructions).toContain(
+      'ingestGamingSources` → `POST /gpt-access/gaming/sources/ingestions'
+    );
+    expect(instructions).toContain(
+      'refreshGamingSources` → `POST /gpt-access/gaming/sources/refreshes'
+    );
+    expect(instructions).toContain(
+      'getGamingSourceIngestionStatus` → `GET /gpt-access/gaming/sources/ingestions/{ingestionId}'
+    );
+    expect(instructions).toContain('Authentication: Bearer');
     expect(instructions).toContain('do not leave this unset');
     expect(instructions).toContain('Pro mode does not support custom GPT Actions');
     expect(instructions).toContain('do not report an ARCANOS backend outage');
@@ -434,6 +715,13 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     );
     expect(instructions).toContain('Never cite an entry with an error');
     expect(instructions).toContain('Relevant source retrieved, but readable article text was limited.');
+    expect(instructions).toContain('sourceId, sourceType, patchVersion, fetchedAt, title, and origin "stored"');
+    expect(instructions).toContain('Ordinary gameplay questions, including current or source-sensitive questions');
+    expect(instructions).toContain('Do not trigger durable ingestion merely because');
+    expect(instructions).toContain('Send URLs only; never send page text, HTML, cookies, credentials');
+    expect(instructions).toContain('Refresh accepts sourceIds, not URLs');
+    expect(instructions).toContain('reuse it only for an identical retry');
+    expect(instructions).toContain('Do not claim that queued or running content is available');
 
     for (const example of [
       'Palworld 1.0',
@@ -441,6 +729,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'Current patch or meta request',
       'Stable older game',
       'User-supplied URL',
+      'GPT-discovered sources for ingestion',
+      'Refresh admitted sources',
       'All candidate URLs rejected',
     ]) {
       expect(instructions).toContain(`### ${example}`);
@@ -452,8 +742,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain(
       'https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json'
     );
-    expect(customGpts).toContain('two Action operations and one gameplay call per gameplay request');
+    expect(customGpts).toContain('five Action operations while retaining one gameplay call per gameplay request');
     expect(customGpts).toContain('each gameplay workflow still makes one `queryArcanosGaming` call');
+    expect(customGpts).toContain('origin: "stored"');
     expect(customGpts).not.toContain('mandatory backend-first evidence workflow');
   });
 });

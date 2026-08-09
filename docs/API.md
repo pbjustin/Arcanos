@@ -906,6 +906,9 @@ never persisted to the daemon token file.
 - `GET /gpt-access/capabilities/v1`
 - `GET /gpt-access/capabilities/v1/:id`
 - `POST /gpt-access/capabilities/v1/:id/run`
+- `POST /gpt-access/gaming/sources/ingestions`
+- `POST /gpt-access/gaming/sources/refreshes`
+- `GET /gpt-access/gaming/sources/ingestions/:ingestionId`
 - `POST /gpt-access/local-agent/heartbeat`, `/jobs/claim`, `/jobs/:jobId/heartbeat`, and `/jobs/:jobId/result` are private executor-protocol operations. They use the dedicated local-agent credential and a separate bounded rate-limit budget, not the Custom GPT bearer or shared GPT Access budget.
 - Privileged `ARCANOS:LOCAL_AGENT` actions `tests.run` and `patch.apply` require a consumed one-time confirmation challenge bound to the authenticated actor, principal, workspace, exact action, and exact payload. Manual, trusted-GPT, automation-secret, or allow-all confirmation modes do not satisfy this stricter execution condition.
 - `GET /gpt-access/modules` and `GET /gpt-access/modules/:id` (capability compatibility aliases)
@@ -914,6 +917,20 @@ never persisted to the daemon token file.
 The two protected worker-diagnostics reads require `workers.read`, use
 `Cache-Control: no-store`, and retain the sanitized operator detail removed
 from the credential-free worker-health projection.
+
+The Gaming source routes are narrow authenticated capabilities declared in
+`contracts/arcanos_gaming.openapi.v1.json`; they are not Gaming module actions
+or generic job-control endpoints. Ingestion accepts a closed body with
+`action: "ingest"`, a game, one to four public HTTPS `sourceUrls`, and a required
+`idempotencyKey`. Optional `sourceTypeHint`, `patchVersion`, and `origin` values
+remain hints or bounded context; callers cannot supply page contents, fetch
+headers, credentials, trust state, source priority, or storage instructions.
+Refresh accepts only one to four previously returned UUID `sourceIds`, a required
+`idempotencyKey`, and an optional bounded reason. Both writes return `202` and an
+UUID `ingestionId`. The status route accepts only that identifier and returns a
+sanitized lifecycle projection with source-level states, safe errors, record
+counts, provenance, and timestamps—never generic job payloads, queue state,
+worker state, raw database records, or provider diagnostics.
 
 ### ActionPlan, CLEAR, and agent execution
 - `POST|GET /plans`

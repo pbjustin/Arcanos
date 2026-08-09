@@ -3553,6 +3553,140 @@ describe('/gpt-access gateway', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('requires bearer auth and the explicit gaming source write scope', async () => {
+    const body = {
+      action: 'ingest',
+      payload: {
+        game: 'Borderlands 4',
+        sourceUrls: ['https://mobalytics.gg/borderlands-4/builds'],
+        idempotencyKey: 'gaming-ingest-test-key'
+      }
+    };
+
+    const unauthenticated = await request(buildApp())
+      .post('/gpt-access/gaming/sources/ingestions')
+      .send(body);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers['cache-control']).toContain('no-store');
+    expect(unauthenticated.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+    const scopeDenied = await authorized(
+      request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
+    ).send(body);
+    expect(scopeDenied.status).toBe(403);
+    expect(scopeDenied.headers['cache-control']).toContain('no-store');
+    expect(scopeDenied.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('queues admitted gaming sources through the capability-specific route', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.write';
+    findOrCreateGptJobMock.mockResolvedValueOnce({
+      job: {
+        id: CREATED_JOB_ID,
+        status: 'pending',
+        created_at: new Date('2026-08-08T12:00:00.000Z')
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+
+    const response = await authorized(
+      request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
+    ).send({
+      action: 'ingest',
+      payload: {
+        game: 'Borderlands 4',
+        sourceUrls: ['https://mobalytics.gg/borderlands-4/builds'],
+        sourceTypeHint: 'build_planner',
+        origin: 'user_supplied',
+        idempotencyKey: 'gaming-ingest-test-key'
+      }
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'ingest',
+      ingestionId: CREATED_JOB_ID,
+      status: 'queued',
+      deduplicated: false
+    }));
+    expect(findOrCreateGptJobMock).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        gptId: 'arcanos-gaming',
+        requestPath: '/gpt-access/gaming/sources/ingestions',
+        executionModeReason: 'gaming_source_ingestion'
+      })
+    }));
+  });
+
+  it('binds gaming ingestion idempotency to the bearer instead of caller-selected sessions', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.write';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: CREATED_JOB_ID,
+        status: 'pending',
+        created_at: new Date('2026-08-08T12:00:00.000Z')
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    const body = {
+      action: 'ingest',
+      payload: {
+        game: 'Borderlands 4',
+        sourceUrls: ['https://mobalytics.gg/borderlands-4/builds'],
+        idempotencyKey: 'gaming-ingest-actor-binding'
+      }
+    };
+
+    const firstResponse = await authorized(
+      request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
+    )
+      .set('X-Session-ID', 'caller-selected-session-one')
+      .send(body);
+    const secondResponse = await request(buildApp())
+      .post('/gpt-access/gaming/sources/ingestions')
+      .set('Authorization', `bEaReR    ${TEST_TOKEN}`)
+      .set('X-Session-ID', 'caller-selected-session-two')
+      .send(body);
+
+    expect({
+      firstStatus: firstResponse.status,
+      firstBody: firstResponse.body,
+      secondStatus: secondResponse.status,
+      secondBody: secondResponse.body
+    }).toEqual({
+      firstStatus: 202,
+      firstBody: expect.objectContaining({ ok: true }),
+      secondStatus: 202,
+      secondBody: expect.objectContaining({ ok: true })
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(2);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash).toBe(
+      findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash
+    );
+  });
+
+  it('returns a no-store not-found projection for an unknown gaming ingestion', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.read';
+    getJobByIdMock.mockResolvedValueOnce(null);
+
+    const response = await authorized(
+      request(buildApp()).get('/gpt-access/gaming/sources/ingestions/019fe3cd-8c01-7f01-8d2d-caa951bc4b9b')
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body.error.code).toBe('GAMING_SOURCE_INGESTION_NOT_FOUND');
+    expect(getJobByIdMock).toHaveBeenCalledWith('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b');
+  });
+
   it('requires bearer auth before reading AI job results', async () => {
     const response = await request(buildApp())
       .post('/gpt-access/jobs/result')

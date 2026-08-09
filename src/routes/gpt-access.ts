@@ -2,7 +2,6 @@ import express from 'express';
 
 import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
-  createRateLimitMiddleware,
   getRequestActorKey,
   getRequestAuthenticatedActorKey,
   securityHeaders
@@ -90,6 +89,17 @@ import {
 import localAgentProtocolRouter from './gpt-access-local-agent.js';
 import { configureLocalAgentActionExecutor } from '@services/localAgent/executor.js';
 import { executeLocalAgentActionAsJob } from '@services/localAgent/service.js';
+import {
+  createGamingSourceIngestion,
+  getGamingSourceIngestionStatus,
+  refreshGamingSources
+} from '@services/gamingSourceIngestion.js';
+import {
+  gamingSourceHttpBoundary,
+  isGamingSourceHttpBoundaryApplied,
+} from '@services/gamingSourceHttpBoundary.js';
+import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
+import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 
 const router = express.Router();
 configureLocalAgentActionExecutor(executeLocalAgentActionAsJob);
@@ -133,21 +143,6 @@ const LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS = new Set([
   'tests.run',
   'patch.apply'
 ]);
-function getGptAccessRateLimitActorKey(req: express.Request): string {
-  const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
-    ? req.ip.trim()
-    : null;
-
-  return expressClientIp ? `ip:${expressClientIp}` : getRequestActorKey(req);
-}
-
-const gptAccessRateLimit = createRateLimitMiddleware({
-  bucketName: 'gpt-access',
-  maxRequests: 120,
-  windowMs: 5 * 60 * 1000,
-  keyGenerator: (req) => `${getGptAccessRateLimitActorKey(req)}:gpt-access`
-});
-
 function sortStrings(values: readonly string[]): string[] {
   return [...values].sort((left, right) => left.localeCompare(right));
 }
@@ -1449,6 +1444,13 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
   }
 });
 
+// Keep the leaf router safe when it is mounted without the production app.
+// Both narrow middleware functions are idempotent at the request boundary.
+router.use(
+  '/gpt-access/gaming/sources',
+  gamingSourceHttpBoundary,
+  gamingSourceBodyParser
+);
 router.use('/gpt-access', securityHeaders);
 router.use(
   [
@@ -1460,7 +1462,13 @@ router.use(
   noStoreResponse
 );
 router.use('/gpt-access/local-agent', localAgentProtocolRouter);
-router.use('/gpt-access', gptAccessRateLimit);
+router.use('/gpt-access', (req, res, next) => {
+  if (isGamingSourceHttpBoundaryApplied(req)) {
+    next();
+    return;
+  }
+  gptAccessRateLimit(req, res, next);
+});
 
 router.get('/gpt-access/openapi.json', (req, res) => {
   res.set('cache-control', 'no-store, max-age=0');
@@ -1469,7 +1477,13 @@ router.get('/gpt-access/openapi.json', (req, res) => {
   }));
 });
 
-router.use('/gpt-access', gptAccessAuthMiddleware);
+router.use('/gpt-access', (req, res, next) => {
+  if (isGamingSourceHttpBoundaryApplied(req)) {
+    next();
+    return;
+  }
+  gptAccessAuthMiddleware(req, res, next);
+});
 
 router.get(
   '/gpt-access/capabilities/v1',
@@ -1623,6 +1637,56 @@ router.post(
       await queryJobEventTimeline(req.body, {
         principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
         workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
+      })
+    );
+  })
+);
+
+router.post(
+  '/gpt-access/gaming/sources/ingestions',
+  requireGptAccessScope('gaming.sources.write'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await createGamingSourceIngestion(req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        idempotencyKey: req.header('idempotency-key') ?? null,
+        logger: req.logger
+      })
+    );
+  })
+);
+
+router.post(
+  '/gpt-access/gaming/sources/refreshes',
+  requireGptAccessScope('gaming.sources.write'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await refreshGamingSources(req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        idempotencyKey: req.header('idempotency-key') ?? null,
+        logger: req.logger
+      })
+    );
+  })
+);
+
+router.get(
+  '/gpt-access/gaming/sources/ingestions/:ingestionId',
+  requireGptAccessScope('gaming.sources.read'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await getGamingSourceIngestionStatus(req.params.ingestionId, {
+        actorKey: getRequestAuthenticatedActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        logger: req.logger
       })
     );
   })
