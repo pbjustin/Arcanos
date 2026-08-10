@@ -240,6 +240,13 @@ Retention defaults:
 - Idempotency reuse window: 24h, capped by the terminal state retention window
 - Pending GPT jobs that sit unclaimed for too long are expired by lifecycle maintenance
 
+Generic queue result retention:
+- Completed and cancelled `ask` jobs remain readable for 24h by default.
+- Completed and cancelled internal `dag-node` rows are retained for 1h by default; durable DAG run snapshots and artifacts have separate ownership.
+- `QUEUE_ASK_TERMINAL_RETENTION_MS` and `QUEUE_DAG_NODE_TERMINAL_RETENTION_MS` are independently configurable from 1h through 30 days.
+- Cleanup is bounded and positively allowlisted to those two types and two statuses. It never deletes GPT, local-agent, failed, pending, running, unknown-type, active-idempotency, or null-deadline legacy rows.
+- Cleanup also preserves rows throughout the one-hour worker-budget accounting window and any longer configured queue-diagnostics window. After the result deadline, active idempotency window, and observation protection have all elapsed, generic reads return the existing `not_found` contract. Lifetime queue totals describe currently retained rows.
+
 Client retry guidance:
 - Reuse the same `Idempotency-Key` only on authenticated bridge, GPT Access, or
   server-established public GPT requests. An anonymous public GPT retry creates

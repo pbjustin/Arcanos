@@ -426,6 +426,8 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
@@ -443,7 +445,7 @@ jobs:
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
-      - name: 🧱 Verify PostgreSQL claim, snapshot, budget, stale-recovery, and Backstage atomicity
+      - name: 🧱 Verify PostgreSQL claim, snapshot, budget, stale-recovery, Backstage atomicity, and terminal retention
         run: npm run test:postgres-fencing
 
   runtime-redis-admission:
@@ -521,5 +523,5 @@ jobs:
       - name: ✅ All checks passed
         run: |
           echo "✅ Every required CI/CD dependency reported success."
-          echo "✅ All seven required PostgreSQL suites ran under the fail-closed database contract."
+          echo "✅ All eight required PostgreSQL suites ran under the fail-closed database contract."
           echo "ℹ️ Production promotion remains subject to the separate rollout policy and live readiness verification."

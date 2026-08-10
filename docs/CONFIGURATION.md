@@ -94,7 +94,9 @@ verification accepts the valid current key and the optional valid
 `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET`. For a rotation, deploy the new
 key as current and the old key as previous in one coordinated configuration
 change. Keep the previous key only through the maximum retained-job window,
-then remove it after those jobs drain or expire. Rotating the current key
+including configured `ask`, `dag-node`, and GPT retention plus any longer
+queue-diagnostics cleanup protection, then remove it after those jobs drain or
+expire. Rotating the current key
 without that overlap immediately invalidates outstanding generic tokens.
 Setting the two variables to the same value, reusing either value for another
 purpose-bound credential, or leaving only an invalid current key makes new
@@ -827,11 +829,27 @@ database URL as a command-line argument.
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS` | `30000` | Max DB bootstrap retry delay. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS` | `0` | `0` means retry indefinitely. |
 | `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` | Maximum generic stale jobs locked and transitioned in one recovery transaction, clamped to 1-1,000. Global and worker-targeted passes each apply the bound independently; oldest visible unlocked rows are processed first and overflow remains for later passes. |
+| `QUEUE_ASK_TERMINAL_RETENTION_MS` | `86400000` | Retains completed/cancelled `ask` results for polling. Values are bounded to 1 hour-30 days. |
+| `QUEUE_DAG_NODE_TERMINAL_RETENTION_MS` | `3600000` | Retains completed/cancelled `dag-node` queue rows for polling and reconciliation. Values are bounded to 1 hour-30 days. |
+| `QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED` | `true` | Enables one deterministic bounded cleanup batch per worker inspection for expired completed/cancelled `ask` and `dag-node` rows only. |
+| `QUEUE_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE` | `100` | Maximum eligible non-GPT terminal rows deleted per inspection; bounded to 1-1000. |
+| `QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS` | `3600000` | Recent queue terminal/failure observation window, bounded to 1 minute-7 days. Non-GPT terminal cleanup preserves at least this window and the one-hour worker-budget window. |
 | `JOB_EVENTS_CLEANUP_ENABLED` | `true` | Enables best-effort `job_events` retention cleanup during worker inspection. Legacy `JOB_EVENT_CLEANUP_ENABLED` is also accepted. |
 | `JOB_EVENTS_RETENTION_DAYS` | `30` | Retains recent job timeline events for operational forensics. Values are bounded to 1-365 days. Legacy `JOB_EVENT_RETENTION_DAYS` is also accepted. |
 | `JOB_EVENTS_CLEANUP_BATCH_SIZE` | `1000` | Maximum `job_events` rows matched or deleted per cleanup run. Values are bounded to 1-10000 to avoid long table locks. Legacy `JOB_EVENT_CLEANUP_BATCH_SIZE` is also accepted. |
 | `JOB_EVENTS_CLEANUP_DRY_RUN` | `true` | When true, cleanup counts eligible old events without deleting them. Set to `false` after reviewing cleanup metrics/logs. Legacy `JOB_EVENT_CLEANUP_DRY_RUN` is also accepted. |
 | `JOB_EVENT_RECORD_HEARTBEATS` | `false` | When true, records high-frequency `worker.heartbeat` timeline events. Leave false unless debugging a specific lease issue because `job_data.last_heartbeat_at` already tracks liveness. |
+
+The non-GPT terminal policy is prospective and fail-closed. A completed or
+cancelled `ask`/`dag-node` row receives its deadline in the same terminal
+write. Cleanup requires that non-null deadline and any active
+`idempotency_until` window to have elapsed. It also requires `updated_at` to
+be older than the longer of the one-hour worker-budget window and the
+configured queue-diagnostics window, so cleanup cannot truncate those active
+counters. GPT, local-agent, failed, pending, running, unknown-type, and legacy
+null-deadline rows are outside this cleanup. Existing null-deadline rows require
+a separately reviewed inventory and cutover; a missing deadline is never
+permission to delete.
 
 `JOB_WORKER_STATS_ID` is intentionally independent of `JOB_WORKER_ID`: lease
 owners such as `async-queue-slot-1` stay distinct, while all configured slots

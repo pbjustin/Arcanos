@@ -1,9 +1,13 @@
 import {
+  cleanupRetainedNonGptTerminalJobs,
   cleanupRetainedFailedJobs,
+  DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
   DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS,
   DEFAULT_FAILED_JOB_RETENTION_COUNT,
+  MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
   MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS,
   MAX_FAILED_JOB_RETENTION_COUNT,
+  type CleanupRetainedNonGptTerminalJobsResult,
   type CleanupRetainedFailedJobsResult
 } from '@core/db/repositories/jobRepository.js';
 import {
@@ -24,6 +28,17 @@ export interface FailedJobCleanupPolicy {
 }
 
 export interface FailedJobCleanupRunResult extends CleanupRetainedFailedJobsResult {
+  enabled: boolean;
+  skipped: boolean;
+}
+
+export interface NonGptTerminalCleanupPolicy {
+  enabled: boolean;
+  batchSize: number;
+}
+
+export interface NonGptTerminalCleanupRunResult
+  extends CleanupRetainedNonGptTerminalJobsResult {
   enabled: boolean;
   skipped: boolean;
 }
@@ -96,6 +111,22 @@ export function resolveFailedJobCleanupPolicy(
   };
 }
 
+export function resolveNonGptTerminalCleanupPolicy(
+  env: NodeJS.ProcessEnv = process.env
+): NonGptTerminalCleanupPolicy {
+  return {
+    enabled: parseBooleanEnv(
+      env.QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED,
+      true
+    ),
+    batchSize: parsePositiveIntegerEnv(
+      env.QUEUE_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
+      DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
+      { min: 1, max: MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE }
+    )
+  };
+}
+
 export function resolveJobEventCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): JobEventCleanupPolicy {
@@ -161,6 +192,57 @@ export async function runFailedJobCleanup(
     logger.info('queue.failed_jobs.cleanup.completed', logPayload);
   } else {
     logger.debug('queue.failed_jobs.cleanup.completed', logPayload);
+  }
+
+  return {
+    enabled: true,
+    skipped: false,
+    ...result
+  };
+}
+
+export async function runNonGptTerminalCleanup(
+  reason = 'scheduled',
+  policy: NonGptTerminalCleanupPolicy = resolveNonGptTerminalCleanupPolicy()
+): Promise<NonGptTerminalCleanupRunResult> {
+  if (!policy.enabled) {
+    logger.debug('queue.non_gpt_terminal.cleanup.skipped', {
+      module: 'queue-cleanup',
+      reason,
+      batchSize: policy.batchSize
+    });
+    return {
+      enabled: false,
+      skipped: true,
+      batchSize: policy.batchSize,
+      deletedTerminal: 0,
+      deletedAsk: 0,
+      deletedDagNode: 0,
+      deletedCompleted: 0,
+      deletedCancelled: 0,
+      deletedJobIds: []
+    };
+  }
+
+  const result = await cleanupRetainedNonGptTerminalJobs({
+    batchSize: policy.batchSize
+  });
+  const logPayload = {
+    module: 'queue-cleanup',
+    reason,
+    batchSize: result.batchSize,
+    deletedTerminal: result.deletedTerminal,
+    deletedAsk: result.deletedAsk,
+    deletedDagNode: result.deletedDagNode,
+    deletedCompleted: result.deletedCompleted,
+    deletedCancelled: result.deletedCancelled,
+    batchFull: result.deletedTerminal === result.batchSize
+  };
+
+  if (result.deletedTerminal > 0) {
+    logger.info('queue.non_gpt_terminal.cleanup.completed', logPayload);
+  } else {
+    logger.debug('queue.non_gpt_terminal.cleanup.completed', logPayload);
   }
 
   return {

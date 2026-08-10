@@ -36,6 +36,12 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
   collation state.
 - The dedicated worker process requires database connectivity before it can claim queued jobs.
 - GPT and worker job state is stored in database-backed job tables, not Redis.
+- Completed/cancelled `ask` and `dag-node` rows receive explicit per-type
+  `retention_until` deadlines at terminal persistence. Worker inspection
+  deletes only expired, non-idempotency-protected rows from that exact
+  allowlist in deterministic `FOR UPDATE SKIP LOCKED` batches, after the
+  active worker-budget and queue-diagnostics observation windows. Legacy rows
+  with a null deadline remain protected pending a separately reviewed inventory.
 - Redis supports fast shared state and health visibility; it is not the durable job source of truth.
 - Shared database queries execute once by default. A caller may opt into at
   most three total attempts only with
@@ -181,13 +187,14 @@ npm run test:local-agent-postgres
 ```
 
 The shared required flag governs both required PostgreSQL package commands and
-all seven suites. `npm run test:postgres-fencing` additionally requires
+all eight suites. `npm run test:postgres-fencing` additionally requires
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`,
 `DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`,
 `JOB_WORKER_BUDGET_TEST_DATABASE_URL`,
 `JOB_STALE_RECOVERY_TEST_DATABASE_URL`,
 `BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL`, and
-`BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`. With the sentinel set, a
+`BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`, and
+`NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`. With the sentinel set, a
 missing dedicated URL fails before `describe.skip`; without it, an absent URL
 retains the intentional local skip. No suite reads ambient `DATABASE_URL`.
 Every configured target must use credentials, an explicit loopback port, and

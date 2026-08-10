@@ -59,6 +59,50 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain("status NOT IN ('completed', 'failed', 'cancelled', 'expired')");
   });
 
+  it('applies shared ask and DAG-node retention fallbacks at the generic terminal writer', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    try {
+      await updateJob('job-1', 'completed', { ok: true });
+
+      const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("WHEN 'ask' THEN $13::timestamptz");
+      expect(sql).toContain("WHEN 'dag-node' THEN $14::timestamptz");
+      expect(sql).not.toContain("WHEN 'gpt'");
+      expect(params[12]).toBe('2026-08-02T12:00:00.000Z');
+      expect(params[13]).toBe('2026-08-01T13:00:00.000Z');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not add a generic repository fallback for GPT lifecycle metadata', async () => {
+    await updateJob('job-1', 'completed', { ok: true });
+
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(sql).not.toContain("WHEN 'gpt'");
+    expect(params).toHaveLength(14);
+    expect(params[6]).toBeNull();
+    expect(params[7]).toBeNull();
+  });
+
+  it('keeps explicit and already-persisted lifecycle metadata ahead of computed fallbacks', async () => {
+    await updateJob(
+      'job-1',
+      'cancelled',
+      null,
+      'cancelled',
+      undefined,
+      { retentionUntil: '2026-08-10T12:00:00.000Z' }
+    );
+
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain(
+      '$8::timestamptz,\n         retention_until,\n         CASE job_type'
+    );
+    expect(params[7]).toBe('2026-08-10T12:00:00.000Z');
+  });
+
   it('blocks unfenced terminal mutation of a running row and emits no terminal event', async () => {
     queryMock.mockResolvedValueOnce({
       rows: [{
@@ -305,7 +349,9 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('OR cancel_requested_at IS NULL');
     expect(sql).not.toContain('current_job');
     expect(sql).not.toContain('UNION ALL');
-    expect(params.slice(-3)).toEqual(['job-1', 'worker-1', '7']);
+    expect(params.slice(9, 12)).toEqual(['job-1', 'worker-1', '7']);
+    expect(params[12]).toEqual(expect.any(String));
+    expect(params[13]).toEqual(expect.any(String));
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.completed',
       metadata: expect.objectContaining({

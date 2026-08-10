@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-10T00:01:05.676Z",
+  "generatedAt": "2026-08-10T20:09:39.342Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2528,6 +2528,9 @@
           "relativePath": "src/shared/jobs/jobReadCapability.ts"
         },
         {
+          "relativePath": "src/shared/jobs/queueJobLifecycle.ts"
+        },
+        {
           "relativePath": "src/shared/jsonFileUtils.ts"
         },
         {
@@ -3721,6 +3724,9 @@
           "relativePath": "tests/integration/local-agent-hardening.pg.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/postgresTestDatabase.ts"
         },
         {
@@ -3764,6 +3770,9 @@
         },
         {
           "relativePath": "tests/job-repository.cleanupRetainedFailedJobs.test.ts"
+        },
+        {
+          "relativePath": "tests/job-repository.cleanupRetainedNonGptTerminalJobs.test.ts"
         },
         {
           "relativePath": "tests/job-repository.deferJobForProviderRecovery.test.ts"
@@ -4124,6 +4133,9 @@
         },
         {
           "relativePath": "tests/queue-cleanup-job-events.test.ts"
+        },
+        {
+          "relativePath": "tests/queue-job-lifecycle.test.ts"
         },
         {
           "relativePath": "tests/queuedAskCompletionService.test.ts"
