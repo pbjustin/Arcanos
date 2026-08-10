@@ -104,8 +104,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'Opaque GPT Access token',
-        description: 'Required only for Gaming source ingestion, refresh, and status operations.',
+        bearerFormat: 'Opaque Gaming source access token',
+        description: 'Required only for Gaming source ingestion, refresh, and status. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
       },
     });
 
@@ -117,6 +117,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     for (const operation of protectedOperations) {
       expect(operation.security).toEqual([{ bearerAuth: [] }]);
       expect(operation.description.length).toBeLessThanOrEqual(300);
+      expect(operation.responses['401'].description).toBe(
+        'A valid dedicated Gaming source bearer credential is required.'
+      );
+      expect(operation.responses['503'].description).toContain(
+        'dedicated bearer authentication'
+      );
     }
     expect(
       protectedOperations.map((operation) => operation['x-openai-isConsequential']),
@@ -246,13 +252,13 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(schemas.GamingSourceRefreshPayload.properties).not.toHaveProperty('sourceUrls');
 
     expect(Object.keys(ingest.responses)).toEqual([
-      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
+      '202', '400', '401', '409', '413', '415', '422', '429', '500', '503',
     ]);
     expect(Object.keys(refresh.responses)).toEqual([
-      '202', '400', '401', '403', '409', '413', '415', '422', '429', '500', '503',
+      '202', '400', '401', '409', '413', '415', '422', '429', '500', '503',
     ]);
     expect(Object.keys(status.responses)).toEqual([
-      '200', '400', '401', '403', '404', '429', '500', '503',
+      '200', '400', '401', '404', '429', '500', '503',
     ]);
     expect(ingest.responses['202'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/GamingSourceIngestionAcceptedResponse',
@@ -261,7 +267,11 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       $ref: '#/components/schemas/GamingSourceIngestionStatusResponse',
     });
     for (const operation of [ingest, refresh, status]) {
-      expect(operation.responses['403'].content['application/json'].schema).toEqual({
+      expect(operation.responses).not.toHaveProperty('403');
+      expect(operation.responses['401'].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/GamingSourceOperationErrorResponse',
+      });
+      expect(operation.responses['503'].content['application/json'].schema).toEqual({
         $ref: '#/components/schemas/GamingSourceOperationErrorResponse',
       });
       expect(operation.responses['429'].content['application/json'].schema).toEqual({
@@ -289,11 +299,17 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     ]) {
       expect(schemas[schemaName].additionalProperties).toBe(false);
     }
-    expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
+    expect(schemas.GamingSourceOperationError.properties.code.enum).not.toContain(
       'GPT_ACCESS_SCOPE_DENIED'
+    );
+    expect(schemas.GamingSourceOperationError.properties.code.enum).not.toContain(
+      'GPT_ACCESS_INTERNAL_ERROR'
     );
     expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
       'GAMING_SOURCE_STORAGE_UNAVAILABLE'
+    );
+    expect(schemas.GamingSourceOperationError.properties.code.enum).toContain(
+      'GAMING_SOURCE_AUTH_UNAVAILABLE'
     );
     expect(schemas.GamingSourceRateLimitResponse).toEqual(expect.objectContaining({
       required: ['error', 'message', 'retryAfter'],

@@ -141,6 +141,9 @@ const {
 const { createGamingSourceHttpBoundary } = await import(
   '../src/services/gamingSourceHttpBoundary.js'
 );
+const { extractGamingSourceAccessBearerToken } = await import(
+  '../src/services/gamingSourceAccessAuth.js'
+);
 const { createGptAccessRateLimit } = await import(
   '../src/services/gptAccessRateLimit.js'
 );
@@ -151,6 +154,7 @@ const {
 } = await import('../src/services/gamingSourceHttpRoutes.js');
 
 const TEST_TOKEN = 'gaming-source-http-boundary-token';
+const GLOBAL_GPT_ACCESS_TOKEN = 'global-gpt-access-token-for-boundary-tests';
 const INGESTION_PATH = '/gpt-access/gaming/sources/ingestions';
 const REFRESH_PATH = '/gpt-access/gaming/sources/refreshes';
 const STATUS_ID = '019fe3cd-8c01-7f01-8d2d-caa951bc4b9b';
@@ -169,6 +173,7 @@ const NON_CANONICAL_STATUS_CASES = [
   ['malformed percent sequence', `${STATUS_PATH}%GG`],
 ] as const;
 const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
 const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
 let consoleLogMock: ReturnType<typeof jest.spyOn>;
 
@@ -222,6 +227,27 @@ function expectClosedGamingError(
 
 function authorized(testRequest: request.Test): request.Test {
   return testRequest.set('Authorization', `Bearer ${TEST_TOKEN}`);
+}
+
+function globallyAuthorized(testRequest: request.Test): request.Test {
+  return testRequest.set(
+    'Authorization',
+    ['Bearer', GLOBAL_GPT_ACCESS_TOKEN].join(' ')
+  );
+}
+
+function sourceAccessRequestWithAuthorization(
+  authorization: string | undefined,
+  rawHeaders: string[] = authorization === undefined
+    ? []
+    : ['Authorization', authorization]
+): Request {
+  return {
+    rawHeaders,
+    header: (name: string) => (
+      name.toLowerCase() === 'authorization' ? authorization : undefined
+    ),
+  } as unknown as Request;
 }
 
 async function sendAbsoluteFormRequest(
@@ -286,9 +312,9 @@ describe('Gaming source production HTTP boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     consoleLogMock = jest.spyOn(console, 'log').mockImplementation(() => undefined);
-    process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
-    process.env.ARCANOS_GPT_ACCESS_SCOPES =
-      'gaming.sources.read,gaming.sources.write';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = GLOBAL_GPT_ACCESS_TOKEN;
+    process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = TEST_TOKEN;
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
   });
 
   afterEach(() => {
@@ -297,7 +323,35 @@ describe('Gaming source production HTTP boundary', () => {
 
   afterAll(() => {
     restoreEnvironmentVariable('ARCANOS_GPT_ACCESS_TOKEN', previousToken);
+    restoreEnvironmentVariable(
+      'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
+      previousGamingSourceToken
+    );
     restoreEnvironmentVariable('ARCANOS_GPT_ACCESS_SCOPES', previousScopes);
+  });
+
+  it.each([
+    ['wrong auth scheme', `Basic ${TEST_TOKEN}`],
+    ['lowercase bearer scheme', `bearer ${TEST_TOKEN}`],
+    ['extra separator whitespace', `Bearer  ${TEST_TOKEN}`],
+    ['token whitespace', `Bearer gaming source token`],
+    ['empty token', 'Bearer '],
+  ])('does not parse a %s credential carrier', (_caseName, authorization) => {
+    expect(extractGamingSourceAccessBearerToken(
+      sourceAccessRequestWithAuthorization(authorization)
+    )).toBeNull();
+  });
+
+  it('does not parse duplicate Authorization headers', () => {
+    const authorization = `Bearer ${TEST_TOKEN}`;
+    const requestWithDuplicateAuthorization = sourceAccessRequestWithAuthorization(
+      authorization,
+      ['Authorization', authorization, 'Authorization', authorization]
+    );
+
+    expect(extractGamingSourceAccessBearerToken(
+      requestWithDuplicateAuthorization
+    )).toBeNull();
   });
 
   it.each([
@@ -399,20 +453,53 @@ describe('Gaming source production HTTP boundary', () => {
     expect(unsafeGateMock).not.toHaveBeenCalled();
   });
 
-  it('enforces operation-specific Gaming scopes before parsing', async () => {
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.read';
-    const writeDenied = await authorized(
+  it('rejects the global GPT Access bearer in the source-only namespace', async () => {
+    const response = await globallyAuthorized(
       request(createApp()).post(INGESTION_PATH)
     ).send({ action: 'ingest', payload: {} });
 
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.write';
-    const readDenied = await authorized(
-      request(createApp()).get(STATUS_PATH)
-    );
-
-    expectClosedGamingError(writeDenied, 403, 'GPT_ACCESS_SCOPE_DENIED');
-    expectClosedGamingError(readDenied, 403, 'GPT_ACCESS_SCOPE_DENIED');
+    expectClosedGamingError(response, 401, 'UNAUTHORIZED_GPT_ACCESS');
     expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before parsing when the dedicated source credential is unavailable', async () => {
+    const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
+    delete process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
+
+    try {
+      const response = await authorized(
+        request(createApp())
+          .post(INGESTION_PATH)
+          .set('Content-Type', 'application/json')
+      ).send(`{"action":"ingest","payload":"${'x'.repeat(GAMING_SOURCE_BODY_LIMIT_BYTES)}"`);
+
+      expectClosedGamingError(response, 503, 'GAMING_SOURCE_AUTH_UNAVAILABLE');
+      expect(unsafeGateMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnvironmentVariable(
+        'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
+        previousGamingSourceToken
+      );
+    }
+  });
+
+  it('fails closed when the dedicated source credential collides with global GPT Access', async () => {
+    const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
+    process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = GLOBAL_GPT_ACCESS_TOKEN;
+
+    try {
+      const response = await globallyAuthorized(
+        request(createApp()).get(STATUS_PATH)
+      );
+
+      expectClosedGamingError(response, 503, 'GAMING_SOURCE_AUTH_UNAVAILABLE');
+      expect(unsafeGateMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnvironmentVariable(
+        'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
+        previousGamingSourceToken
+      );
+    }
   });
 
   it('protects unsupported methods in the exact source namespace', async () => {
@@ -603,11 +690,9 @@ describe('Gaming source production HTTP boundary', () => {
 
     expect(resolveGamingSourceHttpTarget(encodedRequest)).toEqual({
       kind: 'status',
-      scope: 'gaming.sources.read',
     });
     expect(resolveGamingSourceHttpOperation(encodedRequest)).toEqual({
       kind: 'status',
-      scope: 'gaming.sources.read',
       operationKind: 'read',
     });
   });
@@ -623,13 +708,11 @@ describe('Gaming source production HTTP boundary', () => {
       expect(resolveGamingSourceHttpResolution(nonCanonicalRequest)).toEqual({
         target: {
           kind: 'status',
-          scope: 'gaming.sources.read',
         },
         canonical: false,
       });
       expect(resolveGamingSourceHttpTarget(nonCanonicalRequest)).toEqual({
         kind: 'status',
-        scope: 'gaming.sources.read',
       });
       expect(resolveGamingSourceHttpOperation(nonCanonicalRequest)).toBeNull();
     }

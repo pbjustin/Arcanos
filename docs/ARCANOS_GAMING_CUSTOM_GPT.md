@@ -7,7 +7,7 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
 - Schema version: `1.5.0`
 - Canonical server: `https://acranos-production.up.railway.app`
-- Authentication: Bearer. Configure the approved GPT Access token; the backend requires authentication only for source ingestion, refresh, and status operations in this schema.
+- Authentication: Bearer. Configure only the dedicated `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN`; the backend requires it only for source ingestion, refresh, and status operations in this schema. Do not use `ARCANOS_GPT_ACCESS_TOKEN` or `OPENAI_ACTION_SHARED_SECRET`: those credentials are rejected by the Gaming source lifecycle routes.
 - Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.
 - Enable both Actions and Web Search.
 - Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains all five supported operations.
@@ -162,7 +162,7 @@ Network retrieval and provider execution are intentionally reported as `skipped`
 
 ## Release procedure
 
-Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, configure the approved Bearer credential for the protected source lifecycle operations, preserve its visibility, select a supported non-Pro recommended model that can invoke Actions, run stable, current-request, and protected-source Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
+Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, configure the dedicated Gaming source Bearer credential for the protected source lifecycle operations, preserve its visibility, select a supported non-Pro recommended model that can invoke Actions, run stable, current-request, and protected-source Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration. The token belongs only on the web service and in this Action configuration; do not place it on workers or replace the generic GPT Access credential with it.
 
 ### Disposable PR-preview Action validation
 
@@ -170,7 +170,7 @@ Use this procedure only when the PR preview URL and deployed commit have already
 
 1. Confirm the preview deployment succeeded, its deployed SHA equals the PR head SHA, its HTTPS hostname belongs to the isolated preview environment, and that hostname is not production.
 2. Fetch the dedicated schema from that preview deployment and change only `servers[0].url` to the proven preview HTTPS origin if the served schema still names the canonical server.
-3. Create a disposable Custom GPT with an Action-capable non-Pro model and that preview-targeted schema. For query/canary-only validation, do not call the protected source operations. Test source ingestion only with an approved credential scoped to the isolated preview environment. Do not modify the live Arcanos Gaming GPT or reuse its production credential.
+3. Create a disposable Custom GPT with an Action-capable non-Pro model and that preview-targeted schema. For query/canary-only validation, do not call the protected source operations. Test source ingestion only with a distinct Gaming source credential configured on the isolated preview web service. Do not modify the live Arcanos Gaming GPT or reuse its production credential.
 4. Ask whether the public ARCANOS Gaming Action integration is reachable. Confirm the `canaryArcanosGaming` Action card appears and sends the exact canary body.
 5. Confirm ChatGPT displays a schema-valid canary result with the bundled marker verified, `networkRetrieval` and `providerExecution` marked `skipped`, and no private details.
 6. Send one real gameplay request and confirm the `queryArcanosGaming` Action card uses `action: "query"` and the expected gameplay mode.

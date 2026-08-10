@@ -101,23 +101,27 @@ describe("CLI security policy helpers", () => {
 
     expect(redactCliEnv({
       OPENAI_API_KEY: "sk-test-secret-value",
+      ARCANOS_GAMING_SOURCE_ACCESS_TOKEN: "gaming-source-secret-value",
       SAFE_FLAG: "true"
     })).toEqual({
       OPENAI_API_KEY: "[REDACTED]",
+      ARCANOS_GAMING_SOURCE_ACCESS_TOKEN: "[REDACTED]",
       SAFE_FLAG: "true"
     });
 
     const output = redactCliOutput(
-      `OPENAI_API_KEY='sk-test-secret-value' DATABASE_URL=postgresql://user:pass@host/db GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz Bearer test-token-value-123456 ${"x".repeat(200)}`,
+      `OPENAI_API_KEY='sk-test-secret-value' ARCANOS_GAMING_SOURCE_ACCESS_TOKEN=gaming-source-secret-value DATABASE_URL=postgresql://user:pass@host/db GITHUB_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaa Bearer test-token-value-123456 ${"x".repeat(200)}`,
       policy
     );
 
     expect(output).toContain("OPENAI_API_KEY='[REDACTED]'");
+    expect(output).toContain("ARCANOS_GAMING_SOURCE_ACCESS_TOKEN=[REDACTED]");
     expect(output).toContain("DATABASE_URL=[REDACTED]");
     expect(output).toContain("GITHUB_TOKEN=[REDACTED]");
     expect(output).toContain("Bearer [REDACTED]");
     expect(output).toContain("[truncated]");
     expect(output).not.toContain("sk-test-secret-value");
+    expect(output).not.toContain("gaming-source-secret-value");
     expect(output).not.toContain("test-token-value-123456");
   });
 

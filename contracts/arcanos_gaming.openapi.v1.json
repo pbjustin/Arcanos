@@ -165,7 +165,7 @@
       "post": {
         "operationId": "ingestGamingSources",
         "summary": "Queue Gaming source ingestion",
-        "description": "Submit one to four public HTTPS source URLs for authenticated asynchronous validation, extraction, normalization, deduplication, and storage.",
+        "description": "Submit one to four public HTTPS source URLs with the dedicated Gaming source bearer for asynchronous validation, extraction, normalization, deduplication, and storage.",
         "x-openai-isConsequential": true,
         "security": [
           {
@@ -221,17 +221,7 @@
             }
           },
           "401": {
-            "description": "A valid Gaming source bearer credential is required.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated credential lacks the Gaming source write scope.",
+            "description": "A valid dedicated Gaming source bearer credential is required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -301,7 +291,7 @@
             }
           },
           "503": {
-            "description": "Gaming source ingestion is temporarily unavailable.",
+            "description": "Gaming source ingestion or its dedicated bearer authentication is temporarily unavailable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -317,7 +307,7 @@
       "post": {
         "operationId": "refreshGamingSources",
         "summary": "Queue Gaming source refresh",
-        "description": "Queue authenticated refresh work for one to four previously admitted Gaming source IDs without accepting a replacement URL or changing trust state.",
+        "description": "Queue refresh work with the dedicated Gaming source bearer for one to four previously admitted source IDs without accepting a replacement URL or changing trust state.",
         "x-openai-isConsequential": true,
         "security": [
           {
@@ -371,17 +361,7 @@
             }
           },
           "401": {
-            "description": "A valid Gaming source bearer credential is required.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated credential lacks the Gaming source write scope.",
+            "description": "A valid dedicated Gaming source bearer credential is required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -451,7 +431,7 @@
             }
           },
           "503": {
-            "description": "Gaming source refresh is temporarily unavailable.",
+            "description": "Gaming source refresh or its dedicated bearer authentication is temporarily unavailable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -467,7 +447,7 @@
       "get": {
         "operationId": "getGamingSourceIngestionStatus",
         "summary": "Get Gaming source ingestion status",
-        "description": "Read a sanitized authenticated status projection for one Gaming source ingestion or refresh; no generic job, queue, worker, or database state is exposed.",
+        "description": "Read a sanitized status projection with the dedicated Gaming source bearer for one ingestion or refresh; no generic job, queue, worker, or database state is exposed.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -507,17 +487,7 @@
             }
           },
           "401": {
-            "description": "A valid Gaming source bearer credential is required.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GamingSourceOperationErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated credential lacks the Gaming source read scope.",
+            "description": "A valid dedicated Gaming source bearer credential is required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -557,7 +527,7 @@
             }
           },
           "503": {
-            "description": "Gaming source status is temporarily unavailable.",
+            "description": "Gaming source status or its dedicated bearer authentication is temporarily unavailable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -575,8 +545,8 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "Opaque GPT Access token",
-        "description": "Required only for Gaming source ingestion, refresh, and status operations."
+        "bearerFormat": "Opaque Gaming source access token",
+        "description": "Required only for Gaming source ingestion, refresh, and status. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
       }
     },
     "schemas": {
@@ -1586,9 +1556,8 @@
               "GAMING_SOURCE_STORAGE_UNAVAILABLE",
               "GAMING_SOURCE_INTERNAL_ERROR",
               "GAMING_SOURCE_INGESTION_NOT_FOUND",
+              "GAMING_SOURCE_AUTH_UNAVAILABLE",
               "UNAUTHORIZED_GPT_ACCESS",
-              "GPT_ACCESS_SCOPE_DENIED",
-              "GPT_ACCESS_INTERNAL_ERROR",
               "AUTH_REQUIRED",
               "AUTH_INVALID",
               "FORBIDDEN",

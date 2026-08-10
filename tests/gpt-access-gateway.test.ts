@@ -158,6 +158,7 @@ const {
 } = await import('../src/services/gptAccessGateway.js');
 
 const TEST_TOKEN = 'test-gpt-access-token';
+const GAMING_SOURCE_TEST_TOKEN = 'dedicated-gaming-source-access-token-123456';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const CREATED_JOB_ID = '22222222-2222-4222-8222-222222222222';
 const OPENAPI_SERVER_URL_ENV_KEYS = [
@@ -194,6 +195,10 @@ function buildApp(options: { trustProxy?: boolean } = {}) {
 
 function authorized(requestBuilder: request.Test): request.Test {
   return requestBuilder.set('Authorization', `Bearer ${TEST_TOKEN}`);
+}
+
+function gamingSourceAuthorized(requestBuilder: request.Test): request.Test {
+  return requestBuilder.set('Authorization', `Bearer ${GAMING_SOURCE_TEST_TOKEN}`);
 }
 
 function confirmed(requestBuilder: request.Test): request.Test {
@@ -289,6 +294,7 @@ function buildNestedObject(depth: number): Record<string, unknown> {
 
 describe('/gpt-access gateway', () => {
   const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+  const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
   const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
   const previousGptAccessBaseUrl = process.env.ARCANOS_GPT_ACCESS_BASE_URL;
@@ -309,6 +315,7 @@ describe('/gpt-access gateway', () => {
     responsesCreateMock.mockReset();
     hasValidOpenAiKeyMock.mockReturnValue(false);
     process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
+    process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = GAMING_SOURCE_TEST_TOKEN;
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
     delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
@@ -448,6 +455,12 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
     } else {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = previousToken;
+    }
+
+    if (previousGamingSourceToken === undefined) {
+      delete process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = previousGamingSourceToken;
     }
 
     if (previousScopes === undefined) {
@@ -3553,7 +3566,7 @@ describe('/gpt-access gateway', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
-  it('requires bearer auth and the explicit gaming source write scope', async () => {
+  it('requires the dedicated Gaming source bearer instead of a global gateway scope', async () => {
     const body = {
       action: 'ingest',
       payload: {
@@ -3570,18 +3583,28 @@ describe('/gpt-access gateway', () => {
     expect(unauthenticated.headers['cache-control']).toContain('no-store');
     expect(unauthenticated.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
 
-    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
-    const scopeDenied = await authorized(
+    const globalBearerDenied = await authorized(
       request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
     ).send(body);
-    expect(scopeDenied.status).toBe(403);
-    expect(scopeDenied.headers['cache-control']).toContain('no-store');
-    expect(scopeDenied.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(globalBearerDenied.status).toBe(401);
+    expect(globalBearerDenied.headers['cache-control']).toContain('no-store');
+    expect(globalBearerDenied.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('does not let the dedicated Gaming source bearer access generic GPT Access routes', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read';
+
+    const response = await gamingSourceAuthorized(
+      request(buildApp()).get('/gpt-access/status')
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+  });
+
   it('queues admitted gaming sources through the capability-specific route', async () => {
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.write';
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     findOrCreateGptJobMock.mockResolvedValueOnce({
       job: {
         id: CREATED_JOB_ID,
@@ -3593,7 +3616,7 @@ describe('/gpt-access gateway', () => {
       dedupeReason: 'new_job'
     });
 
-    const response = await authorized(
+    const response = await gamingSourceAuthorized(
       request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
     ).send({
       action: 'ingest',
@@ -3624,8 +3647,30 @@ describe('/gpt-access gateway', () => {
     }));
   });
 
+  it('passes the dedicated Gaming source bearer through to refresh storage', async () => {
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+    const response = await gamingSourceAuthorized(
+      request(buildApp()).post('/gpt-access/gaming/sources/refreshes')
+    ).send({
+      action: 'refresh',
+      payload: {
+        sourceIds: ['019fe3cd-8c01-7f01-8d2d-caa951bc4b9b'],
+        idempotencyKey: 'gaming-refresh-test-key'
+      }
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'GAMING_SOURCE_STORAGE_UNAVAILABLE',
+      }),
+    }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('binds gaming ingestion idempotency to the bearer instead of caller-selected sessions', async () => {
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.write';
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
         id: CREATED_JOB_ID,
@@ -3645,14 +3690,14 @@ describe('/gpt-access gateway', () => {
       }
     };
 
-    const firstResponse = await authorized(
+    const firstResponse = await gamingSourceAuthorized(
       request(buildApp()).post('/gpt-access/gaming/sources/ingestions')
     )
       .set('X-Session-ID', 'caller-selected-session-one')
       .send(body);
     const secondResponse = await request(buildApp())
       .post('/gpt-access/gaming/sources/ingestions')
-      .set('Authorization', `bEaReR    ${TEST_TOKEN}`)
+      .set('Authorization', `Bearer ${GAMING_SOURCE_TEST_TOKEN}`)
       .set('X-Session-ID', 'caller-selected-session-two')
       .send(body);
 
@@ -3674,10 +3719,10 @@ describe('/gpt-access gateway', () => {
   });
 
   it('returns a no-store not-found projection for an unknown gaming ingestion', async () => {
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'gaming.sources.read';
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     getJobByIdMock.mockResolvedValueOnce(null);
 
-    const response = await authorized(
+    const response = await gamingSourceAuthorized(
       request(buildApp()).get('/gpt-access/gaming/sources/ingestions/019fe3cd-8c01-7f01-8d2d-caa951bc4b9b')
     );
 

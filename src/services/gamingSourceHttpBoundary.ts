@@ -8,9 +8,8 @@ import type {
 import { securityHeaders } from '@platform/runtime/security.js';
 
 import {
-  gptAccessAuthMiddleware,
-  requireGptAccessScope,
-} from './gptAccessGateway.js';
+  gamingSourceAccessAuthMiddleware,
+} from './gamingSourceAccessAuth.js';
 import { gptAccessRateLimit } from './gptAccessRateLimit.js';
 import { resolveGamingSourceHttpTarget } from './gamingSourceHttpRoutes.js';
 
@@ -44,7 +43,7 @@ function setGamingSourceNoStoreHeaders(
 /**
  * Establish the narrow Gaming source trust boundary before any broad parser or
  * execution gate. It is idempotent so the production app and leaf router can
- * both mount it without authenticating, authorizing, or throttling twice.
+ * both mount it without authenticating or throttling twice.
  */
 export function createGamingSourceHttpBoundary(
   options: GamingSourceHttpBoundaryOptions = {}
@@ -65,13 +64,11 @@ export function createGamingSourceHttpBoundary(
     }
     boundaryRequest[gamingSourceHttpBoundaryApplied] = true;
 
-    const requireScope = requireGptAccessScope(target.scope);
     const middlewareChain: RequestHandler[] = [
       securityHeaders,
       setGamingSourceNoStoreHeaders,
       rateLimit,
-      gptAccessAuthMiddleware,
-      requireScope,
+      gamingSourceAccessAuthMiddleware,
     ];
     let middlewareIndex = 0;
     const advance = ((error?: unknown): void => {
