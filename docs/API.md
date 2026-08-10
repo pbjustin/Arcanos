@@ -932,6 +932,16 @@ sanitized lifecycle projection with source-level states, safe errors, record
 counts, provenance, and timestamps—never generic job payloads, queue state,
 worker state, raw database records, or provider diagnostics.
 
+They require the dedicated, web-service-only
+`ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` Bearer credential. It is an exact
+32–4096-character visible-ASCII non-placeholder secret with no whitespace and
+must be distinct from every other purpose-bound application credential. The
+credential is accepted only on these three routes; generic
+`ARCANOS_GPT_ACCESS_TOKEN` credentials and scopes are rejected here, and the
+Gaming source credential is rejected on other `/gpt-access/*` routes. Configure
+the dedicated value only on the web service and in the Arcanos Gaming Custom
+GPT Action authentication field, never on the worker service.
+
 ### ActionPlan, CLEAR, and agent execution
 - `POST|GET /plans`
 - `GET /plans/:planId`

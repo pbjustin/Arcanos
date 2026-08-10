@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-09T17:47:04.382Z",
+  "generatedAt": "2026-08-10T00:01:05.676Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1758,6 +1758,9 @@
         },
         {
           "relativePath": "src/services/gamingPublicDispatcher.ts"
+        },
+        {
+          "relativePath": "src/services/gamingSourceAccessAuth.ts"
         },
         {
           "relativePath": "src/services/gamingSourceBodyParser.ts"

@@ -174,7 +174,7 @@ export function createApp(): Express {
   app.use('/api/assistants', assistantRegistryHttpBoundary);
   app.use('/api/assistants', assistantRegistryBodyParser);
   // Gaming source operations are a narrow GPT-access control plane. Establish
-  // bearer identity, Gaming scope, client throttling, no-store policy, and the
+  // dedicated bearer identity, client throttling, no-store policy, and the
   // route-specific JSON ceiling before CORS, the broad application parser, or
   // the unsafe execution gate can inspect or short-circuit these paths.
   app.use('/gpt-access/gaming/sources', gamingSourceHttpBoundary);

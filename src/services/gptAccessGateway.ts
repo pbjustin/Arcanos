@@ -122,7 +122,6 @@ const GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG = new Set<GptAccessScope>([
   'jobs.create',
   'capabilities.read',
   'capabilities.run',
-  'gaming.sources.write',
   'workers.recover'
 ]);
 

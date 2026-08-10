@@ -99,6 +99,7 @@ import {
   isGamingSourceHttpBoundaryApplied,
 } from '@services/gamingSourceHttpBoundary.js';
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
+import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 
 const router = express.Router();
@@ -1644,7 +1645,7 @@ router.post(
 
 router.post(
   '/gpt-access/gaming/sources/ingestions',
-  requireGptAccessScope('gaming.sources.write'),
+  requireGamingSourceAccessAuthentication,
   asyncHandler(async (req, res) => {
     sendGptAccessResult(
       res,
@@ -1661,7 +1662,7 @@ router.post(
 
 router.post(
   '/gpt-access/gaming/sources/refreshes',
-  requireGptAccessScope('gaming.sources.write'),
+  requireGamingSourceAccessAuthentication,
   asyncHandler(async (req, res) => {
     sendGptAccessResult(
       res,
@@ -1678,7 +1679,7 @@ router.post(
 
 router.get(
   '/gpt-access/gaming/sources/ingestions/:ingestionId',
-  requireGptAccessScope('gaming.sources.read'),
+  requireGamingSourceAccessAuthentication,
   asyncHandler(async (req, res) => {
     sendGptAccessResult(
       res,

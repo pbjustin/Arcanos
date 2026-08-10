@@ -16,7 +16,6 @@ export type GamingSourceHttpOperationKind = 'read' | 'write';
 
 export interface GamingSourceHttpTarget {
   kind: GamingSourceHttpTargetKind;
-  scope: 'gaming.sources.read' | 'gaming.sources.write';
 }
 
 export interface GamingSourceHttpOperation extends GamingSourceHttpTarget {
@@ -86,7 +85,6 @@ function resolveGamingSourceHttpResolutionUncached(
     return {
       target: {
         kind: 'ingestion',
-        scope: 'gaming.sources.write',
       },
       canonical: true,
     };
@@ -95,7 +93,6 @@ function resolveGamingSourceHttpResolutionUncached(
     return {
       target: {
         kind: 'refresh',
-        scope: 'gaming.sources.write',
       },
       canonical: true,
     };
@@ -109,13 +106,9 @@ function resolveGamingSourceHttpResolutionUncached(
   if (rawId.length === 0 || rawId.includes('/')) {
     return null;
   }
-  const method = normalizeRequestMethod(req.method);
   return {
     target: {
       kind: 'status',
-      scope: method === 'GET'
-        ? 'gaming.sources.read'
-        : 'gaming.sources.write',
     },
     canonical: decodeCanonicalStatusId(rawId) !== null,
   };

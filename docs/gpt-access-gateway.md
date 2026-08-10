@@ -19,15 +19,38 @@ For deployed environments, set `ARCANOS_BASE_URL` to that service's HTTPS origin
 For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or a local development request origin. Railway PR previews advertise their Railway preview URL variables before inherited production URLs. Non-local request hosts are ignored so public metadata cannot be poisoned by spoofed headers. Set `ARCANOS_GPT_ACCESS_BASE_URL` in stable deployments when the gateway is reached through a public origin.
 
 ## Authentication
-Protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every protected operation in that schema still declares bearer auth:
+Generic protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every generic protected operation in that schema still declares bearer auth:
 
 ```bash
 Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 ```
 
-`ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or in the Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history.
+`ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or authorized generic Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history. It must not be configured in the Arcanos Gaming Custom GPT Action: the Gaming source lifecycle has a separate, narrower credential.
 
 `ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` are special: they must be listed explicitly before `/gpt-access/jobs/create` can enqueue work, capability discovery can enumerate modules, or `/gpt-access/capabilities/v1/{id}/run` can execute a module action. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the confirmation gate (`x-confirmed: yes` or a confirmation challenge token).
+
+### Gaming source lifecycle Actions
+
+The three source lifecycle operations in the Arcanos Gaming schema use only a
+dedicated Web-service credential:
+
+```bash
+Authorization: Bearer <ARCANOS_GAMING_SOURCE_ACCESS_TOKEN>
+```
+
+`ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` is optional unless the Gaming source
+lifecycle is enabled, but when configured it must be an exact 32–4096-character
+visible-ASCII non-placeholder secret with no whitespace and distinct from every
+other purpose-bound application credential. Configure it only on the web
+service and in the Arcanos Gaming Custom GPT Action authentication field. Do
+not configure it on workers, in the generic GPT Access Action, or in a bridge.
+It grants access only to `POST /gpt-access/gaming/sources/ingestions`, `POST
+/gpt-access/gaming/sources/refreshes`, and `GET /gpt-access/gaming/sources/ingestions/{ingestionId}`.
+
+There is no generic-token fallback: `ARCANOS_GPT_ACCESS_TOKEN` and its scopes
+are rejected on those source routes, while the Gaming source credential is
+rejected everywhere else under `/gpt-access/*`. The source lifecycle has no
+generic GPT Access scope grant.
 
 Recommended scopes for the protected Trinity async flow:
 
@@ -279,6 +302,15 @@ printf "%s" "$GATEWAY_CREDENTIAL" | railway variable set ARCANOS_GPT_ACCESS_TOKE
 railway variable set "ARCANOS_GPT_ACCESS_BASE_URL=https://<public-web-origin>" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
+```
+
+For the Arcanos Gaming source lifecycle, configure a different credential on
+the web service only. Do not add Gaming source scopes to the generic gateway
+token or set this value on the worker service:
+
+```bash
+GAMING_SOURCE_CREDENTIAL="$(openssl rand -base64 48)"
+printf "%s" "$GAMING_SOURCE_CREDENTIAL" | railway variable set ARCANOS_GAMING_SOURCE_ACCESS_TOKEN --stdin --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 ```
 
 Add `capabilities.read,capabilities.run` and a narrow `MCP_ALLOW_MODULE_ACTIONS` value only when direct capability execution is required.
