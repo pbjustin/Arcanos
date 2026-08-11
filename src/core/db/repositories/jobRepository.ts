@@ -16,6 +16,10 @@ import {
   resolveGptPendingMaxAgeMs
 } from '@shared/gpt/gptJobLifecycle.js';
 import {
+  computeQueueJobLifecycleDeadlines,
+  resolveNonGptTerminalRetentionWindowMs
+} from '@shared/jobs/queueJobLifecycle.js';
+import {
   PRIORITY_QUEUE_LANE_MAX_PRIORITY,
   isPriorityQueueEnabled,
   isPriorityQueueLaneJob,
@@ -266,6 +270,34 @@ export interface CleanupRetainedFailedJobsResult {
   deletedFailed: number;
   retainedFailed: number;
   deletedJobIds: string[];
+}
+
+export interface CleanupRetainedNonGptTerminalJobsOptions {
+  batchSize?: number;
+}
+
+export interface CleanupRetainedNonGptTerminalJobsResult {
+  batchSize: number;
+  deletedTerminal: number;
+  deletedAsk: number;
+  deletedDagNode: number;
+  deletedCompleted: number;
+  deletedCancelled: number;
+  deletedJobIds: string[];
+}
+
+export interface InspectLegacyNullNonGptTerminalJobsOptions {
+  sampleLimit?: number;
+}
+
+export interface InspectLegacyNullNonGptTerminalJobsResult {
+  sampleLimit: number;
+  observedTerminal: number;
+  observedAsk: number;
+  observedDagNode: number;
+  observedCompleted: number;
+  observedCancelled: number;
+  sampleLimitReached: boolean;
 }
 
 export interface RequeueFailedJobOptions {
@@ -545,24 +577,22 @@ function flushJobEvents(events: PendingJobEvent[]): void {
   }
 }
 
-function applyGptLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
+function applyQueueLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
   idempotencyUntil: string | null;
   retentionUntil: string | null;
+  nonGptRetentionWindowMs: number;
 } {
-  if (jobType !== 'gpt') {
-    return {
-      idempotencyUntil: normalizeNullableDate(options.idempotencyUntil),
-      retentionUntil: normalizeNullableDate(options.retentionUntil)
-    };
-  }
-
-  const computedDeadlines = computeGptJobLifecycleDeadlines(status);
+  const computedDeadlines = jobType === 'gpt'
+    ? computeQueueJobLifecycleDeadlines(jobType, status)
+    : { idempotencyUntil: null, retentionUntil: null };
+  const explicitRetentionUntil = normalizeNullableDate(options.retentionUntil);
 
   return {
     idempotencyUntil:
       normalizeNullableDate(options.idempotencyUntil) ?? computedDeadlines.idempotencyUntil,
     retentionUntil:
-      normalizeNullableDate(options.retentionUntil) ?? computedDeadlines.retentionUntil
+      explicitRetentionUntil ?? (jobType === 'gpt' ? computedDeadlines.retentionUntil : null),
+    nonGptRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs(jobType, status)
   };
 }
 
@@ -595,6 +625,10 @@ export const DEFAULT_FAILED_JOB_RETENTION_COUNT = 50;
 export const DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_FAILED_JOB_RETENTION_COUNT = 500;
 export const MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+export const DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE = 100;
+export const MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE = 1_000;
+export const MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS =
+  60 * 60 * 1_000;
 
 export function resolveQueueDiagnosticsFailureWindowMs(
   env: NodeJS.ProcessEnv = process.env
@@ -607,6 +641,15 @@ export function resolveQueueDiagnosticsFailureWindowMs(
   }
 
   return Math.min(7 * 24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.trunc(parsedValue)));
+}
+
+export function resolveNonGptTerminalCleanupObservationWindowMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  return Math.max(
+    MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS,
+    resolveQueueDiagnosticsFailureWindowMs(env)
+  );
 }
 
 export function resolveJobWorkerStaleAfterMs(
@@ -653,6 +696,54 @@ function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
   }
 
   return Math.min(MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS, Math.max(0, Math.trunc(parsedValue)));
+}
+
+function computeTerminalLifecycleFallbacks(status: string): {
+  askRetentionWindowMs: number;
+  dagNodeRetentionWindowMs: number;
+} {
+  return {
+    askRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('ask', status),
+    dagNodeRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('dag-node', status)
+  };
+}
+
+function computeTerminalLifecycleWriteValues(
+  jobType: string,
+  status: string
+): {
+  idempotencyOverride: string | null;
+  retentionOverride: string | null;
+  retentionFallbackWindowMs: number;
+} {
+  const shouldOverridePersistedLifecycle = jobType === 'gpt';
+  const deadlines = shouldOverridePersistedLifecycle
+    ? computeQueueJobLifecycleDeadlines(jobType, status)
+    : { idempotencyUntil: null, retentionUntil: null };
+
+  return {
+    idempotencyOverride: shouldOverridePersistedLifecycle
+      ? deadlines.idempotencyUntil
+      : null,
+    retentionOverride: shouldOverridePersistedLifecycle
+      ? deadlines.retentionUntil
+      : null,
+    retentionFallbackWindowMs: shouldOverridePersistedLifecycle
+      ? 0
+      : resolveNonGptTerminalRetentionWindowMs(jobType, status)
+  };
+}
+
+function normalizeNonGptTerminalCleanupBatchSize(value: number | undefined): number {
+  const parsedValue = Number(value ?? DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE;
+  }
+
+  return Math.min(
+    MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
+    Math.max(1, Math.trunc(parsedValue))
+  );
 }
 
 function buildEmptyFailureBreakdown(): JobFailureBreakdown {
@@ -737,7 +828,7 @@ export async function createJob(
   assertDatabaseReady();
 
   const options = normalizeCreateJobOptions(statusOrOptions);
-  const lifecycleDefaults = applyGptLifecycleDefaults(
+  const lifecycleDefaults = applyQueueLifecycleDefaults(
     jobType,
     options.status ?? 'pending',
     options
@@ -789,7 +880,14 @@ export async function createJob(
        $17,
        $18,
        $19::timestamptz,
-       $20::timestamptz,
+       COALESCE(
+         $20::timestamptz,
+         CASE
+           WHEN $25::bigint > 0
+             THEN NOW() + ($25::bigint * INTERVAL '1 millisecond')
+           ELSE NULL
+         END
+       ),
        $21::timestamptz,
        $22::timestamptz,
        $23,
@@ -823,7 +921,8 @@ export async function createJob(
       normalizeNullableDate(options.expiresAt),
       normalizeNullableDate(options.cancelRequestedAt),
       normalizeNullableString(options.cancelReason ?? null),
-      resolveInitialClaimGeneration(options.status)
+      resolveInitialClaimGeneration(options.status),
+      lifecycleDefaults.nonGptRetentionWindowMs
     ]
   );
 
@@ -863,6 +962,7 @@ export async function updateJob(
     status === 'cancelled' ||
     status === 'expired';
   const runningStatus = status === 'running';
+  const lifecycleFallbacks = computeTerminalLifecycleFallbacks(status);
   const result = await query(
     `WITH current_job AS (
        SELECT *
@@ -894,7 +994,23 @@ export async function updateJob(
        END,
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $6::jsonb,
        idempotency_until = COALESCE($7::timestamptz, idempotency_until),
-       retention_until = COALESCE($8::timestamptz, retention_until),
+       retention_until = COALESCE(
+         $8::timestamptz,
+         retention_until,
+         CASE job_type
+           WHEN 'ask' THEN CASE
+             WHEN $13::bigint > 0
+               THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           WHEN 'dag-node' THEN CASE
+             WHEN $14::bigint > 0
+               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           ELSE NULL
+         END
+       ),
        expires_at = CASE
          WHEN $9::timestamptz IS NOT NULL THEN $9::timestamptz
         WHEN $1::varchar(50) = 'expired'::varchar(50) THEN COALESCE(expires_at, NOW())
@@ -943,7 +1059,9 @@ export async function updateJob(
       normalizeNullableDate(metadata.expiresAt),
       normalizeNullableDate(metadata.cancelRequestedAt),
       normalizeNullableString(metadata.cancelReason ?? null),
-      jobId
+      jobId,
+      lifecycleFallbacks.askRetentionWindowMs,
+      lifecycleFallbacks.dagNodeRetentionWindowMs
     ]
   );
 
@@ -988,6 +1106,7 @@ export async function updateClaimedJobTerminal(
     options.fence.claimGeneration
   );
   const metadata = options.metadata ?? {};
+  const lifecycleFallbacks = computeTerminalLifecycleFallbacks(terminalStatus);
   const result = await query(
     `UPDATE job_data
      SET
@@ -1000,7 +1119,23 @@ export async function updateClaimedJobTerminal(
        lease_expires_at = NULL,
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb,
        idempotency_until = COALESCE($5::timestamptz, idempotency_until),
-       retention_until = COALESCE($6::timestamptz, retention_until),
+       retention_until = COALESCE(
+         $6::timestamptz,
+         retention_until,
+         CASE job_type
+           WHEN 'ask' THEN CASE
+             WHEN $13::bigint > 0
+               THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           WHEN 'dag-node' THEN CASE
+             WHEN $14::bigint > 0
+               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           ELSE NULL
+         END
+       ),
        expires_at = COALESCE($7::timestamptz, expires_at),
        cancel_requested_at = CASE
          WHEN $8::timestamptz IS NOT NULL THEN $8::timestamptz
@@ -1037,7 +1172,9 @@ export async function updateClaimedJobTerminal(
       normalizeNullableString(metadata.cancelReason ?? null),
       jobId,
       fence.workerId,
-      fence.claimGeneration
+      fence.claimGeneration,
+      lifecycleFallbacks.askRetentionWindowMs,
+      lifecycleFallbacks.dagNodeRetentionWindowMs
     ]
   );
 
@@ -1311,7 +1448,7 @@ export async function findOrCreateGptJob(
       idempotencyScopeHash: options.idempotencyScopeHash,
       idempotencyOrigin: options.idempotencyOrigin
     };
-    const lifecycleDefaults = applyGptLifecycleDefaults(
+    const lifecycleDefaults = applyQueueLifecycleDefaults(
       'gpt',
       createOptions.status ?? 'pending',
       createOptions
@@ -1478,10 +1615,10 @@ export async function requestJobCancellation(
     }
 
     const normalizedReason = normalizeNullableString(reason) ?? 'Job cancellation requested by client.';
-    const lifecycleDeadlines =
-      job.job_type === 'gpt'
-        ? computeGptJobLifecycleDeadlines('cancelled')
-        : { idempotencyUntil: null, retentionUntil: null };
+    const lifecycleWriteValues = computeTerminalLifecycleWriteValues(
+      job.job_type,
+      'cancelled'
+    );
 
     if (job.status === 'pending') {
       const cancelledJobResult = await client.query(
@@ -1496,14 +1633,23 @@ export async function requestJobCancellation(
            cancel_requested_at = NOW(),
            cancel_reason = $2,
            idempotency_until = COALESCE($3::timestamptz, idempotency_until),
-           retention_until = COALESCE($4::timestamptz, retention_until)
-         WHERE id = $5
+           retention_until = COALESCE(
+             $4::timestamptz,
+             retention_until,
+             CASE
+               WHEN $5::bigint > 0
+                 THEN NOW() + ($5::bigint * INTERVAL '1 millisecond')
+               ELSE NULL
+             END
+           )
+         WHERE id = $6
          RETURNING *`,
         [
           normalizedReason,
           normalizedReason,
-          lifecycleDeadlines.idempotencyUntil,
-          lifecycleDeadlines.retentionUntil,
+          lifecycleWriteValues.idempotencyOverride,
+          lifecycleWriteValues.retentionOverride,
+          lifecycleWriteValues.retentionFallbackWindowMs,
           jobId
         ]
       );
@@ -2017,10 +2163,10 @@ export async function recoverStaleJobs(
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
 
       if (row.cancel_requested_at) {
-        const lifecycleDeadlines =
-          row.job_type === 'gpt'
-            ? computeGptJobLifecycleDeadlines('cancelled')
-            : { idempotencyUntil: null, retentionUntil: null };
+        const lifecycleWriteValues = computeTerminalLifecycleWriteValues(
+          row.job_type,
+          'cancelled'
+        );
         await client.query(
           `UPDATE job_data
            SET
@@ -2033,8 +2179,16 @@ export async function recoverStaleJobs(
              cancel_reason = COALESCE(cancel_reason, $2),
              autonomy_state = $3::jsonb,
              idempotency_until = COALESCE($4::timestamptz, idempotency_until),
-             retention_until = COALESCE($5::timestamptz, retention_until)
-           WHERE id = $6`,
+             retention_until = COALESCE(
+               $5::timestamptz,
+               retention_until,
+               CASE
+                 WHEN $6::bigint > 0
+                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
+                 ELSE NULL
+               END
+             )
+           WHERE id = $7`,
           [
             row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
             row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
@@ -2042,8 +2196,9 @@ export async function recoverStaleJobs(
               normalizedAutonomyState,
               'jobRepository.recoverStaleJobs.cancelledAutonomyState'
             ),
-            lifecycleDeadlines.idempotencyUntil,
-            lifecycleDeadlines.retentionUntil,
+            lifecycleWriteValues.idempotencyOverride,
+            lifecycleWriteValues.retentionOverride,
+            lifecycleWriteValues.retentionFallbackWindowMs,
             row.id
           ]
         );
@@ -2262,10 +2417,10 @@ export async function recoverStalledJobsForWorkers(
       });
 
       if (row.cancel_requested_at) {
-        const lifecycleDeadlines =
-          row.job_type === 'gpt'
-            ? computeGptJobLifecycleDeadlines('cancelled')
-            : { idempotencyUntil: null, retentionUntil: null };
+        const lifecycleWriteValues = computeTerminalLifecycleWriteValues(
+          row.job_type,
+          'cancelled'
+        );
         const cancelMessage =
           row.cancel_reason ?? 'Job cancellation was requested before stalled worker recovery.';
         await client.query(
@@ -2280,8 +2435,16 @@ export async function recoverStalledJobsForWorkers(
              cancel_reason = COALESCE(cancel_reason, $2),
              autonomy_state = $3::jsonb,
              idempotency_until = COALESCE($4::timestamptz, idempotency_until),
-             retention_until = COALESCE($5::timestamptz, retention_until)
-           WHERE id = $6`,
+             retention_until = COALESCE(
+               $5::timestamptz,
+               retention_until,
+               CASE
+                 WHEN $6::bigint > 0
+                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
+                 ELSE NULL
+               END
+             )
+           WHERE id = $7`,
           [
             cancelMessage,
             cancelMessage,
@@ -2292,8 +2455,9 @@ export async function recoverStalledJobsForWorkers(
               },
               'jobRepository.recoverStalledJobsForWorkers.cancelledAutonomyState'
             ),
-            lifecycleDeadlines.idempotencyUntil,
-            lifecycleDeadlines.retentionUntil,
+            lifecycleWriteValues.idempotencyOverride,
+            lifecycleWriteValues.retentionOverride,
+            lifecycleWriteValues.retentionFallbackWindowMs,
             row.id
           ]
         );
@@ -2869,6 +3033,195 @@ export async function cleanupExpiredGptJobs(): Promise<CleanupGptJobsResult> {
     expiredPending: expiredPendingResult.rowCount ?? expiredPendingResult.rows.length,
     expiredTerminal: expiredTerminalResult.rowCount ?? expiredTerminalResult.rows.length,
     deletedExpired: deletedExpiredResult.rowCount ?? deletedExpiredResult.rows.length
+  };
+}
+
+export const RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL = `WITH delete_candidates AS MATERIALIZED (
+  SELECT
+    id,
+    job_type,
+    status,
+    retention_until,
+    completed_at,
+    created_at
+  FROM job_data
+  WHERE job_type IN ('ask', 'dag-node')
+    AND status IN ('completed', 'cancelled')
+    AND retention_until IS NOT NULL
+    AND retention_until <= NOW()
+    AND updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+    AND (
+      idempotency_until IS NULL
+      OR idempotency_until <= NOW()
+    )
+  ORDER BY retention_until ASC, completed_at ASC NULLS LAST, created_at ASC, id ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT $1
+),
+deleted AS (
+  DELETE FROM job_data AS target
+  USING delete_candidates
+  WHERE target.id = delete_candidates.id
+  RETURNING target.id, target.job_type, target.status
+)
+SELECT deleted.id, deleted.job_type, deleted.status
+FROM deleted
+INNER JOIN delete_candidates ON delete_candidates.id = deleted.id
+ORDER BY
+  delete_candidates.retention_until ASC,
+  delete_candidates.completed_at ASC NULLS LAST,
+  delete_candidates.created_at ASC,
+  delete_candidates.id ASC`;
+
+export const LEGACY_NULL_NON_GPT_TERMINAL_INVENTORY_SQL = `SELECT
+  sampled.job_type,
+  sampled.status,
+  COUNT(*)::int AS observed_count
+FROM (
+  SELECT job_type, status
+  FROM job_data
+  WHERE job_type IN ('ask', 'dag-node')
+    AND status IN ('completed', 'cancelled')
+    AND retention_until IS NULL
+  LIMIT $1
+) AS sampled
+GROUP BY sampled.job_type, sampled.status
+ORDER BY sampled.job_type ASC, sampled.status ASC`;
+
+/**
+ * Inspect a bounded aggregate sample of protected legacy terminal rows.
+ *
+ * This never returns row identifiers or payloads and never makes null-deadline
+ * rows cleanup-eligible. Operators must review any later cutover separately.
+ */
+export async function inspectLegacyNullNonGptTerminalJobs(
+  options: InspectLegacyNullNonGptTerminalJobsOptions = {}
+): Promise<InspectLegacyNullNonGptTerminalJobsResult> {
+  const sampleLimit = normalizeNonGptTerminalCleanupBatchSize(options.sampleLimit);
+  const emptyResult: InspectLegacyNullNonGptTerminalJobsResult = {
+    sampleLimit,
+    observedTerminal: 0,
+    observedAsk: 0,
+    observedDagNode: 0,
+    observedCompleted: 0,
+    observedCancelled: 0,
+    sampleLimitReached: false
+  };
+
+  if (!isDatabaseConnected()) {
+    return emptyResult;
+  }
+
+  const result = await query(LEGACY_NULL_NON_GPT_TERMINAL_INVENTORY_SQL, [
+    sampleLimit
+  ]);
+  const observedRows = result.rows.flatMap((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return [];
+    }
+
+    const record = row as Record<string, unknown>;
+    const observedCount = Number(record.observed_count);
+    if (
+      (record.job_type !== 'ask' && record.job_type !== 'dag-node') ||
+      (record.status !== 'completed' && record.status !== 'cancelled') ||
+      !Number.isFinite(observedCount) ||
+      observedCount <= 0
+    ) {
+      return [];
+    }
+
+    return [{
+      jobType: record.job_type,
+      status: record.status,
+      observedCount: Math.trunc(observedCount)
+    }];
+  });
+  const observedTerminal = observedRows.reduce(
+    (total, row) => total + row.observedCount,
+    0
+  );
+
+  return {
+    sampleLimit,
+    observedTerminal,
+    observedAsk: observedRows
+      .filter((row) => row.jobType === 'ask')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedDagNode: observedRows
+      .filter((row) => row.jobType === 'dag-node')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedCompleted: observedRows
+      .filter((row) => row.status === 'completed')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedCancelled: observedRows
+      .filter((row) => row.status === 'cancelled')
+      .reduce((total, row) => total + row.observedCount, 0),
+    sampleLimitReached: observedTerminal >= sampleLimit
+  };
+}
+
+/**
+ * Delete one bounded batch of expired successful/cancelled non-GPT queue rows.
+ *
+ * The allowlist intentionally excludes GPT, local-agent, failed, unknown, and
+ * unstamped legacy rows. Active idempotency windows take precedence over an
+ * elapsed result-retention deadline, and the observation window protects
+ * worker-budget accounting plus configured queue diagnostics.
+ */
+export async function cleanupRetainedNonGptTerminalJobs(
+  options: CleanupRetainedNonGptTerminalJobsOptions = {}
+): Promise<CleanupRetainedNonGptTerminalJobsResult> {
+  const batchSize = normalizeNonGptTerminalCleanupBatchSize(options.batchSize);
+  const emptyResult: CleanupRetainedNonGptTerminalJobsResult = {
+    batchSize,
+    deletedTerminal: 0,
+    deletedAsk: 0,
+    deletedDagNode: 0,
+    deletedCompleted: 0,
+    deletedCancelled: 0,
+    deletedJobIds: []
+  };
+
+  if (!isDatabaseConnected()) {
+    return emptyResult;
+  }
+
+  const observationWindowMs =
+    resolveNonGptTerminalCleanupObservationWindowMs();
+  const result = await query(RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL, [
+    batchSize,
+    observationWindowMs
+  ]);
+  const deletedRows = result.rows.flatMap((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return [];
+    }
+
+    const record = row as Record<string, unknown>;
+    if (
+      typeof record.id !== 'string' ||
+      (record.job_type !== 'ask' && record.job_type !== 'dag-node') ||
+      (record.status !== 'completed' && record.status !== 'cancelled')
+    ) {
+      return [];
+    }
+
+    return [{
+      id: record.id,
+      jobType: record.job_type,
+      status: record.status
+    }];
+  });
+
+  return {
+    batchSize,
+    deletedTerminal: deletedRows.length,
+    deletedAsk: deletedRows.filter((row) => row.jobType === 'ask').length,
+    deletedDagNode: deletedRows.filter((row) => row.jobType === 'dag-node').length,
+    deletedCompleted: deletedRows.filter((row) => row.status === 'completed').length,
+    deletedCancelled: deletedRows.filter((row) => row.status === 'cancelled').length,
+    deletedJobIds: deletedRows.map((row) => row.id)
   };
 }
 

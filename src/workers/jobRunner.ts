@@ -1255,7 +1255,7 @@ async function pauseClaimIfBudgetDisallowed(
  * Inputs/outputs: accepts one slot definition, the shared runtime settings, an optional prebuilt autonomy service, and a dispatcher-ready callback; does not resolve during normal operation.
  * Edge case behavior: unsupported or invalid job payloads fail deterministically per slot without stopping sibling slots.
  */
-async function runWorkerConsumerSlot(
+export async function runWorkerConsumerSlot(
   slotDefinition: JobRunnerSlotDefinition,
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition),

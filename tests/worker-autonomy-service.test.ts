@@ -18,6 +18,7 @@ const upsertWorkerRuntimeStateMock = jest.fn();
 const appendWorkerRuntimeHistoryMock = jest.fn();
 const runFailedJobCleanupMock = jest.fn();
 const runJobEventCleanupMock = jest.fn();
+const runNonGptTerminalCleanupMock = jest.fn();
 const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
@@ -53,7 +54,8 @@ jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () 
 
 jest.unstable_mockModule('../src/queue/cleanup.js', () => ({
   runFailedJobCleanup: runFailedJobCleanupMock,
-  runJobEventCleanup: runJobEventCleanupMock
+  runJobEventCleanup: runJobEventCleanupMock,
+  runNonGptTerminalCleanup: runNonGptTerminalCleanupMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -173,6 +175,17 @@ describe('workerAutonomyService', () => {
       minAgeMs: 86_400_000,
       deletedFailed: 0,
       retainedFailed: 0,
+      deletedJobIds: []
+    });
+    runNonGptTerminalCleanupMock.mockResolvedValue({
+      enabled: true,
+      skipped: false,
+      batchSize: 100,
+      deletedTerminal: 0,
+      deletedAsk: 0,
+      deletedDagNode: 0,
+      deletedCompleted: 0,
+      deletedCancelled: 0,
       deletedJobIds: []
     });
     runJobEventCleanupMock.mockResolvedValue({
@@ -1326,8 +1339,11 @@ describe('workerAutonomyService', () => {
       failureWebhookCooldownMs: 1
     });
 
-    await service.inspect('scheduled');
+    const inspection = await service.inspect('scheduled');
 
+    expect(runNonGptTerminalCleanupMock).toHaveBeenCalledTimes(1);
+    expect(runNonGptTerminalCleanupMock).toHaveBeenCalledWith('inspector');
+    expect(inspection.cleaned.deletedNonGptTerminal).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

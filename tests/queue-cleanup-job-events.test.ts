@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const cleanupRetainedFailedJobsMock = jest.fn();
+const cleanupRetainedNonGptTerminalJobsMock = jest.fn();
+const inspectLegacyNullNonGptTerminalJobsMock = jest.fn();
 const cleanupJobEventsMock = jest.fn();
 const recordJobEventCleanupMock = jest.fn();
 const loggerDebugMock = jest.fn();
@@ -9,10 +11,14 @@ const loggerWarnMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   cleanupRetainedFailedJobs: cleanupRetainedFailedJobsMock,
+  cleanupRetainedNonGptTerminalJobs: cleanupRetainedNonGptTerminalJobsMock,
+  inspectLegacyNullNonGptTerminalJobs: inspectLegacyNullNonGptTerminalJobsMock,
   DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS: 86_400_000,
   DEFAULT_FAILED_JOB_RETENTION_COUNT: 50,
+  DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE: 100,
   MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS: 30 * 24 * 60 * 60 * 1_000,
-  MAX_FAILED_JOB_RETENTION_COUNT: 1_000
+  MAX_FAILED_JOB_RETENTION_COUNT: 1_000,
+  MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE: 1_000
 }));
 
 jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({
@@ -36,7 +42,9 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 }));
 
 const {
+  resolveNonGptTerminalCleanupPolicy,
   resolveJobEventCleanupPolicy,
+  runNonGptTerminalCleanup,
   runJobEventCleanup
 } = await import('../src/queue/cleanup.js');
 
@@ -54,6 +62,101 @@ describe('queue job event cleanup', () => {
       deletedRows: 0,
       eventIds: ['event-1', 'event-2']
     });
+    cleanupRetainedNonGptTerminalJobsMock.mockResolvedValue({
+      batchSize: 100,
+      deletedTerminal: 2,
+      deletedAsk: 1,
+      deletedDagNode: 1,
+      deletedCompleted: 1,
+      deletedCancelled: 1,
+      deletedJobIds: ['ask-old', 'dag-old']
+    });
+    inspectLegacyNullNonGptTerminalJobsMock.mockResolvedValue({
+      sampleLimit: 100,
+      observedTerminal: 3,
+      observedAsk: 2,
+      observedDagNode: 1,
+      observedCompleted: 2,
+      observedCancelled: 1,
+      sampleLimitReached: false
+    });
+  });
+
+  it('resolves a bounded non-GPT terminal cleanup policy', () => {
+    expect(resolveNonGptTerminalCleanupPolicy({
+      QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED: 'false',
+      QUEUE_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE: '99999'
+    } as NodeJS.ProcessEnv)).toEqual({
+      enabled: false,
+      batchSize: 1_000
+    });
+
+    expect(resolveNonGptTerminalCleanupPolicy({
+      QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED: 'maybe',
+      QUEUE_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE: 'invalid'
+    } as NodeJS.ProcessEnv)).toEqual({
+      enabled: true,
+      batchSize: 100
+    });
+  });
+
+  it('skips non-GPT terminal cleanup without a repository call when disabled', async () => {
+    await expect(runNonGptTerminalCleanup('test', {
+      enabled: false,
+      batchSize: 20
+    })).resolves.toEqual(expect.objectContaining({
+      enabled: false,
+      skipped: true,
+      deletedTerminal: 0
+    }));
+    expect(cleanupRetainedNonGptTerminalJobsMock).not.toHaveBeenCalled();
+    expect(inspectLegacyNullNonGptTerminalJobsMock).not.toHaveBeenCalled();
+  });
+
+  it('runs one bounded non-GPT terminal cleanup and logs aggregate counts only', async () => {
+    await expect(runNonGptTerminalCleanup('test')).resolves.toEqual(
+      expect.objectContaining({
+        enabled: true,
+        skipped: false,
+        deletedTerminal: 2,
+        deletedAsk: 1,
+        deletedDagNode: 1
+      })
+    );
+    expect(cleanupRetainedNonGptTerminalJobsMock).toHaveBeenCalledWith({
+      batchSize: 100
+    });
+    expect(inspectLegacyNullNonGptTerminalJobsMock).toHaveBeenCalledWith({
+      sampleLimit: 100
+    });
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'queue.non_gpt_terminal.cleanup.completed',
+      expect.not.objectContaining({
+        deletedJobIds: expect.anything(),
+        deletedJobIdSample: expect.anything()
+      })
+    );
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'queue.non_gpt_terminal.legacy_null.protected',
+      expect.objectContaining({
+        protectedTerminal: 3,
+        protectedAsk: 2,
+        protectedDagNode: 1,
+        protectedCompleted: 2,
+        protectedCancelled: 1,
+        sampleLimitReached: false
+      })
+    );
+    const warningCall = loggerWarnMock.mock.calls.find(
+      ([eventName]) => eventName === 'queue.non_gpt_terminal.legacy_null.protected'
+    );
+    expect(warningCall?.[1]).not.toHaveProperty('id');
+    expect(warningCall?.[1]).not.toHaveProperty('jobId');
+    expect(warningCall?.[1]).not.toHaveProperty('jobIds');
+    expect(warningCall?.[1]).not.toHaveProperty('payload');
+
+    await runNonGptTerminalCleanup('test-repeat');
+    expect(loggerWarnMock).toHaveBeenCalledTimes(1);
   });
 
   it('resolves bounded retention policy from environment', () => {

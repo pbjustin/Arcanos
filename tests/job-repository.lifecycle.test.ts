@@ -22,6 +22,7 @@ const {
   MAX_JOB_WORKER_RECOVERY_BATCH_SIZE,
   recoverStalledJobsForWorkers,
   recoverStaleJobs,
+  requestJobCancellation,
   resolveJobWorkerRecoveryBatchSize,
   resolveJobWorkerStaleAfterMs
 } = await import('../src/core/db/repositories/jobRepository.js');
@@ -290,6 +291,129 @@ describe('jobRepository lifecycle recovery', () => {
       cancelledJobs: ['job-cancelled-stale']
     });
     expect(getJobUpdateSql()).toContain("status = 'cancelled'");
+  });
+
+  it('stamps ask retention when pending cancellation becomes terminal', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('SELECT * FROM job_data')) {
+        return {
+          rows: [{
+            id: 'ask-pending-cancel',
+            job_type: 'ask',
+            status: 'pending'
+          }]
+        };
+      }
+      if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
+        return {
+          rows: [{
+            id: 'ask-pending-cancel',
+            job_type: 'ask',
+            status: 'cancelled'
+          }]
+        };
+      }
+      return { rows: [] };
+    });
+
+    try {
+      await expect(requestJobCancellation('ask-pending-cancel')).resolves.toEqual(
+        expect.objectContaining({ outcome: 'cancelled' })
+      );
+      const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('UPDATE job_data')
+      ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($5::bigint * INTERVAL '1 millisecond')"
+      );
+      expect(updateCall?.[1]?.[3]).toBeNull();
+      expect(updateCall?.[1]?.[4]).toBe(24 * 60 * 60 * 1_000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stamps ask retention when stale recovery finalizes cancellation', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    mockStaleRows([{
+      id: 'ask-stale-cancel',
+      worker_id: 'queue',
+      last_worker_id: 'worker-1',
+      correlation_id: null,
+      claim_generation: '1',
+      job_type: 'ask',
+      status: 'running',
+      retry_count: 0,
+      max_retries: 2,
+      autonomy_state: {},
+      cancel_requested_at: new Date('2026-08-01T11:59:00.000Z'),
+      cancel_reason: 'cancelled'
+    }]);
+
+    try {
+      await recoverStaleJobs({ staleAfterMs: 60_000, maxRetries: 2 });
+      const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('UPDATE job_data')
+      ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+      );
+      expect(updateCall?.[1]?.[4]).toBeNull();
+      expect(updateCall?.[1]?.[5]).toBe(24 * 60 * 60 * 1_000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stamps DAG-node retention when stalled-worker recovery finalizes cancellation', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('last_worker_id = ANY')
+      ) {
+        return {
+          rows: [{
+            id: 'dag-stalled-cancel',
+            worker_id: 'queue',
+            last_worker_id: 'worker-2',
+            correlation_id: null,
+            claim_generation: '2',
+            job_type: 'dag-node',
+            status: 'running',
+            retry_count: 0,
+            max_retries: 2,
+            autonomy_state: {},
+            cancel_requested_at: new Date('2026-08-01T11:59:00.000Z'),
+            cancel_reason: 'cancelled'
+          }]
+        };
+      }
+      return { rows: [] };
+    });
+
+    try {
+      await recoverStalledJobsForWorkers({
+        workerIds: ['worker-2'],
+        staleAfterMs: 60_000,
+        maxRetries: 2
+      });
+      const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('UPDATE job_data')
+      ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+      );
+      expect(updateCall?.[1]?.[4]).toBeNull();
+      expect(updateCall?.[1]?.[5]).toBe(60 * 60 * 1_000);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not emit stale recovery events when the transaction rolls back', async () => {
