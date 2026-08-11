@@ -10,6 +10,9 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const DEPLOY_REF_PATTERN = /^[0-9a-f]{40}$/u;
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
+// The just-enqueued exact ID must be recent; bounding history prevents old
+// deployment metadata from exhausting the observer's fixed output budget.
+export const DEPLOYMENT_OBSERVATION_LIST_LIMIT = 20;
 
 export const DEPLOYMENT_OBSERVATION_TIMEOUT_MS = 45 * 60_000;
 export const DEPLOYMENT_POLL_INTERVAL_MS = 10_000;
@@ -323,7 +326,7 @@ export async function waitForDeploymentSuccess(
           '--environment',
           target.environmentName,
           '--limit',
-          '100',
+          String(DEPLOYMENT_OBSERVATION_LIST_LIMIT),
           '--json',
         ],
         {
