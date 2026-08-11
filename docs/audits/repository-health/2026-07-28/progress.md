@@ -1,9 +1,11 @@
 # Repository health-audit progress
 
-Status: current non-GPT-OSS dashboard through the latest product slice in
-PR [#1427](https://github.com/pbjustin/Arcanos/pull/1427) and merged,
-automatically promoted delivery-control PR
-[#1430](https://github.com/pbjustin/Arcanos/pull/1430)
+Status: current non-GPT-OSS dashboard through product PR
+[#1427](https://github.com/pbjustin/Arcanos/pull/1427) and delivery-control PRs
+[#1428](https://github.com/pbjustin/Arcanos/pull/1428),
+[#1429](https://github.com/pbjustin/Arcanos/pull/1429), and
+[#1430](https://github.com/pbjustin/Arcanos/pull/1430); exact #1430 was
+automatically promoted and verified as one worker/web pair
 
 Original audit capture: 2026-07-28
 
