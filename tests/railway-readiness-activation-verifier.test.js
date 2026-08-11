@@ -33,6 +33,7 @@ function webReadyResponse(overrides = {}) {
       { name: 'openai', healthy: true },
       { name: 'database', healthy: true },
       { name: 'redis', healthy: true },
+      { name: 'public-provider-admission', healthy: true },
       { name: 'startup', healthy: true },
     ],
     ...overrides,
@@ -283,6 +284,13 @@ describe('Railway readiness activation verifier', () => {
     [200, webReadyResponse({
       checks: webReadyResponse().checks.map(check => (
         check.name === 'redis' ? { ...check, healthy: false } : check
+      )),
+    })],
+    [200, webReadyResponse({
+      checks: webReadyResponse().checks.map(check => (
+        check.name === 'public-provider-admission'
+          ? { ...check, healthy: false }
+          : check
       )),
     })],
     [200, '{not-json'],

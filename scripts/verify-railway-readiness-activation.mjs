@@ -12,6 +12,7 @@ const WEB_READINESS_CHECK_NAMES = Object.freeze([
   'openai',
   'database',
   'redis',
+  'public-provider-admission',
   'startup',
 ]);
 const DATABASE_DISCRETE_VARIABLE_NAMES = Object.freeze([

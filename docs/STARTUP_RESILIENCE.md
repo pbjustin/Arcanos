@@ -31,9 +31,10 @@ dependency state and are retried in-process.
 | Production web runtime initialized without configured database or Redis | Bound | Unconfigured | `200` | `503` |
 
 Liveness responses contain only sanitized lifecycle metadata. Root-backend
-readiness aggregates OpenAI, database, process-local Redis lifecycle, and
-startup checks; it does not create a Redis probe client or issue a Redis
-command. Both `GET` and `HEAD /readyz` are credential-free and return
+readiness aggregates OpenAI, database, process-local Redis lifecycle,
+public-provider admission, and startup checks. It reads the generation-matched
+admission-capability result and does not create a Redis probe client or issue a
+Redis command itself. Both `GET` and `HEAD /readyz` are credential-free and return
 `Cache-Control: no-store` on `200` and `503`; `HEAD` has no response body.
 When `NODE_ENV=production` and `ARCANOS_PROCESS_KIND=web`, readiness requires
 database configuration, connectivity, and completed schema initialization, plus
