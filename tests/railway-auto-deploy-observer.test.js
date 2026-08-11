@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
+  DEPLOYMENT_OBSERVATION_LIST_LIMIT,
   DEPLOYMENT_OBSERVATION_TIMEOUT_MS,
   DEPLOYMENT_POLL_INTERVAL_MS,
   RAILWAY_COMMAND_LIMITS,
@@ -241,7 +242,7 @@ describe('Railway exact-deployment observation', () => {
       '--environment',
       ENVIRONMENT_NAME,
       '--limit',
-      '100',
+      String(DEPLOYMENT_OBSERVATION_LIST_LIMIT),
       '--json',
     ]);
     expect(sleep).toHaveBeenCalledTimes(7);
