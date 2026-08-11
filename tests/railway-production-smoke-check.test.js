@@ -36,6 +36,7 @@ function productionReadinessPayload(checks = [
   { name: 'openai', healthy: true, duration: 1 },
   { name: 'database', healthy: true, duration: 1 },
   { name: 'redis', healthy: true, duration: 1 },
+  { name: 'public-provider-admission', healthy: true, duration: 1 },
   { name: 'startup', healthy: true, duration: 1 }
 ]) {
   return {
@@ -403,7 +404,8 @@ describe('railway-production-smoke-check', () => {
         { name: 'openai', healthy: true },
         { name: 'database', healthy: true },
         { name: 'redis', healthy: true },
-        { name: 'redis', healthy: true }
+        { name: 'public-provider-admission', healthy: true },
+        { name: 'public-provider-admission', healthy: true }
       ]
     },
     {
@@ -412,6 +414,7 @@ describe('railway-production-smoke-check', () => {
         { name: 'openai', healthy: true },
         { name: 'database', healthy: true },
         { name: 'redis', healthy: true },
+        { name: 'public-provider-admission', healthy: true },
         { name: 'startup', healthy: true },
         { name: 'other', healthy: true }
       ]
@@ -438,6 +441,7 @@ describe('railway-production-smoke-check', () => {
   it.each([
     'database',
     'redis',
+    'public-provider-admission',
   ])('rejects top-level-ready production evidence when %s is unhealthy', async (dependencyName) => {
     const originalFetch = global.fetch;
     const checks = productionReadinessPayload().checks.map(check => (
