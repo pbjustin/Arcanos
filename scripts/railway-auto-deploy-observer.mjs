@@ -415,6 +415,45 @@ export async function verifyActiveDeployment(
 }
 
 /**
+ * Return the exact active successful deployment ID for pre-deploy evidence.
+ */
+export async function readActiveDeploymentId(
+  { serviceId, environmentName },
+  { runCommand = runBoundedRailwayCommand } = {},
+) {
+  const target = validateTarget({ serviceId, environmentName });
+  const output = await runCommand(
+    [
+      'service',
+      'status',
+      '--service',
+      target.serviceId,
+      '--environment',
+      target.environmentName,
+      '--json',
+    ],
+    RAILWAY_COMMAND_LIMITS.serviceStatus,
+  );
+  const response = parseJsonObject(
+    output,
+    'RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH',
+  );
+
+  if (response.status !== 'SUCCESS' || response.stopped !== false) {
+    throw safeError('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
+  }
+
+  try {
+    return requireUuid(
+      response.deploymentId,
+      'RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH',
+    );
+  } catch {
+    throw safeError('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
+  }
+}
+
+/**
  * Read bounded variable JSON for the exact service and environment.
  */
 export async function readRailwayVariables(
@@ -509,6 +548,16 @@ export async function main(argv = process.argv.slice(2)) {
       '--environment',
     ]);
     await verifyActiveDeployment(options);
+    return;
+  }
+
+  if (mode === 'active-id') {
+    const options = parseCliOptions(args, [
+      '--service',
+      '--environment',
+    ]);
+    const deploymentId = await readActiveDeploymentId(options);
+    process.stdout.write(`${deploymentId}\n`);
     return;
   }
 

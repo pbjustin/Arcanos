@@ -304,22 +304,21 @@ apply the migration and compatible code together, and do not allow an older
 binary to run concurrently. Likewise, attempt rollback only after all writers
 are stopped or confirmed compatible with the rolled-back schema.
 
-The repository-level Railway fail-safe for this rollout is the
+The repository-level Railway fail-safe used for this completed rollout was the
 `20260727-dag-snapshot-generation-v1` value of
 `ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` in
 `.github/workflows/railway-auto-deploy.yml`. With that hold active, successful
-`main` CI cannot automatically start the Railway deployment job. A deliberate
-manual dispatch requires the exact typed attestation
+`main` CI could not automatically start the Railway deployment job. A
+deliberate manual dispatch required the exact typed attestation
 `DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`; the workflow does
-not perform or verify the drain itself and deploys only its one configured
-service.
+not perform or verify the drain itself.
 
-Keep the hold active until the migration and compatible revision are verified
-on every DAG-writing process, all older replicas are gone, and post-deploy
-health is accepted. Keep it active through any rollback. Then set the marker to
-the exact sentinel `none` in a reviewed follow-up commit to restore normal
-automatic promotion. Deleting, blanking, or malforming the marker fails closed
-instead of silently lifting the hold.
+That rollout is now verified and the marker is the exact sentinel `none`, which
+restores normal worker-first web/worker pair promotion. For a future
+incompatible writer migration, set a reviewed non-`none` hold before the change
+reaches `main`, keep it active through rollout and any rollback, and return to
+`none` only after every writer is compatible and healthy. Deleting, blanking,
+or malforming the marker fails closed instead of silently lifting the hold.
 
 `migrations/20260727_dag_run_snapshot_generation_v1.rollback.sql` verifies
 the complete installed column and validated constraint before destructive

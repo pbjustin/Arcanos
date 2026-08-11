@@ -19,9 +19,9 @@ on:
 
 env:
   # Keep one explicit repository-owned state. "none" restores normal automatic
-  # promotion only after the coordinated rollout is verified in every writer.
+  # promotion after the coordinated rollout has been verified in every writer.
   # Missing, blank, or malformed values fail closed in the policy job.
-  ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: '20260727-dag-snapshot-generation-v1'
+  ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: 'none'
 
 permissions:
   contents: read
@@ -81,7 +81,7 @@ jobs:
       && github.event.workflow_run.head_repository.full_name == github.repository
       && github.event.workflow_run.head_sha == github.sha))
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 130
     concurrency:
       group: railway-auto-deploy-production
       cancel-in-progress: false
@@ -89,7 +89,8 @@ jobs:
       DEPLOY_REF: ${{ github.sha }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-      RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+      RAILWAY_WEB_SERVICE_ID: ${{ vars.RAILWAY_WEB_SERVICE_ID }}
+      RAILWAY_WORKER_SERVICE_ID: ${{ vars.RAILWAY_WORKER_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME }}
 
     steps:
@@ -161,123 +162,195 @@ jobs:
           echo "${bin_dir}" >> "${GITHUB_PATH}"
 
       - name: Validate deploy configuration
-        id: deploy_config
         env:
           RAILWAY_PROJECT_TOKEN_CONFIGURED: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN != '' }}
         run: |
           set -euo pipefail
           missing_fields=()
 
-          # //audit Assumption: repo-connected Railway deploys may already handle production promotion; failure risk: this workflow fails red on every main push when optional GitHub-side Railway credentials are intentionally unset; expected invariant: workflow_run auto-deploy only executes when all Railway credentials are configured; handling strategy: record missing configuration and skip auto mode cleanly while preserving manual-dispatch failures.
           if [ "${RAILWAY_PROJECT_TOKEN_CONFIGURED}" != "true" ]; then
             missing_fields+=("RAILWAY_PRODUCTION_PROJECT_TOKEN")
           fi
 
-          # //audit Assumption: project and service identifiers are required only for GitHub-driven Railway CLI deploys; failure risk: redundant automation path blocks branch protection even though Railway repo deploy already shipped; expected invariant: missing identifiers are surfaced explicitly; handling strategy: aggregate missing identifiers into one decision output.
           if [ -z "${RAILWAY_PROJECT_ID:-}" ]; then
             missing_fields+=("RAILWAY_PROJECT_ID")
           fi
 
-          if [ -z "${RAILWAY_SERVICE_ID:-}" ]; then
-            missing_fields+=("RAILWAY_SERVICE_ID")
+          if [ -z "${RAILWAY_WEB_SERVICE_ID:-}" ]; then
+            missing_fields+=("RAILWAY_WEB_SERVICE_ID")
+          fi
+
+          if [ -z "${RAILWAY_WORKER_SERVICE_ID:-}" ]; then
+            missing_fields+=("RAILWAY_WORKER_SERVICE_ID")
           fi
 
           if [ -z "${RAILWAY_ENVIRONMENT_NAME:-}" ]; then
-            echo "RAILWAY_ENVIRONMENT_NAME not set; defaulting to production"
-            echo "RAILWAY_ENVIRONMENT_NAME=production" >> "$GITHUB_ENV"
+            missing_fields+=("RAILWAY_ENVIRONMENT_NAME")
           fi
 
-          if [ "${#missing_fields[@]}" -eq 0 ]; then
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "missing_fields=" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "${#missing_fields[@]}" -ne 0 ]; then
+            missing_fields_csv="$(IFS=,; printf '%s' "${missing_fields[*]}")"
+            echo "Paired Railway production promotion is not configured. Missing: ${missing_fields_csv}"
+            exit 1
           fi
 
-          missing_fields_csv="$(IFS=,; printf '%s' "${missing_fields[*]}")"
-          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-          echo "missing_fields=${missing_fields_csv}" >> "$GITHUB_OUTPUT"
-          echo "GitHub-side Railway deploy is not configured. Missing: ${missing_fields_csv}"
+          uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          if [[ ! "${RAILWAY_PROJECT_ID}" =~ ${uuid_pattern} ]]; then
+            echo "RAILWAY_PROJECT_ID_INVALID"
+            exit 1
+          fi
+          if [[ ! "${RAILWAY_WEB_SERVICE_ID}" =~ ${uuid_pattern} ]]; then
+            echo "RAILWAY_WEB_SERVICE_ID_INVALID"
+            exit 1
+          fi
+          if [[ ! "${RAILWAY_WORKER_SERVICE_ID}" =~ ${uuid_pattern} ]]; then
+            echo "RAILWAY_WORKER_SERVICE_ID_INVALID"
+            exit 1
+          fi
+          if [ "${RAILWAY_WEB_SERVICE_ID}" = "${RAILWAY_WORKER_SERVICE_ID}" ]; then
+            echo "RAILWAY_PAIRED_SERVICE_IDS_NOT_DISTINCT"
+            exit 1
+          fi
 
-      - name: Fail manual deploy when Railway credentials are missing
-        if: github.event_name == 'workflow_dispatch' && steps.deploy_config.outputs.should_deploy != 'true'
-        run: |
-          set -euo pipefail
-          echo "Manual Railway deploy requested but configuration is incomplete: ${{ steps.deploy_config.outputs.missing_fields }}"
-          exit 1
+      - name: Validate Railway compatibility
+        run: node scripts/validate-railway-compatibility.js
 
-      - name: Skip auto deploy when Railway credentials are missing
-        if: github.event_name == 'workflow_run' && steps.deploy_config.outputs.should_deploy != 'true'
-        run: |
-          set -euo pipefail
-          echo "Skipping GitHub-driven Railway deploy; Railway repo deploy remains the active path."
-          echo "Missing configuration: ${{ steps.deploy_config.outputs.missing_fields }}"
-
-      - name: Verify Railway deploy access
-        if: steps.deploy_config.outputs.should_deploy == 'true'
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
-        run: |
-          set -euo pipefail
-          # //audit Assumption: GitHub Actions may use a project-scoped Railway token instead of a user-scoped account token; failure risk: `railway whoami` rejects valid deploy credentials and blocks automated deploys; expected invariant: the configured token can read project-scoped service state before deploy; handling strategy: probe service variables with the target service/environment pair.
-          node scripts/railway-auto-deploy-observer.mjs variables \
-            --service "${RAILWAY_SERVICE_ID}" \
-            --environment "${RAILWAY_ENVIRONMENT_NAME}" > /dev/null
-
-      - name: Deploy to Railway
-        if: steps.deploy_config.outputs.should_deploy == 'true'
+      - name: Verify paired Railway targets
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
-          deployment_id="$(node scripts/railway-auto-deploy-observer.mjs enqueue \
+          baseline_worker_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs active-id \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}")"
+          baseline_web_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs active-id \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}")"
+
+          worker_evidence="$(node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WORKER_SERVICE_ID}" \
+              node scripts/verify-railway-readiness-activation.mjs)"
+          case "${worker_evidence}" in
+            'role=worker readiness=ready evidence=direct'|'role=worker readiness=ready evidence=platform') ;;
+            *) echo "RAILWAY_WORKER_TARGET_ROLE_MISMATCH"; exit 1 ;;
+          esac
+
+          web_evidence="$(node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WEB_SERVICE_ID}" \
+              node scripts/verify-railway-readiness-activation.mjs)"
+          if [ "${web_evidence}" != 'role=web readiness=ready evidence=direct' ]; then
+            echo "RAILWAY_WEB_TARGET_ROLE_MISMATCH"
+            exit 1
+          fi
+
+          echo "BASELINE_WORKER_DEPLOYMENT_ID=${baseline_worker_deployment_id}" >> "$GITHUB_ENV"
+          echo "BASELINE_WEB_DEPLOYMENT_ID=${baseline_web_deployment_id}" >> "$GITHUB_ENV"
+          echo "Paired target preflight passed: worker_baseline=${baseline_worker_deployment_id} web_baseline=${baseline_web_deployment_id}."
+
+      - name: Deploy and verify Railway worker
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          worker_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs enqueue \
             --project "${RAILWAY_PROJECT_ID}" \
-            --service "${RAILWAY_SERVICE_ID}" \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}" \
             --deploy-ref "${DEPLOY_REF}")"
 
-          echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
-          echo "Queued exact Railway deployment ${deployment_id} for ${DEPLOY_REF}."
+          echo "WORKER_DEPLOYMENT_ID=${worker_deployment_id}" >> "$GITHUB_ENV"
+          echo "Queued exact Railway worker deployment ${worker_deployment_id} for ${DEPLOY_REF}."
 
-      - name: Wait for deployment success
-        if: steps.deploy_config.outputs.should_deploy == 'true'
+          node scripts/railway-auto-deploy-observer.mjs wait \
+            --deployment-id "${worker_deployment_id}" \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
+
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${worker_deployment_id}" \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
+
+          worker_evidence="$(node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WORKER_SERVICE_ID}" \
+              node scripts/verify-railway-readiness-activation.mjs)"
+          case "${worker_evidence}" in
+            'role=worker readiness=ready evidence=direct'|'role=worker readiness=ready evidence=platform') ;;
+            *) echo "RAILWAY_WORKER_TARGET_ROLE_MISMATCH"; exit 1 ;;
+          esac
+
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${worker_deployment_id}" \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
+
+          echo "role=worker deployment_id=${worker_deployment_id} status=SUCCESS tracked_healthcheck=/readyz tracked_drainingSeconds=60 effective_settings_readback=required"
+
+      - name: Deploy and verify Railway web pair
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
 
-          node scripts/railway-auto-deploy-observer.mjs wait \
-            --deployment-id "${DEPLOYMENT_ID}" \
-            --service "${RAILWAY_SERVICE_ID}" \
-            --environment "${RAILWAY_ENVIRONMENT_NAME}"
-
-          # Railway reports SUCCESS only after the configured deployment
-          # healthcheck returns 200. Static validation binds that platform
-          # observation to the repository-owned /readyz and 60-second drain
-          # contract. Public roles receive an immediate bounded direct request;
-          # a private worker retains the platform activation result rather than
-          # acquiring a public domain solely for this check.
-          env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js
-
-          node scripts/railway-auto-deploy-observer.mjs verify-active \
-            --deployment-id "${DEPLOYMENT_ID}" \
-            --service "${RAILWAY_SERVICE_ID}" \
-            --environment "${RAILWAY_ENVIRONMENT_NAME}"
-
-          node scripts/railway-auto-deploy-observer.mjs variables \
-            --service "${RAILWAY_SERVICE_ID}" \
+          web_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs enqueue \
+            --project "${RAILWAY_PROJECT_ID}" \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}" \
-            | env -u RAILWAY_TOKEN node scripts/verify-railway-readiness-activation.mjs
+            --deploy-ref "${DEPLOY_REF}")"
 
-          node scripts/railway-auto-deploy-observer.mjs verify-active \
-            --deployment-id "${DEPLOYMENT_ID}" \
-            --service "${RAILWAY_SERVICE_ID}" \
+          echo "WEB_DEPLOYMENT_ID=${web_deployment_id}" >> "$GITHUB_ENV"
+          echo "Queued exact Railway web deployment ${web_deployment_id} for ${DEPLOY_REF}."
+
+          node scripts/railway-auto-deploy-observer.mjs wait \
+            --deployment-id "${web_deployment_id}" \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}"
 
-          echo "deployment_id=${DEPLOYMENT_ID} status=SUCCESS tracked_healthcheck=/readyz tracked_drainingSeconds=60 effective_settings_readback=required"
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${web_deployment_id}" \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
 
-      - name: Post-deploy watchdog/budget regression check
-        if: steps.deploy_config.outputs.should_deploy == 'true'
+          web_evidence="$(node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WEB_SERVICE_ID}" \
+              node scripts/verify-railway-readiness-activation.mjs)"
+          if [ "${web_evidence}" != 'role=web readiness=ready evidence=direct' ]; then
+            echo "RAILWAY_WEB_TARGET_ROLE_MISMATCH"
+            exit 1
+          fi
+
+          worker_evidence="$(node scripts/railway-auto-deploy-observer.mjs variables \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            | env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WORKER_SERVICE_ID}" \
+              node scripts/verify-railway-readiness-activation.mjs)"
+          case "${worker_evidence}" in
+            'role=worker readiness=ready evidence=direct'|'role=worker readiness=ready evidence=platform') ;;
+            *) echo "RAILWAY_WORKER_TARGET_ROLE_MISMATCH"; exit 1 ;;
+          esac
+
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${web_deployment_id}" \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
+          node scripts/railway-auto-deploy-observer.mjs verify-active \
+            --deployment-id "${WORKER_DEPLOYMENT_ID}" \
+            --service "${RAILWAY_WORKER_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
+
+          echo "pair_status=SUCCESS worker_deployment_id=${WORKER_DEPLOYMENT_ID} web_deployment_id=${web_deployment_id} tracked_healthcheck=/readyz tracked_drainingSeconds=60 effective_settings_readback=required"
+
+      - name: Post-deploy web watchdog/budget regression check
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
         run: |
@@ -286,5 +359,5 @@ jobs:
             --since 15m \
             --lines 500 \
             --fail-on-budget-abort \
-            --service "${RAILWAY_SERVICE_ID}" \
+            --service "${RAILWAY_WEB_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}"
