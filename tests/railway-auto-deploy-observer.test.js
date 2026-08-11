@@ -5,6 +5,7 @@ import {
   RAILWAY_COMMAND_LIMITS,
   classifyDeploymentStatus,
   enqueueDeployment,
+  readActiveDeploymentId,
   readRailwayVariables,
   runBoundedRailwayCommand,
   verifyActiveDeployment,
@@ -340,6 +341,73 @@ describe('Railway exact-deployment observation', () => {
 });
 
 describe('Railway bounded activation evidence', () => {
+  it('captures the exact active successful deployment before mutation', async () => {
+    const runCommand = jest.fn(async () =>
+      JSON.stringify({
+        deploymentId: DEPLOYMENT_ID,
+        status: 'SUCCESS',
+        stopped: false,
+      }),
+    );
+
+    await expect(
+      readActiveDeploymentId(target, { runCommand }),
+    ).resolves.toBe(DEPLOYMENT_ID);
+    expect(runCommand).toHaveBeenCalledWith(
+      [
+        'service',
+        'status',
+        '--service',
+        SERVICE_ID,
+        '--environment',
+        ENVIRONMENT_NAME,
+        '--json',
+      ],
+      RAILWAY_COMMAND_LIMITS.serviceStatus,
+    );
+  });
+
+  it.each([
+    [
+      'invalid deployment ID',
+      JSON.stringify({
+        deploymentId: 'latest',
+        status: 'SUCCESS',
+        stopped: false,
+      }),
+    ],
+    [
+      'non-success state',
+      JSON.stringify({
+        deploymentId: DEPLOYMENT_ID,
+        status: 'DEPLOYING',
+        stopped: false,
+      }),
+    ],
+    [
+      'stopped deployment',
+      JSON.stringify({
+        deploymentId: DEPLOYMENT_ID,
+        status: 'SUCCESS',
+        stopped: true,
+      }),
+    ],
+    [
+      'missing stopped evidence',
+      JSON.stringify({
+        deploymentId: DEPLOYMENT_ID,
+        status: 'SUCCESS',
+      }),
+    ],
+    ['malformed JSON', '{'],
+  ])('rejects %s baseline evidence', async (_label, output) => {
+    await expect(
+      readActiveDeploymentId(target, {
+        runCommand: async () => output,
+      }),
+    ).rejects.toThrow('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
+  });
+
   it('requires the exact deployment to remain the active SUCCESS', async () => {
     const runCommand = jest.fn(async () =>
       JSON.stringify({

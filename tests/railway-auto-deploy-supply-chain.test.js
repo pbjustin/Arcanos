@@ -13,39 +13,39 @@ const RAILWAY_CLI_ARCHIVE_SHA256 =
 const RAILWAY_PROJECT_TOKEN_SECRET =
   '${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}';
 const RAILWAY_TOKEN_STEPS = [
-  'Verify Railway deploy access',
-  'Deploy to Railway',
-  'Wait for deployment success',
-  'Post-deploy watchdog/budget regression check',
+  'Verify paired Railway targets',
+  'Deploy and verify Railway worker',
+  'Deploy and verify Railway web pair',
+  'Post-deploy web watchdog/budget regression check',
 ];
 // Freeze the complete security-critical step bodies and checked-in executors
 // so appended behavior cannot inherit the project token without review.
 const INSTALL_STEP_RUN_SHA256 =
   '6eab131a43da49cf62f45780558cb138190c5e3566cd430d36a0713abef6c509';
 const DEPLOYMENT_OBSERVER_SOURCE_SHA256 =
-  '6a75386ce311ff2ef340ccab1fa1528ed1ad676de5172fd9fa34cde8d40fe626';
+  '333aa034eb78d49ad20a769703b9fda8dc3c7a94d0671365859cccf1938ce2a7';
 const TIMEOUT_WATCHDOG_SOURCE_SHA256 =
   '717a6cda82721d2eb53d6099f462c8738212785e288fbebc3d6855d222bd11e4';
 const READINESS_VERIFIER_SOURCE_SHA256 =
   'd17d5ae7e421728d2523f55da699226f9c3532e53f1745f01ad444768c211b66';
 const TOKEN_STEP_RUN_SHA256 = {
-  'Verify Railway deploy access':
-    '5594ef732d5aa25c48c5eee8f15c83e1aa2fdad33058074a301cb0cba2668868',
-  'Deploy to Railway':
-    '1a65dde7985f4786070584891d58f29a2280dd139fe81e2b4b36828cf3403c2d',
-  'Wait for deployment success':
-    '24996df67931a7a165387514cd6bc1f6d527ab108815b028ec2bcbb982e79dce',
-  'Post-deploy watchdog/budget regression check':
-    '74c9d80317bdfa3de7c1cb5e4083013a0f116646388fe5d1c8455142f81ed674',
+  'Verify paired Railway targets':
+    '025b924c1cb5203d7e46e872ea9339098b321d8f6e0b9d07cdf4f6ab2b50f755',
+  'Deploy and verify Railway worker':
+    'c201922bfc44f403375254ba14395d12f1569a08a3aed357a956308391354103',
+  'Deploy and verify Railway web pair':
+    '53603cd9ee0d5cf6781e544624dfb786d4d002b1cf2b6be347846be0ce87dc78',
+  'Post-deploy web watchdog/budget regression check':
+    '0b3aa83aede25811a0a0a99eedd7e61ea4b5554f8f14c26368a7961ce62f3c96',
 };
 const TOKEN_STEP_REQUIRED_COMMAND = {
-  'Verify Railway deploy access':
-    'node scripts/railway-auto-deploy-observer.mjs variables',
-  'Deploy to Railway':
+  'Verify paired Railway targets':
+    'node scripts/railway-auto-deploy-observer.mjs active-id',
+  'Deploy and verify Railway worker':
     'node scripts/railway-auto-deploy-observer.mjs enqueue',
-  'Wait for deployment success':
-    'node scripts/railway-auto-deploy-observer.mjs wait',
-  'Post-deploy watchdog/budget regression check':
+  'Deploy and verify Railway web pair':
+    'node scripts/railway-auto-deploy-observer.mjs enqueue',
+  'Post-deploy web watchdog/budget regression check':
     'node scripts/check-railway-timeout-regressions.js',
 };
 
@@ -196,7 +196,7 @@ describe('Railway auto-deploy supply-chain containment', () => {
     );
   });
 
-  it('exposes one project token only to the four Railway CLI steps', () => {
+  it('exposes one project token only to the four paired Railway steps', () => {
     const deployJob = job('deploy-production');
     const deploySteps = deployJob.steps ?? [];
     const validationStep = namedStep(
@@ -243,25 +243,22 @@ describe('Railway auto-deploy supply-chain containment', () => {
     expect(
       namedStep(
         'deploy-production',
-        'Post-deploy watchdog/budget regression check',
+        'Post-deploy web watchdog/budget regression check',
       ).run,
     ).toContain('node scripts/check-railway-timeout-regressions.js');
     expect(
       namedStep(
         'deploy-production',
-        'Post-deploy watchdog/budget regression check',
+        'Post-deploy web watchdog/budget regression check',
       ).run,
     ).not.toContain('npm run');
 
-    const waitScript = namedStep(
+    const workerScript = namedStep(
       'deploy-production',
-      'Wait for deployment success',
+      'Deploy and verify Railway worker',
     ).run;
-    expect(waitScript).toContain(
-      'env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js',
-    );
-    expect(waitScript).toContain(
-      '| env -u RAILWAY_TOKEN node scripts/verify-railway-readiness-activation.mjs',
+    expect(workerScript).toContain(
+      '| env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WORKER_SERVICE_ID}"',
     );
   });
 });

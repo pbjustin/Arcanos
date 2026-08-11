@@ -194,14 +194,16 @@ A separately approved local runtime check must use a deliberately isolated effec
 
 ## Deploy (Railway)
 
-The tracked `.github/workflows/railway-auto-deploy.yml` can deploy one configured
-service after successful CI on `main` or by manual dispatch. It skips automatic
-CLI deployment when its Railway credentials or identifiers are absent.
-Repository-connected Railway deployment and current web/worker service coverage
-are environment-dependent and must be confirmed separately.
+The tracked `.github/workflows/railway-auto-deploy.yml` promotes one explicit
+web/worker pair after successful CI on `main` or by manual dispatch. It requires
+`RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_NAME`, and distinct
+`RAILWAY_WEB_SERVICE_ID` and `RAILWAY_WORKER_SERVICE_ID` repository variables.
+Missing credentials or identifiers fail the promotion; there is no green skip
+or implicit environment default. Railway-native GitHub triggers remain disabled
+so an independent single-service deploy cannot bypass the pair.
 
 Successful CI means the aggregate verifier observed the exact required job set
-with every result equal to `success`, including the seven-suite PostgreSQL job.
+with every result equal to `success`, including the eight-suite PostgreSQL job.
 It is not proof of current production topology, deployed revision, live database
 schema, writer compatibility, or drain readiness; those remain separately
 verified promotion conditions.
@@ -223,50 +225,58 @@ protected GitHub environment/approval topology are separate defense-in-depth
 and repository-settings decisions, not guarantees provided by these workflow
 controls.
 
-The production job is limited to 60 minutes and serializes through the
+The production job is limited to 130 minutes and serializes through the
 `railway-auto-deploy-production` concurrency group without cancelling a run
 that has already started. A newer run waits while the active observer finishes;
 GitHub may still coalesce older runs that remain pending.
 
-The workflow captures the exact deployment ID returned by its own detached
-upload and observes deployment history for that ID only. Upload is bounded to
-10 minutes, exact-deployment observation to 45 elapsed minutes with ten-second
-polling, and every Railway status or variable subprocess has an explicit
-timeout and output cap. After that deployment reaches Railway `SUCCESS`, the
-workflow reruns the static Railway validator and rereads the same
-service/environment status, requiring that exact deployment to remain the
-active successful and non-stopped deployment. It also reads the exact target's
-resolved identity, rejects identity or live drain-variable drift, and makes a
-bounded, no-redirect `/readyz` request when that role has a public domain. A
-private worker retains Railway's first-200 activation result instead of being
-exposed solely for the workflow. Post-deploy log retrieval is limited to 30
-seconds and 4 MiB. This is one-time activation evidence, not continuous health
-monitoring or effective provider-setting readback.
+Static Railway compatibility validation runs before any remote mutation. The
+token preflight then captures both exact active successful baseline deployment
+IDs and validates the resolved identity and expected role for each target. It
+requires a direct current web readiness response; a private worker retains
+current Railway active-`SUCCESS` platform evidence instead of acquiring a
+public domain solely for this check. Promotion deploys and verifies the worker
+first, then uploads the same exact SHA to the web service. Worker-first ordering avoids
+a new web producer activating against an old queue consumer; ordinary releases
+must still preserve old/new interoperability, while incompatible migrations use
+the separate rollout hold and stopped/drained procedure.
 
-The detached upload remains a remote mutation. If upload times out before an ID
-is returned, the workflow is manually cancelled, the runner is lost, or an
-exact deployment remains nonterminal past the observer budget, it may continue
-remotely without the remaining activation checks. Reconcile that residual
-manually against the exact project, environment, service, and revision. The
-workflow intentionally does not call `railway down`, which cannot safely
-contain the captured in-flight deployment by exact ID.
+Each upload is bounded to 10 minutes, each exact-deployment observation to 45
+elapsed minutes with ten-second polling, and every Railway status or variable
+subprocess has an explicit timeout and output cap. Each returned ID must reach
+Railway `SUCCESS`, remain the active successful and non-stopped deployment, and
+pass exact identity/role/readiness checks. After web activation the workflow
+re-verifies both new deployment IDs together. A private worker retains
+Railway's first-200 activation result instead of being exposed solely for the
+workflow. Post-deploy web log retrieval is limited to 30 seconds and 4 MiB.
+This is one-time activation evidence, not continuous health monitoring or
+effective provider-setting readback.
+
+Each detached upload remains a remote mutation, and the pair is coordinated
+rather than provider-atomic. If upload times out before an ID is returned, the
+workflow is manually cancelled, the runner is lost, worker promotion succeeds
+but web promotion fails, or an exact deployment remains nonterminal past the
+observer budget, it may continue remotely without the remaining activation
+checks. Reconcile that residual manually against the logged baseline/attempt
+IDs and exact project, environment, service, and revision. The workflow does
+not guess a prior revision, use generic `railway redeploy`, or automatically
+roll application code across a potentially incompatible schema.
 
 The workflow also runs a repository-owned coordinated-writer policy before the
-production deployment job can enter its concurrency group. While
-`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` contains the active
+production deployment job can enter its concurrency group. The completed DAG
+snapshot-generation rollout now uses the inactive `none` sentinel, which admits
+normal paired promotion. If
+`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` is changed back to the active
 `20260727-dag-snapshot-generation-v1` ID, automatic `workflow_run` promotion is
-skipped without starting or cancelling a deployment. A manual dispatch fails
-unless the operator types the exact confirmation
+skipped without starting or cancelling a deployment. A manual dispatch then
+fails unless the operator types the exact confirmation
 `DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`.
 
 The repository policy cannot suppress Railway's separate GitHub-source
-auto-deploy trigger. Before a coordinated migration reaches `main`, disable
-native auto-deploy on every production DAG writer and verify the setting from
-each service. For the current topology, that means both `ARCANOS V2` and
-`ARCANOS Worker` must show **Auto deploy is disabled** while their running
-deployments remain unchanged. Re-enable those triggers only after the
-coordinated revision is accepted on every writer and the reviewed `none`
-follow-up has restored the normal repository policy.
+auto-deploy trigger. Keep native auto-deploy disabled on both `ARCANOS V2` and
+`ARCANOS Worker` while the GitHub paired workflow is canonical. Enabling either
+trigger would permit a source push to bypass worker-first ordering, exact-ID
+observation, and the shared production concurrency lock.
 
 The typed phrase does not stop a process, apply a migration, validate a target,
 or authorize production work. Before using it:
@@ -279,8 +289,8 @@ or authorize production work. Before using it:
 4. Drain or stop every writer and verify that an older binary cannot restart.
 5. Confirm the compatible revision and migration are the approved rollout pair.
 6. Dispatch the workflow only for the approved revision. The workflow deploys
-   one configured `RAILWAY_SERVICE_ID`; coordinate every other writer through
-   its separately approved mechanism.
+   the explicitly configured worker first and web second; inventory and
+   coordinate any additional writer through its separately approved mechanism.
 7. Verify the installed schema, exact revision on every writer, absence of old
    replicas, deployment health, and bounded application diagnostics.
 
@@ -360,8 +370,15 @@ The `railway:probe:fast-path` and `railway:probe:async` scripts are live operati
 
 Rollback:
 1. Treat rollback as a state-changing production operation and satisfy the approval gate.
-2. In the confirmed target's deployment history, identify the last known-good deployment.
-3. Redeploy only the approved version, then observe the targeted health and deployment status.
+2. For a paired-promotion failure, first decide whether the approved recovery
+   is to forward-complete the web role onto the verified worker revision or to
+   restore the worker's captured baseline. Confirm schema compatibility and any
+   coordinated-writer hold before either action; do not guess from `HEAD^` or
+   use a generic latest-deployment redeploy as a substitute.
+3. In each confirmed target's deployment history, identify the exact approved
+   deployment for that recovery decision.
+4. Redeploy only those approved versions, then repeat exact web/worker role,
+   readiness, active-deployment, and shared-revision verification.
 
 ## Troubleshooting
 - Build fails: run `npm ci --include=dev --no-audit --no-fund && npm run build` locally first.

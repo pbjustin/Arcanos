@@ -152,7 +152,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
 
   it('wires the repository hold through a preflight job before deploy concurrency', () => {
     expect(workflow.env?.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD).toBe(
-      ACTIVE_HOLD,
+      INACTIVE_ROLLOUT_HOLD,
     );
     expect(Object.keys(workflow.jobs ?? {})).toEqual([
       'rollout-policy',
@@ -188,7 +188,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
       group: 'railway-auto-deploy-production',
       'cancel-in-progress': false,
     });
-    expect(deployJob['timeout-minutes']).toBe(60);
+    expect(deployJob['timeout-minutes']).toBe(130);
   });
 
   it('runs privileged promotion only from trusted default-branch push provenance', () => {
@@ -338,10 +338,10 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     );
 
     const deployStepNames = [
-      'Verify Railway deploy access',
-      'Deploy to Railway',
-      'Wait for deployment success',
-      'Post-deploy watchdog/budget regression check',
+      'Verify paired Railway targets',
+      'Deploy and verify Railway worker',
+      'Deploy and verify Railway web pair',
+      'Post-deploy web watchdog/budget regression check',
     ];
     for (const stepName of deployStepNames) {
       expect(namedStep('deploy-production', stepName)).toBeDefined();

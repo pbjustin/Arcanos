@@ -31,32 +31,71 @@ function namedStep(name) {
 }
 
 describe('Railway role-aware deployment evidence', () => {
-  it('binds Railway SUCCESS to the exact deployment created by this upload', () => {
+  it('requires distinct explicit web and worker targets and never green-skips missing configuration', () => {
+    const deployJob = workflow.jobs?.['deploy-production'] ?? {};
+    const validation = namedStep('Validate deploy configuration').run ?? '';
+
+    expect(deployJob.env).toMatchObject({
+      RAILWAY_PROJECT_ID: '${{ vars.RAILWAY_PROJECT_ID }}',
+      RAILWAY_WEB_SERVICE_ID: '${{ vars.RAILWAY_WEB_SERVICE_ID }}',
+      RAILWAY_WORKER_SERVICE_ID: '${{ vars.RAILWAY_WORKER_SERVICE_ID }}',
+      RAILWAY_ENVIRONMENT_NAME: '${{ vars.RAILWAY_ENVIRONMENT_NAME }}',
+    });
+    expect(deployJob.env?.RAILWAY_SERVICE_ID).toBeUndefined();
+    expect(validation).toContain('RAILWAY_WEB_SERVICE_ID');
+    expect(validation).toContain('RAILWAY_WORKER_SERVICE_ID');
+    expect(validation).toContain('RAILWAY_ENVIRONMENT_NAME');
+    expect(validation).toContain('RAILWAY_PAIRED_SERVICE_IDS_NOT_DISTINCT');
+    expect(validation).not.toContain('defaulting to production');
+    expect(validation).not.toContain('should_deploy=false');
+    expect(deploymentSteps().map(step => step.name)).not.toContain(
+      'Skip auto deploy when Railway credentials are missing',
+    );
+  });
+
+  it('promotes and observes the exact worker deployment before the exact web deployment', () => {
     const steps = deploymentSteps();
     const names = steps.map(step => step.name);
 
-    expect(names.indexOf('Deploy to Railway')).toBeLessThan(
-      names.indexOf('Wait for deployment success'),
+    expect(names.indexOf('Validate Railway compatibility')).toBeLessThan(
+      names.indexOf('Verify paired Railway targets'),
     );
-    expect(names).not.toContain('Capture current deployment identity');
-    expect(names).not.toContain('Verify role-aware readiness activation');
+    expect(names.indexOf('Verify paired Railway targets')).toBeLessThan(
+      names.indexOf('Deploy and verify Railway worker'),
+    );
+    expect(names.indexOf('Deploy and verify Railway worker')).toBeLessThan(
+      names.indexOf('Deploy and verify Railway web pair'),
+    );
 
-    const deploy = namedStep('Deploy to Railway').run;
-    expect(deploy).toContain(
+    const worker = namedStep('Deploy and verify Railway worker').run;
+    expect(worker).toContain(
       'node scripts/railway-auto-deploy-observer.mjs enqueue',
     );
-    expect(deploy).toContain('DEPLOYMENT_ID');
-    expect(deploy).toContain('--deploy-ref "${DEPLOY_REF}"');
-
-    const wait = namedStep('Wait for deployment success').run;
-    expect(wait).toContain(
+    expect(worker).toContain('WORKER_DEPLOYMENT_ID');
+    expect(worker).toContain('--service "${RAILWAY_WORKER_SERVICE_ID}"');
+    expect(worker).toContain('--deploy-ref "${DEPLOY_REF}"');
+    expect(worker).toContain(
       'node scripts/railway-auto-deploy-observer.mjs wait',
     );
-    expect(wait).toContain('--deployment-id "${DEPLOYMENT_ID}"');
-    expect(wait).not.toContain('railway deployment list');
-    expect(wait).not.toContain('seq ');
-    expect(wait).not.toContain("readFileSync(0, 'utf8')");
-    expect(wait).not.toMatch(/echo "DEPLOYMENT_ID=.*GITHUB_ENV/u);
+    expect(worker).toContain('--deployment-id "${worker_deployment_id}"');
+
+    const web = namedStep('Deploy and verify Railway web pair').run;
+    expect(web).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs enqueue',
+    );
+    expect(web).toContain('WEB_DEPLOYMENT_ID');
+    expect(web).toContain('--service "${RAILWAY_WEB_SERVICE_ID}"');
+    expect(web).toContain('--deploy-ref "${DEPLOY_REF}"');
+    expect(web).toContain(
+      'node scripts/railway-auto-deploy-observer.mjs wait',
+    );
+    expect(web).toContain('--deployment-id "${web_deployment_id}"');
+
+    for (const script of [worker, web]) {
+      expect(script).not.toContain('railway deployment list');
+      expect(script).not.toContain('seq ');
+      expect(script).not.toContain("readFileSync(0, 'utf8')");
+    }
 
     expect(deploymentObserverSource).toContain("'--detach'");
     expect(deploymentObserverSource).toContain(
@@ -71,54 +110,67 @@ describe('Railway role-aware deployment evidence', () => {
     expect(deploymentObserverSource).not.toContain('shell: true');
   });
 
-  it('binds post-deploy evidence to an exact-target readiness request and drain contract', () => {
+  it('preflights and re-verifies both exact roles and active deployments', () => {
     const steps = deploymentSteps();
     const names = steps.map(step => step.name);
-    const evidenceName = 'Wait for deployment success';
+    const preflight = namedStep('Verify paired Railway targets').run;
+    const worker = namedStep('Deploy and verify Railway worker').run;
+    const web = namedStep('Deploy and verify Railway web pair').run;
 
-    expect(names.indexOf(evidenceName)).toBeLessThan(
-      names.indexOf('Post-deploy watchdog/budget regression check'),
+    expect(names.indexOf('Deploy and verify Railway web pair')).toBeLessThan(
+      names.indexOf('Post-deploy web watchdog/budget regression check'),
     );
 
-    const evidence = namedStep(evidenceName).run;
-    expect(evidence).toContain(
-      'env -u RAILWAY_TOKEN node scripts/validate-railway-compatibility.js',
+    expect(preflight.match(
+      /railway-auto-deploy-observer\.mjs active-id/gu,
+    )).toHaveLength(2);
+    expect(preflight).toContain('BASELINE_WORKER_DEPLOYMENT_ID');
+    expect(preflight).toContain('BASELINE_WEB_DEPLOYMENT_ID');
+    expect(preflight).toContain('role=worker readiness=ready');
+    expect(preflight).toContain('role=web readiness=ready evidence=direct');
+
+    for (const evidence of [worker, web]) {
+      expect(evidence).toContain(
+        'node scripts/railway-auto-deploy-observer.mjs verify-active',
+      );
+      expect(evidence).toContain(
+        'node scripts/railway-auto-deploy-observer.mjs variables',
+      );
+      expect(evidence).toContain('verify-railway-readiness-activation.mjs');
+      expect(evidence).not.toContain('variables_json=');
+    }
+    expect(worker).toContain('role=worker readiness=ready');
+    expect(web).toContain('role=web readiness=ready evidence=direct');
+    expect(web).toContain('--deployment-id "${WORKER_DEPLOYMENT_ID}"');
+    expect(web).toContain('--deployment-id "${web_deployment_id}"');
+    expect(web).toContain('pair_status=SUCCESS');
+    expect(web).toContain('tracked_healthcheck=/readyz');
+    expect(web).toContain('tracked_drainingSeconds=60');
+    expect(web).toContain('effective_settings_readback=required');
+
+    expect(preflight).toMatch(
+      /railway-auto-deploy-observer\.mjs variables.+env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="\$\{RAILWAY_WORKER_SERVICE_ID\}".+verify-railway-readiness-activation\.mjs/su,
     );
-    expect(evidence).toContain(
-      'node scripts/railway-auto-deploy-observer.mjs verify-active',
+    expect(preflight).toMatch(
+      /railway-auto-deploy-observer\.mjs variables.+env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="\$\{RAILWAY_WEB_SERVICE_ID\}".+verify-railway-readiness-activation\.mjs/su,
     );
-    expect(evidence).toContain(
-      'node scripts/railway-auto-deploy-observer.mjs variables',
-    );
-    expect(evidence).toContain('DEPLOYMENT_ID');
-    expect(evidence).toContain('verify-railway-readiness-activation.mjs');
-    expect(evidence).toMatch(
-      /railway-auto-deploy-observer\.mjs variables.+env -u RAILWAY_TOKEN node scripts\/verify-railway-readiness-activation\.mjs/su,
-    );
-    expect(evidence).not.toContain('variables_json=');
-    expect(evidence).toMatch(
-      /railway-auto-deploy-observer\.mjs wait.+railway-auto-deploy-observer\.mjs verify-active.+railway-auto-deploy-observer\.mjs variables.+verify-railway-readiness-activation\.mjs.+railway-auto-deploy-observer\.mjs verify-active/su,
-    );
-    expect(evidence).toContain('tracked_healthcheck=/readyz');
-    expect(evidence).toContain('tracked_drainingSeconds=60');
-    expect(evidence).toContain('effective_settings_readback=required');
   });
 
   it('serializes production observers and bounds every remote read', () => {
     const deployJob = workflow.jobs?.['deploy-production'] ?? {};
-    const access = namedStep('Verify Railway deploy access').run ?? '';
-    const deploy = namedStep('Deploy to Railway').run ?? '';
-    const wait = namedStep('Wait for deployment success').run ?? '';
+    const access = namedStep('Verify paired Railway targets').run ?? '';
+    const worker = namedStep('Deploy and verify Railway worker').run ?? '';
+    const web = namedStep('Deploy and verify Railway web pair').run ?? '';
 
     expect(deployJob.concurrency).toEqual({
       group: 'railway-auto-deploy-production',
       'cancel-in-progress': false,
     });
-    expect(deployJob['timeout-minutes']).toBe(60);
+    expect(deployJob['timeout-minutes']).toBe(130);
     expect(access).toContain(
       'node scripts/railway-auto-deploy-observer.mjs variables',
     );
-    expect(`${access}\n${deploy}\n${wait}`).not.toMatch(
+    expect(`${access}\n${worker}\n${web}`).not.toMatch(
       /^\s*railway\s+/mu,
     );
     expect(deploymentObserverSource).toContain('timeout: limits.timeoutMs');
