@@ -168,9 +168,10 @@ Migration-local implementation notes live beside their artifacts under
 - [2026-04-29 refactor audit](audits/reusable-code/2026-04-29/refactor-audit.md)
   — relocated baseline snapshot retained only as historical evidence.
 - [2026-07-28 repository-health audit](audits/repository-health/2026-07-28/progress.md)
-  — compact current dashboard through audit-scoped merged and promoted PR
-  #1427; intervening Arcanos Gaming PRs #1425/#1426 are present in #1427's base
-  but excluded from this audit lineage, with separate
+  — compact current dashboard through the latest product slice in PR #1427
+  and paired-promotion restoration in PRs #1428–#1430; intervening Arcanos
+  Gaming PRs #1425/#1426 are present in #1427's base but excluded from this
+  audit lineage, with separate
   [findings register](audits/repository-health/2026-07-28/findings.md),
   [evidence](audits/repository-health/2026-07-28/evidence.md), and
   [historical narrative](audits/repository-health/2026-07-28/history-through-2026-07-31.md)

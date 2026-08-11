@@ -1,7 +1,9 @@
 # Repository health-audit progress
 
-Status: current non-GPT-OSS dashboard through merged and promoted audit-scoped
-PR [#1427](https://github.com/pbjustin/Arcanos/pull/1427)
+Status: current non-GPT-OSS dashboard through the latest product slice in
+PR [#1427](https://github.com/pbjustin/Arcanos/pull/1427) and merged,
+automatically promoted delivery-control PR
+[#1430](https://github.com/pbjustin/Arcanos/pull/1430)
 
 Original audit capture: 2026-07-28
 
@@ -17,9 +19,9 @@ action. GPT-OSS is explicitly excluded from the active queue.
 
 - This file is the compact current dashboard and implementation order.
 - [findings.md](findings.md) is the normalized open/closed finding register
-  through audit-scoped PR #1427.
-- [evidence.md](evidence.md) is the PR, validation, preview, merge, and bounded
-  production-verification ledger through audit-scoped PR #1427.
+  through audit-scoped product PR #1427 and delivery PRs #1428–#1430.
+- [evidence.md](evidence.md) is the PR, validation, preview, merge, production,
+  and provider-state ledger through delivery PR #1430.
 - [history-through-2026-07-31.md](history-through-2026-07-31.md) preserves the
   former long-form tracked narrative and its dated anchors.
 
@@ -31,16 +33,96 @@ dossier; they should not append another full chronological audit.
 
 | Area | Current state |
 | --- | --- |
-| Audit closure anchor on `main` | PR #1427 merge `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e`; tree `626e623852c70481cbb8a76b6ad9113631ddde18`. A 2026-08-11 fetch found `origin/main` at this exact merge. Its base `b270997a356071fdfa63823ca67beabde897b67f` contains unrelated Arcanos Gaming PRs #1425/#1426; #1427's audit slice remained isolated from Gaming behavior |
-| PR #1427 source identity | Base `b270997a356071fdfa63823ca67beabde897b67f`; final reviewed head `0e3c1d6ebbb4523a71728f8b1d847b27ad23053a`; merge `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` at `2026-08-11T07:16:23Z`; head and merge are tree-identical |
+| Audit closure anchor on `main` | PR #1430 merge `98d6ad998e936d4db26b1330b28a9edff1331018`; tree `23a9f5e5853f60508b25b8f7e2148026304c98be`; fetched on 2026-08-11. The latest product slice remains PR #1427. Unrelated Arcanos Gaming PRs #1425/#1426 are present in #1427's base and remain excluded |
+| Delivery-control source identity | PR #1428 head `fcabc28398c4f943fa9529bdb9b10570609d0b1f`, merge `c3763fe9a970503baab5f19f1fb1490b52abb622`; PR #1429 head `efe6e216d3fb9bba7d5d3dca56b5b301a0d56174`, merge `8361e37263d6b0a9c32c15b76c1999fd80bf98bb`; PR #1430 head `08bd9d2c15805a465700d5ea064b93f80cfd5613`, merge `98d6ad998e936d4db26b1330b28a9edff1331018`. Each squash merge is tree-identical to its reviewed head |
 | Latest closed product slice | Successful non-GPT terminal retention: completed/cancelled Ask and DAG-node rows receive bounded database-clock retention at every authoritative terminal writer; deterministic cleanup preserves active idempotency, diagnostics/accounting observation windows, and unstamped legacy rows |
 | PR #1427 final-head evidence | CI/CD run `31463630148`, API Endpoint Tests `31463630146`, Documentation Audit `31463630135`, PR CI `31463630141`, approval run `31463629006`, Codecov patch, and both Railway preview contexts passed at final head `0e3c1d6e`. GitHub reported `CLEAN` and `MERGEABLE` with no unresolved review threads; the passive preview did not exercise PostgreSQL retention |
-| PR #1427 exact-merge evidence | CI/CD run `31468287598` passed all 13 jobs, including PostgreSQL fencing, `Deployment Readiness`, and `All Checks Complete`; Documentation Audit `31468287552` passed 327/327. Repository Registration `31468287557` was workflow-green although its backend request returned HTTP 400; auxiliary documentation analysis `31468287618` repeated the known missing-secret fixture failure. Railway Auto Deploy `31469237913` enforced the coordinated-writer hold and skipped production. The initial repository-integration fan-out separately produced 18 non-production deployments across nine environments with five successes and 13 failures; all nine deployment records were inactive at the bounded 2026-08-11 readback |
-| Production credit | An authorized 2026-08-11 coordinated promotion drained both prior writers and deployed exact merge `2db3d41a` to web deployment `8fce3a96-e7c2-408c-9eae-f28e55dce823` and worker deployment `71f3c370-9054-43f7-a44f-dd37fe7e6147`. Both roles reported the exact commit, the tracked `/readyz`/300-second/60-second/integrity-launcher contract, and HTTP 200 readiness. A read-only database check found zero active jobs, the validated DAG snapshot-generation schema, and all 279 unstamped legacy rows still protected. No live new-row retention stamp or eligible-row deletion was exercised |
-| Promotion control | Automatic promotion was blocked by the hard-coded hold `20260727-dag-snapshot-generation-v1`; Railway also had zero production deployment triggers for either application service, repository variable `RAILWAY_SERVICE_ID` selected only web, and required Actions secret `RAILWAY_PRODUCTION_PROJECT_TOKEN` was absent. The authorized promotion therefore deployed web and worker explicitly. Automatic paired promotion remains disabled until a separately reviewed change retires the hold, configures the credential, and supplies a two-role mechanism |
-| Current implementation slice | Successful non-GPT terminal retention is closed in merged source and the exact #1427 merge is deployed; live writer/deletion behavior remains unexercised |
+| Exact-merge delivery evidence | PR #1430 CI/CD run `31529904593` passed all 13 jobs, including Railway Compatibility, `Deployment Readiness`, and `All Checks Complete`; Documentation Audit `31529904589` and Repository Registration `31529904597` passed. Auxiliary documentation analysis `31529904611` repeated the known missing-secret fixture failure and did not gate promotion |
+| Production credit | PR #1427 retains its separate manual-promotion/readiness/schema/279-row protection evidence and no live retention stamp/deletion credit. Automatic run `31531116356` then promoted exact #1430 merge to worker deployment `d20a6833-2448-4677-89df-84e46a0d2567` and web deployment `e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41`; both exact IDs became active, role/readiness and joint active-ID verification passed, and the strict 15-minute/500-line watchdog found no `/ask` timeout or budget-abort regression |
+| Promotion control | PR #1428 retired the tracked hold to exact sentinel `none`, introduced one serialized worker-first pair with exact-ID observation, and required explicit project/environment/web/worker configuration plus a dedicated production project-token secret. PRs #1429/#1430 corrected readiness and deployment-history drift exposed by the first two fail-closed runs. Native Railway deployment triggers remain disabled to avoid duplicate independent releases; GitHub is the sole automatic promotion path. The obsolete web-only repository variable `RAILWAY_SERVICE_ID` was removed after acceptance |
+| Latest product slice | Successful non-GPT terminal retention is closed in merged source and was present in the dated exact #1430 automatic-acceptance pair; live writer/deletion behavior remains unexercised |
 | Next active implementation slice | Predictive/reactive self-heal approval |
 | Explicit exclusion | GPT-OSS remains outside this queue and is not made ready by any result in this report |
+
+## PRs #1428–#1430 closure — automatic paired promotion
+
+PR #1428 restored one GitHub-controlled, serialized production pair. Its exact
+base was `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e`, reviewed head
+`fcabc28398c4f943fa9529bdb9b10570609d0b1f`, merge
+`c3763fe9a970503baab5f19f1fb1490b52abb622`, and reviewed/merged tree
+`ddfe9047d5060fd768ffa6b900da598b129a1c6f`. It changed nine files
+(+505/-232) and merged at `2026-08-11T18:29:15Z`. The workflow now requires
+the exact inactive rollout-hold sentinel `none`, explicit project and
+environment identity, distinct web and worker service IDs, and a dedicated
+production project-token secret. It captures both active baselines, validates
+role/readiness before mutation, deploys and verifies worker first, then web,
+rechecks both exact active IDs together, and runs the web-only timeout/budget
+watchdog. Native Railway deployment triggers remain disabled so a merge cannot
+start duplicate independent service releases.
+
+PR #1428 final-head CI and exact-merge CI were green, but its first automatic
+run [`31524244647`](https://github.com/pbjustin/Arcanos/actions/runs/31524244647)
+failed safely in preflight: production web `/readyz` correctly exposed
+`openai`, `database`, `redis`, `public-provider-admission`, and `startup`, while
+the repository verifier still expected the earlier four-name contract. No
+deployment was enqueued and the #1427 pair remained active.
+
+PR #1429 synchronized the activation verifier, production smoke checker,
+negative tests, pinned digest, and maintained readiness documentation with the
+five-check contract. Its reviewed head was
+`efe6e216d3fb9bba7d5d3dca56b5b301a0d56174`, merge
+`8361e37263d6b0a9c32c15b76c1999fd80bf98bb`, and shared tree
+`947a39b7fa7983baaa7c402c8da8e3c592e56a6c`; it changed six files (+20/-5)
+and merged at `2026-08-11T19:10:10Z`. Exact-merge CI run `31526489055`
+passed all 13 jobs. Automatic run
+[`31527715994`](https://github.com/pbjustin/Arcanos/actions/runs/31527715994)
+then passed preflight and enqueued exact worker deployment
+`1732d5d2-9433-4fbd-b2a0-db2e9534f87d`, but the first observation poll asked
+the long-lived service for 100 deployment records and exceeded its fixed 256
+KiB command-output cap. Web was not enqueued. The detached worker later became
+active; both roles stayed ready, and the intervening revisions contained only
+workflow, scripts, docs, and tests, so the temporary worker-new/web-old pair
+did not cross an application, worker, package, or schema compatibility change.
+
+PR #1430 bounded exact-deployment observation to the newest 20 records while
+retaining exact-ID matching, the 256 KiB output cap, ten-second polling, and the
+45-minute elapsed-time budget. A live credential-safe size read found 20
+worker records occupied 60,507 bytes and contained the just-enqueued ID. The
+reviewed head was `08bd9d2c15805a465700d5ea064b93f80cfd5613`, merge
+`98d6ad998e936d4db26b1330b28a9edff1331018`, and shared tree
+`23a9f5e5853f60508b25b8f7e2148026304c98be`; it changed three files (+7/-3)
+and merged at `2026-08-11T19:50:47Z`. Copilot's one actionable thread asked
+the test to consume the exported limit contract; final head `08bd9d2c` made
+that change, refreshed the pinned source digest, replied to the thread, and
+resolved it. Required PR checks and exact-merge CI run `31529904593` passed.
+
+Automatic acceptance run
+[`31531116356`](https://github.com/pbjustin/Arcanos/actions/runs/31531116356)
+started from the exact #1430 merge without manual dispatch. Policy job
+`93911098579` and production job `93911152941` passed. Preflight recorded
+worker baseline `1732d5d2-9433-4fbd-b2a0-db2e9534f87d` and web baseline
+`8fce3a96-e7c2-408c-9eae-f28e55dce823`, then activated:
+
+- worker `d20a6833-2448-4677-89df-84e46a0d2567` for exact merge `98d6ad99`;
+- web `e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41` for the same exact merge.
+
+Both role/readiness checks, both exact active-ID checks, and the final joint
+pair check passed. The strict post-deploy watchdog scanned 500 web log lines
+over 15 minutes and found no `/ask` timeout regression or budget-abort signal.
+The run completed at `2026-08-11T20:13:27Z`.
+
+GitHub now retains the four canonical Railway repository variables:
+`RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_NAME`,
+`RAILWAY_WEB_SERVICE_ID`, and `RAILWAY_WORKER_SERVICE_ID`; the obsolete web-only
+`RAILWAY_SERVICE_ID` variable was removed after acceptance. The dedicated
+`RAILWAY_PRODUCTION_PROJECT_TOKEN` secret remains configured by name; its value
+was never logged or written to the repository. The pair is coordinated,
+worker-first, and serialized, but Railway does not make it provider-atomic. A
+worker success followed by web failure still requires reviewed forward
+completion or exact-baseline reconciliation; the workflow intentionally does
+not guess a rollback or redeploy application code across an unknown schema
+state. No database, provider/model, or live-memory operation was part of this
+delivery-control restoration.
 
 ## PR #1427 closure — successful non-GPT terminal retention
 
@@ -96,10 +178,10 @@ failed on the already recorded missing
 `31469237913` enforced hold `20260727-dag-snapshot-generation-v1` and skipped
 production job `93708761589`.
 
-Railway repository integration separately started 18 web/worker deployments
-across nine non-production environments. That initial fan-out produced five
-successes and 13 failures; none targeted production, and all nine deployment
-records were inactive at the bounded 2026-08-11 readback. Preview environment
+GitHub recorded nine non-production #1427 merge-SHA deployment records. Their
+initial attempts failed, the same pattern was already present on the base, none
+targeted production, and all nine records were inactive at the bounded
+2026-08-11 readback. Preview environment
 `2b806b26-50de-4803-b710-b1fab9956ebb` served the exact head through green web
 deployment `05b35321-df86-4ac0-ac1f-68a895ac9057` and passive-worker deployment
 `111f0a3d-46ae-44d5-b5ef-3d3b9a2b40de`; cleanup run `31468287960` passed and
@@ -266,11 +348,11 @@ and current-source review.
 
 | Follow-up | Deadline or trigger | Current disposition |
 | --- | --- | --- |
-| Repair the auxiliary Analyze Documentation Updates startup fixture by supplying its required sealed `ARCANOS_JOB_READ_CAPABILITY_SECRET` test value | Next workflow-maintenance slice | Still open. Exact-merge run `31468287618` for #1427 repeated the inherited fixture-only failure; maintained Documentation Audit `31468287552` passed 327/327 |
+| Repair the auxiliary Analyze Documentation Updates startup fixture by supplying its required sealed `ARCANOS_JOB_READ_CAPABILITY_SECRET` test value | Next workflow-maintenance slice | Still open. Exact-merge runs `31468287618`, `31522967336`, `31526489082`, and `31529904611` repeated the inherited fixture-only failure through #1430; each maintained Documentation Audit and required main-CI gate passed |
 | Re-review and remove the temporary npm-audit platform-profile exception rather than extending it silently | 2026-08-10 | Deadline reached and the follow-up remains open; no silent extension is authorized. PR #1422 patched Hono to `4.12.34` and removed the obsolete Hono and `@hono/node-server` exceptions; the remaining exact platform profiles still require re-review |
 | Reverify preview teardown and other provider lifecycle state | Before claiming cleanup | The #1422 and #1423 preview absences were previously attested. A 2026-08-10 Railway inventory did not contain #1424 preview `275ef5a6-1c59-4820-9330-40ef34465ec3`, and both former preview health URLs returned HTTP 404. #1427 preview cleanup run `31468287960` passed after merge and the transient preview deployment was reported inactive; this supports preview teardown, not deletion of every historical artifact. #1427's nine non-production merge-SHA deployment records were also inactive at the 2026-08-11 GitHub readback |
-| Restore automatic paired production promotion | Before expecting a merge to promote automatically | The repository workflow is intentionally blocked by hold `20260727-dag-snapshot-generation-v1`; live Railway readback found zero production deployment triggers, `RAILWAY_SERVICE_ID` names only web, and required Actions secret `RAILWAY_PRODUCTION_PROJECT_TOKEN` is absent. A separately reviewed operational change must revalidate all writers, retire the hold with its exact `none` sentinel, configure the credential, deploy/verify both web and worker, and define rollback behavior. This reconciliation did not change automatic-promotion policy |
-| Reverify production topology, edge policy, logs, retained-job inventory, and drain readiness | Before the next audit-scoped production promotion | Completed for #1427 on 2026-08-11: both previous writers drained, both exact-merge roles activated and returned ready, logs were boundedly reviewed, the DAG fencing schema remained valid, zero jobs were active, and all 279 legacy-null rows remained protected. A future promotion still requires fresh target/readiness/drain checks; live new-row retention and deletion remain unexercised |
+| Restore automatic paired production promotion | Before expecting a merge to promote automatically | Closed by PRs #1428–#1430. The hold is exact sentinel `none`; a dedicated production project-token secret and explicit project/environment/web/worker variables are configured; native Railway triggers remain disabled; and run `31531116356` automatically promoted and jointly verified exact worker/web merge `98d6ad99`. The obsolete web-only repository variable was removed. The documented non-atomic partial-failure reconciliation remains an operational residual |
+| Reverify production topology, edge policy, logs, retained-job inventory, and drain readiness | Before the next audit-scoped production promotion | #1427 retains the bounded job/schema/279-row protection evidence. Automatic #1430 acceptance freshly verified exact target/role/readiness/active-ID state and the strict post-deploy timeout/budget watchdog for both deployed roles. Live new-row retention/deletion, edge-policy detail, log-retention duration, and a measured provider-level rollback remain unexercised |
 
 ## Production and rollout state
 
@@ -311,16 +393,27 @@ allowlisted family. The 279 legacy rows therefore remained protected. No live
 writer was invoked and no row was aged or deleted, so production deployment is
 verified while live retention stamping and cleanup deletion are not.
 
-Automatic promotion did not fail because required CI was red. The
-`workflow_run` policy deliberately returned `automatic_promotion_blocked`
-under hard-coded hold `20260727-dag-snapshot-generation-v1`, leaving production
-job `93708761589` skipped. Railway had no production deployment trigger for
-either application service, repository variable `RAILWAY_SERVICE_ID` selected
-only web, and the required Actions secret `RAILWAY_PRODUCTION_PROJECT_TOKEN`
-was absent. The explicit two-role promotion bypassed neither readiness nor
-drain, but automatic paired promotion will remain absent until a reviewed
-follow-up retires the hold, configures the credential, and defines both roles.
-No such policy/configuration change was made here.
+That #1427 automatic run was blocked by policy rather than red required CI:
+the tracked hold still named `20260727-dag-snapshot-generation-v1`, no paired
+service selector or dedicated production project-token secret existed, and
+Railway-native triggers were absent. PR #1428 subsequently changed the hold to
+the exact inactive `none` sentinel and introduced the reviewed single-job,
+worker-first pair. Its first run failed before mutation on a stale four-check
+web-readiness contract. PR #1429 corrected the five-check contract; its run
+passed preflight and enqueued only the worker before the 100-record deployment
+history overflowed the bounded observer. That detached worker became active,
+while the old ready web remained active; no runtime/schema difference existed
+between those revisions.
+
+PR #1430 reduced the observation window to the newest 20 records and retained
+the exact-ID and fixed-output fail-closed checks. Automatic run `31531116356`
+then promoted exact merge `98d6ad998e936d4db26b1330b28a9edff1331018`
+to worker `d20a6833-2448-4677-89df-84e46a0d2567` and web
+`e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41`. Both roles and both active IDs were
+reverified together, and the post-deploy watchdog passed. GitHub now supplies
+the only automatic production trigger; both Railway-native triggers remain
+disabled. The obsolete repository variable `RAILWAY_SERVICE_ID` was removed
+after acceptance.
 
 The #1422 and #1423 merges each triggered 18 Railway repository-integration
 deployments across nine non-production environments, and #1424/#1427 produced
@@ -335,16 +428,17 @@ provider configuration, and promotion policy.
 | Dimension | Verdict |
 | --- | --- |
 | Architecture | Substantially improved. Executable dependency boundaries and cycle gates exist; remaining debt is localized to named coordination and transport seams rather than repository-wide spaghetti |
-| Correctness | Stronger database/job/DAG/Backstage/Research contracts, fail-closed required PostgreSQL/aggregate CI truth, backend-timeout truthfulness, protected-digest tooling, and prospective successful non-GPT terminal retention are merged through audit-scoped PR #1427. Self-heal approval and worker-budget semantics remain explicit work; live terminal stamping/deletion is not yet exercised |
+| Correctness | Stronger database/job/DAG/Backstage/Research contracts, fail-closed required PostgreSQL/aggregate CI truth, backend-timeout truthfulness, protected-digest tooling, and prospective successful non-GPT terminal retention are merged through audit-scoped PR #1427; delivery controls are reconciled through #1430. Self-heal approval and worker-budget semantics remain explicit work; live terminal stamping/deletion is not yet exercised |
 | Security | The scoped ingress, disclosure, admission, Backstage, Research, exact MCP body-cap, Hono remediation, backend-timeout truthfulness, protected-digest generation, and six-runtime-pin startup gate addressed by PRs #1409–#1424 plus #1427's privacy-bounded retention cleanup are closed in merged source. Broader dispatch/pre-admission parser, log/metric, Redis-integrity, and public-health residuals remain open in the finding register |
 | Scalability | Public provider admission, bounded DAG/Backstage/Research persistence, stale-recovery batching, Research aggregate cancellation, and bounded deterministic Ask/DAG terminal cleanup are present. Legacy-null cutover, deletion latency under live scale, replica-policy assumptions, and hard/advisory worker budgets still need explicit contracts or measured evidence |
 | Maintainability | Ownership and documentation improved materially. Large coordinators, duplicate transport contracts, warnings, and stale/manual tests remain isolated cleanup candidates |
-| Delivery and operations | Exact #1427 web/worker production promotion, readiness, schema, and legacy protection are verified. Automatic promotion is still disabled by the coordinated-writer hold, absent Railway triggers, a web-only workflow service selector, and the missing production project-token secret; stale non-production fan-out and the auxiliary documentation-analysis startup fixture remain operational debt |
+| Delivery and operations | Exact #1427 product/schema/legacy protection remains verified, and #1430 was automatically promoted as one exact worker-first pair with joint activation/readiness and watchdog evidence. The hold is `none`, canonical two-role configuration and the dedicated secret are present, the legacy web-only selector is removed, and native Railway triggers remain disabled by design. Provider-level atomicity, partial-failure reconciliation, stale non-production history, and the auxiliary documentation-analysis fixture remain operational debt |
 
 ## Delivered program summary
 
-PRs #1408–#1424 plus audit-scoped PR #1427 delivered the capability foundation
-and the repository-health remediation program in reviewable stages. Unrelated
+PRs #1408–#1424 plus audit-scoped product PR #1427 and delivery-control PRs
+#1428–#1430 delivered the capability foundation and repository-health
+remediation program in reviewable stages. Unrelated
 Gaming PRs #1425/#1426 are present in #1427's base but excluded from this audit.
 The durable merge ledger and exact evidence live in
 [evidence.md](evidence.md). In broad terms,
@@ -373,10 +467,13 @@ the program:
   Python daemon's distinct live seconds-valued controls;
 - added one canonical protected-configuration digest command plus a fail-closed
   Railway startup gate for the six runtime-owned pins, with the seventh generic
-  JSON entry retained as manual-only tooling; and
+  JSON entry retained as manual-only tooling;
 - added prospective database-clock retention for completed/cancelled Ask and
   DAG-node rows plus deterministic bounded `SKIP LOCKED` cleanup that protects
-  idempotency, observation windows, and unstamped legacy rows.
+  idempotency, observation windows, and unstamped legacy rows; and
+- restored one serialized worker-first automatic production pair with exact
+  revision/role/readiness/active-ID verification, bounded detached-deployment
+  observation, and a strict post-deploy timeout/budget watchdog.
 
 ## Update discipline
 
