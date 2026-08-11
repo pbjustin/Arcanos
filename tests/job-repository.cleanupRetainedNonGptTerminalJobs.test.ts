@@ -18,6 +18,7 @@ const {
   MAX_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
   MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS,
   cleanupRetainedNonGptTerminalJobs,
+  inspectLegacyNullNonGptTerminalJobs,
   resolveNonGptTerminalCleanupObservationWindowMs
 } = await import('../src/core/db/repositories/jobRepository.js');
 
@@ -95,6 +96,38 @@ describe('jobRepository.cleanupRetainedNonGptTerminalJobs', () => {
     } as NodeJS.ProcessEnv)).toBe(6 * 60 * 60 * 1_000);
   });
 
+  it('inventories only a bounded aggregate sample of protected legacy-null rows', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { job_type: 'ask', status: 'completed', observed_count: 2 },
+        { job_type: 'dag-node', status: 'cancelled', observed_count: 1 },
+        { job_type: 'gpt', status: 'completed', observed_count: 99 },
+        { job_type: 'ask', status: 'failed', observed_count: 99 },
+        { job_type: 'ask', status: 'cancelled', observed_count: 'invalid' }
+      ]
+    });
+
+    const result = await inspectLegacyNullNonGptTerminalJobs({ sampleLimit: 3 });
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+
+    expect(sql).toContain("job_type IN ('ask', 'dag-node')");
+    expect(sql).toContain("status IN ('completed', 'cancelled')");
+    expect(sql).toContain('retention_until IS NULL');
+    expect(sql).not.toContain('SELECT id');
+    expect(sql).not.toContain('DELETE FROM');
+    expect(sql).toContain('LIMIT $1');
+    expect(params).toEqual([3]);
+    expect(result).toEqual({
+      sampleLimit: 3,
+      observedTerminal: 3,
+      observedAsk: 2,
+      observedDagNode: 1,
+      observedCompleted: 2,
+      observedCancelled: 1,
+      sampleLimitReached: true
+    });
+  });
+
   it('protects every row when the database is unavailable', async () => {
     isDatabaseConnectedMock.mockReturnValue(false);
 
@@ -108,6 +141,23 @@ describe('jobRepository.cleanupRetainedNonGptTerminalJobs', () => {
       deletedCompleted: 0,
       deletedCancelled: 0,
       deletedJobIds: []
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty protected-row inventory when the database is unavailable', async () => {
+    isDatabaseConnectedMock.mockReturnValue(false);
+
+    await expect(
+      inspectLegacyNullNonGptTerminalJobs({ sampleLimit: 20 })
+    ).resolves.toEqual({
+      sampleLimit: 20,
+      observedTerminal: 0,
+      observedAsk: 0,
+      observedDagNode: 0,
+      observedCompleted: 0,
+      observedCancelled: 0,
+      sampleLimitReached: false
     });
     expect(queryMock).not.toHaveBeenCalled();
   });

@@ -15,7 +15,10 @@ import {
   resolveGptExpiredCompactionMs,
   resolveGptPendingMaxAgeMs
 } from '@shared/gpt/gptJobLifecycle.js';
-import { computeQueueJobLifecycleDeadlines } from '@shared/jobs/queueJobLifecycle.js';
+import {
+  computeQueueJobLifecycleDeadlines,
+  resolveNonGptTerminalRetentionWindowMs
+} from '@shared/jobs/queueJobLifecycle.js';
 import {
   PRIORITY_QUEUE_LANE_MAX_PRIORITY,
   isPriorityQueueEnabled,
@@ -281,6 +284,20 @@ export interface CleanupRetainedNonGptTerminalJobsResult {
   deletedCompleted: number;
   deletedCancelled: number;
   deletedJobIds: string[];
+}
+
+export interface InspectLegacyNullNonGptTerminalJobsOptions {
+  sampleLimit?: number;
+}
+
+export interface InspectLegacyNullNonGptTerminalJobsResult {
+  sampleLimit: number;
+  observedTerminal: number;
+  observedAsk: number;
+  observedDagNode: number;
+  observedCompleted: number;
+  observedCancelled: number;
+  sampleLimitReached: boolean;
 }
 
 export interface RequeueFailedJobOptions {
@@ -563,14 +580,19 @@ function flushJobEvents(events: PendingJobEvent[]): void {
 function applyQueueLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
   idempotencyUntil: string | null;
   retentionUntil: string | null;
+  nonGptRetentionWindowMs: number;
 } {
-  const computedDeadlines = computeQueueJobLifecycleDeadlines(jobType, status);
+  const computedDeadlines = jobType === 'gpt'
+    ? computeQueueJobLifecycleDeadlines(jobType, status)
+    : { idempotencyUntil: null, retentionUntil: null };
+  const explicitRetentionUntil = normalizeNullableDate(options.retentionUntil);
 
   return {
     idempotencyUntil:
       normalizeNullableDate(options.idempotencyUntil) ?? computedDeadlines.idempotencyUntil,
     retentionUntil:
-      normalizeNullableDate(options.retentionUntil) ?? computedDeadlines.retentionUntil
+      explicitRetentionUntil ?? (jobType === 'gpt' ? computedDeadlines.retentionUntil : null),
+    nonGptRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs(jobType, status)
   };
 }
 
@@ -677,16 +699,12 @@ function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
 }
 
 function computeTerminalLifecycleFallbacks(status: string): {
-  askRetentionUntil: string | null;
-  dagNodeRetentionUntil: string | null;
+  askRetentionWindowMs: number;
+  dagNodeRetentionWindowMs: number;
 } {
-  const now = new Date();
-  const askDeadlines = computeQueueJobLifecycleDeadlines('ask', status, now);
-  const dagNodeDeadlines = computeQueueJobLifecycleDeadlines('dag-node', status, now);
-
   return {
-    askRetentionUntil: askDeadlines.retentionUntil,
-    dagNodeRetentionUntil: dagNodeDeadlines.retentionUntil
+    askRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('ask', status),
+    dagNodeRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('dag-node', status)
   };
 }
 
@@ -696,10 +714,12 @@ function computeTerminalLifecycleWriteValues(
 ): {
   idempotencyOverride: string | null;
   retentionOverride: string | null;
-  retentionFallback: string | null;
+  retentionFallbackWindowMs: number;
 } {
-  const deadlines = computeQueueJobLifecycleDeadlines(jobType, status);
   const shouldOverridePersistedLifecycle = jobType === 'gpt';
+  const deadlines = shouldOverridePersistedLifecycle
+    ? computeQueueJobLifecycleDeadlines(jobType, status)
+    : { idempotencyUntil: null, retentionUntil: null };
 
   return {
     idempotencyOverride: shouldOverridePersistedLifecycle
@@ -708,9 +728,9 @@ function computeTerminalLifecycleWriteValues(
     retentionOverride: shouldOverridePersistedLifecycle
       ? deadlines.retentionUntil
       : null,
-    retentionFallback: shouldOverridePersistedLifecycle
-      ? null
-      : deadlines.retentionUntil
+    retentionFallbackWindowMs: shouldOverridePersistedLifecycle
+      ? 0
+      : resolveNonGptTerminalRetentionWindowMs(jobType, status)
   };
 }
 
@@ -860,7 +880,14 @@ export async function createJob(
        $17,
        $18,
        $19::timestamptz,
-       $20::timestamptz,
+       COALESCE(
+         $20::timestamptz,
+         CASE
+           WHEN $25::bigint > 0
+             THEN NOW() + ($25::bigint * INTERVAL '1 millisecond')
+           ELSE NULL
+         END
+       ),
        $21::timestamptz,
        $22::timestamptz,
        $23,
@@ -894,7 +921,8 @@ export async function createJob(
       normalizeNullableDate(options.expiresAt),
       normalizeNullableDate(options.cancelRequestedAt),
       normalizeNullableString(options.cancelReason ?? null),
-      resolveInitialClaimGeneration(options.status)
+      resolveInitialClaimGeneration(options.status),
+      lifecycleDefaults.nonGptRetentionWindowMs
     ]
   );
 
@@ -970,8 +998,16 @@ export async function updateJob(
          $8::timestamptz,
          retention_until,
          CASE job_type
-           WHEN 'ask' THEN $13::timestamptz
-           WHEN 'dag-node' THEN $14::timestamptz
+           WHEN 'ask' THEN CASE
+             WHEN $13::bigint > 0
+               THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           WHEN 'dag-node' THEN CASE
+             WHEN $14::bigint > 0
+               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
            ELSE NULL
          END
        ),
@@ -1024,8 +1060,8 @@ export async function updateJob(
       normalizeNullableDate(metadata.cancelRequestedAt),
       normalizeNullableString(metadata.cancelReason ?? null),
       jobId,
-      lifecycleFallbacks.askRetentionUntil,
-      lifecycleFallbacks.dagNodeRetentionUntil
+      lifecycleFallbacks.askRetentionWindowMs,
+      lifecycleFallbacks.dagNodeRetentionWindowMs
     ]
   );
 
@@ -1087,8 +1123,16 @@ export async function updateClaimedJobTerminal(
          $6::timestamptz,
          retention_until,
          CASE job_type
-           WHEN 'ask' THEN $13::timestamptz
-           WHEN 'dag-node' THEN $14::timestamptz
+           WHEN 'ask' THEN CASE
+             WHEN $13::bigint > 0
+               THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
+           WHEN 'dag-node' THEN CASE
+             WHEN $14::bigint > 0
+               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+             ELSE NULL
+           END
            ELSE NULL
          END
        ),
@@ -1129,8 +1173,8 @@ export async function updateClaimedJobTerminal(
       jobId,
       fence.workerId,
       fence.claimGeneration,
-      lifecycleFallbacks.askRetentionUntil,
-      lifecycleFallbacks.dagNodeRetentionUntil
+      lifecycleFallbacks.askRetentionWindowMs,
+      lifecycleFallbacks.dagNodeRetentionWindowMs
     ]
   );
 
@@ -1592,7 +1636,11 @@ export async function requestJobCancellation(
            retention_until = COALESCE(
              $4::timestamptz,
              retention_until,
-             $5::timestamptz
+             CASE
+               WHEN $5::bigint > 0
+                 THEN NOW() + ($5::bigint * INTERVAL '1 millisecond')
+               ELSE NULL
+             END
            )
          WHERE id = $6
          RETURNING *`,
@@ -1601,7 +1649,7 @@ export async function requestJobCancellation(
           normalizedReason,
           lifecycleWriteValues.idempotencyOverride,
           lifecycleWriteValues.retentionOverride,
-          lifecycleWriteValues.retentionFallback,
+          lifecycleWriteValues.retentionFallbackWindowMs,
           jobId
         ]
       );
@@ -2134,7 +2182,11 @@ export async function recoverStaleJobs(
              retention_until = COALESCE(
                $5::timestamptz,
                retention_until,
-               $6::timestamptz
+               CASE
+                 WHEN $6::bigint > 0
+                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
+                 ELSE NULL
+               END
              )
            WHERE id = $7`,
           [
@@ -2146,7 +2198,7 @@ export async function recoverStaleJobs(
             ),
             lifecycleWriteValues.idempotencyOverride,
             lifecycleWriteValues.retentionOverride,
-            lifecycleWriteValues.retentionFallback,
+            lifecycleWriteValues.retentionFallbackWindowMs,
             row.id
           ]
         );
@@ -2386,7 +2438,11 @@ export async function recoverStalledJobsForWorkers(
              retention_until = COALESCE(
                $5::timestamptz,
                retention_until,
-               $6::timestamptz
+               CASE
+                 WHEN $6::bigint > 0
+                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
+                 ELSE NULL
+               END
              )
            WHERE id = $7`,
           [
@@ -2401,7 +2457,7 @@ export async function recoverStalledJobsForWorkers(
             ),
             lifecycleWriteValues.idempotencyOverride,
             lifecycleWriteValues.retentionOverride,
-            lifecycleWriteValues.retentionFallback,
+            lifecycleWriteValues.retentionFallbackWindowMs,
             row.id
           ]
         );
@@ -3016,6 +3072,94 @@ ORDER BY
   delete_candidates.completed_at ASC NULLS LAST,
   delete_candidates.created_at ASC,
   delete_candidates.id ASC`;
+
+export const LEGACY_NULL_NON_GPT_TERMINAL_INVENTORY_SQL = `SELECT
+  sampled.job_type,
+  sampled.status,
+  COUNT(*)::int AS observed_count
+FROM (
+  SELECT job_type, status
+  FROM job_data
+  WHERE job_type IN ('ask', 'dag-node')
+    AND status IN ('completed', 'cancelled')
+    AND retention_until IS NULL
+  LIMIT $1
+) AS sampled
+GROUP BY sampled.job_type, sampled.status
+ORDER BY sampled.job_type ASC, sampled.status ASC`;
+
+/**
+ * Inspect a bounded aggregate sample of protected legacy terminal rows.
+ *
+ * This never returns row identifiers or payloads and never makes null-deadline
+ * rows cleanup-eligible. Operators must review any later cutover separately.
+ */
+export async function inspectLegacyNullNonGptTerminalJobs(
+  options: InspectLegacyNullNonGptTerminalJobsOptions = {}
+): Promise<InspectLegacyNullNonGptTerminalJobsResult> {
+  const sampleLimit = normalizeNonGptTerminalCleanupBatchSize(options.sampleLimit);
+  const emptyResult: InspectLegacyNullNonGptTerminalJobsResult = {
+    sampleLimit,
+    observedTerminal: 0,
+    observedAsk: 0,
+    observedDagNode: 0,
+    observedCompleted: 0,
+    observedCancelled: 0,
+    sampleLimitReached: false
+  };
+
+  if (!isDatabaseConnected()) {
+    return emptyResult;
+  }
+
+  const result = await query(LEGACY_NULL_NON_GPT_TERMINAL_INVENTORY_SQL, [
+    sampleLimit
+  ]);
+  const observedRows = result.rows.flatMap((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return [];
+    }
+
+    const record = row as Record<string, unknown>;
+    const observedCount = Number(record.observed_count);
+    if (
+      (record.job_type !== 'ask' && record.job_type !== 'dag-node') ||
+      (record.status !== 'completed' && record.status !== 'cancelled') ||
+      !Number.isFinite(observedCount) ||
+      observedCount <= 0
+    ) {
+      return [];
+    }
+
+    return [{
+      jobType: record.job_type,
+      status: record.status,
+      observedCount: Math.trunc(observedCount)
+    }];
+  });
+  const observedTerminal = observedRows.reduce(
+    (total, row) => total + row.observedCount,
+    0
+  );
+
+  return {
+    sampleLimit,
+    observedTerminal,
+    observedAsk: observedRows
+      .filter((row) => row.jobType === 'ask')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedDagNode: observedRows
+      .filter((row) => row.jobType === 'dag-node')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedCompleted: observedRows
+      .filter((row) => row.status === 'completed')
+      .reduce((total, row) => total + row.observedCount, 0),
+    observedCancelled: observedRows
+      .filter((row) => row.status === 'cancelled')
+      .reduce((total, row) => total + row.observedCount, 0),
+    sampleLimitReached: observedTerminal >= sampleLimit
+  };
+}
 
 /**
  * Delete one bounded batch of expired successful/cancelled non-GPT queue rows.

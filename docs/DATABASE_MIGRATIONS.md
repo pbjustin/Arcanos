@@ -41,7 +41,10 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
   deletes only expired, non-idempotency-protected rows from that exact
   allowlist in deterministic `FOR UPDATE SKIP LOCKED` batches, after the
   active worker-budget and queue-diagnostics observation windows. Legacy rows
-  with a null deadline remain protected pending a separately reviewed inventory.
+  with a null deadline remain protected. Each enabled cleanup pass reports only
+  a bounded aggregate legacy-null inventory (never IDs or payloads), and the
+  worker warns once when protected rows first appear. Any deadline backfill or
+  cutover remains a separately reviewed operation.
 - Redis supports fast shared state and health visibility; it is not the durable job source of truth.
 - Shared database queries execute once by default. A caller may opt into at
   most three total attempts only with

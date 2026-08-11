@@ -325,8 +325,11 @@ describe('jobRepository lifecycle recovery', () => {
       const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
         typeof sql === 'string' && sql.includes('UPDATE job_data')
       ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($5::bigint * INTERVAL '1 millisecond')"
+      );
       expect(updateCall?.[1]?.[3]).toBeNull();
-      expect(updateCall?.[1]?.[4]).toBe('2026-08-02T12:00:00.000Z');
+      expect(updateCall?.[1]?.[4]).toBe(24 * 60 * 60 * 1_000);
     } finally {
       jest.useRealTimers();
     }
@@ -355,8 +358,11 @@ describe('jobRepository lifecycle recovery', () => {
       const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
         typeof sql === 'string' && sql.includes('UPDATE job_data')
       ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+      );
       expect(updateCall?.[1]?.[4]).toBeNull();
-      expect(updateCall?.[1]?.[5]).toBe('2026-08-02T12:00:00.000Z');
+      expect(updateCall?.[1]?.[5]).toBe(24 * 60 * 60 * 1_000);
     } finally {
       jest.useRealTimers();
     }
@@ -400,8 +406,11 @@ describe('jobRepository lifecycle recovery', () => {
       const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
         typeof sql === 'string' && sql.includes('UPDATE job_data')
       ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[0]).toContain(
+        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+      );
       expect(updateCall?.[1]?.[4]).toBeNull();
-      expect(updateCall?.[1]?.[5]).toBe('2026-08-01T13:00:00.000Z');
+      expect(updateCall?.[1]?.[5]).toBe(60 * 60 * 1_000);
     } finally {
       jest.useRealTimers();
     }

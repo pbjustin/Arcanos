@@ -1,5 +1,6 @@
 import {
   cleanupRetainedNonGptTerminalJobs,
+  inspectLegacyNullNonGptTerminalJobs,
   cleanupRetainedFailedJobs,
   DEFAULT_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE,
   DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS,
@@ -21,6 +22,8 @@ import {
 import { recordJobEventCleanup } from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 
+let protectedLegacyNullRowsPresent = false;
+
 export interface FailedJobCleanupPolicy {
   enabled: boolean;
   keep: number;
@@ -41,6 +44,12 @@ export interface NonGptTerminalCleanupRunResult
   extends CleanupRetainedNonGptTerminalJobsResult {
   enabled: boolean;
   skipped: boolean;
+  protectedLegacyNullTerminal: number;
+  protectedLegacyNullAsk: number;
+  protectedLegacyNullDagNode: number;
+  protectedLegacyNullCompleted: number;
+  protectedLegacyNullCancelled: number;
+  legacyNullSampleLimitReached: boolean;
 }
 
 export interface JobEventCleanupPolicy {
@@ -220,10 +229,19 @@ export async function runNonGptTerminalCleanup(
       deletedDagNode: 0,
       deletedCompleted: 0,
       deletedCancelled: 0,
-      deletedJobIds: []
+      deletedJobIds: [],
+      protectedLegacyNullTerminal: 0,
+      protectedLegacyNullAsk: 0,
+      protectedLegacyNullDagNode: 0,
+      protectedLegacyNullCompleted: 0,
+      protectedLegacyNullCancelled: 0,
+      legacyNullSampleLimitReached: false
     };
   }
 
+  const legacyNullInventory = await inspectLegacyNullNonGptTerminalJobs({
+    sampleLimit: policy.batchSize
+  });
   const result = await cleanupRetainedNonGptTerminalJobs({
     batchSize: policy.batchSize
   });
@@ -236,8 +254,34 @@ export async function runNonGptTerminalCleanup(
     deletedDagNode: result.deletedDagNode,
     deletedCompleted: result.deletedCompleted,
     deletedCancelled: result.deletedCancelled,
-    batchFull: result.deletedTerminal === result.batchSize
+    batchFull: result.deletedTerminal === result.batchSize,
+    protectedLegacyNullTerminal: legacyNullInventory.observedTerminal,
+    protectedLegacyNullAsk: legacyNullInventory.observedAsk,
+    protectedLegacyNullDagNode: legacyNullInventory.observedDagNode,
+    protectedLegacyNullCompleted: legacyNullInventory.observedCompleted,
+    protectedLegacyNullCancelled: legacyNullInventory.observedCancelled,
+    legacyNullSampleLimitReached: legacyNullInventory.sampleLimitReached
   };
+
+  if (
+    legacyNullInventory.observedTerminal > 0 &&
+    !protectedLegacyNullRowsPresent
+  ) {
+    protectedLegacyNullRowsPresent = true;
+    logger.warn('queue.non_gpt_terminal.legacy_null.protected', {
+      module: 'queue-cleanup',
+      reason,
+      sampleLimit: legacyNullInventory.sampleLimit,
+      protectedTerminal: legacyNullInventory.observedTerminal,
+      protectedAsk: legacyNullInventory.observedAsk,
+      protectedDagNode: legacyNullInventory.observedDagNode,
+      protectedCompleted: legacyNullInventory.observedCompleted,
+      protectedCancelled: legacyNullInventory.observedCancelled,
+      sampleLimitReached: legacyNullInventory.sampleLimitReached
+    });
+  } else if (legacyNullInventory.observedTerminal === 0) {
+    protectedLegacyNullRowsPresent = false;
+  }
 
   if (result.deletedTerminal > 0) {
     logger.info('queue.non_gpt_terminal.cleanup.completed', logPayload);
@@ -248,7 +292,13 @@ export async function runNonGptTerminalCleanup(
   return {
     enabled: true,
     skipped: false,
-    ...result
+    ...result,
+    protectedLegacyNullTerminal: legacyNullInventory.observedTerminal,
+    protectedLegacyNullAsk: legacyNullInventory.observedAsk,
+    protectedLegacyNullDagNode: legacyNullInventory.observedDagNode,
+    protectedLegacyNullCompleted: legacyNullInventory.observedCompleted,
+    protectedLegacyNullCancelled: legacyNullInventory.observedCancelled,
+    legacyNullSampleLimitReached: legacyNullInventory.sampleLimitReached
   };
 }
 

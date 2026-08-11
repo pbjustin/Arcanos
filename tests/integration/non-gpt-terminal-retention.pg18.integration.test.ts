@@ -47,6 +47,7 @@ const {
   MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS,
   RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL,
   createJob,
+  inspectLegacyNullNonGptTerminalJobs,
   recoverStaleJobs,
   recoverStalledJobsForWorkers,
   requestJobCancellation,
@@ -150,16 +151,21 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
     return row;
   }
 
-  function expectRetentionWindow(
-    retentionUntil: Date | null,
-    durationMs: number,
-    startedAtMs: number,
-    completedAtMs: number
-  ): void {
-    expect(retentionUntil).toBeInstanceOf(Date);
-    const deadlineMs = retentionUntil?.getTime() ?? Number.NaN;
-    expect(deadlineMs).toBeGreaterThanOrEqual(startedAtMs + durationMs - 5_000);
-    expect(deadlineMs).toBeLessThanOrEqual(completedAtMs + durationMs + 5_000);
+  async function expectDatabaseRetentionWindow(
+    jobId: string,
+    durationMs: number
+  ): Promise<void> {
+    const result = await firstClient.query<{ retention_window_ms: string | null }>(
+      `SELECT ROUND(
+         EXTRACT(EPOCH FROM (
+           retention_until - COALESCE(completed_at, updated_at)
+         )) * 1000
+       )::bigint AS retention_window_ms
+       FROM job_data
+       WHERE id = $1`,
+      [jobId]
+    );
+    expect(Number(result.rows[0]?.retention_window_ms)).toBe(durationMs);
   }
 
   beforeAll(async () => {
@@ -273,31 +279,17 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
   test('actual create, generic update, and claimed writers apply only non-GPT allowlisted fallbacks', async () => {
     const explicitDeadline = '2099-01-01T00:00:00.000Z';
 
-    const createStartedAtMs = Date.now();
     const createdTerminalAsk = await createJob(
       'queue',
       'ask',
       { prompt: 'created terminal ask' },
       { status: 'completed' }
     );
-    const createCompletedAtMs = Date.now();
-    expectRetentionWindow(
-      (await readLifecycle(createdTerminalAsk.id)).retention_until,
-      60 * 60 * 1_000,
-      createStartedAtMs,
-      createCompletedAtMs
-    );
+    await expectDatabaseRetentionWindow(createdTerminalAsk.id, 60 * 60 * 1_000);
 
     const genericAsk = await createJob('queue', 'ask', { prompt: 'generic ask' });
-    const genericStartedAtMs = Date.now();
     await updateJob(genericAsk.id, 'completed', { ok: true });
-    const genericCompletedAtMs = Date.now();
-    expectRetentionWindow(
-      (await readLifecycle(genericAsk.id)).retention_until,
-      60 * 60 * 1_000,
-      genericStartedAtMs,
-      genericCompletedAtMs
-    );
+    await expectDatabaseRetentionWindow(genericAsk.id, 60 * 60 * 1_000);
 
     const persistedAsk = await createJob(
       'queue',
@@ -325,7 +317,6 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
         leaseExpiresAt: new Date(Date.now() + 60_000)
       }
     );
-    const claimedStartedAtMs = Date.now();
     await expect(
       updateClaimedJobTerminal(claimedDagNode.id, 'completed', {
         fence: {
@@ -335,13 +326,7 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
         output: { ok: true }
       })
     ).resolves.not.toBeNull();
-    const claimedCompletedAtMs = Date.now();
-    expectRetentionWindow(
-      (await readLifecycle(claimedDagNode.id)).retention_until,
-      2 * 60 * 60 * 1_000,
-      claimedStartedAtMs,
-      claimedCompletedAtMs
-    );
+    await expectDatabaseRetentionWindow(claimedDagNode.id, 2 * 60 * 60 * 1_000);
 
     const claimedPersistedDagNode = await createJob(
       'queue',
@@ -396,17 +381,10 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
   test('actual pending cancellation preserves persisted lifecycle before applying a fallback', async () => {
     const explicitDeadline = '2099-01-01T00:00:00.000Z';
     const pendingAsk = await createJob('queue', 'ask', { prompt: 'cancel ask' });
-    const cancellationStartedAtMs = Date.now();
     await expect(requestJobCancellation(pendingAsk.id)).resolves.toEqual(
       expect.objectContaining({ outcome: 'cancelled' })
     );
-    const cancellationCompletedAtMs = Date.now();
-    expectRetentionWindow(
-      (await readLifecycle(pendingAsk.id)).retention_until,
-      60 * 60 * 1_000,
-      cancellationStartedAtMs,
-      cancellationCompletedAtMs
-    );
+    await expectDatabaseRetentionWindow(pendingAsk.id, 60 * 60 * 1_000);
 
     const persistedDagNode = await createJob(
       'queue',
@@ -470,21 +448,14 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
       }
     );
 
-    const staleRecoveryStartedAtMs = Date.now();
     const staleRecovery = await recoverStaleJobs({
       staleAfterMs: 1_000,
       maxRetries: 2
     });
-    const staleRecoveryCompletedAtMs = Date.now();
     expect(staleRecovery.cancelledJobs).toEqual(
       expect.arrayContaining([staleAsk.id, staleUnknown.id])
     );
-    expectRetentionWindow(
-      (await readLifecycle(staleAsk.id)).retention_until,
-      60 * 60 * 1_000,
-      staleRecoveryStartedAtMs,
-      staleRecoveryCompletedAtMs
-    );
+    await expectDatabaseRetentionWindow(staleAsk.id, 60 * 60 * 1_000);
     expect((await readLifecycle(staleUnknown.id)).retention_until).toBeNull();
     expect(await readLifecycle(excludedLocalAgent.id)).toEqual({
       status: 'running',
@@ -523,21 +494,17 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
       }
     );
 
-    const stalledRecoveryStartedAtMs = Date.now();
     const stalledRecovery = await recoverStalledJobsForWorkers({
       workerIds: ['stalled-worker'],
       staleAfterMs: 1_000,
       maxRetries: 2
     });
-    const stalledRecoveryCompletedAtMs = Date.now();
     expect(stalledRecovery.cancelledJobIds).toEqual(
       expect.arrayContaining([stalledDagNode.id, stalledPersistedDagNode.id])
     );
-    expectRetentionWindow(
-      (await readLifecycle(stalledDagNode.id)).retention_until,
-      2 * 60 * 60 * 1_000,
-      stalledRecoveryStartedAtMs,
-      stalledRecoveryCompletedAtMs
+    await expectDatabaseRetentionWindow(
+      stalledDagNode.id,
+      2 * 60 * 60 * 1_000
     );
     const stalledPersistedLifecycle = await readLifecycle(
       stalledPersistedDagNode.id
@@ -605,6 +572,18 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
         retentionOffset: '-1 day'
       });
     }
+
+    await expect(
+      inspectLegacyNullNonGptTerminalJobs({ sampleLimit: 2 })
+    ).resolves.toEqual({
+      sampleLimit: 2,
+      observedTerminal: 1,
+      observedAsk: 1,
+      observedDagNode: 0,
+      observedCompleted: 1,
+      observedCancelled: 0,
+      sampleLimitReached: false
+    });
 
     const firstBatch = await firstClient.query<{ id: string }>(
       RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL,

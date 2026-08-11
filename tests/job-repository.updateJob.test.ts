@@ -59,21 +59,21 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain("status NOT IN ('completed', 'failed', 'cancelled', 'expired')");
   });
 
-  it('applies shared ask and DAG-node retention fallbacks at the generic terminal writer', async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
-    try {
-      await updateJob('job-1', 'completed', { ok: true });
+  it('applies shared ask and DAG-node retention windows from the database clock', async () => {
+    await updateJob('job-1', 'completed', { ok: true });
 
-      const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-      expect(sql).toContain("WHEN 'ask' THEN $13::timestamptz");
-      expect(sql).toContain("WHEN 'dag-node' THEN $14::timestamptz");
-      expect(sql).not.toContain("WHEN 'gpt'");
-      expect(params[12]).toBe('2026-08-02T12:00:00.000Z');
-      expect(params[13]).toBe('2026-08-01T13:00:00.000Z');
-    } finally {
-      jest.useRealTimers();
-    }
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("WHEN 'ask' THEN CASE");
+    expect(sql).toContain("WHEN 'dag-node' THEN CASE");
+    expect(sql).toContain(
+      "THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')"
+    );
+    expect(sql).toContain(
+      "THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')"
+    );
+    expect(sql).not.toContain("WHEN 'gpt'");
+    expect(params[12]).toBe(24 * 60 * 60 * 1_000);
+    expect(params[13]).toBe(60 * 60 * 1_000);
   });
 
   it('does not add a generic repository fallback for GPT lifecycle metadata', async () => {
@@ -350,8 +350,8 @@ describe('jobRepository.updateJob', () => {
     expect(sql).not.toContain('current_job');
     expect(sql).not.toContain('UNION ALL');
     expect(params.slice(9, 12)).toEqual(['job-1', 'worker-1', '7']);
-    expect(params[12]).toEqual(expect.any(String));
-    expect(params[13]).toEqual(expect.any(String));
+    expect(params[12]).toBe(24 * 60 * 60 * 1_000);
+    expect(params[13]).toBe(60 * 60 * 1_000);
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.completed',
       metadata: expect.objectContaining({
