@@ -1,7 +1,8 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-08 UTC, after PR #1423 merged and protected-digest PR
-#1424 implementation commit `703c58e5` reached terminal review evidence
+Last reconciled: 2026-08-11 UTC, after audit-scoped product PR #1427 and
+delivery-control PRs #1428–#1430 merged, and exact #1430 was automatically
+promoted as one web/worker pair
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -19,9 +20,247 @@ remain authoritative.
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
 
-## PR #1424 reviewed implementation — protected-digest tooling
+## PRs #1428–#1430 — automatic paired production promotion
 
-### Candidate identity and scope
+### Exact identities
+
+| PR | Base | Final reviewed head | Merge | Reviewed/merged tree | Merge time | Size |
+| --- | --- | --- | --- | --- | --- | --- |
+| [#1428](https://github.com/pbjustin/Arcanos/pull/1428) | `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` | `fcabc28398c4f943fa9529bdb9b10570609d0b1f` | `c3763fe9a970503baab5f19f1fb1490b52abb622` | `ddfe9047d5060fd768ffa6b900da598b129a1c6f` | `2026-08-11T18:29:15Z` | 9 files; +505/-232 |
+| [#1429](https://github.com/pbjustin/Arcanos/pull/1429) | `c3763fe9a970503baab5f19f1fb1490b52abb622` | `efe6e216d3fb9bba7d5d3dca56b5b301a0d56174` | `8361e37263d6b0a9c32c15b76c1999fd80bf98bb` | `947a39b7fa7983baaa7c402c8da8e3c592e56a6c` | `2026-08-11T19:10:10Z` | 6 files; +20/-5 |
+| [#1430](https://github.com/pbjustin/Arcanos/pull/1430) | `8361e37263d6b0a9c32c15b76c1999fd80bf98bb` | `08bd9d2c15805a465700d5ea064b93f80cfd5613` | `98d6ad998e936d4db26b1330b28a9edff1331018` | `23a9f5e5853f60508b25b8f7e2148026304c98be` | `2026-08-11T19:50:47Z` | 3 files; +7/-3 |
+
+### Merged contract
+
+PR #1428 changed the tracked coordinated-writer hold to the exact inactive
+sentinel `none` and replaced the former single-service/skipped path with one
+serialized, worker-first pair. It requires explicit project and environment
+identity, distinct web and worker service IDs, and a dedicated production
+project-token secret. Before mutation it validates static Railway compatibility,
+captures both exact active baselines, and checks each resolved role/readiness
+target. Each detached upload returns one deployment ID which must reach
+`SUCCESS`, remain the active non-stopped deployment, and pass the expected
+role/readiness contract. Web is not enqueued until worker verification
+completes; afterward both new IDs are checked together and the web-only
+timeout/budget watchdog runs. Native Railway deployment triggers remain
+disabled, avoiding duplicate independent service releases.
+
+PR #1429 synchronized both repository-owned production web verifiers with the
+current exact five-check `/readyz` projection: `openai`, `database`, `redis`,
+`public-provider-admission`, and `startup`. It added unhealthy-admission
+regressions, refreshed the pinned verifier digest, and corrected maintained
+startup-readiness prose.
+
+PR #1430 bounded detached-deployment polling to the newest 20 records while
+preserving exact-ID selection, a 256 KiB subprocess-output limit, ten-second
+polling, and a 45-minute elapsed-time budget. A live read of the long-lived
+worker service measured those 20 records at 60,507 bytes and included the
+just-enqueued exact ID. If an out-of-band race displaced the ID, observation
+would remain `NOT_FOUND` and time out; it cannot approve another deployment.
+
+### Local, review, and CI evidence
+
+| Evidence | Result |
+| --- | --- |
+| PR #1428 local validation | Node 20.19 build, lint (zero errors; existing warnings only), four focused Railway suites / 80 tests, `validate:railway`, Documentation Audit 327/327, and `git diff --check` passed |
+| PR #1428 review | Independent reviewers found no blocker. Copilot reviewed all nine files and generated no comments; no unresolved thread remained |
+| PR #1428 final-head/merge | Required PR checks passed at `fcabc283`; exact-merge CI [`31522967337`](https://github.com/pbjustin/Arcanos/actions/runs/31522967337), Documentation Audit `31522967326`, and Repository Registration `31522967304` passed |
+| PR #1429 local validation | Node 20.19 build, lint, six focused Railway suites / 142 tests, `validate:railway`, Documentation Audit 327/327, and `git diff --check` passed |
+| PR #1429 review | Copilot's surfaced zero-comment review was attached to earlier three-file commit `f2e91a0c`, not final head. Independent final-head review found no blocker and no review thread remained |
+| PR #1429 final-head/merge | All required checks passed at `efe6e216`; exact-merge CI [`31526489055`](https://github.com/pbjustin/Arcanos/actions/runs/31526489055), Documentation Audit `31526489036`, and Repository Registration `31526488968` passed |
+| PR #1430 local validation | Node 20.19 build, lint, three focused rollout suites / 74 tests, `validate:railway`, Documentation Audit 327/327, and `git diff --check` passed |
+| PR #1430 review | Copilot opened one thread asking the test to consume the exported 20-record contract. Final head `08bd9d2c` implemented it, refreshed the pinned digest, replied, and resolved thread `PRRT_kwDOPKkVZ86YWjo4`; independent final-head review found no blocker |
+| PR #1430 final-head/merge | All PR checks passed, including Codecov patch, Railway Compatibility, Deployment Readiness, and All Checks Complete. Exact-merge CI [`31529904593`](https://github.com/pbjustin/Arcanos/actions/runs/31529904593) passed all 13 jobs; Documentation Audit `31529904589` and Repository Registration `31529904597` passed |
+
+Auxiliary Analyze Documentation Updates runs `31522967336`, `31526489082`,
+and `31529904611` each repeated the known missing
+`ARCANOS_JOB_READ_CAPABILITY_SECRET` fixture failure. They did not replace the
+green maintained Documentation Audit or required promotion gate.
+
+### Fail-closed acceptance chronology
+
+| Automatic run | Result |
+| --- | --- |
+| [#1428 merge run `31524244647`](https://github.com/pbjustin/Arcanos/actions/runs/31524244647) | Policy job `93888521085` passed. Production job `93888616857` failed in preflight with `RAILWAY_READINESS_RESPONSE_INVALID` because the verifier expected four names while the valid live web response exposed five. No deployment was enqueued; baselines worker `71f3c370-9054-43f7-a44f-dd37fe7e6147` and web `8fce3a96-e7c2-408c-9eae-f28e55dce823` remained active |
+| [#1429 merge run `31527715994`](https://github.com/pbjustin/Arcanos/actions/runs/31527715994) | Policy job `93899996222` and paired-target preflight passed. Production job `93900055496` enqueued exact worker `1732d5d2-9433-4fbd-b2a0-db2e9534f87d`, then the first 100-record history poll exceeded 256 KiB and returned `RAILWAY_COMMAND_OUTPUT_LIMIT`. Web was not enqueued. The detached worker later became active; both roles stayed ready, and the revisions between old web/new worker changed no `src`, migration, package, worker, or runtime code |
+| [#1430 merge run `31531116356`](https://github.com/pbjustin/Arcanos/actions/runs/31531116356) | Policy job `93911098579` and production job `93911152941` passed. The corrected observer tracked the exact worker and web through `INITIALIZING`/`BUILDING`/`DEPLOYING` to `SUCCESS`, joint active-ID verification passed, and the strict watchdog found no `/ask` timeout or budget-abort regression |
+
+### Automatic production acceptance
+
+Run `31531116356` started from exact merge
+`98d6ad998e936d4db26b1330b28a9edff1331018` without manual dispatch. Preflight
+recorded worker baseline `1732d5d2-9433-4fbd-b2a0-db2e9534f87d` and web
+baseline `8fce3a96-e7c2-408c-9eae-f28e55dce823`. It activated:
+
+- worker `d20a6833-2448-4677-89df-84e46a0d2567`, verified at
+  `2026-08-11T20:08:40Z`; and
+- web `e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41`, jointly verified with the
+  worker at `2026-08-11T20:13:22Z`.
+
+Both exact IDs were active on the same merge and passed role/readiness plus the
+tracked `/readyz` and 60-second drain contract. The final watchdog scanned 500
+web log lines over 15 minutes with strict budget-abort failure and reported no
+`/ask` timeout regression. The run completed successfully at
+`2026-08-11T20:13:27Z`.
+
+Final provider readback found each as the sole active deployment, with worker
+instance `eebcafd3-31f5-491e-bae6-30d60636a1f7` and web instance
+`9bf8279c-37ad-4375-879d-82dabe34450e` both `RUNNING`. Both public `/readyz`
+requests returned HTTP 200. Each exact active deployment manifest reported one
+replica in `us-east4-eqdc4a`, `/readyz`, 300-second activation timeout,
+60-second drain, and
+`node scripts/start-railway-service-with-integrity.mjs`. The broader
+environment-level base config still projects `/healthz` and the non-integrity
+launcher; those base values do not override the effective checked-in manifest
+captured on these exact deployments.
+
+GitHub configuration readback retained canonical `RAILWAY_PROJECT_ID`,
+`RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_WEB_SERVICE_ID`, and
+`RAILWAY_WORKER_SERVICE_ID` variables and the dedicated
+`RAILWAY_PRODUCTION_PROJECT_TOKEN` secret by name. The obsolete web-only
+repository variable `RAILWAY_SERVICE_ID` was removed after acceptance. Both
+Railway-native application deployment-trigger lists remain empty; GitHub is
+the sole automatic path. No secret value was logged or committed.
+
+This is exact paired-promotion, activation, readiness, and watchdog evidence.
+It is not provider-atomicity, a measured rollback, database/retention behavior,
+provider/model behavior, or live-memory behavior. Worker success followed by
+web failure can still require reviewed forward completion or exact-baseline
+restore; the workflow intentionally performs no guessed generic redeploy or
+automatic code rollback across an unknown schema state.
+
+## PR #1427 — successful non-GPT terminal retention
+
+### Exact identity and contract
+
+| Field | Value |
+| --- | --- |
+| Base | `b270997a356071fdfa63823ca67beabde897b67f` |
+| Branch | `codex/non-gpt-terminal-retention-main` |
+| Initial published head | `e09c73acbeda162d8b3d2bb4b8e81bfb2dc68616` |
+| Final reviewed head | `0e3c1d6ebbb4523a71728f8b1d847b27ad23053a` |
+| Merge | `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` |
+| Reviewed/merged tree | `626e623852c70481cbb8a76b6ad9113631ddde18` |
+| Merge time | `2026-08-11T07:16:23Z` |
+| Size | 2 commits; 26 files; +2,291/-75 |
+| Pull request | [#1427](https://github.com/pbjustin/Arcanos/pull/1427), merged into `main`; the verified merge parents are the exact base and final head, and the reviewed-head/merge trees are identical |
+| Scope boundary | Gaming PRs #1425/#1426 are present in the base but are unrelated and excluded from this audit slice; GPT-OSS remains excluded |
+
+The merged policy positively allowlists only `ask` and `dag-node` rows in
+`completed` or `cancelled`. Ask retention defaults to 24 hours and DAG-node
+retention to one hour; configured durations clamp from one hour through 30
+days. All six authoritative terminal writer families—create, generic update,
+fenced claimed-job completion/cancellation, pending cancellation, stale-job
+cancellation recovery, and stalled-worker cancellation recovery—use the
+PostgreSQL clock for the fallback. Explicit and persisted deadlines retain
+precedence. GPT lifecycle ownership is unchanged; failed, pending, running,
+expired, unknown, and local-agent rows remain excluded.
+
+Cleanup is enabled by default, takes one deterministic bounded batch (default
+100, clamped 1–1,000), requires elapsed retention and idempotency plus an
+`updated_at` older than the greater of one hour and the diagnostics window, and
+uses `FOR UPDATE SKIP LOCKED`. The cleanup and inventory paths neither delete
+nor backfill unstamped legacy rows; no bulk or automatic backfill was performed.
+Their inventory is bounded and aggregate-only; cleanup logs omit job IDs, and a
+process-local latch warns once per continuous legacy-null presence. Retention is
+earliest eligibility, not a deletion service-level guarantee.
+
+### Local, CI, review, and contained-preview evidence
+
+| Evidence | Result |
+| --- | --- |
+| Node `20.19.0` build, type-check, and lint | Passed; lint had zero errors and 76 existing warnings |
+| Focused Jest | Eight suites / 120 tests passed, including all writer families, cleanup policy/inventory, and the real Ask consumer-slot success path with provider/database transports mocked |
+| PostgreSQL 18 | Required suite passed real writer, precedence/exclusion, deterministic bounded cleanup, idempotency/observation protection, and locked-row skip cases |
+| Railway/docs/generated artifacts | `validate:railway`, 327/327 Documentation Audit, all four generated-index checks, and `git diff --check` passed |
+| Independent review | Source/SQL-concurrency/test reviews found no blocker. Copilot reviewed initial head `e09c73ac`, explicitly generated no comments, and no review thread remained |
+| Final-head GitHub | [CI/CD `31463630148`](https://github.com/pbjustin/Arcanos/actions/runs/31463630148), [API `31463630146`](https://github.com/pbjustin/Arcanos/actions/runs/31463630146), [Documentation Audit `31463630135`](https://github.com/pbjustin/Arcanos/actions/runs/31463630135), [PR CI `31463630141`](https://github.com/pbjustin/Arcanos/actions/runs/31463630141), approval `31463629006`, Codecov, and both Railway contexts passed; GitHub reported `CLEAN`, `MERGEABLE`, and zero unresolved threads |
+
+The automatic preview environment was
+`2b806b26-50de-4803-b710-b1fab9956ebb`, with green web deployment
+`05b35321-df86-4ac0-ac1f-68a895ac9057` and passive-worker deployment
+`111f0a3d-46ae-44d5-b5ef-3d3b9a2b40de`. Cleanup run
+[`31468287960`](https://github.com/pbjustin/Arcanos/actions/runs/31468287960)
+passed, and the deployment record was inactive by `2026-08-11T07:17:31Z`.
+This preview proved exact served identity and the sealed deployment contract.
+It was intentionally credential/database-empty and passive, so it supplied no
+PostgreSQL retention or cleanup evidence.
+
+### Exact-merge and automatic-rollout evidence
+
+| Evidence | Result |
+| --- | --- |
+| [CI/CD Pipeline `31468287598`](https://github.com/pbjustin/Arcanos/actions/runs/31468287598) | Passed all 13 jobs, including the required PostgreSQL fencing job, `Deployment Readiness`, and `All Checks Complete` |
+| [Documentation Audit `31468287552`](https://github.com/pbjustin/Arcanos/actions/runs/31468287552) | Passed 327/327 maintained-documentation checks |
+| [Repository Registration `31468287557`](https://github.com/pbjustin/Arcanos/actions/runs/31468287557) | Workflow-green; its backend registration request returned HTTP 400 |
+| [Analyze Documentation Updates `31468287618`](https://github.com/pbjustin/Arcanos/actions/runs/31468287618) | Failed because the inherited auxiliary startup fixture omitted required `ARCANOS_JOB_READ_CAPABILITY_SECRET`; the maintained Documentation Audit passed |
+| [Railway Auto Deploy `31469237913`](https://github.com/pbjustin/Arcanos/actions/runs/31469237913) | Policy passed, returned `automatic_promotion_blocked` under hold `20260727-dag-snapshot-generation-v1`, and skipped production job `93708761589` |
+| Railway repository-integration fan-out | GitHub recorded nine non-production #1427 merge-SHA deployment records. Their initial attempts failed, the same pattern was present on the base, all nine records were inactive at the bounded 2026-08-11 readback, and none was production |
+
+### Authorized production promotion and bounded verification
+
+Production project `7faf44e5-519c-4e73-8d7a-da9f389e6187`, environment
+`fb583147-6c39-4343-9267-500f357d25ab`, web service
+`c4ade025-3f13-4fca-9309-5d0dd81396fe`, and worker service
+`1765befb-b805-4051-9af9-28634e986886` were independently confirmed before
+mutation. The operation verified zero running/cancel-requested jobs and the DAG
+snapshot-generation schema, then stopped the prior web and worker writers.
+
+Exact merge `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` was deployed to:
+
+- web deployment `8fce3a96-e7c2-408c-9eae-f28e55dce823`, successful at
+  `2026-08-11T17:24:24Z`; and
+- worker deployment `71f3c370-9054-43f7-a44f-dd37fe7e6147`, successful at
+  `2026-08-11T17:24:21Z`.
+
+GitHub production deployment record `5855290028` reported success at
+`2026-08-11T17:24:27Z`.
+
+Both final provider records report branch `main`, the exact merge commit, one
+running replica, `/readyz`, a 300-second activation timeout, 60-second drain,
+and `node scripts/start-railway-service-with-integrity.mjs`. Public web and
+worker `/readyz` returned HTTP 200 with `ready: true`. Bounded sanitized deploy
+logs contained readiness markers and no fatal startup condition; the nonempty
+error-classified lines were Node's JSON-module experimental warning. The worker
+also emitted `queue.non_gpt_terminal.legacy_null.protected`, showing that a
+startup inspection observed the aggregate legacy inventory; source eligibility
+and the post-deploy database readback establish that those rows remained.
+
+A read-only post-deploy transaction verified:
+
+- zero `running` or `cancel_requested` jobs;
+- one non-null BIGINT `dag_runs.snapshot_generation` column and one validated
+  `dag_runs_snapshot_generation_nonnegative` constraint;
+- 23 completed/cancelled Ask and 256 completed/cancelled DAG-node legacy rows
+  with null retention; and
+- zero stamped terminal rows in either allowlisted family.
+
+The repository production-smoke wrapper itself did not complete because this
+audit worktree was intentionally not Railway-linked; it passed its CLI check and
+then failed topology discovery. The worktree was not linked as a workaround.
+Its exact-target deployment, readiness, sanitized-log, and database invariants
+were instead checked directly as described above.
+
+This establishes exact production deployment, paired-role readiness, required
+schema, and legacy-null protection. It does not establish a live successful
+terminal writer, a new retention stamp, eligible-row deletion, cleanup latency,
+backfill, provider/model behavior, or live-memory behavior. The promotion made
+no provider-setting change and performed no manual migration or backfill,
+retention aging, operator-invoked cleanup, provider/model request, or live-
+memory call. The worker's automatic startup inspection remained enabled.
+
+At the time of the #1427 reconciliation, automatic promotion did not occur
+because the tracked coordinated-writer hold was still active. Live readback
+then found zero production deployment triggers, a web-only repository service
+selector, and no dedicated production project-token secret. Those are dated
+#1427 facts, not current configuration. PRs #1428–#1430 subsequently retired
+the hold to `none`, configured and verified the two-role GitHub path, removed
+the obsolete selector, preserved zero native triggers, and produced the exact
+automatic acceptance evidence recorded above.
+
+## PR #1424 — protected-digest tooling and fail-closed startup gate
+
+### Exact identity and scope
 
 | Field | Value |
 | --- | --- |
@@ -29,8 +268,13 @@ remain authoritative.
 | Branch | `codex/repository-health-progress-1423` |
 | Initial published implementation | `51b7bfb117f6a6632f3244628c6b950f71a20559` |
 | Reviewed implementation commit | `703c58e57e5f3555759c3f6a818c91eb0693d20f` |
-| Pull request | [#1424](https://github.com/pbjustin/Arcanos/pull/1424), opened 2026-08-08 UTC against `main`; it was ready, open, `CLEAN`, and `MERGEABLE` at the reviewed implementation commit, while live PR metadata is authoritative afterward |
-| External state | GitHub branch/PR updates and the automatic Railway PR preview occurred. No manual Railway/provider-settings mutation, database action, live-memory action, merge, production deployment, or production credit is recorded |
+| Final reviewed head | `b59da846b829a9133c3dbb75d64e2d6994f523ab` |
+| Merge | `4f253ff68bdcea5c1b5fcc9e8525a43b92d291d3` |
+| Reviewed/merged tree | `aa570f1a1415fabcd09d451072f0abbd9c9f2256` |
+| Merge time | `2026-08-08T23:37:38Z` |
+| Size | 6 commits; 56 files; +9,066/-5,532 |
+| Pull request | [#1424](https://github.com/pbjustin/Arcanos/pull/1424), merged into `main`; the verified merge has parents equal to the exact base and final reviewed head, and its tree equals the reviewed-head tree |
+| External state | GitHub branch/PR updates, automatic Railway PR preview, exact-merge workflows, and automatic non-production Railway fan-out occurred. No manual Railway/provider-settings mutation, database action, live-memory action, configured-pin match, or production rollout is credited |
 
 The reviewed implementation extracts the established version-one
 semantic serializer and SHA-256 implementation into a shared runtime/tooling
@@ -80,37 +324,59 @@ GPT-OSS correction is included because that program remains explicitly outside
 this queue. These local results alone did not establish a reviewed head,
 required CI, contained preview, merge, deployment, or production behavior.
 
-### Reviewed implementation and contained preview evidence
+### Final-head review and contained preview evidence
 
 | Evidence | Result |
 | --- | --- |
-| [CI/CD Pipeline `31282568774`](https://github.com/pbjustin/Arcanos/actions/runs/31282568774) | Passed, including the repaired canonical-wrapper `Deployment Readiness` job and fail-closed `All Checks Complete` |
-| [API Endpoint Tests `31282568765`](https://github.com/pbjustin/Arcanos/actions/runs/31282568765) | Passed |
-| [Documentation Audit `31282568767`](https://github.com/pbjustin/Arcanos/actions/runs/31282568767) | Passed with current generated indexes; `docs:check` was the branch-protection-required context |
-| [PR CI `31282568828`](https://github.com/pbjustin/Arcanos/actions/runs/31282568828) | Passed |
-| [Require Human Approval `31282568159`](https://github.com/pbjustin/Arcanos/actions/runs/31282568159) | Passed |
+| [CI/CD Pipeline `31283307853`](https://github.com/pbjustin/Arcanos/actions/runs/31283307853) | Passed, including the canonical-wrapper `Deployment Readiness` job and fail-closed `All Checks Complete` |
+| [API Endpoint Tests `31283307807`](https://github.com/pbjustin/Arcanos/actions/runs/31283307807) | Passed |
+| [Documentation Audit `31283307816`](https://github.com/pbjustin/Arcanos/actions/runs/31283307816) | Passed with current generated indexes; `docs:check` was the branch-protection-required context |
+| [PR CI `31283307810`](https://github.com/pbjustin/Arcanos/actions/runs/31283307810) | Passed |
+| [Require Human Approval `31283307111`](https://github.com/pbjustin/Arcanos/actions/runs/31283307111) | Passed |
 | Aggregate PR state | All 20 surfaced contexts passed; GitHub reported `CLEAN` and `MERGEABLE`, with zero unresolved review threads |
 | Copilot correction | The startup signal race was repaired and its review thread was resolved |
 | Final agent-review corrections | Non-finite JSON acceptance and the CI readiness-wrapper bypass were repaired |
 
 The automatic Railway PR preview served exact head
-`703c58e57e5f3555759c3f6a818c91eb0693d20f` from environment
+`b59da846b829a9133c3dbb75d64e2d6994f523ab` from environment
 `275ef5a6-1c59-4820-9330-40ef34465ec3`. Web deployment
-`61284fcc-3583-4bbd-ae65-b314af62d9e7` and passive-worker deployment
-`ea629c3c-e88c-4e14-a741-76318cefc911` both succeeded. The bounded native
+`e915a498-1396-43a0-970e-6786245d84fc` and passive-worker deployment
+`1cd8e566-7eee-4d43-9616-3f2f5c5e1356` both succeeded. The bounded native
 runner passed 68/68 sequential requests with stable initial/final served-head
 identity.
 
 This is automatic contained-preview and served-public-identity evidence. It
 proves the no-pin integrity wrapper can hand off to the sealed preview and that
 the existing component matrix remains compatible. It does not establish a
-configured-pin match count, ordinary provider/database routes, merge,
-production deployment, or production state.
+configured-pin match count, ordinary provider/database routes, or production
+deployment/state.
 
-This dashboard reconciliation follows the reviewed implementation commit and
-therefore cannot name its own later documentation-only commit. Current tracked
-source, live PR metadata, and live exact-head checks remain authoritative for a
-final merge decision.
+### Exact-merge and rollout evidence
+
+| Evidence | Result |
+| --- | --- |
+| [CI/CD Pipeline `31284399435`](https://github.com/pbjustin/Arcanos/actions/runs/31284399435) | Passed all 13 jobs, including `Deployment Readiness` and `All Checks Complete` |
+| [Documentation Audit `31284399440`](https://github.com/pbjustin/Arcanos/actions/runs/31284399440) | Passed 327/327 maintained-documentation checks |
+| [Repository Registration `31284399454`](https://github.com/pbjustin/Arcanos/actions/runs/31284399454) | Workflow passed; its non-critical backend registration request returned HTTP 400 |
+| [Analyze Documentation Updates `31284399453`](https://github.com/pbjustin/Arcanos/actions/runs/31284399453) | Failed because the auxiliary startup fixture omitted required `ARCANOS_JOB_READ_CAPABILITY_SECRET`; the maintained Documentation Audit passed |
+| [Audit Cycle `31285801521`](https://github.com/pbjustin/Arcanos/actions/runs/31285801521) | Passed |
+| [Railway Auto Deploy `31284925830`](https://github.com/pbjustin/Arcanos/actions/runs/31284925830) | Rollout policy passed and production job `93171963381` was skipped under coordinated-writer hold `20260727-dag-snapshot-generation-v1` |
+| Railway repository-integration fan-out | The merge started 18 web/worker deployments across nine non-production environments. Commit-status history ended with five successes and 13 failures; a 2026-08-10 provider inventory classified five as removed and 13 as failed. None was a production target |
+
+On 2026-08-10 the #1424 preview environment was absent from Railway project
+inventory, and both former preview `/healthz` URLs returned 404. This attests
+environment absence and endpoint unavailability, not deletion of every
+historical deployment or artifact.
+
+A 2026-08-10 production readback found web deployment
+`4865a033-5cbe-4f9d-9ef4-4fad18a7be33` serving Gaming merge
+`b270997a356071fdfa63823ca67beabde897b67f`; worker deployment
+`12098d15-923e-4c15-91c0-d02225f7fe4d` exposed no commit provenance. Those
+later Gaming changes are outside the audit lineage,
+and transitive inclusion of the #1424 source tree does not establish an exact
+#1424 production rollout. No configured-pin match, database operation,
+provider/model call, live-memory mutation, or production credit is recorded
+for PR #1424.
 
 ## Delivery ledger
 
@@ -132,6 +398,14 @@ final merge decision.
 | [#1421](https://github.com/pbjustin/Arcanos/pull/1421) | Effective MCP decoded-JSON pre-parser body cap | 2026-08-07 UTC | `e01b0397a31daf2309f5f418018d0b4116564db4` | Merged; no production credit |
 | [#1422](https://github.com/pbjustin/Arcanos/pull/1422) | Fail-closed PostgreSQL package commands, aggregate CI truth, and compatible Hono remediation | 2026-08-08 UTC | `7bc83f469e571cd19626dbd2fa9360a8596b38e7` | Merged; no production credit |
 | [#1423](https://github.com/pbjustin/Arcanos/pull/1423) | Node/backend `REQUEST_TIMEOUT` truthfulness | 2026-08-08 UTC | `6a3ef8763e3d97ef10e5345d3061268527d87373` | Merged; no production credit |
+| [#1424](https://github.com/pbjustin/Arcanos/pull/1424) | Protected-digest tooling and fail-closed startup gate | 2026-08-08 UTC | `4f253ff68bdcea5c1b5fcc9e8525a43b92d291d3` | Merged; no configured-pin match or production credit |
+| [#1427](https://github.com/pbjustin/Arcanos/pull/1427) | Successful non-GPT terminal retention | 2026-08-11 UTC | `2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` | Merged and exact web/worker revision production-verified; no live retention stamp or deletion credit |
+| [#1428](https://github.com/pbjustin/Arcanos/pull/1428) | Restore serialized automatic paired Railway promotion | 2026-08-11 UTC | `c3763fe9a970503baab5f19f1fb1490b52abb622` | Merged; first automatic run failed closed in readiness preflight before deployment |
+| [#1429](https://github.com/pbjustin/Arcanos/pull/1429) | Synchronize the five-check production readiness contract | 2026-08-11 UTC | `8361e37263d6b0a9c32c15b76c1999fd80bf98bb` | Merged; automatic run activated only the worker before bounded observer overflow; no web was enqueued |
+| [#1430](https://github.com/pbjustin/Arcanos/pull/1430) | Bound exact-deployment history observation | 2026-08-11 UTC | `98d6ad998e936d4db26b1330b28a9edff1331018` | Merged and automatically promoted as one exact verified worker/web pair |
+
+Gaming PRs #1425/#1426 are deliberately omitted from this audit ledger. They
+are present in #1427's base but do not close or modify an audit finding.
 
 ## PR #1423 — Node/backend `REQUEST_TIMEOUT` truthfulness
 
@@ -605,13 +879,28 @@ passed all 13 jobs. Railway rollout policy run
 [`31058416025`](https://github.com/pbjustin/Arcanos/actions/runs/31058416025)
 enforced the same hold and skipped production deployment.
 
-### Last production-verified generation
+### Production-verification history
 
 The bounded 2026-08-02 production reconciliation verified the PR #1415 source
 generation `8bb0b80350d39a663c5dde0eefd81abfe27e4bf8`, its required database
 contracts, healthy web/worker roles, restored database access policy, and
 rotated database credential. It did not test backup restoration and cannot be
-projected onto PRs #1416–#1423.
+projected onto audit-scoped PRs #1416–#1424.
+
+The separately authorized 2026-08-11 promotion verified exact #1427 merge
+`2db3d41a58d9d34be6ee2119f7da9c0d682ac31e` on both production roles, their
+readiness/activation contract, the required DAG fencing schema, zero active
+jobs, and protection of 279 legacy-null terminal rows. It did not execute a new
+terminal writer or eligible cleanup deletion. Intervening Gaming PRs #1425/#1426
+remain outside the audit lineage despite being included in #1427's base.
+
+The later automatic 2026-08-11 acceptance run verified exact #1430 merge
+`98d6ad998e936d4db26b1330b28a9edff1331018` as one worker-first pair: worker
+`d20a6833-2448-4677-89df-84e46a0d2567` and web
+`e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41` both became the active exact revision,
+passed role/readiness and joint active-ID checks, and completed the strict web
+watchdog. This is promotion-control evidence; it adds no database, retention,
+provider/model, or live-memory behavior credit.
 
 ## Historical evidence
 
@@ -620,6 +909,6 @@ archive banner in
 [history-through-2026-07-31.md](history-through-2026-07-31.md). It contains
 the original capture, intermediate findings, red characterization, superseded
 queues, PR #1408–#1413 detail, and the initial PR #1414 composition record.
-The compact dossiers above preserve the August #1414–#1423 delivery and
-production-reconciliation evidence without restoring chronological sprawl.
-Historical present-tense claims must not override this ledger.
+The compact dossiers above preserve the August #1414–#1424 and #1427–#1430
+delivery and production-reconciliation evidence without restoring chronological
+sprawl. Historical present-tense claims must not override this ledger.
