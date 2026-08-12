@@ -54,6 +54,29 @@ function buildMinimalRailwayConfig(overrides = {}) {
   };
 }
 
+function buildMinimalDockerfile() {
+  return [
+    'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native',
+    'RUN railway_cli_url=https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz',
+    'railway_cli_sha256=7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce',
+    'for attempt in 1 2 3 4 5; do',
+    'wget -qO "${railway_cli_archive}" "${railway_cli_url}"',
+    'printf \'%s  %s\\n\' "${railway_cli_sha256}" "${railway_cli_archive}" | sha256sum -c -',
+    'done; \\',
+    'test "${railway_cli_downloaded}" = true;',
+    'tar -xzf /tmp/railway-cli.tar.gz',
+    'ln -s /usr/local/bin/railway-native /usr/local/bin/railway',
+    'test "$(/usr/local/bin/railway-native --version)" = "railway 4.30.2"',
+    'test "$(railway --version)" = "railway 4.30.2"',
+    'COPY prisma/ ./prisma/',
+    'COPY vendor/ ./vendor/',
+    'RUN npm install --include=dev --no-audit --no-fund && \\',
+    '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
+    '    npm run build',
+    'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]',
+  ].join('\n');
+}
+
 describe('validate-railway-compatibility', () => {
   it('accepts the minimal runtime contract without optional default-backed variables', () => {
     const validationErrors = validateConfig(buildMinimalRailwayConfig());
@@ -354,25 +377,63 @@ describe('validate-railway-compatibility', () => {
       expect.stringContaining('COPY vendor/ ./vendor/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
       expect.stringContaining('ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native'),
-      expect.stringContaining('npm install --global @railway/cli@4.30.2 --no-audit --no-fund'),
       expect.stringContaining('railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz'),
-      expect.stringContaining('/usr/local/bin/railway-native --version'),
+      expect.stringContaining('railway_cli_sha256=7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce'),
+      expect.stringContaining('for attempt in 1 2 3 4 5; do'),
+      expect.stringContaining('wget -qO "${railway_cli_archive}" "${railway_cli_url}"'),
+      expect.stringContaining('sha256sum -c -'),
+      expect.stringContaining('close the bounded Railway CLI download loop'),
+      expect.stringContaining('test "${railway_cli_downloaded}" = true;'),
+      expect.stringContaining('tar -xzf /tmp/railway-cli.tar.gz'),
+      expect.stringContaining('ln -s /usr/local/bin/railway-native /usr/local/bin/railway'),
+      expect.stringContaining('test "$(/usr/local/bin/railway-native --version)" = "railway 4.30.2"'),
+      expect.stringContaining('test "$(railway --version)" = "railway 4.30.2"'),
+    ]);
+
+    expect(validateDockerfile(buildMinimalDockerfile())).toEqual([]);
+  });
+
+  it('rejects unverified Railway CLI installation and post-extraction verification', () => {
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'RUN railway_cli_url=',
+          'RUN npm i -g @railway/cli@4.30.2\nRUN railway_cli_url='
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('must not use the unverified Railway CLI npm postinstall'),
     ]);
 
     expect(
-      validateDockerfile([
-        'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native',
-        'RUN npm install --global @railway/cli@4.30.2 --no-audit --no-fund',
-        'RUN wget -qO /tmp/railway-cli.tar.gz https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz && \\',
-        '    /usr/local/bin/railway-native --version',
-        'COPY prisma/ ./prisma/',
-        'COPY vendor/ ./vendor/',
-        'RUN npm install --include=dev --no-audit --no-fund && \\',
-        '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
-        '    npm run build',
-        'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]',
-      ].join('\n'))
-    ).toEqual([]);
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'test "${railway_cli_downloaded}" = true;\ntar -xzf /tmp/railway-cli.tar.gz',
+          'tar -xzf /tmp/railway-cli.tar.gz\ntest "${railway_cli_downloaded}" = true;'
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('retry and checksum the Railway CLI download before fail-closed extraction'),
+    ]);
+
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'for attempt in 1 2 3 4 5; do\nwget -qO "${railway_cli_archive}" "${railway_cli_url}"\nprintf \'%s  %s\\n\' "${railway_cli_sha256}" "${railway_cli_archive}" | sha256sum -c -\ndone; \\',
+          'for attempt in 1 2 3 4 5; do\ndone; \\\nwget -qO "${railway_cli_archive}" "${railway_cli_url}"\nprintf \'%s  %s\\n\' "${railway_cli_sha256}" "${railway_cli_archive}" | sha256sum -c -'
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('retry and checksum the Railway CLI download before fail-closed extraction'),
+    ]);
+
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace('tar -xzf /tmp/railway-cli.tar.gz\n', '')
+      )
+    ).toEqual([
+      expect.stringContaining('must extract the verified Railway CLI archive'),
+    ]);
   });
 
   it('rejects Railway build contexts that omit vendored npm file dependencies', () => {
