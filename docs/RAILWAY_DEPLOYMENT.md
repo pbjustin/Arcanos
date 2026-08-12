@@ -218,6 +218,15 @@ release archive, verified against SHA-256
 `e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`
 before extraction, and checked for exact version output before use.
 
+The application Docker image has a distinct musl CLI artifact contract. It
+downloads `railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz` with at most five
+attempts, verifies SHA-256
+`7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce`
+before extraction, checks exact `railway 4.30.2` output, and links the verified
+binary to both `/usr/local/bin/railway-native` and the bare `railway` command.
+Do not restore the `@railway/cli` npm global installer: its postinstall repeats
+the network fetch without this repository's checksum and retry gates.
+
 Provider-side token scope must be verified independently before this path is
 enabled or dispatched; tracked workflow code cannot inspect that scope safely.
 The deploy checkout's persisted read-only GitHub credential and a feasible

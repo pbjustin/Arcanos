@@ -45,7 +45,11 @@ Documentation automation boundaries:
 - `.github/workflows/auto-update-documentation.yml` is report-only. It has
   `contents: read`, validates bounded output for its single maintained target,
   and uploads a patch for human review. It never commits, pushes, or opens a
-  pull request.
+  pull request. Its production-mode localhost server receives a fresh masked
+  32-byte random `ARCANOS_JOB_READ_CAPABILITY_SECRET` only after install and
+  build; the parent shell unsets the value immediately after spawning the
+  server so the analysis client cannot inherit it. The workflow does not read
+  a repository or production job-read signing secret.
 - `.github/workflows/documentation-links.yml` runs a read-only external-link
   audit every Monday at 13:17 UTC and on manual dispatch. It writes only a job
   summary and a redacted workflow artifact.
@@ -351,6 +355,15 @@ GNU archive directly from its immutable upstream release, verifies SHA-256
 `e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`
 before extraction, and rejects any version output other than
 `railway 4.30.2`.
+
+The Docker runtime image separately installs the pinned musl Railway CLI
+archive used by application control-plane code. It retries that one upstream
+download at most five times, verifies SHA-256
+`7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce`
+before extraction, checks exact `railway 4.30.2` output, and exposes both the
+explicit `RAILWAY_CLI_BIN` path and the legacy bare `railway` command. The
+unchecked `@railway/cli` npm postinstall is forbidden by Railway compatibility
+validation.
 
 The workflow maps `RAILWAY_PRODUCTION_PROJECT_TOKEN` to the CLI-standard
 `RAILWAY_TOKEN` only on the access probe, deployment, status polling, and

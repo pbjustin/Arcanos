@@ -69,6 +69,12 @@ jobs:
           # The client bearer is localhost-only and deliberately distinct from
           # the provider credential used by the backend.
           export CI_API_KEY="ci-local-documentation-client"
+          ARCANOS_JOB_READ_CAPABILITY_SECRET="$(
+            node --input-type=module --eval \
+              'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"));'
+          )"
+          echo "::add-mask::${ARCANOS_JOB_READ_CAPABILITY_SECRET}"
+          export ARCANOS_JOB_READ_CAPABILITY_SECRET
 
           DOCS_MODE=--strict
           if [ "$OPENAI_API_KEY" = "sk-mock-for-ci-testing" ]; then
@@ -78,6 +84,7 @@ jobs:
 
           npm start &
           SERVER_PID=$!
+          unset ARCANOS_JOB_READ_CAPABILITY_SECRET
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
           SERVER_READY=false

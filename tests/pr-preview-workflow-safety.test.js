@@ -44,6 +44,43 @@ describe('native PR workflow safety', () => {
     );
   });
 
+  it('generates a masked per-run job-read signing fixture for documentation analysis', () => {
+    const workflow = readWorkflow('.github/workflows/auto-update-documentation.yml');
+    const stepStart = workflow.indexOf('      - name: Run documentation analysis\n');
+    const stepEnd = workflow.indexOf(
+      '\n      - name: Apply bounded tracked-document updates',
+      stepStart
+    );
+
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    const analysisStep = workflow.slice(stepStart, stepEnd);
+    const generationIndex = analysisStep.indexOf('randomBytes(32).toString("hex")');
+    const maskIndex = analysisStep.indexOf(
+      'echo "::add-mask::${ARCANOS_JOB_READ_CAPABILITY_SECRET}"'
+    );
+    const exportIndex = analysisStep.indexOf('export ARCANOS_JOB_READ_CAPABILITY_SECRET');
+    const startupIndex = analysisStep.indexOf('npm start &');
+    const serverPidIndex = analysisStep.indexOf('SERVER_PID=$!');
+    const unsetIndex = analysisStep.indexOf('unset ARCANOS_JOB_READ_CAPABILITY_SECRET');
+    const analysisIndex = analysisStep.indexOf('node scripts/generate-docs-update.js');
+
+    expect(generationIndex).toBeGreaterThan(-1);
+    expect(maskIndex).toBeGreaterThan(generationIndex);
+    expect(exportIndex).toBeGreaterThan(maskIndex);
+    expect(startupIndex).toBeGreaterThan(exportIndex);
+    expect(serverPidIndex).toBeGreaterThan(startupIndex);
+    expect(unsetIndex).toBeGreaterThan(serverPidIndex);
+    expect(analysisIndex).toBeGreaterThan(unsetIndex);
+    expect(workflow).not.toContain('secrets.ARCANOS_JOB_READ_CAPABILITY_SECRET');
+    expect(analysisStep).not.toContain(
+      'ARCANOS_JOB_READ_CAPABILITY_SECRET="$ARCANOS_GPT_ACCESS_TOKEN"'
+    );
+    expect(analysisStep).not.toMatch(
+      /ARCANOS_JOB_READ_CAPABILITY_SECRET=["'][^$]/u
+    );
+  });
+
   it('runs deployment readiness through the canonical integrity-gated web launcher', () => {
     const workflow = readWorkflow('.github/workflows/ci-cd.yml');
     const jobStart = workflow.indexOf('  validate-deployment-readiness:\n');

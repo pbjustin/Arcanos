@@ -1,15 +1,19 @@
 # Repository health-audit progress
 
 Status: current non-GPT-OSS dashboard through product PR
-[#1427](https://github.com/pbjustin/Arcanos/pull/1427) and delivery-control PRs
+[#1432](https://github.com/pbjustin/Arcanos/pull/1432), delivery-control PRs
 [#1428](https://github.com/pbjustin/Arcanos/pull/1428),
 [#1429](https://github.com/pbjustin/Arcanos/pull/1429), and
-[#1430](https://github.com/pbjustin/Arcanos/pull/1430); exact #1430 was
-automatically promoted and verified as one worker/web pair
+[#1430](https://github.com/pbjustin/Arcanos/pull/1430), documentation-only
+reconciliation PR [#1431](https://github.com/pbjustin/Arcanos/pull/1431), and
+reviewed delivery-maintenance PR
+[#1433](https://github.com/pbjustin/Arcanos/pull/1433). Exact #1432 automatic
+promotion failed during the worker image build, leaving the exact #1431
+production pair active; #1433 remains unmerged and has no production credit
 
 Original audit capture: 2026-07-28
 
-Last reconciled: 2026-08-11 UTC
+Last reconciled: 2026-08-12 UTC
 
 This report is advisory evidence. Current tracked source, tests, required CI,
 maintained documentation, and freshly read provider state supersede every
@@ -21,9 +25,11 @@ action. GPT-OSS is explicitly excluded from the active queue.
 
 - This file is the compact current dashboard and implementation order.
 - [findings.md](findings.md) is the normalized open/closed finding register
-  through audit-scoped product PR #1427 and delivery PRs #1428–#1430.
+  through audit-scoped product PR #1432, delivery PRs #1428–#1430, and
+  documentation-only PR #1431, with reviewed delivery-maintenance PR #1433.
 - [evidence.md](evidence.md) is the PR, validation, preview, merge, production,
-  and provider-state ledger through delivery PR #1430.
+  and provider-state ledger through product PR #1432 and reviewed maintenance
+  PR #1433.
 - [history-through-2026-07-31.md](history-through-2026-07-31.md) preserves the
   former long-form tracked narrative and its dated anchors.
 
@@ -35,16 +41,70 @@ dossier; they should not append another full chronological audit.
 
 | Area | Current state |
 | --- | --- |
-| Audit closure anchor on `main` | PR #1430 merge `98d6ad998e936d4db26b1330b28a9edff1331018`; tree `23a9f5e5853f60508b25b8f7e2148026304c98be`; fetched on 2026-08-11. The latest product slice remains PR #1427. Unrelated Arcanos Gaming PRs #1425/#1426 are present in #1427's base and remain excluded |
+| Audit closure anchor on `main` | PR #1432 merge `a2aef5e51a95302b55dee7d7c5209dde297cbc4d`; tree `cab5cbe567451a0af82bf8c6e1600abf9c9ac825`; merged and fetched on 2026-08-12. Its exact base is documentation-reconciliation PR #1431 merge `5a3982252f38f2afab368da3089d7a93db20ea0b`. Unrelated Arcanos Gaming PRs #1425/#1426 remain excluded |
 | Delivery-control source identity | PR #1428 head `fcabc28398c4f943fa9529bdb9b10570609d0b1f`, merge `c3763fe9a970503baab5f19f1fb1490b52abb622`; PR #1429 head `efe6e216d3fb9bba7d5d3dca56b5b301a0d56174`, merge `8361e37263d6b0a9c32c15b76c1999fd80bf98bb`; PR #1430 head `08bd9d2c15805a465700d5ea064b93f80cfd5613`, merge `98d6ad998e936d4db26b1330b28a9edff1331018`. Each squash merge is tree-identical to its reviewed head |
-| Latest closed product slice | Successful non-GPT terminal retention: completed/cancelled Ask and DAG-node rows receive bounded database-clock retention at every authoritative terminal writer; deterministic cleanup preserves active idempotency, diagnostics/accounting observation windows, and unstamped legacy rows |
-| PR #1427 final-head evidence | CI/CD run `31463630148`, API Endpoint Tests `31463630146`, Documentation Audit `31463630135`, PR CI `31463630141`, approval run `31463629006`, Codecov patch, and both Railway preview contexts passed at final head `0e3c1d6e`. GitHub reported `CLEAN` and `MERGEABLE` with no unresolved review threads; the passive preview did not exercise PostgreSQL retention |
-| Exact-merge delivery evidence | PR #1430 CI/CD run `31529904593` passed all 13 jobs, including Railway Compatibility, `Deployment Readiness`, and `All Checks Complete`; Documentation Audit `31529904589` and Repository Registration `31529904597` passed. Auxiliary documentation analysis `31529904611` repeated the known missing-secret fixture failure and did not gate promotion |
-| Production credit | PR #1427 retains its separate manual-promotion/readiness/schema/279-row protection evidence and no live retention stamp/deletion credit. Automatic run `31531116356` then promoted exact #1430 merge to worker deployment `d20a6833-2448-4677-89df-84e46a0d2567` and web deployment `e59f6a27-2d2a-4e24-b9e8-f9ba5d26dd41`; both exact IDs became active, role/readiness and joint active-ID verification passed, and the strict 15-minute/500-line watchdog found no `/ask` timeout or budget-abort regression |
-| Promotion control | PR #1428 retired the tracked hold to exact sentinel `none`, introduced one serialized worker-first pair with exact-ID observation, and required explicit project/environment/web/worker configuration plus a dedicated production project-token secret. PRs #1429/#1430 corrected readiness and deployment-history drift exposed by the first two fail-closed runs. Native Railway deployment triggers remain disabled to avoid duplicate independent releases; GitHub is the sole automatic promotion path. The obsolete web-only repository variable `RAILWAY_SERVICE_ID` was removed after acceptance |
-| Latest product slice | Successful non-GPT terminal retention is closed in merged source and was present in the dated exact #1430 automatic-acceptance pair; live writer/deletion behavior remains unexercised |
-| Next active implementation slice | Predictive/reactive self-heal approval |
+| Documentation reconciliation identity | PR #1431 head `cc52b5c9f4326e5b3ce9c47501cf51b93305a238`, merge `5a3982252f38f2afab368da3089d7a93db20ea0b`; it reconciled the audit Markdown without changing product behavior |
+| Latest closed product slice | Predictive/reactive self-heal approval: enabled predictive dispositions own the background tick; unconfirmed or incoherent execution fails closed, coherent execution is accounted once, explicitly disabled prediction preserves the legacy gates, and a successful verification rollback ends its tick before prediction can run |
+| PR #1432 final-head evidence | CI/CD run `31619598385`, API Endpoint Tests `31619598396`, Documentation Audit `31619598483`, PR CI `31619598451`, approval run `31619597207`, Codecov patch, Railway Compatibility, Deployment Readiness, and All Checks Complete passed at final head `3f886d8a`. GitHub reported `CLEAN` and `MERGEABLE`; zero review-thread objects existed |
+| Exact-merge delivery evidence | PR #1432 CI/CD run `31620988384` passed all 13 jobs, including Railway Compatibility, `Deployment Readiness`, and `All Checks Complete`; Documentation Audit `31620988393` and Repository Registration `31620988424` passed. Auxiliary documentation analysis `31620988450` repeated the known missing-secret fixture failure and did not gate promotion |
+| Production credit | PR #1427 retains its separate manual-promotion/readiness/schema/279-row protection evidence and no live retention stamp/deletion credit. Automatic run `31535958799` promoted documentation-only #1431 to worker `f0ac8b97-4b10-483e-a127-798daf345780` and web `a9b4e9da-61a3-4172-b7ce-48f5c98170bf`; both roles and the watchdog passed, but this added no product behavior. Exact #1432 run `31622197454` failed during the new worker image build before web enqueue, so no #1432 role became active. Fresh readback found both #1431 baselines still `RUNNING` with HTTP 200 health/readiness; no Slice 2 production credit is claimed |
+| Promotion control | PR #1428 retired the tracked hold to exact sentinel `none`, introduced one serialized worker-first pair with exact-ID observation, and required explicit project/environment/web/worker configuration plus a dedicated production project-token secret. PRs #1429/#1430 corrected readiness and deployment-history drift exposed by the first two fail-closed runs. Native Railway deployment triggers remain disabled to avoid duplicate independent releases; GitHub is the sole automatic promotion path. The obsolete web-only repository variable `RAILWAY_SERVICE_ID` was removed after acceptance. Run `31622197454` confirms the automatic trigger still fired for #1432; its external worker-build failure is a release attempt to reconcile, not a disabled trigger |
+| PR #1433 reviewed implementation evidence | Published implementation commit `63c31baa1bff8d7e1d21035214168012a1e860e7` removes the redundant unchecked `@railway/cli` npm postinstall, installs one checksum-pinned musl binary with bounded retries and both executable names, and supplies the report-only documentation server a masked per-run job-read signing fixture. All surfaced exact-commit CI checks passed |
+| PR #1433 external evidence | Railway Compatibility run [`31626187034`](https://github.com/pbjustin/Arcanos/actions/runs/31626187034), job `94213819744`, verified `railway-cli.tar.gz: OK` and built image `sha256:69ab55f9e73ef4b12f099b0d240f77fbd9ffc534153b32bd34623d93c74cb3fd`. Analyze Documentation Updates [`31626739806`](https://github.com/pbjustin/Arcanos/actions/runs/31626739806) cleared the former startup failure in configured allow-partial mode; it generated zero sections with six dependency failures and no validated proposal. Manually created credential-empty Railway preview `c88804be-b13b-46b0-b860-63304bdd5984` deployed the same commit to successful web/worker roles and passed the sealed 112/112 probe. The PR remains unmerged; none of this promotes #1432 |
+| Latest product slice | Predictive/reactive self-heal approval is closed in merged source but not production-promoted. The contained live policy probe ran at intermediate head `286e7397`, so final-head rollback/rejection corrections retain local-test and CI—not live-preview—credit |
+| Next active implementation slice | Hard versus advisory worker-budget semantics |
 | Explicit exclusion | GPT-OSS remains outside this queue and is not made ready by any result in this report |
+
+## PR #1432 closure — predictive/reactive self-heal approval
+
+PR #1432 merged on `2026-08-12T17:06:47Z` as
+`a2aef5e51a95302b55dee7d7c5209dde297cbc4d`. Its exact base was the
+documentation-only #1431 merge `5a3982252f38f2afab368da3089d7a93db20ea0b`,
+final reviewed head was `3f886d8acd3f9f8ec490b56dd9b56419e0e77060`,
+and reviewed/merged tree was
+`cab5cbe567451a0af82bf8c6e1600abf9c9ac825`. The three-commit, 21-file slice
+added 1,890 lines and removed 141.
+
+The merged config-free, effect-free policy makes enabled predictive
+dispositions authoritative for each background tick. Coherent completed
+execution requires prediction enabled, an attempted live execution mode, a
+safe non-`none` decision, and matching action/target; it is recorded once and
+is not reactively dispatched again. Recommendation-only, dry-run, refused,
+unsupported, cooldown, fallback, failed, attempted, uncertain, and incoherent
+states do not unlock a reactive action or automatic controller. Explicitly
+disabled passive prediction preserves the legacy gates, including when the
+predictor call rejects; disabled-plus-executed state is invalid.
+
+A due verification rollback that mutates successfully owns its tick and
+returns before prediction. Prediction may resume on the next tick, preventing
+two protected effect owners or hidden predictive accounting. Manual
+self-improve and the directly scoped decision route keep their existing
+authorization owners. The debug override remains development/test-only and
+cannot override a completed or uncertain live execution state. This slice adds
+no human approval token and does not replace the operator checks used by
+privileged actuators.
+
+Node 20.19 validation passed type-check, build, lint with zero errors and 76
+existing warnings, 367 focused Jest tests, ten native-preview runner tests,
+Railway validation, Documentation Audit 327/327, and `git diff --check`.
+Final-head required checks passed, and exact-merge CI run `31620988384` later
+passed all 13 jobs. Copilot's second intermediate-head review described three
+suppressed issues—rollback ownership, disabled-mode rejection, and
+disabled-plus-executed coherence—which final head `3f886d8a` corrected.
+GitHub exposed no review-thread object to resolve, and independent final-head
+review found no blocker.
+
+The contained Railway preview imported only the shared pure policy. At
+intermediate head `286e7397`, credential-free web/worker deployments passed a
+112-request probe covering six fixed policy selectors, fixed 404s for normal
+self-heal/self-improve routes, worker denial, and stable readiness hashes. It
+did not import the normal coordinator or reach provider, actuator, database,
+Redis, normal job-worker runtime, outbound-network, or live-memory boundaries.
+The final-head web
+deployment succeeded, but its matching worker deployment failed while the
+prior intermediate-head worker remained running; the three final corrections
+therefore receive local regression and CI credit, not exact-final-head live
+component-E2E credit.
 
 ## PRs #1428–#1430 closure — automatic paired promotion
 
@@ -336,11 +396,10 @@ This order supersedes every older queue in the historical narrative.
 
 | Order | Priority | Slice | Completion contract |
 | --- | --- | --- | --- |
-| 1 | Older ranked | Predictive/reactive self-heal approval | Re-integrate the explicit-approval candidate on current `main`; preserve policy ownership and prove no predictive path performs an unapproved reactive effect |
-| 2 | Older ranked | Hard versus advisory worker-budget semantics | Ratify the product semantics, implement them at the authoritative ownership seam, and align readiness/diagnostic claims |
-| 3 | P2 | `/dispatch` GPT-ID validation before quota admission | Move deterministic canonical identifier rejection before public-provider admission and prove invalid IDs consume no quota in ready, exhausted, and unavailable-store states |
-| 4 | P2 | `/dispatch` parser/auth/admission ordering | Characterize and introduce bounded selector/route parsing before broad parsing without weakening DAG authentication, admission, or unrelated route contracts |
-| 5 | P2/P3 | Remaining observability, readiness, privacy, Redis, architecture, scale, warning, and cleanup cluster | Subdivide the residuals enumerated in [findings.md](findings.md): generic-model and GPT-log cardinality, rate-policy epoch, corrupt-counter integrity, real-Redis capability proof, public-health minimization, and raw-path pre-decode bounds; then continue shadow MCP registry, ActionPlan transport duplication, measured stale-recovery/worker-discovery/index planning, GPT Access contract extraction, provider-option/Trinity limits, and behavior-preserving warning or excluded-test cleanup |
+| 1 | Older ranked | Hard versus advisory worker-budget semantics | Ratify the product semantics, implement them at the authoritative ownership seam, and align readiness/diagnostic claims |
+| 2 | P2 | `/dispatch` GPT-ID validation before quota admission | Move deterministic canonical identifier rejection before public-provider admission and prove invalid IDs consume no quota in ready, exhausted, and unavailable-store states |
+| 3 | P2 | `/dispatch` parser/auth/admission ordering | Characterize and introduce bounded selector/route parsing before broad parsing without weakening DAG authentication, admission, or unrelated route contracts |
+| 4 | P2/P3 | Remaining observability, readiness, privacy, Redis, architecture, scale, warning, and cleanup cluster | Subdivide the residuals enumerated in [findings.md](findings.md): generic-model and GPT-log cardinality, rate-policy epoch, corrupt-counter integrity, real-Redis capability proof, public-health minimization, and raw-path pre-decode bounds; then continue shadow MCP registry, ActionPlan transport duplication, measured stale-recovery/worker-discovery/index planning, GPT Access contract extraction, provider-option/Trinity limits, and behavior-preserving warning or excluded-test cleanup |
 
 Do not combine these into a broad refactor. Each slice needs its own red
 characterization, smallest safe implementation, focused regression evidence,
@@ -350,11 +409,13 @@ and current-source review.
 
 | Follow-up | Deadline or trigger | Current disposition |
 | --- | --- | --- |
-| Repair the auxiliary Analyze Documentation Updates startup fixture by supplying its required sealed `ARCANOS_JOB_READ_CAPABILITY_SECRET` test value | Next workflow-maintenance slice | Still open. Exact-merge runs `31468287618`, `31522967336`, `31526489082`, and `31529904611` repeated the inherited fixture-only failure through #1430; each maintained Documentation Audit and required main-CI gate passed |
+| Repair the auxiliary Analyze Documentation Updates startup fixture by supplying its required sealed `ARCANOS_JOB_READ_CAPABILITY_SECRET` test value | Next workflow-maintenance slice | Reviewed in PR #1433 at published implementation commit `63c31baa`. Direct exact-commit workflow run [`31626739806`](https://github.com/pbjustin/Arcanos/actions/runs/31626739806) cleared the former startup failure and completed in configured allow-partial mode; it generated zero sections with six dependency failures and no validated proposal, so proposal validation skipped normally. Merge remains required for source closure |
+| Harden the runtime-image Railway CLI bootstrap exposed by #1432 promotion | Before retrying #1432 production promotion | Reviewed in PR #1433 at published implementation commit `63c31baa`. All surfaced CI passed; Railway Compatibility run [`31626187034`](https://github.com/pbjustin/Arcanos/actions/runs/31626187034), job `94213819744`, verified the pinned archive checksum and built image `sha256:69ab55f9e73ef4b12f099b0d240f77fbd9ffc534153b32bd34623d93c74cb3fd`. Exact isolated Railway preview `c88804be-b13b-46b0-b860-63304bdd5984` built both roles successfully and passed readiness plus 112/112 sealed requests. Merge and any separately authorized paired production retry remain outstanding |
+| Restore or verify native Railway PR-environment creation | Before relying on automatic preview evidence | PR #1433 did not materialize a native environment despite enabled PR settings. Its exact preview was created manually from credential-empty base `8d5594c5-075e-4ad5-8fad-9e6e0866032d`; no production target was touched. Treat native automation as unverified until a later new PR creates and tears down its environment automatically |
 | Re-review and remove the temporary npm-audit platform-profile exception rather than extending it silently | 2026-08-10 | Deadline reached and the follow-up remains open; no silent extension is authorized. PR #1422 patched Hono to `4.12.34` and removed the obsolete Hono and `@hono/node-server` exceptions; the remaining exact platform profiles still require re-review |
-| Reverify preview teardown and other provider lifecycle state | Before claiming cleanup | The #1422 and #1423 preview absences were previously attested. A 2026-08-10 Railway inventory did not contain #1424 preview `275ef5a6-1c59-4820-9330-40ef34465ec3`, and both former preview health URLs returned HTTP 404. #1427 preview cleanup run `31468287960` passed after merge and the transient preview deployment was reported inactive; this supports preview teardown, not deletion of every historical artifact. #1427's nine non-production merge-SHA deployment records were also inactive at the 2026-08-11 GitHub readback |
-| Restore automatic paired production promotion | Before expecting a merge to promote automatically | Closed by PRs #1428–#1430. The hold is exact sentinel `none`; a dedicated production project-token secret and explicit project/environment/web/worker variables are configured; native Railway triggers remain disabled; and run `31531116356` automatically promoted and jointly verified exact worker/web merge `98d6ad99`. The obsolete web-only repository variable was removed. The documented non-atomic partial-failure reconciliation remains an operational residual |
-| Reverify production topology, edge policy, logs, retained-job inventory, and drain readiness | Before the next audit-scoped production promotion | #1427 retains the bounded job/schema/279-row protection evidence. Automatic #1430 acceptance freshly verified exact target/role/readiness/active-ID state and the strict post-deploy timeout/budget watchdog for both deployed roles. Live new-row retention/deletion, edge-policy detail, log-retention duration, and a measured provider-level rollback remain unexercised |
+| Reverify preview teardown and other provider lifecycle state | Before claiming cleanup | The #1422 and #1423 preview absences were previously attested. A 2026-08-10 Railway inventory did not contain #1424 preview `275ef5a6-1c59-4820-9330-40ef34465ec3`, and both former preview health URLs returned HTTP 404. #1427 preview cleanup run `31468287960` passed after merge and the transient preview deployment was reported inactive; this supports preview teardown, not deletion of every historical artifact. #1427's nine non-production merge-SHA deployment records were also inactive at the 2026-08-11 GitHub readback. #1432 cleanup run `31620988938` checked only the separately named `worker-diagnostics-pr-1432-e2e` environment and found none; it did not delete or attest teardown of the standard `Arcanos-pr-1432` preview. Manually created #1433 environment `c88804be-b13b-46b0-b860-63304bdd5984` is intentionally active while the PR is open; teardown is required after the PR lifecycle and is not yet claimed |
+| Restore automatic paired production promotion | Before expecting a merge to promote automatically | Closed by PRs #1428–#1430. The hold is exact sentinel `none`; a dedicated production project-token secret and explicit project/environment/web/worker variables are configured; native Railway triggers remain disabled; runs `31531116356` and `31535958799` automatically promoted and jointly verified exact pairs, and #1432 run `31622197454` started automatically before failing in its worker image build. The obsolete web-only repository variable was removed. The documented non-atomic partial-failure reconciliation remains an operational residual |
+| Reverify production topology, edge policy, logs, retained-job inventory, and drain readiness | Before the next audit-scoped production promotion | #1427 retains the bounded job/schema/279-row protection evidence. Automatic #1431 acceptance verified its exact documentation-only target/role/readiness/active-ID state and watchdog. #1432 then failed during the worker image build before web enqueue, leaving #1431 active and Slice 2 unpromoted. Live new-row retention/deletion, live self-heal effects, edge-policy detail, log-retention duration, and a measured provider-level rollback remain unexercised |
 
 ## Production and rollout state
 
@@ -417,6 +478,37 @@ the only automatic production trigger; both Railway-native triggers remain
 disabled. The obsolete repository variable `RAILWAY_SERVICE_ID` was removed
 after acceptance.
 
+Documentation-only PR #1431 merge
+`5a3982252f38f2afab368da3089d7a93db20ea0b` then passed exact-merge CI and
+automatic run `31535958799`. That run activated worker
+`f0ac8b97-4b10-483e-a127-798daf345780` and web
+`a9b4e9da-61a3-4172-b7ce-48f5c98170bf`; both exact roles became active and
+ready, and the strict watchdog passed. It advanced deployed revision identity
+without changing product behavior.
+
+Exact #1432 merge `a2aef5e51a95302b55dee7d7c5209dde297cbc4d`
+also passed required exact-merge CI and automatically started run
+`31622197454`. Policy and paired-target preflight passed, recording the #1431
+pair above as the baselines. New worker deployment
+`b243943d-9043-4200-9dd1-14b649574126` then failed during its Docker build
+when the pinned Railway CLI package's postinstall fetched a GitHub release
+binary and received `Service Unavailable`. Web deployment and the watchdog were
+skipped. No #1432 role became active, production remained on exact #1431, and
+this report does not convert the failed attempt into Slice 2 production credit.
+
+Reviewed PR #1433 publishes the isolated maintenance correction at
+implementation commit `63c31baa1bff8d7e1d21035214168012a1e860e7`. All
+surfaced exact-commit checks passed; CI Docker build `31626187034`, job
+`94213819744`, verified the pinned checksum and image, and direct documentation
+run `31626739806` cleared the former startup failure in configured allow-partial
+mode. Credential-empty Railway environment
+`c88804be-b13b-46b0-b860-63304bdd5984` deployed successful exact-commit
+web/worker roles and passed 112/112 sealed requests. Native preview automation
+did not create that environment, so it was manually instantiated from the
+empty base. No production service was touched. This evidence does not alter
+the failed-run history or promote #1432; merge and a paired production retry
+remain separately authorized.
+
 The #1422 and #1423 merges each triggered 18 Railway repository-integration
 deployments across nine non-production environments, and #1424/#1427 produced
 similar fan-out. Those records are not production credit; the bounded #1427
@@ -430,17 +522,18 @@ provider configuration, and promotion policy.
 | Dimension | Verdict |
 | --- | --- |
 | Architecture | Substantially improved. Executable dependency boundaries and cycle gates exist; remaining debt is localized to named coordination and transport seams rather than repository-wide spaghetti |
-| Correctness | Stronger database/job/DAG/Backstage/Research contracts, fail-closed required PostgreSQL/aggregate CI truth, backend-timeout truthfulness, protected-digest tooling, and prospective successful non-GPT terminal retention are merged through audit-scoped PR #1427; delivery controls are reconciled through #1430. Self-heal approval and worker-budget semantics remain explicit work; live terminal stamping/deletion is not yet exercised |
-| Security | The scoped ingress, disclosure, admission, Backstage, Research, exact MCP body-cap, Hono remediation, backend-timeout truthfulness, protected-digest generation, and six-runtime-pin startup gate addressed by PRs #1409–#1424 plus #1427's privacy-bounded retention cleanup are closed in merged source. Broader dispatch/pre-admission parser, log/metric, Redis-integrity, and public-health residuals remain open in the finding register |
+| Correctness | Stronger database/job/DAG/Backstage/Research contracts, fail-closed required PostgreSQL/aggregate CI truth, backend-timeout truthfulness, protected-digest tooling, prospective successful non-GPT terminal retention, and predictive/reactive self-heal effect ownership are merged through audit-scoped PR #1432; delivery controls are reconciled through #1430. Hard/advisory worker-budget semantics remain the next older-ranked slice; live terminal stamping/deletion and live self-heal actuation remain unexercised |
+| Security | The scoped ingress, disclosure, admission, Backstage, Research, exact MCP body-cap, Hono remediation, backend-timeout truthfulness, protected-digest generation, six-runtime-pin startup gate, privacy-bounded retention cleanup, and one-owner fail-closed self-heal approval boundary addressed through PR #1432 are closed in merged source. Broader dispatch/pre-admission parser, log/metric, Redis-integrity, and public-health residuals remain open in the finding register |
 | Scalability | Public provider admission, bounded DAG/Backstage/Research persistence, stale-recovery batching, Research aggregate cancellation, and bounded deterministic Ask/DAG terminal cleanup are present. Legacy-null cutover, deletion latency under live scale, replica-policy assumptions, and hard/advisory worker budgets still need explicit contracts or measured evidence |
 | Maintainability | Ownership and documentation improved materially. Large coordinators, duplicate transport contracts, warnings, and stale/manual tests remain isolated cleanup candidates |
-| Delivery and operations | Exact #1427 product/schema/legacy protection remains verified, and #1430 was automatically promoted as one exact worker-first pair with joint activation/readiness and watchdog evidence. The hold is `none`, canonical two-role configuration and the dedicated secret are present, the legacy web-only selector is removed, and native Railway triggers remain disabled by design. Provider-level atomicity, partial-failure reconciliation, stale non-production history, and the auxiliary documentation-analysis fixture remain operational debt |
+| Delivery and operations | Exact #1427 product/schema/legacy protection remains verified, and #1431 is the latest automatically promoted exact worker-first pair with joint activation/readiness and watchdog evidence. The #1432 trigger fired but its worker image build failed before web enqueue, leaving Slice 2 unpromoted. PR #1433 supplies reviewed implementation, CI-image, direct-workflow, and contained-preview proof for the immediate bootstrap and fixture corrections but remains unmerged. The hold is `none`, canonical two-role configuration and the dedicated secret are present, the legacy web-only selector is removed, and native production Railway triggers remain disabled by design. Upstream asset availability, provider-level atomicity, partial-failure reconciliation, stale non-production history, and native PR-preview automation remain operational debt |
 
 ## Delivered program summary
 
-PRs #1408–#1424 plus audit-scoped product PR #1427 and delivery-control PRs
-#1428–#1430 delivered the capability foundation and repository-health
-remediation program in reviewable stages. Unrelated
+PRs #1408–#1424, audit-scoped product PRs #1427 and #1432,
+delivery-control PRs #1428–#1430, and documentation-only reconciliation PR
+#1431 delivered the capability foundation and repository-health remediation
+program in reviewable stages. Unrelated
 Gaming PRs #1425/#1426 are present in #1427's base but excluded from this audit.
 The durable merge ledger and exact evidence live in
 [evidence.md](evidence.md). In broad terms,
@@ -472,7 +565,11 @@ the program:
   JSON entry retained as manual-only tooling;
 - added prospective database-clock retention for completed/cancelled Ask and
   DAG-node rows plus deterministic bounded `SKIP LOCKED` cleanup that protects
-  idempotency, observation windows, and unstamped legacy rows; and
+  idempotency, observation windows, and unstamped legacy rows;
+- made enabled predictive dispositions authoritative per background tick,
+  preserved explicitly disabled legacy behavior, separated successful
+  verification rollback ticks from predictive execution, and pinned the
+  shared effect-free approval policy into the sealed preview contract;
 - restored one serialized worker-first automatic production pair with exact
   revision/role/readiness/active-ID verification, bounded detached-deployment
   observation, and a strict post-deploy timeout/budget watchdog.
