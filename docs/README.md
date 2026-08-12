@@ -169,10 +169,11 @@ Migration-local implementation notes live beside their artifacts under
   — relocated baseline snapshot retained only as historical evidence.
 - [2026-07-28 repository-health audit](audits/repository-health/2026-07-28/progress.md)
   — compact current dashboard through the predictive/reactive self-heal
-  approval slice in PR #1432; successful terminal retention in PR #1427,
-  paired-promotion restoration in PRs #1428–#1430, and documentation
-  reconciliation in PR #1431 remain recorded. Arcanos Gaming PRs #1425/#1426
-  remain excluded from this audit lineage, with separate
+  approval slice in merged PR #1432 and reviewed delivery-maintenance in open
+  PR #1433; successful terminal retention in PR #1427, paired-promotion
+  restoration in PRs #1428–#1430, and documentation reconciliation in PR
+  #1431 remain recorded. Arcanos Gaming PRs #1425/#1426 remain excluded from
+  this audit lineage, with separate
   [findings register](audits/repository-health/2026-07-28/findings.md),
   [evidence](audits/repository-health/2026-07-28/evidence.md), and
   [historical narrative](audits/repository-health/2026-07-28/history-through-2026-07-31.md)

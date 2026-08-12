@@ -1,9 +1,10 @@
 # Repository health-audit evidence ledger
 
 Last reconciled: 2026-08-12 UTC, after audit-scoped product PR #1432,
-delivery-control PRs #1428–#1430, and documentation-only PR #1431 merged.
-Exact #1432 automatic promotion failed during the worker image build; the
-exact #1431 production pair remained active
+delivery-control PRs #1428–#1430, and documentation-only PR #1431 merged and
+delivery-maintenance PR #1433 reached reviewed implementation commit
+`63c31baa1bff8d7e1d21035214168012a1e860e7`. #1433 remains unmerged; exact
+#1432 remains unpromoted and the exact #1431 production pair remains active
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -121,33 +122,42 @@ and the watchdog. No #1432 role became active; production stayed on the exact
 failed external supply-chain attempt, not production evidence for the self-heal
 slice, and it was not rerun during this documentation update.
 
-### Local delivery-maintenance candidate
+## PR #1433 — Railway CLI bootstrap and documentation-analysis fixture
 
-The current working tree contains an unpublished candidate for both delivery
-failures. The Docker image no longer invokes the redundant unchecked
-`@railway/cli` npm postinstall. It downloads only the pinned `4.30.2` musl
-archive with five bounded attempts, verifies SHA-256
+PR [#1433](https://github.com/pbjustin/Arcanos/pull/1433) published
+implementation commit `63c31baa1bff8d7e1d21035214168012a1e860e7` on exact
+#1432 merge `a2aef5e51a95302b55dee7d7c5209dde297cbc4d`. The PR remains
+open and unmerged; these checks provide reviewed-PR and contained-preview
+evidence, not merge or production credit.
+
+The Docker image no longer invokes the redundant unchecked `@railway/cli` npm
+postinstall. It downloads only the pinned `4.30.2` musl archive with five
+bounded attempts, verifies SHA-256
 `7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce`
 before extraction, checks exact version output, and preserves both
 `/usr/local/bin/railway-native` and the bare `railway` command. The auxiliary
-documentation step now generates a fresh masked 32-byte job-read signing value
+documentation step generates a fresh masked 32-byte job-read signing value
 after install/build, passes it to the localhost server, and unsets it before
 the analysis client runs.
 
-Local validation passed three focused Jest suites / 32 tests, the full root
-build, lint with zero errors and the existing 76 warnings, Railway
-compatibility validation, Documentation Audit 327/327, generated-index
-verification, the 170-local/25-external-link documentation audit, workflow and
-Docker shell syntax checks, YAML parsing, and `git diff --check`. The local
-Docker engine was unavailable, and a separate temporary Linux fetch of the
-upstream archive returned a network/download error; neither result is a fresh
-image-build success. The candidate remains deliberately fail-closed if all
-five upstream attempts fail.
+| Evidence | Result |
+| --- | --- |
+| Local validation | Three focused Jest suites / 32 tests, full root build, lint with zero errors and 76 existing warnings, Railway validation, Documentation Audit 327/327, generated-index checks, 170-local/25-external-link audit, shell/YAML parsing, and `git diff --check` passed |
+| Published exact-commit CI | Every surfaced check at `63c31baa` completed successfully, including root unit/integration, PR CI, Node 20.19 build, lint/type, Security, PostgreSQL fencing, Local Agent Sandbox, Python Windows, Redis admission, Railway Compatibility, Deployment Readiness, All Checks Complete, documentation/API/approval, and Codecov patch |
+| CI Docker image | CI/CD [`31626187034`](https://github.com/pbjustin/Arcanos/actions/runs/31626187034), Railway Compatibility job `94213819744`, logged `/tmp/railway-cli.tar.gz: OK`, exact `railway 4.30.2` validation for both names, image `sha256:69ab55f9e73ef4b12f099b0d240f77fbd9ffc534153b32bd34623d93c74cb3fd`, and `Docker build successful` |
+| Direct documentation workflow | Analyze Documentation Updates [`31626739806`](https://github.com/pbjustin/Arcanos/actions/runs/31626739806) ran against exact commit `63c31baa` and completed successfully in its configured allow-partial mode. The server started with the masked per-run fixture, so the former missing-secret startup failure did not recur; analysis generated zero sections with six dependency failures and no validated proposal, so proposal validation was skipped normally |
+| Manual contained Railway preview | Native automation did not fire. Environment `c88804be-b13b-46b0-b860-63304bdd5984` was manually created from credential-empty base `8d5594c5-075e-4ad5-8fad-9e6e0866032d` and pinned to exact commit `63c31baa`. Worker `ae089fa5-829c-4f3f-8826-a0115059bfc1` and web `e696d53a-e06a-4746-9637-cf873fec5b30` both reached `SUCCESS`. Final manifests used `/Dockerfile`, `--pr-preview-app-safe-v1`, `/readyz`, 300-second activation, 60-second drain, and one `us-east4` replica |
+| Sealed probe | Web `/readyz` returned HTTP 200 in `native-pr-application-e2e-v1` with `protectedEffectsEnabled: false`; worker returned HTTP 200 in `passive-pr-preview`. The repository sealed runner passed 112/112 requests, 37,902 response bytes, and 20 simulated-auth requests |
 
-This is local source/test evidence only. It does not supersede run
-`31620988450`, repair failed deployment `b243943d-9043-4200-9dd1-14b649574126`,
-or promote merge `a2aef5e5`. Those claims require publication, required CI, a
-fresh provider image build, and separately authorized paired promotion.
+The environment contained isolated role/branch variables only: no shared
+variables, volumes, database, Redis, or provider credentials. No production
+target was touched. This proves separate exact-commit CI Docker and Railway
+provider builds plus the sealed passive preview contract; it does not prove
+native PR-environment automation,
+production promotion, database/provider/model effects, or normal live
+self-heal actuation. Environment teardown remains pending the open PR
+lifecycle. The failed #1432 deployment remains historical; merge and any
+paired production retry require separate authorization.
 
 ## PRs #1428–#1430 — automatic paired production promotion
 
@@ -1057,6 +1067,7 @@ archive banner in
 the original capture, intermediate findings, red characterization, superseded
 queues, PR #1408–#1413 detail, and the initial PR #1414 composition record.
 The compact dossiers above preserve the August #1414–#1424 and #1427–#1432
-delivery and production-reconciliation evidence without restoring chronological
-sprawl; #1431 is documentation-only. Historical present-tense claims must not
-override this ledger.
+delivery and production-reconciliation evidence, plus reviewed, unmerged #1433
+delivery-maintenance evidence, without restoring chronological sprawl; #1431 is
+documentation-only. Historical present-tense claims must not override this
+ledger.
