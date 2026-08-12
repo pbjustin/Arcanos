@@ -37,6 +37,17 @@ export interface NativePrPreviewE2eContract {
       effectiveLimits: 'effective-limits';
     }>;
   }>;
+  readonly selfHealApproval: Readonly<{
+    path: '/self-heal/approval-contract';
+    fixtures: Readonly<{
+      deniedOutcomes: 'denied-outcomes';
+      validCompleted: 'valid-completed';
+      incoherentCompleted: 'incoherent-completed';
+      disabledLegacy: 'disabled-legacy';
+      manualIndependence: 'manual-independence';
+      productionDebugDenial: 'production-debug-denial';
+    }>;
+  }>;
   readonly gaming: Readonly<{
     canaryPath: '/gpt/arcanos-gaming/canary';
     queryPath: '/gpt/arcanos-gaming';

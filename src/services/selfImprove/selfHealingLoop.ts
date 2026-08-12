@@ -50,6 +50,15 @@ import {
   executeWorkerRepairActuator
 } from '@services/selfImprove/workerRepairActuator.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import {
+  isSelfHealingDebugOverrideEligible,
+  resolvePredictiveReactiveApproval,
+  resolveSelfHealingEffectAuthorization,
+  shouldRunSelfHealingController,
+  type PredictiveReactiveApproval
+} from '@shared/selfHealPredictiveApproval.js';
+
+export { resolvePredictiveReactiveApproval } from '@shared/selfHealPredictiveApproval.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const DEFAULT_ACTION_COOLDOWN_MS = 120_000;
@@ -446,6 +455,13 @@ type SelfHealingAIDiagnosis = NonNullable<SelfHealingLoopStatus['lastAIDiagnosis
 type SelfHealingAIDiagnosisResult = {
   diagnosis: SelfHealingAIDiagnosis;
   predictiveResult: Awaited<ReturnType<typeof runPredictiveHealingFromLoop>> | null;
+  allowReactiveAction: boolean;
+  allowAutomaticController: boolean;
+};
+
+type PredictiveAIDiagnosisResolution = {
+  diagnosis: SelfHealingAIDiagnosis;
+  approval: PredictiveReactiveApproval;
 };
 
 function getSelfHealingActionTarget(actionPlan: SelfHealingActionPlan): string {
@@ -528,47 +544,117 @@ function buildDeterministicAIDiagnosis(
   };
 }
 
+function isConfirmedPredictiveExecution(
+  predictiveResult: Awaited<ReturnType<typeof runPredictiveHealingFromLoop>>
+): boolean {
+  return resolvePredictiveReactiveApproval({
+    predictiveHealingEnabled: predictiveResult.featureFlags.enabled,
+    predictiveFallback: isPredictiveAIFallback(predictiveResult),
+    execution: {
+      ...predictiveResult.execution,
+      decisionAction: predictiveResult.decision.action,
+      decisionSafeToExecute: predictiveResult.decision.safeToExecute,
+      decisionTarget: predictiveResult.decision.target
+    }
+  }).source === 'predictive_already_executed';
+}
+
 function buildAIDiagnosisFromPredictiveResult(
   diagnosis: SelfHealingDiagnosis,
   predictiveResult: Awaited<ReturnType<typeof runPredictiveHealingFromLoop>>,
   requestedAt: string
-): SelfHealingAIDiagnosis {
-  if (isPredictiveAIFallback(predictiveResult)) {
+): PredictiveAIDiagnosisResolution {
+  const predictiveFallback = isPredictiveAIFallback(predictiveResult);
+  const predictiveExecutionConfirmed = isConfirmedPredictiveExecution(predictiveResult);
+  const approval = resolvePredictiveReactiveApproval({
+    predictiveHealingEnabled: predictiveResult.featureFlags.enabled,
+    predictiveFallback,
+    execution: {
+      ...predictiveResult.execution,
+      decisionAction: predictiveResult.decision.action,
+      decisionSafeToExecute: predictiveResult.decision.safeToExecute,
+      decisionTarget: predictiveResult.decision.target
+    }
+  });
+
+  if (!predictiveResult.featureFlags.enabled && approval.source === 'predictive_disabled') {
+    const deterministicDiagnosis = buildDeterministicAIDiagnosis(
+      diagnosis,
+      requestedAt,
+      `Predictive healing is disabled; legacy reactive policy selected. ${predictiveResult.decision.reason}`
+    );
+
+    return {
+      diagnosis: {
+        ...deterministicDiagnosis,
+        executionStatus: predictiveResult.execution.status,
+        aiUsedInRuntime: predictiveResult.decision.details?.aiUsed !== false
+      },
+      approval
+    };
+  }
+
+  if (predictiveFallback || !predictiveResult.featureFlags.enabled) {
     const aiFallbackReason =
       typeof predictiveResult.decision.details?.aiFallbackReason === 'string' &&
       predictiveResult.decision.details.aiFallbackReason.trim().length > 0
         ? predictiveResult.decision.details.aiFallbackReason.trim()
         : predictiveResult.decision.reason;
+    const fallbackReason = predictiveFallback
+      ? `AI unavailable; deterministic fallback selected. ${aiFallbackReason}`
+      : `Predictive healing returned an inconsistent disabled execution state. ${predictiveResult.decision.reason}`;
 
-    return buildDeterministicAIDiagnosis(
-      diagnosis,
-      requestedAt,
-      `AI unavailable; deterministic fallback selected. ${aiFallbackReason}`
-    );
+    return {
+      diagnosis: {
+        requestedAt,
+        completedAt: new Date().toISOString(),
+        advisor: 'deterministic_fallback_v1',
+        decision:
+          predictiveExecutionConfirmed && predictiveResult.decision.action !== 'none'
+            ? 'heal'
+            : 'observe',
+        reason: fallbackReason,
+        confidence: predictiveResult.decision.confidence,
+        action: predictiveResult.decision.action === 'none' ? null : predictiveResult.decision.action,
+        target: predictiveResult.decision.target,
+        safeToExecute: predictiveExecutionConfirmed && predictiveResult.decision.safeToExecute,
+        executionStatus: predictiveResult.execution.status,
+        fallbackUsed: true,
+        aiUsedInRuntime: predictiveResult.decision.details?.aiUsed !== false
+      },
+      approval
+    };
   }
 
   return {
-    requestedAt,
-    completedAt: new Date().toISOString(),
-    advisor: predictiveResult.decision.advisor,
-    decision: predictiveResult.decision.action === 'none' ? 'observe' : 'heal',
-    reason: predictiveResult.decision.reason,
-    confidence: predictiveResult.decision.confidence,
-    action: predictiveResult.decision.action === 'none' ? null : predictiveResult.decision.action,
-    target: predictiveResult.decision.target,
-    safeToExecute: predictiveResult.decision.safeToExecute,
-    executionStatus: predictiveResult.execution.status,
-    fallbackUsed: false,
-    aiUsedInRuntime: predictiveResult.decision.details?.aiUsed !== false
+    diagnosis: {
+      requestedAt,
+      completedAt: new Date().toISOString(),
+      advisor: predictiveResult.decision.advisor,
+      decision:
+        predictiveExecutionConfirmed && predictiveResult.decision.action !== 'none'
+          ? 'heal'
+          : 'observe',
+      reason: predictiveResult.decision.reason,
+      confidence: predictiveResult.decision.confidence,
+      action: predictiveResult.decision.action === 'none' ? null : predictiveResult.decision.action,
+      target: predictiveResult.decision.target,
+      safeToExecute: predictiveExecutionConfirmed && predictiveResult.decision.safeToExecute,
+      executionStatus: predictiveResult.execution.status,
+      fallbackUsed: false,
+      aiUsedInRuntime: predictiveResult.decision.details?.aiUsed !== false
+    },
+    approval
   };
 }
 
 function shouldForceAIDebugHealOnce(runtime: SelfHealingLoopRuntime, diagnosis: SelfHealingDiagnosis): boolean {
-  return (
-    getEnvBoolean(SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE_ENV, false) &&
-    !runtime.debugForcedHealConsumed &&
-    diagnosis.actionPlan !== null
-  );
+  return isSelfHealingDebugOverrideEligible({
+    debugOverrideConsumed: runtime.debugForcedHealConsumed,
+    debugOverrideRequested: getEnvBoolean(SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE_ENV, false),
+    hasActionPlan: diagnosis.actionPlan !== null,
+    nodeEnvironment: process.env.NODE_ENV
+  });
 }
 
 function applyForcedAIDebugHealOnce(params: {
@@ -1141,8 +1227,10 @@ async function aiDiagnoseAndDecide(params: {
     timestamp: requestedAt
   });
 
+  const predictiveHealingEnabled = getConfig().predictiveHealingEnabled === true;
+  let predictiveResult: Awaited<ReturnType<typeof runPredictiveHealingFromLoop>>;
   try {
-    const predictiveResult = await runPredictiveHealingFromLoop({
+    predictiveResult = await runPredictiveHealingFromLoop({
       source: 'predictive_self_heal_loop',
       observation: {
         requestWindow: params.observation.requestWindow,
@@ -1152,30 +1240,6 @@ async function aiDiagnoseAndDecide(params: {
         workerHealthError: params.observation.workerHealthError
       }
     });
-    const aiDiagnosis = applyForcedAIDebugHealOnce({
-      runtime: params.runtime,
-      diagnosis: params.diagnosis,
-      aiDiagnosis: buildAIDiagnosisFromPredictiveResult(params.diagnosis, predictiveResult, requestedAt)
-    });
-    recordAndLogAIDiagnosisResult({
-      runtime: params.runtime,
-      trigger: params.trigger,
-      diagnosisContext: params.diagnosis,
-      diagnosis: aiDiagnosis
-    });
-    if (aiDiagnosis.fallbackUsed) {
-      recordFallbackUsed({
-        runtime: params.runtime,
-        trigger: params.trigger,
-        diagnosis: params.diagnosis,
-        aiDiagnosis,
-        reason: aiDiagnosis.reason
-      });
-    }
-    return {
-      diagnosis: aiDiagnosis,
-      predictiveResult
-    };
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     recordAIFailed({
@@ -1184,11 +1248,20 @@ async function aiDiagnoseAndDecide(params: {
       requestedAt,
       errorMessage
     });
-    const aiDiagnosis = buildDeterministicAIDiagnosis(
+    const deterministicDiagnosis = buildDeterministicAIDiagnosis(
       params.diagnosis,
       requestedAt,
-      `AI diagnosis failed; deterministic fallback selected. ${errorMessage}`
+      predictiveHealingEnabled
+        ? `Predictive diagnosis failed; reactive effects withheld because the predictive execution phase is unknown. ${errorMessage}`
+        : `Predictive healing is disabled; legacy reactive policy selected after predictive diagnosis failed. ${errorMessage}`
     );
+    const aiDiagnosis: SelfHealingAIDiagnosis = predictiveHealingEnabled
+      ? {
+          ...deterministicDiagnosis,
+          decision: 'observe',
+          safeToExecute: false
+        }
+      : deterministicDiagnosis;
     recordAndLogAIDiagnosisResult({
       runtime: params.runtime,
       trigger: params.trigger,
@@ -1203,11 +1276,67 @@ async function aiDiagnoseAndDecide(params: {
       aiDiagnosis,
       reason: aiDiagnosis.reason
     });
+    const effectAuthorization = predictiveHealingEnabled
+      ? {
+          allowReactiveAction: false,
+          allowAutomaticController: false
+        }
+      : resolveSelfHealingEffectAuthorization({
+          approval: {
+            allowLegacyReactiveEffects: true,
+            source: 'predictive_disabled'
+          },
+          debugApprovalApplied: false,
+          hasActionPlan: params.diagnosis.actionPlan !== null
+        });
     return {
       diagnosis: aiDiagnosis,
-      predictiveResult: null
+      predictiveResult: null,
+      ...effectAuthorization
     };
   }
+
+  const predictiveResolution = buildAIDiagnosisFromPredictiveResult(
+    params.diagnosis,
+    predictiveResult,
+    requestedAt
+  );
+  const debugOverrideAllowed =
+    predictiveResolution.approval.source === 'authoritative_predictive_result' ||
+    predictiveResolution.approval.source === 'deterministic_fallback';
+  const aiDiagnosis = debugOverrideAllowed
+    ? applyForcedAIDebugHealOnce({
+        runtime: params.runtime,
+        diagnosis: params.diagnosis,
+        aiDiagnosis: predictiveResolution.diagnosis
+      })
+    : predictiveResolution.diagnosis;
+  const debugApprovalApplied = aiDiagnosis !== predictiveResolution.diagnosis;
+  recordAndLogAIDiagnosisResult({
+    runtime: params.runtime,
+    trigger: params.trigger,
+    diagnosisContext: params.diagnosis,
+    diagnosis: aiDiagnosis
+  });
+  if (aiDiagnosis.fallbackUsed) {
+    recordFallbackUsed({
+      runtime: params.runtime,
+      trigger: params.trigger,
+      diagnosis: params.diagnosis,
+      aiDiagnosis,
+      reason: aiDiagnosis.reason
+    });
+  }
+  const effectAuthorization = resolveSelfHealingEffectAuthorization({
+    approval: predictiveResolution.approval,
+    debugApprovalApplied,
+    hasActionPlan: params.diagnosis.actionPlan !== null
+  });
+  return {
+    diagnosis: aiDiagnosis,
+    predictiveResult,
+    ...effectAuthorization
+  };
 }
 
 type SelfHealingLoopGlobal = typeof globalThis & {
@@ -3770,6 +3899,43 @@ export async function runSelfHealingLoop(options: {
       diagnosis,
       observation
     });
+
+    if (verification.followUpAction) {
+      // A successful rollback owns this tick. Prediction waits for the next tick so
+      // rollback and predictive actuation can never overlap or hide one another.
+      if (diagnosis.type === 'healthy' || diagnosis.type === 'prompt_route_stabilized') {
+        runtime.status.lastHealthyObservedAt = tickAt;
+      }
+      if (trigger === 'manual' || diagnosis.actionPlan !== null || diagnosis.controllerInput !== null) {
+        recordSelfHealEvent({
+          kind: 'trigger',
+          source: 'self_heal_loop',
+          trigger,
+          reason: diagnosis.summary,
+          healedComponent: diagnosis.actionPlan ? getSelfHealingActionTarget(diagnosis.actionPlan) : null,
+          details: diagnosis.evidence
+        });
+      }
+      console.log(`[SELF-HEAL] diagnosis ${diagnosis.summary}`);
+      runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
+      runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
+      runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
+      runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
+      refreshStatusViews(runtime);
+      return {
+        trigger,
+        tickAt,
+        tickCount: runtime.status.tickCount,
+        loopRunning: getSelfHealingLoopStatus().loopRunning,
+        lastError: runtime.status.lastError,
+        diagnosis: diagnosis.summary,
+        action: verification.followUpAction,
+        controllerDecision: null,
+        evidence: runtime.status.lastEvidence,
+        verificationResult: verification.verificationResult
+      };
+    }
+
     const aiDiagnosisResult = await aiDiagnoseAndDecide({
       runtime,
       trigger,
@@ -3815,8 +3981,11 @@ export async function runSelfHealingLoop(options: {
 
     console.log(`[SELF-HEAL] diagnosis ${diagnosis.summary}`);
 
-    let action: string | null = verification.followUpAction;
-    if (!action && predictiveResult?.execution.status === 'executed') {
+    const predictiveExecutionConfirmed = Boolean(
+      predictiveResult && isConfirmedPredictiveExecution(predictiveResult)
+    );
+    let action: string | null = null;
+    if (predictiveResult && predictiveExecutionConfirmed) {
       action = predictiveResult.decision.action;
       recordActionDispatchResult({
         runtime,
@@ -3852,9 +4021,10 @@ export async function runSelfHealingLoop(options: {
     if (
       !action &&
       verification.verificationResult === null &&
+      aiDiagnosisResult.allowReactiveAction &&
       aiDiagnosisResult.diagnosis.decision === 'heal'
     ) {
-      // AI approval is the final execution gate; deterministic fallback sets this to heal when AI is unavailable.
+      // Reactive approval is explicit and separate from predictive recommendation telemetry.
       const actionResult = await executeAction(runtime, diagnosis, observation, trigger);
       if (actionResult.executed && actionResult.action) {
         action = actionResult.action;
@@ -3870,10 +4040,13 @@ export async function runSelfHealingLoop(options: {
     runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
 
     let controllerDecision: SelfImproveDecision['decision'] | 'ERROR' | null = null;
-    const shouldRunController =
-      diagnosis.controllerInput !== null &&
-      (trigger === 'manual' || shouldAutoInvokeController()) &&
-      action === null;
+    const shouldRunController = shouldRunSelfHealingController({
+      actionPresent: action !== null,
+      allowAutomaticController: aiDiagnosisResult.allowAutomaticController,
+      automaticControllerConfigured: shouldAutoInvokeController(),
+      hasControllerInput: diagnosis.controllerInput !== null,
+      trigger
+    });
     if (shouldRunController && diagnosis.controllerInput) {
       const controllerKey = diagnosis.incidentKey ?? diagnosis.controllerInput.trigger;
       if (trigger !== 'manual' && isCooldownActive(runtime.controllerCooldowns, controllerKey)) {

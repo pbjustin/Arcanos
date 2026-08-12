@@ -599,6 +599,23 @@ For HTTP predictive decisions, server feature flags remain authoritative.
 disabled or server dry-run is enabled; the request body cannot lower either
 server guard.
 
+The background coordinator evaluates prediction on every tick. When
+`PREDICTIVE_HEALING_ENABLED=true`, the predictive disposition owns that tick:
+recommendation-only, dry-run, refused, unsupported, cooldown, failed, and
+fallback outcomes do not authorize a different reactive action or the
+automatic self-improvement controller. A confirmed predictive execution is
+not dispatched again. Enabled predictive-call rejection and uncertain
+execution also fail closed. When prediction is explicitly disabled, a passive
+`recommend_only` result or rejected advisory call cannot have entered automatic
+execution, so the legacy reactive action and automatic controller retain their
+existing gates. A due successful verification rollback owns and ends its loop
+tick before predictive execution is requested; prediction resumes on a later
+tick, so rollback and predictive actuation cannot overlap or hide one another.
+`SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE`
+is a development/test-only one-shot validation override; production ignores
+it, and it cannot retry a predictive execution whose effect phase may have
+started.
+
 ### Daemon transport authentication
 
 Every `/api/daemon/*` route requires one deployment-wide, purpose-bound

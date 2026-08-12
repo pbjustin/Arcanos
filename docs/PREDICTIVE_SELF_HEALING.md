@@ -7,7 +7,8 @@ Predictive self-healing adds a rules-first layer on top of the existing reactive
 - Background loop:
   - reuses the existing self-heal loop cadence instead of introducing a second scheduler
   - polls metrics on `PREDICTIVE_HEALING_INTERVAL_MS` when set, otherwise on the `SELF_HEAL_LOOP_INTERVAL_MS` cadence
-  - runs predictive decisions only when `PREDICTIVE_HEALING_ENABLED=true`
+  - evaluates predictive decisions on each loop tick and reports whether predictive healing is enabled
+  - permits predictive actuation only when `PREDICTIVE_HEALING_ENABLED=true`
   - auto-executes only when confidence clears the configured threshold and `PREDICTIVE_AUTO_EXECUTE=true`
 
 - Metrics source:
@@ -20,6 +21,15 @@ Predictive self-healing adds a rules-first layer on top of the existing reactive
   - evaluates rolling trends instead of single snapshots
   - builds deterministic rule candidates, then asks the bounded `ARCANOS:CORE` advisor to choose among them
   - falls back to the rules decision when the AI provider is unavailable, unhealthy, in cooldown, or returns invalid output
+- Coordinator approval boundary:
+  - when prediction is enabled, its disposition owns that loop tick; a refusal, unsupported action, cooldown, recommendation-only result, dry run, or deterministic fallback cannot authorize a different reactive action or the automatic self-improvement controller
+  - a confirmed predictive action is recorded only when prediction is enabled and execution reports a coherent live mode, `attempted: true`, and `status: executed`, without a second reactive dispatch
+  - a failed, attempted, or automatic/operator execution result with no confirmed completion blocks reactive retry because partial side effects are uncertain
+  - a rejected predictive call fails closed while prediction is enabled because its execution phase is unknown; when prediction was explicitly disabled before the call, automatic execution was impossible and the legacy reactive/controller gates remain available
+  - a due successful verification rollback owns and ends its loop tick before predictive execution is requested; prediction resumes on a later tick, so rollback and predictive actuation cannot overlap or hide one another in accounting
+  - when prediction is explicitly disabled and returns a passive `recommend_only` result, the older reactive action and automatic controller retain their existing independent gates
+  - manual self-improve runs and direct `POST /api/self-heal/decide` execution retain their existing caller scopes and server feature gates; this coordinator policy does not replace those owners or create a new human-approval token
+  - the one-shot debug heal override is available only in development and test environments and cannot retry an uncertain or completed predictive execution
 - Executors:
   - reinitialize the AI provider
   - scale in-process workers up
@@ -56,6 +66,25 @@ Simulation is never an actuator input: a request containing `simulate` must set
 requires `PREDICTIVE_HEALING_ENABLED=true` and
 `PREDICTIVE_HEALING_DRY_RUN=false`; request overrides cannot weaken those
 server-side guards.
+
+### Native PR preview approval contract
+
+The contained Railway PR web preview exposes the sealed, effect-free
+`POST /self-heal/approval-contract` component contract. Its six fixed selectors
+exercise the same pure approval functions used by `selfHealingLoop`: denied
+predictive outcomes, coherent completed execution, incoherent completed
+execution, explicitly disabled legacy authorization, manual-controller
+independence, and production debug-override denial. Caller input selects only a
+fixture name; it cannot supply an action, target, execution disposition, runtime
+configuration, or credential. Responses state that provider, database, memory,
+worker, outbound-network, and effects boundaries were not reached.
+
+This is end-to-end proof from the Railway preview HTTPS ingress through the
+contained application and the production approval-policy component. It is not a
+normal-runtime self-heal tick, provider decision, actuator, database, worker, or
+live-memory test. The normal `/api/self-heal/*` and `/api/self-improve/*` routes
+remain unavailable in the native preview, and the worker preview remains
+health-only.
 
 ## Config / Env Vars
 
@@ -164,6 +193,7 @@ Actionable predictive decisions are also mirrored into the existing self-heal te
 ## Rollout Plan
 
 1. Enable `PREDICTIVE_HEALING_ENABLED=true` with `PREDICTIVE_HEALING_DRY_RUN=true` and `PREDICTIVE_AUTO_EXECUTE=false`.
+   While prediction is enabled, recommendation-only and dry-run outcomes do not fall through to a separate reactive action or automatic controller. Set prediction explicitly disabled to retain the legacy reactive policy during a rollback.
 2. With the control-plane bearer and `arcanos:read`, watch
    `GET /status/safety/self-heal` for `predictiveHealing.recentAudits`.
 3. Grant a bounded operator `self-heal:decide` scope and exercise

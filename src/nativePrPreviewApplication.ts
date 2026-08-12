@@ -19,6 +19,7 @@ import {
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
+  NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
@@ -54,6 +55,13 @@ import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
 import {
+  isSelfHealingDebugOverrideEligible,
+  resolvePredictiveReactiveApproval,
+  resolveSelfHealingEffectAuthorization,
+  shouldRunSelfHealingController,
+  type PredictiveExecutionDisposition,
+} from './shared/selfHealPredictiveApproval.js';
+import {
   dispatchPublicGamingRequest,
 } from './services/gamingPublicDispatcher.js';
 import {
@@ -66,6 +74,7 @@ const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
 const MAX_MCP_BODY_CAP_RESPONSE_BYTES = 8 * 1024;
+const MAX_SELF_HEAL_APPROVAL_RESPONSE_BYTES = 8 * 1024;
 const MAX_GAMING_CANARY_RESPONSE_BYTES = 2 * 1024;
 const MAX_GAMING_QUERY_RESPONSE_BYTES = 4 * 1024;
 const MAX_GAMING_SOURCE_RESPONSE_BYTES = 8 * 1024;
@@ -108,6 +117,9 @@ const STORYLINE_FIXTURE_NAMES = new Set<string>(
 );
 const MCP_BODY_CAP_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures)
+);
+const SELF_HEAL_APPROVAL_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.fixtures)
 );
 const GAMING_SOURCE_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures)
@@ -2079,6 +2091,258 @@ function resolvePreviewJsonParserStatus(
   return null;
 }
 
+function createSelfHealApprovalExecution(
+  overrides: Partial<PredictiveExecutionDisposition> = {}
+): PredictiveExecutionDisposition {
+  return {
+    action: 'heal_worker_runtime',
+    attempted: false,
+    decisionAction: 'heal_worker_runtime',
+    decisionSafeToExecute: true,
+    decisionTarget: 'worker_runtime',
+    mode: 'recommend_only',
+    status: 'skipped',
+    target: 'worker_runtime',
+    ...overrides,
+  };
+}
+
+function executeSelfHealApprovalCase(params: {
+  execution?: Partial<PredictiveExecutionDisposition>;
+  name: string;
+  predictiveFallback?: boolean;
+  predictiveHealingEnabled?: boolean;
+}): Record<string, unknown> {
+  const approval = resolvePredictiveReactiveApproval({
+    predictiveFallback: params.predictiveFallback ?? false,
+    predictiveHealingEnabled: params.predictiveHealingEnabled ?? true,
+    execution: createSelfHealApprovalExecution(params.execution),
+  });
+  const authorization = resolveSelfHealingEffectAuthorization({
+    approval,
+    debugApprovalApplied: false,
+    hasActionPlan: true,
+  });
+  return {
+    name: params.name,
+    approvalSource: approval.source,
+    allowLegacyReactiveEffects: approval.allowLegacyReactiveEffects,
+    ...authorization,
+  };
+}
+
+function buildSelfHealApprovalFixtureEnvelope(
+  fixture: string,
+  policy: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    componentExecuted: true,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    fixture,
+    kind: 'predictive_reactive_self_heal_approval_contract',
+    memoryBoundaryReached: false,
+    outboundNetworkBoundaryReached: false,
+    policy,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  };
+}
+
+function runSelfHealApprovalFixture(fixture: string): Record<string, unknown> {
+  const fixtures = NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.fixtures;
+  if (fixture === fixtures.deniedOutcomes) {
+    const outcomes = [
+      executeSelfHealApprovalCase({
+        name: 'authoritative-refusal',
+        execution: { status: 'refused' },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'authoritative-recommendation',
+      }),
+      executeSelfHealApprovalCase({
+        name: 'authoritative-dry-run',
+        execution: { mode: 'dry_run', status: 'dry_run' },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'deterministic-fallback',
+        predictiveFallback: true,
+      }),
+      executeSelfHealApprovalCase({
+        name: 'attempted-failure',
+        execution: {
+          attempted: true,
+          mode: 'auto_execute',
+          status: 'failed',
+        },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'declined-automatic-actuator',
+        execution: { mode: 'auto_execute' },
+      }),
+    ];
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      allReactiveEffectsDenied: outcomes.every((outcome) =>
+        outcome.allowReactiveAction === false
+        && outcome.allowAutomaticController === false
+      ),
+      caseCount: outcomes.length,
+      outcomes,
+    });
+  }
+
+  if (fixture === fixtures.validCompleted) {
+    const outcome = executeSelfHealApprovalCase({
+      name: 'valid-completed',
+      execution: {
+        attempted: true,
+        mode: 'auto_execute',
+        status: 'executed',
+      },
+    });
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      confirmedPredictiveExecution:
+        outcome.approvalSource === 'predictive_already_executed',
+      outcome,
+    });
+  }
+
+  if (fixture === fixtures.incoherentCompleted) {
+    const outcomes = [
+      executeSelfHealApprovalCase({
+        name: 'attempt-missing',
+        execution: { mode: 'auto_execute', status: 'executed' },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'mode-mismatch',
+        execution: { attempted: true, mode: 'dry_run', status: 'executed' },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'action-mismatch',
+        execution: {
+          action: 'scale_workers_up',
+          attempted: true,
+          mode: 'auto_execute',
+          status: 'executed',
+        },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'target-mismatch',
+        execution: {
+          attempted: true,
+          mode: 'auto_execute',
+          status: 'executed',
+          target: 'worker_runtime:other',
+        },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'safety-mismatch',
+        execution: {
+          attempted: true,
+          decisionSafeToExecute: false,
+          mode: 'auto_execute',
+          status: 'executed',
+        },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'decision-action-none',
+        execution: {
+          action: 'none',
+          attempted: true,
+          decisionAction: 'none',
+          decisionTarget: null,
+          mode: 'auto_execute',
+          status: 'executed',
+          target: null,
+        },
+      }),
+      executeSelfHealApprovalCase({
+        name: 'disabled-completed',
+        predictiveHealingEnabled: false,
+        execution: {
+          attempted: true,
+          mode: 'auto_execute',
+          status: 'executed',
+        },
+      }),
+    ];
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      allCompletedStatesRejected: outcomes.every((outcome) =>
+        outcome.approvalSource === 'predictive_state_invalid'
+        && outcome.allowReactiveAction === false
+        && outcome.allowAutomaticController === false
+      ),
+      caseCount: outcomes.length,
+      outcomes,
+    });
+  }
+
+  if (fixture === fixtures.disabledLegacy) {
+    const outcome = executeSelfHealApprovalCase({
+      name: 'disabled-legacy',
+      predictiveHealingEnabled: false,
+    });
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      legacyReactivePolicyPreserved:
+        outcome.approvalSource === 'predictive_disabled'
+        && outcome.allowReactiveAction === true
+        && outcome.allowAutomaticController === true,
+      outcome,
+    });
+  }
+
+  if (fixture === fixtures.manualIndependence) {
+    const common = {
+      actionPresent: false,
+      allowAutomaticController: false,
+      automaticControllerConfigured: true,
+      hasControllerInput: true,
+    } as const;
+    const automaticControllerRunAllowed = shouldRunSelfHealingController({
+      ...common,
+      trigger: 'interval',
+    });
+    const manualControllerRunAllowed = shouldRunSelfHealingController({
+      ...common,
+      trigger: 'manual',
+    });
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      automaticControllerRunAllowed,
+      manualAuthorityIndependent:
+        manualControllerRunAllowed && !automaticControllerRunAllowed,
+      manualControllerRunAllowed,
+    });
+  }
+
+  if (fixture === fixtures.productionDebugDenial) {
+    const debugInput = {
+      debugOverrideConsumed: false,
+      debugOverrideRequested: true,
+      hasActionPlan: true,
+    } as const;
+    const developmentDebugOverrideEligible =
+      isSelfHealingDebugOverrideEligible({
+        ...debugInput,
+        nodeEnvironment: 'development',
+      });
+    const productionDebugOverrideEligible =
+      isSelfHealingDebugOverrideEligible({
+        ...debugInput,
+        nodeEnvironment: 'production',
+      });
+    return buildSelfHealApprovalFixtureEnvelope(fixture, {
+      developmentDebugOverrideEligible,
+      productionDebugDenied:
+        developmentDebugOverrideEligible && !productionDebugOverrideEligible,
+      productionDebugOverrideEligible,
+    });
+  }
+
+  throw new Error('PREVIEW_SELF_HEAL_APPROVAL_FIXTURE_INVALID');
+}
+
 function buildAllowedRouteKeys(): Set<string> {
   const allowed = new Set([
     'GET /health',
@@ -2090,6 +2354,7 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}`,
@@ -2202,6 +2467,7 @@ export function createNativePrPreviewApplication(
     if (
       rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath
       || rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath
+      || rawPath === NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path
       || gamingSourcePath
     ) {
       response.setHeader(
@@ -2917,6 +3183,47 @@ export function createNativePrPreviewApplication(
         ))
         .catch(next);
       return undefined;
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path,
+    (request, response) => {
+      const body = request.body as unknown;
+      const bodyKeys =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body)
+          : [];
+      const fixture =
+        bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+          ? (body as { fixture?: unknown }).fixture
+          : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !SELF_HEAL_APPROVAL_FIXTURE_NAMES.has(fixture)
+      ) {
+        return sendBoundedJsonResponse(
+          request,
+          response,
+          { error: 'PREVIEW_SELF_HEAL_APPROVAL_FIXTURE_INVALID' },
+          {
+            logEvent: 'native_pr_preview.self_heal_approval_fixture_invalid',
+            maxBytes: MAX_SELF_HEAL_APPROVAL_RESPONSE_BYTES,
+            statusCode: 400,
+          }
+        );
+      }
+
+      return sendBoundedJsonResponse(
+        request,
+        response,
+        runSelfHealApprovalFixture(fixture),
+        {
+          logEvent: 'native_pr_preview.self_heal_approval_fixture',
+          maxBytes: MAX_SELF_HEAL_APPROVAL_RESPONSE_BYTES,
+          statusCode: 200,
+        }
+      );
     }
   );
 
