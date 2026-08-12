@@ -1775,6 +1775,7 @@ function expectedSelfHealApprovalContractPayload(requestCase) {
         'target-mismatch',
         'safety-mismatch',
         'decision-action-none',
+        'disabled-completed',
       ].map(name => expectedSelfHealApprovalOutcome(
         name,
         'predictive_state_invalid'

@@ -720,6 +720,7 @@ describe('selfHealingLoop', () => {
     ['attempted failure', true, false, true, 'failed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_execution_uncertain'],
     ['declined automatic actuator', true, false, false, 'skipped', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_execution_uncertain'],
     ['completed predictive action', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_already_executed'],
+    ['disabled completed predictive action', false, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
     ['inconsistent completed attempt', true, false, false, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
     ['inconsistent completed mode', true, false, true, 'executed', 'dry_run', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
     ['inconsistent completed action', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'scale_workers_up', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
@@ -955,6 +956,17 @@ describe('selfHealingLoop', () => {
       expectedDecision: 'heal',
       expectedAction: 'recoverStaleJobs:recovered=0:failed=0',
       expectedReactiveCalls: 1
+    },
+    {
+      label: 'disabled completed predictive action',
+      enabled: false,
+      status: 'executed',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: true,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
     }
   ] as const)(
     'keeps $label inside the predictive/reactive approval boundary',
@@ -1028,7 +1040,7 @@ describe('selfHealingLoop', () => {
         lastAIDiagnosis: expect.objectContaining({
           decision: expectedDecision,
           executionStatus: status,
-          safeToExecute: expectedAction === action || enabled === false
+          safeToExecute: expectedDecision === 'heal'
         })
       }));
 
@@ -1042,6 +1054,7 @@ describe('selfHealingLoop', () => {
 
   it('fails closed when the predictive call rejects after an unknown execution phase', async () => {
     getConfigMock.mockReturnValue(createConfig({
+      predictiveHealingEnabled: true,
       selfImproveEnabled: true,
       selfImproveActuatorMode: 'daemon'
     }));
@@ -1063,6 +1076,52 @@ describe('selfHealingLoop', () => {
         fallbackUsed: true
       })
     }));
+  });
+
+  it('preserves the legacy reactive action when an explicitly disabled predictive call rejects', async () => {
+    getConfigMock.mockReturnValue(createConfig({
+      predictiveHealingEnabled: false
+    }));
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockRejectedValueOnce(new Error('disabled predictive advisor unavailable'));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBe('recoverStaleJobs:recovered=0:failed=0');
+    expect(recoverStaleJobsMock).toHaveBeenCalledTimes(1);
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDecision: 'heal',
+      lastAction: 'recoverStaleJobs:recovered=0:failed=0',
+      lastAIDiagnosis: expect.objectContaining({
+        decision: 'heal',
+        fallbackUsed: true,
+        safeToExecute: true
+      })
+    }));
+  });
+
+  it('preserves the automatic controller when an explicitly disabled predictive call rejects', async () => {
+    getConfigMock.mockReturnValue(createConfig({
+      predictiveHealingEnabled: false,
+      selfImproveEnabled: true,
+      selfImproveActuatorMode: 'daemon'
+    }));
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 20,
+      errorCount: 12,
+      clientErrorCount: 12,
+      serverErrorCount: 0,
+      errorRate: 0.6
+    }));
+    runPredictiveHealingFromLoopMock.mockRejectedValueOnce(new Error('disabled predictive advisor unavailable'));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBeNull();
+    expect(result.controllerDecision).toBe('NOOP');
+    expect(runSelfImproveCycleMock).toHaveBeenCalledTimes(1);
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
   });
 
   it('withholds the automatic controller when enabled prediction does not execute', async () => {
@@ -1683,6 +1742,91 @@ describe('selfHealingLoop', () => {
         outcome: 'worse'
       })
     }));
+  });
+
+  it('lets a due rollback own its tick before a later predictive execution', async () => {
+    process.env.SELF_HEAL_VERIFICATION_DELAY_MS = '30000';
+    getRollingRequestWindowMock
+      .mockReturnValueOnce(createRequestWindow({
+        requestCount: 20,
+        errorCount: 5,
+        serverErrorCount: 5,
+        errorRate: 0.25,
+        timeoutCount: 4,
+        timeoutRate: 0.2,
+        slowRequestCount: 8,
+        avgLatencyMs: 3200,
+        p95LatencyMs: 6200,
+        maxLatencyMs: 8000
+      }))
+      .mockReturnValueOnce(createRequestWindow({
+        requestCount: 18,
+        errorCount: 6,
+        serverErrorCount: 6,
+        errorRate: 0.333,
+        timeoutCount: 5,
+        timeoutRate: 0.278,
+        slowRequestCount: 8,
+        avgLatencyMs: 3600,
+        p95LatencyMs: 7100,
+        maxLatencyMs: 8600
+      }))
+      .mockReturnValueOnce(createRequestWindow({
+        requestCount: 18,
+        errorCount: 1,
+        serverErrorCount: 1,
+        errorRate: 0.056,
+        timeoutCount: 0,
+        timeoutRate: 0,
+        slowRequestCount: 1,
+        avgLatencyMs: 800,
+        p95LatencyMs: 1200,
+        maxLatencyMs: 1800
+      }));
+
+    await runSelfHealingLoop({ trigger: 'interval' });
+    await jest.advanceTimersByTimeAsync(31000);
+    runPredictiveHealingFromLoopMock.mockClear();
+    getConfigMock.mockReturnValue(createConfig({
+      predictiveHealingEnabled: true
+    }));
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      action: 'heal_worker_runtime',
+      target: 'worker_runtime',
+      attempted: true,
+      status: 'executed',
+      mode: 'auto_execute'
+    }));
+
+    const rollbackTick = await runSelfHealingLoop({ trigger: 'interval' });
+    const eventsAfterRollback = buildSelfHealEventsSnapshot(100).events.filter(
+      (event) =>
+        event.kind === 'ACTION_EXECUTED' &&
+        event.details?.executionSource === 'predictive_auto_execute'
+    );
+
+    expect(rollbackTick.action).toBe('rollbackTrinityMitigation:reasoning:enable_degraded_mode');
+    expect(rollbackTick.verificationResult).toEqual(expect.objectContaining({
+      outcome: 'worse',
+      action: 'activateTrinityMitigation:reasoning:enable_degraded_mode'
+    }));
+    expect(rollbackTrinitySelfHealingMitigationMock).toHaveBeenCalledTimes(1);
+    expect(runPredictiveHealingFromLoopMock).not.toHaveBeenCalled();
+    expect(eventsAfterRollback).toHaveLength(0);
+
+    const predictiveTick = await runSelfHealingLoop({ trigger: 'interval' });
+    const predictiveEvents = buildSelfHealEventsSnapshot(100).events.filter(
+      (event) =>
+        event.kind === 'ACTION_EXECUTED' &&
+        event.details?.executionSource === 'predictive_auto_execute'
+    );
+
+    expect(predictiveTick.action).toBe('heal_worker_runtime');
+    expect(predictiveTick.verificationResult).toBeNull();
+    expect(rollbackTrinitySelfHealingMitigationMock).toHaveBeenCalledTimes(1);
+    expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(1);
+    expect(predictiveEvents).toHaveLength(1);
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
   });
 
   it('rolls back an ineffective prompt-route mitigation after verification', async () => {

@@ -47,6 +47,7 @@ export function resolvePredictiveReactiveApproval(params: {
 }): PredictiveReactiveApproval {
   if (params.execution.status === 'executed') {
     const executionStateConsistent =
+      params.predictiveHealingEnabled &&
       params.execution.attempted &&
       (params.execution.mode === 'auto_execute' || params.execution.mode === 'operator_execute') &&
       params.execution.decisionAction !== 'none' &&

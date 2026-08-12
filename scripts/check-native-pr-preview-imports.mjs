@@ -557,7 +557,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/selfHealPredictiveApproval.ts',
-    'c721799fe21a7c0a8d034c3dc8a1acc78e1574c2ddda2adc9074470d05902e31',
+    '0ffb63a5137f1992a1901f8690c01b68562e737a320a52987d07b598c6053c38',
   ],
 ]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([

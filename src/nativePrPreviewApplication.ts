@@ -2258,6 +2258,15 @@ function runSelfHealApprovalFixture(fixture: string): Record<string, unknown> {
           target: null,
         },
       }),
+      executeSelfHealApprovalCase({
+        name: 'disabled-completed',
+        predictiveHealingEnabled: false,
+        execution: {
+          attempted: true,
+          mode: 'auto_execute',
+          status: 'executed',
+        },
+      }),
     ];
     return buildSelfHealApprovalFixtureEnvelope(fixture, {
       allCompletedStatesRejected: outcomes.every((outcome) =>

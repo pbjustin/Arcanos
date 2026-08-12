@@ -1053,7 +1053,15 @@ describe('native PR contained application', () => {
     expect(byFixture.get(fixtures.incoherentCompleted)).toEqual(
       expect.objectContaining({
         allCompletedStatesRejected: true,
-        caseCount: 6,
+        caseCount: 7,
+        outcomes: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'disabled-completed',
+            approvalSource: 'predictive_state_invalid',
+            allowAutomaticController: false,
+            allowReactiveAction: false,
+          }),
+        ]),
       })
     );
     expect(byFixture.get(fixtures.disabledLegacy)).toEqual({

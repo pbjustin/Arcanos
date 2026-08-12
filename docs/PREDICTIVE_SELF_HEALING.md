@@ -23,9 +23,10 @@ Predictive self-healing adds a rules-first layer on top of the existing reactive
   - falls back to the rules decision when the AI provider is unavailable, unhealthy, in cooldown, or returns invalid output
 - Coordinator approval boundary:
   - when prediction is enabled, its disposition owns that loop tick; a refusal, unsupported action, cooldown, recommendation-only result, dry run, or deterministic fallback cannot authorize a different reactive action or the automatic self-improvement controller
-  - a confirmed predictive action is recorded only when execution reports both `attempted: true` and `status: executed`, without a second reactive dispatch
+  - a confirmed predictive action is recorded only when prediction is enabled and execution reports a coherent live mode, `attempted: true`, and `status: executed`, without a second reactive dispatch
   - a failed, attempted, or automatic/operator execution result with no confirmed completion blocks reactive retry because partial side effects are uncertain
-  - a rejected predictive call fails closed because its execution phase is unknown
+  - a rejected predictive call fails closed while prediction is enabled because its execution phase is unknown; when prediction was explicitly disabled before the call, automatic execution was impossible and the legacy reactive/controller gates remain available
+  - a due successful verification rollback owns and ends its loop tick before predictive execution is requested; prediction resumes on a later tick, so rollback and predictive actuation cannot overlap or hide one another in accounting
   - when prediction is explicitly disabled and returns a passive `recommend_only` result, the older reactive action and automatic controller retain their existing independent gates
   - manual self-improve runs and direct `POST /api/self-heal/decide` execution retain their existing caller scopes and server feature gates; this coordinator policy does not replace those owners or create a new human-approval token
   - the one-shot debug heal override is available only in development and test environments and cannot retry an uncertain or completed predictive execution
