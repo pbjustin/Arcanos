@@ -26,6 +26,10 @@ export const RAILWAY_COMMAND_LIMITS = Object.freeze({
     timeoutMs: 30_000,
     maxBufferBytes: 256 * 1024,
   }),
+  projectStatus: Object.freeze({
+    timeoutMs: 30_000,
+    maxBufferBytes: 2 * 1024 * 1024,
+  }),
   serviceStatus: Object.freeze({
     timeoutMs: 30_000,
     maxBufferBytes: 64 * 1024,
@@ -163,6 +167,33 @@ function parseJsonObject(rawOutput, errorCode) {
   } catch {
     throw safeError(errorCode);
   }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireBaselineEvidence(condition) {
+  if (!condition) {
+    throw safeError('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
+  }
+}
+
+function readBaselineConnectionNodes(connection) {
+  requireBaselineEvidence(
+    isRecord(connection) && Array.isArray(connection.edges),
+  );
+
+  return connection.edges.map(edge => {
+    requireBaselineEvidence(isRecord(edge) && isRecord(edge.node));
+    return edge.node;
+  });
+}
+
+function requireUniqueBaselineNodeIds(nodes) {
+  requireBaselineEvidence(
+    new Set(nodes.map(node => node.id)).size === nodes.length,
+  );
 }
 
 /**
@@ -421,39 +452,107 @@ export async function verifyActiveDeployment(
  * Return the exact active successful deployment ID for pre-deploy evidence.
  */
 export async function readActiveDeploymentId(
-  { serviceId, environmentName },
+  { projectId, serviceId, environmentName },
   { runCommand = runBoundedRailwayCommand } = {},
 ) {
+  const validatedProjectId = requireUuid(
+    projectId,
+    'RAILWAY_PROJECT_ID_INVALID',
+  );
   const target = validateTarget({ serviceId, environmentName });
   const output = await runCommand(
-    [
-      'service',
-      'status',
-      '--service',
-      target.serviceId,
-      '--environment',
-      target.environmentName,
-      '--json',
-    ],
-    RAILWAY_COMMAND_LIMITS.serviceStatus,
+    ['status', '--json'],
+    RAILWAY_COMMAND_LIMITS.projectStatus,
   );
   const response = parseJsonObject(
     output,
     'RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH',
   );
 
-  if (response.status !== 'SUCCESS' || response.stopped !== false) {
-    throw safeError('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
-  }
+  requireBaselineEvidence(
+    response.id === validatedProjectId && response.deletedAt === null,
+  );
 
-  try {
-    return requireUuid(
-      response.deploymentId,
-      'RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH',
+  const environments = readBaselineConnectionNodes(response.environments);
+  for (const environment of environments) {
+    requireBaselineEvidence(
+      typeof environment.id === 'string'
+        && UUID_PATTERN.test(environment.id)
+        && typeof environment.name === 'string'
+        && environment.name.length > 0
+        && typeof environment.canAccess === 'boolean'
+        && (
+          environment.deletedAt === null
+          || typeof environment.deletedAt === 'string'
+        ),
     );
-  } catch {
-    throw safeError('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
   }
+  requireUniqueBaselineNodeIds(environments);
+  const environmentMatches = environments.filter(
+    environment => environment.name === target.environmentName,
+  );
+  requireBaselineEvidence(
+    environmentMatches.length === 1
+      && environmentMatches[0].canAccess === true
+      && environmentMatches[0].deletedAt === null,
+  );
+  const environment = environmentMatches[0];
+
+  const services = readBaselineConnectionNodes(response.services);
+  for (const service of services) {
+    requireBaselineEvidence(
+      typeof service.id === 'string'
+        && UUID_PATTERN.test(service.id)
+        && typeof service.name === 'string'
+        && service.name.length > 0,
+    );
+  }
+  requireUniqueBaselineNodeIds(services);
+  const serviceMatches = services.filter(
+    service => service.id === target.serviceId,
+  );
+  requireBaselineEvidence(serviceMatches.length === 1);
+  const service = serviceMatches[0];
+
+  const serviceInstances = readBaselineConnectionNodes(
+    environment.serviceInstances,
+  );
+  for (const serviceInstance of serviceInstances) {
+    requireBaselineEvidence(
+      typeof serviceInstance.id === 'string'
+        && UUID_PATTERN.test(serviceInstance.id)
+        && typeof serviceInstance.serviceId === 'string'
+        && UUID_PATTERN.test(serviceInstance.serviceId)
+        && typeof serviceInstance.serviceName === 'string'
+        && serviceInstance.serviceName.length > 0
+        && typeof serviceInstance.environmentId === 'string'
+        && UUID_PATTERN.test(serviceInstance.environmentId),
+    );
+  }
+  requireUniqueBaselineNodeIds(serviceInstances);
+  const serviceInstanceMatches = serviceInstances.filter(
+    serviceInstance => serviceInstance.serviceId === target.serviceId,
+  );
+  requireBaselineEvidence(serviceInstanceMatches.length === 1);
+  const serviceInstance = serviceInstanceMatches[0];
+  requireBaselineEvidence(
+    serviceInstance.environmentId === environment.id
+      && serviceInstance.serviceName === service.name,
+  );
+
+  requireBaselineEvidence(
+    Array.isArray(serviceInstance.activeDeployments)
+      && serviceInstance.activeDeployments.length === 1,
+  );
+  const [activeDeployment] = serviceInstance.activeDeployments;
+  requireBaselineEvidence(
+    isRecord(activeDeployment)
+      && typeof activeDeployment.id === 'string'
+      && UUID_PATTERN.test(activeDeployment.id)
+      && activeDeployment.status === 'SUCCESS',
+  );
+
+  return activeDeployment.id;
 }
 
 /**
@@ -556,6 +655,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (mode === 'active-id') {
     const options = parseCliOptions(args, [
+      '--project',
       '--service',
       '--environment',
     ]);

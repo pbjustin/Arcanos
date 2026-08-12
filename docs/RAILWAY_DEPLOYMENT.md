@@ -240,15 +240,20 @@ that has already started. A newer run waits while the active observer finishes;
 GitHub may still coalesce older runs that remain pending.
 
 Static Railway compatibility validation runs before any remote mutation. The
-token preflight then captures both exact active successful baseline deployment
-IDs and validates the resolved identity and expected role for each target. It
-requires a direct current web readiness response; a private worker retains
-current Railway active-`SUCCESS` platform evidence instead of acquiring a
-public domain solely for this check. Promotion deploys and verifies the worker
-first, then uploads the same exact SHA to the web service. Worker-first ordering avoids
-a new web producer activating against an old queue consumer; ordinary releases
-must still preserve old/new interoperability, while incompatible migrations use
-the separate rollout hold and stopped/drained procedure.
+token preflight then reads a bounded Railway project inventory. It attests the
+exact project, the single accessible non-deleted environment with the configured
+name, and one matching service instance per role. Each target must expose
+exactly one active `SUCCESS` deployment, whose ID becomes its baseline; a newer
+failed latest deployment cannot mask that active deployment. Missing, duplicate,
+malformed, or mismatched inventory fails before upload. The preflight also
+validates the resolved identity and expected role for each target. It requires a
+direct current web readiness response; a private worker retains current Railway
+active-`SUCCESS` platform evidence instead of acquiring a public domain solely
+for this check. Promotion deploys and verifies the worker first, then uploads
+the same exact SHA to the web service. Worker-first ordering avoids a new web
+producer activating against an old queue consumer; ordinary releases must still
+preserve old/new interoperability, while incompatible migrations use the
+separate rollout hold and stopped/drained procedure.
 
 Each upload is bounded to 10 minutes, each exact-deployment observation to 45
 elapsed minutes with ten-second polling, and every Railway status or variable
