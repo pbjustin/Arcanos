@@ -412,56 +412,64 @@ export function validateEnvTemplate(documentedKeys) {
 
 export function validateDockerfile(dockerfileRaw) {
   const errors = [];
+  const dockerfileNonCommentText = dockerfileRaw
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*#/u.test(line))
+    .join('\n');
+  const dockerfileTokenText = dockerfileNonCommentText.replace(
+    /\\\r?\n[ \t]*/gu,
+    ''
+  );
 
   //audit Assumption: Dockerfile-backed Railway deploys must boot through the same launcher as railway.json; risk: image CMD bypasses service-role logic and starts web instances with worker settings; invariant: Dockerfile CMD points at the shared Railway launcher; handling: fail validation when the launcher command is absent.
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_CMD)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_CMD)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_CMD}`);
   }
 
   //audit Assumption: Railway images that expose Prisma-backed routes must include the schema during build and generate the client before pruning dev tooling; risk: routes importing @prisma/client fail at runtime even though the service boots successfully; invariant: Dockerfile copies prisma/ and runs Prisma client generation; handling: fail validation when either build step is absent.
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_PRISMA_COPY)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_PRISMA_COPY)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_COPY}`);
   }
 
   //audit Assumption: npm lockfile file: dependencies under vendor/ must be present before npm ci; risk: Railway image builds fail even though local installs pass; invariant: Dockerfile copies vendor before dependency install; handling: fail validation when the copy is absent.
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_VENDOR_COPY)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_VENDOR_COPY)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_VENDOR_COPY}`);
   }
 
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_PRISMA_GENERATE)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_PRISMA_GENERATE)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_GENERATE}`);
   }
 
   //audit Assumption: the secure control-plane Railway adapter and the legacy self-improve loop execute the Railway CLI inside the runtime image; risk: an unverified postinstall download can fail or replace the CLI while a missing bare command breaks the legacy consumer; invariant: Dockerfile installs one checksum-pinned native CLI with bounded retries, exposes the explicit binary path, preserves the bare command, and verifies the exact version before use; handling: reject the npm installer and fail when any native-install contract is absent or ordered after extraction.
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV}`);
   }
 
-  if (dockerfileRaw.includes(FORBIDDEN_DOCKERFILE_RAILWAY_CLI_NPM_PACKAGE)) {
+  if (dockerfileTokenText.includes(FORBIDDEN_DOCKERFILE_RAILWAY_CLI_NPM_PACKAGE)) {
     errors.push(`Dockerfile must not use the unverified Railway CLI npm postinstall package ${FORBIDDEN_DOCKERFILE_RAILWAY_CLI_NPM_PACKAGE}`);
   }
 
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY)) {
     errors.push(`Dockerfile must install the pinned musl Railway CLI binary ${EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY}`);
   }
 
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_SHA256)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_SHA256)) {
     errors.push(`Dockerfile must pin Railway CLI SHA-256 with ${EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_SHA256}`);
   }
 
-  const retryLoopIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_RETRY_LOOP);
-  const downloadIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_DOWNLOAD);
-  const checksumIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_CHECKSUM);
-  const retryEndIndex = dockerfileRaw.indexOf(
+  const retryLoopIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_RETRY_LOOP);
+  const downloadIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_DOWNLOAD);
+  const checksumIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_CHECKSUM);
+  const retryEndIndex = dockerfileNonCommentText.indexOf(
     EXPECTED_DOCKERFILE_RAILWAY_CLI_RETRY_END,
     retryLoopIndex === -1 ? 0 : retryLoopIndex
   );
-  const downloadSuccessIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_DOWNLOAD_SUCCESS);
+  const downloadSuccessIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_DOWNLOAD_SUCCESS);
   if (retryLoopIndex === -1) {
     errors.push(`Dockerfile must use the bounded Railway CLI download loop ${EXPECTED_DOCKERFILE_RAILWAY_CLI_RETRY_LOOP}`);
   }
 
-  const extractionIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_EXTRACT);
+  const extractionIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_EXTRACT);
   if (downloadIndex === -1) {
     errors.push(`Dockerfile must download the Railway CLI archive with ${EXPECTED_DOCKERFILE_RAILWAY_CLI_DOWNLOAD}`);
   }
@@ -495,18 +503,18 @@ export function validateDockerfile(dockerfileRaw) {
     errors.push('Dockerfile must retry and checksum the Railway CLI download before fail-closed extraction');
   }
 
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_SYMLINK)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_SYMLINK)) {
     errors.push(`Dockerfile must preserve the bare Railway CLI command with ${EXPECTED_DOCKERFILE_RAILWAY_CLI_SYMLINK}`);
   }
 
-  const smokeTestIndex = dockerfileRaw.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST);
+  const smokeTestIndex = dockerfileNonCommentText.indexOf(EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST);
   if (smokeTestIndex === -1) {
     errors.push(`Dockerfile must verify the exact Railway CLI version with ${EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST}`);
   } else if (extractionIndex !== -1 && smokeTestIndex < extractionIndex) {
     errors.push('Dockerfile must verify the exact Railway CLI version after extraction');
   }
 
-  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_BARE_SMOKE_TEST)) {
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_BARE_SMOKE_TEST)) {
     errors.push(`Dockerfile must verify the bare Railway CLI command with ${EXPECTED_DOCKERFILE_RAILWAY_CLI_BARE_SMOKE_TEST}`);
   }
 

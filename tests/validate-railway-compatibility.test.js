@@ -396,6 +396,12 @@ describe('validate-railway-compatibility', () => {
   it('rejects unverified Railway CLI installation and post-extraction verification', () => {
     expect(
       validateDockerfile(
+        `  # Do not restore @railway/cli; use the verified native binary.\r\n${buildMinimalDockerfile()}`
+      )
+    ).toEqual([]);
+
+    expect(
+      validateDockerfile(
         buildMinimalDockerfile().replace(
           'RUN railway_cli_url=',
           'RUN npm i -g @railway/cli@4.30.2\nRUN railway_cli_url='
@@ -403,6 +409,28 @@ describe('validate-railway-compatibility', () => {
       )
     ).toEqual([
       expect.stringContaining('must not use the unverified Railway CLI npm postinstall'),
+    ]);
+
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'RUN railway_cli_url=',
+          'RUN npm i -g @railway/\\\n    cli@4.30.2\nRUN railway_cli_url='
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('must not use the unverified Railway CLI npm postinstall'),
+    ]);
+
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'ln -s /usr/local/bin/railway-native /usr/local/bin/railway',
+          '# ln -s /usr/local/bin/railway-native /usr/local/bin/railway'
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('must preserve the bare Railway CLI command'),
     ]);
 
     expect(
