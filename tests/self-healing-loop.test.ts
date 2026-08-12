@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { PredictiveHealingDecisionResult } from '../src/services/selfImprove/predictiveHealingService.js';
 
 const getConfigMock = jest.fn();
 const runSelfImproveCycleMock = jest.fn();
@@ -111,6 +112,7 @@ jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
 const {
   getSelfHealingLoopStatus,
   resetSelfHealingLoopStateForTests,
+  resolvePredictiveReactiveApproval,
   runSelfHealingLoop,
   startSelfHealingLoop
 } = await import('../src/services/selfImprove/selfHealingLoop.js');
@@ -301,6 +303,94 @@ function createOpenAIHealth(overrides: Record<string, unknown> = {}) {
   };
 }
 
+type PredictiveBoundaryResult = Pick<
+  PredictiveHealingDecisionResult,
+  'featureFlags' | 'decision' | 'execution'
+>;
+
+function createPredictiveBoundaryResult(params: {
+  enabled?: boolean;
+  advisor?: PredictiveBoundaryResult['decision']['advisor'];
+  action?: PredictiveBoundaryResult['decision']['action'];
+  target?: string | null;
+  safeToExecute?: boolean;
+  aiUsed?: boolean;
+  details?: Record<string, unknown>;
+  attempted?: boolean;
+  status?: PredictiveBoundaryResult['execution']['status'];
+  mode?: PredictiveBoundaryResult['execution']['mode'];
+  message?: string;
+  executionAction?: PredictiveBoundaryResult['execution']['action'];
+  executionTarget?: string | null;
+} = {}): PredictiveBoundaryResult {
+  const action = params.action ?? 'heal_worker_runtime';
+  const status = params.status ?? 'skipped';
+  const mode = params.mode ?? 'recommend_only';
+  const target = params.target === undefined ? 'worker_runtime' : params.target;
+  const recoveryStatus = status === 'executed'
+    ? 'pending_observation'
+    : status === 'unsupported'
+      ? 'unsupported'
+      : status === 'failed'
+        ? 'failed'
+        : 'not_executed';
+
+  return {
+    featureFlags: {
+      enabled: params.enabled ?? true,
+      dryRun: mode === 'dry_run',
+      autoExecute: mode === 'auto_execute'
+    },
+    decision: {
+      advisor: params.advisor ?? 'arcanos_core_v1',
+      decidedAt: '2026-03-25T12:00:00.000Z',
+      action,
+      target,
+      reason: `Predictive disposition: ${status}.`,
+      confidence: 0.93,
+      matchedRule: 'worker_runtime_unhealthy',
+      safeToExecute: params.safeToExecute ?? true,
+      staleData: false,
+      suggestedMode: mode,
+      details: {
+        aiUsed: params.aiUsed ?? true,
+        ...params.details
+      }
+    },
+    execution: {
+      attempted: params.attempted ?? false,
+      status,
+      mode,
+      action: params.executionAction ?? action,
+      target: params.executionTarget === undefined ? target : params.executionTarget,
+      message: params.message ?? `Predictive execution status: ${status}.`,
+      cooldownRemainingMs: status === 'cooldown' ? 30_000 : null,
+      actuatorResult: null,
+      recoveryOutcome: {
+        status: recoveryStatus,
+        summary: `Predictive recovery status: ${recoveryStatus}.`
+      }
+    }
+  } satisfies PredictiveBoundaryResult;
+}
+
+function mockStalledWorkerObservation(): void {
+  getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
+    overallStatus: 'unhealthy',
+    queueSummary: {
+      pending: 2,
+      running: 1,
+      completed: 0,
+      failed: 0,
+      total: 3,
+      delayed: 0,
+      stalledRunning: 2,
+      oldestPendingJobAgeMs: 91000
+    },
+    alerts: ['Detected 2 stalled running job(s).']
+  }));
+}
+
 describe('selfHealingLoop', () => {
   const envKeys = [
     'NODE_ENV',
@@ -390,19 +480,19 @@ describe('selfHealingLoop', () => {
       failureWebhookThreshold: 3,
       failureWebhookCooldownMs: 300000
     });
-    runPredictiveHealingFromLoopMock.mockResolvedValue({
-      decision: {
-        action: 'none',
-        confidence: 0,
-        matchedRule: null
-      },
-      execution: {
-        status: 'skipped',
-        message: 'Predictive action was recommended only.'
-      }
-    });
+    runPredictiveHealingFromLoopMock.mockResolvedValue(createPredictiveBoundaryResult({
+      enabled: false,
+      advisor: 'rules_fallback_v1',
+      action: 'none',
+      target: null,
+      safeToExecute: false,
+      aiUsed: false,
+      status: 'skipped',
+      mode: 'recommend_only',
+      message: 'Predictive action was recommended only.'
+    }));
     buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
-      enabled: true,
+      enabled: false,
       dryRun: true,
       autoExecute: false,
       lastObservedAt: null,
@@ -622,6 +712,59 @@ describe('selfHealingLoop', () => {
     }
   });
 
+  it.each([
+    ['authoritative refusal', true, false, false, 'refused', 'recommend_only', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'authoritative_predictive_result'],
+    ['authoritative recommendation', true, false, false, 'skipped', 'recommend_only', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'authoritative_predictive_result'],
+    ['authoritative dry run', true, false, false, 'dry_run', 'dry_run', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'authoritative_predictive_result'],
+    ['deterministic fallback', true, true, false, 'skipped', 'recommend_only', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'deterministic_fallback'],
+    ['attempted failure', true, false, true, 'failed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_execution_uncertain'],
+    ['declined automatic actuator', true, false, false, 'skipped', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_execution_uncertain'],
+    ['completed predictive action', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_already_executed'],
+    ['inconsistent completed attempt', true, false, false, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
+    ['inconsistent completed mode', true, false, true, 'executed', 'dry_run', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
+    ['inconsistent completed action', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'scale_workers_up', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
+    ['inconsistent completed target', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime:other', false, 'predictive_state_invalid'],
+    ['inconsistent completed safety', true, false, true, 'executed', 'auto_execute', 'heal_worker_runtime', false, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid'],
+    ['disabled passive predictor', false, false, false, 'skipped', 'recommend_only', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', true, 'predictive_disabled'],
+    ['disabled no-op predictor', false, true, false, 'refused', 'recommend_only', 'none', false, 'none', null, null, true, 'predictive_disabled'],
+    ['disabled dry-run state', false, false, false, 'dry_run', 'dry_run', 'heal_worker_runtime', true, 'heal_worker_runtime', 'worker_runtime', 'worker_runtime', false, 'predictive_state_invalid']
+  ] as const)(
+    'resolves %s without crossing its approval boundary',
+    (
+      _label,
+      predictiveHealingEnabled,
+      predictiveFallback,
+      executionAttempted,
+      executionStatus,
+      executionMode,
+      decisionAction,
+      decisionSafeToExecute,
+      executionAction,
+      decisionTarget,
+      executionTarget,
+      allowLegacyReactiveEffects,
+      source
+    ) => {
+      expect(resolvePredictiveReactiveApproval({
+        predictiveHealingEnabled,
+        predictiveFallback,
+        execution: {
+          attempted: executionAttempted,
+          status: executionStatus,
+          mode: executionMode,
+          decisionAction,
+          decisionSafeToExecute,
+          decisionTarget,
+          action: executionAction,
+          target: executionTarget
+        }
+      })).toEqual({
+        allowLegacyReactiveEffects,
+        source
+      });
+    }
+  );
+
   it('starts exactly one interval even when bootstrap runs twice', async () => {
     process.env.SELF_HEAL_LOOP_INTERVAL_MS = '30000';
     const setIntervalSpy = jest.spyOn(global, 'setInterval');
@@ -692,6 +835,319 @@ describe('selfHealingLoop', () => {
         worker_stall: 1
       }
     }));
+  });
+
+  it.each([
+    {
+      label: 'unsafe refusal',
+      status: 'refused',
+      mode: 'recommend_only',
+      safeToExecute: false,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'unsupported action',
+      status: 'unsupported',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: false,
+      action: 'shift_traffic_away',
+      target: 'node:test',
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'predictive cooldown',
+      status: 'cooldown',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'recommend-only skip',
+      status: 'skipped',
+      mode: 'recommend_only',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'declined automatic actuator',
+      status: 'skipped',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'dry run',
+      status: 'dry_run',
+      mode: 'dry_run',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'deterministic fallback recommendation',
+      advisor: 'rules_fallback_v1',
+      aiUsed: false,
+      status: 'skipped',
+      mode: 'recommend_only',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'failed predictive actuation',
+      status: 'failed',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: true,
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'completed predictive actuation',
+      status: 'executed',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: true,
+      expectedDecision: 'heal',
+      expectedAction: 'heal_worker_runtime',
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'inconsistent completed payload',
+      status: 'executed',
+      mode: 'auto_execute',
+      safeToExecute: true,
+      attempted: true,
+      executionAction: 'scale_workers_up',
+      expectedDecision: 'observe',
+      expectedAction: null,
+      expectedReactiveCalls: 0
+    },
+    {
+      label: 'disabled predictive layer',
+      enabled: false,
+      advisor: 'rules_fallback_v1',
+      aiUsed: false,
+      status: 'skipped',
+      mode: 'recommend_only',
+      safeToExecute: true,
+      attempted: false,
+      expectedDecision: 'heal',
+      expectedAction: 'recoverStaleJobs:recovered=0:failed=0',
+      expectedReactiveCalls: 1
+    }
+  ] as const)(
+    'keeps $label inside the predictive/reactive approval boundary',
+    async ({
+      label,
+      enabled = true,
+      advisor = 'arcanos_core_v1',
+      aiUsed = true,
+      status,
+      mode,
+      safeToExecute,
+      attempted,
+      action = 'heal_worker_runtime',
+      target = 'worker_runtime',
+      executionAction,
+      expectedDecision,
+      expectedAction,
+      expectedReactiveCalls
+    }) => {
+      getConfigMock.mockReturnValue(createConfig({
+        selfImproveEnabled: true,
+        selfImproveActuatorMode: 'daemon'
+      }));
+      mockStalledWorkerObservation();
+      runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+        enabled,
+        advisor,
+        aiUsed,
+        action,
+        target,
+        safeToExecute,
+        attempted,
+        status,
+        mode,
+        executionAction
+      }));
+
+      const result = await runSelfHealingLoop({ trigger: 'interval' });
+      const loopStatus = getSelfHealingLoopStatus();
+      const events = buildSelfHealEventsSnapshot(50).events;
+      const reactiveDispatchAttempts = events.filter(
+        (event) =>
+          event.kind === 'ACTION_DISPATCH_ATTEMPT' &&
+          event.actionTaken === 'recover_stale_jobs'
+      );
+      const reactiveActionEvents = events.filter(
+        (event) =>
+          event.kind === 'ACTION_EXECUTED' &&
+          event.details?.executionSource === 'self_heal_execute_action'
+      );
+      const predictiveActionEvents = events.filter(
+        (event) =>
+          event.kind === 'ACTION_EXECUTED' &&
+          event.details?.executionSource === 'predictive_auto_execute'
+      );
+
+      expect(result.action).toBe(expectedAction);
+      expect(recoverStaleJobsMock).toHaveBeenCalledTimes(expectedReactiveCalls);
+      expect(reactiveDispatchAttempts).toHaveLength(expectedReactiveCalls);
+      expect(reactiveActionEvents).toHaveLength(expectedReactiveCalls);
+      expect(predictiveActionEvents).toHaveLength(expectedAction === action ? 1 : 0);
+      expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+      expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+      expect(reinitializeOpenAIProviderMock).not.toHaveBeenCalled();
+      expect(activateTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+      expect(activatePromptRouteReducedLatencyModeMock).not.toHaveBeenCalled();
+      expect(activatePromptRouteDegradedModeMock).not.toHaveBeenCalled();
+      expect(loopStatus).toEqual(expect.objectContaining({
+        lastDecision: expectedDecision,
+        lastAction: expectedAction,
+        lastAIDiagnosis: expect.objectContaining({
+          decision: expectedDecision,
+          executionStatus: status,
+          safeToExecute: expectedAction === action || enabled === false
+        })
+      }));
+
+      if (status === 'failed') {
+        expect(loopStatus.lastError).toBe('Predictive execution status: failed.');
+      }
+
+      expect(label).toEqual(expect.any(String));
+    }
+  );
+
+  it('fails closed when the predictive call rejects after an unknown execution phase', async () => {
+    getConfigMock.mockReturnValue(createConfig({
+      selfImproveEnabled: true,
+      selfImproveActuatorMode: 'daemon'
+    }));
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockRejectedValueOnce(new Error('predictive advisor unavailable'));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBeNull();
+    expect(result.controllerDecision).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDecision: 'observe',
+      lastAction: null,
+      lastAIDiagnosis: expect.objectContaining({
+        decision: 'observe',
+        safeToExecute: false,
+        fallbackUsed: true
+      })
+    }));
+  });
+
+  it('withholds the automatic controller when enabled prediction does not execute', async () => {
+    getConfigMock.mockReturnValue(createConfig({
+      selfImproveEnabled: true,
+      selfImproveActuatorMode: 'daemon'
+    }));
+    trinityActiveAction = 'enable_degraded_mode';
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      action: 'heal_worker_runtime',
+      target: 'worker_runtime',
+      status: 'dry_run',
+      mode: 'dry_run'
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.diagnosis).toContain('trinity mitigation active');
+    expect(result.action).toBeNull();
+    expect(result.controllerDecision).toBeNull();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves automatic legacy controller ownership when prediction is explicitly disabled', async () => {
+    getConfigMock.mockReturnValue(createConfig({
+      selfImproveEnabled: true,
+      selfImproveActuatorMode: 'daemon'
+    }));
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 20,
+      errorCount: 12,
+      clientErrorCount: 12,
+      serverErrorCount: 0,
+      errorRate: 0.6
+    }));
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      enabled: false,
+      advisor: 'rules_fallback_v1',
+      aiUsed: false,
+      action: 'none',
+      target: null,
+      safeToExecute: false,
+      status: 'refused',
+      mode: 'recommend_only'
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBeNull();
+    expect(result.diagnosis).toBe('validation noise elevated');
+    expect(result.controllerDecision).toBe('NOOP');
+    expect(runSelfImproveCycleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores the debug heal override in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE = 'true';
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      action: 'none',
+      target: null,
+      safeToExecute: false,
+      status: 'refused',
+      mode: 'recommend_only'
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let the debug override retry a declined automatic actuator', async () => {
+    process.env.SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE = 'true';
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      status: 'skipped',
+      mode: 'auto_execute',
+      attempted: false
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
   });
 
   it('treats idle workers with no receipts as inactive degraded and heals the runtime', async () => {
@@ -1692,6 +2148,14 @@ describe('selfHealingLoop', () => {
       decision: 'PATCH_PROPOSAL',
       evidencePath: 'governance/evidence_packs/cycle-manual.json'
     });
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      enabled: true,
+      action: 'heal_worker_runtime',
+      target: 'worker_runtime',
+      safeToExecute: true,
+      status: 'dry_run',
+      mode: 'dry_run'
+    }));
 
     const result = await runSelfHealingLoop({
       trigger: 'manual',
@@ -1725,42 +2189,22 @@ describe('selfHealingLoop', () => {
 
   it('invokes AI diagnosis and records controller decisions on every loop cycle', async () => {
     runPredictiveHealingFromLoopMock
-      .mockResolvedValueOnce({
-        decision: {
-          advisor: 'arcanos_core_v1',
-          action: 'none',
-          target: null,
-          reason: 'System is healthy; continue observing.',
-          confidence: 0.41,
-          matchedRule: null,
-          safeToExecute: false,
-          details: {
-            aiUsed: true
-          }
-        },
-        execution: {
-          status: 'skipped',
-          message: 'No healing action recommended.'
-        }
-      })
-      .mockResolvedValueOnce({
-        decision: {
-          advisor: 'arcanos_core_v1',
-          action: 'none',
-          target: null,
-          reason: 'System is still healthy; continue observing.',
-          confidence: 0.39,
-          matchedRule: null,
-          safeToExecute: false,
-          details: {
-            aiUsed: true
-          }
-        },
-        execution: {
-          status: 'skipped',
-          message: 'No healing action recommended.'
-        }
-      });
+      .mockResolvedValueOnce(createPredictiveBoundaryResult({
+        action: 'none',
+        target: null,
+        safeToExecute: false,
+        status: 'skipped',
+        mode: 'recommend_only',
+        message: 'No healing action recommended.'
+      }))
+      .mockResolvedValueOnce(createPredictiveBoundaryResult({
+        action: 'none',
+        target: null,
+        safeToExecute: false,
+        status: 'skipped',
+        mode: 'recommend_only',
+        message: 'No healing action recommended.'
+      }));
 
     await runSelfHealingLoop({ trigger: 'interval' });
     await runSelfHealingLoop({ trigger: 'interval' });
@@ -1814,24 +2258,14 @@ describe('selfHealingLoop', () => {
       recoveredJobs: ['job-1'],
       failedJobs: []
     });
-    runPredictiveHealingFromLoopMock.mockResolvedValueOnce({
-      decision: {
-        advisor: 'arcanos_core_v1',
-        action: 'none',
-        target: null,
-        reason: 'Observe for one more interval.',
-        confidence: 0.51,
-        matchedRule: null,
-        safeToExecute: false,
-        details: {
-          aiUsed: true
-        }
-      },
-      execution: {
-        status: 'skipped',
-        message: 'Predictive action was recommended only.'
-      }
-    });
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      action: 'none',
+      target: null,
+      safeToExecute: false,
+      status: 'skipped',
+      mode: 'recommend_only',
+      message: 'Predictive action was recommended only.'
+    }));
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
     const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
