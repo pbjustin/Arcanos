@@ -37,6 +37,17 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       effectiveLimits: 'effective-limits',
     }),
   }),
+  selfHealApproval: Object.freeze({
+    path: '/self-heal/approval-contract',
+    fixtures: Object.freeze({
+      deniedOutcomes: 'denied-outcomes',
+      validCompleted: 'valid-completed',
+      incoherentCompleted: 'incoherent-completed',
+      disabledLegacy: 'disabled-legacy',
+      manualIndependence: 'manual-independence',
+      productionDebugDenial: 'production-debug-denial',
+    }),
+  }),
   gaming: Object.freeze({
     canaryPath: '/gpt/arcanos-gaming/canary',
     queryPath: '/gpt/arcanos-gaming',

@@ -61,6 +61,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/researchRequest.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
+  'src/shared/selfHealPredictiveApproval.ts',
   'src/shared/typeGuards.ts',
   'src/start-native-pr-preview.ts',
   'src/transport/http/asyncHandler.ts',
@@ -553,6 +554,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/routes/_core/researchAbortDrain.ts',
     '0f8ca2e91c799218e3fa873bd3f247ef7eec9061924f1ce0c92e71f9a8b7521c',
+  ],
+  [
+    'src/shared/selfHealPredictiveApproval.ts',
+    'c721799fe21a7c0a8d034c3dc8a1acc78e1574c2ddda2adc9074470d05902e31',
   ],
 ]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([

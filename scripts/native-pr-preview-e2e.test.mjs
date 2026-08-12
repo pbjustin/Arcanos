@@ -128,7 +128,8 @@ function responseHeadersForCase(
   const syntheticResponse =
     requestCase.expectedType.startsWith('gaming-canary')
     || requestCase.expectedType.startsWith('gaming-query')
-    || requestCase.expectedType === 'gaming-source';
+    || requestCase.expectedType === 'gaming-source'
+    || requestCase.expectedType === 'self-heal-approval-contract';
   return {
     'cache-control': 'no-store',
     'content-type': expectedNativePrPreviewContentType(requestCase),
@@ -317,17 +318,19 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 105);
+  assert.equal(requestPlan.length, 112);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
       && expectedType !== 'backstage-storyline-contract'
       && expectedType !== 'mcp-body-cap-contract'
+      && expectedType !== 'self-heal-approval-contract'
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
       && caseId !== 'worker-research-denied'
       && caseId !== 'worker-backstage-storyline-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
+      && caseId !== 'worker-self-heal-approval-denied'
     ).length,
     50
   );
@@ -348,6 +351,12 @@ test('executes the bounded credential-free matrix and detects identity stability
       expectedType === 'mcp-body-cap-contract'
     ).length,
     1
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'self-heal-approval-contract'
+    ).length,
+    6
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -422,6 +431,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-mcp-body-cap-denied'
+    ).length,
+    1
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-self-heal-approval-denied'
     ).length,
     1
   );
@@ -587,6 +602,49 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
     ]
   );
+  const selfHealApprovalCases = requestPlan.filter(({ expectedType }) =>
+    expectedType === 'self-heal-approval-contract'
+  );
+  assert.equal(selfHealApprovalCases.length, 6);
+  const selfHealApprovalPayloads = new Map(
+    selfHealApprovalCases.map(requestCase => [
+      requestCase.fixtureName,
+      expectedNativePrPreviewResponseBody(requestCase, {
+        commitSha: COMMIT_SHA,
+        prNumber: PR_NUMBER,
+      }),
+    ])
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('deniedOutcomes').policy
+      .allReactiveEffectsDenied,
+    true
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('validCompleted').policy
+      .confirmedPredictiveExecution,
+    true
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('incoherentCompleted').policy
+      .allCompletedStatesRejected,
+    true
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('disabledLegacy').policy
+      .legacyReactivePolicyPreserved,
+    true
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('manualIndependence').policy
+      .manualAuthorityIndependent,
+    true
+  );
+  assert.equal(
+    selfHealApprovalPayloads.get('productionDebugDenial').policy
+      .productionDebugDenied,
+    true
+  );
   const mock = buildMockFetch(requestPlan);
 
   const result = await runNativePrPreviewE2e({
@@ -598,14 +656,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 105);
+  assert.equal(result.summary.requestsMade, 112);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 105);
+  assert.equal(result.checks.length, 112);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 105);
+  assert.equal(mock.requestCount, 112);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -665,6 +723,25 @@ test('executes the bounded credential-free matrix and detects identity stability
   for (const { init } of mcpBodyCapCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const selfHealApprovalCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/self-heal/approval-contract')
+  );
+  assert.equal(selfHealApprovalCalls.length, 7);
+  assert.equal(
+    selfHealApprovalCalls.filter(({ url }) => url.startsWith(WEB_BASE_URL)).length,
+    6
+  );
+  assert.equal(
+    selfHealApprovalCalls.filter(({ url }) => url.startsWith(WORKER_BASE_URL)).length,
+    1
+  );
+  for (const { init } of selfHealApprovalCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(
       /authorization|cookie|credential|secret|session|token/iu.test(init.body),
       false
@@ -881,6 +958,15 @@ test('rejects missing synthetic provenance and correlation or security header dr
   const cases = [
     {
       caseId: 'gaming-canary-success',
+      code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+        ];
+      },
+    },
+    {
+      caseId: 'self-heal-approval-denied-outcomes',
       code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
       mutate(headers) {
         delete headers[

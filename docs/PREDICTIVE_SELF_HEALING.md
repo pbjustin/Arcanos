@@ -66,6 +66,25 @@ requires `PREDICTIVE_HEALING_ENABLED=true` and
 `PREDICTIVE_HEALING_DRY_RUN=false`; request overrides cannot weaken those
 server-side guards.
 
+### Native PR preview approval contract
+
+The contained Railway PR web preview exposes the sealed, effect-free
+`POST /self-heal/approval-contract` component contract. Its six fixed selectors
+exercise the same pure approval functions used by `selfHealingLoop`: denied
+predictive outcomes, coherent completed execution, incoherent completed
+execution, explicitly disabled legacy authorization, manual-controller
+independence, and production debug-override denial. Caller input selects only a
+fixture name; it cannot supply an action, target, execution disposition, runtime
+configuration, or credential. Responses state that provider, database, memory,
+worker, outbound-network, and effects boundaries were not reached.
+
+This is end-to-end proof from the Railway preview HTTPS ingress through the
+contained application and the production approval-policy component. It is not a
+normal-runtime self-heal tick, provider decision, actuator, database, worker, or
+live-memory test. The normal `/api/self-heal/*` and `/api/self-improve/*` routes
+remain unavailable in the native preview, and the worker preview remains
+health-only.
+
 ## Config / Env Vars
 
 The predictive layer is off by default and should be rolled out in dry-run first.

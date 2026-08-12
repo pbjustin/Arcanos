@@ -34,6 +34,10 @@ const RESEARCH_ABORT_DRAIN_URL = new URL(
 );
 const RESEARCH_REQUEST_URL =
   new URL('../src/shared/researchRequest.ts', import.meta.url);
+const SELF_HEAL_PREDICTIVE_APPROVAL_URL = new URL(
+  '../src/shared/selfHealPredictiveApproval.ts',
+  import.meta.url
+);
 const STORYLINE_REPOSITORY_URL = new URL(
   '../src/core/db/repositories/backstageStorylineRepository.ts',
   import.meta.url
@@ -81,6 +85,11 @@ async function readResearchAbortDrainSource() {
 
 async function readResearchRequestSource() {
   return (await readFile(RESEARCH_REQUEST_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readSelfHealPredictiveApprovalSource() {
+  return (await readFile(SELF_HEAL_PREDICTIVE_APPROVAL_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -224,6 +233,36 @@ describe('native PR preview import boundary', () => {
       broadenedReflectRead
     )).toEqual(expect.arrayContaining([
       expect.stringContaining('forbidden runtime capability reference'),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
+  it('pins only the effect-free predictive/reactive approval policy', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(['src/shared/selfHealPredictiveApproval.ts'])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/services/selfImprove/selfHealingLoop.ts',
+        'src/services/selfImprove/predictiveHealingService.ts',
+      ])
+    );
+
+    const sourceText = await readSelfHealPredictiveApprovalSource();
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/selfHealPredictiveApproval.ts',
+      sourceText
+    )).toEqual([]);
+
+    const driftedExecutionRecognition = replaceRequired(
+      sourceText,
+      "params.execution.status === 'executed'",
+      "params.execution.status === 'skipped'"
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/selfHealPredictiveApproval.ts',
+      driftedExecutionRecognition
+    )).toEqual(expect.arrayContaining([
       expect.stringContaining('critical entry file semantic digest'),
     ]));
   });

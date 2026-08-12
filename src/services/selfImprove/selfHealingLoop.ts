@@ -43,16 +43,22 @@ import {
   recordSelfHealEvent,
   resetSelfHealTelemetryForTests
 } from '@services/selfImprove/selfHealTelemetry.js';
-import {
-  runPredictiveHealingFromLoop,
-  type PredictiveHealingExecutionResult
-} from '@services/selfImprove/predictiveHealingService.js';
+import { runPredictiveHealingFromLoop } from '@services/selfImprove/predictiveHealingService.js';
 import { resolvePredictiveHealingLoopIntervalMs } from '@services/selfImprove/runtimeConfig.js';
 import {
   buildWorkerRepairActuatorStatus,
   executeWorkerRepairActuator
 } from '@services/selfImprove/workerRepairActuator.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import {
+  isSelfHealingDebugOverrideEligible,
+  resolvePredictiveReactiveApproval,
+  resolveSelfHealingEffectAuthorization,
+  shouldRunSelfHealingController,
+  type PredictiveReactiveApproval
+} from '@shared/selfHealPredictiveApproval.js';
+
+export { resolvePredictiveReactiveApproval } from '@shared/selfHealPredictiveApproval.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const DEFAULT_ACTION_COOLDOWN_MS = 120_000;
@@ -453,29 +459,9 @@ type SelfHealingAIDiagnosisResult = {
   allowAutomaticController: boolean;
 };
 
-type PredictiveReactiveApproval = {
-  allowLegacyReactiveEffects: boolean;
-  source:
-    | 'predictive_already_executed'
-    | 'predictive_execution_uncertain'
-    | 'predictive_disabled'
-    | 'predictive_state_invalid'
-    | 'deterministic_fallback'
-    | 'authoritative_predictive_result';
-};
-
 type PredictiveAIDiagnosisResolution = {
   diagnosis: SelfHealingAIDiagnosis;
   approval: PredictiveReactiveApproval;
-};
-
-type PredictiveExecutionDisposition = Pick<
-  PredictiveHealingExecutionResult,
-  'action' | 'attempted' | 'mode' | 'status' | 'target'
-> & {
-  decisionAction: Awaited<ReturnType<typeof runPredictiveHealingFromLoop>>['decision']['action'];
-  decisionSafeToExecute: boolean;
-  decisionTarget: string | null;
 };
 
 function getSelfHealingActionTarget(actionPlan: SelfHealingActionPlan): string {
@@ -555,71 +541,6 @@ function buildDeterministicAIDiagnosis(
     executionStatus: null,
     fallbackUsed: true,
     aiUsedInRuntime: false
-  };
-}
-
-export function resolvePredictiveReactiveApproval(params: {
-  predictiveHealingEnabled: boolean;
-  predictiveFallback: boolean;
-  execution: PredictiveExecutionDisposition;
-}): PredictiveReactiveApproval {
-  if (params.execution.status === 'executed') {
-    const executionStateConsistent =
-      params.execution.attempted &&
-      (params.execution.mode === 'auto_execute' || params.execution.mode === 'operator_execute') &&
-      params.execution.decisionAction !== 'none' &&
-      params.execution.decisionSafeToExecute &&
-      params.execution.action === params.execution.decisionAction &&
-      params.execution.target === params.execution.decisionTarget;
-    return executionStateConsistent
-      ? {
-          allowLegacyReactiveEffects: false,
-          source: 'predictive_already_executed'
-        }
-      : {
-          allowLegacyReactiveEffects: false,
-          source: 'predictive_state_invalid'
-        };
-  }
-
-  const automaticExecutionPhaseUncertain =
-    params.execution.mode === 'auto_execute' || params.execution.mode === 'operator_execute';
-  if (
-    params.execution.attempted ||
-    params.execution.status === 'failed' ||
-    automaticExecutionPhaseUncertain
-  ) {
-    return {
-      allowLegacyReactiveEffects: false,
-      source: 'predictive_execution_uncertain'
-    };
-  }
-
-  if (!params.predictiveHealingEnabled) {
-    const passiveDisabledStatus =
-      params.execution.mode === 'recommend_only' &&
-      params.execution.status !== 'dry_run';
-    return passiveDisabledStatus
-      ? {
-          allowLegacyReactiveEffects: true,
-          source: 'predictive_disabled'
-        }
-      : {
-          allowLegacyReactiveEffects: false,
-          source: 'predictive_state_invalid'
-        };
-  }
-
-  if (params.predictiveFallback) {
-    return {
-      allowLegacyReactiveEffects: false,
-      source: 'deterministic_fallback'
-    };
-  }
-
-  return {
-    allowLegacyReactiveEffects: false,
-    source: 'authoritative_predictive_result'
   };
 }
 
@@ -728,13 +649,12 @@ function buildAIDiagnosisFromPredictiveResult(
 }
 
 function shouldForceAIDebugHealOnce(runtime: SelfHealingLoopRuntime, diagnosis: SelfHealingDiagnosis): boolean {
-  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
-  return (
-    (nodeEnv === 'development' || nodeEnv === 'test') &&
-    getEnvBoolean(SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE_ENV, false) &&
-    !runtime.debugForcedHealConsumed &&
-    diagnosis.actionPlan !== null
-  );
+  return isSelfHealingDebugOverrideEligible({
+    debugOverrideConsumed: runtime.debugForcedHealConsumed,
+    debugOverrideRequested: getEnvBoolean(SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE_ENV, false),
+    hasActionPlan: diagnosis.actionPlan !== null,
+    nodeEnvironment: process.env.NODE_ENV
+  });
 }
 
 function applyForcedAIDebugHealOnce(params: {
@@ -1390,13 +1310,15 @@ async function aiDiagnoseAndDecide(params: {
       reason: aiDiagnosis.reason
     });
   }
+  const effectAuthorization = resolveSelfHealingEffectAuthorization({
+    approval: predictiveResolution.approval,
+    debugApprovalApplied,
+    hasActionPlan: params.diagnosis.actionPlan !== null
+  });
   return {
     diagnosis: aiDiagnosis,
     predictiveResult,
-    allowReactiveAction:
-      params.diagnosis.actionPlan !== null &&
-      (predictiveResolution.approval.allowLegacyReactiveEffects || debugApprovalApplied),
-    allowAutomaticController: predictiveResolution.approval.allowLegacyReactiveEffects
+    ...effectAuthorization
   };
 }
 
@@ -4061,13 +3983,13 @@ export async function runSelfHealingLoop(options: {
     runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
 
     let controllerDecision: SelfImproveDecision['decision'] | 'ERROR' | null = null;
-    const shouldRunController =
-      diagnosis.controllerInput !== null &&
-      (
-        trigger === 'manual' ||
-        (shouldAutoInvokeController() && aiDiagnosisResult.allowAutomaticController)
-      ) &&
-      action === null;
+    const shouldRunController = shouldRunSelfHealingController({
+      actionPresent: action !== null,
+      allowAutomaticController: aiDiagnosisResult.allowAutomaticController,
+      automaticControllerConfigured: shouldAutoInvokeController(),
+      hasControllerInput: diagnosis.controllerInput !== null,
+      trigger
+    });
     if (shouldRunController && diagnosis.controllerInput) {
       const controllerKey = diagnosis.incidentKey ?? diagnosis.controllerInput.trigger;
       if (trigger !== 'manual' && isCooldownActive(runtime.controllerCooldowns, controllerKey)) {

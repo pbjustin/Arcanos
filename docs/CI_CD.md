@@ -302,11 +302,12 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 105-request plan is the
+evidence, not Railway control-plane provenance. The fixed 112-request plan is the
 original 68-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
-encoded-status cases, and 20 labeled `simulatedAuth` fixtures), and two
-worker-role Gaming denials. It
+encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
+Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
+worker-role approval-contract denial. It
 checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
 synthetic-provenance headers; it is not real bearer-auth, provider, storage,
 queue, or worker-execution evidence.

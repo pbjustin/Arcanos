@@ -13,6 +13,7 @@ import {
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
+  NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
 } from '../src/nativePrPreviewContract.js';
 import {
@@ -965,6 +966,148 @@ describe('native PR contained application', () => {
       request(app)
         .post('/mcp')
         .send({ fixture }),
+    ]);
+    for (const response of deniedResponses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('executes the real effect-free self-heal approval policy through sealed fixtures', async () => {
+    const { app } = buildApplication();
+    const fixtures = NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.fixtures;
+    const responses = await Promise.all(
+      Object.values(fixtures).map((fixture) => request(app)
+        .post(NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path)
+        .set('x-request-id', `req-${fixture}`)
+        .set('x-trace-id', `trace-${fixture}`)
+        .send({ fixture }))
+    );
+
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(expect.objectContaining({
+        componentExecuted: true,
+        databaseBoundaryReached: false,
+        effectsBoundaryReached: false,
+        kind: 'predictive_reactive_self_heal_approval_contract',
+        memoryBoundaryReached: false,
+        outboundNetworkBoundaryReached: false,
+        protectedEffectsEnabled: false,
+        providerBoundaryReached: false,
+        schemaVersion: 1,
+        workerBoundaryReached: false,
+      }));
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expectContainedResponseHeaders(
+        response,
+        `req-${response.body.fixture}`,
+        `trace-${response.body.fixture}`,
+        true
+      );
+    }
+
+    const byFixture = new Map(
+      responses.map((response) => [response.body.fixture, response.body.policy])
+    );
+    expect(byFixture.get(fixtures.deniedOutcomes)).toEqual(expect.objectContaining({
+      allReactiveEffectsDenied: true,
+      caseCount: 6,
+      outcomes: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'authoritative-refusal',
+          approvalSource: 'authoritative_predictive_result',
+          allowAutomaticController: false,
+          allowReactiveAction: false,
+        }),
+        expect.objectContaining({
+          name: 'deterministic-fallback',
+          approvalSource: 'deterministic_fallback',
+          allowAutomaticController: false,
+          allowReactiveAction: false,
+        }),
+        expect.objectContaining({
+          name: 'attempted-failure',
+          approvalSource: 'predictive_execution_uncertain',
+          allowAutomaticController: false,
+          allowReactiveAction: false,
+        }),
+      ]),
+    }));
+    expect(byFixture.get(fixtures.validCompleted)).toEqual({
+      confirmedPredictiveExecution: true,
+      outcome: {
+        name: 'valid-completed',
+        approvalSource: 'predictive_already_executed',
+        allowLegacyReactiveEffects: false,
+        allowReactiveAction: false,
+        allowAutomaticController: false,
+      },
+    });
+    expect(byFixture.get(fixtures.incoherentCompleted)).toEqual(
+      expect.objectContaining({
+        allCompletedStatesRejected: true,
+        caseCount: 6,
+      })
+    );
+    expect(byFixture.get(fixtures.disabledLegacy)).toEqual({
+      legacyReactivePolicyPreserved: true,
+      outcome: {
+        name: 'disabled-legacy',
+        approvalSource: 'predictive_disabled',
+        allowLegacyReactiveEffects: true,
+        allowReactiveAction: true,
+        allowAutomaticController: true,
+      },
+    });
+    expect(byFixture.get(fixtures.manualIndependence)).toEqual({
+      automaticControllerRunAllowed: false,
+      manualAuthorityIndependent: true,
+      manualControllerRunAllowed: true,
+    });
+    expect(byFixture.get(fixtures.productionDebugDenial)).toEqual({
+      developmentDebugOverrideEligible: true,
+      productionDebugDenied: true,
+      productionDebugOverrideEligible: false,
+    });
+  });
+
+  it('keeps the self-heal approval contract sealed and credential-free', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT;
+    const fixture = contract.fixtures.validCompleted;
+    const invalidResponses = await Promise.all([
+      request(app).post(contract.path).send({ fixture: 'unlisted' }),
+      request(app).post(contract.path).send({ fixture, extra: true }),
+    ]);
+    for (const response of invalidResponses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_SELF_HEAL_APPROVAL_FIXTURE_INVALID',
+      });
+      expectNoStore(response);
+    }
+
+    const deniedResponses = await Promise.all([
+      request(app).post(`${contract.path}?fixture=${fixture}`).send({ fixture }),
+      request(app).post('/self-heal%2fapproval-contract').send({ fixture }),
+      request(app)
+        .post(contract.path)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ fixture }),
+      request(app)
+        .post(contract.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture }),
+      request(app).post(contract.path).send({ fixture: 'x'.repeat(4_097) }),
+      request(app).post('/api/self-improve/run').send({ fixture }),
+      request(app).post('/api/self-heal/decide').send({ fixture }),
     ]);
     for (const response of deniedResponses) {
       expect(response.status).toBe(404);

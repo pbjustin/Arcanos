@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 105;
+const MAX_REQUESTS = 112;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
@@ -392,6 +392,24 @@ function mcpBodyCapCase(caseId, fixtureName, status) {
   };
 }
 
+function selfHealApprovalCase(caseId, fixtureName) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: 200,
+    expectedType: 'self-heal-approval-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.path,
+    role: 'web',
+  };
+}
+
 function gamingQueryBody(mode, prompt, extraPayload = undefined) {
   return {
     action: 'query',
@@ -734,6 +752,30 @@ export function buildNativePrPreviewRequestPlan() {
       'mcp-body-cap-effective-limits',
       'effectiveLimits',
       200
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-denied-outcomes',
+      'deniedOutcomes'
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-valid-completed',
+      'validCompleted'
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-incoherent-completed',
+      'incoherentCompleted'
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-disabled-legacy',
+      'disabledLegacy'
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-manual-independence',
+      'manualIndependence'
+    ),
+    selfHealApprovalCase(
+      'self-heal-approval-production-debug-denial',
+      'productionDebugDenial'
     ),
     gamingCase(
       'gaming-canary-success',
@@ -1153,6 +1195,20 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'POST',
       path: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.research.path,
+      role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.fixtures
+            .deniedOutcomes,
+      },
+      caseId: 'worker-self-heal-approval-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.selfHealApproval.path,
       role: 'worker',
     },
     {
@@ -1638,6 +1694,123 @@ function expectedMcpBodyCapContractPayload(requestCase) {
   };
 }
 
+function expectedSelfHealApprovalOutcome(
+  name,
+  approvalSource,
+  allowLegacyReactiveEffects = false
+) {
+  return {
+    name,
+    approvalSource,
+    allowLegacyReactiveEffects,
+    allowReactiveAction: allowLegacyReactiveEffects,
+    allowAutomaticController: allowLegacyReactiveEffects,
+  };
+}
+
+function expectedSelfHealApprovalContractPayload(requestCase) {
+  const envelope = policy => ({
+    componentExecuted: true,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    fixture: requestCase.fixture,
+    kind: 'predictive_reactive_self_heal_approval_contract',
+    memoryBoundaryReached: false,
+    outboundNetworkBoundaryReached: false,
+    policy,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  });
+  switch (requestCase.fixtureName) {
+    case 'deniedOutcomes': {
+      const outcomes = [
+        expectedSelfHealApprovalOutcome(
+          'authoritative-refusal',
+          'authoritative_predictive_result'
+        ),
+        expectedSelfHealApprovalOutcome(
+          'authoritative-recommendation',
+          'authoritative_predictive_result'
+        ),
+        expectedSelfHealApprovalOutcome(
+          'authoritative-dry-run',
+          'authoritative_predictive_result'
+        ),
+        expectedSelfHealApprovalOutcome(
+          'deterministic-fallback',
+          'deterministic_fallback'
+        ),
+        expectedSelfHealApprovalOutcome(
+          'attempted-failure',
+          'predictive_execution_uncertain'
+        ),
+        expectedSelfHealApprovalOutcome(
+          'declined-automatic-actuator',
+          'predictive_execution_uncertain'
+        ),
+      ];
+      return envelope({
+        allReactiveEffectsDenied: true,
+        caseCount: outcomes.length,
+        outcomes,
+      });
+    }
+    case 'validCompleted': {
+      const outcome = expectedSelfHealApprovalOutcome(
+        'valid-completed',
+        'predictive_already_executed'
+      );
+      return envelope({
+        confirmedPredictiveExecution: true,
+        outcome,
+      });
+    }
+    case 'incoherentCompleted': {
+      const outcomes = [
+        'attempt-missing',
+        'mode-mismatch',
+        'action-mismatch',
+        'target-mismatch',
+        'safety-mismatch',
+        'decision-action-none',
+      ].map(name => expectedSelfHealApprovalOutcome(
+        name,
+        'predictive_state_invalid'
+      ));
+      return envelope({
+        allCompletedStatesRejected: true,
+        caseCount: outcomes.length,
+        outcomes,
+      });
+    }
+    case 'disabledLegacy':
+      return envelope({
+        legacyReactivePolicyPreserved: true,
+        outcome: expectedSelfHealApprovalOutcome(
+          'disabled-legacy',
+          'predictive_disabled',
+          true
+        ),
+      });
+    case 'manualIndependence':
+      return envelope({
+        automaticControllerRunAllowed: false,
+        manualAuthorityIndependent: true,
+        manualControllerRunAllowed: true,
+      });
+    case 'productionDebugDenial':
+      return envelope({
+        developmentDebugOverrideEligible: true,
+        productionDebugDenied: true,
+        productionDebugOverrideEligible: false,
+      });
+    default:
+      fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+}
+
 function expectedGamingCanaryPayload(requestCase) {
   const valid = requestCase.expectedType === 'gaming-canary';
   const correlation = nativePrPreviewCaseCorrelation(requestCase);
@@ -2069,6 +2242,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedBackstageStorylineContractPayload(requestCase);
     case 'mcp-body-cap-contract':
       return expectedMcpBodyCapContractPayload(requestCase);
+    case 'self-heal-approval-contract':
+      return expectedSelfHealApprovalContractPayload(requestCase);
     case 'gaming-canary':
     case 'gaming-canary-invalid':
       return expectedGamingCanaryPayload(requestCase);
@@ -2247,6 +2422,7 @@ async function executeRequestCase(
       requestCase.expectedType.startsWith('gaming-canary')
       || requestCase.expectedType.startsWith('gaming-query')
       || requestCase.expectedType === 'gaming-source'
+      || requestCase.expectedType === 'self-heal-approval-contract'
     )
     && response.headers.get(
       NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
