@@ -474,6 +474,8 @@ describe('Railway bounded activation evidence', () => {
   it.each([
     ['a different project', status => { status.id = DECOY_SERVICE_ID; }],
     ['a deleted project', status => { status.deletedAt = '2026-08-12T00:00:00.000Z'; }],
+    ['a missing environment connection', status => { delete status.environments; }],
+    ['a non-array environment connection', status => { status.environments.edges = {}; }],
     ['no exact environment', status => { status.environments.edges.splice(1, 1); }],
     ['duplicate exact environments', status => {
       status.environments.edges.push({
@@ -492,9 +494,14 @@ describe('Railway bounded activation evidence', () => {
       status.environments.edges[0].node.id = ENVIRONMENT_ID;
     }],
     ['a malformed environment edge', status => { status.environments.edges.push({}); }],
+    ['a missing project-service connection', status => { delete status.services; }],
+    ['a non-array project-service connection', status => { status.services.edges = {}; }],
     ['no exact project service', status => { status.services.edges.splice(1, 1); }],
     ['duplicate exact project services', status => {
       status.services.edges.push({ node: { id: SERVICE_ID, name: 'ARCANOS Worker' } });
+    }],
+    ['a reused project-service ID', status => {
+      status.services.edges[0].node.id = SERVICE_ID;
     }],
     ['no exact service instance', status => {
       targetEnvironmentNode(status).serviceInstances.edges.splice(1, 1);
