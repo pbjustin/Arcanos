@@ -124,6 +124,9 @@ describe('Railway role-aware deployment evidence', () => {
     expect(preflight.match(
       /railway-auto-deploy-observer\.mjs active-id/gu,
     )).toHaveLength(2);
+    expect(preflight.match(
+      /railway-auto-deploy-observer\.mjs active-id \\\n\s+--project "\$\{RAILWAY_PROJECT_ID\}"/gu,
+    )).toHaveLength(2);
     expect(preflight).toContain('BASELINE_WORKER_DEPLOYMENT_ID');
     expect(preflight).toContain('BASELINE_WEB_DEPLOYMENT_ID');
     expect(preflight).toContain('role=worker readiness=ready');

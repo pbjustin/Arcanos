@@ -222,9 +222,11 @@ jobs:
           set -euo pipefail
 
           baseline_worker_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs active-id \
+            --project "${RAILWAY_PROJECT_ID}" \
             --service "${RAILWAY_WORKER_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}")"
           baseline_web_deployment_id="$(node scripts/railway-auto-deploy-observer.mjs active-id \
+            --project "${RAILWAY_PROJECT_ID}" \
             --service "${RAILWAY_WEB_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}")"
 

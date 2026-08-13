@@ -393,12 +393,17 @@ The deployment job requires `RAILWAY_PROJECT_ID`,
 Missing credentials or any identifier fails the promotion; there is no green
 automatic skip and no implicit `production` environment default.
 Static Railway compatibility validation runs before the first remote mutation.
-The token preflight captures the exact active successful deployment ID for
-both roles, then reads each service's resolved identity and role. It requires a
-direct current web readiness response; a public worker also receives a direct
-request, while a private worker retains current Railway active-`SUCCESS`
-platform evidence rather than being made public solely for CI.
-Swapped or duplicated targets fail before upload.
+The token preflight reads a bounded Railway project inventory and attests the
+exact project, the single accessible non-deleted environment with the configured
+name, and one matching service instance per role. Each target must have exactly
+one active `SUCCESS` deployment, whose ID becomes its baseline; a newer failed
+latest deployment cannot mask that active deployment. Missing, duplicate,
+malformed, or mismatched inventory fails before upload. The preflight then reads
+each service's resolved identity and role. It requires a direct current web
+readiness response; a public worker also receives a direct request, while a
+private worker retains current Railway active-`SUCCESS` platform evidence
+rather than being made public solely for CI. Swapped or duplicated targets fail
+before upload.
 
 Promotion is one worker-first pair in a single job. The workflow uploads the
 exact default-branch SHA to the worker, observes only the returned worker

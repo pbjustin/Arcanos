@@ -6,6 +6,7 @@ import {
   RAILWAY_COMMAND_LIMITS,
   classifyDeploymentStatus,
   enqueueDeployment,
+  main,
   readActiveDeploymentId,
   readRailwayVariables,
   runBoundedRailwayCommand,
@@ -16,6 +17,12 @@ import {
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 const SERVICE_ID = '22222222-2222-4222-8222-222222222222';
 const DEPLOYMENT_ID = '33333333-3333-4333-8333-333333333333';
+const FAILED_DEPLOYMENT_ID = '44444444-4444-4444-8444-444444444444';
+const ENVIRONMENT_ID = '55555555-5555-4555-8555-555555555555';
+const SERVICE_INSTANCE_ID = '66666666-6666-4666-8666-666666666666';
+const DECOY_ENVIRONMENT_ID = '77777777-7777-4777-8777-777777777777';
+const DECOY_SERVICE_ID = '88888888-8888-4888-8888-888888888888';
+const DECOY_SERVICE_INSTANCE_ID = '99999999-9999-4999-8999-999999999999';
 const DEPLOY_REF = 'a'.repeat(40);
 const ENVIRONMENT_NAME = 'production';
 
@@ -26,6 +33,83 @@ const target = {
 
 function deploymentList(status, deploymentId = DEPLOYMENT_ID) {
   return JSON.stringify([{ id: deploymentId, status }]);
+}
+
+function projectStatusFixture() {
+  return {
+    id: PROJECT_ID,
+    deletedAt: null,
+    services: {
+      edges: [
+        { node: { id: DECOY_SERVICE_ID, name: 'decoy' } },
+        { node: { id: SERVICE_ID, name: 'ARCANOS Worker' } },
+      ],
+    },
+    environments: {
+      edges: [
+        {
+          node: {
+            id: DECOY_ENVIRONMENT_ID,
+            name: 'development',
+            canAccess: true,
+            deletedAt: null,
+            serviceInstances: { edges: [] },
+          },
+        },
+        {
+          node: {
+            id: ENVIRONMENT_ID,
+            name: ENVIRONMENT_NAME,
+            canAccess: true,
+            deletedAt: null,
+            serviceInstances: {
+              edges: [
+                {
+                  node: {
+                    id: DECOY_SERVICE_INSTANCE_ID,
+                    serviceId: DECOY_SERVICE_ID,
+                    serviceName: 'decoy',
+                    environmentId: ENVIRONMENT_ID,
+                    latestDeployment: null,
+                    activeDeployments: [],
+                  },
+                },
+                {
+                  node: {
+                    id: SERVICE_INSTANCE_ID,
+                    serviceId: SERVICE_ID,
+                    serviceName: 'ARCANOS Worker',
+                    environmentId: ENVIRONMENT_ID,
+                    latestDeployment: {
+                      id: FAILED_DEPLOYMENT_ID,
+                      status: 'FAILED',
+                      deploymentStopped: true,
+                    },
+                    activeDeployments: [
+                      {
+                        id: DEPLOYMENT_ID,
+                        status: 'SUCCESS',
+                        createdAt: '2026-08-11T21:00:00.000Z',
+                        meta: { omittedFromErrors: 'sensitive provider metadata' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
+function targetEnvironmentNode(status) {
+  return status.environments.edges[1].node;
+}
+
+function targetServiceNode(status) {
+  return targetEnvironmentNode(status).serviceInstances.edges[1].node;
 }
 
 describe('Railway bounded command execution', () => {
@@ -342,70 +426,152 @@ describe('Railway exact-deployment observation', () => {
 });
 
 describe('Railway bounded activation evidence', () => {
-  it('captures the exact active successful deployment before mutation', async () => {
-    const runCommand = jest.fn(async () =>
-      JSON.stringify({
-        deploymentId: DEPLOYMENT_ID,
-        status: 'SUCCESS',
-        stopped: false,
-      }),
-    );
+  it('captures the sole active SUCCESS when a newer latest deployment failed', async () => {
+    const runCommand = jest.fn(async () => JSON.stringify(projectStatusFixture()));
 
     await expect(
-      readActiveDeploymentId(target, { runCommand }),
+      readActiveDeploymentId({ projectId: PROJECT_ID, ...target }, { runCommand }),
     ).resolves.toBe(DEPLOYMENT_ID);
     expect(runCommand).toHaveBeenCalledWith(
-      [
-        'service',
-        'status',
+      ['status', '--json'],
+      RAILWAY_COMMAND_LIMITS.projectStatus,
+    );
+  });
+
+  it('rejects an invalid expected project before reading Railway state', async () => {
+    const runCommand = jest.fn();
+
+    await expect(
+      readActiveDeploymentId({ projectId: 'current', ...target }, { runCommand }),
+    ).rejects.toThrow('RAILWAY_PROJECT_ID_INVALID');
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it('requires and validates project identity at the active-id CLI boundary', async () => {
+    await expect(
+      main([
+        'active-id',
         '--service',
         SERVICE_ID,
         '--environment',
         ENVIRONMENT_NAME,
-        '--json',
-      ],
-      RAILWAY_COMMAND_LIMITS.serviceStatus,
-    );
+      ]),
+    ).rejects.toThrow('RAILWAY_OBSERVER_ARGUMENTS_INVALID');
+
+    await expect(
+      main([
+        'active-id',
+        '--project',
+        'current',
+        '--service',
+        SERVICE_ID,
+        '--environment',
+        ENVIRONMENT_NAME,
+      ]),
+    ).rejects.toThrow('RAILWAY_PROJECT_ID_INVALID');
   });
 
   it.each([
-    [
-      'invalid deployment ID',
-      JSON.stringify({
-        deploymentId: 'latest',
+    ['a different project', status => { status.id = DECOY_SERVICE_ID; }],
+    ['a deleted project', status => { status.deletedAt = '2026-08-12T00:00:00.000Z'; }],
+    ['a missing environment connection', status => { delete status.environments; }],
+    ['a non-array environment connection', status => { status.environments.edges = {}; }],
+    ['no exact environment', status => { status.environments.edges.splice(1, 1); }],
+    ['duplicate exact environments', status => {
+      status.environments.edges.push({
+        node: {
+          ...targetEnvironmentNode(status),
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        },
+      });
+    }],
+    ['an inaccessible environment', status => { targetEnvironmentNode(status).canAccess = false; }],
+    ['a deleted environment', status => {
+      targetEnvironmentNode(status).deletedAt = '2026-08-12T00:00:00.000Z';
+    }],
+    ['an invalid environment ID', status => { targetEnvironmentNode(status).id = 'production'; }],
+    ['a reused environment ID', status => {
+      status.environments.edges[0].node.id = ENVIRONMENT_ID;
+    }],
+    ['a malformed environment edge', status => { status.environments.edges.push({}); }],
+    ['a missing project-service connection', status => { delete status.services; }],
+    ['a non-array project-service connection', status => { status.services.edges = {}; }],
+    ['no exact project service', status => { status.services.edges.splice(1, 1); }],
+    ['duplicate exact project services', status => {
+      status.services.edges.push({ node: { id: SERVICE_ID, name: 'ARCANOS Worker' } });
+    }],
+    ['a reused project-service ID', status => {
+      status.services.edges[0].node.id = SERVICE_ID;
+    }],
+    ['no exact service instance', status => {
+      targetEnvironmentNode(status).serviceInstances.edges.splice(1, 1);
+    }],
+    ['duplicate exact service instances', status => {
+      targetEnvironmentNode(status).serviceInstances.edges.push({
+        node: {
+          ...targetServiceNode(status),
+          id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        },
+      });
+    }],
+    ['a mismatched service environment', status => {
+      targetServiceNode(status).environmentId = DECOY_ENVIRONMENT_ID;
+    }],
+    ['a mismatched service name', status => { targetServiceNode(status).serviceName = 'impostor'; }],
+    ['a reused service-instance ID', status => {
+      targetEnvironmentNode(status).serviceInstances.edges[0].node.id = SERVICE_INSTANCE_ID;
+    }],
+    ['a malformed service-instance edge', status => {
+      targetEnvironmentNode(status).serviceInstances.edges.push({ node: null });
+    }],
+    ['missing active deployments', status => { delete targetServiceNode(status).activeDeployments; }],
+    ['non-array active deployments', status => { targetServiceNode(status).activeDeployments = {}; }],
+    ['zero active deployments', status => { targetServiceNode(status).activeDeployments = []; }],
+    ['multiple active deployments', status => {
+      targetServiceNode(status).activeDeployments.push({
+        id: FAILED_DEPLOYMENT_ID,
+        status: 'FAILED',
+      });
+    }],
+    ['multiple successful active deployments', status => {
+      targetServiceNode(status).activeDeployments.push({
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
         status: 'SUCCESS',
-        stopped: false,
-      }),
-    ],
-    [
-      'non-success state',
-      JSON.stringify({
-        deploymentId: DEPLOYMENT_ID,
-        status: 'DEPLOYING',
-        stopped: false,
-      }),
-    ],
-    [
-      'stopped deployment',
-      JSON.stringify({
-        deploymentId: DEPLOYMENT_ID,
-        status: 'SUCCESS',
-        stopped: true,
-      }),
-    ],
-    [
-      'missing stopped evidence',
-      JSON.stringify({
-        deploymentId: DEPLOYMENT_ID,
-        status: 'SUCCESS',
-      }),
-    ],
-    ['malformed JSON', '{'],
-  ])('rejects %s baseline evidence', async (_label, output) => {
+      });
+    }],
+    ['a non-success active deployment', status => {
+      targetServiceNode(status).activeDeployments[0].status = 'DEPLOYING';
+    }],
+    ['a missing active status', status => {
+      delete targetServiceNode(status).activeDeployments[0].status;
+    }],
+    ['an invalid active deployment ID', status => {
+      targetServiceNode(status).activeDeployments[0].id = 'active';
+    }],
+    ['a malformed active deployment', status => {
+      targetServiceNode(status).activeDeployments[0] = null;
+    }],
+  ])('rejects baseline inventory with %s', async (_label, mutateStatus) => {
+    const status = projectStatusFixture();
+    mutateStatus(status);
+
     await expect(
-      readActiveDeploymentId(target, {
-        runCommand: async () => output,
-      }),
+      readActiveDeploymentId(
+        { projectId: PROJECT_ID, ...target },
+        { runCommand: async () => JSON.stringify(status) },
+      ),
+    ).rejects.toThrow('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
+  });
+
+  it.each([
+    ['malformed JSON', '{'],
+    ['non-object JSON', '[]'],
+  ])('rejects %s project-status evidence', async (_label, output) => {
+    await expect(
+      readActiveDeploymentId(
+        { projectId: PROJECT_ID, ...target },
+        { runCommand: async () => output },
+      ),
     ).rejects.toThrow('RAILWAY_BASELINE_ACTIVATION_EVIDENCE_MISMATCH');
   });
 
