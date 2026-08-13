@@ -84,6 +84,10 @@ const FAILED_DEPLOYMENT_STATUSES = new Set([
   'SLEEPING',
 ]);
 const EXPECTED_PROPERTY_MAPPINGS = Object.freeze({
+  'build.buildCommand': '$.build.buildCommand',
+  'build.builder': '$.build.builder',
+  'build.cache': '$.build.cache',
+  'build.env': '$.build.env',
   'deploy.startCommand': '$.environments.pr.deploy.startCommand',
   'deploy.healthcheckPath': '$.environments.pr.deploy.healthcheckPath',
   'deploy.healthcheckTimeout': '$.environments.pr.deploy.healthcheckTimeout',
@@ -92,6 +96,7 @@ const EXPECTED_PROPERTY_MAPPINGS = Object.freeze({
   'deploy.preDeployCommand': '$.environments.pr.deploy.preDeployCommand',
   'deploy.cronSchedule': '$.environments.pr.deploy.cronSchedule',
   'deploy.drainingSeconds': '$.deploy.drainingSeconds',
+  'deploy.env': '$.deploy.env',
 });
 
 const TOKEN_TYPE_QUERY = `
@@ -566,9 +571,8 @@ function validateEnvironmentConfig(config, {
         && hasExactKeys(serviceConfig.variables, ['ARCANOS_PROCESS_KIND'])
         && hasExactKeys(
           serviceConfig.variables.ARCANOS_PROCESS_KIND,
-          ['generator', 'value']
+          ['value']
         )
-        && serviceConfig.variables.ARCANOS_PROCESS_KIND.generator === null
         && serviceConfig.variables.ARCANOS_PROCESS_KIND.value === role,
       errorCode
     );

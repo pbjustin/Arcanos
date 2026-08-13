@@ -92,6 +92,10 @@ function deployment({
       rootDirectory: null,
       volumeMounts: [],
       propertyFileMapping: {
+        'build.buildCommand': '$.build.buildCommand',
+        'build.builder': '$.build.builder',
+        'build.cache': '$.build.cache',
+        'build.env': '$.build.env',
         'deploy.startCommand': '$.environments.pr.deploy.startCommand',
         'deploy.healthcheckPath': '$.environments.pr.deploy.healthcheckPath',
         'deploy.healthcheckTimeout': '$.environments.pr.deploy.healthcheckTimeout',
@@ -100,6 +104,7 @@ function deployment({
         'deploy.preDeployCommand': '$.environments.pr.deploy.preDeployCommand',
         'deploy.cronSchedule': '$.environments.pr.deploy.cronSchedule',
         'deploy.drainingSeconds': '$.deploy.drainingSeconds',
+        'deploy.env': '$.deploy.env',
       },
       serviceManifest: {
         build: {
@@ -205,7 +210,7 @@ function environment({
             repo: CONTRACT.repository,
           },
           variables: {
-            ARCANOS_PROCESS_KIND: { generator: null, value: 'worker' },
+            ARCANOS_PROCESS_KIND: { value: 'worker' },
           },
         },
         [CONTRACT.services.web.id]: {
@@ -219,7 +224,7 @@ function environment({
             repo: CONTRACT.repository,
           },
           variables: {
-            ARCANOS_PROCESS_KIND: { generator: null, value: 'web' },
+            ARCANOS_PROCESS_KIND: { value: 'web' },
           },
         },
       },
@@ -507,6 +512,14 @@ describe('Railway PR preview lifecycle policy', () => {
       value: 'sensitive-test-sentinel',
     };
     expect(() => validateOwnedPreviewEnvironment(withSecret, {
+      headRef: HEAD_REF,
+      prNumber: PR_NUMBER,
+    })).toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
+
+    const withUnexpectedVariableMetadata = environment();
+    withUnexpectedVariableMetadata.config.services[CONTRACT.services.web.id]
+      .variables.ARCANOS_PROCESS_KIND.generator = null;
+    expect(() => validateOwnedPreviewEnvironment(withUnexpectedVariableMetadata, {
       headRef: HEAD_REF,
       prNumber: PR_NUMBER,
     })).toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
