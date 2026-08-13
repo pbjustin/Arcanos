@@ -61,6 +61,7 @@ export const RAILWAY_PR_PREVIEW_CONTRACT = Object.freeze({
 });
 
 const CONTRACT = RAILWAY_PR_PREVIEW_CONTRACT;
+const ENVIRONMENT_PREFIX_PATTERN = escapeRegex(CONTRACT.environmentPrefix);
 const PROTECTED_ENVIRONMENT_IDS = new Set([
   CONTRACT.baseEnvironmentId,
   CONTRACT.productionEnvironmentId,
@@ -359,6 +360,10 @@ function hasExactKeys(value, expectedKeys) {
     && actual.every((key, index) => key === expected[index]);
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
 function isUuid(value) {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
@@ -577,7 +582,10 @@ function validatePreviewDomain(domain, {
   prNumber,
 }) {
   const hostname = domain?.domain;
-  const marker = new RegExp(`(?:^|[.-])pr-676861-${prNumber}(?:[.-]|$)`, 'iu');
+  const marker = new RegExp(
+    `(?:^|[.-])${ENVIRONMENT_PREFIX_PATTERN}${prNumber}(?:[.-]|$)`,
+    'iu'
+  );
   requireCondition(
     isRecord(domain)
       && isUuid(domain.id)
@@ -845,7 +853,7 @@ export function validatePreviewDeployment(deployment, {
       && meta.rootDirectory === null
       && Array.isArray(meta.volumeMounts)
       && meta.volumeMounts.length === 0
-      && isRecord(mappings)
+      && hasExactKeys(mappings, Object.keys(EXPECTED_PROPERTY_MAPPINGS))
       && Object.entries(EXPECTED_PROPERTY_MAPPINGS).every(
         ([key, value]) => mappings[key] === value
       )
@@ -1503,7 +1511,7 @@ export async function discoverRailwayPrPreviewNumbers({ github, railway }) {
   await railway.validateAuthority({ requireNativeDisabled: false });
   const numbers = new Set();
   const prefixPattern = new RegExp(
-    `^${CONTRACT.environmentPrefix}([1-9][0-9]*)$`,
+    `^${ENVIRONMENT_PREFIX_PATTERN}([1-9][0-9]*)$`,
     'u'
   );
   for (const environment of await railway.listEnvironments()) {
@@ -1708,7 +1716,7 @@ export class RailwayGraphqlApi {
 
   async createEnvironment(input) {
     const expectedNamePattern = new RegExp(
-      `^${CONTRACT.environmentPrefix}[1-9][0-9]*$`,
+      `^${ENVIRONMENT_PREFIX_PATTERN}[1-9][0-9]*$`,
       'u'
     );
     requireCondition(
@@ -1903,7 +1911,7 @@ export class RailwayGraphqlApi {
 
   async deleteAndVerifyEnvironment(environment) {
     const ownedNamePattern = new RegExp(
-      `^${CONTRACT.environmentPrefix}[1-9][0-9]*$`,
+      `^${ENVIRONMENT_PREFIX_PATTERN}[1-9][0-9]*$`,
       'u'
     );
     requireCondition(

@@ -155,8 +155,8 @@ function serviceNode({ role, activeDeployments = [], latestDeployment = null } =
           ? 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'
           : 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2',
         domain: role === 'worker'
-          ? `arcanos-worker-pr-676861-${PR_NUMBER}.up.railway.app`
-          : `arcanos-v2-pr-676861-${PR_NUMBER}.up.railway.app`,
+          ? `arcanos-worker-${CONTRACT.environmentPrefix}${PR_NUMBER}.up.railway.app`
+          : `arcanos-v2-${CONTRACT.environmentPrefix}${PR_NUMBER}.up.railway.app`,
         environmentId: PREVIEW_ENVIRONMENT_ID,
         serviceId: service.id,
         deletedAt: null,
@@ -525,6 +525,14 @@ describe('Railway PR preview lifecycle policy', () => {
       headRef: pullRequest().head.ref,
       prNumber: PR_NUMBER,
     })).toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
+
+    const withNearMissDomain = environment();
+    withNearMissDomain.serviceInstances.edges[0].node.domains.serviceDomains[0].domain =
+      `arcanos-worker-pr-676862-${PR_NUMBER}.up.railway.app`;
+    expect(() => validateOwnedPreviewEnvironment(withNearMissDomain, {
+      headRef: HEAD_REF,
+      prNumber: PR_NUMBER,
+    })).toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
   });
 
   it('attests exact deployment identity and PR-safe manifest', () => {
@@ -544,6 +552,22 @@ describe('Railway PR preview lifecycle policy', () => {
     });
     unsafe.meta.serviceManifest.deploy.startCommand = 'npm start';
     expect(() => validatePreviewDeployment(unsafe, {
+      deploymentId: WORKER_DEPLOYMENT_ID,
+      environmentId: PREVIEW_ENVIRONMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+      commitSha: HEAD_SHA,
+    })).toThrow('RAILWAY_PR_PREVIEW_DEPLOYMENT_MISMATCH');
+  });
+
+  it('rejects unexpected deployment property mapping keys', () => {
+    const unexpectedMapping = deployment({
+      id: WORKER_DEPLOYMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+    });
+    unexpectedMapping.meta.propertyFileMapping['deploy.numReplicas'] =
+      '$.environments.pr.deploy.numReplicas';
+
+    expect(() => validatePreviewDeployment(unexpectedMapping, {
       deploymentId: WORKER_DEPLOYMENT_ID,
       environmentId: PREVIEW_ENVIRONMENT_ID,
       serviceId: CONTRACT.services.worker.id,
