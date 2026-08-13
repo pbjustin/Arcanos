@@ -1,0 +1,106 @@
+name: Railway PR Preview Lifecycle
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+      - synchronize
+      - labeled
+      - unlabeled
+      - converted_to_draft
+      - edited
+      - closed
+  repository_dispatch:
+    types:
+      - railway_pr_preview_reconcile
+  schedule:
+    - cron: '23 */6 * * *'
+
+permissions: {}
+
+concurrency:
+  group: railway-pr-preview-lifecycle-${{ github.event.pull_request.number || github.event.client_payload.pr_number || 'scheduled-scan' }}
+  cancel-in-progress: false
+
+jobs:
+  run-event-preview-lifecycle:
+    name: Converge event preview lifecycle
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && (
+        github.event_name == 'repository_dispatch'
+        || (
+          github.event_name == 'pull_request_target'
+          && github.event.pull_request.base.repo.full_name == github.repository
+          && github.event.pull_request.head.repo.full_name == github.repository
+        )
+      )
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    uses: ./.github/workflows/railway-pr-preview-run.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number || github.event.client_payload.pr_number }}
+      event_action: ${{ github.event_name == 'repository_dispatch' && 'manual' || github.event.action }}
+      event_label_name: ${{ github.event.label.name || '' }}
+      event_head_sha: ${{ github.event.pull_request.head.sha || '' }}
+
+  discover-scheduled-previews:
+    name: Discover scheduled preview reconciliation set
+    if: github.event_name == 'schedule' && github.repository == 'pbjustin/Arcanos'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: railway-pr-preview-lifecycle
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
+
+    steps:
+      - name: Check out trusted lifecycle controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Discover exact opt-in and controller-owned PR numbers
+        id: discover
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+        run: node scripts/railway-pr-preview-lifecycle.mjs discover
+
+  reconcile-scheduled-previews:
+    name: Converge scheduled preview ${{ matrix.pr_number }}
+    needs: discover-scheduled-previews
+    if: >-
+      needs.discover-scheduled-previews.result == 'success'
+      && needs.discover-scheduled-previews.outputs.pr_numbers != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        pr_number: ${{ fromJSON(needs.discover-scheduled-previews.outputs.pr_numbers) }}
+    concurrency:
+      group: railway-pr-preview-lifecycle-${{ matrix.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    uses: ./.github/workflows/railway-pr-preview-run.yml
+    with:
+      pr_number: ${{ matrix.pr_number }}
+      event_action: manual
+      event_label_name: ''
+      event_head_sha: ''

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -9,6 +13,7 @@ import {
   expectedNativePrPreviewResponseBody,
   nativePrPreviewCaseCorrelation,
   parseNativePrPreviewE2eArguments,
+  readLocalGitState,
   runNativePrPreviewE2e,
 } from './native-pr-preview-e2e.mjs';
 import {
@@ -314,6 +319,52 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
       error instanceof NativePrPreviewE2eError
       && error.code === 'NATIVE_PR_PREVIEW_LOCAL_REPOSITORY_MISMATCH'
   );
+});
+
+test('reads exact candidate Git evidence without executing candidate files', () => {
+  const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'arcanos-preview-evidence-'));
+  const runGit = (...args) => {
+    const result = spawnSync('git', args, {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    runGit('init');
+    runGit('config', 'user.email', 'preview-evidence@example.invalid');
+    runGit('config', 'user.name', 'Preview Evidence');
+    writeFileSync(path.join(repositoryRoot, 'candidate.txt'), 'candidate evidence\n');
+    runGit('add', 'candidate.txt');
+    runGit('commit', '-m', 'candidate evidence');
+    runGit('remote', 'add', 'origin', 'https://github.com/pbjustin/Arcanos.git');
+    const head = runGit('rev-parse', 'HEAD').toLowerCase();
+
+    assert.deepEqual(readLocalGitState(repositoryRoot, repositoryRoot), {
+      clean: true,
+      head,
+      repository: 'pbjustin/Arcanos',
+    });
+    const evidenceArguments = validArguments('--git-evidence-root', repositoryRoot);
+    evidenceArguments[evidenceArguments.indexOf('--commit-sha') + 1] = head;
+    const parsed = parseNativePrPreviewE2eArguments(evidenceArguments);
+    assert.equal(parsed.commitSha, head);
+    assert.throws(
+      () => readLocalGitState(repositoryRoot, path.dirname(repositoryRoot)),
+      (error) => error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_LOCAL_REPOSITORY_ROOT_MISMATCH'
+    );
+    writeFileSync(path.join(repositoryRoot, 'candidate.txt'), 'dirty evidence\n');
+    assert.throws(
+      () => readLocalGitState(repositoryRoot, repositoryRoot),
+      (error) => error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_LOCAL_WORKTREE_DIRTY'
+    );
+  } finally {
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
