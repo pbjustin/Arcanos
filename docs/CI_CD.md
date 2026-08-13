@@ -322,6 +322,71 @@ must not receive inherited production secrets or copied production data.
 Provider-level secret isolation or a trusted-source deployment policy is a
 prerequisite for those previews.
 
+The repository-owned
+[`Railway PR Preview Lifecycle`](../.github/workflows/railway-pr-preview-lifecycle.yml)
+workflow replaces reliance on Railway's GitHub PR lifecycle for explicitly
+opted-in previews. Only same-repository, `main`-targeted PRs carrying the exact
+`railway-preview` label are eligible; drafts wait for `ready_for_review`, and
+label removal, conversion to draft, retargeting away from `main`, or close
+requests teardown. This opt-in is
+also the scope boundary that keeps unrelated Gaming and GPT-OSS work out of the
+controller. A fixed `repository_dispatch` recovery event always executes the
+default-branch controller, and a six-hour scheduled sweep discovers only open
+opt-in PRs plus environments carrying the controller-reserved name prefix. Every
+wakeup converges current GitHub state, so replaced or stale event runs do not
+replay obsolete lifecycle intent.
+
+For an on-demand recovery, send the fixed event type with a JSON-number payload,
+for example `gh api --method POST repos/pbjustin/Arcanos/dispatches -f
+event_type=railway_pr_preview_reconcile -F client_payload[pr_number]=1435`.
+Quoted or non-canonical PR numbers fail input validation and cannot create a
+second concurrency identity.
+
+The `pull_request_target` lifecycle job checks out `github.workflow_sha`, uses
+immutable checkout/setup actions, and receives the dedicated
+`RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN` only in the controller step. It rejects
+account-wide tokens, requires the pinned workspace and project to be visible,
+and constrains every operation to fixed project resources. The credential is
+workspace-scoped at Railway, so it must still be treated as workspace authority.
+PR-head code is neither installed nor executed with that credential. Store the
+token as a secret on the `railway-pr-preview-lifecycle` GitHub Environment, and
+restrict that environment to the protected `main` branch; both the event and
+scheduled paths call the same trusted reusable three-job workflow.
+The controller verifies the credential-empty two-role base and complete project
+visibility, creates an exact ephemeral `pr-676861-<N>` child with initial
+deploys and staged/background apply disabled, removes cloned triggers to a
+twice-observed zero state, and deploys the exact head SHA worker-first. It polls
+only returned deployment IDs and finally requires the exact worker/web pair to
+be the sole active non-stopped successes with the reviewed PR manifest,
+Railway domains, and role/readiness identities. Cleanup validates the exact
+custom ownership predicate before deleting by UUID and verifies both ID and
+name disappear; absence is success only after complete inventory proves base
+and production visibility.
+
+The sealed 112-request E2E runs in a separate job that has no Railway secret. It
+executes the trusted default-branch verifier and uses the exact opted-in head
+checkout only as clean Git provenance evidence; PR code cannot weaken its own
+verdict. A final trusted, no-Railway-authority job revalidates that head and
+publishes `Railway PR Preview E2E` as an informational commit
+status, because an ordinary `pull_request_target` job result belongs to the
+trusted workflow SHA rather than the PR head. The workflow writes `pending`
+before reconciliation and a terminal result afterward. Do not make this
+label-opt-in status globally required: unrelated unlabeled PRs are intentionally
+not preview-gated. Creating the `railway-preview` label and provisioning the
+protected GitHub Environment and its dedicated workspace secret are
+repository/settings operations outside source control.
+
+The controller refuses preview creation while Railway-native PR environments
+remain enabled. During cutover, provision the label and protected environment
+secret first, disable
+the provider-native PR lifecycle, separately inventory and explicitly dispose
+of any legacy `Arcanos-pr-*` environments after exact ownership review, and then
+exercise a disposable labeled PR
+through creation, synchronize, exact-head E2E, and close cleanup. Production
+GitHub triggers remain disabled and paired promotion remains the only normal
+production writer. The introducing PR cannot test its own trusted lifecycle;
+the workflow must first exist on the default branch.
+
 The Railway worker-diagnostics cleanup workflow is a trusted
 `pull_request_target: closed` boundary. It never checks out pull-request code.
 It resolves only the exact

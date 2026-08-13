@@ -35,6 +35,7 @@ const WEB_RESPONSE_HEADER_CONTRACT = Object.freeze({
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const VALUE_ARGUMENTS = new Set([
   '--commit-sha',
+  '--git-evidence-root',
   '--max-response-bytes',
   '--pr-number',
   '--request-timeout-ms',
@@ -176,12 +177,12 @@ function repositoryPathsMatch(actualPath, expectedPath) {
     : actual === expected;
 }
 
-export function readLocalGitState(cwd = REPOSITORY_ROOT) {
+export function readLocalGitState(cwd = REPOSITORY_ROOT, expectedRoot = cwd) {
   const repositoryRoot = runLocalGit(
     ['rev-parse', '--show-toplevel'],
     cwd
   );
-  if (!repositoryPathsMatch(repositoryRoot, REPOSITORY_ROOT)) {
+  if (!repositoryPathsMatch(repositoryRoot, expectedRoot)) {
     fail('NATIVE_PR_PREVIEW_LOCAL_REPOSITORY_ROOT_MISMATCH');
   }
   const head = runLocalGit(['rev-parse', 'HEAD'], cwd).toLowerCase();
@@ -207,7 +208,7 @@ export function readLocalGitState(cwd = REPOSITORY_ROOT) {
 
 export function parseNativePrPreviewE2eArguments(
   args,
-  { localGitState = readLocalGitState() } = {}
+  { localGitState = undefined } = {}
 ) {
   const values = new Map();
   const booleans = new Set();
@@ -245,6 +246,12 @@ export function parseNativePrPreviewE2eArguments(
     }
   }
 
+  const gitEvidenceRoot = values.has('--git-evidence-root')
+    ? path.resolve(values.get('--git-evidence-root'))
+    : REPOSITORY_ROOT;
+  const observedLocalGitState = localGitState
+    ?? readLocalGitState(gitEvidenceRoot, gitEvidenceRoot);
+
   const execute = booleans.has('--execute');
   const allowNetwork = booleans.has('--allow-network');
   if (execute !== allowNetwork) {
@@ -260,13 +267,13 @@ export function parseNativePrPreviewE2eArguments(
   if (!COMMIT_PATTERN.test(commitSha ?? '')) {
     fail('NATIVE_PR_PREVIEW_COMMIT_INVALID');
   }
-  if (!localGitState.clean) {
+  if (!observedLocalGitState.clean) {
     fail('NATIVE_PR_PREVIEW_LOCAL_WORKTREE_DIRTY');
   }
-  if (localGitState.repository !== CANONICAL_REPOSITORY) {
+  if (observedLocalGitState.repository !== CANONICAL_REPOSITORY) {
     fail('NATIVE_PR_PREVIEW_LOCAL_REPOSITORY_MISMATCH');
   }
-  if (commitSha !== localGitState.head) {
+  if (commitSha !== observedLocalGitState.head) {
     fail('NATIVE_PR_PREVIEW_LOCAL_HEAD_MISMATCH');
   }
 
@@ -295,7 +302,7 @@ export function parseNativePrPreviewE2eArguments(
       'NATIVE_PR_PREVIEW_MAX_RESPONSE_BYTES_INVALID'
     ),
     prNumber,
-    repository: localGitState.repository,
+    repository: observedLocalGitState.repository,
     requestTimeoutMs: readInteger(
       values.get('--request-timeout-ms') ?? String(DEFAULT_REQUEST_TIMEOUT_MS),
       1_000,

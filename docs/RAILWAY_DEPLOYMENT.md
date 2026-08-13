@@ -85,6 +85,64 @@ Launcher behavior:
 - The native PR worker role remains the passive health-only server. The historical `--pr-preview-safe` flag remains available as an explicit passive fallback for both roles.
 - Native application readiness reports `trustScope: trusted-pr-accidental-effects`, `protectsMaliciousPr: false`, and `requiresPlatformSecretIsolationForUntrustedCode: true`. Repository code cannot prevent a malicious PR from reading an inherited parent environment or removing its own guard. Do not enable native application previews for forks or untrusted contributors unless Railway prevents production/provider/database/Redis credentials and data from reaching the PR container before code starts.
 - `npm run railway:probe:native-pr -- --pr-number <N> --commit-sha <SHA> --web-base-url https://<confirmed-web-pr-host> --worker-base-url https://<confirmed-worker-pr-host>` performs a no-network dry run. It fails unless the canonical Arcanos `origin`, local HEAD, and an entirely clean tracked/untracked worktree match the supplied commit evidence. Add both `--execute --allow-network` only after independently confirming those two hosts. The live runner makes 112 bounded, sequential, credential-free, no-redirect requests: the original 68-request matrix plus seven public Gaming requests, 28 Gaming-source requests (eight true unauthenticated checks, including auth-first `OPTIONS` and encoded-status cases, and 20 explicitly labeled `simulatedAuth` fixtures), two worker-role Gaming denials, six sealed self-heal approval cases, and one worker-role approval-contract denial. The unauthenticated set includes malformed and 16,385-byte bodies to prove auth-before-parser behavior. After the selector, the source fixtures mirror the production 16 KiB limit, closed 413/415 parser errors, and one-decode status-path containment. The runner verifies correlation, security, `no-store`, source `no-cache`, bounded-body, and synthetic-provenance headers. It reports served-public-identity and effect-free self-heal approval component evidence; it does not assert Railway control-plane ownership or real bearer-auth, provider, storage, queue, normal self-heal loop, actuator, or worker execution.
+- The trusted
+  [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
+  owns preview creation and teardown for PRs carrying the exact
+  `railway-preview` label. The opt-in prevents repository-wide preview creation
+  for unrelated Gaming, GPT-OSS, or other work. It accepts only a
+  same-repository PR targeting `main`, skips drafts until `ready_for_review`,
+  and treats every admitted PR event as a wakeup to converge current state.
+  Retargeting an owned preview away from `main` is an explicit teardown wakeup.
+  A fixed `repository_dispatch` event provides an on-demand default-branch
+  recovery path, while a six-hour sweep covers missed creation and teardown
+  events using only open opt-in PRs and controller-owned environment names.
+  Dispatch recovery with a numeric payload, for example `gh api --method POST
+  repos/pbjustin/Arcanos/dispatches -f
+  event_type=railway_pr_preview_reconcile -F
+  client_payload[pr_number]=1435`; quoted or non-canonical PR numbers are
+  rejected.
+- The lifecycle controller checks out only trusted default-branch workflow
+  code while its dedicated workspace token is present. It never installs or
+  executes PR-head code in that job. The token is Railway workspace-scoped; the
+  controller additionally pins every operation to the exact project, base, and
+  service IDs. Store the token only as a secret on the
+  `railway-pr-preview-lifecycle` GitHub Environment and restrict that
+  environment to protected branch `main`; event and scheduled calls use the
+  same trusted reusable workflow. It attests the exact credential-empty base, creates only the
+  reserved `pr-676861-<N>` namespace with `ephemeral=true`, skipped initial deploys,
+  and disabled staged/background apply, removes and twice verifies cloned
+  GitHub triggers, then deploys the exact PR SHA worker-first through Railway's
+  API. Each returned deployment ID must become the sole active non-stopped
+  `SUCCESS` for its exact role and pass repository, commit, manifest, domain,
+  and readiness checks. A newer failed latest record does not mask the sole
+  active success. Ambiguity, pagination truncation, trigger recreation,
+  deployment races, or provider-schema drift fails closed.
+- Only the separate credential-free job checks out the opted-in PR head, and it
+  uses that checkout solely as clean exact-SHA Git evidence. The executed
+  112-request harness and contract come from the trusted default-branch checkout.
+  A final trusted job writes the
+  `Railway PR Preview E2E` commit status against the revalidated exact head; it
+  has no Railway authority and never checks out the head. Configure
+  `RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN` with a token scoped only to the
+  pinned Railway workspace. Account-wide and project-environment tokens are
+  rejected. Configure the protected GitHub Environment and the
+  `railway-preview` label before rehearsal. The commit
+  status is informational for this opt-in policy; do not configure it as a
+  global required check because unrelated unlabeled PRs are intentionally out
+  of preview scope.
+- Cutover is deliberately fail closed. Railway-native PR environment creation
+  must be disabled before the controller will create a custom preview, because
+  both mechanisms can create competing environments and deployments for the
+  same PR even though their reserved names differ. Keep production
+  GitHub triggers disabled; this workflow does not change production promotion.
+  Install the dedicated secret and label before disabling the native lifecycle,
+  then separately inventory and explicitly dispose of legacy `Arcanos-pr-*`
+  children only after exact ownership review; the controller deliberately never
+  adopts or deletes that older namespace. Finally, prove one disposable labeled
+  PR through open/ready, synchronize, and close. The PR that introduces the
+  workflow cannot exercise its own trusted
+  lifecycle because unmerged `pull_request_target` code is not present on the
+  default branch.
 - A production-shaped worker-diagnostics E2E must not activate or reuse that
   native environment. Use an empty custom
   `worker-diagnostics-pr-<PR_NUMBER>-e2e` environment with environment-scoped

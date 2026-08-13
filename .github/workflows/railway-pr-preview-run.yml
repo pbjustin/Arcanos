@@ -1,0 +1,159 @@
+name: Railway PR Preview Run
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      event_action:
+        required: true
+        type: string
+      event_label_name:
+        required: true
+        type: string
+      event_head_sha:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  lifecycle:
+    name: Reconcile exact Railway preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    environment: railway-pr-preview-lifecycle
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      EXPECTED_OPT_IN_LABEL: railway-preview
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      EVENT_ACTION: ${{ inputs.event_action }}
+      EVENT_LABEL_NAME: ${{ inputs.event_label_name }}
+      EVENT_HEAD_SHA: ${{ inputs.event_head_sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    outputs:
+      action: ${{ steps.manage.outputs.action }}
+      preview_ready: ${{ steps.manage.outputs.preview_ready }}
+      pr_number: ${{ steps.manage.outputs.pr_number }}
+      head_sha: ${{ steps.manage.outputs.head_sha }}
+      environment_id: ${{ steps.manage.outputs.environment_id }}
+      worker_deployment_id: ${{ steps.manage.outputs.worker_deployment_id }}
+      web_deployment_id: ${{ steps.manage.outputs.web_deployment_id }}
+      worker_base_url: ${{ steps.manage.outputs.worker_base_url }}
+      web_base_url: ${{ steps.manage.outputs.web_base_url }}
+
+    steps:
+      # The local reusable workflow comes from the caller's exact trusted
+      # commit. The lifecycle credential never shares a runner with PR data.
+      - name: Check out trusted lifecycle controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Manage exact Railway PR preview
+        id: manage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+        run: node scripts/railway-pr-preview-lifecycle.mjs event
+
+  preview-e2e:
+    name: Run sealed Railway preview E2E
+    needs: lifecycle
+    if: needs.lifecycle.outputs.preview_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      PR_NUMBER: ${{ needs.lifecycle.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.lifecycle.outputs.head_sha }}
+      WEB_BASE_URL: ${{ needs.lifecycle.outputs.web_base_url }}
+      WORKER_BASE_URL: ${{ needs.lifecycle.outputs.worker_base_url }}
+
+    steps:
+      - name: Check out trusted verifier
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out exact opted-in PR head as evidence only
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ needs.lifecycle.outputs.head_sha }}
+          path: head-evidence
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Run exact-head sealed application E2E
+        env:
+          GITHUB_TOKEN: ''
+        run: >-
+          node "$GITHUB_WORKSPACE/trusted/scripts/native-pr-preview-e2e.mjs"
+          --git-evidence-root "$GITHUB_WORKSPACE/head-evidence"
+          --pr-number "${PR_NUMBER}"
+          --commit-sha "${HEAD_SHA}"
+          --web-base-url "${WEB_BASE_URL}"
+          --worker-base-url "${WORKER_BASE_URL}"
+          --execute
+          --allow-network
+
+  report-preview-status:
+    name: Publish exact-head preview status
+    needs:
+      - lifecycle
+      - preview-e2e
+    if: always() && needs.lifecycle.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      EXPECTED_OPT_IN_LABEL: railway-preview
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      EVENT_ACTION: ${{ inputs.event_action }}
+      EVENT_LABEL_NAME: ${{ inputs.event_label_name }}
+      EVENT_HEAD_SHA: ${{ inputs.event_head_sha }}
+      LIFECYCLE_HEAD_SHA: ${{ needs.lifecycle.outputs.head_sha }}
+      LIFECYCLE_RESULT: ${{ needs.lifecycle.result }}
+      PREVIEW_READY: ${{ needs.lifecycle.outputs.preview_ready }}
+      E2E_RESULT: ${{ needs.preview-e2e.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Check out trusted status reporter
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Publish bounded commit status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/railway-pr-preview-lifecycle.mjs report-status
