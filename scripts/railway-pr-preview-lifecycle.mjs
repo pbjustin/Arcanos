@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
+import { Buffer } from 'node:buffer';
 import { appendFileSync } from 'node:fs';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const GITHUB_OBJECT_ID_PATTERN = /^[0-9a-f]{40}$/iu;
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
-const HEAD_REF_PATTERN = /^(?![./])(?!.*(?:\.\.|\/\.|\.\/|\/\/))[A-Za-z0-9._/-]{1,255}$/u;
+const GITHUB_HEAD_REF_PREFIX = 'refs/heads/';
+const GITHUB_REF_LIMIT_BYTES = 255;
+const GIT_REF_FORBIDDEN_CHARACTERS = new Set(['~', '^', ':', '?', '*', '[', '\\']);
 const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2';
 const GITHUB_API_URL = 'https://api.github.com';
 const API_TIMEOUT_MS = 10_000;
@@ -23,6 +27,7 @@ const READINESS_POLL_ATTEMPTS = 15;
 const DELETE_POLL_INTERVAL_MS = 5_000;
 const DELETE_POLL_ATTEMPTS = 12;
 const TRIGGER_QUIESCENCE_INTERVAL_MS = 2_000;
+const PREVIEW_REGION = 'us-east4-eqdc4a';
 
 const services = Object.freeze({
   worker: Object.freeze({
@@ -365,6 +370,42 @@ function hasExactKeys(value, expectedKeys) {
     && actual.every((key, index) => key === expected[index]);
 }
 
+function hasExactPreviewRegionConfig(value) {
+  return hasExactKeys(value, [PREVIEW_REGION])
+    && hasExactKeys(value[PREVIEW_REGION], ['numReplicas'])
+    && value[PREVIEW_REGION].numReplicas === 1;
+}
+
+function isValidGitHubHeadRef(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return false;
+  }
+  if (
+    Buffer.byteLength(`${GITHUB_HEAD_REF_PREFIX}${value}`, 'utf8') > GITHUB_REF_LIMIT_BYTES
+    || value.startsWith('refs/')
+    || GITHUB_OBJECT_ID_PATTERN.test(value)
+    || value.includes('..')
+    || value.includes('@{')
+    || value.endsWith('.')
+  ) {
+    return false;
+  }
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint <= 0x20
+      || codePoint === 0x7f
+      || GIT_REF_FORBIDDEN_CHARACTERS.has(character)
+    ) {
+      return false;
+    }
+  }
+  return value.split('/').every(component =>
+    component.length > 0
+    && !component.startsWith('.')
+    && !component.endsWith('.lock'));
+}
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
@@ -422,11 +463,11 @@ export function validateLifecyclePullRequest(rawPullRequest, expectedPrNumber) {
       && (rawPullRequest.state === 'open' || rawPullRequest.state === 'closed')
       && typeof rawPullRequest.draft === 'boolean'
       && typeof rawPullRequest.base?.ref === 'string'
-      && HEAD_REF_PATTERN.test(rawPullRequest.base.ref)
+      && isValidGitHubHeadRef(rawPullRequest.base.ref)
       && rawPullRequest.base?.repo?.full_name === CONTRACT.repository
       && rawPullRequest.head?.repo?.full_name === CONTRACT.repository
       && typeof rawPullRequest.head?.ref === 'string'
-      && HEAD_REF_PATTERN.test(rawPullRequest.head.ref)
+      && isValidGitHubHeadRef(rawPullRequest.head.ref)
       && typeof rawPullRequest.head?.sha === 'string'
       && COMMIT_PATTERN.test(rawPullRequest.head.sha.toLowerCase()),
     'RAILWAY_PR_PREVIEW_GITHUB_PR_INVALID'
@@ -558,12 +599,13 @@ function validateEnvironmentConfig(config, {
       ])
         && isRecord(serviceConfig.build)
         && isRecord(serviceConfig.deploy)
+        && hasExactPreviewRegionConfig(serviceConfig.deploy.multiRegionConfig)
         && serviceConfig.groupId === CONTRACT.serviceGroupId
         && isRecord(serviceConfig.networking)
         && sourceHasExpectedKeys
         && typeof serviceConfig.source.branch === 'string'
         && (allowAnyBranch
-          ? HEAD_REF_PATTERN.test(serviceConfig.source.branch)
+          ? isValidGitHubHeadRef(serviceConfig.source.branch)
           : expectedBranches.includes(serviceConfig.source.branch))
         && serviceConfig.source.repo === CONTRACT.repository
         && (serviceConfig.source.checkSuites === undefined
@@ -717,7 +759,7 @@ export function validateOwnedPreviewEnvironment(environment, {
         && trigger.repository === CONTRACT.repository
         && typeof trigger.branch === 'string'
         && (allowAnyHeadRef
-          ? HEAD_REF_PATTERN.test(trigger.branch)
+          ? isValidGitHubHeadRef(trigger.branch)
           : trigger.branch === CONTRACT.baseBranch
           || (headRef !== undefined && trigger.branch === headRef))
         && trigger.provider === 'github'
@@ -879,6 +921,7 @@ export function validatePreviewDeployment(deployment, {
       && deploy.cronSchedule === null
       && deploy.runtime === 'V2'
       && deploy.numReplicas === 1
+      && hasExactPreviewRegionConfig(deploy.multiRegionConfig)
       && deploy.requiredMountPath === null,
     'RAILWAY_PR_PREVIEW_DEPLOYMENT_MISMATCH'
   );

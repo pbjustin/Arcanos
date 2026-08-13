@@ -39,6 +39,7 @@ const CONTRACT = RAILWAY_PR_PREVIEW_CONTRACT;
 const PR_NUMBER = 1435;
 const HEAD_SHA = 'a'.repeat(40);
 const HEAD_REF = 'codex/railway-preview-lifecycle-fixture';
+const PREVIEW_REGION = 'us-east4-eqdc4a';
 const WORKER_DEPLOYMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const WEB_DEPLOYMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const PREVIEW_ENVIRONMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
@@ -125,6 +126,9 @@ function deployment({
           cronSchedule: null,
           runtime: 'V2',
           numReplicas: 1,
+          multiRegionConfig: {
+            [PREVIEW_REGION]: { numReplicas: 1 },
+          },
           requiredMountPath: null,
         },
       },
@@ -201,7 +205,11 @@ function environment({
       services: {
         [CONTRACT.services.worker.id]: {
           build: {},
-          deploy: {},
+          deploy: {
+            multiRegionConfig: {
+              [PREVIEW_REGION]: { numReplicas: 1 },
+            },
+          },
           groupId: CONTRACT.serviceGroupId,
           networking: {},
           source: {
@@ -215,7 +223,11 @@ function environment({
         },
         [CONTRACT.services.web.id]: {
           build: {},
-          deploy: {},
+          deploy: {
+            multiRegionConfig: {
+              [PREVIEW_REGION]: { numReplicas: 1 },
+            },
+          },
           groupId: CONTRACT.serviceGroupId,
           networking: {},
           source: {
@@ -452,6 +464,60 @@ describe('Railway PR preview lifecycle policy', () => {
     );
   });
 
+  it.each([
+    'feature+preview',
+    'feature@preview',
+    'fix#1435',
+    'feature=preview',
+    'feature,preview',
+    'hello-$USER',
+    'feature;preview',
+    'feature/雪',
+    '-feature',
+    '@',
+    'feature/foo./bar',
+    'a'.repeat(244),
+  ])('accepts the Git-valid branch ref %s', (headRef) => {
+    const validated = validateLifecyclePullRequest(pullRequest({
+      head: {
+        ref: headRef,
+        sha: HEAD_SHA,
+        repo: { full_name: CONTRACT.repository },
+      },
+    }), PR_NUMBER);
+
+    expect(validated.headRef).toBe(headRef);
+  });
+
+  it.each([
+    'feature preview',
+    'feature..preview',
+    'feature@{preview',
+    'feature.lock',
+    'feature.lock/preview',
+    'feature/.hidden',
+    'feature//preview',
+    'feature~preview',
+    'feature^preview',
+    'feature:preview',
+    'feature?preview',
+    'feature*preview',
+    'feature[preview',
+    'feature\\preview',
+    'feature/preview.',
+    'refs/heads/feature',
+    'a'.repeat(40),
+    'a'.repeat(245),
+  ])('rejects the Git-invalid branch ref %s', (headRef) => {
+    expect(() => validateLifecyclePullRequest(pullRequest({
+      head: {
+        ref: headRef,
+        sha: HEAD_SHA,
+        repo: { full_name: CONTRACT.repository },
+      },
+    }), PR_NUMBER)).toThrow('RAILWAY_PR_PREVIEW_GITHUB_PR_INVALID');
+  });
+
   it('requires exact workspace/project/base authority and native lifecycle cutover', () => {
     const authority = {
       apiToken: { workspaces: [{ id: CONTRACT.workspaceId }] },
@@ -480,6 +546,22 @@ describe('Railway PR preview lifecycle policy', () => {
     const wrongRetries = baseEnvironment();
     wrongRetries.serviceInstances.edges[0].node.restartPolicyMaxRetries = 0;
     expect(() => validateBasePreviewEnvironment(wrongRetries)).toThrow(
+      'RAILWAY_PR_PREVIEW_BASE_MISMATCH'
+    );
+  });
+
+  it('rejects base region or replica topology drift', () => {
+    const extraRegion = baseEnvironment();
+    extraRegion.config.services[CONTRACT.services.worker.id]
+      .deploy.multiRegionConfig['us-west2'] = { numReplicas: 1 };
+    expect(() => validateBasePreviewEnvironment(extraRegion)).toThrow(
+      'RAILWAY_PR_PREVIEW_BASE_MISMATCH'
+    );
+
+    const extraReplica = baseEnvironment();
+    extraReplica.config.services[CONTRACT.services.web.id]
+      .deploy.multiRegionConfig[PREVIEW_REGION].numReplicas = 2;
+    expect(() => validateBasePreviewEnvironment(extraReplica)).toThrow(
       'RAILWAY_PR_PREVIEW_BASE_MISMATCH'
     );
   });
@@ -581,6 +663,35 @@ describe('Railway PR preview lifecycle policy', () => {
       '$.environments.pr.deploy.numReplicas';
 
     expect(() => validatePreviewDeployment(unexpectedMapping, {
+      deploymentId: WORKER_DEPLOYMENT_ID,
+      environmentId: PREVIEW_ENVIRONMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+      commitSha: HEAD_SHA,
+    })).toThrow('RAILWAY_PR_PREVIEW_DEPLOYMENT_MISMATCH');
+  });
+
+  it('rejects realized deployment region or replica topology drift', () => {
+    const extraRegion = deployment({
+      id: WORKER_DEPLOYMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+    });
+    extraRegion.meta.serviceManifest.deploy.multiRegionConfig['us-west2'] = {
+      numReplicas: 1,
+    };
+    expect(() => validatePreviewDeployment(extraRegion, {
+      deploymentId: WORKER_DEPLOYMENT_ID,
+      environmentId: PREVIEW_ENVIRONMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+      commitSha: HEAD_SHA,
+    })).toThrow('RAILWAY_PR_PREVIEW_DEPLOYMENT_MISMATCH');
+
+    const extraReplica = deployment({
+      id: WORKER_DEPLOYMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+    });
+    extraReplica.meta.serviceManifest.deploy
+      .multiRegionConfig[PREVIEW_REGION].numReplicas = 2;
+    expect(() => validatePreviewDeployment(extraReplica, {
       deploymentId: WORKER_DEPLOYMENT_ID,
       environmentId: PREVIEW_ENVIRONMENT_ID,
       serviceId: CONTRACT.services.worker.id,
@@ -1020,13 +1131,22 @@ describe('Railway PR preview lifecycle policy', () => {
   });
 
   it('can clean a controller-owned environment after the PR branch is renamed', async () => {
-    const target = environment();
-    target.config.services[CONTRACT.services.worker.id].source.branch = 'renamed/branch';
-    target.config.services[CONTRACT.services.web.id].source.branch = 'renamed/branch';
+    const target = environment({ triggers: [{
+      id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      projectId: CONTRACT.projectId,
+      environmentId: PREVIEW_ENVIRONMENT_ID,
+      serviceId: CONTRACT.services.worker.id,
+      repository: CONTRACT.repository,
+      branch: 'renamed#branch',
+      provider: 'github',
+      checkSuites: false,
+    }] });
+    target.config.services[CONTRACT.services.worker.id].source.branch = 'renamed+branch';
+    target.config.services[CONTRACT.services.web.id].source.branch = 'renamed+branch';
     let deletedId;
     const closed = validateLifecyclePullRequest(
       pullRequest({ state: 'closed', head: {
-        ref: 'new/branch-name',
+        ref: 'new@branch-name',
         sha: HEAD_SHA,
         repo: { full_name: CONTRACT.repository },
       } }),
