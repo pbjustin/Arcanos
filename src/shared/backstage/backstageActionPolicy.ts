@@ -2,6 +2,8 @@ export const BACKSTAGE_MODULE_NAME = 'BACKSTAGE:BOOKER';
 export const BACKSTAGE_MODULE_ROUTE = 'backstage-booker';
 export const BACKSTAGE_DEFAULT_ACTION = 'generateBooking';
 export const BACKSTAGE_MUTATION_SCOPE = 'mcp:invoke';
+export const BACKSTAGE_MUTATION_CONFIRMATION_PROTOCOL =
+  'backstage-mutation-confirmation-v1';
 
 export const BACKSTAGE_PUBLIC_ACTIONS = Object.freeze([
   'generateBooking',
@@ -59,4 +61,15 @@ export function isBackstageMutationAction(
   action: BackstageAction
 ): action is BackstageMutationAction {
   return backstageMutationActionSet.has(action);
+}
+
+export function buildBackstageMutationConfirmationFingerprintBody(
+  action: string,
+  body: unknown
+): Record<string, unknown> {
+  return {
+    protocol: BACKSTAGE_MUTATION_CONFIRMATION_PROTOCOL,
+    action,
+    body,
+  };
 }

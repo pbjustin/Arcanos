@@ -1,4 +1,8 @@
 import express from 'express';
+import {
+  isBackstageBookerAction,
+  type BackstageBookerAction,
+} from '@arcanos/protocol';
 
 import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
@@ -45,11 +49,13 @@ import {
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
 import {
-  type BackstageStorylineValidationError,
-  isBackstageStorylineValidationError,
-  parseBackstageStorylinePayload
+  isBackstageStorylineValidationError
 } from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  BackstageBookerContractError,
+  normalizeBackstageBookerSchemaDrivenActionPayload,
+} from '@services/backstageBookerContracts.js';
 import {
   isResearchRequestValidationError,
   normalizeResearchModulePayload,
@@ -569,7 +575,13 @@ function preflightResearchCapabilityRun(
   }
 }
 
-function preflightBackstageStorylineCapabilityRun(
+function isBackstageCapabilityValidationError(error: unknown): error is Error {
+  return error instanceof BackstageBookerContractError
+    || isBackstageRosterValidationError(error)
+    || isBackstageStorylineValidationError(error);
+}
+
+function preflightBackstageCapabilityRun(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction,
@@ -584,7 +596,11 @@ function preflightBackstageStorylineCapabilityRun(
   }
 
   const body = readCapabilityRunBody(req.body);
-  if (!body.ok || typeof body.action !== 'string') {
+  if (!body.ok) {
+    sendGptAccessBadRequest(res, body.message);
+    return;
+  }
+  if (typeof body.action !== 'string') {
     next();
     return;
   }
@@ -598,18 +614,21 @@ function preflightBackstageStorylineCapabilityRun(
   }
   if (
     metadata?.name !== BACKSTAGE_MODULE_NAME
-    || body.action.trim() !== 'trackStoryline'
+    || !isBackstageBookerAction(body.action.trim())
   ) {
     next();
     return;
   }
 
   try {
-    const normalizedPayload = parseBackstageStorylinePayload(body.payload);
+    const normalizedPayload = normalizeBackstageBookerSchemaDrivenActionPayload(
+      body.action.trim() as BackstageBookerAction,
+      body.payload
+    );
     (req.body as Record<string, unknown>).payload = normalizedPayload;
     next();
   } catch (error: unknown) {
-    if (!isBackstageStorylineValidationError(error)) {
+    if (!isBackstageCapabilityValidationError(error)) {
       throw error;
     }
 
@@ -659,14 +678,14 @@ function resolveResearchDispatchValidationError(
   }
 }
 
-function resolveBackstageStorylineDispatchValidationError(
+function resolveBackstageDispatchValidationError(
   plan: DispatchPlan,
   policy: DispatchPolicyDecision,
-): BackstageStorylineValidationError | null {
+): Error | null {
   const runner = policy.registryAction?.runner;
   if (
     runner?.kind !== 'gpt-access-capability'
-    || runner.capabilityAction !== 'trackStoryline'
+    || !isBackstageBookerAction(runner.capabilityAction)
   ) {
     return null;
   }
@@ -682,10 +701,13 @@ function resolveBackstageStorylineDispatchValidationError(
   }
 
   try {
-    plan.payload = parseBackstageStorylinePayload(plan.payload);
+    plan.payload = normalizeBackstageBookerSchemaDrivenActionPayload(
+      runner.capabilityAction,
+      plan.payload
+    );
     return null;
   } catch (error: unknown) {
-    if (!isBackstageStorylineValidationError(error)) {
+    if (!isBackstageCapabilityValidationError(error)) {
       throw error;
     }
     return error;
@@ -1066,14 +1088,18 @@ async function runGptAccessCapabilityAction(input: {
   }
 
   try {
+    const executionPayload = metadata.name === BACKSTAGE_MODULE_NAME
+      && isBackstageBookerAction(input.action)
+      ? normalizeBackstageBookerSchemaDrivenActionPayload(input.action, input.payload)
+      : input.payload;
     const result = metadata.gptAccessOnly === true
       ? await dispatchModuleAction(
           metadata.name,
           input.action,
-          input.payload,
+          executionPayload,
           input.moduleContext ?? undefined
         )
-      : await dispatchModuleAction(metadata.name, input.action, input.payload);
+      : await dispatchModuleAction(metadata.name, input.action, executionPayload);
     return {
       statusCode: 200,
       payload: {
@@ -1097,25 +1123,7 @@ async function runGptAccessCapabilityAction(input: {
 
     if (
       metadata.name === BACKSTAGE_MODULE_NAME
-      && input.action === 'updateRoster'
-      && isBackstageRosterValidationError(error)
-    ) {
-      return {
-        statusCode: 400,
-        payload: {
-          ok: false,
-          error: {
-            code: 'GPT_ACCESS_VALIDATION_ERROR',
-            message: error.message
-          }
-        }
-      };
-    }
-
-    if (
-      metadata.name === BACKSTAGE_MODULE_NAME
-      && input.action === 'trackStoryline'
-      && isBackstageStorylineValidationError(error)
+      && isBackstageCapabilityValidationError(error)
     ) {
       return {
         statusCode: 400,
@@ -1354,16 +1362,15 @@ async function executeGptAccessDispatchRequest(
     return;
   }
 
-  const storylineValidationError =
-    resolveBackstageStorylineDispatchValidationError(plan, policy);
-  if (storylineValidationError) {
+  const backstageValidationError = resolveBackstageDispatchValidationError(plan, policy);
+  if (backstageValidationError) {
     sendGptAccessResult(res, {
       statusCode: 400,
       payload: {
         ok: false,
         error: {
           code: 'GPT_ACCESS_VALIDATION_ERROR',
-          message: storylineValidationError.message,
+          message: backstageValidationError.message,
         },
       },
     });
@@ -1507,7 +1514,7 @@ router.post(
   mapCapabilityRunConfirmationToken,
   validateCapabilityIdempotencyKey,
   preflightResearchCapabilityRun,
-  preflightBackstageStorylineCapabilityRun,
+  preflightBackstageCapabilityRun,
   confirmCapabilityRunWhenRequired,
   runGptAccessCapability
 );

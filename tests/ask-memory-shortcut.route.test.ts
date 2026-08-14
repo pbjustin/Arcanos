@@ -236,7 +236,8 @@ describe('/ask prompt shortcuts', () => {
 
     const response = await request(buildApp()).post('/brain').send({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
-      sessionId: 'RAW_RIVALRY_TEST'
+      sessionId: 'RAW_RIVALRY_TEST',
+      universeId: 'raw-2026'
     });
 
     expect(response.status).toBe(200);
@@ -245,7 +246,8 @@ describe('/ask prompt shortcuts', () => {
     expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
     expect(mockTryExecutePromptRouteShortcut).toHaveBeenLastCalledWith({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
-      sessionId: 'RAW_RIVALRY_TEST'
+      sessionId: 'RAW_RIVALRY_TEST',
+      universeId: 'raw-2026'
     });
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });

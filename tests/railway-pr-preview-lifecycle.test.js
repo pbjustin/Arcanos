@@ -370,7 +370,7 @@ describe('Railway PR preview lifecycle workflow', () => {
     }
   });
 
-  it('runs the trusted 112-request harness against a Railway-secret-free head checkout', () => {
+  it('runs the trusted 113-request harness against a Railway-secret-free head checkout', () => {
     const e2e = reusable.jobs['preview-e2e'];
     expect(e2e.permissions).toEqual({ contents: 'read' });
     expect(e2e.steps.some(step =>

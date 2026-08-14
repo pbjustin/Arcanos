@@ -247,7 +247,7 @@ describe('backstage-booker storyline lifecycle containment', () => {
     const insertCall = transactionQueryCalls().find(([sql]) =>
       normalizeSql(sql).startsWith('INSERT INTO backstage_story_beats')
     );
-    expect(insertCall?.[1]).toEqual([JSON.stringify(payload)]);
+    expect(insertCall?.[1]).toEqual([JSON.stringify(payload), 'legacy']);
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
@@ -263,7 +263,7 @@ describe('backstage-booker storyline lifecycle containment', () => {
     const insertCall = transactionQueryCalls().find(([sql]) =>
       normalizeSql(sql).startsWith('INSERT INTO backstage_story_beats')
     );
-    expect(insertCall?.[1]).toEqual([JSON.stringify(payload)]);
+    expect(insertCall?.[1]).toEqual([JSON.stringify(payload), 'legacy']);
     expect(insertCall?.[0]).toContain("'{}'::JSONB");
     expect(insertCall?.[0]).not.toContain('$1::TEXT::JSONB');
   });
@@ -318,7 +318,8 @@ describe('backstage-booker storyline lifecycle containment', () => {
       normalizeSql(sql).startsWith('INSERT INTO backstage_story_beats')
     );
     const nullCleanupIndex = calls.findIndex(([sql]) =>
-      normalizeSql(sql) === 'DELETE FROM backstage_story_beats WHERE serialized_data IS NULL'
+      normalizeSql(sql)
+        === 'DELETE FROM backstage_story_beats WHERE universe_id = $1 AND serialized_data IS NULL'
     );
     const retentionDeleteIndex = calls.findIndex(([sql]) => {
       const normalized = normalizeSql(sql);
@@ -354,7 +355,8 @@ describe('backstage-booker storyline lifecycle containment', () => {
     const selectCall = calls[selectIndex];
     expect(legacyUpdateCall?.[1]).toEqual([
       BACKSTAGE_STORYLINE_MAX_BYTES,
-      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+      'legacy'
     ]);
     expect(insertCall?.[0]).toContain('RETURNING');
     expect(insertCall?.[0]).toContain("'{}'::JSONB");
@@ -363,16 +365,18 @@ describe('backstage-booker storyline lifecycle containment', () => {
     expect(insertCall?.[0]).toContain('clock_timestamp()');
     expect(insertCall?.[0]).toContain('COALESCE(MAX(storage_sequence), 0) + 1');
     expect(insertCall?.[0]).not.toContain('MAX(created_at)');
-    expect(insertCall?.[1]).toEqual([JSON.stringify(insertedBeat)]);
+    expect(insertCall?.[1]).toEqual([JSON.stringify(insertedBeat), 'legacy']);
     expect(retentionDeleteCall?.[1]).toEqual([
-      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1,
+      'legacy'
     ]);
     expect(normalizeSql(retentionDeleteCall?.[0] ?? '')).toMatch(
       /ORDER BY storage_sequence DESC, id DESC OFFSET \$1/u
     );
     expect(selectCall?.[1]).toEqual([
       'inserted-beat',
-      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+      'legacy'
     ]);
     expect(normalizeSql(selectCall?.[0] ?? '')).toMatch(
       /storage_sequence DESC, id DESC LIMIT \$2/u
@@ -392,7 +396,7 @@ describe('backstage-booker storyline lifecycle containment', () => {
     expect(normalizeSql(retentionDeleteCall?.[0] ?? '')).not.toContain('created_at');
 
     expect(mockSaveMemory).toHaveBeenCalledWith(
-      'backstage-storybeats:latest',
+      'backstage-universe:legacy:storybeats:latest',
       expect.objectContaining({
         beats: returnedBeats,
         source: 'database',

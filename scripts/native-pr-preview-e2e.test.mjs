@@ -369,7 +369,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 112);
+  assert.equal(requestPlan.length, 113);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -395,7 +395,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-storyline-contract'
     ).length,
-    3
+    4
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -565,6 +565,50 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
     }
   );
+  const phaseOneUniverseBindingCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-phase-one-universe-binding'
+  );
+  assert.ok(phaseOneUniverseBindingCase);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(phaseOneUniverseBindingCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: true,
+      fixture: 'phase-one-universe-binding',
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: true,
+      protectedEffectsEnabled: false,
+      schemaVersion: 1,
+      transactionComponentExecuted: true,
+      validationCompleted: true,
+      validationCode: 'VALID',
+      phaseOne: {
+        action: 'trackStoryline',
+        canonicalRoute: '/gpt/backstage-booker',
+        confirmationFingerprintInputUniverseBound: true,
+        confirmationTokenIssued: false,
+        crossUniverseLeakageObserved: false,
+        queryPhaseCount: 20,
+        queryUniverseRoutingVerified: true,
+        universes: [
+          {
+            universeId: 'preview-alpha',
+            retainedSequences: [1, 101],
+          },
+          {
+            universeId: 'preview-beta',
+            retainedSequences: [2, 202],
+          },
+        ],
+      },
+    }
+  );
   const payloadOverCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-storyline-payload-over'
   );
@@ -707,14 +751,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 112);
+  assert.equal(result.summary.requestsMade, 113);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 112);
+  assert.equal(result.checks.length, 113);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 112);
+  assert.equal(mock.requestCount, 113);
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -738,12 +782,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageStorylineCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/storyline-contract')
   );
-  assert.equal(backstageStorylineCalls.length, 4);
+  assert.equal(backstageStorylineCalls.length, 5);
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    3
+    4
   );
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>

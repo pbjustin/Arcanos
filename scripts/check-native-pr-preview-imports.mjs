@@ -529,7 +529,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/core/db/repositories/backstageStorylineRepository.ts',
-    '7f0ce80fce04c46ab23fd10673fb21ac09b3daa2799fb9377657e4fac838dca7',
+    '6a38cb1b934544e1db96a0c9c796a4fde7aa89e0fd2a15cf1f17d70183151144',
   ],
   [
     'scripts/start-railway-service.mjs',

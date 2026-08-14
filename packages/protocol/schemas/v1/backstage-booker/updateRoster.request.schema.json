@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/updateRoster.request.schema.json",
+  "title": "Backstage Booker updateRoster request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wrestlers"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "wrestlers": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/wrestler"
+      }
+    }
+  }
+}

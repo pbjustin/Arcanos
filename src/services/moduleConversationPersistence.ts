@@ -1,7 +1,12 @@
 import { loadMemory, saveMemory } from "@core/db/index.js";
+import { DEFAULT_BACKSTAGE_UNIVERSE_ID } from '@arcanos/protocol';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { saveMessage } from "@services/sessionMemoryService.js";
+import {
+  buildBackstageStorylineByKeyMemoryKey,
+  buildBackstageUniverseMemoryKey
+} from '@services/backstageBookerContracts.js';
 import { Mutex } from "async-mutex";
 
 const modulePersistenceLogger = logger.child({ module: "moduleConversationPersistence" });
@@ -9,6 +14,7 @@ const modulePersistenceLogger = logger.child({ module: "moduleConversationPersis
 const MODULE_HISTORY_LIMIT = 60;
 const MODULE_SUMMARY_LIMIT = 20;
 const TEXT_PREVIEW_LIMIT = 1800;
+const BACKSTAGE_UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 const persistenceLocks = new Map<string, Mutex>();
 
 interface ModuleConversationPersistenceInput {
@@ -76,7 +82,12 @@ export async function persistModuleConversation(
     });
 
     if (input.moduleName === "BACKSTAGE:BOOKER") {
-      await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, now);
+      await persistBackstageBookerConvenienceKeys(
+        input.action,
+        input.requestPayload,
+        input.responsePayload,
+        now
+      );
     }
     return;
   }
@@ -118,7 +129,12 @@ export async function persistModuleConversation(
   });
 
   if (input.moduleName === "BACKSTAGE:BOOKER") {
-    await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, now);
+    await persistBackstageBookerConvenienceKeys(
+      input.action,
+      input.requestPayload,
+      input.responsePayload,
+      now
+    );
   }
 }
 
@@ -258,17 +274,36 @@ async function persistModuleSummary(key: string, snapshot: ModuleInteractionSnap
 async function persistBackstageBookerConvenienceKeys(
   action: string,
   requestPayload: unknown,
+  responsePayload: unknown,
   timestamp: string
 ): Promise<void> {
   const normalizedAction = action.trim();
+  const requestRecord = asRecord(requestPayload);
+  const responseRecord = asRecord(responsePayload);
+  const universeId = resolveBackstageUniverseId(requestRecord, responseRecord);
+  if (!universeId) {
+    return;
+  }
+
+  const persistenceRecord = asRecord(responseRecord?.persistence);
+  // Structured mutation results are mirrored by the service with their authoritative receipt
+  // and revision metadata. Rewriting them here would erase that concurrency information.
+  if (persistenceRecord) {
+    return;
+  }
 
   //audit Assumption: saveStoryline payload carries key/storyline fields; failure risk: missing direct lookup keys; expected invariant: valid storyline writes mirrored; handling strategy: conditional key extraction.
   if (normalizedAction === "saveStoryline") {
-    const payloadRecord = asRecord(requestPayload);
-    const key = typeof payloadRecord?.key === "string" ? payloadRecord.key.trim() : "";
-    const storyline = typeof payloadRecord?.storyline === "string" ? payloadRecord.storyline.trim() : "";
-    if (key && storyline) {
-      await saveMemory(`backstage-storyline:${key}`, {
+    const saved = typeof responsePayload === 'boolean'
+      ? responsePayload
+      : responseRecord?.saved === true;
+    const responseKey = typeof responseRecord?.key === 'string' ? responseRecord.key.trim() : '';
+    const requestKey = typeof requestRecord?.key === 'string' ? requestRecord.key.trim() : '';
+    const key = responseKey || requestKey;
+    const storyline = typeof requestRecord?.storyline === "string" ? requestRecord.storyline.trim() : "";
+    if (saved && key && storyline) {
+      await saveMemory(buildBackstageStorylineByKeyMemoryKey(universeId, key), {
+        universeId,
         key,
         storyline,
         savedAt: timestamp
@@ -279,19 +314,53 @@ async function persistBackstageBookerConvenienceKeys(
           error: resolveErrorMessage(error, "unknown")
         });
       });
-      await saveMemory("backstage-storyline:latest", {
+      const latestKey = buildBackstageUniverseMemoryKey(universeId, 'storyline:latest');
+      await saveMemory(latestKey, {
+        universeId,
         key,
         storyline,
         savedAt: timestamp
       }).catch((error: unknown) => {
         modulePersistenceLogger.warn("Failed to persist latest Backstage storyline convenience key", {
           operation: "persistBackstageBookerConvenienceKeys",
-          key: "backstage-storyline:latest",
+          key: latestKey,
           error: resolveErrorMessage(error, "unknown")
         });
       });
     }
   }
+}
+
+function resolveBackstageUniverseId(
+  requestRecord: Record<string, unknown> | null,
+  responseRecord: Record<string, unknown> | null
+): string | null {
+  const hasResponseUniverseId = Boolean(
+    responseRecord && Object.prototype.hasOwnProperty.call(responseRecord, 'universeId')
+  );
+  const hasRequestUniverseId = Boolean(
+    requestRecord && Object.prototype.hasOwnProperty.call(requestRecord, 'universeId')
+  );
+  const candidate = hasResponseUniverseId
+    ? responseRecord?.universeId
+    : hasRequestUniverseId
+      ? requestRecord?.universeId
+      : undefined;
+
+  if (!hasResponseUniverseId && !hasRequestUniverseId) {
+    return DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  }
+  if (typeof candidate === 'string') {
+    const normalized = candidate.trim();
+    if (BACKSTAGE_UNIVERSE_ID_PATTERN.test(normalized)) {
+      return normalized;
+    }
+  }
+
+  modulePersistenceLogger.warn('Skipping Backstage convenience persistence for invalid universe id', {
+    operation: 'persistBackstageBookerConvenienceKeys'
+  });
+  return null;
 }
 
 function resolveSessionId(input: ModuleConversationPersistenceInput): string | null {

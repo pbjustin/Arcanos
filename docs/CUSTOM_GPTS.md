@@ -186,6 +186,51 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
   `saveStoryline`
 (`src/services/backstage-booker.ts`)
 
+Every Backstage Booker action accepts an optional `universeId`. Omitted scope
+uses the backward-compatible `legacy` universe; explicit IDs are bounded to
+128 characters and use the portable `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, and
+`-` character set. Roster, event, storyline, and story-beat reads and writes
+stay within that universe. `legacy` is a compatibility scope, not a canon or
+storyline-domain model. `universeId` is also not an authorization or tenant
+boundary; callers must be authorized separately.
+
+The seven action request and response contracts live under
+`packages/protocol/schemas/v1/backstage-booker/` and are exposed through
+`getProtocolSchemaCatalog().backstageBooker.actions`. Dedicated Backstage
+Booker validators enforce these contracts at the module boundary. They are a
+module-action schema family, not Arcanos protocol command IDs, so they do not
+add entries to either protocol command-ID list. The raw-string
+`generateBooking` response remains accepted for existing callers while the
+structured response shape carries `universeId` when used.
+
+Mutation results (`bookEvent`, `updateRoster`, `trackStoryline`, and
+`saveStoryline`) report persistence explicitly: `durable` confirms a
+PostgreSQL commit, `non_durable` identifies a process-memory fallback after a
+known database availability or pre-commit write failure, and `unknown` means
+the PostgreSQL commit outcome could not be established. Unknown outcomes do
+not mutate the fallback or any convenience-memory key, and callers must not
+retry them as though they were confirmed failures. `saveStoryline` makes that
+distinction explicit with `saved: null` for `unknown` and `saved: true` for the
+other two receipts.
+
+One `updateRoster` request may contain at most 100 wrestlers, but that is not a
+cap on the total stored roster. The `legacy` roster retains its original fixed
+PostgreSQL advisory lock for mixed-version compatibility; activated non-legacy
+universes use deterministic hashed lock resources. Classified pre-commit
+failures use a per-universe fallback. The Booker service, rather than generic
+conversation persistence, owns structured convenience snapshots. Named
+storyline recall uses a SHA-256 by-key suffix so it cannot collide with the
+`storyline:latest` alias or exceed exact-memory key limits.
+
+Existing-database rollout is expand/contract. Startup adds and backfills the
+scope columns and scoped constraints but retains legacy global uniqueness. A
+non-`legacy` mutation therefore reports `non_durable` until every older
+Backstage replica has been drained and the explicit universe-scope migration
+removes those global constraints. `legacy` durable writes remain available
+while staged. Fresh databases also retain the global constraints, so the same
+explicit migration is required to activate non-`legacy` durability; see
+`DATABASE_MIGRATIONS.md` for the rollout boundary.
+
 Operator mutations require the existing control-plane bearer, configured
 operator principal, `mcp:invoke` scope, and explicit confirmation. The same rule
 applies to configured Backstage GPT IDs and to GPT-selected `/dispatch`,
@@ -209,10 +254,12 @@ headers:
 body:
   action: bookEvent
   payload:
-    name: "AEW Daily's Place"
-    date: "2024-09-20"
+    universeId: "aew-2024"
+    event:
+      name: "AEW Daily's Place"
+      date: "2024-09-20"
 success_response:
-  description: Booking ID plus _route metadata.
+  description: Universe-scoped booking result plus _route metadata.
 ```
 
 ### Arcanos Gaming

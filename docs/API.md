@@ -416,25 +416,114 @@ budget. Protected responses are `no-store`. Direct mutation paths establish
 identity before broad body parsing; action-selecting aliases parse first so the
 server can preserve public generation and simulation. Confirmation is approval,
 not authentication. Issued confirmation challenges are bound to the authenticated
-principal, request path, canonical mutation action, and request body, so a token
-cannot be replayed across Backstage actions. GPT Access and HTTP MCP retain their
+principal, request path, canonical mutation action, and normalized mutation
+payload, so a token cannot be replayed across Backstage actions or equivalent
+envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
+#### Backstage Booker Phase 1 contract
+
+`POST /gpt/backstage-booker` and its `backstage` GPT-ID alias expose the
+`bookEvent`, `updateRoster`, `trackStoryline`, `simulateMatch`,
+`generateBooking`, `generateBookingWithHRC`, and `saveStoryline` module
+actions. Their canonical payloads are closed JSON objects and accept an
+optional `universeId`; omitting it selects `legacy` for compatibility. An
+explicit ID must match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`.
+`universeId` is a caller-selected data scope, not authentication, ownership,
+or tenant isolation; deployment middleware must authorize the caller before
+exposing another universe's data.
+
+On an upgraded database, accepting a non-`legacy` ID does not by itself mean
+that durable universe writes are activated. Runtime startup performs only the
+expand step and retains the two legacy global uniqueness constraints. Until
+all older Backstage replicas are drained and
+`20260814_backstage_universe_scope_v1.sql` removes those constraints, the
+repository rejects every non-`legacy` database mutation before its domain
+write; the structured action reports `non_durable` with
+`reason: "database_write_failed"` and uses its scoped process-memory fallback.
+`legacy` writes remain eligible for durable storage throughout that window.
+Fresh databases created by this version also retain the two legacy constraints,
+so the reviewed explicit migration remains the only activation boundary.
+
+The direct `/backstage` compatibility routes continue accepting their
+established request shapes while also accepting the universe scope used by
+the module-action schemas. Their existing `success`, `eventID`, `storyline`,
+`roster`, and `result` fields stay in place as applicable; `universeId`,
+canonical result aliases, and `persistence` are additive. `generateBooking`
+may likewise return its legacy raw storyline string through the module action
+for compatibility.
+
+Mutation results expose one of these persistence receipts:
+
+| `status` | Meaning | Retry guidance |
+| --- | --- | --- |
+| `durable` | The PostgreSQL transaction committed. | No persistence retry is needed. |
+| `non_durable` | PostgreSQL was unavailable or a known write failure occurred before commit; the accepted result exists only in the universe-scoped process-memory fallback. | Reconcile or deliberately repeat after durable storage recovers. |
+| `unknown` | A commit was attempted, but its outcome could not be confirmed. The uncertain write is not published to fallback or convenience memory; roster and beat responses expose only the last known local view. | Do not blindly retry; reconcile by the returned universe and record identity. |
+
+The structured mutation responses carry this receipt alongside their canonical
+result fields. In particular, `saveStoryline` returns `saved: true` for
+`durable` and `non_durable` outcomes, but `saved: null` when persistence is
+`unknown`; it never claims that an indeterminate commit saved or failed.
+
+Generation context is read from one universe in a read-only repeatable-read
+snapshot. Each durable mutation is a transaction. Legacy roster updates retain
+the original fixed lock, while activated non-legacy rosters serialize by
+universe before their read-after-write response. This phase establishes
+scope and persistence correctness only; it does not define a canon graph,
+storyline lifecycle engine, or visual booking workspace.
+
+`bookEvent` accepts one JSON object whose compact serialized UTF-8 form is at
+most 65,536 bytes; oversized events are rejected before database, fallback, or
+audit effects. Process-memory continuity retains immutable JSON snapshots and
+shares one per-universe budget across durable event cache entries and pending
+events: at most 25 entries and 262,144 serialized bytes total. Durable cache
+entries are discarded before accepted pending continuity when that budget is
+full. The process fallback retains at most 32 universe states, never evicts a
+state with pending continuity or an active roster, story-beat, or saved-storyline
+mutation, and removes completed storyline-version and convenience-publication
+fences once no older operation can still publish through them.
+
 `trackStoryline` accepts one JSON object whose compact serialized UTF-8 form is
 at most 16,384 bytes. A successful database mutation serializes insert, cleanup,
-retention, and read under one transaction lock; it retains the newest 100 beats
-and returns the newest 25 in oldest-to-newest order, always including the beat
-just accepted. The response remains the existing raw beat-array shape. If the
-storyline database transaction fails with a classified transient availability
-error before the commit phase, the service uses a replica-local volatile
-fallback with the same 100-retained/25-returned limits. A failure received while
-awaiting `COMMIT` fails closed because the durable outcome cannot be confirmed;
-it is never appended to volatile state. Integrity and other unclassified
-persistence failures likewise fail closed as server errors. Recent booking context reads bypass the
-process-local SQL cache, and fallback prompt context is limited to the newest
-five beats. These limits apply only to tracked beats; named `saveStoryline`
-canon remains durable by key and has no automatic expiry.
+retention, and read under the original fixed storyline advisory lock plus a
+relation writer fence, with every row operation still filtered by universe. The
+fixed lock and relation fence preserve ordering and containment with legacy
+replicas during a mixed-version drain; storyline writes across different
+universes therefore remain serialized. The transaction retains the
+newest 100 beats and returns the newest 25 in oldest-to-newest order, always
+including the beat just accepted. Canonical and direct responses are structured
+as `{ universeId, beats, persistence }`; the direct route also preserves
+`storyline` as an alias of `beats`. A classified availability or known write
+failure before commit uses the replica-local, per-universe fallback with the
+same 100-retained/25-returned limits and reports `non_durable`. An indeterminate
+commit reports `unknown`, returns only the last known fallback beats (or an empty
+array), and never appends the uncertain beat or writes its convenience mirror.
+Integrity and other unclassified failures remain server errors. Recent booking
+context reads bypass the process-local SQL cache, and fallback prompt context is
+limited to the newest five beats.
+
+Named `saveStoryline` entries remain scoped by `(universe_id, story_key)` and
+have no automatic expiry. For `durable` and `non_durable` structured results,
+the Booker service is the authoritative convenience writer: it writes
+`storyline:latest` and a collision-resistant
+`storyline:by-key:<sha256-of-trimmed-key>` mirror under the universe prefix.
+Durable saves serialize per universe, obtain their revision after taking the
+transaction lock, and fence both per-key and latest mirrors by commit order so
+delayed acknowledgements cannot regress either view.
+The hash keeps exact-memory keys distinct and under the 255-character storage
+limit even for a maximum-length universe ID and storyline key. Dispatcher-level
+conversation persistence detects the structured receipt and does not duplicate
+or overwrite those mirrors. An `unknown` save returns `saved: null` and performs
+no fallback, audit, latest, or by-key mirror mutation.
+
+PostgreSQL-bound text is validated before effects. `saveStoryline` keys and
+storylines, plus every string value and property name nested in `bookEvent`
+event JSON, reject U+0000 and unpaired UTF-16 surrogate code units. Valid
+surrogate pairs and astral characters remain accepted. Storyline keys are
+bounded to 240 Unicode code points after trimming; storyline content is
+bounded to 100,000 Unicode code points.
 
 The `updateRoster` payload is an array of at most 100 supplied items per
 request. Each item must be a plain JSON object whose `name` is a string and
@@ -443,39 +532,52 @@ the result must contain 1 through 120 Unicode code points. Duplicate trimmed
 names within one request are rejected using exact, case-sensitive comparison,
 while names that differ only by case remain distinct. Accepted items are
 normalized to exactly `{ name, overall }`, so additional properties are
-discarded. Names containing U+0000 are rejected before database work because
-PostgreSQL `TEXT` cannot store that code point. An empty array remains a valid refresh request: it performs no
-upserts and returns the current roster. The 100-item limit applies to supplied
+discarded. Names containing U+0000 or unpaired UTF-16 surrogates are rejected
+before database work because PostgreSQL `TEXT` cannot store them. An empty
+array remains a valid refresh request: it performs no upserts and returns the
+current roster. The 100-item limit applies to supplied
 items in one request; it does not delete existing wrestlers or impose a total
-stored-roster limit. Invalid roster input returns HTTP `400` with
-`BACKSTAGE_ROSTER_INVALID` on the direct, canonical GPT, dispatch, and legacy
-HTTP paths. GPT Access exposes the same failure as
+stored-roster limit. Canonical GPT, dispatch, and legacy compatibility
+preflights preserve `BACKSTAGE_ROSTER_INVALID` and
+`BACKSTAGE_STORYLINE_INVALID` for their respective invalid payloads. The direct
+`/backstage` routes also return HTTP `400` with
+`{ success: false, error: { code, message } }` for those established validation
+failures; `error.code` is the corresponding `BACKSTAGE_ROSTER_INVALID` or
+`BACKSTAGE_STORYLINE_INVALID` value. Other contract-schema failures retain the
+canonical action and validation `issues`. GPT Access exposes validation as
 `GPT_ACCESS_VALIDATION_ERROR`; MCP `modules.invoke` exposes `ERR_BAD_REQUEST`
-with `BACKSTAGE_ROSTER_INVALID` as its error category.
+with the corresponding Backstage validation code as its error category.
 
 Accepted roster mutations use one PostgreSQL transaction containing a
 cluster-wide transaction-scoped advisory lock, a bulk upsert, and the fresh
-post-write roster read. The lock serializes mutation/read snapshots across web
-and worker replicas. Process-local roster state changes only after that
-transaction reports a successful commit, and the same monotonic revision fence
-prevents a delayed older commit acknowledgement from regressing fallback state.
-A begin, write, or read failure rolls back the transaction. A commit failure
-triggers a rollback attempt. Failure of that rollback does not replace the
-primary error, but a lost commit acknowledgement can leave the database outcome
-indeterminate. Every
-such failure is fail-closed: it performs no in-memory fallback mutation and
-returns `BACKSTAGE_ROSTER_PERSISTENCE_FAILED`. Direct,
-canonical GPT, dispatch, legacy, and GPT Access HTTP paths expose that failure
-with HTTP `503`; MCP `modules.invoke` exposes `ERR_UNAVAILABLE`. Queued GPT
-execution retries that failure only when its SQL state, transport code, or
-bounded nested PostgreSQL transport cause is classified as transient. Explicit
-query cancellation is not retryable; PostgreSQL statement timeout is. The
-`backstage-roster:latest` memory entry remains a
-best-effort convenience mirror written after commit; a database transaction
-revision fences its conditional upsert so a delayed older request cannot
-replace a newer snapshot. The option revision must match the revision carried
-inside the stored payload. This mirror is not the authority for
-roster-mutation success.
+post-write roster read. The `legacy` universe deliberately retains the original
+fixed advisory-lock identity so new replicas serialize with older ones during
+the drain. Activated non-legacy universes derive deterministic hashed lock
+resources from their universe IDs, allowing independent universe snapshots to
+proceed without changing legacy lock compatibility. A successful commit updates
+the process-local known view,
+and a monotonic database revision fences both that view and the conditional
+`backstage-universe:{universeId}:roster:latest` convenience write so a delayed
+older commit acknowledgement cannot regress either snapshot. The service is the
+authoritative writer for this structured mirror.
+
+A classified database-unavailable or known pre-commit write failure merges the
+request into the same per-universe process-memory view, writes a convenience
+snapshot carrying the `non_durable` receipt, and returns that structured roster.
+A lost commit acknowledgement instead returns `unknown` with the last known
+local roster (or an empty array) and performs no fallback or convenience
+mutation. Unclassified integrity and programming failures still fail closed as
+server errors. These persistence rules do not change the request limit: at most
+100 wrestlers may be supplied in one update, while the stored roster has no
+100-item total cap.
+
+The one-argument `updateRoster` and `trackStoryline` service overloads retain
+their pre-Phase-1 raw-array behavior and typed compatibility errors, including
+`BACKSTAGE_ROSTER_PERSISTENCE_FAILED` and
+`BACKSTAGE_STORYLINE_PERSISTENCE_FAILED`. Existing transport and queued-result
+adapters continue to recognize those codes. Classified failures on the new
+structured action path use persistence receipts instead; an `unknown` receipt
+is never rewritten as a legacy persistence error.
 
 Match simulation accepts the ratified `0` through `100` ratings. When both
 wrestlers have rating `0`, the base matchup is explicitly `0.50`/`0.50` before

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/generateBookingWithHRC.response.schema.json",
+  "title": "Backstage Booker generateBookingWithHRC response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "storyline",
+    "hrc"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "storyline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100000,
+      "pattern": "\\S"
+    },
+    "hrc": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/hrc"
+    }
+  }
+}

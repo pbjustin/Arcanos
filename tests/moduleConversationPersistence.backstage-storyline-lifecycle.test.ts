@@ -16,6 +16,9 @@ jest.unstable_mockModule('@services/sessionMemoryService.js', () => ({
 const { persistModuleConversation } = await import(
   '../src/services/moduleConversationPersistence.js'
 );
+const { buildBackstageStorylineByKeyMemoryKey } = await import(
+  '../src/services/backstageBookerContracts.js'
+);
 const { TABLE_DEFINITIONS } = await import('../src/core/db/schema.js');
 
 describe('Backstage storyline conversation persistence boundaries', () => {
@@ -57,8 +60,9 @@ describe('Backstage storyline conversation persistence boundaries', () => {
     expect(mockSaveMemory).toHaveBeenCalledTimes(2);
     expect(mockSaveMemory).toHaveBeenNthCalledWith(
       1,
-      'backstage-storyline:summer-slam-main-event',
+      buildBackstageStorylineByKeyMemoryKey('legacy', 'summer-slam-main-event'),
       expect.objectContaining({
+        universeId: 'legacy',
         key: 'summer-slam-main-event',
         storyline: 'The champion accepts the final challenge.',
         savedAt: expect.any(String)
@@ -66,8 +70,9 @@ describe('Backstage storyline conversation persistence boundaries', () => {
     );
     expect(mockSaveMemory).toHaveBeenNthCalledWith(
       2,
-      'backstage-storyline:latest',
+      'backstage-universe:legacy:storyline:latest',
       expect.objectContaining({
+        universeId: 'legacy',
         key: 'summer-slam-main-event',
         storyline: 'The champion accepts the final challenge.',
         savedAt: expect.any(String)
@@ -82,7 +87,8 @@ describe('Backstage storyline conversation persistence boundaries', () => {
     );
 
     expect(namedStorylineTable).toBeDefined();
-    expect(namedStorylineTable).toContain('story_key TEXT UNIQUE NOT NULL');
+    expect(namedStorylineTable).toContain('story_key TEXT NOT NULL');
+    expect(namedStorylineTable).toContain('UNIQUE (universe_id, story_key)');
     expect(namedStorylineTable).toContain('storyline TEXT NOT NULL');
     expect(namedStorylineTable).not.toMatch(/\bexpires_at\b/u);
   });

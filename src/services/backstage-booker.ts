@@ -1,4 +1,20 @@
 import { randomUUID } from 'crypto';
+import {
+  DEFAULT_BACKSTAGE_UNIVERSE_ID,
+  assertValidBackstageBookerActionData,
+  getProtocolSchemaCatalog,
+  type BackstageBookEventResponse,
+  type BackstageBookerAction,
+  type BackstageDurablePersistence,
+  type BackstageGenerateBookingWithHrcResponse,
+  type BackstageHrcResult,
+  type BackstageNonDurablePersistence,
+  type BackstagePersistence,
+  type BackstageSaveStorylineResponse,
+  type BackstageSimulateMatchResponse,
+  type BackstageTrackStorylineResponse,
+  type BackstageUpdateRosterResponse
+} from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
@@ -17,8 +33,18 @@ import {
   saveMemory,
   transaction
 } from "@core/db/index.js";
+import * as coreDb from '@core/db/index.js';
+import {
+  BackstageBookerCommitUnknownError,
+  BackstageBookerRepositoryUnavailableError,
+  BackstageBookerWriteError,
+  createBackstageBookerRepository,
+  isBackstageBookerUniverseScopeNotActivatedError,
+  type BackstageContext,
+  type PostgresBackstageBookerRepository
+} from '@core/db/repositories/backstageBookerRepository.js';
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
-import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
+import { evaluateWithHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
@@ -39,6 +65,13 @@ import {
   selectBackstageStorylineResponseBeats,
   type StorylineBeat
 } from '@shared/backstage/backstageStoryline.js';
+import {
+  buildBackstageStorylineByKeyMemoryKey,
+  buildBackstageUniverseMemoryKey,
+  normalizeBackstageBookerActionPayload,
+  normalizeBackstageBookerModuleActionPayload
+} from './backstageBookerContracts.js';
+import type { ModuleActionMetadata } from './moduleLoader.js';
 
 export type { Wrestler } from '@shared/backstage/backstageRoster.js';
 
@@ -75,12 +108,371 @@ interface EventData {
   [key: string]: unknown;
 }
 
-// Internal in-memory stores
-const events: Array<{ id: string; data: EventData }> = [];
-let roster: Wrestler[] = [];
-let rosterRevision: bigint | null = null;
-const storylines: StorylineBeat[] = [];
-let storylineRevision: bigint | null = null;
+interface FallbackEventEntry {
+  id: string;
+  data: EventData;
+  createdAt: Date;
+  serializedBytes: number;
+}
+
+interface PendingRosterEntry {
+  wrestler: Wrestler;
+  updatedAt: Date;
+  operationSequence: number;
+  persistence: BackstageNonDurablePersistence;
+}
+
+interface PendingStoryBeatEntry {
+  data: StorylineBeat;
+  createdAt: Date;
+  operationSequence: number;
+  persistence: BackstageNonDurablePersistence;
+}
+
+interface PendingSavedStorylineEntry {
+  key: string;
+  storyline: string;
+  updatedAt: Date;
+  operationSequence: number;
+  viewSequence: number;
+  persistence: BackstageNonDurablePersistence;
+}
+
+interface SavedStorylineEntry {
+  key: string;
+  storyline: string;
+  updatedAt: Date;
+  operationSequence: number;
+  viewSequence: number;
+  revision: string;
+  persistence: BackstageDurablePersistence;
+}
+
+interface SavedStorylineVersion {
+  operationSequence: number;
+  viewSequence: number;
+  revision: string | null;
+  persistence: BackstagePersistence;
+}
+
+interface MemorySnapshotPublication {
+  sequence: number;
+  write: () => Promise<unknown>;
+  onError: (error: unknown) => void;
+}
+
+interface MemorySnapshotPublicationState {
+  desired: MemorySnapshotPublication;
+  running: Promise<void> | null;
+}
+
+interface FallbackUniverseState {
+  events: FallbackEventEntry[];
+  roster: Wrestler[];
+  rosterRevision: bigint | null;
+  rosterOperationSequences: Map<string, number>;
+  storylines: StorylineBeat[];
+  storylineRevision: bigint | null;
+  storylineOperationSequences: Array<number | null>;
+  savedStorylines: SavedStorylineEntry[];
+  pendingEvents: FallbackEventEntry[];
+  pendingRoster: PendingRosterEntry[];
+  pendingStorylines: PendingStoryBeatEntry[];
+  pendingSavedStorylines: PendingSavedStorylineEntry[];
+  savedStorylineVersions: Map<string, SavedStorylineVersion>;
+  latestSavedStoryline: SavedStorylineEntry | PendingSavedStorylineEntry | null;
+}
+
+const fallbackUniverseState = new Map<string, FallbackUniverseState>();
+const memorySnapshotPublicationSequences = new Map<string, number>();
+const memorySnapshotPublicationStates = new Map<string, MemorySnapshotPublicationState>();
+const activeFallbackUniverseOperationCounts = new Map<string, number>();
+const activeMemorySnapshotOperationSequences = new Map<string, Set<number>>();
+const MAX_FALLBACK_UNIVERSES = 32;
+const MAX_FALLBACK_EVENTS_PER_UNIVERSE = 25;
+const MAX_FALLBACK_EVENT_BYTES_PER_UNIVERSE = 256 * 1024;
+let fallbackRosterOperationSequence = 0;
+let fallbackStorylineOperationSequence = 0;
+let fallbackSavedStorylineOperationSequence = 0;
+let fallbackSavedStorylineViewSequence = 0;
+
+function createFallbackUniverseState(): FallbackUniverseState {
+  return {
+    events: [],
+    roster: [],
+    rosterRevision: null,
+    rosterOperationSequences: new Map(),
+    storylines: [],
+    storylineRevision: null,
+    storylineOperationSequences: [],
+    savedStorylines: [],
+    pendingEvents: [],
+    pendingRoster: [],
+    pendingStorylines: [],
+    pendingSavedStorylines: [],
+    savedStorylineVersions: new Map(),
+    latestSavedStoryline: null
+  };
+}
+
+function hasPendingFallbackState(state: FallbackUniverseState): boolean {
+  return state.pendingEvents.length > 0
+    || state.pendingRoster.length > 0
+    || state.pendingStorylines.length > 0
+    || state.pendingSavedStorylines.length > 0;
+}
+
+function hasActiveFallbackUniverseOperation(universeId: string): boolean {
+  return (activeFallbackUniverseOperationCounts.get(universeId) ?? 0) > 0;
+}
+
+function tryGetFallbackUniverseState(universeId: string): FallbackUniverseState | null {
+  const existing = fallbackUniverseState.get(universeId);
+  if (existing) {
+    fallbackUniverseState.delete(universeId);
+    fallbackUniverseState.set(universeId, existing);
+    return existing;
+  }
+
+  if (fallbackUniverseState.size >= MAX_FALLBACK_UNIVERSES) {
+    const evictableUniverse = [...fallbackUniverseState.entries()].find(
+      ([candidateUniverseId, state]) => (
+        !hasPendingFallbackState(state)
+        && !hasActiveFallbackUniverseOperation(candidateUniverseId)
+      )
+    );
+    if (!evictableUniverse) {
+      return null;
+    }
+    fallbackUniverseState.delete(evictableUniverse[0]);
+  }
+
+  const created = createFallbackUniverseState();
+  fallbackUniverseState.set(universeId, created);
+  return created;
+}
+
+function getFallbackUniverseState(universeId: string): FallbackUniverseState {
+  const state = tryGetFallbackUniverseState(universeId);
+  if (!state) {
+    throw new Error(
+      'Backstage Booker process fallback capacity is exhausted; mutation was not accepted.'
+    );
+  }
+  return state;
+}
+
+function readFallbackUniverseState(universeId: string): FallbackUniverseState {
+  return fallbackUniverseState.get(universeId) ?? createFallbackUniverseState();
+}
+
+export function resetBackstageBookerProcessStateForTests(): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Backstage Booker process state can only be reset in tests.');
+  }
+  fallbackUniverseState.clear();
+  memorySnapshotPublicationSequences.clear();
+  memorySnapshotPublicationStates.clear();
+  activeFallbackUniverseOperationCounts.clear();
+  activeMemorySnapshotOperationSequences.clear();
+  fallbackRosterOperationSequence = 0;
+  fallbackStorylineOperationSequence = 0;
+  fallbackSavedStorylineOperationSequence = 0;
+  fallbackSavedStorylineViewSequence = 0;
+}
+
+export function getBackstageBookerProcessStateStatsForTests(universeId: string): {
+  universeCount: number;
+  retainedEventCount: number;
+  retainedEventBytes: number;
+  savedStorylineVersionCount: number;
+  activeUniverseOperationCount: number;
+  activeMemorySnapshotOperationKeyCount: number;
+  activeMemorySnapshotOperationCount: number;
+  memorySnapshotPublicationSequenceCount: number;
+  memorySnapshotPublicationStateCount: number;
+} {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Backstage Booker process state can only be inspected in tests.');
+  }
+  const state = fallbackUniverseState.get(universeId);
+  const retainedEvents = state ? [...state.events, ...state.pendingEvents] : [];
+  return {
+    universeCount: fallbackUniverseState.size,
+    retainedEventCount: retainedEvents.length,
+    retainedEventBytes: retainedEvents.reduce(
+      (total, event) => total + event.serializedBytes,
+      0
+    ),
+    savedStorylineVersionCount: state?.savedStorylineVersions.size ?? 0,
+    activeUniverseOperationCount: [...activeFallbackUniverseOperationCounts.values()]
+      .reduce((total, count) => total + count, 0),
+    activeMemorySnapshotOperationKeyCount: activeMemorySnapshotOperationSequences.size,
+    activeMemorySnapshotOperationCount: [...activeMemorySnapshotOperationSequences.values()]
+      .reduce((total, sequences) => total + sequences.size, 0),
+    memorySnapshotPublicationSequenceCount: memorySnapshotPublicationSequences.size,
+    memorySnapshotPublicationStateCount: memorySnapshotPublicationStates.size
+  };
+}
+
+function forgetMemorySnapshotPublicationSequenceIfIdle(key: string): void {
+  if (
+    !memorySnapshotPublicationStates.has(key)
+    && (activeMemorySnapshotOperationSequences.get(key)?.size ?? 0) === 0
+  ) {
+    memorySnapshotPublicationSequences.delete(key);
+  }
+}
+
+function registerFallbackOperation(
+  universeId: string,
+  publications: Array<{ key: string; sequence: number }>
+): () => void {
+  activeFallbackUniverseOperationCounts.set(
+    universeId,
+    (activeFallbackUniverseOperationCounts.get(universeId) ?? 0) + 1
+  );
+  for (const publication of publications) {
+    const sequences = activeMemorySnapshotOperationSequences.get(publication.key) ?? new Set();
+    sequences.add(publication.sequence);
+    activeMemorySnapshotOperationSequences.set(publication.key, sequences);
+  }
+
+  let active = true;
+  return () => {
+    if (!active) {
+      return;
+    }
+    active = false;
+
+    for (const publication of publications) {
+      const sequences = activeMemorySnapshotOperationSequences.get(publication.key);
+      sequences?.delete(publication.sequence);
+      if (sequences?.size === 0) {
+        activeMemorySnapshotOperationSequences.delete(publication.key);
+      }
+      forgetMemorySnapshotPublicationSequenceIfIdle(publication.key);
+    }
+
+    const remainingUniverseOperations = (
+      activeFallbackUniverseOperationCounts.get(universeId) ?? 1
+    ) - 1;
+    if (remainingUniverseOperations > 0) {
+      activeFallbackUniverseOperationCounts.set(universeId, remainingUniverseOperations);
+    } else {
+      activeFallbackUniverseOperationCounts.delete(universeId);
+    }
+  };
+}
+
+const DURABLE_PERSISTENCE: BackstagePersistence = {
+  status: 'durable',
+  durable: true,
+  backend: 'postgresql',
+  degraded: false
+};
+
+const UNKNOWN_PERSISTENCE: BackstagePersistence = {
+  status: 'unknown',
+  durable: null,
+  backend: 'postgresql',
+  degraded: true,
+  reason: 'commit_outcome_unknown'
+};
+
+function nonDurablePersistence(
+  reason: BackstageNonDurablePersistence['reason']
+): BackstageNonDurablePersistence {
+  return {
+    status: 'non_durable',
+    durable: false,
+    backend: 'process-memory',
+    degraded: true,
+    reason
+  };
+}
+
+function getBackstageRepository(): PostgresBackstageBookerRepository {
+  const getPool = typeof coreDb.getPool === 'function' ? coreDb.getPool : null;
+  const pool = getPool?.() ?? null;
+  if (!pool) {
+    throw new BackstageBookerRepositoryUnavailableError('connect');
+  }
+  return createBackstageBookerRepository(pool);
+}
+
+function persistenceForDatabaseError(error: unknown): BackstagePersistence | null {
+  if (error instanceof BackstageBookerCommitUnknownError) {
+    return UNKNOWN_PERSISTENCE;
+  }
+  if (error instanceof BackstageBookerRepositoryUnavailableError) {
+    return (
+      (error.operation === 'connect' && error.cause === undefined)
+      || isRetryableBackstageRosterPersistenceCause(error)
+    )
+      ? nonDurablePersistence('database_unavailable')
+      : null;
+  }
+  if (error instanceof BackstageBookerWriteError) {
+    return (
+      isBackstageBookerUniverseScopeNotActivatedError(error.cause)
+      || isRetryableBackstageRosterPersistenceCause(error)
+    )
+      ? nonDurablePersistence('database_write_failed')
+      : null;
+  }
+  return null;
+}
+
+async function publishMemorySnapshot(
+  key: string,
+  sequence: number,
+  write: () => Promise<unknown>,
+  onError: (error: unknown) => void
+): Promise<void> {
+  const publishedSequence = memorySnapshotPublicationSequences.get(key);
+  const activeState = memorySnapshotPublicationStates.get(key);
+  if (publishedSequence !== undefined && sequence < publishedSequence) {
+    await activeState?.running;
+    return;
+  }
+
+  memorySnapshotPublicationSequences.set(key, sequence);
+  const publication: MemorySnapshotPublication = { sequence, write, onError };
+  const state = activeState ?? { desired: publication, running: null };
+  state.desired = publication;
+  if (!activeState) {
+    memorySnapshotPublicationStates.set(key, state);
+  }
+
+  if (!state.running) {
+    // Start on the next microtask so `state.running` is installed before the
+    // drain can synchronously finish a rejected write.
+    state.running = Promise.resolve().then(async () => {
+      while (true) {
+        const desired = state.desired;
+        try {
+          await desired.write();
+        } catch (error) {
+          desired.onError(error);
+        }
+
+        // A write may have been in flight when a newer accepted operation
+        // arrived. Republish that desired state before releasing the key.
+        if (state.desired !== desired) {
+          continue;
+        }
+
+        state.running = null;
+        memorySnapshotPublicationStates.delete(key);
+        forgetMemorySnapshotPublicationSequenceIfIdle(key);
+        return;
+      }
+    });
+  }
+
+  await state.running;
+}
 
 /**
  * Persist latest roster snapshot for cross-session recall.
@@ -89,22 +481,35 @@ let storylineRevision: bigint | null = null;
  * Edge cases: logs warning without throwing when persistence is unavailable.
  */
 async function persistLatestRosterSnapshot(
+  universeId: string,
   nextRoster: Wrestler[],
-  source: "database" | "fallback",
-  revision: string
+  persistence: BackstagePersistence,
+  operationSequence: number,
+  revision?: string
 ): Promise<void> {
-  await saveMemory("backstage-roster:latest", {
+  const key = buildBackstageUniverseMemoryKey(universeId, 'roster:latest');
+  const snapshot = {
+    universeId,
     roster: nextRoster,
-    source,
-    revision,
+    source: persistence.status === 'durable' ? 'database' : 'fallback',
+    persistence,
+    ...(revision ? { revision } : {}),
     updatedAt: new Date().toISOString()
-  }, { ifNewerRevision: revision }).catch((error: unknown) => {
-    //audit Assumption: convenience roster mirror is optional metadata; failure risk: stale roster recall in new chats; expected invariant: primary roster mutation still succeeds; handling strategy: warn and continue.
-    console.warn(
-      "Backstage Booker: failed to persist latest roster snapshot",
-      resolveErrorMessage(error)
-    );
-  });
+  };
+  await publishMemorySnapshot(
+    key,
+    operationSequence,
+    () => revision
+      ? saveMemory(key, snapshot, { ifNewerRevision: revision })
+      : saveMemory(key, snapshot),
+    (error: unknown) => {
+      //audit Assumption: convenience roster mirror is optional metadata; failure risk: stale roster recall in new chats; expected invariant: primary roster mutation still succeeds; handling strategy: warn and continue.
+      console.warn(
+        "Backstage Booker: failed to persist latest roster snapshot",
+        resolveErrorMessage(error)
+      );
+    }
+  );
 }
 
 /**
@@ -113,27 +518,51 @@ async function persistLatestRosterSnapshot(
  * Output: resolves when latest and keyed storyline convenience entries are updated.
  * Edge cases: warns and continues on persistence failures.
  */
-async function persistLatestStorylineSnapshot(
-  key: string,
-  storyline: string,
-  source: "database" | "fallback"
+async function persistLatestStorylineSnapshots(
+  universeId: string,
+  keyedStoryline: SavedStorylineEntry | PendingSavedStorylineEntry,
+  latestStoryline: SavedStorylineEntry | PendingSavedStorylineEntry
 ): Promise<void> {
-  const snapshot = {
-    key,
-    storyline,
-    source,
+  const buildSnapshot = (
+    entry: SavedStorylineEntry | PendingSavedStorylineEntry
+  ) => ({
+    universeId,
+    key: entry.key,
+    storyline: entry.storyline,
+    source: entry.persistence.status === 'durable' ? 'database' : 'fallback',
+    persistence: entry.persistence,
+    ...('revision' in entry ? { revision: entry.revision } : {}),
     updatedAt: new Date().toISOString()
-  };
-
-  await saveMemory("backstage-storyline:latest", snapshot).catch((error: unknown) => {
-    //audit Assumption: latest storyline mirror may fail independently; failure risk: no quick "latest" recall; expected invariant: primary storyline flow continues; handling strategy: warn and continue.
-    console.warn("Backstage Booker: failed to persist latest storyline snapshot", (error as Error).message);
   });
 
-  await saveMemory(`backstage-storyline:${key}`, snapshot).catch((error: unknown) => {
-    //audit Assumption: keyed storyline mirror is convenience only; failure risk: key lookup misses; expected invariant: core save path unaffected; handling strategy: warn and continue.
-    console.warn(`Backstage Booker: failed to persist keyed storyline snapshot for ${key}`, (error as Error).message);
-  });
+  const latestKey = buildBackstageUniverseMemoryKey(universeId, 'storyline:latest');
+  const byKey = buildBackstageStorylineByKeyMemoryKey(universeId, keyedStoryline.key);
+  const latestSnapshot = buildSnapshot(latestStoryline);
+  const keyedSnapshot = buildSnapshot(keyedStoryline);
+  await Promise.all([
+    publishMemorySnapshot(
+      latestKey,
+      latestStoryline.viewSequence,
+      () => 'revision' in latestStoryline
+        ? saveMemory(latestKey, latestSnapshot, { ifNewerRevision: latestStoryline.revision })
+        : saveMemory(latestKey, latestSnapshot),
+      (error: unknown) => {
+        //audit Assumption: latest storyline mirror may fail independently; failure risk: no quick "latest" recall; expected invariant: primary storyline flow continues; handling strategy: warn and continue.
+        console.warn("Backstage Booker: failed to persist latest storyline snapshot", resolveErrorMessage(error));
+      }
+    ),
+    publishMemorySnapshot(
+      byKey,
+      keyedStoryline.viewSequence,
+      () => 'revision' in keyedStoryline
+        ? saveMemory(byKey, keyedSnapshot, { ifNewerRevision: keyedStoryline.revision })
+        : saveMemory(byKey, keyedSnapshot),
+      (error: unknown) => {
+        //audit Assumption: keyed storyline mirror is convenience only; failure risk: key lookup misses; expected invariant: core save path unaffected; handling strategy: warn and continue.
+        console.warn(`Backstage Booker: failed to persist keyed storyline snapshot for ${keyedStoryline.key}`, resolveErrorMessage(error));
+      }
+    )
+  ]);
 }
 
 /**
@@ -143,18 +572,32 @@ async function persistLatestStorylineSnapshot(
  * Edge cases: warns and continues when persistence is unavailable.
  */
 async function persistLatestStoryBeatsSnapshot(
+  universeId: string,
   beats: StorylineBeat[],
-  revision: string
+  persistence: BackstagePersistence,
+  operationSequence: number,
+  revision?: string
 ): Promise<void> {
-  await saveMemory("backstage-storybeats:latest", {
+  const key = buildBackstageUniverseMemoryKey(universeId, 'storybeats:latest');
+  const snapshot = {
+    universeId,
     beats,
-    source: "database",
-    revision,
+    source: persistence.status === 'durable' ? 'database' : 'fallback',
+    persistence,
+    ...(revision ? { revision } : {}),
     updatedAt: new Date().toISOString()
-  }, { ifNewerRevision: revision }).catch((error: unknown) => {
-    //audit Assumption: story beats mirror is best-effort; failure risk: reduced context continuity; expected invariant: storyline tracking still returns beats; handling strategy: warn and continue.
-    console.warn("Backstage Booker: failed to persist latest story beats snapshot", (error as Error).message);
-  });
+  };
+  await publishMemorySnapshot(
+    key,
+    operationSequence,
+    () => revision
+      ? saveMemory(key, snapshot, { ifNewerRevision: revision })
+      : saveMemory(key, snapshot),
+    (error: unknown) => {
+      //audit Assumption: story beats mirror is best-effort; failure risk: reduced context continuity; expected invariant: storyline tracking still returns beats; handling strategy: warn and continue.
+      console.warn("Backstage Booker: failed to persist latest story beats snapshot", resolveErrorMessage(error));
+    }
+  );
 }
 
 function formatJsonSnippet(value: unknown, maxLength = 220): string {
@@ -384,7 +827,7 @@ function resolveBackstageBookerTokenLimit(prompt: string, defaultTokenLimit: num
   return Math.min(defaultTokenLimit, directAnswerTokenLimit);
 }
 
-async function buildStructuredBookingPrompt(basePrompt: string): Promise<string> {
+async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<string> {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const directAnswerContract = directAnswerMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
@@ -394,7 +837,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
     const [rosterResult, eventsResult, beatsResult, savedStoriesResult] = await Promise.all([
       query(
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_ROSTER_RECENT.sql,
-        [],
+        [DEFAULT_BACKSTAGE_UNIVERSE_ID],
         {
           useCache: false,
           retry: 'transient-read',
@@ -405,7 +848,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       ),
       query(
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_EVENTS_RECENT.sql,
-        [],
+        [DEFAULT_BACKSTAGE_UNIVERSE_ID],
         {
           useCache: true,
           retry: 'transient-read',
@@ -416,7 +859,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       ),
       query(
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORY_BEATS_RECENT.sql,
-        [],
+        [DEFAULT_BACKSTAGE_UNIVERSE_ID],
         {
           useCache: false,
           retry: 'transient-read',
@@ -427,7 +870,7 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       ),
       query(
         AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORYLINES_RECENT.sql,
-        [],
+        [DEFAULT_BACKSTAGE_UNIVERSE_ID],
         {
           useCache: false,
           retry: 'transient-read',
@@ -489,10 +932,11 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
     return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', (error as Error).message);
-    const fallbackRoster = roster.length
-      ? roster.map(w => `- ${w.name} (Overall ${w.overall})`).join('\n')
+    const legacyState = readFallbackUniverseState(DEFAULT_BACKSTAGE_UNIVERSE_ID);
+    const fallbackRoster = legacyState.roster.length
+      ? legacyState.roster.map(w => `- ${w.name} (Overall ${w.overall})`).join('\n')
       : 'No roster data recorded yet.';
-    const fallbackStorylines = storylines.slice(-BACKSTAGE_STORYLINE_PROMPT_BEATS);
+    const fallbackStorylines = legacyState.storylines.slice(-BACKSTAGE_STORYLINE_PROMPT_BEATS);
     const fallbackStories = fallbackStorylines.length
       ? fallbackStorylines.map((entry, idx) => `- #${idx + 1}: ${formatJsonSnippet(entry)}`).join('\n')
       : 'No story beats recorded yet.';
@@ -512,6 +956,125 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
   }
 }
 
+interface BackstagePromptBlocks {
+  roster: string;
+  events: string;
+  storyBeats: string;
+  savedStorylines: string;
+}
+
+function buildBookingPrompt(
+  basePrompt: string,
+  universeId: string,
+  blocks: BackstagePromptBlocks
+): string {
+  const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const directAnswerContract = directAnswerMode
+    ? parseBackstageDirectAnswerOutputContract(basePrompt)
+    : null;
+  const sections = [
+    directAnswerMode
+      ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
+      : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
+    `<<UNIVERSE_ID>>\n${universeId}`,
+    `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
+    `<<CURRENT_ROSTER>>\n${blocks.roster}`,
+    `<<RECENT_EVENTS>>\n${blocks.events}`,
+    `<<RECENT_STORY_BEATS>>\n${blocks.storyBeats}`,
+    `<<SAVED_STORYLINES>>\n${blocks.savedStorylines}`,
+    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+  ];
+
+  return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+}
+
+function promptBlocksFromContext(context: BackstageContext): BackstagePromptBlocks {
+  return {
+    roster: context.roster.length
+      ? context.roster
+          .map(wrestler => `- ${wrestler.name} (Overall ${wrestler.overall}) • updated ${toISODate(wrestler.updatedAt)}`)
+          .join('\n')
+      : 'No roster data recorded yet.',
+    events: context.events.length
+      ? context.events
+          .map(event => {
+            const label = typeof event.data.name === 'string'
+              ? event.data.name
+              : typeof event.data.title === 'string'
+                ? event.data.title
+                : 'Unlabeled Event';
+            return `- ${label} • booked ${toISODate(event.createdAt)} :: ${formatJsonSnippet(event.data)}`;
+          })
+          .join('\n')
+      : 'No events booked yet.',
+    storyBeats: context.storyBeats.length
+      ? context.storyBeats
+          .map(beat => `- ${toISODate(beat.createdAt)} :: ${formatJsonSnippet(beat.data)}`)
+          .join('\n')
+      : 'No story beats recorded yet.',
+    savedStorylines: context.storylines.length
+      ? context.storylines
+          .map(story => `- ${story.storyKey}: ${formatJsonSnippet(story.storyline, 260)}`)
+          .join('\n')
+      : 'No saved storylines yet.'
+  };
+}
+
+function promptBlocksFromFallback(state: FallbackUniverseState): BackstagePromptBlocks {
+  const roster = effectiveFallbackRoster(state);
+  const events = effectiveFallbackEvents(state);
+  const storyBeats = effectiveFallbackStoryBeats(state);
+  const savedStorylines = effectiveFallbackSavedStorylines(state);
+  return {
+    roster: roster.length
+      ? roster.map(wrestler => `- ${wrestler.name} (Overall ${wrestler.overall})`).join('\n')
+      : 'No roster data recorded yet.',
+    events: events.length
+      ? [...events]
+          .reverse()
+          .slice(0, 5)
+          .map(event => `- ${toISODate(event.createdAt)} :: ${formatJsonSnippet(event.data)}`)
+          .join('\n')
+      : 'No events booked yet.',
+    storyBeats: storyBeats.length
+      ? [...storyBeats]
+          .reverse()
+          .slice(0, BACKSTAGE_STORYLINE_PROMPT_BEATS)
+          .map((entry, index) => `- #${index + 1}: ${formatJsonSnippet(entry)}`)
+          .join('\n')
+      : 'No story beats recorded yet.',
+    savedStorylines: savedStorylines.length
+      ? [...savedStorylines]
+          .reverse()
+          .slice(0, 5)
+          .map(story => `- ${story.key}: ${formatJsonSnippet(story.storyline, 260)}`)
+          .join('\n')
+      : 'No saved storylines yet.'
+  };
+}
+
+async function buildStructuredBookingPrompt(
+  basePrompt: string,
+  universeId: string
+): Promise<string> {
+  try {
+    const context = await getBackstageRepository().loadContext(universeId);
+    return buildBookingPrompt(
+      basePrompt,
+      universeId,
+      promptBlocksFromContext(overlayPendingContext(universeId, context))
+    );
+  } catch (error) {
+    console.warn('Backstage Booker: falling back to in-memory context', resolveErrorMessage(error));
+    //audit Assumption: continuity reads may degrade independently of writes; failure risk: generation crosses universe boundaries or fails during a database outage; expected invariant: fallback context remains isolated by universe and clearly process-local; handling strategy: render only the selected universe's bounded process state.
+    return buildBookingPrompt(
+      basePrompt,
+      universeId,
+      promptBlocksFromFallback(readFallbackUniverseState(universeId))
+    );
+  }
+}
+
 /**
  * Resolve the model used for backstage booking generation.
  * Inputs/outputs: none -> explicit USER_GPT_ID override when present, otherwise the shared GPT-5 model fallback.
@@ -527,91 +1090,944 @@ function resolveBackstageBookerModel(): string {
   return getGPT5Model();
 }
 
-export async function bookEvent(data: EventData): Promise<string> {
-  const id = randomUUID();
-  try {
-    await query(
-      'INSERT INTO backstage_events (id, data, created_at) VALUES ($1, $2, NOW())',
-      [id, data]
-    );
-    events.push({ id, data });
-    if (events.length > 25) {
-      events.shift();
+function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
+  const serialized = JSON.stringify(data);
+  if (typeof serialized !== 'string') {
+    throw new TypeError('Backstage Booker event payload must be JSON serializable.');
+  }
+  return {
+    id,
+    data: JSON.parse(serialized) as EventData,
+    createdAt: new Date(),
+    serializedBytes: Buffer.byteLength(serialized, 'utf8')
+  };
+}
+
+function fallbackEventRetentionExceedsLimit(state: FallbackUniverseState): boolean {
+  const retainedEvents = [...state.events, ...state.pendingEvents];
+  return retainedEvents.length > MAX_FALLBACK_EVENTS_PER_UNIVERSE
+    || retainedEvents.reduce(
+      (total, event) => total + event.serializedBytes,
+      0
+    ) > MAX_FALLBACK_EVENT_BYTES_PER_UNIVERSE;
+}
+
+function trimFallbackEvents(
+  state: FallbackUniverseState,
+  allowPendingEviction: boolean
+): void {
+  while (fallbackEventRetentionExceedsLimit(state)) {
+    if (state.events.length > 0) {
+      state.events.shift();
+    } else if (allowPendingEviction && state.pendingEvents.length > 0) {
+      state.pendingEvents.shift();
+    } else {
+      return;
     }
-    return id;
-  } catch (error) {
-    console.warn('Backstage Booker: falling back to in-memory events store', (error as Error).message);
-    events.push({ id, data });
-    return id;
   }
 }
 
-export async function updateRoster(payload: unknown): Promise<Wrestler[]> {
-  const wrestlers = parseBackstageRosterPayload(payload);
+function rememberEvent(universeId: string, event: FallbackEventEntry): void {
+  const state = tryGetFallbackUniverseState(universeId);
+  if (!state) {
+    return;
+  }
+  state.events.push(event);
+  trimFallbackEvents(state, false);
+}
 
-  let mutationResult: Awaited<ReturnType<typeof applyBackstageRosterMutation>>;
-  try {
-    mutationResult = await transaction(
-      client => applyBackstageRosterMutation(client, wrestlers)
+function replaceFallbackRoster(
+  state: FallbackUniverseState,
+  nextRoster: Wrestler[]
+): Wrestler[] {
+  state.roster = nextRoster
+    .map(wrestler => ({ name: wrestler.name, overall: wrestler.overall }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return [...state.roster];
+}
+
+function projectMergedRoster(current: Wrestler[], wrestlers: Wrestler[]): Wrestler[] {
+  const byName = new Map(current.map(wrestler => [wrestler.name, wrestler]));
+  for (const wrestler of wrestlers) {
+    byName.set(wrestler.name, { name: wrestler.name, overall: wrestler.overall });
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function rememberPendingEvent(universeId: string, event: FallbackEventEntry): void {
+  const state = getFallbackUniverseState(universeId);
+  state.pendingEvents.push(event);
+  trimFallbackEvents(state, true);
+}
+
+function mergePendingRoster(
+  universeId: string,
+  wrestlers: Wrestler[],
+  operationSequence: number,
+  persistence: BackstageNonDurablePersistence
+): void {
+  const state = getFallbackUniverseState(universeId);
+  const pendingByName = new Map(
+    state.pendingRoster.map(entry => [entry.wrestler.name, entry])
+  );
+  const updatedAt = new Date();
+  for (const wrestler of wrestlers) {
+    const appliedSequence = state.rosterOperationSequences.get(wrestler.name) ?? 0;
+    if (operationSequence < appliedSequence) {
+      continue;
+    }
+    state.rosterOperationSequences.set(wrestler.name, operationSequence);
+    pendingByName.set(wrestler.name, {
+      wrestler: { name: wrestler.name, overall: wrestler.overall },
+      updatedAt,
+      operationSequence,
+      persistence
+    });
+  }
+  state.pendingRoster = [...pendingByName.values()];
+}
+
+function recordDurableRosterOperation(
+  state: FallbackUniverseState,
+  wrestlers: Wrestler[],
+  operationSequence: number
+): void {
+  for (const wrestler of wrestlers) {
+    const appliedSequence = state.rosterOperationSequences.get(wrestler.name) ?? 0;
+    if (operationSequence >= appliedSequence) {
+      state.rosterOperationSequences.set(wrestler.name, operationSequence);
+    }
+  }
+}
+
+function latestRosterViewOperationSequence(
+  state: FallbackUniverseState,
+  fallbackSequence: number
+): number {
+  let latest = fallbackSequence;
+  for (const sequence of state.rosterOperationSequences.values()) {
+    latest = Math.max(latest, sequence);
+  }
+  return latest;
+}
+
+function clearPendingRosterNames(
+  state: FallbackUniverseState,
+  wrestlers: Wrestler[],
+  operationSequence: number
+): void {
+  const durableNames = new Set(wrestlers.map(wrestler => wrestler.name));
+  state.pendingRoster = state.pendingRoster.filter(
+    entry => (
+      !durableNames.has(entry.wrestler.name)
+      || entry.operationSequence > operationSequence
+    )
+  );
+}
+
+function rememberPendingStoryBeat(
+  universeId: string,
+  data: StorylineBeat,
+  operationSequence: number,
+  persistence: BackstageNonDurablePersistence
+): void {
+  const state = getFallbackUniverseState(universeId);
+  state.pendingStorylines.push({
+    data,
+    createdAt: new Date(),
+    operationSequence,
+    persistence
+  });
+  state.pendingStorylines.splice(
+    0,
+    Math.max(0, state.pendingStorylines.length - 100)
+  );
+}
+
+function shouldAcceptSavedStorylineVersion(
+  current: SavedStorylineVersion | null,
+  operationSequence: number,
+  persistence: BackstageDurablePersistence | BackstageNonDurablePersistence,
+  revision: string | null
+): boolean {
+  if (!current) {
+    return true;
+  }
+  if (persistence.status !== 'durable') {
+    return operationSequence >= current.operationSequence;
+  }
+  if (current.persistence.status !== 'durable') {
+    return operationSequence >= current.operationSequence;
+  }
+  return revision !== null
+    && current.revision !== null
+    && BigInt(revision) > BigInt(current.revision);
+}
+
+function versionFromSavedStoryline(
+  entry: SavedStorylineEntry | PendingSavedStorylineEntry
+): SavedStorylineVersion {
+  return {
+    operationSequence: entry.operationSequence,
+    viewSequence: entry.viewSequence,
+    revision: 'revision' in entry ? entry.revision : null,
+    persistence: entry.persistence
+  };
+}
+
+function pruneSavedStorylineVersions(
+  universeId: string,
+  state: FallbackUniverseState
+): void {
+  const retainedKeys = new Set([
+    ...state.savedStorylines.map(entry => entry.key),
+    ...state.pendingSavedStorylines.map(entry => entry.key),
+    ...(state.latestSavedStoryline ? [state.latestSavedStoryline.key] : [])
+  ]);
+  for (const key of state.savedStorylineVersions.keys()) {
+    const byKeyMemoryKey = buildBackstageStorylineByKeyMemoryKey(universeId, key);
+    if (
+      !retainedKeys.has(key)
+      && (activeMemorySnapshotOperationSequences.get(byKeyMemoryKey)?.size ?? 0) === 0
+    ) {
+      state.savedStorylineVersions.delete(key);
+    }
+  }
+}
+
+function acceptSavedStoryline(
+  universeId: string,
+  state: FallbackUniverseState,
+  key: string,
+  storyline: string,
+  operationSequence: number,
+  persistence: BackstageDurablePersistence | BackstageNonDurablePersistence,
+  revision: string | null
+): SavedStorylineEntry | PendingSavedStorylineEntry | null {
+  const currentVersion = state.savedStorylineVersions.get(key) ?? null;
+  if (!shouldAcceptSavedStorylineVersion(
+    currentVersion,
+    operationSequence,
+    persistence,
+    revision
+  )) {
+    return latestSavedStorylineForKey(state, key);
+  }
+
+  const viewSequence = ++fallbackSavedStorylineViewSequence;
+  const updatedAt = new Date();
+  let accepted: SavedStorylineEntry | PendingSavedStorylineEntry;
+  if (persistence.status === 'durable') {
+    if (revision === null) {
+      throw new TypeError('Durable saved-storyline persistence requires a revision.');
+    }
+    state.pendingSavedStorylines = state.pendingSavedStorylines.filter(
+      entry => entry.key !== key
     );
-  } catch (error: unknown) {
-    throw new BackstageRosterPersistenceError({
-      retryable: isRetryableBackstageRosterPersistenceCause(error),
-      cause: error
+    state.savedStorylines = state.savedStorylines.filter(entry => entry.key !== key);
+    accepted = {
+      key,
+      storyline,
+      updatedAt,
+      operationSequence,
+      viewSequence,
+      revision,
+      persistence
+    };
+    state.savedStorylines.push(accepted);
+    state.savedStorylines.splice(0, Math.max(0, state.savedStorylines.length - 5));
+  } else {
+    state.pendingSavedStorylines = state.pendingSavedStorylines.filter(
+      entry => entry.key !== key
+    );
+    accepted = {
+      key,
+      storyline,
+      updatedAt,
+      operationSequence,
+      viewSequence,
+      persistence
+    };
+    state.pendingSavedStorylines.push(accepted);
+    state.pendingSavedStorylines.splice(
+      0,
+      Math.max(0, state.pendingSavedStorylines.length - 5)
+    );
+  }
+
+  state.savedStorylineVersions.set(key, versionFromSavedStoryline(accepted));
+  const latestVersion = state.latestSavedStoryline
+    ? versionFromSavedStoryline(state.latestSavedStoryline)
+    : null;
+  if (shouldAcceptSavedStorylineVersion(
+    latestVersion,
+    operationSequence,
+    persistence,
+    revision
+  )) {
+    state.latestSavedStoryline = accepted;
+  }
+  pruneSavedStorylineVersions(universeId, state);
+  return accepted;
+}
+
+function latestPendingSavedStoryline(
+  state: FallbackUniverseState,
+  key: string
+): PendingSavedStorylineEntry | null {
+  return state.pendingSavedStorylines.reduce<PendingSavedStorylineEntry | null>(
+    (latest, entry) => (
+      entry.key === key
+      && (!latest || entry.operationSequence > latest.operationSequence)
+        ? entry
+        : latest
+    ),
+    null
+  );
+}
+
+function latestSavedStorylineForKey(
+  state: FallbackUniverseState,
+  key: string
+): SavedStorylineEntry | PendingSavedStorylineEntry | null {
+  const version = state.savedStorylineVersions.get(key);
+  if (!version) {
+    return null;
+  }
+  const pending = latestPendingSavedStoryline(state, key);
+  if (pending?.viewSequence === version.viewSequence) {
+    return pending;
+  }
+  return state.savedStorylines.find(entry => (
+    entry.key === key && entry.viewSequence === version.viewSequence
+  )) ?? null;
+}
+
+function effectiveFallbackRoster(state: FallbackUniverseState): Wrestler[] {
+  return projectMergedRoster(
+    state.roster,
+    state.pendingRoster.map(entry => entry.wrestler)
+  );
+}
+
+function latestPendingRosterPersistence(
+  state: FallbackUniverseState
+): BackstageNonDurablePersistence | null {
+  return state.pendingRoster.reduce<PendingRosterEntry | null>(
+    (latest, entry) => (
+      !latest || entry.operationSequence > latest.operationSequence ? entry : latest
+    ),
+    null
+  )?.persistence ?? null;
+}
+
+function effectiveFallbackEvents(
+  state: FallbackUniverseState
+): FallbackUniverseState['events'] {
+  const byId = new Map(state.events.map(event => [event.id, event]));
+  for (const event of state.pendingEvents) {
+    byId.set(event.id, event);
+  }
+  return [...byId.values()]
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+    .slice(-25);
+}
+
+function effectiveFallbackStoryBeats(state: FallbackUniverseState): StorylineBeat[] {
+  const ordered = state.storylines.map((data, index) => ({
+    data,
+    operationSequence: state.storylineOperationSequences[index] ?? null,
+    durable: true
+  }));
+  const pending = [...state.pendingStorylines].sort(
+    (left, right) => left.operationSequence - right.operationSequence
+  );
+
+  for (const entry of pending) {
+    const nextDurableIndex = ordered.findIndex(candidate => (
+      candidate.durable
+      && candidate.operationSequence !== null
+      && candidate.operationSequence > entry.operationSequence
+    ));
+    const pendingEntry = {
+      data: entry.data,
+      operationSequence: entry.operationSequence,
+      durable: false
+    };
+    if (nextDurableIndex < 0) {
+      ordered.push(pendingEntry);
+    } else {
+      ordered.splice(nextDurableIndex, 0, pendingEntry);
+    }
+  }
+
+  return ordered.reduce<StorylineBeat[]>(
+    (retained, entry) => appendBoundedBackstageStorylineBeat(retained, entry.data),
+    []
+  );
+}
+
+function latestStorylineViewOperationSequence(
+  state: FallbackUniverseState,
+  fallbackSequence: number
+): number {
+  let latest = fallbackSequence;
+  for (const sequence of state.storylineOperationSequences) {
+    if (sequence !== null) {
+      latest = Math.max(latest, sequence);
+    }
+  }
+  for (const pending of state.pendingStorylines) {
+    latest = Math.max(latest, pending.operationSequence);
+  }
+  return latest;
+}
+
+function latestPendingStorylinePersistence(
+  state: FallbackUniverseState
+): BackstageNonDurablePersistence | null {
+  return state.pendingStorylines.reduce<PendingStoryBeatEntry | null>(
+    (latest, entry) => (
+      !latest || entry.operationSequence > latest.operationSequence ? entry : latest
+    ),
+    null
+  )?.persistence ?? null;
+}
+
+function effectiveFallbackSavedStorylines(
+  state: FallbackUniverseState
+): Array<SavedStorylineEntry | PendingSavedStorylineEntry> {
+  const byKey = new Map<string, SavedStorylineEntry | PendingSavedStorylineEntry>(
+    state.savedStorylines.map(storyline => [storyline.key, storyline])
+  );
+  for (const storyline of state.pendingSavedStorylines) {
+    byKey.set(storyline.key, storyline);
+  }
+  const ordered = [...byKey.values()]
+    .sort((left, right) => (
+      left.operationSequence - right.operationSequence
+      || left.updatedAt.getTime() - right.updatedAt.getTime()
+    ));
+  const latest = state.latestSavedStoryline;
+  if (latest) {
+    const latestIndex = ordered.findIndex(entry => entry.key === latest.key);
+    if (latestIndex >= 0) {
+      ordered.splice(latestIndex, 1);
+    }
+    ordered.push(latest);
+  }
+  return ordered.slice(-5);
+}
+
+function overlayPendingContext(
+  universeId: string,
+  context: BackstageContext
+): BackstageContext {
+  const state = fallbackUniverseState.get(universeId);
+  if (!state) {
+    return context;
+  }
+
+  const rosterByName = new Map(context.roster.map(wrestler => [wrestler.name, wrestler]));
+  for (const pending of state.pendingRoster) {
+    rosterByName.set(pending.wrestler.name, {
+      ...pending.wrestler,
+      updatedAt: pending.updatedAt
     });
   }
 
-  const committedRevision = BigInt(mutationResult.revision);
-  if (rosterRevision === null || committedRevision > rosterRevision) {
-    roster = mutationResult.roster;
-    rosterRevision = committedRevision;
+  const eventById = new Map(context.events.map(event => [event.id, event]));
+  for (const pending of state.pendingEvents) {
+    eventById.set(pending.id, {
+      ...pending,
+      universeId
+    });
   }
-  await persistLatestRosterSnapshot(
-    mutationResult.roster,
-    "database",
-    mutationResult.revision
+
+  const storylinesByKey = new Map(
+    context.storylines.map(storyline => [storyline.storyKey, storyline])
   );
-  return mutationResult.roster;
+  for (const pending of state.pendingSavedStorylines) {
+    storylinesByKey.set(pending.key, {
+      id: `process-memory:${pending.key}`,
+      universeId,
+      storyKey: pending.key,
+      storyline: pending.storyline,
+      createdAt: pending.updatedAt,
+      updatedAt: pending.updatedAt
+    });
+  }
+
+  const storyBeats = [
+    ...context.storyBeats,
+    ...state.pendingStorylines.map((pending, index) => ({
+      id: `process-memory:${index}`,
+      universeId,
+      data: pending.data,
+      createdAt: pending.createdAt
+    }))
+  ]
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+    .slice(-BACKSTAGE_STORYLINE_PROMPT_BEATS);
+
+  const storylines = [...storylinesByKey.values()]
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+  const latestPending = state.latestSavedStoryline?.persistence.status === 'non_durable'
+    ? state.latestSavedStoryline
+    : null;
+  if (latestPending) {
+    const latestIndex = storylines.findIndex(storyline => (
+      storyline.storyKey === latestPending.key
+    ));
+    if (latestIndex >= 0) {
+      const [latestStoryline] = storylines.splice(latestIndex, 1);
+      if (latestStoryline) {
+        storylines.unshift(latestStoryline);
+      }
+    }
+  }
+
+  return {
+    roster: [...rosterByName.values()].sort(
+      (left, right) => left.name.localeCompare(right.name)
+    ),
+    events: [...eventById.values()]
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .slice(0, 5),
+    storyBeats,
+    storylines: storylines.slice(0, 5)
+  };
 }
 
-export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]> {
-  const data = parseBackstageStorylinePayload(payload);
-  const serializedData = JSON.stringify(data);
+function storyBeatSignature(beat: StorylineBeat): string {
+  return JSON.stringify(beat);
+}
 
-  let mutationResult: Awaited<ReturnType<typeof applyBackstageStorylineMutation>>;
-  try {
-    mutationResult = await transaction(
-      client => applyBackstageStorylineMutation(client, serializedData),
-      { commitErrorMode: 'ambiguous' }
-    );
-  } catch (error: unknown) {
-    if (
-      isTransactionCommitAmbiguousError(error)
-      || !isRetryableBackstageStorylinePersistenceCause(error)
+function reconcileFallbackStoryBeats(
+  state: FallbackUniverseState,
+  retainedBeats: StorylineBeat[],
+  operationSequence: number
+): StorylineBeat[] {
+  const priorBeats = state.storylines;
+  const priorSequences = state.storylineOperationSequences;
+  const nextSequences = Array<number | null>(retainedBeats.length).fill(null);
+  let priorIndex = priorBeats.length - 1;
+
+  // The repository result is append-only and places the newly committed beat
+  // last. Align the retained prefix backwards so repeated, equal beats keep
+  // the newest matching durable anchor after the bounded history trims.
+  for (let nextIndex = retainedBeats.length - 2; nextIndex >= 0; nextIndex -= 1) {
+    const signature = storyBeatSignature(retainedBeats[nextIndex]);
+    while (
+      priorIndex >= 0
+      && storyBeatSignature(priorBeats[priorIndex]) !== signature
     ) {
-      throw new BackstageStorylinePersistenceError(error);
+      priorIndex -= 1;
     }
-    console.warn(
-      'Backstage Booker: storyline DB unavailable, using bounded in-memory log',
-      resolveErrorMessage(error)
+    if (priorIndex >= 0) {
+      nextSequences[nextIndex] = priorSequences[priorIndex] ?? null;
+      priorIndex -= 1;
+    }
+  }
+  if (retainedBeats.length > 0) {
+    nextSequences[retainedBeats.length - 1] = operationSequence;
+  }
+
+  state.storylines.splice(0, state.storylines.length, ...retainedBeats);
+  state.storylineOperationSequences = nextSequences;
+  return selectBackstageStorylineResponseBeats(state.storylines);
+}
+
+function rememberStoryBeat(
+  universeId: string,
+  data: StorylineBeat,
+  operationSequence: number
+): StorylineBeat[] {
+  const state = getFallbackUniverseState(universeId);
+  const retained = appendBoundedBackstageStorylineBeat(state.storylines, data);
+  const retainedPriorCount = retained.length - 1;
+  const retainedPriorSequences = retainedPriorCount > 0
+    ? state.storylineOperationSequences.slice(-retainedPriorCount)
+    : [];
+  state.storylines.splice(0, state.storylines.length, ...retained);
+  state.storylineOperationSequences = [
+    ...retainedPriorSequences,
+    operationSequence
+  ];
+  return selectBackstageStorylineResponseBeats(state.storylines);
+}
+
+function normalizeHrcResult(result: BackstageHrcResult): BackstageHrcResult {
+  const fidelity = Number(result.fidelity);
+  const resilience = Number(result.resilience);
+  return {
+    fidelity: Number.isFinite(fidelity) ? Math.min(1, Math.max(0, fidelity)) : 0,
+    resilience: Number.isFinite(resilience) ? Math.min(1, Math.max(0, resilience)) : 0,
+    verdict: String(result.verdict || 'HRC unavailable').slice(0, 1000)
+  };
+}
+
+function normalizeRepositoryRosterMutation(value: unknown): {
+  roster: Wrestler[];
+  revision?: string;
+} {
+  if (Array.isArray(value)) {
+    return { roster: value.flatMap(wrestler => parseBackstageRosterPayload([wrestler])) };
+  }
+  const record = value as { roster?: unknown; revision?: unknown } | null;
+  if (!Array.isArray(record?.roster)) {
+    throw new Error('Backstage roster repository returned an invalid roster.');
+  }
+  return {
+    roster: record.roster.flatMap(wrestler => parseBackstageRosterPayload([wrestler])),
+    ...(typeof record?.revision === 'string' ? { revision: record.revision } : {})
+  };
+}
+
+function normalizeRepositoryStorylineMutation(value: unknown): {
+  retainedBeats: StorylineBeat[];
+  revision?: string;
+} {
+  if (Array.isArray(value)) {
+    return { retainedBeats: value.map(parseBackstageStorylinePayload) };
+  }
+  const record = value as {
+    retainedBeats?: unknown;
+    beats?: unknown;
+    revision?: unknown;
+  } | null;
+  const candidate = record?.retainedBeats ?? record?.beats;
+  if (!Array.isArray(candidate)) {
+    throw new Error('Backstage storyline repository returned an invalid timeline.');
+  }
+  return {
+    retainedBeats: candidate.map(parseBackstageStorylinePayload),
+    ...(typeof record?.revision === 'string' ? { revision: record.revision } : {})
+  };
+}
+
+function normalizeRepositorySavedStorylineMutation(value: unknown): {
+  revision: string;
+} {
+  const revision = (value as { revision?: unknown } | null)?.revision;
+  if (typeof revision !== 'string' || !/^[0-9]{1,20}$/u.test(revision)) {
+    throw new TypeError(
+      'Backstage saved-storyline repository returned an invalid revision.'
     );
-    const retainedFallback = appendBoundedBackstageStorylineBeat(storylines, data);
-    storylines.splice(0, storylines.length, ...retainedFallback);
-    return selectBackstageStorylineResponseBeats(storylines);
+  }
+  return { revision };
+}
+
+export function bookEvent(data: EventData): Promise<string>;
+export function bookEvent(data: EventData, universeId: string): Promise<BackstageBookEventResponse>;
+export async function bookEvent(
+  data: EventData,
+  universeId?: string
+): Promise<string | BackstageBookEventResponse> {
+  const structuredResponse = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('bookEvent', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    event: data
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const id = randomUUID();
+  // Capture one immutable value before any write awaits so database and fallback continuity
+  // cannot diverge if a programmatic caller later mutates its original object.
+  const eventSnapshot = snapshotFallbackEvent(id, input.event);
+  let persistence: BackstagePersistence;
+
+  try {
+    await getBackstageRepository().bookEvent(resolvedUniverseId, eventSnapshot.data, id);
+    persistence = DURABLE_PERSISTENCE;
+  } catch (error) {
+    const degradedPersistence = persistenceForDatabaseError(error);
+    if (!degradedPersistence) {
+      throw error;
+    }
+    persistence = degradedPersistence;
+    if (!structuredResponse && persistence.status === 'unknown') {
+      throw error;
+    }
+    console.warn('Backstage Booker: event persistence degraded', persistence.status);
   }
 
-  const committedRevision = BigInt(mutationResult.revision);
-  if (storylineRevision === null || committedRevision > storylineRevision) {
-    storylines.length = 0;
-    storylines.push(...mutationResult.retainedBeats);
-    storylineRevision = committedRevision;
+  if (persistence.status === 'durable') {
+    rememberEvent(resolvedUniverseId, eventSnapshot);
+  } else if (persistence.status === 'non_durable') {
+    rememberPendingEvent(resolvedUniverseId, eventSnapshot);
   }
+  if (!structuredResponse) {
+    return id;
+  }
+  return assertValidBackstageBookerActionData('bookEvent', {
+    universeId: resolvedUniverseId,
+    eventId: id,
+    persistence
+  });
+}
 
-  const responseBeats = selectBackstageStorylineResponseBeats(
-    mutationResult.retainedBeats
-  );
-  await persistLatestStoryBeatsSnapshot(responseBeats, mutationResult.revision);
-  return responseBeats;
+export function updateRoster(payload: unknown): Promise<Wrestler[]>;
+export function updateRoster(payload: unknown, universeId: string): Promise<BackstageUpdateRosterResponse>;
+export async function updateRoster(
+  payload: unknown,
+  universeId?: string
+): Promise<Wrestler[] | BackstageUpdateRosterResponse> {
+  const wrestlers = parseBackstageRosterPayload(payload);
+  const structuredResponse = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('updateRoster', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    wrestlers
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const operationSequence = ++fallbackRosterOperationSequence;
+  const finishOperation = registerFallbackOperation(resolvedUniverseId, [{
+    key: buildBackstageUniverseMemoryKey(resolvedUniverseId, 'roster:latest'),
+    sequence: operationSequence
+  }]);
+
+  try {
+    if (structuredResponse) {
+      let persistence: BackstagePersistence;
+      let resolvedRoster: Wrestler[];
+      let revision: string | undefined;
+
+      try {
+        const mutation = normalizeRepositoryRosterMutation(
+          await getBackstageRepository().updateRoster(resolvedUniverseId, input.wrestlers)
+        );
+        revision = mutation.revision;
+        const state = tryGetFallbackUniverseState(resolvedUniverseId);
+        if (state) {
+          recordDurableRosterOperation(state, input.wrestlers, operationSequence);
+          clearPendingRosterNames(state, input.wrestlers, operationSequence);
+          if (
+            !revision
+            || state.rosterRevision === null
+            || BigInt(revision) > state.rosterRevision
+          ) {
+            replaceFallbackRoster(state, mutation.roster);
+            if (revision) {
+              state.rosterRevision = BigInt(revision);
+            }
+          }
+          resolvedRoster = effectiveFallbackRoster(state);
+        } else {
+          resolvedRoster = mutation.roster;
+        }
+        persistence = DURABLE_PERSISTENCE;
+      } catch (error) {
+        const degradedPersistence = persistenceForDatabaseError(error);
+        if (!degradedPersistence) {
+          throw error;
+        }
+        persistence = degradedPersistence;
+        if (persistence.status === 'non_durable') {
+          mergePendingRoster(
+            resolvedUniverseId,
+            input.wrestlers,
+            operationSequence,
+            persistence
+          );
+        }
+        const state = fallbackUniverseState.get(resolvedUniverseId);
+        resolvedRoster = state ? effectiveFallbackRoster(state) : [];
+        console.warn('Backstage Booker: roster persistence degraded', persistence.status);
+      }
+
+      if (persistence.status !== 'unknown') {
+        const state = fallbackUniverseState.get(resolvedUniverseId);
+        const snapshotPersistence = state
+          ? latestPendingRosterPersistence(state) ?? DURABLE_PERSISTENCE
+          : persistence;
+        await persistLatestRosterSnapshot(
+          resolvedUniverseId,
+          resolvedRoster,
+          snapshotPersistence,
+          state
+            ? latestRosterViewOperationSequence(state, operationSequence)
+            : operationSequence,
+          revision
+        );
+      }
+      return assertValidBackstageBookerActionData('updateRoster', {
+        universeId: resolvedUniverseId,
+        roster: resolvedRoster,
+        persistence
+      });
+    }
+
+    const state = getFallbackUniverseState(resolvedUniverseId);
+    let mutationResult: Awaited<ReturnType<typeof applyBackstageRosterMutation>>;
+    try {
+      mutationResult = await transaction(
+        client => applyBackstageRosterMutation(client, wrestlers, resolvedUniverseId)
+      );
+    } catch (error: unknown) {
+      throw new BackstageRosterPersistenceError({
+        retryable: isRetryableBackstageRosterPersistenceCause(error),
+        cause: error
+      });
+    }
+
+    const committedRevision = BigInt(mutationResult.revision);
+    if (state.rosterRevision === null || committedRevision > state.rosterRevision) {
+      replaceFallbackRoster(state, mutationResult.roster);
+      state.rosterRevision = committedRevision;
+    }
+    recordDurableRosterOperation(state, wrestlers, operationSequence);
+    clearPendingRosterNames(state, wrestlers, operationSequence);
+    await persistLatestRosterSnapshot(
+      resolvedUniverseId,
+      mutationResult.roster,
+      DURABLE_PERSISTENCE,
+      latestRosterViewOperationSequence(state, operationSequence),
+      mutationResult.revision
+    );
+    return mutationResult.roster;
+  } finally {
+    finishOperation();
+  }
+}
+
+export function trackStoryline(payload: unknown): Promise<StorylineBeat[]>;
+export function trackStoryline(payload: unknown, universeId: string): Promise<BackstageTrackStorylineResponse>;
+export async function trackStoryline(
+  payload: unknown,
+  universeId?: string
+): Promise<StorylineBeat[] | BackstageTrackStorylineResponse> {
+  const data = parseBackstageStorylinePayload(payload);
+  const structuredResponse = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('trackStoryline', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    beat: data
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const operationSequence = ++fallbackStorylineOperationSequence;
+  const finishOperation = registerFallbackOperation(resolvedUniverseId, [{
+    key: buildBackstageUniverseMemoryKey(resolvedUniverseId, 'storybeats:latest'),
+    sequence: operationSequence
+  }]);
+
+  try {
+    if (structuredResponse) {
+      let persistence: BackstagePersistence;
+      let responseBeats: StorylineBeat[];
+      let revision: string | undefined;
+
+      try {
+        const mutation = normalizeRepositoryStorylineMutation(
+          await getBackstageRepository().trackStoryline(resolvedUniverseId, input.beat)
+        );
+        revision = mutation.revision;
+        const state = tryGetFallbackUniverseState(resolvedUniverseId);
+        if (state) {
+          if (
+            !revision
+            || state.storylineRevision === null
+            || BigInt(revision) > state.storylineRevision
+          ) {
+            reconcileFallbackStoryBeats(
+              state,
+              mutation.retainedBeats,
+              operationSequence
+            );
+            if (revision) {
+              state.storylineRevision = BigInt(revision);
+            }
+          }
+          responseBeats = selectBackstageStorylineResponseBeats(
+            effectiveFallbackStoryBeats(state)
+          );
+        } else {
+          responseBeats = selectBackstageStorylineResponseBeats(mutation.retainedBeats);
+        }
+        persistence = DURABLE_PERSISTENCE;
+      } catch (error) {
+        const degradedPersistence = persistenceForDatabaseError(error);
+        if (!degradedPersistence) {
+          throw error;
+        }
+        persistence = degradedPersistence;
+        if (persistence.status === 'non_durable') {
+          rememberPendingStoryBeat(
+            resolvedUniverseId,
+            input.beat,
+            operationSequence,
+            persistence
+          );
+        }
+        const state = fallbackUniverseState.get(resolvedUniverseId);
+        responseBeats = selectBackstageStorylineResponseBeats(
+          state ? effectiveFallbackStoryBeats(state) : []
+        );
+        console.warn('Backstage Booker: story-beat persistence degraded', persistence.status);
+      }
+
+      if (persistence.status !== 'unknown') {
+        const state = fallbackUniverseState.get(resolvedUniverseId);
+        const snapshotPersistence = persistence.status === 'durable' && state
+          ? latestPendingStorylinePersistence(state) ?? persistence
+          : persistence;
+        await persistLatestStoryBeatsSnapshot(
+          resolvedUniverseId,
+          responseBeats,
+          snapshotPersistence,
+          state
+            ? latestStorylineViewOperationSequence(state, operationSequence)
+            : operationSequence,
+          revision
+        );
+      }
+      return assertValidBackstageBookerActionData('trackStoryline', {
+        universeId: resolvedUniverseId,
+        beats: responseBeats,
+        persistence
+      });
+    }
+
+    const state = getFallbackUniverseState(resolvedUniverseId);
+    const serializedData = JSON.stringify(data);
+
+    let mutationResult: Awaited<ReturnType<typeof applyBackstageStorylineMutation>>;
+    try {
+      mutationResult = await transaction(
+        client => applyBackstageStorylineMutation(client, serializedData, resolvedUniverseId),
+        { commitErrorMode: 'ambiguous' }
+      );
+    } catch (error: unknown) {
+      if (
+        isTransactionCommitAmbiguousError(error)
+        || !isRetryableBackstageStorylinePersistenceCause(error)
+      ) {
+        throw new BackstageStorylinePersistenceError(error);
+      }
+      console.warn(
+        'Backstage Booker: storyline DB unavailable, using bounded in-memory log',
+        resolveErrorMessage(error)
+      );
+      return rememberStoryBeat(resolvedUniverseId, data, operationSequence);
+    }
+
+    const committedRevision = BigInt(mutationResult.revision);
+    if (state.storylineRevision === null || committedRevision > state.storylineRevision) {
+      reconcileFallbackStoryBeats(state, mutationResult.retainedBeats, operationSequence);
+      state.storylineRevision = committedRevision;
+    }
+
+    const responseBeats = selectBackstageStorylineResponseBeats(
+      mutationResult.retainedBeats
+    );
+    await persistLatestStoryBeatsSnapshot(
+      resolvedUniverseId,
+      responseBeats,
+      DURABLE_PERSISTENCE,
+      latestStorylineViewOperationSequence(state, operationSequence),
+      mutationResult.revision
+    );
+    return responseBeats;
+  } finally {
+    finishOperation();
+  }
 }
 
 /**
@@ -619,19 +2035,33 @@ export async function trackStoryline(payload: unknown): Promise<StorylineBeat[]>
  * Inputs/outputs: natural-language booking prompt -> finalized storyline or booking plan string.
  * Edge cases: exact-literal anti-simulation prompts short-circuit before persona/context expansion, and database failures fall back to in-memory continuity snapshots.
  */
-export async function generateBooking(prompt: string): Promise<string> {
-  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(prompt);
+export async function generateBooking(
+  prompt: string,
+  universeId?: string
+): Promise<string> {
+  const structuredScope = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('generateBooking', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    prompt
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(input.prompt);
   //audit Assumption: literal-only backstage prompts should bypass persona/context expansion; failure risk: the booker persona or context scaffolding wraps the required literal in storytelling language; expected invariant: recognized exact-literal directives return verbatim output; handling strategy: short-circuit before prompt construction and provider invocation.
   if (exactLiteralShortcut) {
-    return exactLiteralShortcut.literal;
+    return assertValidBackstageBookerActionData(
+      'generateBooking',
+      exactLiteralShortcut.literal
+    ) as string;
   }
 
   const model = resolveBackstageBookerModel();
   const tokenLimit = resolveBackstageBookerTokenLimit(
-    prompt,
+    input.prompt,
     getEnvNumber('BOOKER_TOKEN_LIMIT', 512)
   );
-  const instructions = await buildStructuredBookingPrompt(prompt);
+  const instructions = structuredScope
+    ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
+    : await buildLegacyStructuredBookingPrompt(input.prompt);
   try {
     const { client } = getOpenAIClientOrAdapter();
     if (!client) {
@@ -644,7 +2074,8 @@ export async function generateBooking(prompt: string): Promise<string> {
         sourceEndpoint: 'backstage-booker.generateBooking',
         requestedAction: 'generateBooking',
         body: {
-          prompt,
+          prompt: input.prompt,
+          ...(structuredScope ? { universeId: resolvedUniverseId } : {}),
           model,
           tokenLimit
         },
@@ -663,69 +2094,212 @@ export async function generateBooking(prompt: string): Promise<string> {
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
-    if (shouldPreferDirectAnswerMode(prompt)) {
-      return applyBackstageDirectAnswerOutputContract(clean, prompt);
+    if (shouldPreferDirectAnswerMode(input.prompt)) {
+      return assertValidBackstageBookerActionData(
+        'generateBooking',
+        applyBackstageDirectAnswerOutputContract(clean, input.prompt)
+      ) as string;
     }
-    return clean;
+    return assertValidBackstageBookerActionData('generateBooking', clean) as string;
   } catch (error) {
     console.error('Failed to generate booking storyline:', error);
     throw new Error('Booking generation failed');
   }
 }
 
-export async function saveStoryline(key: string, storyline: string): Promise<boolean> {
-  const data = { key, storyline };
-  const result = await saveWithAuditCheck(
-    'backstage_booker',
-    data,
-    d => typeof d.storyline === 'string' && d.storyline.trim().length > 0
-  );
-  if (result) {
-    try {
-      await query(
-        `INSERT INTO backstage_storylines (story_key, storyline, created_at, updated_at)
-         VALUES ($1, $2, NOW(), NOW())
-         ON CONFLICT (story_key)
-         DO UPDATE SET storyline = EXCLUDED.storyline, updated_at = NOW()`,
-        [key, storyline]
-      );
-    } catch (error) {
-      console.warn('Backstage Booker: failed to persist storyline to DB', (error as Error).message);
+export function saveStoryline(key: string, storyline: string): Promise<boolean>;
+export function saveStoryline(
+  key: string,
+  storyline: string,
+  universeId: string
+): Promise<BackstageSaveStorylineResponse>;
+export async function saveStoryline(
+  key: string,
+  storyline: string,
+  universeId?: string
+): Promise<boolean | BackstageSaveStorylineResponse> {
+  const structuredResponse = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('saveStoryline', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    key: key.trim(),
+    storyline
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const operationSequence = ++fallbackSavedStorylineOperationSequence;
+  const finishOperation = registerFallbackOperation(resolvedUniverseId, [
+    {
+      key: buildBackstageUniverseMemoryKey(resolvedUniverseId, 'storyline:latest'),
+      sequence: operationSequence
+    },
+    {
+      key: buildBackstageStorylineByKeyMemoryKey(resolvedUniverseId, input.key),
+      sequence: operationSequence
     }
-    await persistLatestStorylineSnapshot(key, storyline, "database");
-  } else {
-    //audit Assumption: failed audit-safe validation should still keep a transient breadcrumb for operators; failure risk: lost debugging context; expected invariant: invalid data not written to core storyline table; handling strategy: write fallback-tagged snapshot key only.
-    await persistLatestStorylineSnapshot(key, storyline, "fallback");
+  ]);
+
+  try {
+    let persistence: BackstagePersistence;
+    let durableRevision: string | null = null;
+
+    try {
+      const mutation = normalizeRepositorySavedStorylineMutation(
+        await getBackstageRepository().saveStoryline(
+          resolvedUniverseId,
+          input.key,
+          input.storyline
+        )
+      );
+      durableRevision = mutation.revision;
+      persistence = DURABLE_PERSISTENCE;
+    } catch (error) {
+      const degradedPersistence = persistenceForDatabaseError(error);
+      if (!degradedPersistence) {
+        throw error;
+      }
+      persistence = degradedPersistence;
+      if (!structuredResponse && persistence.status === 'unknown') {
+        throw error;
+      }
+      console.warn('Backstage Booker: storyline persistence degraded', persistence.status);
+    }
+
+    //audit Assumption: an unknown commit outcome cannot safely feed any secondary store; failure risk: a speculative mirror becomes the only visible truth while PostgreSQL may or may not contain the write; expected invariant: unknown outcomes have zero fallback, audit, or convenience side effects; handling strategy: return the explicit receipt before all secondary persistence.
+    if (persistence.status !== 'unknown') {
+      const state = persistence.status === 'non_durable'
+        ? getFallbackUniverseState(resolvedUniverseId)
+        : tryGetFallbackUniverseState(resolvedUniverseId);
+      let visible: SavedStorylineEntry | PendingSavedStorylineEntry | null;
+      let latest: SavedStorylineEntry | PendingSavedStorylineEntry | null;
+      if (state) {
+        visible = acceptSavedStoryline(
+          resolvedUniverseId,
+          state,
+          input.key,
+          input.storyline,
+          operationSequence,
+          persistence,
+          durableRevision
+        );
+        latest = state.latestSavedStoryline;
+      } else {
+        if (persistence.status !== 'durable' || durableRevision === null) {
+          throw new Error(
+            'Backstage Booker process fallback capacity is exhausted; mutation was not accepted.'
+          );
+        }
+        const durableEntry: SavedStorylineEntry = {
+          key: input.key,
+          storyline: input.storyline,
+          updatedAt: new Date(),
+          operationSequence,
+          viewSequence: ++fallbackSavedStorylineViewSequence,
+          revision: durableRevision,
+          persistence
+        };
+        visible = durableEntry;
+        latest = durableEntry;
+      }
+      if (visible && latest) {
+        await persistLatestStorylineSnapshots(resolvedUniverseId, visible, latest);
+        await saveWithAuditCheck(
+          'backstage_booker',
+          {
+            universeId: resolvedUniverseId,
+            key: visible.key,
+            storyline: visible.storyline
+          },
+          data => typeof data.storyline === 'string' && data.storyline.trim().length > 0
+        ).catch((error: unknown) => {
+          console.warn(
+            'Backstage Booker: audit mirror failed after authoritative save',
+            resolveErrorMessage(error)
+          );
+          return false;
+        });
+      }
+    }
+
+    if (!structuredResponse) {
+      return true;
+    }
+    return assertValidBackstageBookerActionData('saveStoryline', {
+      universeId: resolvedUniverseId,
+      key: input.key,
+      saved: persistence.status === 'unknown' ? null : true,
+      persistence
+    });
+  } finally {
+    finishOperation();
+    const state = fallbackUniverseState.get(resolvedUniverseId);
+    if (state) {
+      pruneSavedStorylineVersions(resolvedUniverseId, state);
+    }
   }
-  return result;
 }
 
+export function simulateMatch(
+  match: MatchInput,
+  rosters?: Wrestler[],
+  winProbModifier?: number
+): Promise<KayfabeResult | RealResult>;
+export function simulateMatch(
+  match: MatchInput,
+  rosters: Wrestler[] | undefined,
+  winProbModifier: number | undefined,
+  universeId: string
+): Promise<BackstageSimulateMatchResponse>;
 export async function simulateMatch(
   match: MatchInput,
   rosters: Wrestler[] = [],
-  winProbModifier = 0
-): Promise<KayfabeResult | RealResult> {
-  const { wrestler1, wrestler2, matchType, kayfabeMode = false } = match;
+  winProbModifier = 0,
+  universeId?: string
+): Promise<KayfabeResult | RealResult | BackstageSimulateMatchResponse> {
+  const structuredResponse = universeId !== undefined;
+  const input = normalizeBackstageBookerActionPayload('simulateMatch', {
+    universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+    match,
+    rosters,
+    winProbModifier
+  });
+  const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const { wrestler1, wrestler2, matchType, kayfabeMode = false } = input.match;
 
-  let activeRoster = rosters;
+  let activeRoster = input.rosters ?? [];
 
-  if (!activeRoster || activeRoster.length === 0) {
+  if (activeRoster.length === 0) {
     try {
-      const result = await query(
-        AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.sql,
-        [],
-        {
-          useCache: false,
-          retry: 'transient-read',
-          idempotent: true,
-          auditedQueryId:
-            AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.id
-        }
-      );
-      activeRoster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
+      if (structuredResponse) {
+        const durableRoster = await getBackstageRepository().loadRoster(resolvedUniverseId);
+        const state = fallbackUniverseState.get(resolvedUniverseId);
+        activeRoster = state
+          ? projectMergedRoster(
+              durableRoster.map(wrestler => ({
+                name: wrestler.name,
+                overall: wrestler.overall
+              })),
+              state.pendingRoster.map(entry => entry.wrestler)
+            )
+          : durableRoster.map(wrestler => ({
+              name: wrestler.name,
+              overall: wrestler.overall
+            }));
+      } else {
+        const result = await query(
+          AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.sql,
+          [resolvedUniverseId],
+          {
+            useCache: false,
+            retry: 'transient-read',
+            idempotent: true,
+            auditedQueryId:
+              AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_MATCH_ROSTER_READ.id
+          }
+        );
+        activeRoster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
+      }
     } catch (error) {
       console.warn('Backstage Booker: match simulation falling back to in-memory roster', (error as Error).message);
-      activeRoster = roster;
+      activeRoster = effectiveFallbackRoster(readFallbackUniverseState(resolvedUniverseId));
     }
   }
 
@@ -740,12 +2314,15 @@ export async function simulateMatch(
   let w1Chance = totalOverall === 0 ? 0.5 : w1.overall / totalOverall;
   let w2Chance = 1 - w1Chance;
 
-  w1Chance = Math.min(Math.max(w1Chance + winProbModifier, 0), 1);
+  w1Chance = Math.min(Math.max(w1Chance + (input.winProbModifier ?? 0), 0), 1);
   w2Chance = 1 - w1Chance;
 
   let interference: string | null = null;
-  if (Math.random() < 0.1 && activeRoster.length > 0) {
-    interference = activeRoster[Math.floor(Math.random() * activeRoster.length)].name;
+  const interferenceCandidates = activeRoster.filter(
+    wrestler => wrestler.name !== wrestler1 && wrestler.name !== wrestler2
+  );
+  if (Math.random() < 0.1 && interferenceCandidates.length > 0) {
+    interference = interferenceCandidates[Math.floor(Math.random() * interferenceCandidates.length)].name;
     if (Math.random() > 0.5) {
       w1Chance = Math.min(Math.max(w1Chance + 0.15, 0), 1);
     } else {
@@ -759,27 +2336,35 @@ export async function simulateMatch(
   const loser = winner === wrestler1 ? wrestler2 : wrestler1;
   const rating = (Math.random() * 4 + 1).toFixed(1);
 
-  if (kayfabeMode) {
-    return {
+  const result: KayfabeResult | RealResult = kayfabeMode
+    ? {
       match: `${wrestler1} vs ${wrestler2} (${matchType})`,
       result: `${winner} wins`,
       via: 'Pinfall',
       interference,
       rating
+    }
+    : {
+      match: `${wrestler1} vs ${wrestler2} (${matchType})`,
+      winner,
+      loser,
+      probability: {
+        [wrestler1]: w1Chance.toFixed(2),
+        [wrestler2]: w2Chance.toFixed(2)
+      },
+      interference,
+      rating
     };
-  }
 
-  return {
-    match: `${wrestler1} vs ${wrestler2} (${matchType})`,
-    winner,
-    loser,
-    probability: {
-      [wrestler1]: w1Chance.toFixed(2),
-      [wrestler2]: w2Chance.toFixed(2)
-    },
-    interference,
-    rating
-  };
+  if (!structuredResponse) {
+    return result;
+  }
+  const hrc = normalizeHrcResult(await evaluateWithHRC(JSON.stringify(result)));
+  return assertValidBackstageBookerActionData('simulateMatch', {
+    universeId: resolvedUniverseId,
+    result,
+    hrc
+  });
 }
 
 export const BackstageBooker = {
@@ -791,45 +2376,106 @@ export const BackstageBooker = {
   saveStoryline
 };
 
-function normalizePayloadRecord(payload: unknown): Record<string, unknown> {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('Payload must be an object');
-  }
-  return payload as Record<string, unknown>;
-}
+const backstageSchemaCatalog = getProtocolSchemaCatalog().backstageBooker.actions;
+const readonlyActions = new Set<BackstageBookerAction>([
+  'simulateMatch',
+  'generateBooking',
+  'generateBookingWithHRC'
+]);
+const actionDescriptions: Record<BackstageBookerAction, string> = {
+  bookEvent: 'Persist one event in a universe.',
+  updateRoster: 'Upsert wrestlers in a universe-scoped roster.',
+  trackStoryline: 'Append one universe-scoped storyline beat.',
+  simulateMatch: 'Simulate a match using supplied or universe-scoped roster ratings.',
+  generateBooking: 'Generate a booking plan from one universe snapshot.',
+  generateBookingWithHRC: 'Generate a booking plan and attach HRC evaluation.',
+  saveStoryline: 'Upsert a named storyline in a universe.'
+};
+const actionMetadata = Object.fromEntries(
+  (Object.keys(backstageSchemaCatalog) as BackstageBookerAction[]).map(action => {
+    const readonly = readonlyActions.has(action);
+    return [
+      action,
+      {
+        description: actionDescriptions[action],
+        risk: readonly ? 'readonly' : 'privileged',
+        requiresConfirmation: !readonly,
+        inputSchema: backstageSchemaCatalog[action].request as Record<string, unknown>,
+        outputSchema: backstageSchemaCatalog[action].response as Record<string, unknown>,
+        readOnly: readonly,
+        idempotent: false
+      } satisfies ModuleActionMetadata
+    ];
+  })
+) as Record<BackstageBookerAction, ModuleActionMetadata>;
 
 export const BackstageBookerModule = {
   name: 'BACKSTAGE:BOOKER',
-  description: 'Behind-the-scenes pro wrestling booker for WWE/AEW with strict canon and logic.',
+  description: 'Universe-scoped pro wrestling booking, continuity, and match simulation.',
   gptIds: ['backstage-booker', 'backstage'],
   defaultAction: 'generateBooking',
   defaultTimeoutMs: 60000,
+  actionMetadata,
   actions: {
     async bookEvent(payload: unknown) {
-      const record = normalizePayloadRecord(payload);
-      return BackstageBooker.bookEvent(record);
+      const input = normalizeBackstageBookerModuleActionPayload('bookEvent', payload);
+      return BackstageBooker.bookEvent(
+        input.event,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     },
     async updateRoster(payload: unknown) {
-      return BackstageBooker.updateRoster(payload);
+      const input = normalizeBackstageBookerModuleActionPayload('updateRoster', payload);
+      return BackstageBooker.updateRoster(
+        input.wrestlers,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     },
     async trackStoryline(payload: unknown) {
-      return BackstageBooker.trackStoryline(payload);
+      const input = normalizeBackstageBookerModuleActionPayload('trackStoryline', payload);
+      return BackstageBooker.trackStoryline(
+        input.beat,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     },
-    async simulateMatch(payload: { match: MatchInput; rosters: Wrestler[]; winProbModifier?: number }) {
-      const result = await BackstageBooker.simulateMatch(payload.match, payload.rosters, payload.winProbModifier ?? 0);
-      return withHRC(result as typeof result & Record<string, unknown>, r => r.match);
+    async simulateMatch(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload('simulateMatch', payload);
+      return BackstageBooker.simulateMatch(
+        input.match,
+        input.rosters,
+        input.winProbModifier ?? 0,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     },
-    async generateBooking(payload: { prompt: string }) {
+    async generateBooking(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload('generateBooking', payload);
       // Maintain backward-compatible behavior: return the raw storyline string.
-      return BackstageBooker.generateBooking(payload.prompt);
+      return BackstageBooker.generateBooking(
+        input.prompt,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     },
-    async generateBookingWithHRC(payload: { prompt: string }) {
-      const storyline = await BackstageBooker.generateBooking(payload.prompt);
-      const hrc = await evaluateWithHRC(storyline);
-      return { storyline, hrc };
+    async generateBookingWithHRC(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload(
+        'generateBookingWithHRC',
+        payload
+      );
+      const universeId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+      const storyline = await BackstageBooker.generateBooking(input.prompt, universeId);
+      const result: BackstageGenerateBookingWithHrcResponse = {
+        universeId,
+        storyline,
+        hrc: normalizeHrcResult(await evaluateWithHRC(storyline))
+      };
+      return assertValidBackstageBookerActionData('generateBookingWithHRC', result);
     },
-    async saveStoryline(payload: { key: string; storyline: string }) {
-      return BackstageBooker.saveStoryline(payload.key, payload.storyline);
+    async saveStoryline(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload('saveStoryline', payload);
+      return BackstageBooker.saveStoryline(
+        input.key,
+        input.storyline,
+        input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+      );
     }
   }
 };

@@ -52,6 +52,12 @@ import {
   type StorylineBeat,
 } from './shared/backstage/backstageStoryline.js';
 import {
+  BACKSTAGE_MODULE_ROUTE,
+  buildBackstageMutationConfirmationFingerprintBody,
+  isBackstageMutationAction,
+  resolveBackstageGptAction,
+} from './shared/backstage/backstageActionPolicy.js';
+import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
 import {
@@ -996,7 +1002,10 @@ function compareStorylineFixtureRows(
   return left.id < right.id ? -1 : 1;
 }
 
-function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[]) {
+function createStorylineTransactionFixture(
+  initialBeats: readonly StorylineBeat[],
+  expectedUniverseId = 'legacy'
+) {
   let rows: StorylineFixtureRow[] = initialBeats.map((beat, index) => ({
     id: storylineFixtureId(index + 1),
     serializedData: JSON.stringify(beat),
@@ -1060,23 +1069,29 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       recordPhase('legacy-backfill');
       requireStorylineFixtureInvariant(
         parameters[0] === BACKSTAGE_STORYLINE_MAX_BYTES
-        && parameters[1] === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        && parameters[1] === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+        && parameters[2] === expectedUniverseId,
         'PREVIEW_BACKSTAGE_STORYLINE_LEGACY_BOUND_INVALID'
       );
       return { rows: [] };
     }
     if (
       sql
-      === 'DELETE FROM backstage_story_beats WHERE serialized_data IS NULL'
+      === 'DELETE FROM backstage_story_beats WHERE universe_id = $1 AND serialized_data IS NULL'
     ) {
       recordPhase('null-cleanup');
+      requireStorylineFixtureInvariant(
+        parameters[0] === expectedUniverseId,
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       return { rows: [] };
     }
     if (sql.startsWith('WITH expired AS MATERIALIZED')) {
       recordPhase('prune');
       const retainedBeforeInsert = BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1;
       requireStorylineFixtureInvariant(
-        parameters[0] === retainedBeforeInsert,
+        parameters[0] === retainedBeforeInsert
+        && parameters[1] === expectedUniverseId,
         'PREVIEW_BACKSTAGE_STORYLINE_RETENTION_BOUND_INVALID'
       );
       rows = [...rows]
@@ -1086,6 +1101,10 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
     }
     if (sql.startsWith('WITH ordered AS MATERIALIZED')) {
       recordPhase('compact');
+      requireStorylineFixtureInvariant(
+        parameters[0] === expectedUniverseId,
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       rows = [...rows]
         .sort(compareStorylineFixtureRows)
         .map((row, index) => ({ ...row, storageSequence: index + 1 }));
@@ -1095,6 +1114,10 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       recordPhase('insert');
       const serializedData = parameters[0];
       parseBackstageStorylineSerializedPayload(serializedData);
+      requireStorylineFixtureInvariant(
+        parameters[1] === expectedUniverseId,
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       const id = storylineFixtureId(nextIdSequence);
       nextIdSequence += 1;
       rows.push({
@@ -1111,7 +1134,8 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       const limit = parameters[1];
       requireStorylineFixtureInvariant(
         typeof insertedId === 'string'
-        && limit === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        && limit === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+        && parameters[2] === expectedUniverseId,
         'PREVIEW_BACKSTAGE_STORYLINE_READ_BOUND_INVALID'
       );
       const selected = [...rows]
@@ -1281,6 +1305,106 @@ async function runStorylineLifecycleFixture(
   };
 }
 
+async function runPhaseOneUniverseBindingFixture(
+  fixture: string
+): Promise<SyntheticStorylineResult> {
+  const action = resolveBackstageGptAction('trackStoryline');
+  requireStorylineFixtureInvariant(
+    action !== null && isBackstageMutationAction(action),
+    'PREVIEW_BACKSTAGE_PHASE_ONE_ACTION_INVALID'
+  );
+
+  const alphaUniverseId = 'preview-alpha';
+  const betaUniverseId = 'preview-beta';
+  const confirmationBeat = parseBackstageStorylinePayload({ sequence: 303 });
+  const alphaConfirmationInput = buildBackstageMutationConfirmationFingerprintBody(
+    action,
+    { universeId: alphaUniverseId, beat: confirmationBeat }
+  );
+  const betaConfirmationInput = buildBackstageMutationConfirmationFingerprintBody(
+    action,
+    { universeId: betaUniverseId, beat: confirmationBeat }
+  );
+  const confirmationFingerprintInputUniverseBound =
+    JSON.stringify(alphaConfirmationInput) !== JSON.stringify(betaConfirmationInput);
+
+  const alphaTransaction = createStorylineTransactionFixture(
+    [parseBackstageStorylinePayload({ sequence: 1 })],
+    alphaUniverseId
+  );
+  const betaTransaction = createStorylineTransactionFixture(
+    [parseBackstageStorylinePayload({ sequence: 2 })],
+    betaUniverseId
+  );
+  const [alphaMutation, betaMutation] = await Promise.all([
+    applyBackstageStorylineMutation(
+      alphaTransaction.client,
+      JSON.stringify(parseBackstageStorylinePayload({ sequence: 101 })),
+      alphaUniverseId
+    ),
+    applyBackstageStorylineMutation(
+      betaTransaction.client,
+      JSON.stringify(parseBackstageStorylinePayload({ sequence: 202 })),
+      betaUniverseId
+    ),
+  ]);
+  const alphaSequences = alphaMutation.retainedBeats.map(storylineSequence);
+  const betaSequences = betaMutation.retainedBeats.map(storylineSequence);
+  const crossUniverseLeakageObserved =
+    alphaSequences.includes(2)
+    || alphaSequences.includes(202)
+    || betaSequences.includes(1)
+    || betaSequences.includes(101);
+
+  requireStorylineFixtureInvariant(
+    action === 'trackStoryline'
+    && confirmationFingerprintInputUniverseBound
+    && !crossUniverseLeakageObserved
+    && alphaSequences.length === 2
+    && alphaSequences[0] === 1
+    && alphaSequences[1] === 101
+    && betaSequences.length === 2
+    && betaSequences[0] === 2
+    && betaSequences[1] === 202
+    && alphaTransaction.phases.length === STORYLINE_TRANSACTION_PHASES.length
+    && betaTransaction.phases.length === STORYLINE_TRANSACTION_PHASES.length,
+    'PREVIEW_BACKSTAGE_PHASE_ONE_UNIVERSE_BINDING_INVALID'
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: true,
+      fixture,
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: true,
+      protectedEffectsEnabled: false,
+      schemaVersion: 1,
+      transactionComponentExecuted: true,
+      validationCompleted: true,
+      validationCode: 'VALID',
+      phaseOne: {
+        action,
+        canonicalRoute: `/gpt/${BACKSTAGE_MODULE_ROUTE}`,
+        confirmationFingerprintInputUniverseBound,
+        confirmationTokenIssued: false,
+        crossUniverseLeakageObserved,
+        queryPhaseCount:
+          alphaTransaction.phases.length + betaTransaction.phases.length,
+        queryUniverseRoutingVerified: true,
+        universes: [
+          { universeId: alphaUniverseId, retainedSequences: alphaSequences },
+          { universeId: betaUniverseId, retainedSequences: betaSequences },
+        ],
+      },
+    },
+  };
+}
+
 function runStorylinePayloadOverFixture(
   fixture: string
 ): SyntheticStorylineResult {
@@ -1324,6 +1448,8 @@ async function runStorylineFixture(
   switch (fixture) {
     case fixtures.lifecycleExact:
       return runStorylineLifecycleFixture(fixture);
+    case fixtures.phaseOneUniverseBinding:
+      return runPhaseOneUniverseBindingFixture(fixture);
     case fixtures.payloadOver:
       return runStorylinePayloadOverFixture(fixture);
     default:

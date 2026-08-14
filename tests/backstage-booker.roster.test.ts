@@ -150,6 +150,14 @@ describe('backstage-booker roster containment', () => {
     ['a non-string name', [{ name: 42, overall: 96 }]],
     ['an empty trimmed name', [{ name: '   ', overall: 96 }]],
     ['a PostgreSQL-incompatible NUL name', [{ name: 'Rhea\u0000Ripley', overall: 96 }]],
+    ['an unpaired high-surrogate name', [{
+      name: 'Rhea' + String.fromCharCode(0xd800) + 'Ripley',
+      overall: 96
+    }]],
+    ['an unpaired low-surrogate name', [{
+      name: 'Rhea' + String.fromCharCode(0xdc00) + 'Ripley',
+      overall: 96
+    }]],
     ['a name over the Unicode code-point limit', [{ name: '😀'.repeat(BACKSTAGE_WRESTLER_NAME_MAX_LENGTH + 1), overall: 96 }]],
     ['a string rating', [{ name: 'Rhea Ripley', overall: '96' }]],
     ['a fractional rating', [{ name: 'Rhea Ripley', overall: 96.5 }]],
@@ -199,8 +207,9 @@ describe('backstage-booker roster containment', () => {
     const upsertCalls = transactionQueryCalls()
       .filter(([sql]) => sql.includes('INSERT INTO backstage_wrestlers'));
     expect(upsertCalls).toHaveLength(1);
-    expect(upsertCalls[0]?.[0]).toContain('UNNEST($1::TEXT[], $2::INTEGER[])');
+    expect(upsertCalls[0]?.[0]).toContain('UNNEST($2::TEXT[], $3::INTEGER[])');
     expect(upsertCalls[0]?.[1]).toEqual([
+      'legacy',
       payload.map(wrestler => wrestler.name),
       payload.map(wrestler => wrestler.overall)
     ]);
@@ -229,11 +238,12 @@ describe('backstage-booker roster containment', () => {
       .filter(([sql]) => sql.includes('INSERT INTO backstage_wrestlers'))
       .map(([, params]) => params);
     expect(upsertParams).toEqual([[
+      'legacy',
       expectedRoster.map(({ name }) => name),
       expectedRoster.map(({ overall }) => overall)
     ]]);
     expect(mockSaveMemory).toHaveBeenCalledWith(
-      'backstage-roster:latest',
+      'backstage-universe:legacy:roster:latest',
       expect.objectContaining({ roster: expectedRoster, source: 'database', revision: '102' }),
       { ifNewerRevision: '102' }
     );
@@ -251,11 +261,11 @@ describe('backstage-booker roster containment', () => {
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
     )).toEqual([
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
-      []
+      ['legacy']
     ]);
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockSaveMemory).toHaveBeenCalledWith(
-      'backstage-roster:latest',
+      'backstage-universe:legacy:roster:latest',
       expect.objectContaining({ roster: freshRows, source: 'database', revision: '103' }),
       { ifNewerRevision: '103' }
     );
@@ -381,7 +391,7 @@ describe('backstage-booker roster containment', () => {
     expect(mockSaveMemory).not.toHaveBeenCalled();
   });
 
-  it('returns its own committed roster while another snapshot write completes first', async () => {
+  it('returns each committed roster while serializing overlapping snapshot writes', async () => {
     const firstRoster = [{ name: 'First Commit', overall: 91 }];
     const secondRoster = [{ name: 'Second Commit', overall: 92 }];
     let transactionCount = 0;
@@ -419,18 +429,23 @@ describe('backstage-booker roster containment', () => {
 
     const firstUpdate = updateRoster(firstRoster);
     await firstSnapshotStarted;
-    await expect(updateRoster(secondRoster)).resolves.toEqual(secondRoster);
+    const secondUpdate = updateRoster(secondRoster);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(mockSaveMemory).toHaveBeenCalledTimes(1);
     releaseFirstSnapshot?.();
-    await expect(firstUpdate).resolves.toEqual(firstRoster);
+    await expect(Promise.all([firstUpdate, secondUpdate])).resolves.toEqual([
+      firstRoster,
+      secondRoster
+    ]);
     expect(mockSaveMemory).toHaveBeenNthCalledWith(
       1,
-      'backstage-roster:latest',
+      'backstage-universe:legacy:roster:latest',
       expect.objectContaining({ roster: firstRoster, revision: '109' }),
       { ifNewerRevision: '109' }
     );
     expect(mockSaveMemory).toHaveBeenNthCalledWith(
       2,
-      'backstage-roster:latest',
+      'backstage-universe:legacy:roster:latest',
       expect.objectContaining({ roster: secondRoster, revision: '110' }),
       { ifNewerRevision: '110' }
     );
@@ -513,11 +528,11 @@ describe('backstage-booker roster containment', () => {
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql
     )).toEqual([
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_ROSTER_READ_AFTER_UPDATE.sql,
-      []
+      ['legacy']
     ]);
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockSaveMemory).toHaveBeenCalledWith(
-      'backstage-roster:latest',
+      'backstage-universe:legacy:roster:latest',
       expect.objectContaining({ roster: freshRows, source: 'database', revision: '113' }),
       { ifNewerRevision: '113' }
     );

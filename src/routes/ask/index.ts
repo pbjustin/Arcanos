@@ -1040,7 +1040,8 @@ export const handleAIRequest = async (
 
     const promptShortcut = await tryExecutePromptRouteShortcut({
       prompt,
-      sessionId
+      sessionId,
+      ...(typeof req.body.universeId === 'string' ? { universeId: req.body.universeId } : {})
     });
     //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation when they have a confident route-specific execution path; failure risk: memory and booker prompts drift back into generic chat behavior; expected invariant: registered shortcuts return stable route-specific output before Trinity; handling strategy: execute the shared shortcut registry and short-circuit on the first match.
     if (promptShortcut) {

@@ -153,6 +153,71 @@ database because dropping these tables removes ingested Gaming knowledge. Do
 not apply either file as routine validation. Runtime startup mirrors the
 additive table and index definitions in `src/core/db/schema.ts`.
 
+### Backstage Booker universe-scope migration
+
+`migrations/20260814_backstage_universe_scope_v1.sql` adds a bounded,
+non-null `universe_id` to `backstage_events`, `backstage_wrestlers`,
+`backstage_storylines`, and `backstage_story_beats`. Existing rows are
+backfilled into `legacy`, which also remains the database default for older
+callers. Named check constraints enforce the same identifier syntax as the
+public action schemas:
+`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`.
+
+The migration replaces global wrestler-name and storyline-key uniqueness with
+`(universe_id, name)` and `(universe_id, story_key)` uniqueness. It also adds
+universe-first recency indexes for roster, event, storyline, and story-beat
+reads. Runtime bootstrap in `src/core/db/schema.ts` installs the additive
+columns, checks, scoped uniqueness, and indexes but deliberately retains the
+legacy global constraints. Their absence is the activation marker for
+non-`legacy` durable writes, so runtime startup alone cannot expose
+universe-scoped rows to an older replica's global readers. While either global
+constraint remains, the repository blocks all four non-`legacy` mutations
+before domain DML. Structured callers receive a `non_durable` receipt with
+`database_write_failed` and continue in the universe-scoped process-memory
+fallback; `legacy` database writes continue normally.
+
+Before applying the explicit migration, stop and drain every older Backstage
+Booker replica that uses global roster or storyline reads and confirm that only
+universe-aware replicas can resume. The migration removes
+`backstage_wrestlers_name_key` and `backstage_storylines_story_key_key`; once
+that transaction commits, new replicas admit non-`legacy` writes. Do not apply
+the migration while an older reader or writer can still serve traffic.
+The same drain-and-activate boundary applies to a fresh database: current
+runtime table creation installs both legacy global constraints alongside the
+composite scoped constraints. Startup never activates non-`legacy` durability
+by dropping a global constraint; only the reviewed explicit migration does so.
+
+All four Backstage mutations run in PostgreSQL transactions. Legacy roster
+upserts retain the original fixed transaction-scoped advisory lock so they
+serialize with older replicas; activated non-legacy universes use independent
+hashed roster-lock resources. Story-beat mutations retain the original fixed
+storyline advisory lock for every universe and also take the existing relation
+writer fence, preserving mixed-version containment at the cost of serializing
+storyline writes across universes. Named storyline saves serialize per universe
+under a transaction advisory lock and obtain a database revision after that
+lock; the service uses the revision to fence per-key and latest convenience
+views by commit order. Booking-generation context uses a
+read-only repeatable-read transaction across roster, event, story-beat, and
+saved-storyline queries instead of combining values from different database
+snapshots. The explicit pre-activation gate and recognized availability or
+transient database failures use the service's disclosed universe-scoped
+process-memory fallback and return `non_durable`. Integrity, programming, and
+result-mapping failures propagate instead of being mislabeled as degraded
+persistence. An indeterminate commit is reported as `unknown` and is not
+retried automatically. The unknown path does not mutate the fallback, audit
+mirror, or exact-memory convenience keys. For `saveStoryline`, it also returns
+`saved: null` instead of asserting a result that PostgreSQL did not confirm.
+
+`migrations/20260814_backstage_universe_scope_v1.rollback.sql` is guarded. It
+refuses to remove universe scoping while any affected table contains a
+non-`legacy` row, because restoring global uniqueness could collapse distinct
+universe records. Before evaluating that guard it takes `ACCESS EXCLUSIVE`
+locks on all four tables in the same fixed order as context reads and retains
+them through the rollback, preventing a concurrent writer from inserting a
+non-legacy row between the guard and schema removal. Do not apply either file
+as routine validation, and do not interpret the presence of this schema as a
+canon/storyline domain model.
+
 ### Local-agent hardening migration
 
 The additive

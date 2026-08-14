@@ -63,16 +63,20 @@ import {
 import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE,
-  isBackstageRosterValidationError,
-  parseBackstageRosterPayload
+  BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+  isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES,
-  isBackstageStorylineValidationError,
-  parseBackstageStorylinePayload
+  BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+  isBackstageStorylineValidationError
 } from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  BackstageBookerContractError,
+  normalizeBackstageBookerIngressMutationPayload
+} from '@services/backstageBookerContracts.js';
 import {
   buildResearchModulePreflightPayload,
   getResearchGptPromptPreflight,
@@ -1074,13 +1078,17 @@ function normalizeBackstageRosterMutationBody(body: unknown): Record<string, unk
   const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
     ? body as Record<string, unknown>
     : {};
-  const rosterPayload = Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
-    ? bodyRecord.payload
-    : body;
+  const normalizedPayload = normalizeBackstageBookerIngressMutationPayload(
+    'updateRoster',
+    body,
+    'canonical-gpt'
+  );
+  const preserveLegacyArray = Array.isArray(bodyRecord.payload)
+    && !Object.prototype.hasOwnProperty.call(bodyRecord, 'universeId');
 
   return {
     ...bodyRecord,
-    payload: parseBackstageRosterPayload(rosterPayload)
+    payload: preserveLegacyArray ? normalizedPayload.wrestlers : normalizedPayload
   };
 }
 
@@ -1088,13 +1096,25 @@ function normalizeBackstageStorylineMutationBody(body: unknown): Record<string, 
   const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
     ? body as Record<string, unknown>
     : {};
-  const storylinePayload = Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
-    ? bodyRecord.payload
-    : body;
+  const normalizedPayload = normalizeBackstageBookerIngressMutationPayload(
+    'trackStoryline',
+    body,
+    'canonical-gpt'
+  );
+  const explicitPayload = bodyRecord.payload;
+  const preserveLegacyPayload = Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
+    && explicitPayload !== null
+    && typeof explicitPayload === 'object'
+    && !Array.isArray(explicitPayload)
+    && !Object.prototype.hasOwnProperty.call(
+      explicitPayload as Record<string, unknown>,
+      'universeId'
+    )
+    && !Object.prototype.hasOwnProperty.call(bodyRecord, 'universeId');
 
   return {
     ...bodyRecord,
-    payload: parseBackstageStorylinePayload(storylinePayload)
+    payload: preserveLegacyPayload ? normalizedPayload.beat : normalizedPayload
   };
 }
 
@@ -1820,24 +1840,32 @@ router.post(
           try {
             effectiveBody = normalizeBackstageRosterMutationBody(effectiveBody);
           } catch (error: unknown) {
-            if (!isBackstageRosterValidationError(error)) {
+            const isContractError = error instanceof BackstageBookerContractError
+              && error.action === 'updateRoster';
+            if (!isBackstageRosterValidationError(error) && !isContractError) {
               throw error;
             }
+            const errorCode = isBackstageRosterValidationError(error)
+              ? error.code
+              : BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE;
+            const errorMessage = error instanceof Error
+              ? error.message
+              : 'Invalid Backstage Booker updateRoster payload.';
 
             requestLogger?.warn?.('gpt.request.backstage_roster_validation_failed', {
               endpoint: req.originalUrl,
               gptId: incomingGptId,
               requestId,
               action: backstageMutationOperation.action,
-              errorCode: error.code
+              errorCode
             });
             const errorPayload = buildGptDispatcherErrorPayload({
               requestId,
               traceId,
               gptId: incomingGptId,
               action: backstageMutationOperation.action,
-              code: error.code,
-              message: error.message,
+              code: errorCode,
+              message: errorMessage,
               route: 'backstage_roster_validation'
             });
             logGptDispatcherOutcome({
@@ -1847,8 +1875,8 @@ router.post(
               action: backstageMutationOperation.action,
               status: 400,
               error: {
-                name: error.code,
-                message: error.message
+                name: errorCode,
+                message: errorMessage
               }
             });
             return sendGuardedGptJsonResponse(
@@ -1868,24 +1896,32 @@ router.post(
           try {
             effectiveBody = normalizeBackstageStorylineMutationBody(effectiveBody);
           } catch (error: unknown) {
-            if (!isBackstageStorylineValidationError(error)) {
+            const isContractError = error instanceof BackstageBookerContractError
+              && error.action === 'trackStoryline';
+            if (!isBackstageStorylineValidationError(error) && !isContractError) {
               throw error;
             }
+            const errorCode = isBackstageStorylineValidationError(error)
+              ? error.code
+              : BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE;
+            const errorMessage = error instanceof Error
+              ? error.message
+              : 'Invalid Backstage Booker trackStoryline payload.';
 
             requestLogger?.warn?.('gpt.request.backstage_storyline_validation_failed', {
               endpoint: req.originalUrl,
               gptId: incomingGptId,
               requestId,
               action: backstageMutationOperation.action,
-              errorCode: error.code
+              errorCode
             });
             const errorPayload = buildGptDispatcherErrorPayload({
               requestId,
               traceId,
               gptId: incomingGptId,
               action: backstageMutationOperation.action,
-              code: error.code,
-              message: error.message,
+              code: errorCode,
+              message: errorMessage,
               route: 'backstage_storyline_validation'
             });
             logGptDispatcherOutcome({
@@ -1895,8 +1931,8 @@ router.post(
               action: backstageMutationOperation.action,
               status: 400,
               error: {
-                name: error.code,
-                message: error.message
+                name: errorCode,
+                message: errorMessage
               }
             });
             return sendGuardedGptJsonResponse(

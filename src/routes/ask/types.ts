@@ -28,6 +28,7 @@ export type AskRequest = AIRequestDTO & {
     label?: string;
   };
   sessionId?: string;
+  universeId?: string;
   overrideAuditSafe?: string;
   requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
   requested_verbosity?: 'minimal' | 'normal' | 'detailed';

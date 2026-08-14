@@ -27,6 +27,13 @@ const askValidationSchema = {
   max_tokens: { type: 'number' as const },
   clientContext: { type: 'object' as const },
   sessionId: { type: 'string' as const, maxLength: 100, sanitize: true },
+  universeId: {
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 128,
+    pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    sanitize: true
+  },
   overrideAuditSafe: { type: 'string' as const, maxLength: 50, sanitize: true },
   metadata: { type: 'object' as const }
 };

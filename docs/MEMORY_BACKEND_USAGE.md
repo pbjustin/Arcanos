@@ -133,6 +133,36 @@ Research owns deterministic `research/<topic-component>/...` result persistence
 inside its aggregate deadline and does not additionally write generic module
 conversation transcripts or history, even when `sessionId` is present.
 
+### Backstage Booker convenience keys
+
+Backstage Booker mirrors selected successful action results to bounded,
+best-effort exact-memory convenience keys scoped by the action's universe:
+
+- `backstage-universe:{universeId}:roster:latest`
+- `backstage-universe:{universeId}:storybeats:latest`
+- `backstage-universe:{universeId}:storyline:latest`
+- `backstage-universe:{universeId}:storyline:by-key:<sha256>`
+
+An omitted universe uses `legacy`; an explicitly invalid universe ID causes
+the convenience mirror to be skipped instead of contaminating `legacy`.
+The by-key suffix is the lowercase SHA-256 hexadecimal digest of the trimmed
+storyline key. Hashing prevents a storyline named `latest` from colliding with
+the latest-storyline alias and keeps the complete exact-memory key below its
+255-character limit even when both public identifiers use their maximum size.
+The original storyline key remains inside the stored value.
+
+These keys no longer receive unscoped global dual-writes. For structured
+mutation results, the Backstage Booker service is the authoritative convenience
+writer because it has the persistence receipt and database revision. Generic
+module-conversation persistence detects that receipt and skips a duplicate
+write that could erase concurrency metadata. A `durable` mirror records the
+committed database view; a `non_durable` mirror records the accepted
+universe-scoped process-memory fallback. A commit-`unknown` response writes no
+fallback, audit, or convenience state. These entries are recall aids, not proof
+that PostgreSQL committed: clients must use `persistence.status`, and
+`saveStoryline.saved` is `null` for the unknown case. They also do not establish
+tenant authorization or define the future canon and storyline domain model.
+
 ## Command Baseline for Users
 Use these command patterns when talking to the AI.
 Except for exact key, record, or tag selectors, these examples assume the caller supplies `sessionId` in the request or includes an inline session/storage label.

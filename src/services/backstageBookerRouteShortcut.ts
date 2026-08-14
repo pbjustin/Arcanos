@@ -92,6 +92,7 @@ export function detectBackstageBookerIntent(prompt: string | null | undefined): 
 export async function tryExecuteBackstageBookerRouteShortcut(params: {
   prompt: string;
   sessionId?: string;
+  universeId?: string;
 }): Promise<BackstageBookerRouteShortcut | null> {
   const intentMatch = detectBackstageBookerIntent(params.prompt);
   //audit Assumption: non-booking prompts should preserve their existing route behavior; failure risk: over-eager interception on generic chat inputs; expected invariant: only scored booker prompts short-circuit; handling strategy: return null when detection fails.
@@ -99,7 +100,9 @@ export async function tryExecuteBackstageBookerRouteShortcut(params: {
     return null;
   }
 
-  const resultText = await BackstageBooker.generateBooking(params.prompt);
+  const resultText = params.universeId === undefined
+    ? await BackstageBooker.generateBooking(params.prompt)
+    : await BackstageBooker.generateBooking(params.prompt, params.universeId);
   return {
     resultText,
     dispatcher: {

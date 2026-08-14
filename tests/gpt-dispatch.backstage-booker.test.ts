@@ -10,7 +10,6 @@ import {
   BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_MESSAGE,
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
   BackstageStorylinePersistenceError,
-  BackstageStorylineValidationError,
 } from '../src/shared/backstage/backstageStoryline.js';
 
 const mockGetGptModuleMap = jest.fn();
@@ -71,6 +70,9 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 }));
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { normalizeBackstageBookerActionPayload } = await import(
+  '../src/services/backstageBookerContracts.js'
+);
 const {
   buildQueuedGptBackstageMutationAdmission,
 } = await import('../src/shared/gpt/asyncGptJob.js');
@@ -153,6 +155,64 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     );
   });
 
+  it('does not forward top-level universe scope into a non-Backstage explicit payload', async () => {
+    mockDetectBackstageBookerIntent.mockReturnValue(null);
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (moduleName: string, action: string, payload: unknown) => {
+        expect(moduleName).toBe('ARCANOS:CORE');
+        expect(action).toBe('query');
+        expect(payload).toEqual(expect.objectContaining({ prompt: 'core-only prompt' }));
+        expect(payload).not.toEqual(expect.objectContaining({ universeId: expect.anything() }));
+        return 'core result';
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        universeId: 'must-not-leak',
+        payload: { prompt: 'core-only prompt' }
+      },
+      requestId: 'req-core-universe-isolation'
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({ ok: true, result: 'core result' }));
+  });
+
+  it('forwards top-level universe scope when an explicit Core payload auto-routes to Backstage', async () => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (moduleName: string, action: string, payload: unknown) => {
+        expect(moduleName).toBe('BACKSTAGE:BOOKER');
+        expect(action).toBe('generateBooking');
+        expect(payload).toEqual(expect.objectContaining({
+          prompt: 'Book a WWE Raw rivalry after WrestleMania.',
+          universeId: 'auto-routed-universe',
+        }));
+        return 'auto-routed result';
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        universeId: 'auto-routed-universe',
+        payload: { prompt: 'Book a WWE Raw rivalry after WrestleMania.' },
+      },
+      requestId: 'req-core-auto-routed-universe'
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: true,
+      result: 'auto-routed result',
+      _route: expect.objectContaining({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+      }),
+    }));
+  });
+
   it('defaults backstage-booker traffic without an explicit action to generateBooking', async () => {
     const envelope = await routeGptRequest({
       gptId: 'backstage',
@@ -201,6 +261,209 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         })
       })
     );
+  });
+
+  it.each([
+    [
+      'bookEvent',
+      {
+        event: 'WrestleMania',
+        venue: 'MSG',
+        action: 'announce-card',
+        context: { brand: 'Raw' },
+        mode: 'canon',
+        hrc: { requested: true },
+        content: 'Night-one main event'
+      }
+    ],
+    [
+      'trackStoryline',
+      {
+        beat: 'turn',
+        feud: 'A/B',
+        action: 'betrayal',
+        context: { target: 'champion' },
+        mode: 'canon',
+        hrc: { requested: true },
+        content: 'The ally reveals the plan.'
+      }
+    ]
+  ] as const)(
+    'preserves explicit %s domain fields that collide with dispatch transport names',
+    async (action, domainPayload) => {
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, dispatchedAction: string, payload: unknown) => {
+          expect(dispatchedAction).toBe(action);
+          return action === 'bookEvent'
+            ? normalizeBackstageBookerActionPayload('bookEvent', payload)
+            : normalizeBackstageBookerActionPayload('trackStoryline', payload);
+        }
+      );
+
+      const envelope = await routeGptRequest({
+        gptId: 'backstage',
+        body: {
+          action,
+          universeId: 'collision-universe',
+          context: { transport: true },
+          mode: 'transport-mode',
+          hrc: { transport: true },
+          content: 'transport-content',
+          payload: domainPayload
+        },
+        requestId: `req-backstage-${action}-collisions`
+      });
+
+      expect(envelope).toMatchObject({
+        ok: true,
+        result: {
+          universeId: 'collision-universe',
+          [action === 'bookEvent' ? 'event' : 'beat']: domainPayload
+        }
+      });
+    }
+  );
+
+  it('keeps only explicit event fields and top-level universe provenance at execution', async () => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (_moduleName: string, dispatchedAction: string, payload: unknown) => {
+        expect(dispatchedAction).toBe('bookEvent');
+        return normalizeBackstageBookerActionPayload('bookEvent', payload);
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'bookEvent',
+        universeId: 'explicit-provenance-universe',
+        game: 'transport-game',
+        url: 'https://example.test/changed-source',
+        urls: ['https://example.test/changed-list'],
+        guideUrl: 'https://example.test/changed-guide',
+        guideUrls: ['https://example.test/changed-guides'],
+        payload: {
+          name: 'SummerSlam',
+          venue: 'Ford Field'
+        }
+      },
+      requestId: 'req-backstage-explicit-provenance'
+    });
+
+    expect(envelope).toMatchObject({ ok: true });
+    if (!envelope.ok) {
+      throw new Error('Expected Backstage event dispatch to succeed.');
+    }
+    expect(envelope.result).toEqual({
+      universeId: 'explicit-provenance-universe',
+      event: {
+        name: 'SummerSlam',
+        venue: 'Ford Field'
+      }
+    });
+  });
+
+  it.each([
+    ['bookEvent', 'event', { name: 'Canonical event' }],
+    ['trackStoryline', 'beat', { turn: 'Canonical heel turn' }]
+  ] as const)(
+    'unwraps canonical %s module payloads without an explicit universeId',
+    async (action, wrapperKey, domainPayload) => {
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, dispatchedAction: string, payload: unknown) => {
+          expect(dispatchedAction).toBe(action);
+          return action === 'bookEvent'
+            ? normalizeBackstageBookerActionPayload('bookEvent', payload)
+            : normalizeBackstageBookerActionPayload('trackStoryline', payload);
+        }
+      );
+
+      const envelope = await routeGptRequest({
+        gptId: 'backstage',
+        body: {
+          action,
+          payload: { [wrapperKey]: domainPayload }
+        },
+        requestId: `req-backstage-canonical-default-${action}`
+      });
+
+      expect(envelope).toMatchObject({
+        ok: true,
+        result: {
+          universeId: 'legacy',
+          [wrapperKey]: domainPayload
+        }
+      });
+    }
+  );
+
+  it.each([
+    ['bookEvent', 'event', { name: 'Legacy outer event' }],
+    ['trackStoryline', 'beat', { turn: 'Legacy outer beat' }]
+  ] as const)(
+    'preserves ambiguous flattened %s object fields as legacy domain records',
+    async (action, wrapperKey, domainPayload) => {
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, dispatchedAction: string, payload: unknown) => {
+          expect(dispatchedAction).toBe(action);
+          return action === 'bookEvent'
+            ? normalizeBackstageBookerActionPayload('bookEvent', payload)
+            : normalizeBackstageBookerActionPayload('trackStoryline', payload);
+        }
+      );
+
+      const envelope = await routeGptRequest({
+        gptId: 'backstage',
+        body: {
+          action,
+          [wrapperKey]: domainPayload
+        },
+        requestId: `req-backstage-legacy-ambiguous-${action}`
+      });
+
+      expect(envelope).toMatchObject({
+        ok: true,
+        result: {
+          universeId: 'legacy',
+          [wrapperKey]: { [wrapperKey]: domainPayload }
+        }
+      });
+    }
+  );
+
+  it('removes flattened dispatch envelope fields from a legacy open event payload', async () => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (_moduleName: string, dispatchedAction: string, payload: unknown) => {
+        expect(dispatchedAction).toBe('bookEvent');
+        return normalizeBackstageBookerActionPayload('bookEvent', payload);
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'bookEvent',
+        universeId: 'flattened-universe',
+        event: 'WrestleMania',
+        venue: 'MSG',
+        context: { transport: true },
+        mode: 'transport-mode',
+        hrc: { transport: true },
+        content: 'transport-content'
+      },
+      requestId: 'req-backstage-flattened-event'
+    });
+
+    expect(envelope).toMatchObject({
+      ok: true,
+      result: {
+        universeId: 'flattened-universe',
+        event: {
+          event: 'WrestleMania',
+          venue: 'MSG'
+        }
+      }
+    });
   });
 
   it('fails closed before executing an unattested queued Backstage mutation', async () => {
@@ -284,8 +547,11 @@ describe('routeGptRequest backstage booker auto-routing', () => {
   it.each(['backstage', 'backstage-booker'])(
     'maps typed roster validation failures for canonical alias %s without persistence',
     async (gptId) => {
-      mockDispatchModuleAction.mockRejectedValueOnce(
-        new BackstageRosterValidationError('Roster payload must be an array.')
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, action: string, payload: unknown) => {
+          expect(action).toBe('updateRoster');
+          return normalizeBackstageBookerActionPayload('updateRoster', payload);
+        }
       );
 
       const envelope = await routeGptRequest({
@@ -320,10 +586,11 @@ describe('routeGptRequest backstage booker auto-routing', () => {
   it.each(['backstage', 'backstage-booker'])(
     'maps typed storyline validation failures for canonical alias %s without persistence',
     async (gptId) => {
-      mockDispatchModuleAction.mockRejectedValueOnce(
-        new BackstageStorylineValidationError(
-          'Storyline beat payload must be a JSON object.'
-        )
+      mockDispatchModuleAction.mockImplementationOnce(
+        async (_moduleName: string, action: string, payload: unknown) => {
+          expect(action).toBe('trackStoryline');
+          return normalizeBackstageBookerActionPayload('trackStoryline', payload);
+        }
       );
 
       const envelope = await routeGptRequest({

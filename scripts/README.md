@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 68-request plan without network access.
+untracked worktree, limits, and the fixed 69-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -47,9 +47,10 @@ cookie, or session credential. Its attestation scope is the identity served by
 the two pre-confirmed public hosts. It does not independently prove Railway
 project/service/deployment ownership.
 
-The 68 checks retain the original 50 health/readiness and synthetic generic-job
-cases, add eleven server-owned Research web contract fixtures and three Backstage
-storyline web requests (two `lifecycle-exact` requests plus `payload-over`), add
+The 69 checks retain the original 50 health/readiness and synthetic generic-job
+cases, add eleven server-owned Research web contract fixtures and four Backstage
+storyline web requests (two `lifecycle-exact` requests plus
+`phase-one-universe-binding` and `payload-over`), add
 one sealed MCP body-cap web fixture, and prove the worker role denies all three
 contract paths. Each fixture request body
 contains only
@@ -80,16 +81,21 @@ That built runtime is also semantic-digest pinned after comments and line-ending
 normalization.
 
 The sealed `POST /backstage/storyline-contract` selectors are
-`lifecycle-exact` and `payload-over`. `lifecycle-exact` calls the real storyline
+`lifecycle-exact`, `phase-one-universe-binding`, and `payload-over`.
+`lifecycle-exact` calls the real storyline
 validator, response selector, and repository transaction helper against a fresh
 per-request in-memory query adapter. Its two mutations prove the exact
 16,384-byte beat boundary, 100-beat retention, a fresh read, chronological
-newest-25 selection, and accepted-beat inclusion. `payload-over` proves a
+newest-25 selection, and accepted-beat inclusion. The Phase One fixture routes
+independent mutations through two universe-aware adapters and uses the same pure
+confirmation-envelope builder as the production gate to prove that changing only
+`universeId` changes the fingerprint input. It does not issue or verify a
+confirmation token. `payload-over` proves a
 16,385-byte beat is rejected before the repository helper. This is a component
 E2E only: it does not reach PostgreSQL or prove SQL-engine locking or atomicity;
 the PostgreSQL 18 CI suite remains authoritative. The fixtures use no
-credentials, provider, memory, confirmation, persistence effect, or protected
-effect.
+credentials, provider, memory, confirmation challenge/token store, persistence
+effect, or protected effect.
 
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
 executes the config-free core used by the production MCP pre-parser against six

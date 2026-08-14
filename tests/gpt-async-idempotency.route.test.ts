@@ -313,6 +313,11 @@ function buildLargeStorylineBeats() {
   }));
 }
 
+function storylineBeatAtSerializedBytes(totalBytes: number): Record<string, unknown> {
+  const envelopeBytes = Buffer.byteLength(JSON.stringify({ detail: '' }), 'utf8');
+  return { detail: 'x'.repeat(totalBytes - envelopeBytes) };
+}
+
 function configureResearchRoutingMock(): void {
   isRegisteredResearchGptIdMock.mockResolvedValue(true);
   mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
@@ -468,6 +473,109 @@ describe('async /gpt idempotency', () => {
       expect(mockRouteGptRequest).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    [
+      'canonical payload',
+      (beat: Record<string, unknown>) => ({
+        payload: { universeId: 'boundary-universe', beat }
+      })
+    ],
+    [
+      'flattened payload',
+      (beat: Record<string, unknown>) => ({
+        universeId: 'boundary-universe',
+        beat
+      })
+    ]
+  ] as const)(
+    'requires confirmation for a %s storyline beat at the inner byte limit',
+    async (_label, buildBody) => {
+      const controlPlaneToken = 'boundary-storyline-control-plane-token-1234567890';
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:boundary-storyline';
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureBackstageRoutingMock();
+      const beat = storylineBeatAtSerializedBytes(BACKSTAGE_STORYLINE_MAX_BYTES);
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-GPT-Action', 'trackStoryline')
+        .send(buildBody(beat));
+
+      expect(Buffer.byteLength(JSON.stringify(beat), 'utf8'))
+        .toBe(BACKSTAGE_STORYLINE_MAX_BYTES);
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+      expect(response.headers['x-confirmation-challenge']).toEqual(expect.any(String));
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('binds a storyline challenge to explicit payload fields instead of forwarded URL metadata', async () => {
+    const controlPlaneToken = 'storyline-url-parity-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:storyline-url-parity';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        universeId: 'storyline-url-parity',
+        beats: [{ beat: 'Contract signing' }]
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'trackStoryline',
+        timestamp: '2026-08-14T00:00:00.000Z'
+      }
+    });
+    const app = buildApp();
+    const explicitPayload = {
+      universeId: 'storyline-url-parity',
+      beat: { beat: 'Contract signing' }
+    };
+
+    const challengeResponse = await request(app)
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .send({
+        url: 'https://example.test/original-source',
+        payload: explicitPayload
+      });
+    const challengeId = challengeResponse.headers['x-confirmation-challenge'];
+
+    expect(challengeResponse.status).toBe(403);
+    expect(challengeId).toEqual(expect.any(String));
+
+    const confirmedResponse = await request(app)
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .set('X-Confirmed', `token:${challengeId}`)
+      .send({
+        url: 'https://example.test/changed-source',
+        payload: explicitPayload
+      });
+
+    expect(confirmedResponse.status).toBe(200);
+    expect(confirmedResponse.headers['x-confirmation-status']).toBe('challenge-token');
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: {
+        action: 'trackStoryline',
+        payload: explicitPayload,
+        url: 'https://example.test/changed-source'
+      }
+    }));
+  });
 
   it('bounds a configured Research GPT alias while retaining admission accounting', async () => {
     configureResearchRoutingMock();
@@ -2627,6 +2735,44 @@ describe('async /gpt idempotency', () => {
     }
   );
 
+  it('rejects a canonical storyline wrapper with extra fields before confirmation or job planning', async () => {
+    const controlPlaneToken = 'invalid-canonical-storyline-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:invalid-canonical-storyline';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .set('X-GPT-Execution-Mode', 'async')
+      .send({
+        payload: {
+          beat: { turn: 'heel' },
+          callerSelectedTenant: 'forbidden',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE },
+      _route: {
+        gptId: 'backstage',
+        action: 'trackStoryline',
+        route: 'backstage_storyline_validation',
+      },
+    });
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('preserves all 25 large storyline beats through a completed async direct return', async () => {
     const controlPlaneToken = 'async-storyline-response-control-token-1234567890';
     const beats = buildLargeStorylineBeats();
@@ -2785,6 +2931,115 @@ describe('async /gpt idempotency', () => {
         action: 'updateRoster',
         payload: [],
       },
+    }));
+  });
+
+  it.each([
+    [
+      'canonical payload',
+      {
+        payload: {
+          universeId: 'raw-brand-2026',
+          wrestlers: [{ name: '  Rhea Ripley  ', overall: 96 }]
+        }
+      }
+    ],
+    [
+      'flattened payload',
+      {
+        universeId: 'raw-brand-2026',
+        wrestlers: [{ name: '  Rhea Ripley  ', overall: 96 }]
+      }
+    ]
+  ] as const)(
+    'accepts a universe-scoped roster through the primary GPT route as a %s',
+    async (_label, body) => {
+      const controlPlaneToken = 'scoped-roster-control-plane-token-1234567890';
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:scoped-roster';
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureBackstageRoutingMock();
+      mockRouteGptRequest.mockResolvedValue({
+        ok: true,
+        result: {
+          universeId: 'raw-brand-2026',
+          roster: [{ name: 'Rhea Ripley', overall: 96 }]
+        },
+        _route: {
+          gptId: 'backstage-booker',
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'updateRoster',
+          timestamp: '2026-08-14T00:00:00.000Z'
+        }
+      });
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-GPT-Action', 'updateRoster')
+        .set('X-Confirmed', 'yes')
+        .send(body);
+
+      expect(response.status).toBe(200);
+      expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+        gptId: 'backstage-booker',
+        body: {
+          ...body,
+          action: 'updateRoster',
+          payload: {
+            universeId: 'raw-brand-2026',
+            wrestlers: [{ name: 'Rhea Ripley', overall: 96 }]
+          }
+        }
+      }));
+    }
+  );
+
+  it('preserves only the normalized inner beat for a flattened confirmed GPT mutation', async () => {
+    const controlPlaneToken = 'flattened-storyline-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:flattened-storyline';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        universeId: 'story-brand-2026',
+        beats: [{ beat: 'Contract signing' }]
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'trackStoryline',
+        timestamp: '2026-08-14T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .set('X-Confirmed', 'yes')
+      .send({
+        universeId: 'story-brand-2026',
+        beat: { beat: 'Contract signing' }
+      });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: {
+        universeId: 'story-brand-2026',
+        beat: { beat: 'Contract signing' },
+        action: 'trackStoryline',
+        payload: {
+          universeId: 'story-brand-2026',
+          beat: { beat: 'Contract signing' }
+        }
+      }
     }));
   });
 

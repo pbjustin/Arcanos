@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/trackStoryline.request.schema.json",
+  "title": "Backstage Booker trackStoryline request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "beat"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "beat": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/jsonObject"
+    }
+  }
+}

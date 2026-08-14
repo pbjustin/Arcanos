@@ -405,32 +405,52 @@ export const TABLE_DEFINITIONS = [
   // Backstage Booker tables for persistent wrestling data
   `CREATE TABLE IF NOT EXISTS backstage_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
     data JSONB NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_events_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_wrestlers (
     id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
+    name TEXT NOT NULL,
     overall INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_wrestlers_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT backstage_wrestlers_name_key
+      UNIQUE (name),
+    CONSTRAINT uq_backstage_wrestlers_universe_name
+      UNIQUE (universe_id, name)
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_storylines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    story_key TEXT UNIQUE NOT NULL,
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
+    story_key TEXT NOT NULL,
     storyline TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_storylines_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT backstage_storylines_story_key_key
+      UNIQUE (story_key),
+    CONSTRAINT uq_backstage_storylines_universe_story_key
+      UNIQUE (universe_id, story_key)
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_story_beats (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
     data JSONB NOT NULL,
     serialized_data TEXT,
     storage_sequence BIGINT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_story_beats_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
   )`,
 
   `ALTER TABLE backstage_story_beats
@@ -648,6 +668,159 @@ export const TABLE_DEFINITIONS = [
   `ALTER TABLE backstage_story_beats
      VALIDATE CONSTRAINT backstage_story_beats_serialized_data_contract`,
 
+  // Upgrade existing Backstage Booker tables to universe-scoped storage.
+  `ALTER TABLE backstage_events ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_wrestlers ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_storylines ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_story_beats ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `UPDATE backstage_events SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_wrestlers SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_storylines SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_story_beats SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `ALTER TABLE backstage_events ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_wrestlers ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_storylines ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_story_beats ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_events ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_wrestlers ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_storylines ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_story_beats ALTER COLUMN universe_id SET NOT NULL`,
+  `DO $$
+   DECLARE
+     target RECORD;
+     expected_constraint_name TEXT;
+     actual_constraint_oid OID;
+     actual_constraint_type "char";
+     actual_constraint_expression TEXT;
+     actual_constraint_no_inherit BOOLEAN;
+     actual_constraint_is_local BOOLEAN;
+     actual_constraint_inheritance_count INTEGER;
+     actual_constraint_parent OID;
+     actual_constraint_enforced BOOLEAN;
+     expected_constraint_expression TEXT;
+   BEGIN
+     FOR target IN
+       SELECT *
+       FROM (VALUES
+         ('backstage_wrestlers', 'ck_backstage_wrestlers_universe_id'),
+         ('backstage_events', 'ck_backstage_events_universe_id'),
+         ('backstage_story_beats', 'ck_backstage_story_beats_universe_id'),
+         ('backstage_storylines', 'ck_backstage_storylines_universe_id')
+       ) AS targets(table_name, constraint_name)
+     LOOP
+       EXECUTE format('LOCK TABLE %I IN SHARE ROW EXCLUSIVE MODE', target.table_name);
+       actual_constraint_oid := NULL;
+       actual_constraint_type := NULL;
+       actual_constraint_expression := NULL;
+       expected_constraint_expression := NULL;
+       expected_constraint_name := target.constraint_name || '_expected';
+
+       SELECT
+         constraint_row.oid,
+         constraint_row.contype,
+         pg_get_expr(constraint_row.conbin, constraint_row.conrelid, false),
+         constraint_row.connoinherit,
+         constraint_row.conislocal,
+         constraint_row.coninhcount,
+         constraint_row.conparentid,
+         COALESCE((to_jsonb(constraint_row) ->> 'conenforced')::BOOLEAN, TRUE)
+       INTO
+         actual_constraint_oid,
+         actual_constraint_type,
+         actual_constraint_expression,
+         actual_constraint_no_inherit,
+         actual_constraint_is_local,
+         actual_constraint_inheritance_count,
+         actual_constraint_parent,
+         actual_constraint_enforced
+       FROM pg_constraint AS constraint_row
+       WHERE constraint_row.conrelid = target.table_name::regclass
+         AND constraint_row.conname = target.constraint_name;
+
+       IF EXISTS (
+         SELECT 1
+         FROM pg_constraint AS constraint_row
+         WHERE constraint_row.conrelid = target.table_name::regclass
+           AND constraint_row.conname = expected_constraint_name
+       ) THEN
+         RAISE EXCEPTION '% is a reserved constraint verifier name', expected_constraint_name
+           USING ERRCODE = '42804';
+       END IF;
+
+       IF actual_constraint_oid IS NULL THEN
+         EXECUTE format(
+           'ALTER TABLE %I ADD CONSTRAINT %I CHECK (universe_id ~ %L) NOT VALID',
+           target.table_name,
+           target.constraint_name,
+           '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+         );
+       ELSE
+         EXECUTE format(
+           'ALTER TABLE %I ADD CONSTRAINT %I CHECK (universe_id ~ %L) NOT VALID',
+           target.table_name,
+           expected_constraint_name,
+           '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+         );
+
+         SELECT pg_get_expr(constraint_row.conbin, constraint_row.conrelid, false)
+         INTO expected_constraint_expression
+         FROM pg_constraint AS constraint_row
+         WHERE constraint_row.conrelid = target.table_name::regclass
+           AND constraint_row.conname = expected_constraint_name;
+
+         EXECUTE format(
+           'ALTER TABLE %I DROP CONSTRAINT %I',
+           target.table_name,
+           expected_constraint_name
+         );
+
+         IF actual_constraint_type <> 'c'
+           OR actual_constraint_expression IS DISTINCT FROM expected_constraint_expression
+           OR actual_constraint_no_inherit
+           OR NOT actual_constraint_is_local
+           OR actual_constraint_inheritance_count <> 0
+           OR actual_constraint_parent <> 0
+           OR NOT actual_constraint_enforced
+         THEN
+           RAISE EXCEPTION '% has an unexpected definition', target.constraint_name
+             USING ERRCODE = '42804';
+         END IF;
+       END IF;
+
+       EXECUTE format(
+         'ALTER TABLE %I VALIDATE CONSTRAINT %I',
+         target.table_name,
+         target.constraint_name
+       );
+     END LOOP;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_wrestlers'::regclass
+         AND conname = 'uq_backstage_wrestlers_universe_name'
+     ) THEN
+       ALTER TABLE backstage_wrestlers
+         ADD CONSTRAINT uq_backstage_wrestlers_universe_name
+         UNIQUE (universe_id, name);
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_storylines'::regclass
+         AND conname = 'uq_backstage_storylines_universe_story_key'
+     ) THEN
+       ALTER TABLE backstage_storylines
+         ADD CONSTRAINT uq_backstage_storylines_universe_story_key
+         UNIQUE (universe_id, story_key);
+     END IF;
+   END
+   $$`,
   // Self-reflection storage for AI analysis history
   `CREATE TABLE IF NOT EXISTS self_reflections (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1294,6 +1467,14 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_name ON backstage_wrestlers(name)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_events_created_at ON backstage_events(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_created_at ON backstage_story_beats(created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_universe_updated
+    ON backstage_wrestlers(universe_id, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_events_universe_created
+    ON backstage_events(universe_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_storylines_universe_updated
+    ON backstage_storylines(universe_id, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_universe_created
+    ON backstage_story_beats(universe_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_created_at ON self_reflections(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_category_priority ON self_reflections(category, priority)`
 ];

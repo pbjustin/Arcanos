@@ -77,4 +77,59 @@ describe('moduleConversationPersistence', () => {
       })
     );
   });
+
+  it('does not duplicate structured Backstage storyline mirrors', async () => {
+    await persistModuleConversation({
+      moduleName: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action: 'saveStoryline',
+      gptId: 'backstage-booker',
+      requestPayload: {
+        universeId: 'roh-2026',
+        key: 'request-key',
+        storyline: 'Structured feud outline'
+      },
+      responsePayload: {
+        universeId: 'roh-2026',
+        key: 'canonical-key',
+        saved: true,
+        persistence: {
+          status: 'durable',
+          durable: true,
+          degraded: false,
+          backend: 'postgresql'
+        }
+      }
+    });
+
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('does not mirror an unknown Backstage commit outcome', async () => {
+    await persistModuleConversation({
+      moduleName: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action: 'saveStoryline',
+      gptId: 'backstage-booker',
+      requestPayload: {
+        universeId: 'unknown-commit',
+        key: 'uncertain',
+        storyline: 'Do not mirror'
+      },
+      responsePayload: {
+        universeId: 'unknown-commit',
+        key: 'uncertain',
+        saved: true,
+        persistence: {
+          status: 'unknown',
+          durable: null,
+          degraded: true,
+          backend: 'postgresql',
+          reason: 'commit_outcome_unknown'
+        }
+      }
+    });
+
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
 });

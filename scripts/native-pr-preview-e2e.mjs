@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 112;
+const MAX_REQUESTS = 113;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
@@ -748,6 +748,11 @@ export function buildNativePrPreviewRequestPlan() {
     backstageStorylineCase(
       'backstage-storyline-lifecycle-repeat',
       'lifecycleExact',
+      200
+    ),
+    backstageStorylineCase(
+      'backstage-phase-one-universe-binding',
+      'phaseOneUniverseBinding',
       200
     ),
     backstageStorylineCase(
@@ -1571,6 +1576,40 @@ function expectedBackstageStorylineContractPayload(requestCase) {
     protectedEffectsEnabled: false,
     schemaVersion: 1,
   };
+  if (requestCase.fixtureName === 'phaseOneUniverseBinding') {
+    return {
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      eligibleForConfirmation: true,
+      ...base,
+      durablePersistenceAttempted: false,
+      postValidationBoundaryReached: true,
+      transactionComponentExecuted: true,
+      validationCompleted: true,
+      validationCode: 'VALID',
+      phaseOne: {
+        action: 'trackStoryline',
+        canonicalRoute: '/gpt/backstage-booker',
+        confirmationFingerprintInputUniverseBound: true,
+        confirmationTokenIssued: false,
+        crossUniverseLeakageObserved: false,
+        queryPhaseCount: 20,
+        queryUniverseRoutingVerified: true,
+        universes: [
+          {
+            universeId: 'preview-alpha',
+            retainedSequences: [1, 101],
+          },
+          {
+            universeId: 'preview-beta',
+            retainedSequences: [2, 202],
+          },
+        ],
+      },
+    };
+  }
   if (requestCase.fixtureName === 'payloadOver') {
     return {
       accepted: false,

@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json",
+  "title": "Backstage Booker common definitions",
+  "$defs": {
+    "universeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "default": "legacy"
+    },
+    "postgresText": {
+      "type": "string",
+      "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "jsonValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/jsonObject"
+        }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/jsonValue"
+      }
+    },
+    "postgresJsonValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/postgresText"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/postgresJsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/postgresJsonObject"
+        }
+      ]
+    },
+    "postgresJsonObject": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/postgresText"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/postgresJsonValue"
+      }
+    },
+    "wrestlerName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "#/$defs/postgresText"
+        }
+      ]
+    },
+    "wrestler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "overall"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        "overall": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "hrc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fidelity",
+        "resilience",
+        "verdict"
+      ],
+      "properties": {
+        "fidelity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "resilience": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verdict": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "durablePersistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "durable",
+        "backend",
+        "degraded"
+      ],
+      "properties": {
+        "status": {
+          "const": "durable"
+        },
+        "durable": {
+          "const": true
+        },
+        "backend": {
+          "const": "postgresql"
+        },
+        "degraded": {
+          "const": false
+        }
+      }
+    },
+    "nonDurablePersistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "durable",
+        "backend",
+        "degraded",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "const": "non_durable"
+        },
+        "durable": {
+          "const": false
+        },
+        "backend": {
+          "const": "process-memory"
+        },
+        "degraded": {
+          "const": true
+        },
+        "reason": {
+          "enum": [
+            "database_unavailable",
+            "database_write_failed"
+          ]
+        }
+      }
+    },
+    "unknownPersistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "durable",
+        "backend",
+        "degraded",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "const": "unknown"
+        },
+        "durable": {
+          "type": "null"
+        },
+        "backend": {
+          "const": "postgresql"
+        },
+        "degraded": {
+          "const": true
+        },
+        "reason": {
+          "const": "commit_outcome_unknown"
+        }
+      }
+    },
+    "persistence": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/durablePersistence"
+        },
+        {
+          "$ref": "#/$defs/nonDurablePersistence"
+        },
+        {
+          "$ref": "#/$defs/unknownPersistence"
+        }
+      ]
+    },
+    "matchInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wrestler1",
+        "wrestler2",
+        "matchType"
+      ],
+      "properties": {
+        "wrestler1": {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        "wrestler2": {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        "matchType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "\\S"
+        },
+        "kayfabeMode": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "matchLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "matchRating": {
+      "type": "string",
+      "pattern": "^(?:[1-4]\\.[0-9]|5\\.0)$"
+    },
+    "interference": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kayfabeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "result",
+        "via",
+        "interference",
+        "rating"
+      ],
+      "properties": {
+        "match": {
+          "$ref": "#/$defs/matchLabel"
+        },
+        "result": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "via": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "interference": {
+          "$ref": "#/$defs/interference"
+        },
+        "rating": {
+          "$ref": "#/$defs/matchRating"
+        }
+      }
+    },
+    "realResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "winner",
+        "loser",
+        "probability",
+        "interference",
+        "rating"
+      ],
+      "properties": {
+        "match": {
+          "$ref": "#/$defs/matchLabel"
+        },
+        "winner": {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        "loser": {
+          "$ref": "#/$defs/wrestlerName"
+        },
+        "probability": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 2,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^(?:0\\.[0-9]{2}|1\\.00)$"
+          }
+        },
+        "interference": {
+          "$ref": "#/$defs/interference"
+        },
+        "rating": {
+          "$ref": "#/$defs/matchRating"
+        }
+      }
+    },
+    "matchResult": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/kayfabeResult"
+        },
+        {
+          "$ref": "#/$defs/realResult"
+        }
+      ]
+    }
+  }
+}

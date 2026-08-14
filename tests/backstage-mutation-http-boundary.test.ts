@@ -416,7 +416,7 @@ describe('Backstage mutation HTTP boundary', () => {
       .post('/gpt/backstage')
       .set('Authorization', `Bearer ${controlPlaneToken}`)
       .set('X-GPT-Action', 'updateRoster')
-      .send({ payload: {} });
+      .send({ payload: { wrestlers: [{ name: 'A', overall: 90 }] } });
     const challengeId = challengeResponse.headers['x-confirmation-challenge'];
 
     expect(challengeResponse.status).toBe(403);
@@ -427,7 +427,7 @@ describe('Backstage mutation HTTP boundary', () => {
       .set('Authorization', `Bearer ${controlPlaneToken}`)
       .set('X-GPT-Action', 'trackStoryline')
       .set('X-Confirmed', `token:${challengeId}`)
-      .send({ payload: {} });
+      .send({ payload: { beat: { turn: 'heel' } } });
 
     expect(replayResponse.status).toBe(403);
     expect(replayResponse.body.code).toBe('CONFIRMATION_REQUIRED');
@@ -440,7 +440,7 @@ describe('Backstage mutation HTTP boundary', () => {
       .post('/gpt/backstage')
       .set('Authorization', `Bearer ${controlPlaneToken}`)
       .set('X-GPT-Action', 'updateRoster')
-      .send({ payload: {} });
+      .send({ payload: { wrestlers: [{ name: 'A', overall: 90 }] } });
     const challengeId = challengeResponse.headers['x-confirmation-challenge'];
 
     expect(challengeResponse.status).toBe(403);
@@ -449,7 +449,7 @@ describe('Backstage mutation HTTP boundary', () => {
     const confirmedResponse = await authorizedPost(app, '/gpt/backstage')
       .set('X-GPT-Action', 'updateRoster')
       .set('X-Confirmed', `token:${challengeId}`)
-      .send({ payload: {} });
+      .send({ payload: { wrestlers: [{ name: 'A', overall: 90 }] } });
 
     expect(confirmedResponse.status).toBe(204);
     expect(confirmedResponse.headers['x-confirmation-status']).toBe('challenge-token');

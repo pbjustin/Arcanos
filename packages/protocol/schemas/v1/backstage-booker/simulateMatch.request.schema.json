@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/simulateMatch.request.schema.json",
+  "title": "Backstage Booker simulateMatch request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "match"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "match": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/matchInput"
+    },
+    "rosters": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/wrestler"
+      }
+    },
+    "winProbModifier": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0
+    }
+  }
+}

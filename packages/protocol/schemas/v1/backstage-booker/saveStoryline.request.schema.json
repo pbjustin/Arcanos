@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/saveStoryline.request.schema.json",
+  "title": "Backstage Booker saveStoryline request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "key",
+    "storyline"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/postgresText"
+        }
+      ]
+    },
+    "storyline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100000,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/postgresText"
+        }
+      ]
+    }
+  }
+}

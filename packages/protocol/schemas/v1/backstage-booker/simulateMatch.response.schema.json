@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/simulateMatch.response.schema.json",
+  "title": "Backstage Booker simulateMatch response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "result",
+    "hrc"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "result": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/matchResult"
+    },
+    "hrc": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/hrc"
+    }
+  }
+}

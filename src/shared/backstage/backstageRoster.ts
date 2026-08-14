@@ -155,6 +155,24 @@ function hasBoundedCodePointLength(value: string, maximum: number): boolean {
   return length > 0;
 }
 
+function hasUnpairedUtf16Surrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const trailingCodeUnit = value.charCodeAt(index + 1);
+      if (!(trailingCodeUnit >= 0xdc00 && trailingCodeUnit <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Validate and normalize one roster mutation before any database work.
  *
@@ -194,6 +212,11 @@ export function parseBackstageRosterPayload(payload: unknown): Wrestler[] {
     if (name.includes('\u0000')) {
       throw new BackstageRosterValidationError(
         `Roster item at index ${index} name must not contain U+0000.`
+      );
+    }
+    if (hasUnpairedUtf16Surrogate(name)) {
+      throw new BackstageRosterValidationError(
+        `Roster item at index ${index} name must not contain unpaired UTF-16 surrogates.`
       );
     }
     if (!hasBoundedCodePointLength(name, BACKSTAGE_WRESTLER_NAME_MAX_LENGTH)) {
