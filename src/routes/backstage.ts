@@ -16,7 +16,10 @@ import {
   isBackstageRosterPersistenceError,
   isBackstageRosterValidationError
 } from '@shared/backstage/backstageRoster.js';
-import { isBackstageStorylineValidationError } from '@shared/backstage/backstageStoryline.js';
+import {
+  isBackstageStorylinePersistenceError,
+  isBackstageStorylineValidationError
+} from '@shared/backstage/backstageStoryline.js';
 
 const router = express.Router();
 
@@ -42,7 +45,10 @@ function sendBackstageRouteError(res: Response, error: unknown): void {
     return;
   }
 
-  if (isBackstageRosterPersistenceError(error)) {
+  if (
+    isBackstageRosterPersistenceError(error)
+    || isBackstageStorylinePersistenceError(error)
+  ) {
     res.status(503).json({
       success: false,
       error: {

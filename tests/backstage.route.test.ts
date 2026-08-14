@@ -6,7 +6,9 @@ import {
 } from '../src/shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_STORYLINE_MAX_BYTES,
+  BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
+  BackstageStorylinePersistenceError,
 } from '../src/shared/backstage/backstageStoryline.js';
 
 const originalAllowAllGpts = process.env.ALLOW_ALL_GPTS;
@@ -392,6 +394,23 @@ describe('direct Backstage routes', () => {
       }
     });
     expect(mockUpdateRoster).toHaveBeenCalledWith([{ name: 'A', overall: 90 }], 'legacy');
+  });
+
+  it('maps authoritative storyline persistence failures to a stable unavailable response', async () => {
+    mockTrackStoryline.mockRejectedValueOnce(new BackstageStorylinePersistenceError());
+
+    const response = await authorizedConfirmedPost('/backstage/track-storyline')
+      .send({ beat: 'turn' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
+        message: 'Storyline persistence could not be confirmed.'
+      }
+    });
+    expect(mockTrackStoryline).toHaveBeenCalledWith({ beat: 'turn' }, 'legacy');
   });
 
   it('does not replay a direct mutation challenge across control-plane principals', async () => {

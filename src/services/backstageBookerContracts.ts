@@ -8,11 +8,11 @@ import {
 } from '@arcanos/protocol';
 import { parseBackstageRosterPayload } from '@shared/backstage/backstageRoster.js';
 import {
+  BACKSTAGE_STORYLINE_MAX_BYTES,
   BackstageStorylineValidationError,
   parseBackstageStorylinePayload
 } from '@shared/backstage/backstageStoryline.js';
 
-const MAX_OPEN_PAYLOAD_BYTES = 16 * 1024;
 export const BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS = '__arcanosBackstageExplicitPayloadFields';
 export const BACKSTAGE_FLATTENED_PAYLOAD_FLAG = '__arcanosBackstageFlattenedPayload';
 
@@ -233,9 +233,9 @@ function assertOpenPayloadJson(action: BackstageBookerAction, value: unknown): s
 
 function assertStorylinePayloadSize(value: unknown): void {
   const serialized = assertOpenPayloadJson('trackStoryline', value);
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_OPEN_PAYLOAD_BYTES) {
+  if (Buffer.byteLength(serialized, 'utf8') > BACKSTAGE_STORYLINE_MAX_BYTES) {
     throw new BackstageStorylineValidationError(
-      `Storyline beat payload must not exceed ${MAX_OPEN_PAYLOAD_BYTES} bytes of serialized UTF-8 JSON.`
+      `Storyline beat payload must not exceed ${BACKSTAGE_STORYLINE_MAX_BYTES} bytes of serialized UTF-8 JSON.`
     );
   }
 }
