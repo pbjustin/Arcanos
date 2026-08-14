@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
-import { Client } from 'pg';
+import { Client, type Pool } from 'pg';
 
+import { PostgresBackstageBookerRepository } from '../../src/core/db/repositories/backstageBookerRepository.js';
 import { applyBackstageStorylineMutation } from '../../src/core/db/repositories/backstageStorylineRepository.js';
 import { TABLE_DEFINITIONS } from '../../src/core/db/schema.js';
 import {
@@ -284,11 +285,24 @@ describeWithDatabase('Backstage storyline lifecycle on PostgreSQL 18', () => {
     await observer.query(
       `CREATE TABLE backstage_story_beats (
          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+         universe_id TEXT NOT NULL DEFAULT 'legacy',
          data JSONB NOT NULL,
          created_at TIMESTAMPTZ DEFAULT NOW()
        )`
     );
     await observer.query(forwardMigration);
+    await observer.query(
+      `CREATE TABLE backstage_wrestlers (
+         universe_id TEXT NOT NULL,
+         name TEXT NOT NULL
+       )`
+    );
+    await observer.query(
+      `CREATE TABLE backstage_storylines (
+         universe_id TEXT NOT NULL,
+         story_key TEXT NOT NULL
+       )`
+    );
 
     const pidResult = await second.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
     secondPid = pidResult.rows[0]?.pid ?? 0;
@@ -557,6 +571,26 @@ describeWithDatabase('Backstage storyline lifecycle on PostgreSQL 18', () => {
       }
     }
   }, 15_000);
+
+  test('persists a non-legacy beat after the in-transaction activation check', async () => {
+    const repository = new PostgresBackstageBookerRepository({
+      connect: async () => ({
+        query: first.query.bind(first),
+        release: () => undefined
+      })
+    } as unknown as Pool);
+
+    const result = await repository.trackStoryline('universe-a', {
+      beat: 'Activated universe beat'
+    });
+
+    expect(result.retainedBeats).toEqual([{ beat: 'Activated universe beat' }]);
+    await expect(observer.query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT AS count
+       FROM backstage_story_beats
+       WHERE universe_id = 'universe-a'`
+    )).resolves.toMatchObject({ rows: [{ count: '1' }] });
+  });
 
   test('fences mixed-version writers and retains legacy beats after authoritative state', async () => {
     const values: string[] = [];

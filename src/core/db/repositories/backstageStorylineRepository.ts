@@ -9,6 +9,8 @@ import {
 
 const BACKSTAGE_STORYLINE_ADVISORY_LOCK_NAMESPACE = 0x41524341;
 const BACKSTAGE_STORYLINE_ADVISORY_LOCK_RESOURCE = 0x53544254;
+const LEGACY_BACKSTAGE_UNIVERSE_ID = 'legacy';
+const BACKSTAGE_UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 export interface BackstageStorylineMutationResult {
   retainedBeats: StorylineBeat[];
@@ -25,6 +27,14 @@ interface StoredStorylineBeatRow {
   serialized_data: unknown;
 }
 
+function normalizeUniverseId(universeId: string): string {
+  const normalized = universeId.trim();
+  if (!BACKSTAGE_UNIVERSE_ID_PATTERN.test(normalized)) {
+    throw new TypeError('universeId must be a valid Backstage universe identifier.');
+  }
+  return normalized;
+}
+
 /**
  * Persist one validated beat and enforce the complete retained timeline atomically.
  * Inputs/outputs: transaction client plus exact compact JSON -> retained chronological beats and revision.
@@ -33,12 +43,17 @@ interface StoredStorylineBeatRow {
  */
 export async function applyBackstageStorylineMutation(
   client: BackstageStorylineTransactionClient,
-  serializedBeat: string
+  serializedBeat: string,
+  universeId = LEGACY_BACKSTAGE_UNIVERSE_ID,
+  afterIsolationLevelConfigured?: () => Promise<void>
 ): Promise<BackstageStorylineMutationResult> {
+  const normalizedUniverseId = normalizeUniverseId(universeId);
+
   // Keep this as the first transaction statement: PostgreSQL permits normalizing an explicit
   // BEGIN ... REPEATABLE READ before any snapshot-establishing query, and the PG18 concurrency
   // regression covers that exact caller sequence.
   await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+  await afterIsolationLevelConfigured?.();
 
   //audit Assumption: all supported storyline mutations use this fixed transaction-scoped advisory lock; failure risk: replicas prune or publish competing timelines; expected invariant: insert, legacy containment, retention, and read execute serially; handling strategy: acquire one shared lock before inspecting or mutating beat state.
   await client.query(
@@ -67,7 +82,8 @@ export async function applyBackstageStorylineMutation(
     `WITH newest_legacy AS MATERIALIZED (
        SELECT id, created_at
        FROM backstage_story_beats
-       WHERE serialized_data IS NULL
+       WHERE universe_id = $3
+         AND serialized_data IS NULL
          AND jsonb_typeof(data) = 'object'
          AND created_at IS NOT NULL
          AND isfinite(created_at)
@@ -82,7 +98,8 @@ export async function applyBackstageStorylineMutation(
          beat.created_at,
          FALSE AS is_legacy
        FROM backstage_story_beats AS beat
-       WHERE beat.serialized_data IS NOT NULL
+       WHERE beat.universe_id = $3
+         AND beat.serialized_data IS NOT NULL
 
        UNION ALL
 
@@ -114,29 +131,41 @@ export async function applyBackstageStorylineMutation(
        storage_sequence = ordered.storage_sequence
      FROM ordered
      WHERE beat.id = ordered.id
+       AND beat.universe_id = $3
        AND (
          beat.serialized_data IS DISTINCT FROM ordered.serialized_data
          OR beat.storage_sequence IS DISTINCT FROM ordered.storage_sequence
        )`,
-    [BACKSTAGE_STORYLINE_MAX_BYTES, BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS]
+    [
+      BACKSTAGE_STORYLINE_MAX_BYTES,
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+      normalizedUniverseId
+    ]
   );
 
   await client.query(
     `DELETE FROM backstage_story_beats
-     WHERE serialized_data IS NULL`
+     WHERE universe_id = $1
+       AND serialized_data IS NULL`,
+    [normalizedUniverseId]
   );
 
   await client.query(
     `WITH expired AS MATERIALIZED (
        SELECT id
        FROM backstage_story_beats
+       WHERE universe_id = $2
        ORDER BY storage_sequence DESC, id DESC
        OFFSET $1
      )
      DELETE FROM backstage_story_beats AS beat
      USING expired
-     WHERE beat.id = expired.id`,
-    [BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1]
+     WHERE beat.id = expired.id
+       AND beat.universe_id = $2`,
+    [
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1,
+      normalizedUniverseId
+    ]
   );
 
   //audit Assumption: storage_sequence is an internal compact append order, not a caller timestamp; failure risk: manually inserted BIGINT extremes or duplicates poison MAX()+1; expected invariant: every admitted mutation starts from a dense 1..99 order; handling strategy: re-rank the bounded retained rows under the advisory lock before inserting.
@@ -147,29 +176,35 @@ export async function applyBackstageStorylineMutation(
          ROW_NUMBER() OVER (ORDER BY storage_sequence ASC, id ASC)::BIGINT
            AS compact_sequence
        FROM backstage_story_beats
+       WHERE universe_id = $1
      )
      UPDATE backstage_story_beats AS beat
      SET storage_sequence = ordered.compact_sequence
      FROM ordered
      WHERE beat.id = ordered.id
-       AND beat.storage_sequence IS DISTINCT FROM ordered.compact_sequence`
+       AND beat.universe_id = $1
+       AND beat.storage_sequence IS DISTINCT FROM ordered.compact_sequence`,
+    [normalizedUniverseId]
   );
 
   const insertedResult = await client.query<InsertedStorylineBeatRow>(
     `INSERT INTO backstage_story_beats (
+       universe_id,
        data,
        serialized_data,
        storage_sequence,
        created_at
      )
      SELECT
+       $2,
        '{}'::JSONB,
        $1::TEXT,
        COALESCE(MAX(storage_sequence), 0) + 1,
        clock_timestamp()
      FROM backstage_story_beats
+     WHERE universe_id = $2
      RETURNING id`,
-    [serializedBeat]
+    [serializedBeat, normalizedUniverseId]
   );
   const insertedId = insertedResult.rows[0]?.id;
   if (typeof insertedId !== 'string' || insertedId.length === 0) {
@@ -181,6 +216,7 @@ export async function applyBackstageStorylineMutation(
      FROM (
        SELECT id, serialized_data, storage_sequence
        FROM backstage_story_beats
+       WHERE universe_id = $3
        ORDER BY
          (id = $1::UUID) DESC,
          storage_sequence DESC,
@@ -191,7 +227,11 @@ export async function applyBackstageStorylineMutation(
        recent.storage_sequence ASC,
        (recent.id = $1::UUID) ASC,
        recent.id ASC`,
-    [insertedId, BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS]
+    [
+      insertedId,
+      BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+      normalizedUniverseId
+    ]
   );
 
   const retainedBeats = retainedResult.rows.map(row =>

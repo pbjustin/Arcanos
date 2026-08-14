@@ -1,4 +1,9 @@
 export { ARCANOS_PROTOCOL_COMMAND_IDS, ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS } from "./commands.js";
+export {
+  BACKSTAGE_BOOKER_ACTIONS,
+  DEFAULT_BACKSTAGE_UNIVERSE_ID,
+  isBackstageBookerAction
+} from "./backstageBooker.js";
 export { ARCANOS_PROTOCOL_VERSION } from "./constants.js";
 export { getProtocolSchemaCatalog } from "./schemaCatalog.js";
 export type {
@@ -56,13 +61,51 @@ export type {
   ValidationIssue,
   ValidationResult
 } from "./types.js";
+export type {
+  BackstageBookEventRequest,
+  BackstageBookEventResponse,
+  BackstageBookerAction,
+  BackstageBookerActionInputMap,
+  BackstageBookerActionOutputMap,
+  BackstageDurablePersistence,
+  BackstageGenerateBookingRequest,
+  BackstageGenerateBookingResponse,
+  BackstageGenerateBookingStructuredResponse,
+  BackstageGenerateBookingWithHrcRequest,
+  BackstageGenerateBookingWithHrcResponse,
+  BackstageHrcResult,
+  BackstageJsonObject,
+  BackstageJsonValue,
+  BackstageKayfabeResult,
+  BackstageMatchInput,
+  BackstageMatchResult,
+  BackstageMatchResultBase,
+  BackstageNonDurablePersistence,
+  BackstagePersistence,
+  BackstageRealResult,
+  BackstageSaveStorylineRequest,
+  BackstageSaveStorylineResponse,
+  BackstageSimulateMatchRequest,
+  BackstageSimulateMatchResponse,
+  BackstageTrackStorylineRequest,
+  BackstageTrackStorylineResponse,
+  BackstageUniverseId,
+  BackstageUnknownPersistence,
+  BackstageUpdateRosterRequest,
+  BackstageUpdateRosterResponse,
+  BackstageWrestler
+} from "./backstageBooker.js";
 export {
+  assertValidBackstageBookerActionData,
+  assertValidBackstageBookerActionPayload,
   assertTypedImplementedResponse,
   assertValidProtocolRequest,
   assertValidProtocolResponse,
   createProtocolAjv,
   createProtocolRequest,
   isImplementedProtocolCommandId,
+  validateBackstageBookerActionData,
+  validateBackstageBookerActionPayload,
   validateProtocolCommandData,
   validateProtocolCommandPayload,
   validateProtocolRequestEnvelope,

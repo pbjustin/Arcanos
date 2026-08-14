@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/trackStoryline.response.schema.json",
+  "title": "Backstage Booker trackStoryline response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "beats",
+    "persistence"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "beats": {
+      "type": "array",
+      "maxItems": 25,
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/jsonObject"
+      }
+    },
+    "persistence": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/persistence"
+    }
+  }
+}

@@ -405,32 +405,52 @@ export const TABLE_DEFINITIONS = [
   // Backstage Booker tables for persistent wrestling data
   `CREATE TABLE IF NOT EXISTS backstage_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
     data JSONB NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_events_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_wrestlers (
     id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
+    name TEXT NOT NULL,
     overall INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_wrestlers_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT backstage_wrestlers_name_key
+      UNIQUE (name),
+    CONSTRAINT uq_backstage_wrestlers_universe_name
+      UNIQUE (universe_id, name)
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_storylines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    story_key TEXT UNIQUE NOT NULL,
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
+    story_key TEXT NOT NULL,
     storyline TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_storylines_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT backstage_storylines_story_key_key
+      UNIQUE (story_key),
+    CONSTRAINT uq_backstage_storylines_universe_story_key
+      UNIQUE (universe_id, story_key)
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_story_beats (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    universe_id TEXT NOT NULL DEFAULT 'legacy',
     data JSONB NOT NULL,
     serialized_data TEXT,
     storage_sequence BIGINT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT ck_backstage_story_beats_universe_id
+      CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
   )`,
 
   `ALTER TABLE backstage_story_beats
@@ -648,6 +668,101 @@ export const TABLE_DEFINITIONS = [
   `ALTER TABLE backstage_story_beats
      VALIDATE CONSTRAINT backstage_story_beats_serialized_data_contract`,
 
+  // Upgrade existing Backstage Booker tables to universe-scoped storage.
+  `ALTER TABLE backstage_events ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_wrestlers ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_storylines ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `ALTER TABLE backstage_story_beats ADD COLUMN IF NOT EXISTS universe_id TEXT`,
+  `UPDATE backstage_events SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_wrestlers SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_storylines SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `UPDATE backstage_story_beats SET universe_id = 'legacy' WHERE universe_id IS NULL OR btrim(universe_id) = ''`,
+  `ALTER TABLE backstage_events ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_wrestlers ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_storylines ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_story_beats ALTER COLUMN universe_id SET DEFAULT 'legacy'`,
+  `ALTER TABLE backstage_events ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_wrestlers ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_storylines ALTER COLUMN universe_id SET NOT NULL`,
+  `ALTER TABLE backstage_story_beats ALTER COLUMN universe_id SET NOT NULL`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_events'::regclass
+         AND conname = 'ck_backstage_events_universe_id'
+     ) THEN
+       ALTER TABLE backstage_events
+         ADD CONSTRAINT ck_backstage_events_universe_id
+         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_wrestlers'::regclass
+         AND conname = 'ck_backstage_wrestlers_universe_id'
+     ) THEN
+       ALTER TABLE backstage_wrestlers
+         ADD CONSTRAINT ck_backstage_wrestlers_universe_id
+         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_storylines'::regclass
+         AND conname = 'ck_backstage_storylines_universe_id'
+     ) THEN
+       ALTER TABLE backstage_storylines
+         ADD CONSTRAINT ck_backstage_storylines_universe_id
+         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_story_beats'::regclass
+         AND conname = 'ck_backstage_story_beats_universe_id'
+     ) THEN
+       ALTER TABLE backstage_story_beats
+         ADD CONSTRAINT ck_backstage_story_beats_universe_id
+         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_wrestlers'::regclass
+         AND conname = 'uq_backstage_wrestlers_universe_name'
+     ) THEN
+       ALTER TABLE backstage_wrestlers
+         ADD CONSTRAINT uq_backstage_wrestlers_universe_name
+         UNIQUE (universe_id, name);
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'backstage_storylines'::regclass
+         AND conname = 'uq_backstage_storylines_universe_story_key'
+     ) THEN
+       ALTER TABLE backstage_storylines
+         ADD CONSTRAINT uq_backstage_storylines_universe_story_key
+         UNIQUE (universe_id, story_key);
+     END IF;
+   END
+   $$`,
   // Self-reflection storage for AI analysis history
   `CREATE TABLE IF NOT EXISTS self_reflections (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1294,6 +1409,14 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_name ON backstage_wrestlers(name)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_events_created_at ON backstage_events(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_created_at ON backstage_story_beats(created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_universe_updated
+    ON backstage_wrestlers(universe_id, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_events_universe_created
+    ON backstage_events(universe_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_storylines_universe_updated
+    ON backstage_storylines(universe_id, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_universe_created
+    ON backstage_story_beats(universe_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_created_at ON self_reflections(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_self_reflections_category_priority ON self_reflections(category, priority)`
 ];

@@ -2,8 +2,14 @@ import { createRequire } from "node:module";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 
 import { ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS } from "./commands.js";
+import { BACKSTAGE_BOOKER_ACTIONS } from "./backstageBooker.js";
 import { ARCANOS_PROTOCOL_VERSION } from "./constants.js";
 import { getProtocolSchemaCatalog } from "./schemaCatalog.js";
+import type {
+  BackstageBookerAction,
+  BackstageBookerActionInputMap,
+  BackstageBookerActionOutputMap
+} from "./backstageBooker.js";
 import type {
   ArtifactStoreResponseData,
   ControlPlaneInvokeResponseData,
@@ -32,6 +38,10 @@ const AjvConstructor = require("ajv/dist/2020").default as typeof import("ajv").
 const sharedSchemas: AnySchema[] = [
   schemaCatalog.envelope,
   ...Object.values(schemaCatalog.nouns),
+  schemaCatalog.backstageBooker.common,
+  ...Object.values(schemaCatalog.backstageBooker.actions).flatMap(
+    ({ request, response }) => [request, response]
+  ),
   schemaCatalog.commands.artifactStore.request,
   schemaCatalog.commands.artifactStore.response,
   schemaCatalog.commands.controlPlaneInvoke.request,
@@ -110,6 +120,28 @@ const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = 
   "tool.registry": schemaCatalog.commands.toolRegistry.response
 };
 
+const backstageBookerActionRequestSchemas: Record<BackstageBookerAction, AnySchema> = {
+  bookEvent: schemaCatalog.backstageBooker.actions.bookEvent.request,
+  updateRoster: schemaCatalog.backstageBooker.actions.updateRoster.request,
+  trackStoryline: schemaCatalog.backstageBooker.actions.trackStoryline.request,
+  simulateMatch: schemaCatalog.backstageBooker.actions.simulateMatch.request,
+  generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.request,
+  generateBookingWithHRC:
+    schemaCatalog.backstageBooker.actions.generateBookingWithHRC.request,
+  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.request
+};
+
+const backstageBookerActionResponseSchemas: Record<BackstageBookerAction, AnySchema> = {
+  bookEvent: schemaCatalog.backstageBooker.actions.bookEvent.response,
+  updateRoster: schemaCatalog.backstageBooker.actions.updateRoster.response,
+  trackStoryline: schemaCatalog.backstageBooker.actions.trackStoryline.response,
+  simulateMatch: schemaCatalog.backstageBooker.actions.simulateMatch.response,
+  generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.response,
+  generateBookingWithHRC:
+    schemaCatalog.backstageBooker.actions.generateBookingWithHRC.response,
+  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.response
+};
+
 const protocolAjv = createProtocolAjv();
 const requestEnvelopeValidator = protocolAjv.compile({
   $id: "https://schemas.arcanos.dev/protocol/v1/envelope-request.schema.json",
@@ -129,6 +161,12 @@ const responseEnvelopeValidator = protocolAjv.compile({
 });
 const requestPayloadValidators = compileCommandValidators(commandRequestSchemas);
 const responseDataValidators = compileCommandValidators(commandResponseSchemas);
+const backstageBookerRequestValidators = compileBackstageBookerActionValidators(
+  backstageBookerActionRequestSchemas
+);
+const backstageBookerResponseValidators = compileBackstageBookerActionValidators(
+  backstageBookerActionResponseSchemas
+);
 
 /**
  * Builds an Ajv instance loaded with every shared protocol schema.
@@ -208,6 +246,72 @@ export function validateProtocolCommandData(command: ProtocolCommandId, data: un
   }
 
   return buildValidationResult(responseDataValidators[command], data ?? {});
+}
+
+/**
+ * Validates one canonical Backstage Booker module-action request payload.
+ * Inputs: action identifier and untrusted payload value.
+ * Outputs: normalized validation issues without mutating or defaulting the payload.
+ * Edge cases: an omitted universeId remains valid for the temporary legacy-universe compatibility window.
+ */
+export function validateBackstageBookerActionPayload(
+  action: BackstageBookerAction,
+  payload: unknown
+): ValidationResult {
+  const validator = backstageBookerRequestValidators[action];
+  if (typeof validator !== "function") {
+    return buildUnknownBackstageBookerActionResult(action);
+  }
+  return buildValidationResult(validator, payload ?? {});
+}
+
+/**
+ * Validates one Backstage Booker module-action response value.
+ * Inputs: action identifier and untrusted result value.
+ * Outputs: normalized validation issues for the registered action response schema.
+ * Edge cases: generateBooking accepts its deprecated raw string during the compatibility window.
+ */
+export function validateBackstageBookerActionData(
+  action: BackstageBookerAction,
+  data: unknown
+): ValidationResult {
+  const validator = backstageBookerResponseValidators[action];
+  if (typeof validator !== "function") {
+    return buildUnknownBackstageBookerActionResult(action);
+  }
+  return buildValidationResult(validator, data ?? {});
+}
+
+/** Assert and type one canonical Backstage Booker module-action request payload. */
+export function assertValidBackstageBookerActionPayload<
+  TAction extends BackstageBookerAction
+>(
+  action: TAction,
+  payload: unknown
+): BackstageBookerActionInputMap[TAction] {
+  const result = validateBackstageBookerActionPayload(action, payload);
+  if (!result.ok) {
+    throw new Error(
+      formatValidationFailure(`Backstage Booker request payload for ${action}`, result.issues)
+    );
+  }
+  return payload as BackstageBookerActionInputMap[TAction];
+}
+
+/** Assert and type one canonical Backstage Booker module-action response value. */
+export function assertValidBackstageBookerActionData<
+  TAction extends BackstageBookerAction
+>(
+  action: TAction,
+  data: unknown
+): BackstageBookerActionOutputMap[TAction] {
+  const result = validateBackstageBookerActionData(action, data);
+  if (!result.ok) {
+    throw new Error(
+      formatValidationFailure(`Backstage Booker response data for ${action}`, result.issues)
+    );
+  }
+  return data as BackstageBookerActionOutputMap[TAction];
 }
 
 /**
@@ -340,11 +444,34 @@ function compileCommandValidators(commandSchemas: Record<ImplementedProtocolComm
   };
 }
 
+function compileBackstageBookerActionValidators(
+  actionSchemas: Record<BackstageBookerAction, AnySchema>
+): Record<BackstageBookerAction, ValidateFunction> {
+  return Object.fromEntries(
+    BACKSTAGE_BOOKER_ACTIONS.map((action) => [
+      action,
+      protocolAjv.compile(actionSchemas[action])
+    ])
+  ) as Record<BackstageBookerAction, ValidateFunction>;
+}
+
 function buildValidationResult(validator: ValidateFunction, candidate: unknown): ValidationResult {
   const ok = Boolean(validator(candidate));
   return {
     ok,
     issues: ok ? [] : normalizeAjvErrors(validator.errors ?? [])
+  };
+}
+
+function buildUnknownBackstageBookerActionResult(action: string): ValidationResult {
+  return {
+    ok: false,
+    issues: [
+      {
+        instancePath: "/action",
+        message: `No Backstage Booker schema is registered for action "${action}".`
+      }
+    ]
   };
 }
 

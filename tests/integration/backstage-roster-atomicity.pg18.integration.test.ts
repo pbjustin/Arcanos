@@ -159,10 +159,12 @@ describeWithDatabase('Backstage roster atomicity on PostgreSQL 18', () => {
     await observer.query(
       `CREATE TABLE ${quotedSchema}.backstage_wrestlers (
          id BIGSERIAL PRIMARY KEY,
-         name TEXT UNIQUE NOT NULL,
+         universe_id TEXT NOT NULL DEFAULT 'legacy',
+         name TEXT NOT NULL,
          overall INTEGER NOT NULL,
          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         UNIQUE (universe_id, name)
        )`
     );
     await observer.query(

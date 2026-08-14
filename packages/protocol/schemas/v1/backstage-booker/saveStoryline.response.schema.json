@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/saveStoryline.response.schema.json",
+  "title": "Backstage Booker saveStoryline response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "key",
+    "saved",
+    "persistence"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "\\S"
+    },
+    "saved": {
+      "oneOf": [
+        {
+          "const": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "persistence": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/persistence"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "persistence"
+        ],
+        "properties": {
+          "persistence": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "unknown"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "saved": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "saved": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

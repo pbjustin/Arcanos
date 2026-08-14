@@ -6,8 +6,12 @@ import {
   type BackstageMutationHttpOperation
 } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 import {
-  isBackstageStorylineValidationError,
-  parseBackstageStorylinePayload
+  BackstageBookerContractError,
+  normalizeBackstageBookerIngressMutationPayload,
+  type BackstageBookerMutationIngress
+} from '@services/backstageBookerContracts.js';
+import {
+  isBackstageStorylineValidationError
 } from '@shared/backstage/backstageStoryline.js';
 import { confirmGate } from './confirmGate.js';
 
@@ -19,36 +23,23 @@ type BackstageMutationConfirmationRequest = Request & {
   [backstageMutationConfirmationApplied]?: true;
 };
 
-function normalizeStorylineMutationBody(
-  req: Request,
+function normalizeMutationPayload(
+  body: unknown,
   operation: BackstageMutationHttpOperation
-): void {
+): unknown | null {
   if (operation.action !== 'trackStoryline') {
-    return;
+    return null;
   }
 
-  if (operation.ingress === 'direct') {
-    req.body = parseBackstageStorylinePayload(req.body);
-    return;
-  }
-
-  const bodyRecord = req.body
-    && typeof req.body === 'object'
-    && !Array.isArray(req.body)
-    ? req.body as Record<string, unknown>
-    : null;
-  const storylinePayload = operation.ingress === 'dispatch'
-    ? bodyRecord && Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
-      ? bodyRecord.payload
-      : {}
-    : bodyRecord && Object.prototype.hasOwnProperty.call(bodyRecord, 'payload')
-      ? bodyRecord.payload
-      : req.body;
-  const normalizedPayload = parseBackstageStorylinePayload(storylinePayload);
-  req.body = {
-    ...(bodyRecord ?? {}),
-    payload: normalizedPayload
-  };
+  const ingress: BackstageBookerMutationIngress =
+    operation.ingress === 'legacy-module' || operation.ingress === 'legacy-queryroute'
+      ? 'legacy'
+      : operation.ingress;
+  return normalizeBackstageBookerIngressMutationPayload(
+    operation.action,
+    body,
+    ingress
+  );
 }
 
 /** Require the existing confirmation contract only for admitted Backstage mutations. */
@@ -85,15 +76,19 @@ export function createBackstageMutationConfirmationGate(): RequestHandler {
           return;
         }
 
+        let confirmationPayload: unknown | null;
         try {
-          normalizeStorylineMutationBody(req, operation);
+          confirmationPayload = normalizeMutationPayload(req.body, operation);
         } catch (error: unknown) {
-          if (!isBackstageStorylineValidationError(error)) {
+          if (
+            !(error instanceof BackstageBookerContractError)
+            && !isBackstageStorylineValidationError(error)
+          ) {
             throw error;
           }
 
           // Let the ingress-specific handler render its established validation shape,
-          // but never issue a confirmation challenge for an invalid storyline beat.
+          // but never issue a confirmation challenge for an invalid mutation.
           next();
           return;
         }
@@ -108,7 +103,7 @@ export function createBackstageMutationConfirmationGate(): RequestHandler {
           requestFingerprintBody: {
             protocol: 'backstage-mutation-confirmation-v1',
             action: operation.action,
-            body: req.body,
+            body: confirmationPayload ?? req.body,
           },
         });
       })

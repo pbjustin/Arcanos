@@ -69,7 +69,8 @@ describe('promptRouteShortcuts', () => {
 
     const shortcut = await tryExecutePromptRouteShortcut({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
-      sessionId: 'RAW_RIVALRY_TEST'
+      sessionId: 'RAW_RIVALRY_TEST',
+      universeId: 'raw-2026'
     });
 
     expect(shortcut).toEqual({
@@ -89,6 +90,11 @@ describe('promptRouteShortcuts', () => {
         action: 'generateBooking',
         reason: 'booking_verb+storyline_request+wrestling_brand'
       }
+    });
+    expect(mockTryExecuteBackstageBookerRouteShortcut).toHaveBeenCalledWith({
+      prompt: 'Generate three rivalries for RAW after WrestleMania.',
+      sessionId: 'RAW_RIVALRY_TEST',
+      universeId: 'raw-2026'
     });
   });
 });

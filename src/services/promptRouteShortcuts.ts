@@ -10,6 +10,7 @@ import {
 export interface PromptRouteShortcutRequest {
   prompt: string;
   sessionId?: string;
+  universeId?: string;
 }
 
 export interface PromptRouteShortcutResult {

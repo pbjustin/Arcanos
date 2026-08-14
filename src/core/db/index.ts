@@ -89,6 +89,23 @@ export {
 } from './repositories/backstageStorylineRepository.js';
 
 export {
+  BACKSTAGE_UNIVERSE_ID_PATTERN,
+  LEGACY_BACKSTAGE_UNIVERSE_ID,
+  BackstageBookerCommitUnknownError,
+  BackstageBookerRepositoryUnavailableError,
+  BackstageBookerUniverseScopeNotActivatedError,
+  BackstageBookerWriteError,
+  PostgresBackstageBookerRepository,
+  createBackstageBookerRepository,
+  isBackstageBookerUniverseScopeNotActivatedError,
+  type BackstageContext,
+  type BackstageEventRecord,
+  type BackstageStoryBeatRecord,
+  type BackstageStorylineRecord,
+  type BackstageWrestler
+} from './repositories/backstageBookerRepository.js';
+
+export {
   createGamingSourceRepository,
   findGamingSourceById,
   getGamingSourceById,

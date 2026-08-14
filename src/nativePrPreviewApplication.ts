@@ -1060,23 +1060,29 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       recordPhase('legacy-backfill');
       requireStorylineFixtureInvariant(
         parameters[0] === BACKSTAGE_STORYLINE_MAX_BYTES
-        && parameters[1] === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        && parameters[1] === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+        && parameters[2] === 'legacy',
         'PREVIEW_BACKSTAGE_STORYLINE_LEGACY_BOUND_INVALID'
       );
       return { rows: [] };
     }
     if (
       sql
-      === 'DELETE FROM backstage_story_beats WHERE serialized_data IS NULL'
+      === 'DELETE FROM backstage_story_beats WHERE universe_id = $1 AND serialized_data IS NULL'
     ) {
       recordPhase('null-cleanup');
+      requireStorylineFixtureInvariant(
+        parameters[0] === 'legacy',
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       return { rows: [] };
     }
     if (sql.startsWith('WITH expired AS MATERIALIZED')) {
       recordPhase('prune');
       const retainedBeforeInsert = BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS - 1;
       requireStorylineFixtureInvariant(
-        parameters[0] === retainedBeforeInsert,
+        parameters[0] === retainedBeforeInsert
+        && parameters[1] === 'legacy',
         'PREVIEW_BACKSTAGE_STORYLINE_RETENTION_BOUND_INVALID'
       );
       rows = [...rows]
@@ -1086,6 +1092,10 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
     }
     if (sql.startsWith('WITH ordered AS MATERIALIZED')) {
       recordPhase('compact');
+      requireStorylineFixtureInvariant(
+        parameters[0] === 'legacy',
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       rows = [...rows]
         .sort(compareStorylineFixtureRows)
         .map((row, index) => ({ ...row, storageSequence: index + 1 }));
@@ -1095,6 +1105,10 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       recordPhase('insert');
       const serializedData = parameters[0];
       parseBackstageStorylineSerializedPayload(serializedData);
+      requireStorylineFixtureInvariant(
+        parameters[1] === 'legacy',
+        'PREVIEW_BACKSTAGE_STORYLINE_UNIVERSE_INVALID'
+      );
       const id = storylineFixtureId(nextIdSequence);
       nextIdSequence += 1;
       rows.push({
@@ -1111,7 +1125,8 @@ function createStorylineTransactionFixture(initialBeats: readonly StorylineBeat[
       const limit = parameters[1];
       requireStorylineFixtureInvariant(
         typeof insertedId === 'string'
-        && limit === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS,
+        && limit === BACKSTAGE_STORYLINE_MAX_RETAINED_BEATS
+        && parameters[2] === 'legacy',
         'PREVIEW_BACKSTAGE_STORYLINE_READ_BOUND_INVALID'
       );
       const selected = [...rows]

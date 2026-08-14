@@ -79,7 +79,8 @@ describe('Backstage storyline serialized storage contract', () => {
       AUDITED_TRANSIENT_READ_QUERIES.BACKSTAGE_PROMPT_STORY_BEATS_RECENT.sql;
 
     expect(promptSql).toContain('SELECT serialized_data, storage_sequence');
-    expect(promptSql).toContain('WHERE serialized_data IS NOT NULL');
+    expect(promptSql).toContain('WHERE universe_id = $1');
+    expect(promptSql).toContain('AND serialized_data IS NOT NULL');
     expect(promptSql).toContain('ORDER BY storage_sequence DESC, id DESC');
     expect(promptSql).toContain('LIMIT 5');
     expect(promptSql).not.toMatch(/\bSELECT\s+data\b/u);

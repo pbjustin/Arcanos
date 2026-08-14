@@ -71,6 +71,14 @@ export const aiRequestSchema = z
       .trim()
       .max(100, 'Session identifier cannot exceed 100 characters')
       .optional(),
+    universeId: z
+      .string()
+      .trim()
+      .regex(
+        /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+        'Universe identifier must begin with an alphanumeric character and contain only letters, numbers, dots, underscores, colons, or hyphens'
+      )
+      .optional(),
     overrideAuditSafe: z
       .string()
       .trim()

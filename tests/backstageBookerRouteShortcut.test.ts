@@ -50,4 +50,17 @@ describe('backstageBookerRouteShortcut', () => {
       }
     });
   });
+
+  it('forwards an explicit universe to booking generation', async () => {
+    const shortcut = await tryExecuteBackstageBookerRouteShortcut({
+      prompt: 'Book a WWE Raw rivalry matrix for the next four weeks.',
+      universeId: 'wwe-alt-2026'
+    });
+
+    expect(mockGenerateBooking).toHaveBeenCalledWith(
+      'Book a WWE Raw rivalry matrix for the next four weeks.',
+      'wwe-alt-2026'
+    );
+    expect(shortcut?.resultText).toBe('Generated booking response');
+  });
 });

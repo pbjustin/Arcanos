@@ -25,12 +25,25 @@ npm install
 | ActionPlan shared TypeScript types | `src/shared/types/actionPlanExecution.ts` |
 | ActionPlan OpenAPI contract | `contracts/action_plan_execution.openapi.v1.json` |
 | ActionPlan Python consumer constants | `daemon-python/arcanos/action_plan_execution_protocol.py` |
+| Backstage Booker module-action schemas | `packages/protocol/schemas/v1/backstage-booker/` |
 | Backend/CLI OpenAPI contracts | `contracts/*.openapi.v1.json` and `contracts/backend_cli_contract.v1.json` |
 | Custom GPT bridge OpenAPI | `openapi/custom-gpt-bridge.yaml` |
 
 Protocol v1 distinguishes protocol-visible command ids from implemented command ids. `ARCANOS_PROTOCOL_COMMAND_IDS` includes forward-compatible reserved commands so clients can reason about future surfaces. `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` is the supported set with concrete schemas and dispatcher behavior in this checkout.
 
 ActionPlan execution is a separate contract family. Keep its schemas, shared TypeScript types, OpenAPI contract, Python constants, and focused contract tests synchronized; do not register these schemas in `packages/protocol/src/schemaCatalog.ts`.
+
+Backstage Booker is also a distinct contract family, but it is registered in
+the shared schema catalog under `backstageBooker`, alongside (not inside) the
+`commands` catalog. Its seven action names are module action identifiers, not
+protocol command IDs. Adding or changing a Backstage action therefore does not
+change `ARCANOS_PROTOCOL_COMMAND_IDS` or
+`ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` unless an independently reviewed
+protocol command is also being introduced.
+The persistence union distinguishes committed, known pre-commit fallback, and
+indeterminate commit outcomes. A `saveStoryline` response couples
+`persistence.status: "unknown"` to `saved: null`; all other valid persistence
+states require `saved: true`.
 
 Implemented protocol commands:
 - `task.create`

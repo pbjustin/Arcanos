@@ -19,6 +19,10 @@ import {
 import { classifyGptMemoryInterception } from "@services/memoryDispatchInterception.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
+  BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS,
+  BACKSTAGE_FLATTENED_PAYLOAD_FLAG,
+} from '@services/backstageBookerContracts.js';
+import {
   buildRepoInspectionAnswer,
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
@@ -194,6 +198,7 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   'query',
   'messages',
   'sessionId',
+  'universeId',
   'mode',
   'game',
   'url',
@@ -257,6 +262,7 @@ function mergeForwardedTopLevelPayloadFields(
 function buildDispatchPayload(
   body: unknown,
   promptOverride?: { promptText: string | null },
+  annotateBackstageOrigin = false,
 ): unknown {
   //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
   if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
@@ -264,6 +270,9 @@ function buildDispatchPayload(
     if (isRecord(explicitPayload)) {
       const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
       delete sanitizedPayload.gptId;
+      if (annotateBackstageOrigin) {
+        sanitizedPayload[BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS] = Object.keys(explicitPayload);
+      }
       return sanitizedPayload;
     }
     return explicitPayload;
@@ -279,6 +288,9 @@ function buildDispatchPayload(
     delete normalizedPayload.gptId;
     if (prompt) {
       normalizedPayload.prompt = prompt;
+    }
+    if (annotateBackstageOrigin) {
+      normalizedPayload[BACKSTAGE_FLATTENED_PAYLOAD_FLAG] = true;
     }
     return normalizedPayload;
   }
@@ -1004,7 +1016,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       ? { promptText: boundedPromptCandidate }
       : undefined;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
-    buildDispatchPayload(body, boundedPromptOverride),
+    buildDispatchPayload(
+      body,
+      boundedPromptOverride,
+      resolved?.entry.module === BACKSTAGE_MODULE_NAME
+    ),
     runtimeExecutionMode
   );
   const suppressTimeoutFallback =
@@ -1321,11 +1337,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const isBackstageStorylineMutation =
     activeEntry.module === BACKSTAGE_MODULE_NAME
     && initialActionCandidate === 'trackStoryline';
-  //audit Assumption: state payload bytes must describe caller data rather than dispatcher metadata; failure risk: valid boundary-sized beats are rejected or internal route fields become durable canon; expected invariant: trackStoryline receives the exact explicit payload; handling strategy: bypass writing-plane enrichment only for this typed mutation.
+  //audit Assumption: state payload bytes must describe caller data rather than dispatcher metadata; failure risk: valid boundary-sized beats are rejected or internal route fields become durable canon; expected invariant: trackStoryline keeps dispatch-origin metadata long enough for the module normalizer to distinguish explicit and flattened input, while skipping generic writing enrichment; handling strategy: forward the pre-enrichment payload only for this typed mutation.
   const payload = isBackstageStorylineMutation
-    && isRecord(body)
-    && Object.prototype.hasOwnProperty.call(body, 'payload')
-    ? body.payload
+    ? preDispatchPayload
     : enrichWritingDispatchPayload(preDispatchPayload, {
         gptId: trimmedGptId,
         sourceEndpoint: dispatchSourceEndpoint,
