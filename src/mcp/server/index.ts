@@ -82,6 +82,7 @@ import {
   stripConfirmationFields,
   requireNonceOrIssue,
   notExposed,
+  buildBackstageCanonMcpError,
   buildBackstageRosterPersistenceMcpError,
   buildBackstageRosterValidationMcpError,
   buildBackstageStorylineValidationMcpError,
@@ -1395,6 +1396,11 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
             )
           : null) ?? buildBackstageRosterValidationMcpError(
           args.module,
+          args.action,
+          error,
+          ctx
+        ) ?? buildBackstageCanonMcpError(
+          invokedModuleMetadata?.name,
           args.action,
           error,
           ctx

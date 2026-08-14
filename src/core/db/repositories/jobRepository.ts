@@ -11,6 +11,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 import {
   computeGptJobLifecycleDeadlines,
+  isGptJobResultReusable,
   isGptJobReusableStatus,
   resolveGptExpiredCompactionMs,
   resolveGptPendingMaxAgeMs
@@ -1325,6 +1326,12 @@ async function findReusableGptJobByFingerprint(
        AND status = ANY($3::text[])
        AND status <> 'expired'
        AND (
+         status <> 'completed'
+         OR NOT (
+           autonomy_state @> '{"gptResultReuse":{"reusable":false}}'::jsonb
+         )
+       )
+       AND (
          status IN ('pending', 'running')
          OR (idempotency_until IS NOT NULL AND idempotency_until > NOW())
        )
@@ -1415,13 +1422,15 @@ export async function findOrCreateGptJob(
           );
         }
 
-        await client.query('COMMIT');
-        return {
-          job: existingJobByKey,
-          created: false,
-          deduped: true,
-          dedupeReason: classifyGptJobReuse(existingJobByKey)
-        };
+        if (isGptJobResultReusable(existingJobByKey)) {
+          await client.query('COMMIT');
+          return {
+            job: existingJobByKey,
+            created: false,
+            deduped: true,
+            dedupeReason: classifyGptJobReuse(existingJobByKey)
+          };
+        }
       }
     }
 
@@ -1431,7 +1440,7 @@ export async function findOrCreateGptJob(
       idempotencyOrigin: options.idempotencyOrigin
     });
 
-    if (existingJobByFingerprint) {
+    if (existingJobByFingerprint && isGptJobResultReusable(existingJobByFingerprint)) {
       await client.query('COMMIT');
       return {
         job: existingJobByFingerprint,

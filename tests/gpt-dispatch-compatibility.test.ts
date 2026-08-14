@@ -17,6 +17,10 @@ import {
   BackstageStorylinePersistenceError,
   parseBackstageStorylinePayload,
 } from '../src/shared/backstage/backstageStoryline.js';
+import { BackstageCanonDomainError } from '../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  BackstageCanonUnavailableError,
+} from '../src/services/backstageBookerContracts.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -647,6 +651,83 @@ describe('gpt dispatch compatibility', () => {
       expect(mockRebuildGptModuleMap).not.toHaveBeenCalled();
       expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
     }
+  );
+
+  it.each([
+    [new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND'), 404],
+    [new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT'), 409],
+    [new BackstageCanonUnavailableError('appendCanonBeat'), 503],
+  ] as const)(
+    'maps a canon failure through the legacy Backstage route to HTTP %i',
+    async (failure, expectedStatus) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        backstage: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['appendCanonBeat'],
+        defaultAction: 'appendCanonBeat',
+      });
+      mockDispatchModuleAction.mockRejectedValueOnce(failure);
+
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        req.controlPlanePrincipal = {
+          audience: 'control-plane-http',
+          role: 'operator',
+          principalId: `operator:legacy-canon-${expectedStatus}`,
+          scopes: ['mcp:invoke'],
+        };
+        next();
+      });
+      app.post(
+        '/modules/backstage-booker',
+        backstageMutationConfirmationGate,
+        async (req, res, next) => {
+          await dispatchLegacyRouteToGpt(req, res, next, {
+            legacyRoute: '/modules/backstage-booker',
+            gptId: 'backstage',
+            applyDeprecationHeaders: false,
+          });
+        },
+      );
+
+      const response = await request(app)
+        .post('/modules/backstage-booker')
+        .set('X-Confirmed', 'yes')
+        .send({
+          action: 'appendCanonBeat',
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '44f73965-2760-4e8f-9d28-dbb4ea9a7527',
+            storylineKey: 'summer-feud',
+            expectedVersion: 1,
+            beat: {
+              kind: 'payoff',
+              summary: 'The rivalry reaches its decisive match.',
+              occurredAt: '2026-08-14T00:00:00.000Z',
+              participantNames: [],
+            },
+          },
+        });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: failure.code,
+          message: failure.message,
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'appendCanonBeat',
+        },
+      });
+      expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+    },
   );
 
   it.each(['universal', 'legacy'] as const)(

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/upsertStoryline.request.schema.json",
+  "title": "Backstage Booker upsertStoryline request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "mutationId",
+    "expectedVersion",
+    "storyline"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "mutationId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/mutationId"
+    },
+    "expectedVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "storyline": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/storylineInput"
+    }
+  }
+}

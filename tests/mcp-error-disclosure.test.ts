@@ -27,10 +27,18 @@ jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
 }));
 
 const {
+  buildBackstageCanonMcpError,
   buildBackstageRosterPersistenceMcpError,
   buildBackstageRosterValidationMcpError,
   wrapTool,
 } = await import('../src/mcp/server/helpers.js');
+const { BackstageCanonDomainError } = await import(
+  '../src/core/db/repositories/backstageBookerRepository.js'
+);
+const {
+  BackstageBookerContractError,
+  BackstageCanonUnavailableError,
+} = await import('../src/services/backstageBookerContracts.js');
 
 function buildContext(loggerOverrides: Partial<Record<'debug' | 'info' | 'warn' | 'error', jest.Mock>> = {}) {
   return {
@@ -316,6 +324,92 @@ describe('MCP external error disclosure contract', () => {
         code: BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
         message: 'spoofed persistence disclosure',
       },
+      context
+    )).toBeNull();
+  });
+
+  it('maps only typed Phase 2A canon failures to bounded MCP errors', () => {
+    const context = buildContext();
+
+    expect(buildBackstageCanonMcpError(
+      'BACKSTAGE:BOOKER',
+      'upsertStoryline',
+      new BackstageBookerContractError('upsertStoryline', [{
+        instancePath: '/storyline/title',
+        message: 'must be a nonblank string',
+      }]),
+      context
+    )).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_BAD_REQUEST',
+          message: 'Invalid Backstage Booker upsertStoryline payload.',
+          details: {
+            tool: 'modules.invoke',
+            category: 'BACKSTAGE_BOOKER_INVALID',
+            action: 'upsertStoryline',
+            issues: [{
+              instancePath: '/storyline/title',
+              message: 'must be a nonblank string',
+            }],
+          },
+          requestId: 'phase2b-request',
+        },
+      },
+    }));
+
+    expect(buildBackstageCanonMcpError(
+      'BACKSTAGE:BOOKER',
+      'appendCanonBeat',
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND'),
+      context
+    )).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_NOT_FOUND',
+          message: 'The requested Backstage storyline was not found.',
+          details: {
+            tool: 'modules.invoke',
+            category: 'BACKSTAGE_STORYLINE_NOT_FOUND',
+          },
+          requestId: 'phase2b-request',
+        },
+      },
+    }));
+
+    expect(buildBackstageCanonMcpError(
+      'BACKSTAGE:BOOKER',
+      'appendCanonBeat',
+      new BackstageCanonUnavailableError('appendCanonBeat'),
+      context
+    )).toEqual(expect.objectContaining({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: 'ERR_UNAVAILABLE',
+          message: 'Backstage canon persistence is temporarily unavailable.',
+          details: {
+            tool: 'modules.invoke',
+            category: 'BACKSTAGE_CANON_UNAVAILABLE',
+            retryable: true,
+          },
+          requestId: 'phase2b-request',
+        },
+      },
+    }));
+
+    expect(buildBackstageCanonMcpError(
+      'BACKSTAGE:BOOKER',
+      'saveStoryline',
+      new BackstageCanonUnavailableError('upsertStoryline'),
+      context
+    )).toBeNull();
+    expect(buildBackstageCanonMcpError(
+      'OTHER:MODULE',
+      'upsertStoryline',
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT'),
       context
     )).toBeNull();
   });

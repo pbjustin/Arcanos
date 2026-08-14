@@ -19,10 +19,15 @@ import {
 import { classifyGptMemoryInterception } from "@services/memoryDispatchInterception.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
+  BackstageBookerContractError,
   copyBackstageBookerPayloadProvenance,
+  isBackstageCanonUnavailableError,
   markBackstageBookerExplicitPayload,
   markBackstageBookerFlattenedPayload,
 } from '@services/backstageBookerContracts.js';
+import {
+  isBackstageCanonDomainError,
+} from '@core/db/repositories/backstageBookerRepository.js';
 import {
   buildRepoInspectionAnswer,
   collectRepoImplementationEvidence,
@@ -485,9 +490,25 @@ function buildDispatchTimeoutDetails(moduleName: string, errorMessage: string): 
 
 function buildDispatchErrorDetails(
   moduleName: string,
+  action: string,
   error: unknown,
   errorMessage: string
 ): Record<string, unknown> | undefined {
+  if (
+    error instanceof BackstageBookerContractError
+    && error.action === action
+    && (action === 'upsertStoryline' || action === 'appendCanonBeat')
+  ) {
+    return {
+      action: error.action,
+      issues: error.issues.slice(0, 16),
+    };
+  }
+
+  if (isBackstageCanonUnavailableError(error)) {
+    return { retryable: error.retryable };
+  }
+
   if (isBackstageRosterPersistenceError(error)) {
     return { retryable: error.retryable };
   }
@@ -1905,6 +1926,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'trackStoryline'
         && isBackstageStorylinePersistenceError(err);
+      const isBackstageCanonContractFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && err instanceof BackstageBookerContractError
+        && err.action === action
+        && (action === 'upsertStoryline' || action === 'appendCanonBeat');
+      const isCanonDomainFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageCanonDomainError(err);
+      const isCanonUnavailableFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageCanonUnavailableError(err);
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -2109,12 +2141,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
               || isStorylineValidationFailure
               || isStorylinePersistenceFailure
               || isResearchValidationFailure
+              || isCanonDomainFailure
+              || isCanonUnavailableFailure
             )
             ? err.code
+            : isBackstageCanonContractFailure
+            ? 'BACKSTAGE_BOOKER_INVALID'
             : "MODULE_ERROR",
         message: dispatchErrorMessage,
-        ...(buildDispatchErrorDetails(activeEntry.module, err, errorMessage)
-          ? { details: buildDispatchErrorDetails(activeEntry.module, err, errorMessage) }
+        ...(buildDispatchErrorDetails(activeEntry.module, action, err, errorMessage)
+          ? { details: buildDispatchErrorDetails(activeEntry.module, action, err, errorMessage) }
           : {})
       },
       _route: {

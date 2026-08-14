@@ -7,11 +7,15 @@ export const BACKSTAGE_BOOKER_ACTIONS = [
   "simulateMatch",
   "generateBooking",
   "generateBookingWithHRC",
-  "saveStoryline"
+  "saveStoryline",
+  "upsertStoryline",
+  "appendCanonBeat"
 ] as const;
 
 export type BackstageBookerAction = (typeof BACKSTAGE_BOOKER_ACTIONS)[number];
 export type BackstageUniverseId = string;
+export type BackstageMutationId = string;
+export type BackstageUniverseRevision = string;
 export type BackstageJsonValue =
   | string
   | number
@@ -170,6 +174,120 @@ export interface BackstageSaveStorylineResponse {
   persistence: BackstagePersistence;
 }
 
+export type BackstageStorylineStatus =
+  | "draft"
+  | "active"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+export interface BackstageStorylineInput {
+  key: string;
+  title: string;
+  summary: string | null;
+  status: BackstageStorylineStatus;
+  participantNames: string[];
+}
+
+export interface BackstageStorylineModel extends BackstageStorylineInput {
+  id: string;
+  version: number;
+  universeRevision: BackstageUniverseRevision;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+export interface BackstageCanonBeatInput {
+  kind: string;
+  summary: string;
+  occurredAt: string;
+  participantNames: string[];
+  eventId?: string;
+  supersedesBeatId?: string;
+}
+
+export interface BackstageCanonBeatModel {
+  id: string;
+  storylineId: string;
+  storylineKey: string;
+  sequence: number;
+  kind: string;
+  summary: string;
+  occurredAt: string;
+  participantNames: string[];
+  eventId: string | null;
+  supersedesBeatId: string | null;
+  universeRevision: BackstageUniverseRevision;
+  createdAt: string;
+}
+
+export type BackstageCanonPersistence =
+  | BackstageDurablePersistence
+  | BackstageUnknownPersistence;
+
+export interface BackstageUpsertStorylineRequest {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  expectedVersion: number;
+  storyline: BackstageStorylineInput;
+}
+
+export interface BackstageUpsertStorylineDurableResponse {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  applied: true;
+  universeRevision: BackstageUniverseRevision;
+  storyline: BackstageStorylineModel;
+  persistence: BackstageDurablePersistence;
+}
+
+export interface BackstageUpsertStorylineUnknownResponse {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  applied: null;
+  universeRevision: null;
+  storyline: null;
+  persistence: BackstageUnknownPersistence;
+}
+
+export type BackstageUpsertStorylineResponse =
+  | BackstageUpsertStorylineDurableResponse
+  | BackstageUpsertStorylineUnknownResponse;
+
+export interface BackstageAppendCanonBeatRequest {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  storylineKey: string;
+  expectedVersion: number;
+  beat: BackstageCanonBeatInput;
+  nextStatus?: BackstageStorylineStatus;
+}
+
+export interface BackstageAppendCanonBeatDurableResponse {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  applied: true;
+  universeRevision: BackstageUniverseRevision;
+  storyline: BackstageStorylineModel;
+  beat: BackstageCanonBeatModel;
+  persistence: BackstageDurablePersistence;
+}
+
+export interface BackstageAppendCanonBeatUnknownResponse {
+  universeId: BackstageUniverseId;
+  mutationId: BackstageMutationId;
+  applied: null;
+  universeRevision: null;
+  storyline: null;
+  beat: null;
+  persistence: BackstageUnknownPersistence;
+}
+
+export type BackstageAppendCanonBeatResponse =
+  | BackstageAppendCanonBeatDurableResponse
+  | BackstageAppendCanonBeatUnknownResponse;
+
 export interface BackstageBookerActionInputMap {
   bookEvent: BackstageBookEventRequest;
   updateRoster: BackstageUpdateRosterRequest;
@@ -178,6 +296,8 @@ export interface BackstageBookerActionInputMap {
   generateBooking: BackstageGenerateBookingRequest;
   generateBookingWithHRC: BackstageGenerateBookingWithHrcRequest;
   saveStoryline: BackstageSaveStorylineRequest;
+  upsertStoryline: BackstageUpsertStorylineRequest;
+  appendCanonBeat: BackstageAppendCanonBeatRequest;
 }
 
 export interface BackstageBookerActionOutputMap {
@@ -188,6 +308,8 @@ export interface BackstageBookerActionOutputMap {
   generateBooking: BackstageGenerateBookingResponse;
   generateBookingWithHRC: BackstageGenerateBookingWithHrcResponse;
   saveStoryline: BackstageSaveStorylineResponse;
+  upsertStoryline: BackstageUpsertStorylineResponse;
+  appendCanonBeat: BackstageAppendCanonBeatResponse;
 }
 
 export function isBackstageBookerAction(value: string): value is BackstageBookerAction {

@@ -218,6 +218,56 @@ non-legacy row between the guard and schema removal. Do not apply either file
 as routine validation, and do not interpret the presence of this schema as a
 canon/storyline domain model.
 
+### Backstage Booker canon/storyline migration
+
+`migrations/20260814_backstage_canon_storyline_v1.sql` installs the additive
+Phase 2A canon substrate after the universe-scope migration is active. It does
+not alter, import, or dual-write the Phase One `backstage_storylines` prose or
+the bounded `backstage_story_beats` continuity cache. Older replicas ignore the
+new tables, so this additive step requires no additional mixed-version drain;
+non-`legacy` writes still require the earlier universe-scope activation marker.
+Runtime startup mirrors the additive definitions in `src/core/db/schema.ts`.
+Do not apply the migration or runtime initializer as routine validation.
+Both the forward and guarded rollback migrations pin their transaction-local
+`search_path` to `public, pg_catalog`, so every unqualified owned object is
+resolved in the intended application schema rather than a caller-controlled
+session schema.
+
+The migration adds:
+
+- `backstage_canon_heads`, the one-row-per-universe serialization and semantic
+  revision anchor;
+- `backstage_canon_revisions`, immutable mutation-ID, request-fingerprint, and
+  exact-result evidence used for replay after lost acknowledgements;
+- `backstage_storyline_threads`, versioned typed storyline aggregates separate
+  from legacy saved prose;
+- `backstage_storyline_participants`, with composite universe/storyline and
+  universe/roster foreign keys; and
+- `backstage_storyline_canon_beats`, the immutable, storyline-local beat ledger
+  with same-universe event and retcon references.
+
+The only Phase One schema addition is a named unique identity on
+`backstage_events(universe_id, id)`, used as the target of the beat-to-event
+composite foreign key. Every Phase 2 relationship includes `universe_id`, uses
+`RESTRICT` rather than cascading canon away, and keeps revision foreign keys
+deferred until the immutable revision/result row is inserted in the same
+transaction. Writers lock the canon head before checking mutation replay or
+storyline versions. A new mutation advances the head exactly once; an identical
+`(universe_id, mutation_id, request_fingerprint)` replay returns the stored
+result without another revision, while a changed fingerprint fails closed.
+
+The guarded rollback acquires exclusive locks in repository order and refuses
+with SQLSTATE `55000` if any head has a nonzero revision or any Phase 2
+revision, storyline, participant, or beat row exists. Revision-zero head seed
+rows alone are disposable. It drops only the five Phase 2 tables and retains
+`uq_backstage_events_universe_id`, because the forward migration may have
+adopted an exact pre-existing shared-table constraint whose ownership it cannot
+prove. Once canon has been written, roll back application code while preserving
+the schema and data; do not drop the ledger. Ordinary source validation never
+applies either file; the dedicated disposable PostgreSQL 18 integration suite
+applies and rolls them back only against its explicitly guarded loopback test
+database.
+
 ### Local-agent hardening migration
 
 The additive
@@ -255,13 +305,14 @@ npm run test:local-agent-postgres
 ```
 
 The shared required flag governs both required PostgreSQL package commands and
-all eight suites. `npm run test:postgres-fencing` additionally requires
+all nine suites. `npm run test:postgres-fencing` additionally requires
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`,
 `DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`,
 `JOB_WORKER_BUDGET_TEST_DATABASE_URL`,
 `JOB_STALE_RECOVERY_TEST_DATABASE_URL`,
 `BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL`, and
-`BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`, and
+`BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`,
+`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`, and
 `NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`. With the sentinel set, a
 missing dedicated URL fails before `describe.skip`; without it, an absent URL
 retains the intentional local skip. No suite reads ambient `DATABASE_URL`.

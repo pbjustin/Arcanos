@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  buildNonReusableGptResultAutonomyState,
+  computeGptJobLifecycleDeadlines,
+  isGptJobResultReusable
+} from '@shared/gpt/gptJobLifecycle.js';
 import {
   DEFAULT_ASK_TERMINAL_RETENTION_MS,
   DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS,
@@ -57,6 +61,18 @@ describe('queue job lifecycle policy', () => {
       expect(computeQueueJobLifecycleDeadlines('gpt', status, NOW, env)).toEqual(
         computeGptJobLifecycleDeadlines(status, NOW, env)
       );
+    }
+  });
+
+  it('suppresses only tagged completed-result reuse while preserving in-flight deduplication', () => {
+    const autonomy_state = buildNonReusableGptResultAutonomyState(
+      'backstage_canon_commit_outcome_unknown'
+    );
+
+    expect(isGptJobResultReusable({ status: 'completed', autonomy_state })).toBe(false);
+    expect(isGptJobResultReusable({ status: 'completed', autonomy_state: {} })).toBe(true);
+    for (const status of ['pending', 'running', 'failed', 'cancelled']) {
+      expect(isGptJobResultReusable({ status, autonomy_state })).toBe(true);
     }
   });
 

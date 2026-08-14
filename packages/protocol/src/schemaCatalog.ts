@@ -55,7 +55,10 @@ import repoReadFileV2InputSchema from "../schemas/v1/tools/repo.readFile.input.s
 import repoReadFileV2OutputSchema from "../schemas/v1/tools/repo.readFile.output.schema.json" with { type: "json" };
 import repoSearchInputSchema from "../schemas/v1/tools/repo.search.input.schema.json" with { type: "json" };
 import repoSearchOutputSchema from "../schemas/v1/tools/repo.search.output.schema.json" with { type: "json" };
+import backstageAppendCanonBeatRequestSchema from "../schemas/v1/backstage-booker/appendCanonBeat.request.schema.json" with { type: "json" };
+import backstageAppendCanonBeatResponseSchema from "../schemas/v1/backstage-booker/appendCanonBeat.response.schema.json" with { type: "json" };
 import backstageBookerCommonSchema from "../schemas/v1/backstage-booker/common.schema.json" with { type: "json" };
+import backstageBookerCanonSchema from "../schemas/v1/backstage-booker/canon.schema.json" with { type: "json" };
 import backstageBookEventRequestSchema from "../schemas/v1/backstage-booker/bookEvent.request.schema.json" with { type: "json" };
 import backstageBookEventResponseSchema from "../schemas/v1/backstage-booker/bookEvent.response.schema.json" with { type: "json" };
 import backstageGenerateBookingRequestSchema from "../schemas/v1/backstage-booker/generateBooking.request.schema.json" with { type: "json" };
@@ -70,6 +73,8 @@ import backstageTrackStorylineRequestSchema from "../schemas/v1/backstage-booker
 import backstageTrackStorylineResponseSchema from "../schemas/v1/backstage-booker/trackStoryline.response.schema.json" with { type: "json" };
 import backstageUpdateRosterRequestSchema from "../schemas/v1/backstage-booker/updateRoster.request.schema.json" with { type: "json" };
 import backstageUpdateRosterResponseSchema from "../schemas/v1/backstage-booker/updateRoster.response.schema.json" with { type: "json" };
+import backstageUpsertStorylineRequestSchema from "../schemas/v1/backstage-booker/upsertStoryline.request.schema.json" with { type: "json" };
+import backstageUpsertStorylineResponseSchema from "../schemas/v1/backstage-booker/upsertStoryline.response.schema.json" with { type: "json" };
 
 /**
  * Returns the schema bundle shared across TypeScript and Python boundaries.
@@ -150,6 +155,7 @@ export function getProtocolSchemaCatalog() {
     },
     backstageBooker: {
       common: backstageBookerCommonSchema,
+      canon: backstageBookerCanonSchema,
       actions: {
         bookEvent: {
           request: backstageBookEventRequestSchema,
@@ -178,6 +184,14 @@ export function getProtocolSchemaCatalog() {
         saveStoryline: {
           request: backstageSaveStorylineRequestSchema,
           response: backstageSaveStorylineResponseSchema
+        },
+        upsertStoryline: {
+          request: backstageUpsertStorylineRequestSchema,
+          response: backstageUpsertStorylineResponseSchema
+        },
+        appendCanonBeat: {
+          request: backstageAppendCanonBeatRequestSchema,
+          response: backstageAppendCanonBeatResponseSchema
         }
       }
     },

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-14T20:22:54.330Z",
+  "generatedAt": "2026-08-14T22:37:48.657Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3728,6 +3728,9 @@
         },
         {
           "relativePath": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"

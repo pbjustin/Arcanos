@@ -74,9 +74,13 @@ import {
 } from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
+import {
+  resolveBackstageCanonDomainErrorHttpStatus,
+} from '@core/db/repositories/backstageBookerRepository.js';
 import {
   buildResearchModulePreflightPayload,
   getResearchGptPromptPreflight,
@@ -3430,7 +3434,10 @@ router.post(
               traceId
             }
           };
-          const statusCode =
+          const canonDomainStatus = resolveBackstageCanonDomainErrorHttpStatus(
+            envelope.error.code
+          );
+          const statusCode = canonDomainStatus ?? (
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
               : envelope.error.code === 'MEMORY_AUTH_REQUIRED'
@@ -3441,13 +3448,16 @@ router.post(
               ? 503
               : envelope.error.code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE
               ? 500
+              : envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+              ? 503
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
               : unexpectedGamingRouteFailure
               ? 500
               : envelope.error.code === "MODULE_TIMEOUT"
               ? 504
-              : 400;
+              : 400
+          );
           requestLogger?.warn?.("gpt.request.route_result", {
             endpoint: req.originalUrl,
             gptId: incomingGptId,

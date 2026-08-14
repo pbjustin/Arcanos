@@ -390,6 +390,58 @@ describe('/dispatch production application composition', () => {
     });
   });
 
+  it.each([
+    ['BACKSTAGE_STORYLINE_NOT_FOUND', 404],
+    ['BACKSTAGE_STORYLINE_VERSION_CONFLICT', 409],
+    ['BACKSTAGE_CANON_UNAVAILABLE', 503],
+  ] as const)('maps canon error %s to dispatch HTTP %i', async (code, status) => {
+    configureControlPlane(`operator:dispatch-app-canon-${status}`);
+    routeGptRequestMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code,
+        message: 'Bounded canon failure.',
+      },
+      _route: {
+        gptId: 'backstage',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'upsertStoryline',
+        timestamp: '2026-08-14T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(createApp())
+      .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        target: 'gpt',
+        gptId: 'backstage',
+        action: 'upsertStoryline',
+        payload: {
+          universeId: 'phase-two',
+          mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+          expectedVersion: 0,
+          storyline: {
+            key: 'summer-feud',
+            title: 'Summer Feud',
+            summary: null,
+            status: 'draft',
+            participantNames: [],
+          },
+        },
+      });
+
+    expect(response.status).toBe(status);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code, message: 'Bounded canon failure.' },
+      target: 'gpt',
+      routeFamily: 'dispatch',
+    });
+  });
+
   it('shares principal admission between the canonical and compatibility DAG routes', async () => {
     configureControlPlane('operator:dispatch-app-shared-quota');
     const app = createApp();

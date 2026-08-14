@@ -1,10 +1,13 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import {
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   assertValidBackstageBookerActionData,
   getProtocolSchemaCatalog,
+  type BackstageAppendCanonBeatRequest,
+  type BackstageAppendCanonBeatResponse,
   type BackstageBookEventResponse,
   type BackstageBookerAction,
+  type BackstageCanonBeatModel,
   type BackstageDurablePersistence,
   type BackstageGenerateBookingWithHrcResponse,
   type BackstageHrcResult,
@@ -12,7 +15,11 @@ import {
   type BackstagePersistence,
   type BackstageSaveStorylineResponse,
   type BackstageSimulateMatchResponse,
+  type BackstageStorylineModel,
   type BackstageTrackStorylineResponse,
+  type BackstageUnknownPersistence,
+  type BackstageUpsertStorylineRequest,
+  type BackstageUpsertStorylineResponse,
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
@@ -40,6 +47,11 @@ import {
   BackstageBookerWriteError,
   createBackstageBookerRepository,
   isBackstageBookerUniverseScopeNotActivatedError,
+  type BackstageCanonBeatMutationResult,
+  type BackstageCanonBeatRecord,
+  type BackstageCanonContext,
+  type BackstageCanonStorylineMutationResult,
+  type BackstageCanonStorylineRecord,
   type BackstageContext,
   type PostgresBackstageBookerRepository
 } from '@core/db/repositories/backstageBookerRepository.js';
@@ -66,6 +78,7 @@ import {
   type StorylineBeat
 } from '@shared/backstage/backstageStoryline.js';
 import {
+  BackstageCanonUnavailableError,
   buildBackstageStorylineByKeyMemoryKey,
   buildBackstageUniverseMemoryKey,
   normalizeBackstageBookerActionPayload,
@@ -98,6 +111,13 @@ export interface RealResult extends MatchResultBase {
   loser: string;
   probability: Record<string, string>;
 }
+
+export {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_MESSAGE,
+  BackstageCanonUnavailableError,
+  isBackstageCanonUnavailableError,
+} from './backstageBookerContracts.js';
 
 interface BackstageDirectAnswerOutputContract {
   requestedBulletCount?: number;
@@ -365,14 +385,14 @@ function registerFallbackOperation(
   };
 }
 
-const DURABLE_PERSISTENCE: BackstagePersistence = {
+const DURABLE_PERSISTENCE: BackstageDurablePersistence = {
   status: 'durable',
   durable: true,
   backend: 'postgresql',
   degraded: false
 };
 
-const UNKNOWN_PERSISTENCE: BackstagePersistence = {
+const UNKNOWN_PERSISTENCE: BackstageUnknownPersistence = {
   status: 'unknown',
   durable: null,
   backend: 'postgresql',
@@ -399,6 +419,153 @@ function getBackstageRepository(): PostgresBackstageBookerRepository {
     throw new BackstageBookerRepositoryUnavailableError('connect');
   }
   return createBackstageBookerRepository(pool);
+}
+
+function canonicalizeBackstageCanonRequest(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError('Backstage canon request numbers must be finite.');
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(entry => canonicalizeBackstageCanonRequest(entry)).join(',')}]`;
+  }
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError('Backstage canon requests must contain only JSON values.');
+  }
+  const record = value as Record<string, unknown>;
+  const entries = Object.keys(record)
+    .filter(key => record[key] !== undefined)
+    .sort()
+    .map(key => (
+      `${JSON.stringify(key)}:${canonicalizeBackstageCanonRequest(record[key])}`
+    ));
+  return `{${entries.join(',')}}`;
+}
+
+/** Fingerprint one already-normalized closed canon request deterministically. */
+export function buildBackstageCanonRequestFingerprint(
+  input: BackstageUpsertStorylineRequest | BackstageAppendCanonBeatRequest
+): string {
+  return createHash('sha256')
+    .update(canonicalizeBackstageCanonRequest(input), 'utf8')
+    .digest('hex');
+}
+
+function toCanonUnavailableError(
+  operation: 'upsertStoryline' | 'appendCanonBeat',
+  error: unknown
+): BackstageCanonUnavailableError | null {
+  if (error instanceof BackstageBookerRepositoryUnavailableError) {
+    return (
+      (error.operation === 'connect' && error.cause === undefined)
+      || isRetryableBackstageStorylinePersistenceCause(error)
+    )
+      ? new BackstageCanonUnavailableError(operation, error)
+      : null;
+  }
+  if (error instanceof BackstageBookerWriteError) {
+    return (
+      isBackstageBookerUniverseScopeNotActivatedError(error.cause)
+      || isRetryableBackstageStorylinePersistenceCause(error)
+    )
+      ? new BackstageCanonUnavailableError(operation, error)
+      : null;
+  }
+  return null;
+}
+
+function normalizeCanonRevision(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]{0,19})$/u.test(value)) {
+    throw new TypeError(`${label} must be a canonical universe revision.`);
+  }
+  return value;
+}
+
+function normalizeCanonTimestamp(
+  value: Date | string,
+  label: string
+): string {
+  const timestamp = value instanceof Date
+    ? new Date(value.getTime())
+    : new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new TypeError(`${label} must be a valid timestamp.`);
+  }
+  return timestamp.toISOString();
+}
+
+function mapCanonStorylineModel(
+  record: BackstageCanonStorylineRecord,
+  expectedUniverseId: string,
+  expectedStoryKey: string,
+  expectedRevision: string
+): BackstageStorylineModel {
+  if (
+    record.universeId !== expectedUniverseId
+    || record.storyKey !== expectedStoryKey
+    || record.updatedRevision !== expectedRevision
+  ) {
+    throw new TypeError('Backstage canon storyline result identity did not match the request.');
+  }
+  return {
+    id: record.id,
+    key: record.storyKey,
+    title: record.title,
+    summary: record.summary,
+    status: record.status,
+    participantNames: [...record.participantNames],
+    version: record.version,
+    universeRevision: normalizeCanonRevision(
+      record.updatedRevision,
+      'Backstage canon storyline revision'
+    ),
+    createdAt: normalizeCanonTimestamp(
+      record.createdAt,
+      'Backstage canon storyline createdAt'
+    ),
+    updatedAt: normalizeCanonTimestamp(
+      record.updatedAt,
+      'Backstage canon storyline updatedAt'
+    ),
+    closedAt: record.closedAt === null
+      ? null
+      : normalizeCanonTimestamp(record.closedAt, 'Backstage canon storyline closedAt')
+  };
+}
+
+function mapCanonBeatModel(
+  record: BackstageCanonBeatRecord,
+  expectedUniverseId: string,
+  expectedStoryline: BackstageStorylineModel,
+  expectedRevision: string
+): BackstageCanonBeatModel {
+  if (
+    record.universeId !== expectedUniverseId
+    || record.storylineId !== expectedStoryline.id
+    || record.storyKey !== expectedStoryline.key
+    || record.revision !== expectedRevision
+  ) {
+    throw new TypeError('Backstage canon beat result identity did not match the request.');
+  }
+  return {
+    id: record.id,
+    storylineId: record.storylineId,
+    storylineKey: record.storyKey,
+    sequence: record.sequence,
+    kind: record.kind,
+    summary: record.summary,
+    occurredAt: normalizeCanonTimestamp(record.occurredAt, 'Backstage canon beat occurredAt'),
+    participantNames: [...record.participantNames],
+    eventId: record.eventId,
+    supersedesBeatId: record.supersedesBeatId,
+    universeRevision: normalizeCanonRevision(record.revision, 'Backstage canon beat revision'),
+    createdAt: normalizeCanonTimestamp(record.createdAt, 'Backstage canon beat createdAt')
+  };
 }
 
 function persistenceForDatabaseError(error: unknown): BackstagePersistence | null {
@@ -963,10 +1130,19 @@ interface BackstagePromptBlocks {
   savedStorylines: string;
 }
 
+interface BackstageCanonPromptBlocks {
+  storylines: string;
+  beats: string;
+}
+
+const BACKSTAGE_CANON_PROMPT_STORYLINES = 8;
+const BACKSTAGE_CANON_PROMPT_BEATS = 12;
+
 function buildBookingPrompt(
   basePrompt: string,
   universeId: string,
-  blocks: BackstagePromptBlocks
+  blocks: BackstagePromptBlocks,
+  canonBlocks: BackstageCanonPromptBlocks | null = null
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const directAnswerContract = directAnswerMode
@@ -980,12 +1156,47 @@ function buildBookingPrompt(
     `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
     `<<CURRENT_ROSTER>>\n${blocks.roster}`,
     `<<RECENT_EVENTS>>\n${blocks.events}`,
+    ...(canonBlocks
+      ? [
+          `<<CANON_STORYLINES>>\n${canonBlocks.storylines}`,
+          `<<CANON_BEATS>>\n${canonBlocks.beats}`
+        ]
+      : []),
     `<<RECENT_STORY_BEATS>>\n${blocks.storyBeats}`,
     `<<SAVED_STORYLINES>>\n${blocks.savedStorylines}`,
     `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
   ];
 
   return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+}
+
+function promptBlocksFromCanonContext(
+  context: BackstageCanonContext
+): BackstageCanonPromptBlocks {
+  return {
+    storylines: context.storylines.length
+      ? context.storylines
+          .slice(0, BACKSTAGE_CANON_PROMPT_STORYLINES)
+          .map(storyline => {
+            const participants = storyline.participantNames.length
+              ? ` • participants: ${storyline.participantNames.join(', ')}`
+              : '';
+            const summary = storyline.summary === null
+              ? 'No summary recorded.'
+              : formatJsonSnippet(storyline.summary, 260);
+            return `- ${storyline.title} [${storyline.status}] • key: ${storyline.storyKey} • version ${storyline.version}${participants} :: ${summary}`;
+          })
+          .join('\n')
+      : 'No typed storylines recorded yet.',
+    beats: context.activeBeats.length
+      ? context.activeBeats
+          .slice(-BACKSTAGE_CANON_PROMPT_BEATS)
+          .map(beat => (
+            `- ${toISODate(beat.occurredAt)} • ${beat.storyKey} #${beat.sequence} [${beat.kind}] :: ${formatJsonSnippet(beat.summary, 260)}`
+          ))
+          .join('\n')
+      : 'No active canon beats recorded yet.'
+  };
 }
 
 function promptBlocksFromContext(context: BackstageContext): BackstagePromptBlocks {
@@ -1058,11 +1269,22 @@ async function buildStructuredBookingPrompt(
   universeId: string
 ): Promise<string> {
   try {
-    const context = await getBackstageRepository().loadContext(universeId);
+    const repository = getBackstageRepository();
+    const context = await repository.loadContext(universeId);
+    let canonBlocks: BackstageCanonPromptBlocks | null = null;
+    const canonContext = context.canonContext;
+    if (canonContext.universeId !== universeId) {
+      throw new TypeError('Backstage canon context crossed its requested universe.');
+    }
+    normalizeCanonRevision(canonContext.revision, 'Backstage canon context revision');
+    if (canonContext.storylines.length > 0 || canonContext.activeBeats.length > 0) {
+      canonBlocks = promptBlocksFromCanonContext(canonContext);
+    }
     return buildBookingPrompt(
       basePrompt,
       universeId,
-      promptBlocksFromContext(overlayPendingContext(universeId, context))
+      promptBlocksFromContext(overlayPendingContext(universeId, context)),
+      canonBlocks
     );
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', resolveErrorMessage(error));
@@ -1588,6 +1810,7 @@ function overlayPendingContext(
   }
 
   return {
+    canonContext: context.canonContext,
     roster: [...rosterByName.values()].sort(
       (left, right) => left.name.localeCompare(right.name)
     ),
@@ -2237,6 +2460,133 @@ export async function saveStoryline(
   }
 }
 
+/** Upsert one version-fenced storyline aggregate with durable-only semantics. */
+export async function upsertStoryline(
+  payload: unknown
+): Promise<BackstageUpsertStorylineResponse> {
+  const input = normalizeBackstageBookerActionPayload('upsertStoryline', payload);
+  const requestFingerprint = buildBackstageCanonRequestFingerprint(input);
+
+  let mutation: BackstageCanonStorylineMutationResult;
+  try {
+    mutation = await getBackstageRepository().upsertStoryline({
+      universeId: input.universeId,
+      mutationId: input.mutationId,
+      requestFingerprint,
+      storyKey: input.storyline.key,
+      title: input.storyline.title,
+      summary: input.storyline.summary,
+      status: input.storyline.status,
+      expectedVersion: input.expectedVersion,
+      participantNames: input.storyline.participantNames
+    });
+  } catch (error) {
+    if (error instanceof BackstageBookerCommitUnknownError) {
+      return assertValidBackstageBookerActionData('upsertStoryline', {
+        universeId: input.universeId,
+        mutationId: input.mutationId,
+        applied: null,
+        universeRevision: null,
+        storyline: null,
+        persistence: UNKNOWN_PERSISTENCE
+      });
+    }
+    const unavailableError = toCanonUnavailableError('upsertStoryline', error);
+    throw unavailableError ?? error;
+  }
+
+  const revision = normalizeCanonRevision(
+    mutation.revision,
+    'Backstage canon mutation revision'
+  );
+  if (mutation.mutationId.toLowerCase() !== input.mutationId) {
+    throw new TypeError('Backstage canon mutation identity did not match the request.');
+  }
+  const storyline = mapCanonStorylineModel(
+    mutation.storyline,
+    input.universeId,
+    input.storyline.key,
+    revision
+  );
+  return assertValidBackstageBookerActionData('upsertStoryline', {
+    universeId: input.universeId,
+    mutationId: input.mutationId,
+    applied: true,
+    universeRevision: revision,
+    storyline,
+    persistence: DURABLE_PERSISTENCE
+  });
+}
+
+/** Append one immutable canon beat and optional lifecycle transition atomically. */
+export async function appendCanonBeat(
+  payload: unknown
+): Promise<BackstageAppendCanonBeatResponse> {
+  const input = normalizeBackstageBookerActionPayload('appendCanonBeat', payload);
+  const requestFingerprint = buildBackstageCanonRequestFingerprint(input);
+
+  let mutation: BackstageCanonBeatMutationResult;
+  try {
+    mutation = await getBackstageRepository().appendCanonBeat({
+      universeId: input.universeId,
+      mutationId: input.mutationId,
+      requestFingerprint,
+      storyKey: input.storylineKey,
+      expectedVersion: input.expectedVersion,
+      kind: input.beat.kind,
+      summary: input.beat.summary,
+      occurredAt: input.beat.occurredAt,
+      participantNames: input.beat.participantNames,
+      eventId: input.beat.eventId ?? null,
+      supersedesBeatId: input.beat.supersedesBeatId ?? null,
+      ...(input.nextStatus === undefined ? {} : { nextStatus: input.nextStatus })
+    });
+  } catch (error) {
+    if (error instanceof BackstageBookerCommitUnknownError) {
+      return assertValidBackstageBookerActionData('appendCanonBeat', {
+        universeId: input.universeId,
+        mutationId: input.mutationId,
+        applied: null,
+        universeRevision: null,
+        storyline: null,
+        beat: null,
+        persistence: UNKNOWN_PERSISTENCE
+      });
+    }
+    const unavailableError = toCanonUnavailableError('appendCanonBeat', error);
+    throw unavailableError ?? error;
+  }
+
+  const revision = normalizeCanonRevision(
+    mutation.revision,
+    'Backstage canon mutation revision'
+  );
+  if (mutation.mutationId.toLowerCase() !== input.mutationId) {
+    throw new TypeError('Backstage canon mutation identity did not match the request.');
+  }
+  const storyline = mapCanonStorylineModel(
+    mutation.storyline,
+    input.universeId,
+    input.storylineKey,
+    revision
+  );
+  const beat = mapCanonBeatModel(
+    mutation.beat,
+    input.universeId,
+    storyline,
+    revision
+  );
+  return assertValidBackstageBookerActionData('appendCanonBeat', {
+    universeId: input.universeId,
+    mutationId: input.mutationId,
+    applied: true,
+    universeRevision: revision,
+    storyline,
+    beat,
+    persistence: DURABLE_PERSISTENCE
+  });
+}
+
 export function simulateMatch(
   match: MatchInput,
   rosters?: Wrestler[],
@@ -2373,7 +2723,9 @@ export const BackstageBooker = {
   trackStoryline,
   simulateMatch,
   generateBooking,
-  saveStoryline
+  saveStoryline,
+  upsertStoryline,
+  appendCanonBeat
 };
 
 const backstageSchemaCatalog = getProtocolSchemaCatalog().backstageBooker.actions;
@@ -2382,6 +2734,10 @@ const readonlyActions = new Set<BackstageBookerAction>([
   'generateBooking',
   'generateBookingWithHRC'
 ]);
+const idempotentActions = new Set<BackstageBookerAction>([
+  'upsertStoryline',
+  'appendCanonBeat'
+]);
 const actionDescriptions: Record<BackstageBookerAction, string> = {
   bookEvent: 'Persist one event in a universe.',
   updateRoster: 'Upsert wrestlers in a universe-scoped roster.',
@@ -2389,7 +2745,9 @@ const actionDescriptions: Record<BackstageBookerAction, string> = {
   simulateMatch: 'Simulate a match using supplied or universe-scoped roster ratings.',
   generateBooking: 'Generate a booking plan from one universe snapshot.',
   generateBookingWithHRC: 'Generate a booking plan and attach HRC evaluation.',
-  saveStoryline: 'Upsert a named storyline in a universe.'
+  saveStoryline: 'Upsert a named storyline in a universe.',
+  upsertStoryline: 'Create or version-fence a typed storyline aggregate.',
+  appendCanonBeat: 'Append an immutable canon beat to a typed storyline.'
 };
 const actionMetadata = Object.fromEntries(
   (Object.keys(backstageSchemaCatalog) as BackstageBookerAction[]).map(action => {
@@ -2403,7 +2761,7 @@ const actionMetadata = Object.fromEntries(
         inputSchema: backstageSchemaCatalog[action].request as Record<string, unknown>,
         outputSchema: backstageSchemaCatalog[action].response as Record<string, unknown>,
         readOnly: readonly,
-        idempotent: false
+        idempotent: idempotentActions.has(action)
       } satisfies ModuleActionMetadata
     ];
   })
@@ -2476,6 +2834,20 @@ export const BackstageBookerModule = {
         input.storyline,
         input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
       );
+    },
+    async upsertStoryline(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload(
+        'upsertStoryline',
+        payload
+      );
+      return BackstageBooker.upsertStoryline(input);
+    },
+    async appendCanonBeat(payload: unknown) {
+      const input = normalizeBackstageBookerModuleActionPayload(
+        'appendCanonBeat',
+        payload
+      );
+      return BackstageBooker.appendCanonBeat(input);
     }
   }
 };

@@ -163,6 +163,16 @@ that PostgreSQL committed: clients must use `persistence.status`, and
 `saveStoryline.saved` is `null` for the unknown case. They also do not establish
 tenant authorization or define the future canon and storyline domain model.
 
+Phase 2A canon mutations are deliberately outside this convenience-key model.
+`upsertStoryline` and `appendCanonBeat` write only the PostgreSQL canon ledger
+and immutable mutation-revision evidence. They never publish process-memory,
+exact-memory, audit, or module-specific convenience mirrors, including when a
+commit acknowledgement is lost. Generic module conversation summaries may
+record that an interaction occurred, but they are not a canon projection and
+must never be used to reconstruct storyline state. Reconcile an indeterminate
+canon mutation only with its explicit universe and mutation ID against the
+authoritative database path.
+
 ## Command Baseline for Users
 Use these command patterns when talking to the AI.
 Except for exact key, record, or tag selectors, these examples assume the caller supplies `sessionId` in the request or includes an inline session/storage label.

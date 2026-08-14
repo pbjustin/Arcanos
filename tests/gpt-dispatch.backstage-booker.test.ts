@@ -11,6 +11,14 @@ import {
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
   BackstageStorylinePersistenceError,
 } from '../src/shared/backstage/backstageStoryline.js';
+import {
+  BackstageCanonDomainError,
+} from '../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BackstageBookerContractError,
+  BackstageCanonUnavailableError,
+} from '../src/services/backstageBookerContracts.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -100,7 +108,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       if (moduleName === 'BACKSTAGE:BOOKER') {
         return {
           name: 'BACKSTAGE:BOOKER',
-          actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline'],
+          actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline', 'upsertStoryline', 'appendCanonBeat'],
           route: 'backstage',
           defaultAction: 'generateBooking',
           defaultTimeoutMs: 60000,
@@ -621,6 +629,119 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       expect(mockPersistModuleConversation).not.toHaveBeenCalled();
     }
   );
+
+  it('maps closed canon contract failures to a bounded validation envelope', async () => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (_moduleName: string, action: string, payload: unknown) => (
+        normalizeBackstageBookerActionPayload(
+          action as 'upsertStoryline',
+          payload
+        )
+      )
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'upsertStoryline',
+        payload: {
+          mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+          expectedVersion: 0,
+          storyline: {},
+        },
+      },
+      requestId: 'req-backstage-invalid-canon',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_BOOKER_INVALID',
+        message: 'Invalid Backstage Booker upsertStoryline payload.',
+        details: {
+          action: 'upsertStoryline',
+          issues: expect.any(Array),
+        },
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves the Phase One module-error envelope for generic contract failures', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerContractError('simulateMatch', [
+        { instancePath: '/match', message: 'match is required' }
+      ])
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'simulateMatch',
+        payload: {},
+      },
+      requestId: 'req-backstage-phase-one-contract-compatibility',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: 'Invalid Backstage Booker simulateMatch payload.',
+      },
+    });
+    expect(envelope.error).not.toHaveProperty('details');
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves bounded canon domain conflicts for HTTP status mapping', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT')
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'upsertStoryline',
+        payload: {},
+      },
+      requestId: 'req-backstage-canon-conflict',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_STORYLINE_VERSION_CONFLICT',
+        message: 'The Backstage storyline changed before this mutation could be applied.',
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('maps classified canon outages to the retryable unavailable envelope', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageCanonUnavailableError('appendCanonBeat')
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'appendCanonBeat',
+        payload: {},
+      },
+      requestId: 'req-backstage-canon-unavailable',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+        message: 'Backstage canon persistence is temporarily unavailable.',
+        details: { retryable: true },
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
 
   it.each(['backstage', 'backstage-booker'])(
     'maps transactional roster failures for canonical alias %s to a retryable persistence code',

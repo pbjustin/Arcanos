@@ -290,6 +290,8 @@ function configureBackstageRoutingMock(): void {
         'generateBooking',
         'generateBookingWithHRC',
         'saveStoryline',
+        'upsertStoryline',
+        'appendCanonBeat',
       ],
       moduleVersion: null,
       moduleDescription: null,
@@ -2563,6 +2565,8 @@ describe('async /gpt idempotency', () => {
           'generateBooking',
           'generateBookingWithHRC',
           'saveStoryline',
+          'upsertStoryline',
+          'appendCanonBeat',
         ],
         moduleVersion: null,
         moduleDescription: null,
@@ -2891,6 +2895,8 @@ describe('async /gpt idempotency', () => {
           'generateBooking',
           'generateBookingWithHRC',
           'saveStoryline',
+          'upsertStoryline',
+          'appendCanonBeat',
         ],
         moduleVersion: null,
         moduleDescription: null,
@@ -3081,6 +3087,66 @@ describe('async /gpt idempotency', () => {
       },
     });
   });
+
+  it.each([
+    ['BACKSTAGE_STORYLINE_NOT_FOUND', 404],
+    ['BACKSTAGE_STORYLINE_VERSION_CONFLICT', 409],
+    ['BACKSTAGE_MUTATION_ID_CONFLICT', 409],
+    ['BACKSTAGE_CANON_UNAVAILABLE', 503],
+  ] as const)(
+    'maps synchronous canon error %s to HTTP %i',
+    async (errorCode, expectedStatus) => {
+      const controlPlaneToken = `sync-canon-${expectedStatus}-control-plane-token-1234567890`;
+      process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = `operator:sync-canon-${expectedStatus}`;
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+      configureBackstageRoutingMock();
+      mockRouteGptRequest.mockResolvedValue({
+        ok: false,
+        error: {
+          code: errorCode,
+          message: 'Bounded canon failure.',
+        },
+        _route: {
+          gptId: 'backstage',
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'upsertStoryline',
+          timestamp: '2026-08-14T00:00:00.000Z',
+        },
+      });
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('X-GPT-Action', 'upsertStoryline')
+        .set('X-Confirmed', 'yes')
+        .send({
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          },
+        });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: errorCode,
+          message: 'Bounded canon failure.',
+        },
+      });
+    }
+  );
 
   it('returns the stable 503 when an admitted async roster transaction fails while waiting', async () => {
     const controlPlaneToken = 'async-backstage-persistence-token-1234567890';

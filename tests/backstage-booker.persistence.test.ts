@@ -17,10 +17,13 @@ const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
 
 const mockRepository = {
+  appendCanonBeat: jest.fn(),
   bookEvent: jest.fn(),
   updateRoster: jest.fn(),
   trackStoryline: jest.fn(),
   saveStoryline: jest.fn(),
+  upsertStoryline: jest.fn(),
+  loadCanonContext: jest.fn(),
   loadContext: jest.fn(),
   loadRoster: jest.fn()
 };
@@ -121,14 +124,19 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 const {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerModule,
+  appendCanonBeat,
   bookEvent,
+  buildBackstageCanonRequestFingerprint,
   generateBooking,
   getBackstageBookerProcessStateStatsForTests,
+  isBackstageCanonUnavailableError,
   resetBackstageBookerProcessStateForTests,
   saveStoryline,
   simulateMatch,
   trackStoryline,
+  upsertStoryline,
   updateRoster
 } = await import('../src/services/backstage-booker.js');
 const {
@@ -160,6 +168,57 @@ function savedStorylineMutation(
     createdAt: timestamp,
     updatedAt: timestamp,
     revision
+  };
+}
+
+const canonMutationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const canonStorylineId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const canonBeatId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function canonStorylineRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: canonStorylineId,
+    universeId: 'phase-two',
+    storyKey: 'summer-feud',
+    title: 'Summer Feud',
+    summary: 'A rivalry built around the world championship.',
+    status: 'active',
+    version: 1,
+    participantNames: ['Alex Star', 'Blake Stone'],
+    createdRevision: '20001',
+    updatedRevision: '20001',
+    createdAt: new Date('2026-08-14T15:00:00.000Z'),
+    updatedAt: new Date('2026-08-14T15:00:00.000Z'),
+    closedAt: null,
+    ...overrides
+  };
+}
+
+function canonBeatRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: canonBeatId,
+    universeId: 'phase-two',
+    storylineId: canonStorylineId,
+    storyKey: 'summer-feud',
+    sequence: 1,
+    kind: 'development',
+    summary: 'Alex interrupts Blake after the main event.',
+    occurredAt: new Date('2026-08-15T02:00:00.000Z'),
+    participantNames: ['Alex Star', 'Blake Stone'],
+    eventId: null,
+    supersedesBeatId: null,
+    revision: '20002',
+    createdAt: new Date('2026-08-15T02:01:00.000Z'),
+    ...overrides
+  };
+}
+
+function emptyCanonContext(universeId: string) {
+  return {
+    universeId,
+    revision: '0',
+    storylines: [],
+    activeBeats: []
   };
 }
 
@@ -196,12 +255,14 @@ describe('Backstage Booker service persistence outcomes', () => {
         savedStorylineMutation(universeId, storyKey, storyline)
       )
     );
-    mockRepository.loadContext.mockResolvedValue({
+    mockRepository.loadContext.mockImplementation(async (universeId: string) => ({
       roster: [],
       events: [],
       storyBeats: [],
-      storylines: []
-    });
+      storylines: [],
+      canonContext: emptyCanonContext(universeId)
+    }));
+    mockRepository.loadCanonContext.mockRejectedValue(new Error('canon context unavailable'));
     mockRepository.loadRoster.mockResolvedValue([]);
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
     mockRunTrinityWritingPipeline.mockResolvedValue({
@@ -549,7 +610,8 @@ describe('Backstage Booker service persistence outcomes', () => {
         data: { beat: 'Contract signing confrontation' },
         createdAt: new Date('2026-08-14T12:00:00.000Z')
       }],
-      storylines: []
+      storylines: [],
+      canonContext: emptyCanonContext('serialized-context')
     });
 
     await expect(generateBooking('Book the next chapter.', 'serialized-context'))
@@ -560,6 +622,9 @@ describe('Backstage Booker service persistence outcomes', () => {
     } | undefined;
     expect(pipelineInput?.input?.prompt).toContain('Contract signing confrontation');
     expect(pipelineInput?.input?.prompt).not.toContain('<<RECENT_STORY_BEATS>>\n- 2026-08-14T12:00:00.000Z :: {}');
+    expect(pipelineInput?.input?.prompt).not.toContain('<<CANON_STORYLINES>>');
+    expect(pipelineInput?.input?.prompt).not.toContain('<<CANON_BEATS>>');
+    expect(mockRepository.loadCanonContext).not.toHaveBeenCalled();
   });
 
   it('overlays accepted non-durable continuity onto successful repository context reads', async () => {
@@ -606,7 +671,8 @@ describe('Backstage Booker service persistence outcomes', () => {
         createdAt: new Date('2026-08-14T12:00:00.000Z')
       }],
       storyBeats: [],
-      storylines: []
+      storylines: [],
+      canonContext: emptyCanonContext(universeId)
     });
 
     await expect(generateBooking('Book the next chapter.', universeId))
@@ -1016,7 +1082,8 @@ describe('Backstage Booker service persistence outcomes', () => {
       }],
       events: [],
       storyBeats: [],
-      storylines: []
+      storylines: [],
+      canonContext: emptyCanonContext(universeId)
     });
     await generateBooking('Book the operation-fenced roster.', universeId);
     const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
@@ -1264,7 +1331,8 @@ describe('Backstage Booker service persistence outcomes', () => {
       roster: [],
       events: [],
       storyBeats: [],
-      storylines: []
+      storylines: [],
+      canonContext: emptyCanonContext('legacy')
     });
     await generateBooking('Book only confirmed continuity.', 'legacy');
     const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
@@ -1653,7 +1721,8 @@ describe('Backstage Booker service persistence outcomes', () => {
         storyline: 'Older durable storyline.',
         createdAt: new Date('2026-08-14T12:00:00.000Z'),
         updatedAt: new Date('2026-08-14T12:00:00.000Z')
-      }]
+      }],
+      canonContext: emptyCanonContext(universeId)
     });
     await generateBooking('Book the fenced saved storyline.', universeId);
     const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
@@ -2005,5 +2074,504 @@ describe('Backstage Booker service persistence outcomes', () => {
 
     expect(result.result.match).toBe('Alex Star vs alex star (Singles)');
     expect(mockEvaluateWithHRC).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes and durably upserts a typed storyline with a deterministic fingerprint', async () => {
+    mockRepository.upsertStoryline.mockResolvedValueOnce({
+      mutationId: canonMutationId,
+      revision: '20001',
+      replayed: false,
+      storyline: canonStorylineRecord()
+    });
+
+    const result = await upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId.toUpperCase(),
+      expectedVersion: 0,
+      storyline: {
+        key: '  summer-feud  ',
+        title: '  Summer Feud  ',
+        summary: '  A rivalry built around the world championship.  ',
+        status: 'active',
+        participantNames: [' Alex Star ', 'Blake Stone']
+      }
+    });
+
+    expect(result).toEqual({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      applied: true,
+      universeRevision: '20001',
+      storyline: {
+        id: canonStorylineId,
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: 'A rivalry built around the world championship.',
+        status: 'active',
+        participantNames: ['Alex Star', 'Blake Stone'],
+        version: 1,
+        universeRevision: '20001',
+        createdAt: '2026-08-14T15:00:00.000Z',
+        updatedAt: '2026-08-14T15:00:00.000Z',
+        closedAt: null
+      },
+      persistence: durablePersistence
+    });
+    const repositoryInput = mockRepository.upsertStoryline.mock.calls[0]?.[0] as {
+      requestFingerprint?: string;
+    };
+    expect(repositoryInput).toEqual(expect.objectContaining({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storyKey: 'summer-feud',
+      title: 'Summer Feud',
+      summary: 'A rivalry built around the world championship.',
+      expectedVersion: 0,
+      participantNames: ['Alex Star', 'Blake Stone']
+    }));
+    expect(repositoryInput.requestFingerprint).toBe(buildBackstageCanonRequestFingerprint({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: 'A rivalry built around the world championship.',
+        status: 'active',
+        participantNames: ['Alex Star', 'Blake Stone']
+      }
+    }));
+    expect(repositoryInput.requestFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
+  });
+
+  it('appends a durable canon beat with normalized UTC time and lifecycle status', async () => {
+    const updatedStoryline = canonStorylineRecord({
+      version: 2,
+      updatedRevision: '20002',
+      updatedAt: new Date('2026-08-15T02:01:00.000Z')
+    });
+    mockRepository.appendCanonBeat.mockResolvedValueOnce({
+      mutationId: canonMutationId,
+      revision: '20002',
+      replayed: false,
+      storyline: updatedStoryline,
+      beat: canonBeatRecord()
+    });
+
+    const result = await appendCanonBeat({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storylineKey: ' summer-feud ',
+      expectedVersion: 1,
+      beat: {
+        kind: 'development',
+        summary: ' Alex interrupts Blake after the main event. ',
+        occurredAt: '2026-08-15T02:00:00.000000000Z',
+        participantNames: ['Alex Star', ' Blake Stone ']
+      },
+      nextStatus: 'active'
+    });
+
+    expect(result.applied).toBe(true);
+    if (result.applied !== true) {
+      throw new Error('Expected a durable canon beat result.');
+    }
+    expect(result.beat).toEqual(expect.objectContaining({
+      id: canonBeatId,
+      storylineId: canonStorylineId,
+      storylineKey: 'summer-feud',
+      sequence: 1,
+      occurredAt: '2026-08-15T02:00:00.000Z',
+      universeRevision: '20002'
+    }));
+    expect(result.storyline.version).toBe(2);
+    expect(mockRepository.appendCanonBeat).toHaveBeenCalledWith(expect.objectContaining({
+      storyKey: 'summer-feud',
+      occurredAt: '2026-08-15T02:00:00.000Z',
+      participantNames: ['Alex Star', 'Blake Stone'],
+      eventId: null,
+      supersedesBeatId: null,
+      nextStatus: 'active',
+      requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u)
+    }));
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('returns an unknown upsert receipt with no fallback or mirror side effects', async () => {
+    mockRepository.upsertStoryline.mockRejectedValueOnce(
+      new MockBackstageBookerCommitUnknownError('upsertStoryline', new Error('lost ack'))
+    );
+
+    await expect(upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: []
+      }
+    })).resolves.toEqual({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      applied: null,
+      universeRevision: null,
+      storyline: null,
+      persistence: {
+        status: 'unknown',
+        durable: null,
+        backend: 'postgresql',
+        degraded: true,
+        reason: 'commit_outcome_unknown'
+      }
+    });
+    expect(getBackstageBookerProcessStateStatsForTests('phase-two').universeCount).toBe(0);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
+  });
+
+  it('returns an unknown beat receipt without publishing the requested canon', async () => {
+    mockRepository.appendCanonBeat.mockRejectedValueOnce(
+      new MockBackstageBookerCommitUnknownError('appendCanonBeat', new Error('lost ack'))
+    );
+
+    await expect(appendCanonBeat({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storylineKey: 'summer-feud',
+      expectedVersion: 1,
+      beat: {
+        kind: 'development',
+        summary: 'A result whose commit is unknown.',
+        occurredAt: '2026-08-15T02:00:00Z',
+        participantNames: []
+      }
+    })).resolves.toEqual(expect.objectContaining({
+      applied: null,
+      universeRevision: null,
+      storyline: null,
+      beat: null,
+      persistence: expect.objectContaining({ status: 'unknown' })
+    }));
+    expect(getBackstageBookerProcessStateStatsForTests('phase-two').universeCount).toBe(0);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('wraps only classified pre-commit canon outages and never falls back', async () => {
+    mockRepository.upsertStoryline.mockRejectedValueOnce(
+      new MockBackstageBookerRepositoryUnavailableError(
+        'upsertStoryline',
+        { code: 'ECONNREFUSED' }
+      )
+    );
+
+    const request = {
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: []
+      }
+    };
+    const error = await upsertStoryline(request).catch((cause: unknown) => cause);
+    expect(isBackstageCanonUnavailableError(error)).toBe(true);
+    expect(error).toMatchObject({
+      code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+      operation: 'upsertStoryline'
+    });
+    expect(getBackstageBookerProcessStateStatsForTests('phase-two').universeCount).toBe(0);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('classifies a transient rollback failure as canon unavailable', async () => {
+    mockRepository.upsertStoryline.mockRejectedValueOnce(
+      new MockBackstageBookerWriteError(
+        'upsertStoryline',
+        Object.assign(new Error('domain mutation was rejected before commit'), {
+          code: '23514'
+        }),
+        Object.assign(new Error('rollback connection was lost'), {
+          code: 'ECONNRESET'
+        })
+      )
+    );
+
+    const error = await upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: []
+      }
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+      operation: 'upsertStoryline'
+    });
+    expect(isBackstageCanonUnavailableError(error)).toBe(true);
+    expect(getBackstageBookerProcessStateStatsForTests('phase-two').universeCount).toBe(0);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
+  });
+
+  it('propagates unclassified canon write failures without fallback effects', async () => {
+    const integrityFailure = new MockBackstageBookerWriteError(
+      'appendCanonBeat',
+      new Error('canon result violated an internal invariant')
+    );
+    mockRepository.appendCanonBeat.mockRejectedValueOnce(integrityFailure);
+
+    await expect(appendCanonBeat({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storylineKey: 'summer-feud',
+      expectedVersion: 1,
+      beat: {
+        kind: 'development',
+        summary: 'A valid beat whose repository mapping fails.',
+        occurredAt: '2026-08-15T02:00:00Z',
+        participantNames: []
+      }
+    })).rejects.toBe(integrityFailure);
+
+    expect(getBackstageBookerProcessStateStatsForTests('phase-two').universeCount).toBe(0);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
+  });
+
+  it('passes an idempotent repository replay through as the same durable response', async () => {
+    const replay = {
+      mutationId: canonMutationId,
+      revision: '20001',
+      replayed: true,
+      storyline: canonStorylineRecord()
+    };
+    mockRepository.upsertStoryline.mockResolvedValue(replay);
+    const request = {
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: 'A rivalry built around the world championship.',
+        status: 'active',
+        participantNames: ['Alex Star', 'Blake Stone']
+      }
+    };
+
+    const first = await upsertStoryline(request);
+    const replayed = await upsertStoryline(request);
+    expect(replayed).toEqual(first);
+    const fingerprints = mockRepository.upsertStoryline.mock.calls.map(
+      call => (call[0] as { requestFingerprint: string }).requestFingerprint
+    );
+    expect(fingerprints).toEqual([fingerprints[0], fingerprints[0]]);
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('advertises canon mutations as privileged confirmation-bound idempotent actions', () => {
+    for (const action of ['upsertStoryline', 'appendCanonBeat'] as const) {
+      expect(BackstageBookerModule.actionMetadata[action]).toEqual(expect.objectContaining({
+        risk: 'privileged',
+        requiresConfirmation: true,
+        readOnly: false,
+        idempotent: true
+      }));
+    }
+    expect(BackstageBookerModule.actionMetadata.saveStoryline.idempotent).toBe(false);
+    expect(BackstageBookerModule.actionMetadata.trackStoryline.idempotent).toBe(false);
+  });
+
+  it('renders bounded typed canon ahead of unchanged legacy continuity blocks', async () => {
+    const activeCanonBeats = Array.from({ length: 14 }, (_unused, index) => (
+      canonBeatRecord({
+        sequence: index + 1,
+        summary: `CANON-${String(index + 1).padStart(2, '0')}-END`,
+        occurredAt: new Date(Date.UTC(2026, 7, 15, 2, index, 0))
+      })
+    ));
+    mockRepository.loadContext.mockResolvedValueOnce({
+      roster: [],
+      events: [],
+      storyBeats: [{
+        data: { legacyBeat: 'Legacy continuity note' },
+        createdAt: new Date('2026-08-13T10:00:00.000Z')
+      }],
+      storylines: [{
+        id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        universeId: 'phase-two',
+        storyKey: 'legacy-story',
+        storyline: 'Legacy saved narrative',
+        createdAt: new Date('2026-08-12T10:00:00.000Z'),
+        updatedAt: new Date('2026-08-12T10:00:00.000Z')
+      }],
+      canonContext: {
+        universeId: 'phase-two',
+        revision: '20002',
+        storylines: [canonStorylineRecord()],
+        activeBeats: activeCanonBeats
+      }
+    });
+
+    await generateBooking('Book the next chapter.', 'phase-two');
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input?: { prompt?: string };
+    } | undefined;
+    const prompt = pipelineInput?.input?.prompt ?? '';
+    expect(prompt).toContain('<<CANON_STORYLINES>>\n- Summer Feud [active]');
+    expect(prompt).toContain('<<CANON_BEATS>>\n- 2026-08-15T02:02:00.000Z');
+    expect(prompt).not.toContain('CANON-01-END');
+    expect(prompt).not.toContain('CANON-02-END');
+    expect(prompt).toContain('CANON-03-END');
+    expect(prompt).toContain('CANON-14-END');
+    expect(prompt.indexOf('CANON-03-END')).toBeLessThan(prompt.indexOf('CANON-14-END'));
+    expect(prompt).toContain('Legacy continuity note');
+    expect(prompt).toContain('Legacy saved narrative');
+    expect(prompt.indexOf('<<CANON_BEATS>>')).toBeLessThan(
+      prompt.indexOf('<<RECENT_STORY_BEATS>>')
+    );
+    expect(prompt.indexOf('<<CANON_STORYLINES>>')).toBeLessThan(
+      prompt.indexOf('<<SAVED_STORYLINES>>')
+    );
+    expect(mockRepository.loadCanonContext).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid initial lifecycle and completion mutations before repository work', async () => {
+    await expect(upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'paused',
+        participantNames: []
+      }
+    })).rejects.toMatchObject({ name: 'BackstageBookerContractError' });
+
+    await expect(appendCanonBeat({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storylineKey: 'summer-feud',
+      expectedVersion: 1,
+      beat: {
+        kind: 'development',
+        summary: 'This is not a payoff.',
+        occurredAt: '2026-08-15T02:00:00Z',
+        participantNames: []
+      },
+      nextStatus: 'completed'
+    })).rejects.toMatchObject({ name: 'BackstageBookerContractError' });
+
+    await expect(upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: ['Alex Star', ' Alex Star ']
+      }
+    })).rejects.toMatchObject({ name: 'BackstageBookerContractError' });
+
+    expect(mockRepository.upsertStoryline).not.toHaveBeenCalled();
+    expect(mockRepository.appendCanonBeat).not.toHaveBeenCalled();
+  });
+
+  it('rejects PostgreSQL-invalid and unsupported canon timestamps before repository work', async () => {
+    for (const occurredAt of [
+      '0000-01-01T00:00:00Z',
+      '2026-12-31T23:59:60Z'
+    ]) {
+      await expect(appendCanonBeat({
+        universeId: 'phase-two',
+        mutationId: canonMutationId,
+        storylineKey: 'summer-feud',
+        expectedVersion: 1,
+        beat: {
+          kind: 'development',
+          summary: 'A timestamp boundary that must fail before persistence.',
+          occurredAt,
+          participantNames: []
+        }
+      })).rejects.toMatchObject({
+        name: 'BackstageBookerContractError',
+        action: 'appendCanonBeat',
+        issues: expect.arrayContaining([
+          expect.objectContaining({ instancePath: '/beat/occurredAt' })
+        ])
+      });
+    }
+
+    expect(mockRepository.appendCanonBeat).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized canon participant arrays as contract failures before repository work', async () => {
+    const participantNames = Array.from(
+      { length: 50 },
+      (_unused, index) => `${'😀'.repeat(117)}-${String(index).padStart(2, '0')}`
+    );
+
+    await expect(upsertStoryline({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames
+      }
+    })).rejects.toMatchObject({
+      name: 'BackstageBookerContractError',
+      action: 'upsertStoryline',
+      issues: expect.arrayContaining([
+        expect.objectContaining({ instancePath: '/storyline/participantNames' })
+      ])
+    });
+
+    await expect(appendCanonBeat({
+      universeId: 'phase-two',
+      mutationId: canonMutationId,
+      storylineKey: 'summer-feud',
+      expectedVersion: 1,
+      beat: {
+        kind: 'development',
+        summary: 'A valid summary with an oversized participant encoding.',
+        occurredAt: '2026-08-15T02:00:00Z',
+        participantNames
+      }
+    })).rejects.toMatchObject({
+      name: 'BackstageBookerContractError',
+      action: 'appendCanonBeat',
+      issues: expect.arrayContaining([
+        expect.objectContaining({ instancePath: '/beat/participantNames' })
+      ])
+    });
+
+    expect(mockRepository.upsertStoryline).not.toHaveBeenCalled();
+    expect(mockRepository.appendCanonBeat).not.toHaveBeenCalled();
   });
 });

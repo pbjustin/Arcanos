@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/appendCanonBeat.request.schema.json",
+  "title": "Backstage Booker appendCanonBeat request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "mutationId",
+    "storylineKey",
+    "expectedVersion",
+    "beat"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "mutationId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/mutationId"
+    },
+    "storylineKey": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/storylineKey"
+    },
+    "expectedVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "beat": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/canonBeatInput"
+    },
+    "nextStatus": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/storylineStatus"
+    }
+  }
+}

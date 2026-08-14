@@ -54,8 +54,12 @@ import {
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
   BackstageBookerContractError,
+  isBackstageCanonUnavailableError,
   normalizeBackstageBookerSchemaDrivenActionPayload,
 } from '@services/backstageBookerContracts.js';
+import {
+  isBackstageCanonDomainError,
+} from '@core/db/repositories/backstageBookerRepository.js';
 import {
   isResearchRequestValidationError,
   normalizeResearchModulePayload,
@@ -1132,6 +1136,39 @@ async function runGptAccessCapabilityAction(input: {
           error: {
             code: 'GPT_ACCESS_VALIDATION_ERROR',
             message: error.message
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && isBackstageCanonDomainError(error)
+    ) {
+      return {
+        statusCode: error.httpStatus,
+        payload: {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && isBackstageCanonUnavailableError(error)
+    ) {
+      return {
+        statusCode: error.httpStatus,
+        payload: {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable
           }
         }
       };

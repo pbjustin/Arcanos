@@ -16,6 +16,8 @@ export const BACKSTAGE_MUTATION_ACTIONS = Object.freeze([
   'updateRoster',
   'trackStoryline',
   'saveStoryline',
+  'upsertStoryline',
+  'appendCanonBeat',
 ] as const);
 
 export const BACKSTAGE_ACTIONS = Object.freeze([

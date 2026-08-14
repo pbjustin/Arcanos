@@ -5,6 +5,10 @@ import {
   BackstageRosterPersistenceError,
   BackstageRosterValidationError,
 } from '../src/shared/backstage/backstageRoster.js';
+import {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BackstageCanonUnavailableError,
+} from '../src/services/backstageBookerContracts.js';
 
 const mockGetJobById = jest.fn(async (_jobId: string) => null);
 const mockGetGptModuleMap = jest.fn();
@@ -160,7 +164,7 @@ describe('normal worker queued Backstage mutation admission', () => {
     });
     mockGetModuleMetadata.mockReturnValue({
       name: 'BACKSTAGE:BOOKER',
-      actions: ['updateRoster', 'trackStoryline'],
+      actions: ['updateRoster', 'trackStoryline', 'upsertStoryline', 'appendCanonBeat'],
       route: 'backstage',
       defaultAction: 'updateRoster',
       defaultTimeoutMs: 60_000,
@@ -349,5 +353,133 @@ describe('normal worker queued Backstage mutation admission', () => {
         },
       },
     });
+  });
+
+  it.each(['upsertStoryline', 'appendCanonBeat'] as const)(
+    'keeps an admitted %s commit-unknown receipt completed but non-reusable',
+    async (action) => {
+      const mutationId = '8d64dad3-f080-4bac-88ec-994005dc7152';
+      const result = {
+        universeId: 'phase-two',
+        mutationId,
+        applied: null,
+        universeRevision: null,
+        storyline: null,
+        ...(action === 'appendCanonBeat' ? { beat: null } : {}),
+        persistence: {
+          status: 'unknown',
+          durable: null,
+          backend: 'postgresql',
+          degraded: true,
+          reason: 'commit_outcome_unknown',
+        },
+      };
+      mockDispatchModuleAction.mockResolvedValueOnce(result);
+      const payload = action === 'upsertStoryline'
+        ? {
+            universeId: 'phase-two',
+            mutationId,
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          }
+        : {
+            universeId: 'phase-two',
+            mutationId,
+            storylineKey: 'summer-feud',
+            expectedVersion: 1,
+            beat: {
+              kind: 'angle',
+              summary: 'A confrontation escalates the feud.',
+              occurredAt: '2026-08-14T00:00:00.000Z',
+              participantNames: [],
+            },
+          };
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: `job-backstage-${action}-commit-unknown`,
+        rawInput: {
+          gptId: 'backstage',
+          body: { action, payload },
+          requestId: `req-backstage-${action}-commit-unknown`,
+          backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+            action,
+            principalId: 'operator:normal-worker-test',
+          }),
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'completed',
+        output: {
+          ok: true,
+          result,
+        },
+        completionAutonomyState: {
+          gptResultReuse: {
+            reusable: false,
+            reason: 'backstage_canon_commit_outcome_unknown',
+          },
+        },
+      });
+    }
+  );
+
+  it('retries a classified canon outage with the admitted mutation payload intact', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageCanonUnavailableError('upsertStoryline')
+    );
+    const payload = {
+      universeId: 'phase-two',
+      mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: [],
+      },
+    };
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'job-backstage-canon-unavailable',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'upsertStoryline',
+          payload,
+        },
+        requestId: 'req-backstage-canon-unavailable',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'upsertStoryline',
+          principalId: 'operator:normal-worker-test',
+        }),
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: true,
+      errorMessage:
+        `${BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE}: Backstage canon persistence is temporarily unavailable.`,
+      output: {
+        ok: false,
+        error: {
+          code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+          details: { retryable: true },
+        },
+      },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'upsertStoryline',
+      expect.objectContaining(payload)
+    );
   });
 });

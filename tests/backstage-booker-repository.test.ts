@@ -2,12 +2,15 @@ import { describe, expect, it } from '@jest/globals';
 import type { Pool } from 'pg';
 
 import {
+  BackstageCanonDomainError,
   BackstageBookerCommitUnknownError,
   BackstageBookerRepositoryUnavailableError,
   BackstageBookerUniverseScopeNotActivatedError,
   BackstageBookerWriteError,
+  isBackstageCanonDomainError,
   isBackstageBookerUniverseScopeNotActivatedError,
-  PostgresBackstageBookerRepository
+  PostgresBackstageBookerRepository,
+  resolveBackstageCanonDomainErrorHttpStatus
 } from '../src/core/db/repositories/backstageBookerRepository.js';
 
 interface HarnessEvent {
@@ -310,6 +313,15 @@ class BackstageRepositoryHarness {
         .filter(row => row.universe_id === String(values[0]))
         .map(row => ({ ...row }));
       return this.result(rows);
+    }
+    if (sql.startsWith('SELECT revision::TEXT AS revision FROM backstage_canon_heads')) {
+      return this.result();
+    }
+    if (sql.includes('jsonb_agg(participant.wrestler_name ORDER BY participant.sort_order)')) {
+      return this.result();
+    }
+    if (sql.startsWith('SELECT recent.* FROM ( SELECT beat.id')) {
+      return this.result();
     }
 
     throw new Error(`Unhandled Backstage repository query: ${sql}`);
@@ -815,5 +827,747 @@ describe('PostgresBackstageBookerRepository', () => {
       'valid Backstage universe identifier'
     );
     expect(harness.commands).toHaveLength(0);
+  });
+});
+
+interface CanonHarnessThread {
+  id: string;
+  universe_id: string;
+  story_key: string;
+  title: string;
+  summary: string | null;
+  status: string;
+  version: number;
+  created_revision: string;
+  updated_revision: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+interface CanonHarnessBeat {
+  id: string;
+  universe_id: string;
+  storyline_id: string;
+  story_key: string;
+  sequence: number;
+  kind: string;
+  summary: string;
+  occurred_at: string;
+  participant_names: string[];
+  event_id: string | null;
+  supersedes_beat_id: string | null;
+  universe_revision: string;
+  created_at: string;
+}
+
+interface CanonHarnessRevision {
+  operation: 'upsertStoryline' | 'appendCanonBeat';
+  request_fingerprint: string;
+  result: Record<string, unknown>;
+}
+
+class CanonRepositoryHarness {
+  readonly commands: string[] = [];
+  readonly commandValues: unknown[][] = [];
+  readonly releaseCauses: unknown[] = [];
+  readonly rosterByUniverse = new Map<string, Set<string>>();
+  readonly events = new Array<{ universeId: string; id: string }>();
+  readonly revisions = new Map<string, CanonHarnessRevision>();
+  participants: string[] = [];
+  beats: CanonHarnessBeat[] = [];
+  thread: CanonHarnessThread | null = null;
+  headRevision = 0;
+  failCommit = false;
+  failDeferredConstraintCheck = false;
+  private clockSequence = 0;
+  private snapshot: {
+    headRevision: number;
+    thread: CanonHarnessThread | null;
+    participants: string[];
+    beats: CanonHarnessBeat[];
+    revisions: Array<[string, CanonHarnessRevision]>;
+  } | null = null;
+
+  readonly pool = {
+    connect: async () => ({
+      query: async (sql: string, values: unknown[] = []) => this.query(sql, values),
+      release: (cause?: unknown) => this.releaseCauses.push(cause)
+    }),
+    query: async (sql: string, values: unknown[] = []) => this.query(sql, values)
+  } as unknown as Pool;
+
+  addRoster(universeId: string, ...names: string[]): void {
+    this.rosterByUniverse.set(universeId, new Set(names));
+  }
+
+  private timestamp(): string {
+    this.clockSequence += 1;
+    return new Date(Date.UTC(2026, 7, 14, 15, 0, this.clockSequence)).toISOString();
+  }
+
+  private result<T>(rows: T[] = []) {
+    return { rows, rowCount: rows.length };
+  }
+
+  private cloneThread(): CanonHarnessThread | null {
+    return this.thread ? { ...this.thread } : null;
+  }
+
+  private revisionKey(universeId: string, mutationId: string): string {
+    return `${universeId}:${mutationId}`;
+  }
+
+  async query(rawSql: string, values: unknown[] = []) {
+    const sql = normalizeSql(rawSql);
+    this.commands.push(sql);
+    this.commandValues.push(values);
+
+    if (sql === 'BEGIN' || sql.startsWith('BEGIN TRANSACTION')) {
+      this.snapshot = {
+        headRevision: this.headRevision,
+        thread: this.cloneThread(),
+        participants: [...this.participants],
+        beats: this.beats.map(beat => ({ ...beat, participant_names: [...beat.participant_names] })),
+        revisions: [...this.revisions.entries()].map(([key, value]) => [
+          key,
+          structuredClone(value)
+        ])
+      };
+      return this.result();
+    }
+    if (sql === 'COMMIT') {
+      this.snapshot = null;
+      if (this.failCommit) {
+        this.failCommit = false;
+        throw new Error('SENTINEL_CANON_COMMIT_FAILURE');
+      }
+      return this.result();
+    }
+    if (sql === 'ROLLBACK') {
+      if (this.snapshot) {
+        this.headRevision = this.snapshot.headRevision;
+        this.thread = this.snapshot.thread;
+        this.participants = this.snapshot.participants;
+        this.beats = this.snapshot.beats;
+        this.revisions.clear();
+        for (const [key, value] of this.snapshot.revisions) {
+          this.revisions.set(key, value);
+        }
+      }
+      this.snapshot = null;
+      return this.result();
+    }
+    if (sql.startsWith('INSERT INTO backstage_canon_heads')) {
+      return this.result();
+    }
+    if (
+      sql.startsWith('SELECT revision::TEXT AS revision FROM backstage_canon_heads')
+      && sql.endsWith('FOR UPDATE')
+    ) {
+      return this.result([{ revision: String(this.headRevision) }]);
+    }
+    if (sql.startsWith('SELECT operation, request_fingerprint, result')) {
+      const revision = this.revisions.get(
+        this.revisionKey(String(values[0]), String(values[1]))
+      );
+      return this.result(revision ? [structuredClone(revision)] : []);
+    }
+    if (
+      sql.includes('FROM backstage_storyline_threads')
+      && sql.endsWith('FOR UPDATE')
+    ) {
+      const [universeId, storyKey] = values.map(String);
+      return this.result(
+        this.thread
+          && this.thread.universe_id === universeId
+          && this.thread.story_key === storyKey
+          ? [this.cloneThread()]
+          : []
+      );
+    }
+    if (
+      sql.startsWith('SELECT name FROM backstage_wrestlers')
+      && sql.endsWith('FOR KEY SHARE')
+    ) {
+      const universeId = String(values[0]);
+      const requested = values[1] as string[];
+      const roster = this.rosterByUniverse.get(universeId) ?? new Set<string>();
+      return this.result(requested.filter(name => roster.has(name)).map(name => ({ name })));
+    }
+    if (sql.startsWith('UPDATE backstage_canon_heads')) {
+      this.headRevision += 1;
+      return this.result([{ revision: String(this.headRevision) }]);
+    }
+    if (sql.startsWith('INSERT INTO backstage_storyline_threads')) {
+      const timestamp = this.timestamp();
+      this.thread = {
+        id: String(values[0]),
+        universe_id: String(values[1]),
+        story_key: String(values[2]),
+        title: String(values[3]),
+        summary: values[4] === null ? null : String(values[4]),
+        status: String(values[5]),
+        version: 1,
+        created_revision: String(values[6]),
+        updated_revision: String(values[6]),
+        created_at: timestamp,
+        updated_at: timestamp,
+        closed_at: null
+      };
+      return this.result([this.cloneThread()]);
+    }
+    if (sql.startsWith('UPDATE backstage_storyline_threads')) {
+      const expectedVersion = Number(values.at(-1));
+      if (!this.thread || this.thread.version !== expectedVersion) {
+        return this.result();
+      }
+      if (sql.includes('title = $3')) {
+        this.thread.title = String(values[2]);
+        this.thread.summary = values[3] === null ? null : String(values[3]);
+        this.thread.status = String(values[4]);
+        this.thread.updated_revision = String(values[5]);
+      } else {
+        this.thread.status = String(values[2]);
+        this.thread.updated_revision = String(values[3]);
+      }
+      this.thread.version += 1;
+      this.thread.updated_at = this.timestamp();
+      this.thread.closed_at = new Set(['completed', 'cancelled']).has(this.thread.status)
+        ? this.thread.closed_at ?? this.timestamp()
+        : null;
+      return this.result([this.cloneThread()]);
+    }
+    if (sql.startsWith('DELETE FROM backstage_storyline_participants')) {
+      this.participants = [];
+      return this.result();
+    }
+    if (sql.startsWith('INSERT INTO backstage_storyline_participants')) {
+      this.participants = [...(values[2] as string[])];
+      return this.result();
+    }
+    if (sql.startsWith('SELECT wrestler_name FROM backstage_storyline_participants')) {
+      return this.result(this.participants.map(wrestler_name => ({ wrestler_name })));
+    }
+    if (sql.startsWith('SELECT id FROM backstage_events')) {
+      const universeId = String(values[0]);
+      const eventId = String(values[1]);
+      return this.result(
+        this.events.some(event => event.universeId === universeId && event.id === eventId)
+          ? [{ id: eventId }]
+          : []
+      );
+    }
+    if (sql.startsWith('SELECT beat.id, EXISTS')) {
+      const universeId = String(values[0]);
+      const storylineId = String(values[1]);
+      const beatId = String(values[2]);
+      const beat = this.beats.find(candidate =>
+        candidate.universe_id === universeId
+        && candidate.storyline_id === storylineId
+        && candidate.id === beatId
+      );
+      return this.result(beat ? [{
+        id: beat.id,
+        already_superseded: this.beats.some(candidate =>
+          candidate.universe_id === universeId
+          && candidate.supersedes_beat_id === beat.id
+        )
+      }] : []);
+    }
+    if (sql.startsWith('SELECT (COALESCE(MAX(sequence), 0)::BIGINT + 1)::TEXT')) {
+      const universeId = String(values[0]);
+      const storylineId = String(values[1]);
+      const maximum = this.beats
+        .filter(beat => beat.universe_id === universeId && beat.storyline_id === storylineId)
+        .reduce((value, beat) => Math.max(value, beat.sequence), 0);
+      return this.result([{ sequence: String(maximum + 1) }]);
+    }
+    if (sql.startsWith('INSERT INTO backstage_storyline_canon_beats')) {
+      const beat: CanonHarnessBeat = {
+        id: String(values[0]),
+        universe_id: String(values[1]),
+        storyline_id: String(values[2]),
+        sequence: Number(values[3]),
+        kind: String(values[4]),
+        summary: String(values[5]),
+        occurred_at: String(values[6]),
+        participant_names: JSON.parse(String(values[7])) as string[],
+        event_id: values[8] === null ? null : String(values[8]),
+        supersedes_beat_id: values[9] === null ? null : String(values[9]),
+        universe_revision: String(values[10]),
+        story_key: String(values[11]),
+        created_at: this.timestamp()
+      };
+      this.beats.push(beat);
+      return this.result([{ ...beat, participant_names: [...beat.participant_names] }]);
+    }
+    if (sql.startsWith('INSERT INTO backstage_canon_revisions')) {
+      const serializedResult = String(values[5]);
+      this.revisions.set(
+        this.revisionKey(String(values[0]), String(values[2])),
+        {
+          operation: values[3] as 'upsertStoryline' | 'appendCanonBeat',
+          request_fingerprint: String(values[4]),
+          result: JSON.parse(serializedResult) as Record<string, unknown>
+        }
+      );
+      return this.result();
+    }
+    if (sql.startsWith('SET CONSTRAINTS')) {
+      if (this.failDeferredConstraintCheck) {
+        this.failDeferredConstraintCheck = false;
+        throw new Error('SENTINEL_DEFERRED_CONSTRAINT_FAILURE');
+      }
+      return this.result();
+    }
+    if (sql === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY') {
+      return this.result();
+    }
+    if (
+      sql.startsWith('SELECT name, overall, updated_at FROM backstage_wrestlers')
+      || sql.startsWith('SELECT id, universe_id, data, created_at FROM backstage_events')
+      || sql.includes('FROM ( SELECT id, universe_id, data, serialized_data')
+      || sql.startsWith('SELECT id, universe_id, story_key, storyline, created_at')
+    ) {
+      return this.result();
+    }
+    if (sql.startsWith('SELECT revision::TEXT AS revision FROM backstage_canon_heads')) {
+      return this.result(this.headRevision > 0 ? [{ revision: String(this.headRevision) }] : []);
+    }
+    if (sql.includes("jsonb_agg(participant.wrestler_name ORDER BY participant.sort_order)")) {
+      return this.result(this.thread ? [{
+        ...this.cloneThread(),
+        participant_names: [...this.participants]
+      }] : []);
+    }
+    if (sql.startsWith('SELECT recent.* FROM ( SELECT beat.id')) {
+      const active = this.beats.filter(beat => !this.beats.some(replacement =>
+        replacement.universe_id === beat.universe_id
+        && replacement.supersedes_beat_id === beat.id
+      ));
+      return this.result(active.map(beat => ({
+        ...beat,
+        participant_names: [...beat.participant_names]
+      })));
+    }
+
+    throw new Error(`UNHANDLED_CANON_HARNESS_QUERY: ${sql}`);
+  }
+}
+
+const CANON_MUTATION_ONE = '11111111-1111-4111-8111-111111111111';
+const CANON_MUTATION_TWO = '22222222-2222-4222-8222-222222222222';
+const CANON_EVENT = '33333333-3333-4333-8333-333333333333';
+const FINGERPRINT_ONE = 'a'.repeat(64);
+const FINGERPRINT_TWO = 'b'.repeat(64);
+
+function canonStorylineInput(overrides: Record<string, unknown> = {}) {
+  return {
+    universeId: 'legacy',
+    mutationId: CANON_MUTATION_ONE,
+    requestFingerprint: FINGERPRINT_ONE,
+    storyKey: 'world-title-chase',
+    title: 'World title chase',
+    summary: null,
+    status: 'active' as const,
+    expectedVersion: 0,
+    participantNames: ['Alex', 'Blair'],
+    ...overrides
+  };
+}
+
+function canonBeatInput(overrides: Record<string, unknown> = {}) {
+  return {
+    universeId: 'legacy',
+    mutationId: CANON_MUTATION_TWO,
+    requestFingerprint: FINGERPRINT_TWO,
+    storyKey: 'world-title-chase',
+    expectedVersion: 1,
+    kind: 'development',
+    summary: 'The challenger confronts the champion.',
+    occurredAt: '2026-08-14T16:00:00.000Z',
+    participantNames: ['Alex'],
+    ...overrides
+  };
+}
+
+function canonParticipantNamesAtJsonbBoundary(extraAsciiBytes: number): string[] {
+  return Array.from(
+    { length: 50 },
+    (_, index) => [
+      '😀'.repeat(80),
+      '-',
+      String(index).padStart(2, '0'),
+      index < extraAsciiBytes ? 'x' : ''
+    ].join('')
+  );
+}
+
+describe('PostgresBackstageBookerRepository Phase 2A canon persistence', () => {
+  it('resolves only the bounded canon-domain error codes for HTTP envelopes', () => {
+    expect(resolveBackstageCanonDomainErrorHttpStatus(
+      'BACKSTAGE_STORYLINE_NOT_FOUND'
+    )).toBe(404);
+    expect(resolveBackstageCanonDomainErrorHttpStatus(
+      'BACKSTAGE_STORYLINE_VERSION_CONFLICT'
+    )).toBe(409);
+    expect(resolveBackstageCanonDomainErrorHttpStatus(
+      'BACKSTAGE_BOOKER_WRITE_FAILED'
+    )).toBeNull();
+    expect(resolveBackstageCanonDomainErrorHttpStatus(null)).toBeNull();
+  });
+
+  it('enforces protocol canon bounds before opening a connection', async () => {
+    const harness = new CanonRepositoryHarness();
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    await expect(repository.upsertStoryline(canonStorylineInput({
+      summary: 's'.repeat(10_001)
+    }))).rejects.toThrow('summary must contain at most 10000 characters');
+    await expect(repository.upsertStoryline(canonStorylineInput({
+      participantNames: Array.from({ length: 51 }, (_, index) => `Wrestler ${index}`)
+    }))).rejects.toThrow('participantNames must be an array containing at most 50 names');
+    await expect(repository.upsertStoryline(canonStorylineInput({
+      participantNames: Array.from(
+        { length: 50 },
+        (_, index) => `${'😀'.repeat(117)}-${String(index).padStart(2, '0')}`
+      )
+    }))).rejects.toThrow('participantNames exceeds its UTF-8 storage contract');
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      kind: 'k'.repeat(65)
+    }))).rejects.toThrow('kind must contain between 1 and 64 characters');
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      summary: 's'.repeat(10_001)
+    }))).rejects.toThrow('summary must contain between 1 and 10000 characters');
+
+    expect(harness.commands).toHaveLength(0);
+  });
+
+  it('matches PostgreSQL jsonb separator bytes at the participant storage boundary', async () => {
+    const acceptedNames = canonParticipantNamesAtJsonbBoundary(34);
+    const acceptedPostgresBytes = Buffer.byteLength(
+      JSON.stringify(acceptedNames),
+      'utf8'
+    ) + acceptedNames.length - 1;
+    expect(acceptedPostgresBytes).toBe(16_384);
+
+    const acceptedHarness = new CanonRepositoryHarness();
+    acceptedHarness.addRoster('legacy', ...acceptedNames);
+    const acceptedRepository = new PostgresBackstageBookerRepository(
+      acceptedHarness.pool
+    );
+    await expect(acceptedRepository.upsertStoryline(canonStorylineInput({
+      participantNames: acceptedNames
+    }))).resolves.toMatchObject({
+      storyline: { participantNames: acceptedNames }
+    });
+
+    const rejectedNames = canonParticipantNamesAtJsonbBoundary(35);
+    const rejectedPostgresBytes = Buffer.byteLength(
+      JSON.stringify(rejectedNames),
+      'utf8'
+    ) + rejectedNames.length - 1;
+    expect(rejectedPostgresBytes).toBe(16_385);
+    const rejectedHarness = new CanonRepositoryHarness();
+    const rejectedRepository = new PostgresBackstageBookerRepository(
+      rejectedHarness.pool
+    );
+    await expect(rejectedRepository.upsertStoryline(canonStorylineInput({
+      participantNames: rejectedNames
+    }))).rejects.toThrow('participantNames exceeds its UTF-8 storage contract');
+    expect(rejectedHarness.commands).toHaveLength(0);
+  });
+
+  it('commits once and replays an identical mutation without advancing revision', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    const input = canonStorylineInput();
+
+    const first = await repository.upsertStoryline(input);
+    const replay = await repository.upsertStoryline(input);
+
+    expect(first).toMatchObject({
+      mutationId: CANON_MUTATION_ONE,
+      revision: '1',
+      replayed: false,
+      storyline: {
+        summary: null,
+        version: 1,
+        participantNames: ['Alex', 'Blair']
+      }
+    });
+    expect(replay).toEqual({ ...first, replayed: true });
+    expect(harness.headRevision).toBe(1);
+    expect(harness.commands.filter(command =>
+      command.startsWith('UPDATE backstage_canon_heads')
+    )).toHaveLength(1);
+    expect(harness.commands.filter(command =>
+      command.startsWith('INSERT INTO backstage_canon_revisions')
+    )).toHaveLength(1);
+
+    const revisionInsertIndex = harness.commands.findIndex(command =>
+      command.startsWith('INSERT INTO backstage_canon_revisions')
+    );
+    const constraintCheckIndex = harness.commands.findIndex(command =>
+      command.startsWith('SET CONSTRAINTS')
+    );
+    const commitIndex = harness.commands.indexOf('COMMIT');
+    expect(constraintCheckIndex).toBeGreaterThan(revisionInsertIndex);
+    expect(commitIndex).toBeGreaterThan(constraintCheckIndex);
+  });
+
+  it('rejects mutation-id fingerprint reuse and rolls back without another bump', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput());
+
+    await expect(repository.upsertStoryline(canonStorylineInput({
+      requestFingerprint: FINGERPRINT_TWO
+    }))).rejects.toMatchObject({
+      code: 'BACKSTAGE_MUTATION_ID_CONFLICT',
+      httpStatus: 409
+    });
+
+    expect(harness.headRevision).toBe(1);
+    expect(harness.commands.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('exposes bounded not-found, CAS, and transition conflicts', async () => {
+    const missingHarness = new CanonRepositoryHarness();
+    missingHarness.addRoster('legacy', 'Alex', 'Blair');
+    const missingRepository = new PostgresBackstageBookerRepository(missingHarness.pool);
+    await expect(missingRepository.upsertStoryline(canonStorylineInput({
+      expectedVersion: 1
+    }))).rejects.toMatchObject({ code: 'BACKSTAGE_STORYLINE_NOT_FOUND' });
+
+    const staleHarness = new CanonRepositoryHarness();
+    staleHarness.addRoster('legacy', 'Alex', 'Blair');
+    const staleRepository = new PostgresBackstageBookerRepository(staleHarness.pool);
+    await staleRepository.upsertStoryline(canonStorylineInput());
+    await expect(staleRepository.upsertStoryline(canonStorylineInput({
+      mutationId: CANON_MUTATION_TWO,
+      requestFingerprint: FINGERPRINT_TWO,
+      expectedVersion: 4
+    }))).rejects.toMatchObject({
+      code: 'BACKSTAGE_STORYLINE_VERSION_CONFLICT'
+    });
+
+    const invalidHarness = new CanonRepositoryHarness();
+    const invalidRepository = new PostgresBackstageBookerRepository(invalidHarness.pool);
+    const error = await invalidRepository.upsertStoryline(canonStorylineInput({
+      status: 'completed'
+    })).catch(value => value as unknown);
+    expect(isBackstageCanonDomainError(error)).toBe(true);
+    expect(error).toBeInstanceOf(BackstageCanonDomainError);
+    expect(invalidHarness.commands).toHaveLength(0);
+  });
+
+  it('appends a payoff and closes the storyline atomically', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    harness.events.push({ universeId: 'legacy', id: CANON_EVENT });
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput());
+
+    const result = await repository.appendCanonBeat(canonBeatInput({
+      kind: 'payoff',
+      summary: 'The challenger wins the championship.',
+      eventId: CANON_EVENT,
+      nextStatus: 'completed'
+    }));
+
+    expect(result).toMatchObject({
+      revision: '2',
+      replayed: false,
+      storyline: { status: 'completed', version: 2 },
+      beat: {
+        storylineId: result.storyline.id,
+        storyKey: 'world-title-chase',
+        sequence: 1,
+        kind: 'payoff',
+        eventId: CANON_EVENT,
+        revision: '2'
+      }
+    });
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      kind: 'payoff',
+      summary: 'The challenger wins the championship.',
+      eventId: CANON_EVENT,
+      nextStatus: 'completed'
+    }))).resolves.toEqual({ ...result, replayed: true });
+  });
+
+  it('activates a draft atomically with its first canon beat', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput({ status: 'draft' }));
+
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      nextStatus: 'active'
+    }))).resolves.toMatchObject({
+      revision: '2',
+      storyline: { status: 'active', version: 2 },
+      beat: { sequence: 1 }
+    });
+  });
+
+  it('rolls back immediately when a beat participant is outside the thread', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput({
+      participantNames: ['Alex']
+    }));
+    const commandStart = harness.commands.length;
+
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      participantNames: ['Blair']
+    }))).rejects.toMatchObject({
+      code: 'BACKSTAGE_STORYLINE_REFERENCE_INVALID'
+    });
+
+    const mutationCommands = harness.commands.slice(commandStart);
+    const participantRead = mutationCommands.findIndex(command =>
+      command.startsWith('SELECT wrestler_name FROM backstage_storyline_participants')
+    );
+    expect(participantRead).toBeGreaterThan(-1);
+    expect(mutationCommands.slice(participantRead + 1)).toEqual(['ROLLBACK']);
+    expect(mutationCommands.some(command =>
+      command.startsWith('UPDATE backstage_canon_heads')
+      || command.startsWith('INSERT INTO backstage_storyline_canon_beats')
+    )).toBe(false);
+  });
+
+  it('rejects an event from another universe before revision or beat writes', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    harness.events.push({ universeId: 'other-universe', id: CANON_EVENT });
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput());
+    const commandStart = harness.commands.length;
+
+    await expect(repository.appendCanonBeat(canonBeatInput({
+      eventId: CANON_EVENT
+    }))).rejects.toMatchObject({
+      code: 'BACKSTAGE_STORYLINE_REFERENCE_INVALID'
+    });
+
+    const mutationCommands = harness.commands.slice(commandStart);
+    const eventQueryIndex = mutationCommands.findIndex(command =>
+      command.startsWith('SELECT id FROM backstage_events')
+    );
+    expect(eventQueryIndex).toBeGreaterThan(-1);
+    expect(harness.commandValues[commandStart + eventQueryIndex]).toEqual([
+      'legacy',
+      CANON_EVENT
+    ]);
+    expect(mutationCommands.some(command =>
+      command.startsWith('UPDATE backstage_canon_heads')
+    )).toBe(false);
+  });
+
+  it('classifies COMMIT failure as unknown after forcing deferred checks', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    harness.failCommit = true;
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    await expect(repository.upsertStoryline(canonStorylineInput())).rejects
+      .toBeInstanceOf(BackstageBookerCommitUnknownError);
+
+    const constraintIndex = harness.commands.findIndex(command =>
+      command.startsWith('SET CONSTRAINTS')
+    );
+    expect(constraintIndex).toBeGreaterThan(-1);
+    expect(harness.commands.at(-1)).toBe('COMMIT');
+    expect(harness.commands).not.toContain('ROLLBACK');
+  });
+
+  it('treats a deferred lineage failure as known and rolls the whole write back', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    harness.failDeferredConstraintCheck = true;
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    await expect(repository.upsertStoryline(canonStorylineInput())).rejects
+      .toBeInstanceOf(BackstageBookerWriteError);
+
+    expect(harness.commands.at(-1)).toBe('ROLLBACK');
+    expect(harness.commands).not.toContain('COMMIT');
+    expect(harness.headRevision).toBe(0);
+    expect(harness.thread).toBeNull();
+    expect(harness.revisions).toHaveProperty('size', 0);
+  });
+
+  it('loads legacy and retcon-aware canon context from one read-only snapshot', async () => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput());
+    const original = await repository.appendCanonBeat(canonBeatInput());
+    const replacement = await repository.appendCanonBeat(canonBeatInput({
+      mutationId: '44444444-4444-4444-8444-444444444444',
+      requestFingerprint: 'c'.repeat(64),
+      expectedVersion: 2,
+      summary: 'The confrontation is corrected in canon.',
+      supersedesBeatId: original.beat.id
+    }));
+
+    const context = await repository.loadContext('legacy');
+
+    expect(context.canonContext).toMatchObject({
+      universeId: 'legacy',
+      revision: '3',
+      storylines: [{ version: 3, summary: null }],
+      activeBeats: [{
+        id: replacement.beat.id,
+        sequence: 2,
+        supersedesBeatId: original.beat.id
+      }]
+    });
+    expect(context.canonContext.activeBeats).toHaveLength(1);
+    expect(harness.commands.filter(command =>
+      command === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    )).toHaveLength(1);
+  });
+
+  it.each([
+    ['storyline summary', (harness: CanonRepositoryHarness) => {
+      if (harness.thread) harness.thread.summary = 's'.repeat(10_001);
+    }],
+    ['beat kind', (harness: CanonRepositoryHarness) => {
+      if (harness.beats[0]) harness.beats[0].kind = 'k'.repeat(65);
+    }],
+    ['beat summary', (harness: CanonRepositoryHarness) => {
+      if (harness.beats[0]) harness.beats[0].summary = 's'.repeat(10_001);
+    }],
+    ['beat participants', (harness: CanonRepositoryHarness) => {
+      if (harness.beats[0]) {
+        harness.beats[0].participant_names = Array.from(
+          { length: 51 },
+          (_, index) => `Wrestler ${index}`
+        );
+      }
+    }]
+  ])('rolls back a snapshot containing a protocol-wider stored %s', async (_label, mutate) => {
+    const harness = new CanonRepositoryHarness();
+    harness.addRoster('legacy', 'Alex', 'Blair');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+    await repository.upsertStoryline(canonStorylineInput());
+    await repository.appendCanonBeat(canonBeatInput());
+    mutate(harness);
+    const commandStart = harness.commands.length;
+
+    await expect(repository.loadCanonContext('legacy')).rejects.toBeInstanceOf(
+      BackstageBookerRepositoryUnavailableError
+    );
+
+    const snapshotCommands = harness.commands.slice(commandStart);
+    expect(snapshotCommands.at(-1)).toBe('ROLLBACK');
+    expect(snapshotCommands).not.toContain('COMMIT');
   });
 });

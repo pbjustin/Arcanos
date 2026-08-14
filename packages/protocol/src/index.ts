@@ -62,11 +62,18 @@ export type {
   ValidationResult
 } from "./types.js";
 export type {
+  BackstageAppendCanonBeatDurableResponse,
+  BackstageAppendCanonBeatRequest,
+  BackstageAppendCanonBeatResponse,
+  BackstageAppendCanonBeatUnknownResponse,
   BackstageBookEventRequest,
   BackstageBookEventResponse,
   BackstageBookerAction,
   BackstageBookerActionInputMap,
   BackstageBookerActionOutputMap,
+  BackstageCanonBeatInput,
+  BackstageCanonBeatModel,
+  BackstageCanonPersistence,
   BackstageDurablePersistence,
   BackstageGenerateBookingRequest,
   BackstageGenerateBookingResponse,
@@ -80,6 +87,7 @@ export type {
   BackstageMatchInput,
   BackstageMatchResult,
   BackstageMatchResultBase,
+  BackstageMutationId,
   BackstageNonDurablePersistence,
   BackstagePersistence,
   BackstageRealResult,
@@ -87,12 +95,20 @@ export type {
   BackstageSaveStorylineResponse,
   BackstageSimulateMatchRequest,
   BackstageSimulateMatchResponse,
+  BackstageStorylineInput,
+  BackstageStorylineModel,
+  BackstageStorylineStatus,
   BackstageTrackStorylineRequest,
   BackstageTrackStorylineResponse,
   BackstageUniverseId,
+  BackstageUniverseRevision,
   BackstageUnknownPersistence,
   BackstageUpdateRosterRequest,
   BackstageUpdateRosterResponse,
+  BackstageUpsertStorylineDurableResponse,
+  BackstageUpsertStorylineRequest,
+  BackstageUpsertStorylineResponse,
+  BackstageUpsertStorylineUnknownResponse,
   BackstageWrestler
 } from "./backstageBooker.js";
 export {

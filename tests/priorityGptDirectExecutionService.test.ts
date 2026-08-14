@@ -3,6 +3,7 @@ import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE
 } from '../src/shared/backstage/backstageRoster.js';
+import { BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE } from '../src/services/backstageBookerContracts.js';
 
 const recordJobHeartbeatMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -323,7 +324,93 @@ describe('priorityGptDirectExecutionService', () => {
       enforceQueuedBackstageMutationAdmission: true,
       queuedBackstageMutationAdmission: backstageMutationAdmission,
     }));
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-backstage',
+      'completed',
+      expect.not.objectContaining({
+        autonomyState: expect.objectContaining({
+          gptResultReuse: expect.anything(),
+        }),
+      })
+    );
   });
+
+  it.each(['upsertStoryline', 'appendCanonBeat'] as const)(
+    'retains a priority-direct %s unknown receipt without caching it for idempotency',
+    async (action) => {
+      const slot = { release: jest.fn() };
+      const mutationId = '8d64dad3-f080-4bac-88ec-994005dc7152';
+      const backstageMutationAdmission = {
+        version: 1,
+        source: 'control-plane-http',
+        module: 'BACKSTAGE:BOOKER',
+        action,
+        scope: 'mcp:invoke',
+        principalId: 'operator:priority-backstage-unknown',
+      } as const;
+      const result = {
+        universeId: 'phase-two',
+        mutationId,
+        applied: null,
+        universeRevision: null,
+        storyline: null,
+        ...(action === 'appendCanonBeat' ? { beat: null } : {}),
+        persistence: {
+          status: 'unknown',
+          durable: null,
+          backend: 'postgresql',
+          degraded: true,
+          reason: 'commit_outcome_unknown',
+        },
+      };
+      routeGptRequestMock.mockResolvedValue({ ok: true, result });
+      updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'completed' }));
+
+      startReservedPriorityGptDirectExecution({
+        jobId: `job-priority-direct-${action}-unknown`,
+        claimGeneration: '1',
+        workerId: 'api-priority-worker',
+        rawInput: {
+          gptId: 'backstage',
+          body: { action, payload: { mutationId } },
+          requestId: `req-priority-direct-${action}-unknown`,
+          backstageMutationAdmission,
+        },
+        slot,
+      });
+
+      await waitForMockCall(
+        () => slot.release.mock.calls.length === 1,
+        `priority direct ${action} unknown receipt`
+      );
+
+      expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+        `job-priority-direct-${action}-unknown`,
+        'completed',
+        expect.objectContaining({
+          output: { ok: true, result },
+          metadata: {
+            idempotencyUntil: expect.any(String),
+            retentionUntil: expect.any(String),
+          },
+          autonomyState: {
+            priorityDirectExecution: expect.objectContaining({
+              idempotencyReusable: false,
+            }),
+            gptResultReuse: {
+              reusable: false,
+              reason: 'backstage_canon_commit_outcome_unknown',
+            },
+          },
+        })
+      );
+      expect(recordGptJobEventMock).toHaveBeenCalledWith({
+        event: 'completed',
+        status: 'completed',
+        retryable: false,
+      });
+    }
+  );
 
   it('records invalid Backstage roster input as a non-retryable priority-direct failure', async () => {
     const slot = { release: jest.fn() };
@@ -439,6 +526,80 @@ describe('priorityGptDirectExecutionService', () => {
           priorityDirectExecution: expect.objectContaining({
             retryable: true,
           }),
+          lastFailure: expect.objectContaining({
+            retryable: true,
+            retryExhausted: true,
+          }),
+        }),
+      })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'retryable_failure',
+      status: 'failed',
+      retryable: true,
+    });
+  });
+
+  it('records a classified canon outage as retryable priority-direct failure', async () => {
+    const slot = { release: jest.fn() };
+    const backstageMutationAdmission = {
+      version: 1,
+      source: 'control-plane-http',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'upsertStoryline',
+      scope: 'mcp:invoke',
+      principalId: 'operator:priority-backstage-canon',
+    } as const;
+    routeGptRequestMock.mockResolvedValue({
+      ok: false,
+      error: {
+        code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+        message: 'Backstage canon persistence is temporarily unavailable.',
+        details: { retryable: true },
+      },
+    });
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'failed' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-backstage-canon',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'upsertStoryline',
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          },
+        },
+        requestId: 'req-priority-direct-backstage-canon',
+        backstageMutationAdmission,
+      },
+      slot,
+    });
+
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct Backstage canon outage'
+    );
+
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-backstage-canon',
+      'failed',
+      expect.objectContaining({
+        errorMessage:
+          `${BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE}: Backstage canon persistence is temporarily unavailable.`,
+        autonomyState: expect.objectContaining({
+          priorityDirectExecution: expect.objectContaining({ retryable: true }),
           lastFailure: expect.objectContaining({
             retryable: true,
             retryExhausted: true,
