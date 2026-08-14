@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 
 import {
+  GitHubApi,
   RAILWAY_PR_PREVIEW_CONTRACT,
   RailwayGraphqlApi,
   RailwayPrPreviewLifecycleError,
@@ -43,6 +44,7 @@ const PREVIEW_REGION = 'us-east4-eqdc4a';
 const WORKER_DEPLOYMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const WEB_DEPLOYMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const PREVIEW_ENVIRONMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+const LIFECYCLE_SECRET_NAME = 'RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN';
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -314,15 +316,25 @@ describe('Railway PR preview lifecycle workflow', () => {
     expect(reusableWorkflow).toContain('railway-preview');
     expect(parsed.concurrency['cancel-in-progress']).toBe(false);
     expect(parsed.concurrency.group).toContain('railway-pr-preview-lifecycle-');
-    expect(parsed.jobs['run-event-preview-lifecycle'].uses).toBe(
+    const eventLifecycle = parsed.jobs['run-event-preview-lifecycle'];
+    expect(eventLifecycle.uses).toBe(
       './.github/workflows/railway-pr-preview-run.yml'
     );
+    expect(eventLifecycle.secrets).toEqual({
+      [LIFECYCLE_SECRET_NAME]: '${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}',
+    });
     const scheduled = parsed.jobs['reconcile-scheduled-previews'];
     expect(scheduled.strategy['fail-fast']).toBe(false);
     expect(scheduled.strategy['max-parallel']).toBe(2);
     expect(scheduled.concurrency.group).toContain('matrix.pr_number');
     expect(scheduled.uses).toBe('./.github/workflows/railway-pr-preview-run.yml');
-    expect(JSON.stringify(scheduled)).not.toContain('RAILWAY_API_TOKEN');
+    expect(scheduled.secrets).toEqual({
+      [LIFECYCLE_SECRET_NAME]: '${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}',
+    });
+    expect(reusable.on.workflow_call.secrets[LIFECYCLE_SECRET_NAME]).toEqual({
+      required: true,
+    });
+    expect(workflow).not.toContain('secrets: inherit');
   });
 
   it('keeps PR code away from the dedicated Railway credential', () => {
@@ -390,6 +402,68 @@ describe('Railway PR preview lifecycle workflow', () => {
     );
     expect(reporter.steps.some(step =>
       String(step.run ?? '').includes('report-status'))).toBe(true);
+  });
+});
+
+describe('GitHub PR preview status API', () => {
+  const state = 'pending';
+  const description = 'Reconciling exact-SHA Railway preview and sealed E2E.';
+  const targetUrl = 'https://github.com/pbjustin/Arcanos/actions/runs/123456789';
+  const statusUrl = `https://api.github.com/repos/${CONTRACT.repository}/statuses/${HEAD_SHA}`;
+
+  function commitStatusResponse(overrides = {}) {
+    return {
+      url: statusUrl,
+      id: 123456789,
+      state,
+      description,
+      target_url: targetUrl,
+      context: CONTRACT.statusContext,
+      ...overrides,
+    };
+  }
+
+  it('accepts GitHub documented commit-status responses without a sha field', async () => {
+    let observedRequest;
+    const api = new GitHubApi({
+      token: 'github-token-for-test-only-000000000000',
+      fetchImpl: async (url, init) => {
+        observedRequest = { url, init };
+        return jsonResponse(commitStatusResponse(), 201);
+      },
+    });
+
+    await expect(api.writeCommitStatus({
+      sha: HEAD_SHA,
+      state,
+      description,
+      targetUrl,
+    })).resolves.toBeUndefined();
+
+    expect(observedRequest.url).toBe(statusUrl);
+    expect(observedRequest.init.method).toBe('POST');
+    expect(JSON.parse(observedRequest.init.body)).toEqual({
+      state,
+      context: CONTRACT.statusContext,
+      description,
+      target_url: targetUrl,
+    });
+  });
+
+  it('rejects a commit-status response for a different exact SHA', async () => {
+    const api = new GitHubApi({
+      token: 'github-token-for-test-only-000000000000',
+      fetchImpl: async () => jsonResponse(commitStatusResponse({
+        url: `https://api.github.com/repos/${CONTRACT.repository}/statuses/${'b'.repeat(40)}`,
+      }), 201),
+    });
+
+    await expect(api.writeCommitStatus({
+      sha: HEAD_SHA,
+      state,
+      description,
+      targetUrl,
+    })).rejects.toThrow('RAILWAY_PR_PREVIEW_STATUS_WRITE_FAILED');
   });
 });
 

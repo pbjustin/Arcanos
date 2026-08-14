@@ -47,6 +47,8 @@ jobs:
       event_action: ${{ github.event_name == 'repository_dispatch' && 'manual' || github.event.action }}
       event_label_name: ${{ github.event.label.name || '' }}
       event_head_sha: ${{ github.event.pull_request.head.sha || '' }}
+    secrets:
+      RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
 
   discover-scheduled-previews:
     name: Discover scheduled preview reconciliation set
@@ -104,3 +106,5 @@ jobs:
       event_action: manual
       event_label_name: ''
       event_head_sha: ''
+    secrets:
+      RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}

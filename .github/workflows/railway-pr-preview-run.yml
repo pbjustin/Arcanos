@@ -15,6 +15,9 @@ on:
       event_head_sha:
         required: true
         type: string
+    secrets:
+      RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN:
+        required: true
 
 permissions: {}
 

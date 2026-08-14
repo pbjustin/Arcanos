@@ -2091,8 +2091,15 @@ export class GitHubApi {
         },
       }
     );
+    const expectedStatusUrl = `${GITHUB_API_URL}/repos/${CONTRACT.repository}/statuses/${sha}`;
     requireCondition(
-      result.sha?.toLowerCase() === sha && result.context === CONTRACT.statusContext,
+      Number.isSafeInteger(result.id)
+        && result.id > 0
+        && result.url === expectedStatusUrl
+        && result.state === state
+        && result.context === CONTRACT.statusContext
+        && result.description === description
+        && result.target_url === targetUrl,
       'RAILWAY_PR_PREVIEW_STATUS_WRITE_FAILED'
     );
   }
