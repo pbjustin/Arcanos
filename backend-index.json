@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-12T15:24:38.399Z",
+  "generatedAt": "2026-08-14T16:51:53.297Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -274,6 +274,9 @@
           "relativePath": "packages/cli/src/transportConstraints.ts"
         },
         {
+          "relativePath": "packages/protocol/src/backstageBooker.ts"
+        },
+        {
           "relativePath": "packages/protocol/src/commands.ts"
         },
         {
@@ -438,6 +441,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/actionPlanExecutionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageBookerRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageRosterRepository.ts"
@@ -1536,6 +1542,9 @@
         },
         {
           "relativePath": "src/services/backstage-booker.ts"
+        },
+        {
+          "relativePath": "src/services/backstageBookerContracts.ts"
         },
         {
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
@@ -3187,7 +3196,19 @@
           "relativePath": "tests/autoscaling-architecture.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker-protocol-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker-schema-parity.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker.persistence.test.ts"
         },
         {
           "relativePath": "tests/backstage-booker.roster.test.ts"
