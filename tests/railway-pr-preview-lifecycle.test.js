@@ -592,22 +592,47 @@ describe('Railway PR preview lifecycle policy', () => {
     }), PR_NUMBER)).toThrow('RAILWAY_PR_PREVIEW_GITHUB_PR_INVALID');
   });
 
-  it('requires exact workspace/project/base authority and native lifecycle cutover', () => {
+  it('requires coherent exact authority before and after native lifecycle cutover', () => {
     const authority = {
       apiToken: { workspaces: [{ id: CONTRACT.workspaceId }] },
       project: {
         id: CONTRACT.projectId,
         workspaceId: CONTRACT.workspaceId,
-        baseEnvironmentId: CONTRACT.baseEnvironmentId,
+        baseEnvironmentId: null,
         primaryEnvironmentId: CONTRACT.productionEnvironmentId,
         prDeploys: false,
       },
     };
     expect(() => validateLifecycleAuthority(authority, { requireNativeDisabled: true })).not.toThrow();
+    expect(() => validateLifecycleAuthority(authority, { requireNativeDisabled: false })).not.toThrow();
+    const nativeAuthority = {
+      ...authority,
+      project: {
+        ...authority.project,
+        baseEnvironmentId: CONTRACT.baseEnvironmentId,
+        prDeploys: true,
+      },
+    };
+    expect(() => validateLifecycleAuthority(nativeAuthority, {
+      requireNativeDisabled: false,
+    })).not.toThrow();
+    expect(() => validateLifecycleAuthority(nativeAuthority, {
+      requireNativeDisabled: true,
+    })).toThrow('RAILWAY_PR_PREVIEW_NATIVE_LIFECYCLE_ENABLED');
     expect(() => validateLifecycleAuthority({
       ...authority,
-      project: { ...authority.project, prDeploys: true },
-    }, { requireNativeDisabled: true })).toThrow('RAILWAY_PR_PREVIEW_NATIVE_LIFECYCLE_ENABLED');
+      project: {
+        ...authority.project,
+        baseEnvironmentId: CONTRACT.baseEnvironmentId,
+      },
+    }, { requireNativeDisabled: false })).toThrow('RAILWAY_PR_PREVIEW_AUTHORITY_MISMATCH');
+    expect(() => validateLifecycleAuthority({
+      ...nativeAuthority,
+      project: {
+        ...nativeAuthority.project,
+        baseEnvironmentId: null,
+      },
+    }, { requireNativeDisabled: false })).toThrow('RAILWAY_PR_PREVIEW_AUTHORITY_MISMATCH');
   });
 
   it('attests the exact credential-empty base topology from live provider shape', () => {
@@ -796,7 +821,10 @@ describe('Railway PR preview lifecycle policy', () => {
     });
     const calls = [];
     const railway = {
-      async validateAuthority() { calls.push('authority'); },
+      async validateAuthority(options) {
+        expect(options).toEqual({ requireNativeDisabled: true });
+        calls.push('authority');
+      },
       async readBaseEnvironment() { calls.push('base'); return { valid: true }; },
       validateBaseEnvironment(base) { expect(base).toEqual({ valid: true }); },
       async listEnvironments() { calls.push('list'); return [active]; },
@@ -1073,7 +1101,9 @@ describe('Railway PR preview lifecycle policy', () => {
     await expect(reconcileRailwayPrPreview({
       pullRequest: validateLifecyclePullRequest(pullRequest(), PR_NUMBER),
       railway: {
-        async validateAuthority() {},
+        async validateAuthority(options) {
+          expect(options).toEqual({ requireNativeDisabled: true });
+        },
         async readBaseEnvironment() { return { valid: true }; },
         validateBaseEnvironment() {},
         async listEnvironments() { return []; },
@@ -1194,7 +1224,9 @@ describe('Railway PR preview lifecycle policy', () => {
     await expect(cleanupRailwayPrPreview({
       pullRequest: retargeted,
       railway: {
-        async validateAuthority() {},
+        async validateAuthority(options) {
+          expect(options).toEqual({ requireNativeDisabled: false });
+        },
         async listEnvironments() { return [target]; },
         async readEnvironment() { return target; },
         async deleteAndVerifyEnvironment(item) { deletedId = item.id; },

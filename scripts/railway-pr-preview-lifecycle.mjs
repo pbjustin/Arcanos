@@ -534,13 +534,20 @@ export function validateLifecycleAuthority(authority, {
     isRecord(project)
       && project.id === CONTRACT.projectId
       && project.workspaceId === CONTRACT.workspaceId
-      && project.baseEnvironmentId === CONTRACT.baseEnvironmentId
       && project.primaryEnvironmentId === CONTRACT.productionEnvironmentId,
+    'RAILWAY_PR_PREVIEW_AUTHORITY_MISMATCH'
+  );
+  const nativeLifecycleEnabled = project.prDeploys === true
+    && project.baseEnvironmentId === CONTRACT.baseEnvironmentId;
+  const nativeLifecycleDisabled = project.prDeploys === false
+    && project.baseEnvironmentId === null;
+  requireCondition(
+    nativeLifecycleEnabled || nativeLifecycleDisabled,
     'RAILWAY_PR_PREVIEW_AUTHORITY_MISMATCH'
   );
   if (requireNativeDisabled) {
     requireCondition(
-      project.prDeploys === false,
+      nativeLifecycleDisabled,
       'RAILWAY_PR_PREVIEW_NATIVE_LIFECYCLE_ENABLED'
     );
   }
