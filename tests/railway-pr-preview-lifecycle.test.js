@@ -821,7 +821,10 @@ describe('Railway PR preview lifecycle policy', () => {
     });
     const calls = [];
     const railway = {
-      async validateAuthority() { calls.push('authority'); },
+      async validateAuthority(options) {
+        expect(options).toEqual({ requireNativeDisabled: true });
+        calls.push('authority');
+      },
       async readBaseEnvironment() { calls.push('base'); return { valid: true }; },
       validateBaseEnvironment(base) { expect(base).toEqual({ valid: true }); },
       async listEnvironments() { calls.push('list'); return [active]; },
@@ -1098,7 +1101,9 @@ describe('Railway PR preview lifecycle policy', () => {
     await expect(reconcileRailwayPrPreview({
       pullRequest: validateLifecyclePullRequest(pullRequest(), PR_NUMBER),
       railway: {
-        async validateAuthority() {},
+        async validateAuthority(options) {
+          expect(options).toEqual({ requireNativeDisabled: true });
+        },
         async readBaseEnvironment() { return { valid: true }; },
         validateBaseEnvironment() {},
         async listEnvironments() { return []; },
@@ -1219,7 +1224,9 @@ describe('Railway PR preview lifecycle policy', () => {
     await expect(cleanupRailwayPrPreview({
       pullRequest: retargeted,
       railway: {
-        async validateAuthority() {},
+        async validateAuthority(options) {
+          expect(options).toEqual({ requireNativeDisabled: false });
+        },
         async listEnvironments() { return [target]; },
         async readEnvironment() { return target; },
         async deleteAndVerifyEnvironment(item) { deletedId = item.id; },
