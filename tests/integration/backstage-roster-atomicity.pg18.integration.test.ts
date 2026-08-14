@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { Client } from 'pg';
@@ -12,6 +14,22 @@ const TEST_DATABASE_ENV = 'BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL';
 const EXPECTED_DATABASE_NAME = 'arcanos_audit_pg18_20260727';
 const configuredConnectionString =
   resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV);
+const universeScopeForwardMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260814_backstage_universe_scope_v1.sql'
+  ),
+  'utf8'
+);
+const universeScopeRollbackMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260814_backstage_universe_scope_v1.rollback.sql'
+  ),
+  'utf8'
+);
 
 interface DisposableDatabaseConfig {
   host: string;
@@ -111,6 +129,36 @@ async function waitForBlockedAdvisoryLock(
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   throw new Error('Second roster connection did not block on the advisory lock.');
+}
+
+async function waitForBlockedTableLock(
+  observer: Client,
+  blockedPid: number,
+  schema: string,
+  table: string
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await observer.query<{ granted: boolean }>(
+      `SELECT held_lock.granted
+       FROM pg_locks AS held_lock
+       INNER JOIN pg_class AS relation
+         ON relation.oid = held_lock.relation
+       INNER JOIN pg_namespace AS namespace
+         ON namespace.oid = relation.relnamespace
+       WHERE held_lock.locktype = 'relation'
+         AND held_lock.pid = $1
+         AND held_lock.mode = 'AccessExclusiveLock'
+         AND namespace.nspname = $2
+         AND relation.relname = $3`,
+      [blockedPid, schema, table]
+    );
+    if (result.rows.some(row => row.granted === false)) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(`Migration did not block on ${schema}.${table} as expected.`);
 }
 
 describe('disposable Backstage roster database connection guard', () => {
@@ -279,4 +327,300 @@ describeWithDatabase('Backstage roster atomicity on PostgreSQL 18', () => {
     );
     expect(stored.rows[0]?.value.payload).toEqual(newerPayload);
   });
+
+  test('rejects a fail-open universe check that reuses the canonical name', async () => {
+    const driftSchema = `backstage_universe_drift_${randomUUID().replaceAll('-', '')}`;
+    const quotedDriftSchema = `"${driftSchema}"`;
+
+    try {
+      await observer.query(`CREATE SCHEMA ${quotedDriftSchema}`);
+      await observer.query(
+        `CREATE TABLE ${quotedDriftSchema}.backstage_events (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           universe_id TEXT,
+           data JSONB NOT NULL,
+           created_at TIMESTAMPTZ DEFAULT NOW(),
+           CONSTRAINT ck_backstage_events_universe_id CHECK (
+             TRUE OR universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+           )
+         )`
+      );
+      await observer.query(`SET search_path TO ${quotedDriftSchema}, public`);
+
+      const driftFailure = await observer.query(universeScopeForwardMigration).then(
+        () => null,
+        (error: unknown) => error
+      );
+      expect(driftFailure).toMatchObject({ code: '42804' });
+    } finally {
+      await Promise.allSettled([observer.query('ROLLBACK')]);
+      await observer.query(`SET search_path TO ${quotedSchema}, public`);
+      await observer.query(`DROP SCHEMA IF EXISTS ${quotedDriftSchema} CASCADE`);
+    }
+  }, 15_000);
+
+  test('activates universe scope without deadlocking the context-read lock order', async () => {
+    const migrationSchema = `backstage_universe_migration_${randomUUID().replaceAll('-', '')}`;
+    const quotedMigrationSchema = `"${migrationSchema}"`;
+    let migration: Promise<unknown> | null = null;
+
+    try {
+      await observer.query(`CREATE SCHEMA ${quotedMigrationSchema}`);
+      await observer.query(
+        `CREATE TABLE ${quotedMigrationSchema}.backstage_wrestlers (
+           id SERIAL PRIMARY KEY,
+           name TEXT UNIQUE NOT NULL,
+           overall INTEGER NOT NULL,
+           created_at TIMESTAMPTZ DEFAULT NOW(),
+           updated_at TIMESTAMPTZ DEFAULT NOW()
+         )`
+      );
+      await observer.query(
+        `CREATE TABLE ${quotedMigrationSchema}.backstage_events (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           data JSONB NOT NULL,
+           created_at TIMESTAMPTZ DEFAULT NOW()
+         )`
+      );
+      await observer.query(
+        `CREATE TABLE ${quotedMigrationSchema}.backstage_story_beats (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           data JSONB NOT NULL,
+           created_at TIMESTAMPTZ DEFAULT NOW()
+         )`
+      );
+      await observer.query(
+        `CREATE TABLE ${quotedMigrationSchema}.backstage_storylines (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           story_key TEXT UNIQUE NOT NULL,
+           storyline TEXT NOT NULL,
+           created_at TIMESTAMPTZ DEFAULT NOW(),
+           updated_at TIMESTAMPTZ DEFAULT NOW()
+         )`
+      );
+      await observer.query(
+        `INSERT INTO ${quotedMigrationSchema}.backstage_wrestlers (name, overall)
+         VALUES ('Legacy Wrestler', 81)`
+      );
+      await observer.query(
+        `INSERT INTO ${quotedMigrationSchema}.backstage_events (data)
+         VALUES ('{"name":"Legacy Event"}'::JSONB)`
+      );
+      await observer.query(
+        `INSERT INTO ${quotedMigrationSchema}.backstage_story_beats (data)
+         VALUES ('{"beat":"Legacy Beat"}'::JSONB)`
+      );
+      await observer.query(
+        `INSERT INTO ${quotedMigrationSchema}.backstage_storylines (story_key, storyline)
+         VALUES ('legacy-story', 'Legacy storyline')`
+      );
+      await Promise.all([
+        first.query(`SET search_path TO ${quotedMigrationSchema}, public`),
+        second.query(`SET search_path TO ${quotedMigrationSchema}, public`)
+      ]);
+
+      await first.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await first.query("SET LOCAL lock_timeout = '5s'");
+      await first.query('SELECT id FROM backstage_wrestlers');
+
+      const migrationPidResult = await second.query<{ pid: number }>(
+        'SELECT pg_backend_pid() AS pid'
+      );
+      const migrationPid = migrationPidResult.rows[0]?.pid;
+      expect(Number.isInteger(migrationPid)).toBe(true);
+      migration = second.query(universeScopeForwardMigration);
+      void migration.catch(() => undefined);
+
+      await waitForBlockedTableLock(
+        observer,
+        migrationPid!,
+        migrationSchema,
+        'backstage_wrestlers'
+      );
+
+      await first.query('SELECT id FROM backstage_events');
+      await first.query('SELECT id FROM backstage_story_beats');
+      await first.query('SELECT id FROM backstage_storylines');
+      await first.query('COMMIT');
+      await migration;
+
+      await second.query(universeScopeForwardMigration);
+
+      const backfilledRows = await second.query<{
+        table_name: string;
+        universe_id: string;
+      }>(
+        `SELECT 'backstage_events' AS table_name, universe_id
+         FROM backstage_events
+         UNION ALL
+         SELECT 'backstage_story_beats' AS table_name, universe_id
+         FROM backstage_story_beats
+         UNION ALL
+         SELECT 'backstage_storylines' AS table_name, universe_id
+         FROM backstage_storylines
+         UNION ALL
+         SELECT 'backstage_wrestlers' AS table_name, universe_id
+         FROM backstage_wrestlers
+         ORDER BY table_name`
+      );
+      expect(backfilledRows.rows).toEqual([
+        { table_name: 'backstage_events', universe_id: 'legacy' },
+        { table_name: 'backstage_story_beats', universe_id: 'legacy' },
+        { table_name: 'backstage_storylines', universe_id: 'legacy' },
+        { table_name: 'backstage_wrestlers', universe_id: 'legacy' }
+      ]);
+
+      await second.query(
+        `INSERT INTO backstage_wrestlers (universe_id, name, overall)
+         VALUES
+           ('universe-a', 'Scoped Twin', 82),
+           ('universe-b', 'Scoped Twin', 93)`
+      );
+      await second.query(
+        `INSERT INTO backstage_storylines (universe_id, story_key, storyline)
+         VALUES
+           ('universe-a', 'shared-scope', 'Universe A storyline'),
+           ('universe-b', 'shared-scope', 'Universe B storyline')`
+      );
+
+      const scopedIdentity = await second.query<{
+        entity: string;
+        universe_count: string;
+        row_count: string;
+      }>(
+        `SELECT
+           'storyline' AS entity,
+           COUNT(DISTINCT universe_id)::TEXT AS universe_count,
+           COUNT(*)::TEXT AS row_count
+         FROM backstage_storylines
+         WHERE story_key = 'shared-scope'
+         UNION ALL
+         SELECT
+           'wrestler' AS entity,
+           COUNT(DISTINCT universe_id)::TEXT AS universe_count,
+           COUNT(*)::TEXT AS row_count
+         FROM backstage_wrestlers
+         WHERE name = 'Scoped Twin'
+         ORDER BY entity`
+      );
+      expect(scopedIdentity.rows).toEqual([
+        { entity: 'storyline', universe_count: '2', row_count: '2' },
+        { entity: 'wrestler', universe_count: '2', row_count: '2' }
+      ]);
+
+      const constraints = await observer.query<{ conname: string }>(
+        `SELECT constraint_row.conname
+         FROM pg_constraint AS constraint_row
+         INNER JOIN pg_class AS relation
+           ON relation.oid = constraint_row.conrelid
+         INNER JOIN pg_namespace AS namespace
+           ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = $1
+           AND constraint_row.conname IN (
+             'backstage_wrestlers_name_key',
+             'backstage_storylines_story_key_key',
+             'uq_backstage_wrestlers_universe_name',
+             'uq_backstage_storylines_universe_story_key'
+           )
+         ORDER BY constraint_row.conname`,
+        [migrationSchema]
+      );
+      expect(constraints.rows.map(row => row.conname)).toEqual([
+        'uq_backstage_storylines_universe_story_key',
+        'uq_backstage_wrestlers_universe_name'
+      ]);
+
+      const guardedRollbackFailure = await second
+        .query(universeScopeRollbackMigration)
+        .then(
+          () => null,
+          async (error: unknown) => {
+            await second.query('ROLLBACK');
+            return error;
+          }
+        );
+      expect(guardedRollbackFailure).toMatchObject({ code: '55000' });
+
+      await second.query(
+        `DELETE FROM backstage_wrestlers WHERE universe_id <> 'legacy';
+         DELETE FROM backstage_events WHERE universe_id <> 'legacy';
+         DELETE FROM backstage_story_beats WHERE universe_id <> 'legacy';
+         DELETE FROM backstage_storylines WHERE universe_id <> 'legacy'`
+      );
+      await second.query(universeScopeRollbackMigration);
+
+      const rolledBackConstraints = await observer.query<{ conname: string }>(
+        `SELECT constraint_row.conname
+         FROM pg_constraint AS constraint_row
+         INNER JOIN pg_class AS relation
+           ON relation.oid = constraint_row.conrelid
+         INNER JOIN pg_namespace AS namespace
+           ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = $1
+           AND constraint_row.conname IN (
+             'backstage_wrestlers_name_key',
+             'backstage_storylines_story_key_key',
+             'uq_backstage_wrestlers_universe_name',
+             'uq_backstage_storylines_universe_story_key'
+           )
+         ORDER BY constraint_row.conname`,
+        [migrationSchema]
+      );
+      expect(rolledBackConstraints.rows.map(row => row.conname)).toEqual([
+        'backstage_storylines_story_key_key',
+        'backstage_wrestlers_name_key'
+      ]);
+
+      const removedUniverseColumns = await observer.query<{
+        table_name: string;
+      }>(
+        `SELECT table_name
+         FROM information_schema.columns
+         WHERE table_schema = $1
+           AND table_name = ANY($2::TEXT[])
+           AND column_name = 'universe_id'
+         ORDER BY table_name`,
+        [
+          migrationSchema,
+          [
+            'backstage_events',
+            'backstage_wrestlers',
+            'backstage_storylines',
+            'backstage_story_beats'
+          ]
+        ]
+      );
+      expect(removedUniverseColumns.rows).toEqual([]);
+
+      const preservedLegacyRows = await second.query<{
+        events: string;
+        story_beats: string;
+        storylines: string;
+        wrestlers: string;
+      }>(
+        `SELECT
+           (SELECT COUNT(*)::TEXT FROM backstage_events) AS events,
+           (SELECT COUNT(*)::TEXT FROM backstage_story_beats) AS story_beats,
+           (SELECT COUNT(*)::TEXT FROM backstage_storylines) AS storylines,
+           (SELECT COUNT(*)::TEXT FROM backstage_wrestlers) AS wrestlers`
+      );
+      expect(preservedLegacyRows.rows[0]).toEqual({
+        events: '1',
+        story_beats: '1',
+        storylines: '1',
+        wrestlers: '1'
+      });
+    } finally {
+      await Promise.allSettled([
+        first.query('ROLLBACK'),
+        second.query('ROLLBACK')
+      ]);
+      await migration?.catch(() => undefined);
+      await Promise.allSettled([
+        first.query(`SET search_path TO ${quotedSchema}, public`),
+        second.query(`SET search_path TO ${quotedSchema}, public`)
+      ]);
+      await observer.query(`DROP SCHEMA IF EXISTS ${quotedMigrationSchema} CASCADE`);
+    }
+  }, 30_000);
 });

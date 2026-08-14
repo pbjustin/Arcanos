@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-14T16:51:53.297Z",
+  "generatedAt": "2026-08-14T20:22:54.330Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2370,6 +2370,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageEvent.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageRoster.ts"

@@ -273,25 +273,30 @@ describe('direct Backstage routes', () => {
     ['non-string', 42],
     ['oversized', 'x'.repeat(241)]
   ] as const)('validates a %s optional storyline key before generation effects', async (_label, key) => {
-    const response = await authorizedConfirmedPost('/backstage/book-gpt').send({
-      prompt: 'Book a rivalry',
-      key
-    });
+    const response = await request(buildApp())
+      .post('/backstage/book-gpt')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({ prompt: 'Book a rivalry', key });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual(expect.objectContaining({
       success: false,
       action: 'saveStoryline'
     }));
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
     expect(mockGenerateBooking).not.toHaveBeenCalled();
     expect(mockSaveStoryline).not.toHaveBeenCalled();
   });
 
   it('rejects invalid universe ids before invoking the service', async () => {
-    const response = await authorizedConfirmedPost('/backstage/book-event').send({
-      universeId: '../cross-universe',
-      event: { name: 'Forbidden Door' }
-    });
+    const response = await request(buildApp())
+      .post('/backstage/book-event')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        universeId: '../cross-universe',
+        event: { name: 'Forbidden Door' }
+      });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual(expect.objectContaining({
@@ -299,6 +304,8 @@ describe('direct Backstage routes', () => {
       action: 'bookEvent',
       issues: expect.any(Array)
     }));
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
     expect(mockBookEvent).not.toHaveBeenCalled();
   });
 
@@ -330,7 +337,9 @@ describe('direct Backstage routes', () => {
   });
 
   it('maps typed roster validation failures to a stable client error', async () => {
-    const response = await authorizedConfirmedPost('/backstage/update-roster')
+    const response = await request(buildApp())
+      .post('/backstage/update-roster')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({ name: 'not-an-array', overall: 90 });
 
     expect(response.status).toBe(400);
@@ -341,6 +350,8 @@ describe('direct Backstage routes', () => {
         message: 'Roster payload must be an array.'
       }
     });
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
     expect(mockUpdateRoster).not.toHaveBeenCalled();
   });
 

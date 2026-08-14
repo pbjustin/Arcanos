@@ -19,8 +19,9 @@ import {
 import { classifyGptMemoryInterception } from "@services/memoryDispatchInterception.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
-  BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS,
-  BACKSTAGE_FLATTENED_PAYLOAD_FLAG,
+  copyBackstageBookerPayloadProvenance,
+  markBackstageBookerExplicitPayload,
+  markBackstageBookerFlattenedPayload,
 } from '@services/backstageBookerContracts.js';
 import {
   buildRepoInspectionAnswer,
@@ -198,7 +199,6 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   'query',
   'messages',
   'sessionId',
-  'universeId',
   'mode',
   'game',
   'url',
@@ -271,7 +271,13 @@ function buildDispatchPayload(
       const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
       delete sanitizedPayload.gptId;
       if (annotateBackstageOrigin) {
-        sanitizedPayload[BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS] = Object.keys(explicitPayload);
+        if (
+          !Object.prototype.hasOwnProperty.call(sanitizedPayload, 'universeId')
+          && body.universeId !== undefined
+        ) {
+          sanitizedPayload.universeId = body.universeId;
+        }
+        markBackstageBookerExplicitPayload(sanitizedPayload, Object.keys(explicitPayload));
       }
       return sanitizedPayload;
     }
@@ -290,7 +296,7 @@ function buildDispatchPayload(
       normalizedPayload.prompt = prompt;
     }
     if (annotateBackstageOrigin) {
-      normalizedPayload[BACKSTAGE_FLATTENED_PAYLOAD_FLAG] = true;
+      markBackstageBookerFlattenedPayload(normalizedPayload);
     }
     return normalizedPayload;
   }
@@ -312,10 +318,12 @@ function applyRuntimeExecutionModeOverride(
     return payload;
   }
 
-  return {
+  const overriddenPayload = {
     ...payload,
     __arcanosExecutionMode: runtimeExecutionMode
   };
+  copyBackstageBookerPayloadProvenance(payload, overriddenPayload);
+  return overriddenPayload;
 }
 
 function readSuppressTimeoutFallbackFlag(payload: unknown): boolean {
@@ -651,7 +659,7 @@ function enrichWritingDispatchPayload(
     return payload;
   }
 
-  return {
+  const enrichedPayload = {
     ...payload,
     [INTERNAL_GPT_ID_FIELD]: params.gptId,
     [INTERNAL_SOURCE_ENDPOINT_FIELD]: params.sourceEndpoint,
@@ -659,6 +667,8 @@ function enrichWritingDispatchPayload(
       ? { [INTERNAL_REQUESTED_ACTION_FIELD]: params.requestedAction }
       : {})
   };
+  copyBackstageBookerPayloadProvenance(payload, enrichedPayload);
+  return enrichedPayload;
 }
 
 function recordDispatchPromptDebugTrace(
@@ -1338,7 +1348,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     activeEntry.module === BACKSTAGE_MODULE_NAME
     && initialActionCandidate === 'trackStoryline';
   //audit Assumption: state payload bytes must describe caller data rather than dispatcher metadata; failure risk: valid boundary-sized beats are rejected or internal route fields become durable canon; expected invariant: trackStoryline keeps dispatch-origin metadata long enough for the module normalizer to distinguish explicit and flattened input, while skipping generic writing enrichment; handling strategy: forward the pre-enrichment payload only for this typed mutation.
-  const payload = isBackstageStorylineMutation
+  let payload = isBackstageStorylineMutation
     ? preDispatchPayload
     : enrichWritingDispatchPayload(preDispatchPayload, {
         gptId: trimmedGptId,
@@ -1533,6 +1543,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     moduleMetadata = getModuleMetadata(activeEntry.module);
     availableActions = moduleMetadata?.actions ?? [];
     requestedAction = resolveGptModuleRequestedActionAlias(rawRequestedAction, availableActions);
+    const autoRoutedPreDispatchPayload = applyRuntimeExecutionModeOverride(
+      buildDispatchPayload(body, boundedPromptOverride, true),
+      runtimeExecutionMode
+    );
+    payload = enrichWritingDispatchPayload(autoRoutedPreDispatchPayload, {
+      gptId: trimmedGptId,
+      sourceEndpoint: dispatchSourceEndpoint,
+      requestedAction: rawRequestedAction ?? writePlaneClassification.action
+    });
     logger?.info?.("gpt.dispatch.booker.auto_selected", {
       requestId,
       gptId: trimmedGptId,

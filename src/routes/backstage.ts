@@ -74,36 +74,7 @@ function normalizeDirectOpenPayload(
   action: 'bookEvent' | 'trackStoryline',
   body: unknown
 ): BackstageBookerActionInputMap['bookEvent'] | BackstageBookerActionInputMap['trackStoryline'] {
-  if (action === 'trackStoryline') {
-    return normalizeBackstageBookerIngressMutationPayload(action, body, 'direct');
-  }
-
-  const record = body !== null && typeof body === 'object' && !Array.isArray(body)
-    ? body as Record<string, unknown>
-    : null;
-  if (!record) {
-    return normalizeBackstageBookerActionPayload(action, body);
-  }
-
-  const wrapperKey = action === 'bookEvent' ? 'event' : 'beat';
-  const wrappedValue = record[wrapperKey];
-  const isCanonicalWrapper = Object.prototype.hasOwnProperty.call(record, 'universeId')
-    && wrappedValue !== null
-    && typeof wrappedValue === 'object'
-    && !Array.isArray(wrappedValue)
-    && Object.keys(record).every(key => key === 'universeId' || key === wrapperKey);
-  if (isCanonicalWrapper) {
-    return normalizeBackstageBookerActionPayload(action, record);
-  }
-
-  const domainPayload = { ...record };
-  delete domainPayload.universeId;
-  return normalizeBackstageBookerActionPayload(action, {
-    universeId: Object.prototype.hasOwnProperty.call(record, 'universeId')
-      ? record.universeId
-      : 'legacy',
-    [wrapperKey]: domainPayload
-  });
+  return normalizeBackstageBookerIngressMutationPayload(action, body, 'direct');
 }
 
 // Entry point for Backstage Booker

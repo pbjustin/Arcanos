@@ -346,6 +346,37 @@ function expectedStorylinePayloadOver(fixture: string) {
   };
 }
 
+function expectedPhaseOneUniverseBinding(fixture: string) {
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    eligibleForConfirmation: true,
+    fixture,
+    durablePersistenceAttempted: false,
+    postValidationBoundaryReached: true,
+    protectedEffectsEnabled: false,
+    schemaVersion: 1,
+    transactionComponentExecuted: true,
+    validationCompleted: true,
+    validationCode: 'VALID',
+    phaseOne: {
+      action: 'trackStoryline',
+      canonicalRoute: '/gpt/backstage-booker',
+      confirmationFingerprintInputUniverseBound: true,
+      confirmationTokenIssued: false,
+      crossUniverseLeakageObserved: false,
+      queryPhaseCount: 20,
+      queryUniverseRoutingVerified: true,
+      universes: [
+        { universeId: 'preview-alpha', retainedSequences: [1, 101] },
+        { universeId: 'preview-beta', retainedSequences: [2, 202] },
+      ],
+    },
+  };
+}
+
 function expectedMcpBodyCap(fixture: string) {
   const profiles = [
     {
@@ -813,6 +844,11 @@ describe('native PR contained application', () => {
         fixture: fixtures.lifecycleExact,
         status: 200,
         body: expectedStorylineLifecycle(fixtures.lifecycleExact),
+      },
+      {
+        fixture: fixtures.phaseOneUniverseBinding,
+        status: 200,
+        body: expectedPhaseOneUniverseBinding(fixtures.phaseOneUniverseBinding),
       },
       {
         fixture: fixtures.payloadOver,

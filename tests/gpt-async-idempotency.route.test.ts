@@ -2735,6 +2735,44 @@ describe('async /gpt idempotency', () => {
     }
   );
 
+  it('rejects a canonical storyline wrapper with extra fields before confirmation or job planning', async () => {
+    const controlPlaneToken = 'invalid-canonical-storyline-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:invalid-canonical-storyline';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'trackStoryline')
+      .set('X-GPT-Execution-Mode', 'async')
+      .send({
+        payload: {
+          beat: { turn: 'heel' },
+          callerSelectedTenant: 'forbidden',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code: BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE },
+      _route: {
+        gptId: 'backstage',
+        action: 'trackStoryline',
+        route: 'backstage_storyline_validation',
+      },
+    });
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('preserves all 25 large storyline beats through a completed async direct return', async () => {
     const controlPlaneToken = 'async-storyline-response-control-token-1234567890';
     const beats = buildLargeStorylineBeats();

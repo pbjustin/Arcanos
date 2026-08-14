@@ -474,6 +474,17 @@ universe before their read-after-write response. This phase establishes
 scope and persistence correctness only; it does not define a canon graph,
 storyline lifecycle engine, or visual booking workspace.
 
+`bookEvent` accepts one JSON object whose compact serialized UTF-8 form is at
+most 65,536 bytes; oversized events are rejected before database, fallback, or
+audit effects. Process-memory continuity retains immutable JSON snapshots and
+shares one per-universe budget across durable event cache entries and pending
+events: at most 25 entries and 262,144 serialized bytes total. Durable cache
+entries are discarded before accepted pending continuity when that budget is
+full. The process fallback retains at most 32 universe states, never evicts a
+state with pending continuity or an active roster, story-beat, or saved-storyline
+mutation, and removes completed storyline-version and convenience-publication
+fences once no older operation can still publish through them.
+
 `trackStoryline` accepts one JSON object whose compact serialized UTF-8 form is
 at most 16,384 bytes. A successful database mutation serializes insert, cleanup,
 retention, and read under the original fixed storyline advisory lock plus a

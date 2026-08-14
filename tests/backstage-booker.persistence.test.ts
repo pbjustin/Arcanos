@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { BACKSTAGE_BOOK_EVENT_MAX_BYTES } from '../src/shared/backstage/backstageEvent.js';
 import {
   BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
 } from '../src/shared/backstage/backstageRoster.js';
@@ -123,12 +124,18 @@ const {
   BackstageBookerModule,
   bookEvent,
   generateBooking,
+  getBackstageBookerProcessStateStatsForTests,
   resetBackstageBookerProcessStateForTests,
   saveStoryline,
   simulateMatch,
   trackStoryline,
   updateRoster
 } = await import('../src/services/backstage-booker.js');
+const {
+  BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS,
+  BACKSTAGE_FLATTENED_PAYLOAD_FLAG,
+  normalizeBackstageBookerSchemaDrivenActionPayload,
+} = await import('../src/services/backstageBookerContracts.js');
 
 const durablePersistence = {
   status: 'durable',
@@ -270,6 +277,142 @@ describe('Backstage Booker service persistence outcomes', () => {
     );
   });
 
+  it('accepts an event exactly at the serialized UTF-8 byte ceiling', async () => {
+    const emptyEventBytes = Buffer.byteLength(JSON.stringify({ payload: '' }), 'utf8');
+    const event = {
+      payload: 'x'.repeat(BACKSTAGE_BOOK_EVENT_MAX_BYTES - emptyEventBytes)
+    };
+    expect(Buffer.byteLength(JSON.stringify(event), 'utf8'))
+      .toBe(BACKSTAGE_BOOK_EVENT_MAX_BYTES);
+
+    await expect(bookEvent(event, 'maximum-event')).resolves.toMatchObject({
+      universeId: 'maximum-event',
+      persistence: durablePersistence
+    });
+    expect(mockRepository.bookEvent).toHaveBeenCalledTimes(1);
+    expect(getBackstageBookerProcessStateStatsForTests('maximum-event')).toMatchObject({
+      retainedEventCount: 1,
+      retainedEventBytes: BACKSTAGE_BOOK_EVENT_MAX_BYTES
+    });
+  });
+
+  it('rejects an event one serialized UTF-8 byte over before durable or fallback effects', async () => {
+    const emptyEventBytes = Buffer.byteLength(JSON.stringify({ payload: '' }), 'utf8');
+    const event = {
+      payload: 'x'.repeat(BACKSTAGE_BOOK_EVENT_MAX_BYTES - emptyEventBytes + 1)
+    };
+    expect(Buffer.byteLength(JSON.stringify(event), 'utf8'))
+      .toBe(BACKSTAGE_BOOK_EVENT_MAX_BYTES + 1);
+
+    for (const configuredPool of [{ kind: 'test-pool' }, null]) {
+      mockGetPool.mockReturnValue(configuredPool);
+      await expect(bookEvent(event, 'oversized-event')).rejects.toMatchObject({
+        name: 'BackstageBookerContractError',
+        action: 'bookEvent',
+        issues: [expect.objectContaining({
+          instancePath: '/event',
+          message: expect.stringContaining(String(BACKSTAGE_BOOK_EVENT_MAX_BYTES))
+        })]
+      });
+    }
+
+    expect(mockGetPool).not.toHaveBeenCalled();
+    expect(mockCreateBackstageBookerRepository).not.toHaveBeenCalled();
+    expect(mockRepository.bookEvent).not.toHaveBeenCalled();
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
+    expect(getBackstageBookerProcessStateStatsForTests('oversized-event')).toMatchObject({
+      universeCount: 0,
+      retainedEventCount: 0,
+      retainedEventBytes: 0
+    });
+  });
+
+  it('retains the pre-write event snapshot when the caller mutates its input in flight', async () => {
+    const universeId = 'immutable-event-snapshot';
+    const event: {
+      name: string;
+      card: { mainEvent: string; cycle?: unknown };
+    } = {
+      name: 'Original Event Name',
+      card: { mainEvent: 'Original Main Event' }
+    };
+    let releaseWrite!: () => void;
+    mockRepository.bookEvent.mockImplementationOnce(async () => (
+      new Promise<void>(resolve => {
+        releaseWrite = resolve;
+      })
+    ));
+
+    const write = bookEvent(event, universeId);
+    expect(mockRepository.bookEvent).toHaveBeenCalledWith(
+      universeId,
+      {
+        name: 'Original Event Name',
+        card: { mainEvent: 'Original Main Event' }
+      },
+      expect.any(String)
+    );
+    expect(mockRepository.bookEvent.mock.calls[0]?.[1]).not.toBe(event);
+
+    event.name = 'Mutated Event Name';
+    event.card.mainEvent = 'Mutated Main Event';
+    event.card.cycle = event;
+    releaseWrite();
+    await expect(write).resolves.toMatchObject({
+      universeId,
+      persistence: durablePersistence
+    });
+    const retainedBytes = getBackstageBookerProcessStateStatsForTests(universeId)
+      .retainedEventBytes;
+    expect(getBackstageBookerProcessStateStatsForTests(universeId).retainedEventBytes)
+      .toBe(retainedBytes);
+
+    mockRepository.loadContext.mockRejectedValueOnce(new Error('context unavailable'));
+    await generateBooking('Book from the immutable event.', universeId);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string };
+    } | undefined;
+    expect(pipelineInput?.input?.prompt).toContain('Original Event Name');
+    expect(pipelineInput?.input?.prompt).toContain('Original Main Event');
+    expect(pipelineInput?.input?.prompt).not.toContain('Mutated Event Name');
+    expect(pipelineInput?.input?.prompt).not.toContain('Mutated Main Event');
+  });
+
+  it('bounds combined durable and pending event retention by count and serialized bytes', async () => {
+    const universeId = 'bounded-event-retention';
+    mockRepository.bookEvent.mockImplementation(async (
+      _resolvedUniverseId: string,
+      event: { name: string }
+    ) => {
+      const eventIndex = Number(event.name.slice('event-'.length));
+      if (eventIndex % 2 === 1) {
+        throw new MockBackstageBookerWriteError(
+          'bookEvent',
+          new MockBackstageBookerUniverseScopeNotActivatedError()
+        );
+      }
+    });
+
+    for (let index = 0; index < 40; index += 1) {
+      await bookEvent({
+        name: `event-${index}`,
+        productionNotes: 'x'.repeat(12 * 1024)
+      }, universeId);
+    }
+
+    const stats = getBackstageBookerProcessStateStatsForTests(universeId);
+    expect(stats.retainedEventCount).toBeLessThanOrEqual(25);
+    expect(stats.retainedEventBytes).toBeLessThanOrEqual(256 * 1024);
+    mockRepository.loadContext.mockRejectedValueOnce(new Error('context unavailable'));
+    await generateBooking('Book from bounded event continuity.', universeId);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string };
+    } | undefined;
+    expect(pipelineInput?.input?.prompt).toContain('event-39');
+    expect(pipelineInput?.input?.prompt).not.toContain('event-0');
+  });
+
   it('preserves a raw top-level beat field through the module action adapter', async () => {
     const beat = {
       beat: 'turn',
@@ -312,6 +455,49 @@ describe('Backstage Booker service persistence outcomes', () => {
     await BackstageBookerModule.actions.trackStoryline(beat);
 
     expect(mockRepository.trackStoryline).toHaveBeenCalledWith('legacy', beat);
+  });
+
+  it('unwraps a schema-driven canonical event without an explicit universe scope', async () => {
+    const event = { name: 'Canonical Raw' };
+    const payload = normalizeBackstageBookerSchemaDrivenActionPayload(
+      'bookEvent',
+      { event }
+    );
+
+    await BackstageBookerModule.actions.bookEvent(payload);
+
+    expect(mockRepository.bookEvent).toHaveBeenCalledWith(
+      'legacy',
+      event,
+      expect.any(String)
+    );
+  });
+
+  it('unwraps a schema-driven canonical beat without an explicit universe scope', async () => {
+    const beat = { turn: 'heel' };
+    mockRepository.trackStoryline.mockResolvedValueOnce({
+      retainedBeats: [beat],
+      revision: '502'
+    });
+    const payload = normalizeBackstageBookerSchemaDrivenActionPayload(
+      'trackStoryline',
+      { beat }
+    );
+
+    await BackstageBookerModule.actions.trackStoryline(payload);
+
+    expect(mockRepository.trackStoryline).toHaveBeenCalledWith('legacy', beat);
+  });
+
+  it.each([
+    [BACKSTAGE_EXPLICIT_PAYLOAD_FIELDS, ['event']],
+    [BACKSTAGE_FLATTENED_PAYLOAD_FLAG, true],
+  ] as const)('rejects caller-forged schema provenance in %s', (reservedKey, markerValue) => {
+    expect(() => normalizeBackstageBookerSchemaDrivenActionPayload('bookEvent', {
+      event: { name: 'SummerSlam' },
+      callerSelectedTenant: 'forbidden',
+      [reservedKey]: markerValue,
+    })).toThrow('Invalid Backstage Booker bookEvent payload.');
   });
 
   it('preserves typed roster validation failures through the module action adapter', async () => {
@@ -565,6 +751,42 @@ describe('Backstage Booker service persistence outcomes', () => {
       roster: [{ name: 'Durable Overflow', overall: 95 }],
       persistence: durablePersistence
     });
+  });
+
+  it('does not evict an existing universe while one of its mutations is in flight', async () => {
+    for (let index = 0; index < 32; index += 1) {
+      await bookEvent({ name: `seed-${index}` }, `active-capacity-${index}`);
+    }
+
+    let resolveActiveMutation: ((value: unknown) => void) | undefined;
+    const activeMutation = new Promise<unknown>(resolve => {
+      resolveActiveMutation = resolve;
+    });
+    mockRepository.updateRoster.mockImplementationOnce(async () => activeMutation);
+    const activeRequest = updateRoster(
+      [{ name: 'Protected In Flight', overall: 91 }],
+      'active-capacity-0'
+    );
+
+    await bookEvent({ name: 'overflow-seed' }, 'active-capacity-overflow');
+    expect(getBackstageBookerProcessStateStatsForTests('active-capacity-0').retainedEventCount)
+      .toBe(1);
+    expect(getBackstageBookerProcessStateStatsForTests('active-capacity-1').retainedEventCount)
+      .toBe(0);
+    expect(getBackstageBookerProcessStateStatsForTests('active-capacity-overflow').retainedEventCount)
+      .toBe(1);
+
+    resolveActiveMutation?.({
+      roster: [{ name: 'Protected In Flight', overall: 91 }],
+      revision: '9901'
+    });
+    await activeRequest;
+    expect(getBackstageBookerProcessStateStatsForTests('active-capacity-0'))
+      .toMatchObject({
+        activeUniverseOperationCount: 0,
+        activeMemorySnapshotOperationKeyCount: 0,
+        memorySnapshotPublicationSequenceCount: 0
+      });
   });
 
   it('keeps prior non-durable roster entries in a later durable response and snapshot', async () => {
@@ -1290,6 +1512,99 @@ describe('Backstage Booker service persistence outcomes', () => {
     expect(memoryKeys.every(memoryKey => memoryKey.length <= 255)).toBe(true);
   });
 
+  it('bounds saved-storyline version and publication tracking across many distinct keys', async () => {
+    const universeId = 'saved-storyline-tracking-stress';
+    for (let index = 0; index < 1_000; index += 1) {
+      await saveStoryline(
+        `stress-key-${index}`,
+        `Stress storyline ${index}.`,
+        universeId
+      );
+      mockRepository.saveStoryline.mockClear();
+      mockSaveMemory.mockClear();
+      mockSaveWithAuditCheck.mockClear();
+    }
+
+    expect(getBackstageBookerProcessStateStatsForTests(universeId)).toMatchObject({
+      savedStorylineVersionCount: 5,
+      activeUniverseOperationCount: 0,
+      activeMemorySnapshotOperationKeyCount: 0,
+      activeMemorySnapshotOperationCount: 0,
+      memorySnapshotPublicationSequenceCount: 0,
+      memorySnapshotPublicationStateCount: 0
+    });
+  });
+
+  it('retains an evicted same-key version fence until the older operation finishes', async () => {
+    const universeId = 'saved-storyline-pruned-fence';
+    const storylineKey = 'fenced-key';
+    let resolveOlderSave: ((value: unknown) => void) | undefined;
+    const olderSave = new Promise<unknown>(resolve => {
+      resolveOlderSave = resolve;
+    });
+    const nonDurableError = new MockBackstageBookerWriteError(
+      'saveStoryline',
+      new MockBackstageBookerUniverseScopeNotActivatedError()
+    );
+    mockRepository.saveStoryline
+      .mockImplementationOnce(async () => olderSave)
+      .mockRejectedValueOnce(nonDurableError)
+      .mockRejectedValue(nonDurableError);
+
+    const olderRequest = saveStoryline(
+      storylineKey,
+      'Older durable storyline must stay fenced.',
+      universeId
+    );
+    await saveStoryline(
+      storylineKey,
+      'Newer pending storyline that will leave the bounded view.',
+      universeId
+    );
+    for (let index = 0; index < 6; index += 1) {
+      await saveStoryline(
+        `newer-key-${index}`,
+        `Newer pending storyline ${index}.`,
+        universeId
+      );
+    }
+
+    expect(getBackstageBookerProcessStateStatsForTests(universeId)).toMatchObject({
+      savedStorylineVersionCount: 6,
+      activeUniverseOperationCount: 1,
+      activeMemorySnapshotOperationKeyCount: 2,
+      activeMemorySnapshotOperationCount: 2,
+      memorySnapshotPublicationSequenceCount: 2,
+      memorySnapshotPublicationStateCount: 0
+    });
+    resolveOlderSave?.(savedStorylineMutation(
+      universeId,
+      storylineKey,
+      'Older durable storyline must stay fenced.',
+      '13001'
+    ));
+    await olderRequest;
+
+    const memoryStorylines = (mockSaveMemory.mock.calls as unknown as Array<[
+      string,
+      { storyline?: string }
+    ]>).map(([, value]) => value.storyline);
+    const auditStorylines = (mockSaveWithAuditCheck.mock.calls as unknown as Array<[
+      string,
+      { storyline?: string }
+    ]>).map(([, value]) => value.storyline);
+    expect(memoryStorylines).not.toContain('Older durable storyline must stay fenced.');
+    expect(auditStorylines).not.toContain('Older durable storyline must stay fenced.');
+    expect(getBackstageBookerProcessStateStatsForTests(universeId)).toMatchObject({
+      savedStorylineVersionCount: 5,
+      activeUniverseOperationCount: 0,
+      activeMemorySnapshotOperationKeyCount: 0,
+      activeMemorySnapshotOperationCount: 0,
+      memorySnapshotPublicationSequenceCount: 0,
+      memorySnapshotPublicationStateCount: 0
+    });
+  });
+
   it('keeps a newer pending save visible when an older durable save finishes later', async () => {
     const universeId = 'saved-storyline-operation-fence';
     const storylineKey = 'main-event';
@@ -1563,6 +1878,13 @@ describe('Backstage Booker service persistence outcomes', () => {
       'older-key',
       'newer-key'
     ]));
+    expect(getBackstageBookerProcessStateStatsForTests(universeId)).toMatchObject({
+      activeUniverseOperationCount: 0,
+      activeMemorySnapshotOperationKeyCount: 0,
+      activeMemorySnapshotOperationCount: 0,
+      memorySnapshotPublicationSequenceCount: 0,
+      memorySnapshotPublicationStateCount: 0
+    });
   });
 
   it('republishes both saved-storyline mirrors after older writes were in flight', async () => {

@@ -28,6 +28,7 @@ export interface NativePrPreviewE2eContract {
     path: '/backstage/storyline-contract';
     fixtures: Readonly<{
       lifecycleExact: 'lifecycle-exact';
+      phaseOneUniverseBinding: 'phase-one-universe-binding';
       payloadOver: 'payload-over';
     }>;
   }>;

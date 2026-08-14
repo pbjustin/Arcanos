@@ -155,6 +155,64 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     );
   });
 
+  it('does not forward top-level universe scope into a non-Backstage explicit payload', async () => {
+    mockDetectBackstageBookerIntent.mockReturnValue(null);
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (moduleName: string, action: string, payload: unknown) => {
+        expect(moduleName).toBe('ARCANOS:CORE');
+        expect(action).toBe('query');
+        expect(payload).toEqual(expect.objectContaining({ prompt: 'core-only prompt' }));
+        expect(payload).not.toEqual(expect.objectContaining({ universeId: expect.anything() }));
+        return 'core result';
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        universeId: 'must-not-leak',
+        payload: { prompt: 'core-only prompt' }
+      },
+      requestId: 'req-core-universe-isolation'
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({ ok: true, result: 'core result' }));
+  });
+
+  it('forwards top-level universe scope when an explicit Core payload auto-routes to Backstage', async () => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (moduleName: string, action: string, payload: unknown) => {
+        expect(moduleName).toBe('BACKSTAGE:BOOKER');
+        expect(action).toBe('generateBooking');
+        expect(payload).toEqual(expect.objectContaining({
+          prompt: 'Book a WWE Raw rivalry after WrestleMania.',
+          universeId: 'auto-routed-universe',
+        }));
+        return 'auto-routed result';
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        universeId: 'auto-routed-universe',
+        payload: { prompt: 'Book a WWE Raw rivalry after WrestleMania.' },
+      },
+      requestId: 'req-core-auto-routed-universe'
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: true,
+      result: 'auto-routed result',
+      _route: expect.objectContaining({
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+      }),
+    }));
+  });
+
   it('defaults backstage-booker traffic without an explicit action to generateBooking', async () => {
     const envelope = await routeGptRequest({
       gptId: 'backstage',

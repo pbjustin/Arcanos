@@ -686,55 +686,113 @@ export const TABLE_DEFINITIONS = [
   `ALTER TABLE backstage_storylines ALTER COLUMN universe_id SET NOT NULL`,
   `ALTER TABLE backstage_story_beats ALTER COLUMN universe_id SET NOT NULL`,
   `DO $$
+   DECLARE
+     target RECORD;
+     expected_constraint_name TEXT;
+     actual_constraint_oid OID;
+     actual_constraint_type "char";
+     actual_constraint_expression TEXT;
+     actual_constraint_no_inherit BOOLEAN;
+     actual_constraint_is_local BOOLEAN;
+     actual_constraint_inheritance_count INTEGER;
+     actual_constraint_parent OID;
+     actual_constraint_enforced BOOLEAN;
+     expected_constraint_expression TEXT;
    BEGIN
-     IF NOT EXISTS (
-       SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'backstage_events'::regclass
-         AND conname = 'ck_backstage_events_universe_id'
-     ) THEN
-       ALTER TABLE backstage_events
-         ADD CONSTRAINT ck_backstage_events_universe_id
-         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF NOT EXISTS (
-       SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'backstage_wrestlers'::regclass
-         AND conname = 'ck_backstage_wrestlers_universe_id'
-     ) THEN
-       ALTER TABLE backstage_wrestlers
-         ADD CONSTRAINT ck_backstage_wrestlers_universe_id
-         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF NOT EXISTS (
-       SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'backstage_storylines'::regclass
-         AND conname = 'ck_backstage_storylines_universe_id'
-     ) THEN
-       ALTER TABLE backstage_storylines
-         ADD CONSTRAINT ck_backstage_storylines_universe_id
-         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF NOT EXISTS (
-       SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'backstage_story_beats'::regclass
-         AND conname = 'ck_backstage_story_beats_universe_id'
-     ) THEN
-       ALTER TABLE backstage_story_beats
-         ADD CONSTRAINT ck_backstage_story_beats_universe_id
-         CHECK (universe_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
-     END IF;
+     FOR target IN
+       SELECT *
+       FROM (VALUES
+         ('backstage_wrestlers', 'ck_backstage_wrestlers_universe_id'),
+         ('backstage_events', 'ck_backstage_events_universe_id'),
+         ('backstage_story_beats', 'ck_backstage_story_beats_universe_id'),
+         ('backstage_storylines', 'ck_backstage_storylines_universe_id')
+       ) AS targets(table_name, constraint_name)
+     LOOP
+       EXECUTE format('LOCK TABLE %I IN SHARE ROW EXCLUSIVE MODE', target.table_name);
+       actual_constraint_oid := NULL;
+       actual_constraint_type := NULL;
+       actual_constraint_expression := NULL;
+       expected_constraint_expression := NULL;
+       expected_constraint_name := target.constraint_name || '_expected';
+
+       SELECT
+         constraint_row.oid,
+         constraint_row.contype,
+         pg_get_expr(constraint_row.conbin, constraint_row.conrelid, false),
+         constraint_row.connoinherit,
+         constraint_row.conislocal,
+         constraint_row.coninhcount,
+         constraint_row.conparentid,
+         COALESCE((to_jsonb(constraint_row) ->> 'conenforced')::BOOLEAN, TRUE)
+       INTO
+         actual_constraint_oid,
+         actual_constraint_type,
+         actual_constraint_expression,
+         actual_constraint_no_inherit,
+         actual_constraint_is_local,
+         actual_constraint_inheritance_count,
+         actual_constraint_parent,
+         actual_constraint_enforced
+       FROM pg_constraint AS constraint_row
+       WHERE constraint_row.conrelid = target.table_name::regclass
+         AND constraint_row.conname = target.constraint_name;
+
+       IF EXISTS (
+         SELECT 1
+         FROM pg_constraint AS constraint_row
+         WHERE constraint_row.conrelid = target.table_name::regclass
+           AND constraint_row.conname = expected_constraint_name
+       ) THEN
+         RAISE EXCEPTION '% is a reserved constraint verifier name', expected_constraint_name
+           USING ERRCODE = '42804';
+       END IF;
+
+       IF actual_constraint_oid IS NULL THEN
+         EXECUTE format(
+           'ALTER TABLE %I ADD CONSTRAINT %I CHECK (universe_id ~ %L) NOT VALID',
+           target.table_name,
+           target.constraint_name,
+           '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+         );
+       ELSE
+         EXECUTE format(
+           'ALTER TABLE %I ADD CONSTRAINT %I CHECK (universe_id ~ %L) NOT VALID',
+           target.table_name,
+           expected_constraint_name,
+           '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+         );
+
+         SELECT pg_get_expr(constraint_row.conbin, constraint_row.conrelid, false)
+         INTO expected_constraint_expression
+         FROM pg_constraint AS constraint_row
+         WHERE constraint_row.conrelid = target.table_name::regclass
+           AND constraint_row.conname = expected_constraint_name;
+
+         EXECUTE format(
+           'ALTER TABLE %I DROP CONSTRAINT %I',
+           target.table_name,
+           expected_constraint_name
+         );
+
+         IF actual_constraint_type <> 'c'
+           OR actual_constraint_expression IS DISTINCT FROM expected_constraint_expression
+           OR actual_constraint_no_inherit
+           OR NOT actual_constraint_is_local
+           OR actual_constraint_inheritance_count <> 0
+           OR actual_constraint_parent <> 0
+           OR NOT actual_constraint_enforced
+         THEN
+           RAISE EXCEPTION '% has an unexpected definition', target.constraint_name
+             USING ERRCODE = '42804';
+         END IF;
+       END IF;
+
+       EXECUTE format(
+         'ALTER TABLE %I VALIDATE CONSTRAINT %I',
+         target.table_name,
+         target.constraint_name
+       );
+     END LOOP;
    END
    $$`,
   `DO $$

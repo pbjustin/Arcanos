@@ -28,6 +28,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     path: '/backstage/storyline-contract',
     fixtures: Object.freeze({
       lifecycleExact: 'lifecycle-exact',
+      phaseOneUniverseBinding: 'phase-one-universe-binding',
       payloadOver: 'payload-over',
     }),
   }),

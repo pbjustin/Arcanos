@@ -1,0 +1,1 @@
+export const BACKSTAGE_BOOK_EVENT_MAX_BYTES = 64 * 1024;

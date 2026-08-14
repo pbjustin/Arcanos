@@ -234,17 +234,23 @@ the public schema and production guard, which admit no preview-only field;
 preview provenance.
 
 The exact `POST /backstage/storyline-contract` surface accepts only the
-server-owned `lifecycle-exact` and `payload-over` selectors. `lifecycle-exact`
+server-owned `lifecycle-exact`, `phase-one-universe-binding`, and `payload-over`
+selectors. `lifecycle-exact`
 calls the real storyline validator, response selector, and repository
 transaction helper through a fresh per-request in-memory query adapter. Its two
 mutations prove the exact 16,384-byte beat boundary, 100-beat retention,
 fresh-read response, chronological newest-25 selection, and accepted-beat
-inclusion. `payload-over` proves a 16,385-byte beat is rejected before the
+inclusion. The Phase One selector routes independent mutations through two
+universe-aware adapters and uses the pure confirmation-envelope builder shared
+with the production gate to prove that changing only `universeId` changes the
+fingerprint input; it does not issue or verify a confirmation token.
+`payload-over` proves a 16,385-byte beat is rejected before the
 repository helper is reached. This is a contained component E2E, not a database
 E2E: it does not connect to PostgreSQL or prove SQL-engine locking or atomicity.
 The PostgreSQL 18 CI suite remains authoritative for those properties. The
 storyline fixtures carry no credentials, contact no provider, and do not reach
-memory, confirmation, persistence effects, or any other protected effect.
+memory, a confirmation challenge/token store, persistence effects, or any other
+protected effect.
 
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
 `effective-limits` selector. It imports the config-free core used by the
@@ -306,8 +312,8 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 112-request plan is the
-original 68-request matrix plus seven public Gaming requests, 28 Gaming-source
+evidence, not Railway control-plane provenance. The fixed 113-request plan is the
+original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
@@ -363,7 +369,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 112-request E2E runs in a separate job that has no Railway secret. It
+The sealed 113-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and

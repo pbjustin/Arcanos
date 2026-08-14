@@ -7,12 +7,17 @@ import {
 } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 import {
   BackstageBookerContractError,
+  normalizeBackstageBookerActionPayload,
   normalizeBackstageBookerIngressMutationPayload,
   type BackstageBookerMutationIngress
 } from '@services/backstageBookerContracts.js';
+import { isBackstageRosterValidationError } from '@shared/backstage/backstageRoster.js';
 import {
   isBackstageStorylineValidationError
 } from '@shared/backstage/backstageStoryline.js';
+import {
+  buildBackstageMutationConfirmationFingerprintBody
+} from '@shared/backstage/backstageActionPolicy.js';
 import { confirmGate } from './confirmGate.js';
 
 const BACKSTAGE_MUTATION_CONFIRMATION_WORKSPACE_ID =
@@ -27,19 +32,45 @@ function normalizeMutationPayload(
   body: unknown,
   operation: BackstageMutationHttpOperation
 ): unknown | null {
-  if (operation.action !== 'trackStoryline') {
-    return null;
-  }
-
   const ingress: BackstageBookerMutationIngress =
     operation.ingress === 'legacy-module' || operation.ingress === 'legacy-queryroute'
       ? 'legacy'
       : operation.ingress;
-  return normalizeBackstageBookerIngressMutationPayload(
-    operation.action,
-    body,
-    ingress
-  );
+
+  if (operation.action === 'saveStoryline' && ingress === 'direct') {
+    const requestRecord = body !== null && typeof body === 'object'
+      ? body as Record<string, unknown>
+      : {};
+    const bookingPayload = { ...requestRecord };
+    delete bookingPayload.key;
+    const bookingInput = normalizeBackstageBookerActionPayload(
+      'generateBooking',
+      bookingPayload
+    );
+    normalizeBackstageBookerActionPayload('saveStoryline', {
+      universeId: bookingInput.universeId ?? 'legacy',
+      key: Object.prototype.hasOwnProperty.call(requestRecord, 'key')
+        ? requestRecord.key
+        : 'pending-confirmation-key-validation',
+      storyline: 'pending-generation-validation'
+    });
+    // Preserve the established /book-gpt request-body fingerprint after validating both effects.
+    return null;
+  }
+
+  switch (operation.action) {
+    case 'bookEvent':
+    case 'saveStoryline':
+    case 'trackStoryline':
+    case 'updateRoster':
+      return normalizeBackstageBookerIngressMutationPayload(
+        operation.action,
+        body,
+        ingress
+      );
+    default:
+      return null;
+  }
 }
 
 /** Require the existing confirmation contract only for admitted Backstage mutations. */
@@ -82,6 +113,7 @@ export function createBackstageMutationConfirmationGate(): RequestHandler {
         } catch (error: unknown) {
           if (
             !(error instanceof BackstageBookerContractError)
+            && !isBackstageRosterValidationError(error)
             && !isBackstageStorylineValidationError(error)
           ) {
             throw error;
@@ -100,11 +132,10 @@ export function createBackstageMutationConfirmationGate(): RequestHandler {
             principalId,
             workspaceId: BACKSTAGE_MUTATION_CONFIRMATION_WORKSPACE_ID,
           },
-          requestFingerprintBody: {
-            protocol: 'backstage-mutation-confirmation-v1',
-            action: operation.action,
-            body: confirmationPayload ?? req.body,
-          },
+          requestFingerprintBody: buildBackstageMutationConfirmationFingerprintBody(
+            operation.action,
+            confirmationPayload ?? req.body
+          ),
         });
       })
       .catch(next);
