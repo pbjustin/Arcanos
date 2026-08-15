@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS backstage_canon_revisions (
 );
 
 CREATE TABLE IF NOT EXISTS backstage_storyline_threads (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
   universe_id TEXT NOT NULL,
   story_key TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS backstage_storyline_participants (
 );
 
 CREATE TABLE IF NOT EXISTS backstage_storyline_canon_beats (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
   universe_id TEXT NOT NULL,
   storyline_id UUID NOT NULL,
   sequence INTEGER NOT NULL,
@@ -274,6 +274,14 @@ CREATE TABLE IF NOT EXISTS backstage_storyline_canon_beats (
   CONSTRAINT ck_backstage_storyline_canon_beats_revision
     CHECK (universe_revision > 0)
 );
+
+-- Normalize installs created by the original Phase 2 migration, where a
+-- public-first search_path could bind these defaults to pgcrypto's legacy
+-- wrapper instead of PostgreSQL's built-in function.
+ALTER TABLE backstage_storyline_threads
+  ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid();
+ALTER TABLE backstage_storyline_canon_beats
+  ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid();
 
 CREATE INDEX IF NOT EXISTS idx_backstage_storyline_threads_universe_status_updated
   ON backstage_storyline_threads(universe_id, status, updated_at DESC, id);
@@ -371,7 +379,7 @@ BEGIN
   ) ON COMMIT DROP;
 
   CREATE TEMP TABLE p2_expected_backstage_storyline_threads (
-    id UUID DEFAULT gen_random_uuid(),
+    id UUID DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     story_key TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -460,7 +468,7 @@ BEGIN
   ) ON COMMIT DROP;
 
   CREATE TEMP TABLE p2_expected_backstage_storyline_canon_beats (
-    id UUID DEFAULT gen_random_uuid(),
+    id UUID DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     storyline_id UUID NOT NULL,
     sequence INTEGER NOT NULL,

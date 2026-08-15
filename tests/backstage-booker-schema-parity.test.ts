@@ -415,6 +415,31 @@ describe('Backstage Booker canon/storyline schema', () => {
   it.each([
     ['runtime bootstrap', runtimeSchemaSql],
     ['forward migration', canonForwardMigration]
+  ])('%s binds canon UUID defaults to the built-in function', (_label, sql) => {
+    expect(
+      sql.match(
+        /id UUID(?: PRIMARY KEY)? DEFAULT pg_catalog\.gen_random_uuid\(\)/gu
+      )
+    ).toHaveLength(4);
+  });
+
+  it('repairs UUID defaults installed by the original public-first migration', () => {
+    expect(canonForwardMigration).toContain(
+      `ALTER TABLE backstage_storyline_threads
+  ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid();`
+    );
+    expect(canonForwardMigration).toContain(
+      `ALTER TABLE backstage_storyline_canon_beats
+  ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid();`
+    );
+    expect(runtimeSchemaSql).not.toContain(
+      'ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid()'
+    );
+  });
+
+  it.each([
+    ['runtime bootstrap', runtimeSchemaSql],
+    ['forward migration', canonForwardMigration]
   ])('%s rejects drifted Phase-2 tables, constraints, and indexes', (_label, sql) => {
     expect(sql).toContain('p2_expected_backstage_canon_heads');
     expect(sql).toContain('actual_columns IS DISTINCT FROM expected_columns');

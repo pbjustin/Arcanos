@@ -233,6 +233,11 @@ their transaction-local `search_path` to `public, pg_catalog`; the preceding
 non-transactional concurrent-index phase schema-qualifies its shared table.
 Every owned object therefore resolves in the intended application schema rather
 than a caller-controlled session schema.
+The two canon UUID defaults bind PostgreSQL's built-in
+`pg_catalog.gen_random_uuid()` explicitly. Re-running the forward migration
+also normalizes pre-promotion Phase 2 installs that bound those defaults to
+pgcrypto's legacy `public.gen_random_uuid()` wrapper, before the exact catalog
+verifier runs.
 
 The migration adds:
 
