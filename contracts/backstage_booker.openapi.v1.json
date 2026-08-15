@@ -222,7 +222,22 @@
             }
           },
           "403": {
-            "description": "The dedicated canon action is not allowlisted or its execution scope is denied.",
+            "description": "The dedicated canon action is denied, or a generic GPT Access bearer triggered a confirmation-required credential mismatch.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonForbiddenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The referenced Backstage storyline does not exist in the selected universe.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -1184,6 +1199,70 @@
             "enum": [
               "commit_outcome_unknown"
             ]
+          }
+        }
+      },
+      "BackstageCanonForbiddenResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/BackstageGenericConfirmationMismatchResponse"
+          }
+        ]
+      },
+      "BackstageGenericConfirmationMismatchResponse": {
+        "type": "object",
+        "description": "Compatibility response emitted when the generic GPT Access bearer reaches this route. The Builder Action must stop and report a credential mismatch instead of entering the legacy backend confirmation flow.",
+        "additionalProperties": true,
+        "required": [
+          "error",
+          "message",
+          "code",
+          "confirmationRequired",
+          "confirmationStatus"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "CONFIRMATION_REQUIRED"
+            ]
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "gptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confirmationRequired": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "confirmationStatus": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

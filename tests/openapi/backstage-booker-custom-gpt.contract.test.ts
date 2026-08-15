@@ -167,6 +167,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '400',
       '401',
       '403',
+      '404',
       '409',
       '429',
       '503',
@@ -452,11 +453,14 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       }));
       expect(schemas[envelopeName].properties.ok.enum).toEqual([true]);
     }
-    for (const status of ['400', '401', '403', '409', '503']) {
+    for (const status of ['400', '401', '404', '409', '503']) {
       expect(canonOperation.responses[status].content['application/json'].schema).toEqual({
         $ref: '#/components/schemas/BackstageCanonErrorResponse',
       });
     }
+    expect(canonOperation.responses['403'].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/BackstageCanonForbiddenResponse',
+    });
     expect(canonOperation.responses['429'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/RateLimitResponse',
     });
@@ -466,6 +470,97 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       required: ['ok', 'error'],
     }));
     expect(schemas.BackstageCanonErrorResponse.properties.ok.enum).toEqual([false]);
+    expect(schemas.BackstageCanonForbiddenResponse.oneOf).toEqual([
+      { $ref: '#/components/schemas/BackstageCanonErrorResponse' },
+      { $ref: '#/components/schemas/BackstageGenericConfirmationMismatchResponse' },
+    ]);
+    expect(schemas.BackstageGenericConfirmationMismatchResponse).toEqual(
+      expect.objectContaining({
+        type: 'object',
+        additionalProperties: true,
+        required: [
+          'error',
+          'message',
+          'code',
+          'confirmationRequired',
+          'confirmationStatus',
+        ],
+      })
+    );
+    expect(schemas.BackstageGenericConfirmationMismatchResponse.properties.code)
+      .toEqual({
+        type: 'string',
+        enum: ['CONFIRMATION_REQUIRED'],
+      });
+    expect(
+      schemas.BackstageGenericConfirmationMismatchResponse.properties
+        .confirmationRequired
+    ).toEqual({
+      type: 'boolean',
+      enum: [true],
+    });
+    const missingStorylineEnvelope = {
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_STORYLINE_NOT_FOUND',
+        message: 'The requested Backstage storyline was not found.',
+      },
+    };
+    const validateCanonError = compileComponent(
+      contract,
+      'BackstageCanonErrorResponse'
+    );
+    expect({
+      valid: validateCanonError(missingStorylineEnvelope),
+      errors: validateCanonError.errors,
+    }).toEqual({
+      valid: true,
+      errors: null,
+    });
+
+    const validateForbidden = compileComponent(
+      contract,
+      'BackstageCanonForbiddenResponse'
+    );
+    const dedicatedForbiddenEnvelope = {
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+        message: 'Capability action is not allowlisted for GPT Access execution.',
+      },
+    };
+    expect({
+      valid: validateForbidden(dedicatedForbiddenEnvelope),
+      errors: validateForbidden.errors,
+    }).toEqual({
+      valid: true,
+      errors: null,
+    });
+    const genericConfirmationEnvelope = {
+      error: 'Confirmation required',
+      message: 'This endpoint requires explicit human approval.',
+      code: 'CONFIRMATION_REQUIRED',
+      endpoint: '/capabilities/v1/backstage-booker/run',
+      method: 'POST',
+      gptId: null,
+      confirmationRequired: true,
+      confirmationStatus: 'pending',
+      confirmationChallenge: {
+        id: 'challenge-id',
+      },
+      timestamp: '2026-08-15T20:00:00.000Z',
+    };
+    expect({
+      valid: validateForbidden(genericConfirmationEnvelope),
+      errors: validateForbidden.errors,
+    }).toEqual({
+      valid: true,
+      errors: null,
+    });
+    expect(validateForbidden({
+      ...genericConfirmationEnvelope,
+      confirmationRequired: false,
+    })).toBe(false);
 
     expect(schemas.Storyline.required).toEqual(
       loadProtocolSchema('canon.schema.json').$defs.storyline.required

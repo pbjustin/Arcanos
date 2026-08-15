@@ -119,6 +119,9 @@ a password or API key, and do not put credentials in any action payload.
 Every new semantic canon mutation needs a new UUID mutationId. Reuse the same
 mutationId only to retry the identical normalized request. Preserve
 expectedVersion exactly; never silently change it to avoid a version conflict.
+If the backend returns BACKSTAGE_STORYLINE_NOT_FOUND, stop and report the
+missing storyline. Do not silently change expectedVersion to 0 or create a
+replacement storyline; creation is a distinct consequential mutation.
 
 The dedicated writeBackstageCanon operation does not use confirmation_token.
 If it returns CONFIRMATION_REQUIRED, stop and report an Action/backend

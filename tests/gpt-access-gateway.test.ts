@@ -3323,7 +3323,19 @@ describe('/gpt-access gateway', () => {
     });
 
     expect(response.status).toBe(403);
-    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body).toEqual(expect.objectContaining({
+      error: 'Confirmation required',
+      message: expect.any(String),
+      code: 'CONFIRMATION_REQUIRED',
+      method: 'POST',
+      confirmationRequired: true,
+      confirmationStatus: 'pending',
+      confirmationChallenge: expect.objectContaining({
+        id: expect.any(String),
+      }),
+      timestamp: expect.any(String),
+    }));
+    expect(response.body).not.toHaveProperty('ok');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
@@ -3354,6 +3366,34 @@ describe('/gpt-access gateway', () => {
       );
     }
   );
+
+  it('maps a missing storyline through the dedicated canon bearer as a bounded 404', async () => {
+    configureBackstageCapability('appendCanonBeat');
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND')
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'appendCanonBeat',
+      payload: buildBackstageCanonPayload('appendCanonBeat'),
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_STORYLINE_NOT_FOUND',
+        message: 'The requested Backstage storyline was not found.',
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+  });
 
   it('uses the fixed dedicated action grant instead of the generic capability scope', async () => {
     configureBackstageCapability('upsertStoryline');
