@@ -7,6 +7,8 @@ import {
 } from '@shared/http/aiDegradedHeaders.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
+import { BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE } from '@services/backstageBookerContracts.js';
+import { resolveBackstageCanonDomainErrorHttpStatus } from '@core/db/repositories/backstageBookerRepository.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
@@ -79,7 +81,9 @@ export async function dispatchLegacyRouteToGpt(
 
     if (!envelope.ok) {
       applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
-      const statusCode = LEGACY_ROUTE_ERROR_STATUS_CODES[envelope.error.code] ?? 400;
+      const statusCode = resolveBackstageCanonDomainErrorHttpStatus(envelope.error.code)
+        ?? LEGACY_ROUTE_ERROR_STATUS_CODES[envelope.error.code]
+        ?? (envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE ? 503 : 400);
       sendBoundedJsonResponse(req, res, envelope, {
         logEvent: 'legacy.route.error.response',
         statusCode,

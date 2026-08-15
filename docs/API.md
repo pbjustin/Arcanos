@@ -405,7 +405,8 @@ enforcement.
 Backstage generation and simulation actions remain public through the canonical
 GPT and compatibility writing routes: `generateBooking`,
 `generateBookingWithHRC`, and `simulateMatch`. The state-changing module actions
-`bookEvent`, `updateRoster`, `trackStoryline`, and `saveStoryline` require
+`bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`,
+`upsertStoryline`, and `appendCanonBeat` require
 `Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>`, the configured
 operator principal, the server-owned `mcp:invoke` scope, and the existing
 confirmation contract through `/gpt/:gptId`, GPT-selected `/dispatch`,
@@ -424,10 +425,10 @@ bearer credentials on one request.
 
 #### Backstage Booker Phase 1 contract
 
-`POST /gpt/backstage-booker` and its `backstage` GPT-ID alias expose the
-`bookEvent`, `updateRoster`, `trackStoryline`, `simulateMatch`,
-`generateBooking`, `generateBookingWithHRC`, and `saveStoryline` module
-actions. Their canonical payloads are closed JSON objects and accept an
+The Phase One action set on `POST /gpt/backstage-booker` and its `backstage`
+GPT-ID alias consists of `bookEvent`, `updateRoster`, `trackStoryline`,
+`simulateMatch`, `generateBooking`, `generateBookingWithHRC`, and
+`saveStoryline`. Their canonical payloads are closed JSON objects and accept an
 optional `universeId`; omitting it selects `legacy` for compatibility. An
 explicit ID must match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`.
 `universeId` is a caller-selected data scope, not authentication, ownership,
@@ -591,6 +592,66 @@ rows created before this policy cannot newly execute a Backstage mutation.
 The established control-plane principal also supplies the idempotency actor, so
 an operator retry with the same idempotency key stays in one authenticated
 scope instead of creating a new anonymous scope.
+
+#### Backstage Booker Phase 2A canon contract
+
+Phase 2A adds the `upsertStoryline` and `appendCanonBeat` module actions. They
+are module-action schemas, not top-level Arcanos command IDs, and do not change
+the seven Phase One request/response schemas. Both actions require an explicit
+`universeId`, a UUID `mutationId`, and an exact `expectedVersion`; canon writes
+never default to the `legacy` universe implicitly. They use the same
+control-plane `mcp:invoke` and one-use confirmation boundary as the Phase One
+mutations. No new direct `/backstage` compatibility route is introduced.
+
+`upsertStoryline` creates or replaces one typed storyline aggregate. Creation
+uses `expectedVersion: 0`; updates must supply the current positive version.
+The closed `storyline` object contains `key`, `title`, nullable `summary`,
+`status`, and an ordered, exact-case-unique `participantNames` array. Participant
+names must already exist in the same universe's roster, and the complete array
+must fit the 16,384-byte PostgreSQL JSONB text representation. This aggregate
+storage bound is checked during action normalization before database work. New
+storylines may start in `draft` or `active`. Allowed lifecycle moves are
+`draft -> active|cancelled`, `active -> paused|cancelled`, and
+`paused -> active|cancelled`; terminal `completed` and `cancelled` storylines
+cannot reopen. Completion is deliberately excluded from the aggregate-only
+upsert path.
+
+`appendCanonBeat` appends immutable, storyline-local history. Its closed beat
+contains a bounded typed `kind`, summary, normalized UTC `occurredAt`, and
+participant names that must be a subset of the storyline participants. An
+optional `eventId` must identify an event in the same universe. An optional
+`supersedesBeatId` performs an append-only retcon: the original row remains,
+only one replacement may supersede it, and booking context omits superseded
+beats from the current projection. The optional `nextStatus` changes lifecycle
+state in the same transaction. Moving to `completed` requires a `payoff` or
+`resolution` beat.
+
+Each mutation locks the per-universe canon head, compares the storyline
+version, increments one gapless semantic universe revision, changes the
+storyline/participant/beat projections, and records the exact result under
+`(universeId, mutationId)` in one PostgreSQL transaction. Reusing a mutation ID
+with the identical normalized payload replays the stored result without a new
+revision. Reusing it with different input returns
+`BACKSTAGE_MUTATION_ID_CONFLICT`. Missing storylines return
+`BACKSTAGE_STORYLINE_NOT_FOUND`; stale versions and lifecycle/reference/retcon
+conflicts return their bounded `BACKSTAGE_*` conflict code.
+
+Canon has no process-memory or exact-memory persistence fallback. A classified
+pre-commit database outage returns `BACKSTAGE_CANON_UNAVAILABLE` with HTTP 503.
+If a commit was attempted but its acknowledgement was lost, the action returns
+HTTP 200 with `applied: null`, `universeRevision: null`, null storyline/beat
+fields, and the existing `unknown` PostgreSQL receipt. Reconcile that outcome by
+repeating the identical normalized payload with the same mutation ID; do not
+invent a new ID or assert that the requested canon exists. Confirmed outcomes
+return `applied: true`, a decimal-string `universeRevision`, the updated typed
+storyline, and (for `appendCanonBeat`) the appended beat.
+
+Legacy `saveStoryline` prose and bounded `trackStoryline` continuity notes are
+not imported, dual-written, or silently promoted into canon. Generation reads
+the typed storyline and non-superseded beat projection ahead of those legacy
+blocks inside the same bounded repeatable-read snapshot. Phase 2A intentionally
+does not add a public canon read endpoint or visual workspace; those build on
+this authoritative mutation and revision substrate in a later slice.
 
 ### AFOL decision and inspection
 - `POST /api/afol/decide` (control-plane operator, `mcp:invoke`, and an issued

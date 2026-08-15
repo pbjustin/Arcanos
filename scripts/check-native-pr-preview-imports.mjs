@@ -541,7 +541,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageStoryline.ts',
-    '721c6f1f4305df5bd4be6e86ee156fd83ba46411c61f14571056cb69ad42e85c',
+    '1352383228608e77a2b1d86a0bf9cafdc928809753f11036553a94b83468c148',
   ],
   [
     'src/shared/researchRequest.ts',

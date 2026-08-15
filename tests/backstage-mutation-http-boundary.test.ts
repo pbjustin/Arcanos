@@ -455,6 +455,67 @@ describe('Backstage mutation HTTP boundary', () => {
     expect(confirmedResponse.headers['x-confirmation-status']).toBe('challenge-token');
   });
 
+  it('binds a canon storyline challenge to the exact normalized mutation payload', async () => {
+    const app = buildBoundaryApp();
+    const payload = {
+      universeId: 'promotion-east',
+      mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+      expectedVersion: 0,
+      storyline: {
+        key: 'world-title-chase',
+        title: 'World Title Chase',
+        summary: 'The challenger earns one final opportunity.',
+        status: 'draft',
+        participantNames: ['Alex Vega'],
+      },
+    };
+    const challengeResponse = await request(app)
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .send({ payload });
+    const challengeId = challengeResponse.headers['x-confirmation-challenge'];
+
+    expect(challengeResponse.status).toBe(403);
+    expect(challengeId).toEqual(expect.any(String));
+
+    const changedResponse = await request(app)
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .set('X-Confirmed', `token:${challengeId}`)
+      .send({
+        payload: {
+          ...payload,
+          storyline: {
+            ...payload.storyline,
+            title: 'Changed After Confirmation',
+          },
+        },
+      });
+
+    expect(changedResponse.status).toBe(403);
+    expect(changedResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(changedResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
+
+    const exactChallengeResponse = await request(app)
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .send({ payload });
+    const exactChallengeId = exactChallengeResponse.headers['x-confirmation-challenge'];
+    const confirmedResponse = await request(app)
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .set('X-Confirmed', `token:${exactChallengeId}`)
+      .send({ payload });
+
+    expect(exactChallengeResponse.status).toBe(403);
+    expect(confirmedResponse.status).toBe(204);
+    expect(confirmedResponse.headers['x-confirmation-status']).toBe('challenge-token');
+  });
+
   it.each([
     ['/backstage/book-event', {}],
     ['/gpt/backstage', { action: 'updateRoster' }],

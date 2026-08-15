@@ -5,17 +5,33 @@ import { describe, expect, it } from '@jest/globals';
 
 import { TABLE_DEFINITIONS } from '../src/core/db/schema.js';
 
-const forwardMigration = readFileSync(
+function readNormalized(path: string): string {
+  return readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+}
+
+const forwardMigration = readNormalized(
   join(process.cwd(), 'migrations', '20260814_backstage_universe_scope_v1.sql'),
-  'utf8'
 );
-const rollbackMigration = readFileSync(
+const rollbackMigration = readNormalized(
   join(
     process.cwd(),
     'migrations',
     '20260814_backstage_universe_scope_v1.rollback.sql'
-  ),
-  'utf8'
+  )
+);
+const canonForwardMigration = readNormalized(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260814_backstage_canon_storyline_v1.sql'
+  )
+);
+const canonRollbackMigration = readNormalized(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260814_backstage_canon_storyline_v1.rollback.sql'
+  )
 );
 const runtimeSchemaSql = TABLE_DEFINITIONS.join('\n');
 
@@ -285,5 +301,208 @@ describe('Backstage Booker universe-scope schema', () => {
       );
     }
     expect(rollbackMigration).not.toMatch(/\b(?:DELETE\s+FROM|TRUNCATE|DROP\s+TABLE)\b/iu);
+  });
+});
+
+const BACKSTAGE_CANON_TABLES = [
+  'backstage_canon_heads',
+  'backstage_canon_revisions',
+  'backstage_storyline_threads',
+  'backstage_storyline_participants',
+  'backstage_storyline_canon_beats'
+] as const;
+
+const BACKSTAGE_CANON_SCOPE_CONSTRAINTS = [
+  'uq_backstage_events_universe_id',
+  'uq_backstage_canon_revisions_mutation',
+  'uq_backstage_storyline_threads_universe_id',
+  'uq_backstage_storyline_threads_universe_key',
+  'fk_backstage_storyline_participants_thread',
+  'fk_backstage_storyline_participants_wrestler',
+  'fk_backstage_storyline_canon_beats_thread',
+  'fk_backstage_storyline_canon_beats_event',
+  'fk_backstage_storyline_canon_beats_supersedes',
+  'uq_backstage_storyline_canon_beats_replacement'
+] as const;
+
+describe('Backstage Booker canon/storyline schema', () => {
+  it.each([
+    ['runtime bootstrap', runtimeSchemaSql],
+    ['forward migration', canonForwardMigration]
+  ])('%s installs the additive scoped model', (_label, sql) => {
+    for (const table of BACKSTAGE_CANON_TABLES) {
+      expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
+    for (const constraint of BACKSTAGE_CANON_SCOPE_CONSTRAINTS) {
+      expect(sql).toContain(constraint);
+    }
+    expect(sql).toContain("operation IN ('upsertStoryline', 'appendCanonBeat')");
+    expect(sql).toContain("request_fingerprint ~ '^[0-9a-f]{64}$'");
+    expect(sql).toContain(
+      "status IN ('draft', 'active', 'paused', 'completed', 'cancelled')"
+    );
+    expect(sql).toContain('summary TEXT,');
+    expect(sql).toContain(
+      'CHECK (summary IS NULL OR char_length(summary) <= 10000)'
+    );
+    expect(sql).toContain('CHECK (char_length(btrim(kind)) BETWEEN 1 AND 64)');
+    expect(sql).toContain('CHECK (char_length(btrim(summary)) BETWEEN 1 AND 10000)');
+    expect(sql).toContain('jsonb_array_length(participant_names) <= 50');
+    expect(sql).toContain('UNIQUE (universe_id, supersedes_beat_id)');
+    expect(sql).toContain(
+      'FOREIGN KEY (universe_id, storyline_id, supersedes_beat_id)'
+    );
+  });
+
+  it.each([
+    ['runtime bootstrap', runtimeSchemaSql],
+    ['forward migration', canonForwardMigration]
+  ])('%s verifies or creates the event scoped identity', (_label, sql) => {
+    expect(sql).toContain("conname = 'uq_backstage_events_universe_id'");
+    expect(sql).toContain("<> 'UNIQUE(universe_id,id)'");
+    expect(sql).toContain("USING ERRCODE = '42804'");
+  });
+
+  it('builds the shared event identity concurrently before attaching it transactionally', () => {
+    const concurrentIndex =
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_backstage_events_universe_id';
+    const concurrentIndexPosition = canonForwardMigration.indexOf(concurrentIndex);
+    const transactionPosition = canonForwardMigration.indexOf('BEGIN;');
+
+    expect(concurrentIndexPosition).toBeGreaterThan(-1);
+    expect(transactionPosition).toBeGreaterThan(concurrentIndexPosition);
+    expect(canonForwardMigration).toContain(
+      'UNIQUE USING INDEX uq_backstage_events_universe_id'
+    );
+    expect(canonForwardMigration).toContain(
+      'backing index is invalid or incomplete; remove it concurrently before retrying'
+    );
+    expect(runtimeSchemaSql).toContain(
+      'is missing; apply 20260814_backstage_canon_storyline_v1.sql before starting this runtime against an existing database'
+    );
+    expect(runtimeSchemaSql).not.toContain(
+      'ADD CONSTRAINT uq_backstage_events_universe_id\n         UNIQUE (universe_id, id)'
+    );
+  });
+
+  it('keeps the runtime and migration catalog verifiers byte-for-byte aligned', () => {
+    const marker = '-- CREATE ... IF NOT EXISTS';
+    const migrationStart = canonForwardMigration.indexOf(marker);
+    const migrationEnd = canonForwardMigration.indexOf(
+      '-- Establish revision-zero heads only.',
+      migrationStart
+    );
+    const runtimeStart = runtimeSchemaSql.indexOf(marker);
+    const runtimeEnd = runtimeSchemaSql.indexOf(
+      'INSERT INTO backstage_canon_heads (universe_id)',
+      runtimeStart
+    );
+    expect(migrationStart).toBeGreaterThan(-1);
+    expect(migrationEnd).toBeGreaterThan(migrationStart);
+    expect(runtimeStart).toBeGreaterThan(-1);
+    expect(runtimeEnd).toBeGreaterThan(runtimeStart);
+
+    const migrationVerifier = canonForwardMigration
+      .slice(migrationStart, migrationEnd)
+      .trim();
+    const runtimeVerifier = runtimeSchemaSql
+      .slice(runtimeStart, runtimeEnd)
+      .replace(/`,\s*$/u, '')
+      .trim();
+    expect(runtimeVerifier).toBe(migrationVerifier);
+  });
+
+  it.each([
+    ['runtime bootstrap', runtimeSchemaSql],
+    ['forward migration', canonForwardMigration]
+  ])('%s rejects drifted Phase-2 tables, constraints, and indexes', (_label, sql) => {
+    expect(sql).toContain('p2_expected_backstage_canon_heads');
+    expect(sql).toContain('actual_columns IS DISTINCT FROM expected_columns');
+    expect(sql).toContain(
+      'actual_constraint_names IS DISTINCT FROM expected_constraint_names'
+    );
+    expect(sql).toContain('actual_constraint.condeferrable');
+    expect(sql).toContain('actual_constraint.convalidated');
+    expect(sql).toContain("to_jsonb(constraint_row) ->> 'conenforced'");
+    expect(sql).toContain("to_jsonb(index_row) ->> 'indnullsnotdistinct'");
+    expect(sql).toContain(
+      'actual_index_signature IS DISTINCT FROM expected_index_signature'
+    );
+    expect(sql).toContain("USING ERRCODE = '42804'");
+  });
+
+  it('keeps table changes transactional and never infers structured canon from legacy content', () => {
+    expect(canonForwardMigration).toMatch(/\bBEGIN;/u);
+    expect(canonForwardMigration).toContain(
+      'SET LOCAL search_path = public, pg_catalog;'
+    );
+    expect(canonForwardMigration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(canonForwardMigration).toContain(
+      'INSERT INTO backstage_canon_heads (universe_id)'
+    );
+    expect(canonForwardMigration).not.toMatch(
+      /INSERT\s+INTO\s+backstage_storyline_(?:threads|canon_beats)[\s\S]*?SELECT/iu
+    );
+    expect(canonForwardMigration).not.toMatch(
+      /\b(?:UPDATE|DELETE\s+FROM)\s+backstage_(?:storylines|story_beats|events|wrestlers)\b/iu
+    );
+  });
+
+  it('guards rollback before dropping only Phase-2-owned objects', () => {
+    const guardPosition = canonRollbackMigration.indexOf(
+      'Cannot roll back populated Backstage canon/storyline storage'
+    );
+    expect(guardPosition).toBeGreaterThan(-1);
+    expect(canonRollbackMigration).toContain("USING ERRCODE = '55000'");
+    expect(canonRollbackMigration).toContain(
+      'SELECT 1 FROM backstage_canon_heads WHERE revision <> 0'
+    );
+    expect(canonRollbackMigration).toContain(
+      'SET LOCAL search_path = public, pg_catalog;'
+    );
+
+    let previousLock = canonRollbackMigration.indexOf('BEGIN;');
+    for (const table of BACKSTAGE_CANON_TABLES) {
+      const lockPosition = canonRollbackMigration.indexOf(
+        `LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`
+      );
+      expect(lockPosition).toBeGreaterThan(previousLock);
+      expect(lockPosition).toBeLessThan(guardPosition);
+      previousLock = lockPosition;
+    }
+
+    let previousDrop = guardPosition;
+    for (const table of [
+      'backstage_storyline_canon_beats',
+      'backstage_storyline_participants',
+      'backstage_storyline_threads',
+      'backstage_canon_revisions',
+      'backstage_canon_heads'
+    ]) {
+      const dropPosition = canonRollbackMigration.indexOf(`DROP TABLE ${table}`);
+      expect(dropPosition).toBeGreaterThan(previousDrop);
+      previousDrop = dropPosition;
+    }
+    expect(canonRollbackMigration).not.toContain(
+      'DROP CONSTRAINT IF EXISTS uq_backstage_events_universe_id'
+    );
+    expect(canonRollbackMigration).toContain(
+      'cannot prove that it\n-- owns this shared-table object'
+    );
+    expect(canonRollbackMigration).not.toMatch(
+      /DROP TABLE backstage_(?:events|wrestlers|storylines|story_beats)\b/iu
+    );
+    expect(canonRollbackMigration).not.toMatch(/\b(?:DELETE\s+FROM|TRUNCATE)\b/iu);
+  });
+
+  it('requires canon Phase 2 rollback before universe-scope Phase 1 rollback', () => {
+    expect(rollbackMigration).toContain(
+      'Roll back Backstage canon/storyline Phase 2 before universe-scope Phase 1'
+    );
+    for (const table of BACKSTAGE_CANON_TABLES) {
+      expect(rollbackMigration).toContain(`to_regclass('public.${table}')`);
+    }
+    expect(rollbackMigration.indexOf('Roll back Backstage canon/storyline Phase 2'))
+      .toBeLessThan(rollbackMigration.indexOf('LOCK TABLE backstage_wrestlers'));
   });
 });

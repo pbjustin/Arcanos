@@ -84,12 +84,19 @@ Railway builds from the root package and uses `scripts/start-railway-service-wit
 ### Protocol and CLI
 
 - Public protocol commands, envelopes, and schema-catalog entries belong in `packages/protocol/` first.
-- Backstage Booker's seven request/response pairs are exported by
+- Backstage Booker's nine request/response pairs are exported by
   `@arcanos/protocol` as a registered module-action family. Consumers should
   use the exported action types, `DEFAULT_BACKSTAGE_UNIVERSE_ID`, schema
   catalog, and dedicated validation/assertion helpers rather than reproducing
   request or persistence shapes in backend code. These action names do not
   extend either public protocol command-ID list.
+  The Phase 2A exports include typed storyline/beat models, storyline status,
+  mutation UUID and decimal revision aliases, and the durable-or-unknown
+  `upsertStoryline` / `appendCanonBeat` request and response unions. Unlike the
+  original actions, both canon requests require an explicit `universeId`.
+  `isValidBackstageCanonUtcTimestamp` and its exported pattern source keep the
+  portable JSON schema and backend normalization aligned on real UTC calendar
+  dates from year 0001 through 9999 and one to nine optional fractional digits.
 - `packages/cli/` owns the TypeScript `arcanos` / `arcanos-protocol` binaries and transports. Its behavior is documented in `CLI_OVERVIEW.md`.
 - `daemon-python/` owns the interactive Python local agent. It also installs an `arcanos` executable, so use `arcanos-protocol` or `node packages/cli/dist/index.js` when the TypeScript executable must be unambiguous, and `python -m arcanos.cli` for the Python executable.
 - Python consumes the TypeScript-owned protocol behind the backend/protocol boundary and must not define a competing public shape.

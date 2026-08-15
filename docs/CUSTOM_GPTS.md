@@ -183,18 +183,20 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 - Public generation/simulation: `simulateMatch`, `generateBooking`,
   `generateBookingWithHRC`
 - Operator mutations: `bookEvent`, `updateRoster`, `trackStoryline`,
-  `saveStoryline`
+  `saveStoryline`, `upsertStoryline`, `appendCanonBeat`
 (`src/services/backstage-booker.ts`)
 
-Every Backstage Booker action accepts an optional `universeId`. Omitted scope
+The original seven Backstage Booker actions accept an optional `universeId`. Omitted scope
 uses the backward-compatible `legacy` universe; explicit IDs are bounded to
 128 characters and use the portable `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, and
 `-` character set. Roster, event, storyline, and story-beat reads and writes
 stay within that universe. `legacy` is a compatibility scope, not a canon or
 storyline-domain model. `universeId` is also not an authorization or tenant
 boundary; callers must be authorized separately.
+The Phase 2A canon mutations require `universeId` explicitly and never infer
+`legacy`, because canon must be attached to a deliberate durable scope.
 
-The seven action request and response contracts live under
+The nine action request and response contracts live under
 `packages/protocol/schemas/v1/backstage-booker/` and are exposed through
 `getProtocolSchemaCatalog().backstageBooker.actions`. Dedicated Backstage
 Booker validators enforce these contracts at the module boundary. They are a
@@ -202,6 +204,17 @@ module-action schema family, not Arcanos protocol command IDs, so they do not
 add entries to either protocol command-ID list. The raw-string
 `generateBooking` response remains accepted for existing callers while the
 structured response shape carries `universeId` when used.
+
+`upsertStoryline` provides version-fenced typed storyline aggregates;
+`appendCanonBeat` records immutable beats, append-only retcons, and atomic
+lifecycle transitions. Both require a UUID mutation ID. An identical retry
+replays the exact PostgreSQL result without advancing the universe revision,
+while a reused ID with changed input conflicts. Canon mutations never use the
+Phase One process-memory or convenience-memory fallback: known pre-commit
+outages fail with `BACKSTAGE_CANON_UNAVAILABLE`, and a lost commit
+acknowledgement returns null result fields plus the `unknown` receipt for
+same-ID reconciliation. Legacy saved prose and retained story beats are not
+promoted or dual-written into this model.
 
 Mutation results (`bookEvent`, `updateRoster`, `trackStoryline`, and
 `saveStoryline`) report persistence explicitly: `durable` confirms a

@@ -39,6 +39,7 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.envelope,
   ...Object.values(schemaCatalog.nouns),
   schemaCatalog.backstageBooker.common,
+  schemaCatalog.backstageBooker.canon,
   ...Object.values(schemaCatalog.backstageBooker.actions).flatMap(
     ({ request, response }) => [request, response]
   ),
@@ -128,7 +129,9 @@ const backstageBookerActionRequestSchemas: Record<BackstageBookerAction, AnySche
   generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.request,
   generateBookingWithHRC:
     schemaCatalog.backstageBooker.actions.generateBookingWithHRC.request,
-  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.request
+  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.request,
+  upsertStoryline: schemaCatalog.backstageBooker.actions.upsertStoryline.request,
+  appendCanonBeat: schemaCatalog.backstageBooker.actions.appendCanonBeat.request
 };
 
 const backstageBookerActionResponseSchemas: Record<BackstageBookerAction, AnySchema> = {
@@ -139,7 +142,9 @@ const backstageBookerActionResponseSchemas: Record<BackstageBookerAction, AnySch
   generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.response,
   generateBookingWithHRC:
     schemaCatalog.backstageBooker.actions.generateBookingWithHRC.response,
-  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.response
+  saveStoryline: schemaCatalog.backstageBooker.actions.saveStoryline.response,
+  upsertStoryline: schemaCatalog.backstageBooker.actions.upsertStoryline.response,
+  appendCanonBeat: schemaCatalog.backstageBooker.actions.appendCanonBeat.response
 };
 
 const protocolAjv = createProtocolAjv();

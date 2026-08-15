@@ -17,6 +17,11 @@ import {
 } from '@shared/backstage/backstageRoster.js';
 import { isBackstageStorylineValidationError } from '@shared/backstage/backstageStoryline.js';
 import {
+  BackstageBookerContractError,
+  isBackstageCanonUnavailableError,
+} from '@services/backstageBookerContracts.js';
+import { isBackstageCanonDomainError } from '@core/db/repositories/backstageBookerRepository.js';
+import {
   isResearchRequestValidationError,
   RESEARCH_REQUEST_VALIDATION_ERROR_CODE,
 } from '@shared/researchRequest.js';
@@ -154,6 +159,62 @@ export function buildBackstageStorylineValidationMcpError(
     },
     requestId: ctx.requestId
   });
+}
+
+/** Build client-safe MCP errors for the durable-only Phase 2A canon mutations. */
+export function buildBackstageCanonMcpError(
+  moduleName: unknown,
+  action: unknown,
+  error: unknown,
+  ctx: McpRequestContext
+): ReturnType<typeof mcpError> | null {
+  if (
+    moduleName !== BACKSTAGE_MODULE_NAME
+    || (action !== 'upsertStoryline' && action !== 'appendCanonBeat')
+  ) {
+    return null;
+  }
+
+  if (error instanceof BackstageBookerContractError) {
+    return mcpError({
+      code: 'ERR_BAD_REQUEST',
+      message: error.message,
+      details: {
+        tool: 'modules.invoke',
+        category: 'BACKSTAGE_BOOKER_INVALID',
+        action: error.action,
+        issues: error.issues.slice(0, 16),
+      },
+      requestId: ctx.requestId,
+    });
+  }
+
+  if (isBackstageCanonDomainError(error)) {
+    return mcpError({
+      code: error.httpStatus === 404 ? 'ERR_NOT_FOUND' : 'ERR_CONFLICT',
+      message: error.message,
+      details: {
+        tool: 'modules.invoke',
+        category: error.code,
+      },
+      requestId: ctx.requestId,
+    });
+  }
+
+  if (isBackstageCanonUnavailableError(error)) {
+    return mcpError({
+      code: 'ERR_UNAVAILABLE',
+      message: error.message,
+      details: {
+        tool: 'modules.invoke',
+        category: error.code,
+        retryable: error.retryable,
+      },
+      requestId: ctx.requestId,
+    });
+  }
+
+  return null;
 }
 
 /** Build a retryable MCP unavailable error for the authoritative roster transaction. */

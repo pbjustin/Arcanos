@@ -104,6 +104,7 @@ export function isRetryableBackstageStorylinePersistenceCause(
         code?: unknown;
         errors?: unknown;
         message?: unknown;
+        rollbackCause?: unknown;
       };
       const code = typeof candidate.code === 'string'
         ? candidate.code.trim().toUpperCase()
@@ -122,6 +123,9 @@ export function isRetryableBackstageStorylinePersistenceCause(
 
       if (candidate.cause !== undefined) {
         pending.push(candidate.cause);
+      }
+      if (candidate.rollbackCause !== undefined) {
+        pending.push(candidate.rollbackCause);
       }
       if (Array.isArray(candidate.errors)) {
         pending.push(...candidate.errors.slice(0, MAX_STORYLINE_PERSISTENCE_CAUSES));

@@ -74,9 +74,13 @@ import {
 } from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
+import {
+  resolveBackstageCanonDomainErrorHttpStatus,
+} from '@core/db/repositories/backstageBookerRepository.js';
 import {
   buildResearchModulePreflightPayload,
   getResearchGptPromptPreflight,
@@ -1118,6 +1122,55 @@ function normalizeBackstageStorylineMutationBody(body: unknown): Record<string, 
   };
 }
 
+type BackstageCanonMutationAction = 'upsertStoryline' | 'appendCanonBeat';
+
+const BACKSTAGE_CANON_MUTATION_DOMAIN_FIELDS: Readonly<
+  Record<BackstageCanonMutationAction, readonly string[]>
+> = Object.freeze({
+  upsertStoryline: Object.freeze([
+    'universeId',
+    'mutationId',
+    'expectedVersion',
+    'storyline',
+  ]),
+  appendCanonBeat: Object.freeze([
+    'universeId',
+    'mutationId',
+    'storylineKey',
+    'expectedVersion',
+    'beat',
+    'nextStatus',
+  ]),
+});
+
+function normalizeBackstageCanonMutationBody(
+  body: unknown,
+  action: BackstageCanonMutationAction
+): Record<string, unknown> {
+  const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const normalizedPayload = normalizeBackstageBookerIngressMutationPayload(
+    action,
+    body,
+    'canonical-gpt'
+  );
+  const normalizedBody: Record<string, unknown> = {
+    ...bodyRecord,
+    payload: normalizedPayload,
+  };
+
+  // Flattened canonical requests may carry their domain fields at the transport
+  // root. Once the shared contract has materialized the canonical payload, keep
+  // only that copy so queued persistence and request fingerprints cannot retain
+  // a second, non-normalized UUID or timestamp representation.
+  for (const field of BACKSTAGE_CANON_MUTATION_DOMAIN_FIELDS[action]) {
+    delete normalizedBody[field];
+  }
+
+  return normalizedBody;
+}
+
 function validateResearchGptRequestBody(body: unknown): void {
   normalizeResearchModulePayload(
     buildResearchModulePreflightPayload(body),
@@ -1940,6 +1993,66 @@ router.post(
               res,
               errorPayload,
               'gpt.response.backstage_storyline_validation',
+              400
+            );
+          }
+        }
+
+        if (
+          (
+            backstageMutationOperation?.action === 'upsertStoryline'
+            || backstageMutationOperation?.action === 'appendCanonBeat'
+          )
+          && routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+        ) {
+          const canonAction = backstageMutationOperation.action;
+          try {
+            effectiveBody = normalizeBackstageCanonMutationBody(effectiveBody, canonAction);
+          } catch (error: unknown) {
+            if (
+              !(error instanceof BackstageBookerContractError)
+              || error.action !== canonAction
+            ) {
+              throw error;
+            }
+
+            const errorCode = 'BACKSTAGE_BOOKER_INVALID';
+            requestLogger?.warn?.('gpt.request.backstage_canon_validation_failed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              action: canonAction,
+              errorCode,
+            });
+            const errorPayload = buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: canonAction,
+              code: errorCode,
+              message: error.message,
+              route: 'backstage_canon_validation',
+              details: {
+                action: canonAction,
+                issues: error.issues.slice(0, 16),
+              },
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: canonAction,
+              status: 400,
+              error: {
+                name: errorCode,
+                message: error.message,
+              },
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              errorPayload,
+              'gpt.response.backstage_canon_validation',
               400
             );
           }
@@ -3430,7 +3543,10 @@ router.post(
               traceId
             }
           };
-          const statusCode =
+          const canonDomainStatus = resolveBackstageCanonDomainErrorHttpStatus(
+            envelope.error.code
+          );
+          const statusCode = canonDomainStatus ?? (
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
               : envelope.error.code === 'MEMORY_AUTH_REQUIRED'
@@ -3441,13 +3557,16 @@ router.post(
               ? 503
               : envelope.error.code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE
               ? 500
+              : envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+              ? 503
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
               : unexpectedGamingRouteFailure
               ? 500
               : envelope.error.code === "MODULE_TIMEOUT"
               ? 504
-              : 400;
+              : 400
+          );
           requestLogger?.warn?.("gpt.request.route_result", {
             endpoint: req.originalUrl,
             gptId: incomingGptId,

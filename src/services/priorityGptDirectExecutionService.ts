@@ -19,7 +19,15 @@ import {
 import type { routeGptRequest as routeGptRequestType } from '@routes/_core/gptDispatch.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
-import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  isBackstageCanonCommitOutcomeUnknown
+} from '@services/backstageBookerContracts.js';
+import {
+  buildNonReusableGptResultAutonomyState,
+  computeGptJobLifecycleDeadlines
+} from '@shared/gpt/gptJobLifecycle.js';
 import {
   resolveGptWaitTimeoutMs,
   resolvePriorityGptDirectExecutionConcurrency
@@ -45,7 +53,10 @@ function isRetryablePriorityGptError(error: {
   details?: unknown;
 }): boolean {
   const backstagePersistenceRetryable =
-    error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+    (
+      error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+      || error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+    )
     && typeof error.details === 'object'
     && error.details !== null
     && (error.details as { retryable?: unknown }).retryable === true;
@@ -433,7 +444,11 @@ async function executeReservedPriorityGptDirectExecution(params: {
     }));
 
     stopHeartbeat();
-    if (cancellationController.signal.aborted) {
+    const completedAdmittedCanonMutation = envelope.ok && (
+      backstageMutationAdmission?.action === 'upsertStoryline'
+      || backstageMutationAdmission?.action === 'appendCanonBeat'
+    );
+    if (cancellationController.signal.aborted && !completedAdmittedCanonMutation) {
       const reason = cancellationController.signal.reason;
       throw reason instanceof Error
         ? reason
@@ -486,6 +501,10 @@ async function executeReservedPriorityGptDirectExecution(params: {
       return;
     }
 
+    const idempotencyReusable = !isBackstageCanonCommitOutcomeUnknown(
+      backstageMutationAdmission?.action,
+      envelope.result
+    );
     const terminalJob = await persistTerminal(
       'completed',
       {
@@ -494,14 +513,24 @@ async function executeReservedPriorityGptDirectExecution(params: {
         autonomyState: {
           priorityDirectExecution: {
             completedAt: new Date().toISOString(),
-            durationMs: Date.now() - startedAtMs
-          }
+            durationMs: Date.now() - startedAtMs,
+            idempotencyReusable
+          },
+          ...(!idempotencyReusable
+            ? buildNonReusableGptResultAutonomyState(
+                BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON
+              )
+            : {})
         },
-        metadata: computeGptJobLifecycleDeadlines('completed')
+        metadata: computeGptJobLifecycleDeadlines('completed'),
+        allowCompletionAfterCancellationRequest: completedAdmittedCanonMutation
       }
     );
     if (!terminalJob) {
-      if (await finalizeCancellationAfterTerminalCasMiss()) {
+      if (
+        !completedAdmittedCanonMutation
+        && await finalizeCancellationAfterTerminalCasMiss()
+      ) {
         return;
       }
       params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {

@@ -11,7 +11,11 @@ import {
   BACKSTAGE_STORYLINE_MAX_BYTES,
   BackstageStorylineValidationError,
 } from '../src/shared/backstage/backstageStoryline.js';
-import { BackstageBookerContractError } from '../src/services/backstageBookerContracts.js';
+import {
+  BackstageBookerContractError,
+  BackstageCanonUnavailableError,
+} from '../src/services/backstageBookerContracts.js';
+import { BackstageCanonDomainError } from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
   ResearchRequestValidationError,
   RESEARCH_MODULE_NAME,
@@ -3426,6 +3430,69 @@ describe('/gpt-access gateway', () => {
     expect(response.body.error).toEqual({
       code: 'GPT_ACCESS_VALIDATION_ERROR',
       message: 'Invalid Backstage Booker bookEvent payload.',
+    });
+  });
+
+  it('maps a bounded canon conflict to its GPT Access HTTP status and code', async () => {
+    configureBackstageCapability('upsertStoryline');
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT')
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/backstage-booker/run')
+    )).send({
+      action: 'upsertStoryline',
+      payload: {
+        universeId: 'phase-two',
+        mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+        expectedVersion: 0,
+        storyline: {
+          key: 'summer-feud',
+          title: 'Summer Feud',
+          summary: null,
+          status: 'draft',
+          participantNames: [],
+        },
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toEqual({
+      code: 'BACKSTAGE_STORYLINE_VERSION_CONFLICT',
+      message: 'The Backstage storyline changed before this mutation could be applied.',
+    });
+  });
+
+  it('maps a classified canon outage to a retryable GPT Access 503', async () => {
+    configureBackstageCapability('appendCanonBeat');
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageCanonUnavailableError('appendCanonBeat')
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/backstage-booker/run')
+    )).send({
+      action: 'appendCanonBeat',
+      payload: {
+        universeId: 'phase-two',
+        mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+        storylineKey: 'summer-feud',
+        expectedVersion: 1,
+        beat: {
+          kind: 'development',
+          summary: 'The challenger interrupts the champion.',
+          occurredAt: '2026-08-14T20:00:00Z',
+          participantNames: [],
+        },
+      },
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toEqual({
+      code: 'BACKSTAGE_CANON_UNAVAILABLE',
+      message: 'Backstage canon persistence is temporarily unavailable.',
+      retryable: true,
     });
   });
 

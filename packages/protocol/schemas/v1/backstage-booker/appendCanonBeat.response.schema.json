@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/appendCanonBeat.response.schema.json",
+  "title": "Backstage Booker appendCanonBeat response",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "mutationId",
+        "applied",
+        "universeRevision",
+        "storyline",
+        "beat",
+        "persistence"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+        },
+        "mutationId": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/mutationId"
+        },
+        "applied": {
+          "const": true
+        },
+        "universeRevision": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/universeRevision"
+        },
+        "storyline": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/storyline"
+        },
+        "beat": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/canonBeat"
+        },
+        "persistence": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/durablePersistence"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "mutationId",
+        "applied",
+        "universeRevision",
+        "storyline",
+        "beat",
+        "persistence"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+        },
+        "mutationId": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json#/$defs/mutationId"
+        },
+        "applied": {
+          "type": "null"
+        },
+        "universeRevision": {
+          "type": "null"
+        },
+        "storyline": {
+          "type": "null"
+        },
+        "beat": {
+          "type": "null"
+        },
+        "persistence": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/unknownPersistence"
+        }
+      }
+    }
+  ]
+}

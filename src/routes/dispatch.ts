@@ -12,6 +12,8 @@ import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageStoryline.js';
+import { BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE } from '@services/backstageBookerContracts.js';
+import { resolveBackstageCanonDomainErrorHttpStatus } from '@core/db/repositories/backstageBookerRepository.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import {
   buildResolvedGptDispatchBody,
@@ -77,6 +79,13 @@ function gptStatusCode(envelope: AskEnvelope): number {
     return 401;
   }
   if (code === 'MEMORY_AUTH_UNAVAILABLE') {
+    return 503;
+  }
+  const canonDomainStatus = resolveBackstageCanonDomainErrorHttpStatus(code);
+  if (canonDomainStatus !== null) {
+    return canonDomainStatus;
+  }
+  if (code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE) {
     return 503;
   }
   if (code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE) {

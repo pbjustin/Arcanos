@@ -1,5 +1,42 @@
 import type { JobData } from '@core/db/schema.js';
 
+const GPT_RESULT_REUSE_AUTONOMY_KEY = 'gptResultReuse';
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Persist why a completed GPT result must not satisfy a later identical request. */
+export function buildNonReusableGptResultAutonomyState(
+  reason: string
+): Record<string, unknown> {
+  return {
+    [GPT_RESULT_REUSE_AUTONOMY_KEY]: {
+      reusable: false,
+      reason
+    }
+  };
+}
+
+/**
+ * Decide whether a terminal GPT result may be returned by request-level
+ * idempotency. The key binding itself remains active so a changed fingerprint
+ * still conflicts while an exact retry can create a reconciliation job.
+ */
+export function isGptJobResultReusable(
+  job: Pick<JobData, 'status' | 'autonomy_state'>
+): boolean {
+  if (job.status !== 'completed') {
+    return true;
+  }
+
+  const autonomyState = asRecord(job.autonomy_state);
+  const reusePolicy = asRecord(autonomyState?.[GPT_RESULT_REUSE_AUTONOMY_KEY]);
+  return reusePolicy?.reusable !== false;
+}
+
 export type GptJobStorageStatus =
   | 'pending'
   | 'running'

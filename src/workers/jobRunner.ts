@@ -31,6 +31,11 @@ import {
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
+  BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
+  BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  isBackstageCanonCommitOutcomeUnknown
+} from '@services/backstageBookerContracts.js';
+import {
   buildBridgeSmokeCompletedOutput,
   isQueuedBridgeSmokeJobInput
 } from '@shared/gpt/bridgeSmoke.js';
@@ -83,7 +88,11 @@ import {
   isAbortError,
   runWithRequestAbortContext
 } from '@arcanos/runtime';
-import { computeGptJobLifecycleDeadlines, summarizeGptJobTimings } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  buildNonReusableGptResultAutonomyState,
+  computeGptJobLifecycleDeadlines,
+  summarizeGptJobTimings
+} from '@shared/gpt/gptJobLifecycle.js';
 import {
   getOpenAIProviderRuntimeStatus,
   probeOpenAIProviderHealth,
@@ -110,6 +119,8 @@ interface JobExecutionOutcome {
   output: unknown;
   errorMessage?: string;
   retryable?: boolean;
+  completionAutonomyState?: Record<string, unknown>;
+  completionWinsLateCancellation?: boolean;
 }
 
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
@@ -876,7 +887,10 @@ export async function executeQueuedGptRequest(params: {
         envelope.error.code === 'MODULE_TIMEOUT'
         || envelope.error.code === 'MODULE_ERROR'
         || (
-          envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+          (
+            envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+            || envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+          )
           && typeof envelope.error.details === 'object'
           && envelope.error.details !== null
           && (envelope.error.details as { retryable?: unknown }).retryable === true
@@ -892,9 +906,26 @@ export async function executeQueuedGptRequest(params: {
     route: envelope._route.route ?? null
   });
 
+  const commitOutcomeUnknown = isBackstageCanonCommitOutcomeUnknown(
+    backstageMutationAdmission?.action,
+    envelope.result
+  );
   return {
     status: 'completed',
-    output: envelope
+    output: envelope,
+    ...(
+      backstageMutationAdmission?.action === 'upsertStoryline'
+      || backstageMutationAdmission?.action === 'appendCanonBeat'
+        ? { completionWinsLateCancellation: true }
+        : {}
+    ),
+    ...(commitOutcomeUnknown
+      ? {
+          completionAutonomyState: buildNonReusableGptResultAutonomyState(
+            BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON
+          )
+        }
+      : {})
   };
 }
 
@@ -1679,7 +1710,13 @@ export async function runWorkerConsumerSlot(
               'Queue job cancellation requested before terminal persistence.'
           );
         }
-        if (jobCancellationController.signal.aborted) {
+        const completedAdmittedCanonMutation =
+          outcome.status === 'completed'
+          && outcome.completionWinsLateCancellation === true;
+        if (
+          jobCancellationController.signal.aborted
+          && !completedAdmittedCanonMutation
+        ) {
           if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1711,16 +1748,22 @@ export async function runWorkerConsumerSlot(
             fence: claimFence,
             output: outcome.output,
             errorMessage: null,
-            metadata: lifecycleDeadlines
+            autonomyState: outcome.completionAutonomyState,
+            metadata: lifecycleDeadlines,
+            allowCompletionAfterCancellationRequest:
+              outcome.completionWinsLateCancellation === true
           }
         );
         if (!terminalJob) {
-          if (await finalizeCancellationAfterTerminalCasMiss({
-            job,
-            fence: claimFence,
-            autonomyService,
-            jobStartedAtMs
-          })) {
+          if (
+            outcome.completionWinsLateCancellation !== true
+            && await finalizeCancellationAfterTerminalCasMiss({
+              job,
+              fence: claimFence,
+              autonomyService,
+              jobStartedAtMs
+            })
+          ) {
             continue;
           }
           await autonomyService.markJobLeaseLost(

@@ -3,6 +3,22 @@
 
 BEGIN;
 
+-- Phase 2 owns foreign keys into Phase 1 tables. Refuse an out-of-order
+-- rollback before PostgreSQL reports a lower-level dependency failure.
+DO $$
+BEGIN
+  IF to_regclass('public.backstage_canon_heads') IS NOT NULL
+    OR to_regclass('public.backstage_canon_revisions') IS NOT NULL
+    OR to_regclass('public.backstage_storyline_threads') IS NOT NULL
+    OR to_regclass('public.backstage_storyline_participants') IS NOT NULL
+    OR to_regclass('public.backstage_storyline_canon_beats') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'Roll back Backstage canon/storyline Phase 2 before universe-scope Phase 1'
+      USING ERRCODE = '55000';
+  END IF;
+END
+$$;
+
 -- Fence every universe-aware writer before checking the rollback invariant.
 -- The fixed order matches the application context-read order and the locks are
 -- retained through every constraint and column change below.

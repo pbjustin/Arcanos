@@ -35,7 +35,7 @@ ActionPlan execution is a separate contract family. Keep its schemas, shared Typ
 
 Backstage Booker is also a distinct contract family, but it is registered in
 the shared schema catalog under `backstageBooker`, alongside (not inside) the
-`commands` catalog. Its seven action names are module action identifiers, not
+`commands` catalog. Its nine action names are module action identifiers, not
 protocol command IDs. Adding or changing a Backstage action therefore does not
 change `ARCANOS_PROTOCOL_COMMAND_IDS` or
 `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` unless an independently reviewed
@@ -44,6 +44,14 @@ The persistence union distinguishes committed, known pre-commit fallback, and
 indeterminate commit outcomes. A `saveStoryline` response couples
 `persistence.status: "unknown"` to `saved: null`; all other valid persistence
 states require `saved: true`.
+The additive Phase 2A `canon` schema supplies the typed storyline, immutable
+beat, mutation UUID, timestamp, and decimal revision definitions shared by
+`upsertStoryline` and `appendCanonBeat`. Those two actions require explicit
+universe scope and allow only confirmed PostgreSQL durability or an
+indeterminate commit receipt; they never validate a `non_durable` canon result.
+Module normalization also enforces the canon participant array's 16,384-byte
+PostgreSQL JSONB text bound, which JSON Schema cannot express directly.
+The original seven action schema files remain unchanged.
 
 Implemented protocol commands:
 - `task.create`

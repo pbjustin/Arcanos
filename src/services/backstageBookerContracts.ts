@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import {
+  isValidBackstageCanonUtcTimestamp,
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   validateBackstageBookerActionPayload,
   type BackstageBookerAction,
@@ -30,9 +31,11 @@ export type BackstageBookerMutationIngress =
   | 'legacy';
 
 type BackstageBookerMutationAction =
+  | 'appendCanonBeat'
   | 'bookEvent'
   | 'saveStoryline'
   | 'trackStoryline'
+  | 'upsertStoryline'
   | 'updateRoster';
 
 const TRANSPORT_ONLY_FIELDS = new Set([
@@ -239,8 +242,69 @@ function hasSchemaDrivenCanonicalIntent(
     case 'generateBooking':
     case 'generateBookingWithHRC':
     case 'saveStoryline':
+    case 'upsertStoryline':
+    case 'appendCanonBeat':
       return true;
   }
+}
+
+export const BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE = 'BACKSTAGE_CANON_UNAVAILABLE';
+export const BACKSTAGE_CANON_UNAVAILABLE_ERROR_MESSAGE =
+  'Backstage canon persistence is temporarily unavailable.';
+export const BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON =
+  'backstage_canon_commit_outcome_unknown';
+
+/**
+ * Identify the truthful receipt returned when PostgreSQL commit acknowledgement
+ * is lost for a Phase 2 canon mutation. Async jobs retain this receipt for
+ * polling, but must not reuse it as an idempotent completed result because a
+ * subsequent request with the same mutationId is how the durable outcome is
+ * reconciled.
+ */
+export function isBackstageCanonCommitOutcomeUnknown(
+  action: unknown,
+  result: unknown
+): boolean {
+  if (action !== 'upsertStoryline' && action !== 'appendCanonBeat') {
+    return false;
+  }
+
+  const record = asRecord(result);
+  const persistence = asRecord(record?.persistence);
+  return record?.applied === null
+    && record.universeRevision === null
+    && record.storyline === null
+    && persistence?.status === 'unknown'
+    && persistence.durable === null
+    && persistence.backend === 'postgresql'
+    && persistence.degraded === true
+    && persistence.reason === 'commit_outcome_unknown';
+}
+
+/** Represent a classified pre-commit canon outage without exposing repository details. */
+export class BackstageCanonUnavailableError extends Error {
+  readonly code = BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE;
+  readonly httpStatus = 503;
+  readonly retryable = true;
+  readonly operation: 'upsertStoryline' | 'appendCanonBeat';
+
+  constructor(
+    operation: 'upsertStoryline' | 'appendCanonBeat',
+    cause?: unknown
+  ) {
+    super(
+      BACKSTAGE_CANON_UNAVAILABLE_ERROR_MESSAGE,
+      cause === undefined ? undefined : { cause }
+    );
+    this.name = 'BackstageCanonUnavailableError';
+    this.operation = operation;
+  }
+}
+
+export function isBackstageCanonUnavailableError(
+  value: unknown
+): value is BackstageCanonUnavailableError {
+  return value instanceof BackstageCanonUnavailableError;
 }
 
 function sanitizeOpenPayloadRecord(record: Record<string, unknown>): Record<string, unknown> {
@@ -500,7 +564,166 @@ function normalizeCandidate(action: BackstageBookerAction, payload: unknown): un
       }
       return { ...sanitizedRecord, universeId: resolveUniverseId(sanitizedRecord) };
     }
+    case 'upsertStoryline':
+    case 'appendCanonBeat':
+      // Phase 2 canon mutations deliberately have no implicit legacy universe.
+      // Their closed schemas require the caller to choose the durable scope explicitly.
+      return sanitizedRecord ?? payload;
   }
+}
+
+function canonContractIssue(
+  action: 'upsertStoryline' | 'appendCanonBeat',
+  instancePath: string,
+  message: string
+): never {
+  throw new BackstageBookerContractError(action, [{ instancePath, message }]);
+}
+
+function normalizeCanonUuid(
+  action: 'upsertStoryline' | 'appendCanonBeat',
+  value: string,
+  instancePath: string
+): string {
+  const normalized = value.toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    .test(normalized)) {
+    return canonContractIssue(action, instancePath, 'Value must be a UUID.');
+  }
+  return normalized;
+}
+
+function normalizeCanonParticipants(
+  action: 'upsertStoryline' | 'appendCanonBeat',
+  names: readonly string[],
+  instancePath: string
+): string[] {
+  const normalized = names.map(name => name.trim());
+  // Match PostgreSQL jsonb text rendering, which inserts one space after each
+  // comma. Reject this closed-contract storage bound before repository effects.
+  const postgresJsonbTextBytes = Buffer.byteLength(
+    JSON.stringify(normalized),
+    'utf8'
+  ) + Math.max(0, normalized.length - 1);
+  if (postgresJsonbTextBytes > 16_384) {
+    return canonContractIssue(
+      action,
+      instancePath,
+      'participantNames must fit the 16384-byte canon storage contract.'
+    );
+  }
+  return normalized;
+}
+
+function normalizeCanonTimestamp(value: string): string {
+  if (!isValidBackstageCanonUtcTimestamp(value)) {
+    return canonContractIssue(
+      'appendCanonBeat',
+      '/beat/occurredAt',
+      'occurredAt must be a supported UTC timestamp from year 0001 through 9999.'
+    );
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return canonContractIssue(
+      'appendCanonBeat',
+      '/beat/occurredAt',
+      'occurredAt must be a valid UTC timestamp.'
+    );
+  }
+  const normalized = parsed.toISOString();
+  if (normalized.slice(0, 19) !== value.slice(0, 19)) {
+    return canonContractIssue(
+      'appendCanonBeat',
+      '/beat/occurredAt',
+      'occurredAt must identify a valid UTC calendar timestamp.'
+    );
+  }
+  return normalized;
+}
+
+function normalizeCanonMutationCandidate(
+  action: BackstageBookerAction,
+  candidate: unknown
+): unknown {
+  if (action === 'upsertStoryline') {
+    const input = candidate as BackstageBookerActionInputMap['upsertStoryline'];
+    const normalized: BackstageBookerActionInputMap['upsertStoryline'] = {
+      universeId: input.universeId.trim(),
+      mutationId: normalizeCanonUuid(action, input.mutationId, '/mutationId'),
+      expectedVersion: input.expectedVersion,
+      storyline: {
+        key: input.storyline.key.trim(),
+        title: input.storyline.title.trim(),
+        summary: input.storyline.summary === null ? null : input.storyline.summary.trim(),
+        status: input.storyline.status,
+        participantNames: normalizeCanonParticipants(
+          action,
+          input.storyline.participantNames,
+          '/storyline/participantNames'
+        )
+      }
+    };
+    if (
+      normalized.expectedVersion === 0
+      && normalized.storyline.status !== 'draft'
+      && normalized.storyline.status !== 'active'
+    ) {
+      return canonContractIssue(
+        action,
+        '/storyline/status',
+        'A new storyline must start in draft or active status.'
+      );
+    }
+    return normalized;
+  }
+
+  if (action === 'appendCanonBeat') {
+    const input = candidate as BackstageBookerActionInputMap['appendCanonBeat'];
+    const normalized: BackstageBookerActionInputMap['appendCanonBeat'] = {
+      universeId: input.universeId.trim(),
+      mutationId: normalizeCanonUuid(action, input.mutationId, '/mutationId'),
+      storylineKey: input.storylineKey.trim(),
+      expectedVersion: input.expectedVersion,
+      beat: {
+        kind: input.beat.kind.trim(),
+        summary: input.beat.summary.trim(),
+        occurredAt: normalizeCanonTimestamp(input.beat.occurredAt),
+        participantNames: normalizeCanonParticipants(
+          action,
+          input.beat.participantNames,
+          '/beat/participantNames'
+        ),
+        ...(input.beat.eventId === undefined
+          ? {}
+          : { eventId: normalizeCanonUuid(action, input.beat.eventId, '/beat/eventId') }),
+        ...(input.beat.supersedesBeatId === undefined
+          ? {}
+          : {
+              supersedesBeatId: normalizeCanonUuid(
+                action,
+                input.beat.supersedesBeatId,
+                '/beat/supersedesBeatId'
+              )
+            })
+      },
+      ...(input.nextStatus === undefined ? {} : { nextStatus: input.nextStatus })
+    };
+    if (
+      normalized.nextStatus === 'completed'
+      && normalized.beat.kind !== 'payoff'
+      && normalized.beat.kind !== 'resolution'
+    ) {
+      return canonContractIssue(
+        action,
+        '/beat/kind',
+        'Completing an active or paused storyline requires a payoff or resolution beat.'
+      );
+    }
+    return normalized;
+  }
+
+  return candidate;
 }
 
 /**
@@ -510,7 +733,14 @@ export function normalizeBackstageBookerActionPayload<TAction extends BackstageB
   action: TAction,
   payload: unknown
 ): BackstageBookerActionInputMap[TAction] {
-  const candidate = normalizeCandidate(action, payload);
+  const schemaCandidate = normalizeCandidate(action, payload);
+  if (action === 'upsertStoryline' || action === 'appendCanonBeat') {
+    const schemaValidation = validateBackstageBookerActionPayload(action, schemaCandidate);
+    if (!schemaValidation.ok) {
+      throw new BackstageBookerContractError(action, schemaValidation.issues);
+    }
+  }
+  const candidate = normalizeCanonMutationCandidate(action, schemaCandidate);
   const validation = validateBackstageBookerActionPayload(action, candidate);
   if (!validation.ok) {
     throw new BackstageBookerContractError(action, validation.issues);

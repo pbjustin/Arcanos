@@ -1,7 +1,9 @@
 export { ARCANOS_PROTOCOL_COMMAND_IDS, ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS } from "./commands.js";
 export {
+  BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE,
   BACKSTAGE_BOOKER_ACTIONS,
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
+  isValidBackstageCanonUtcTimestamp,
   isBackstageBookerAction
 } from "./backstageBooker.js";
 export { ARCANOS_PROTOCOL_VERSION } from "./constants.js";
@@ -62,11 +64,18 @@ export type {
   ValidationResult
 } from "./types.js";
 export type {
+  BackstageAppendCanonBeatDurableResponse,
+  BackstageAppendCanonBeatRequest,
+  BackstageAppendCanonBeatResponse,
+  BackstageAppendCanonBeatUnknownResponse,
   BackstageBookEventRequest,
   BackstageBookEventResponse,
   BackstageBookerAction,
   BackstageBookerActionInputMap,
   BackstageBookerActionOutputMap,
+  BackstageCanonBeatInput,
+  BackstageCanonBeatModel,
+  BackstageCanonPersistence,
   BackstageDurablePersistence,
   BackstageGenerateBookingRequest,
   BackstageGenerateBookingResponse,
@@ -80,6 +89,7 @@ export type {
   BackstageMatchInput,
   BackstageMatchResult,
   BackstageMatchResultBase,
+  BackstageMutationId,
   BackstageNonDurablePersistence,
   BackstagePersistence,
   BackstageRealResult,
@@ -87,12 +97,20 @@ export type {
   BackstageSaveStorylineResponse,
   BackstageSimulateMatchRequest,
   BackstageSimulateMatchResponse,
+  BackstageStorylineInput,
+  BackstageStorylineModel,
+  BackstageStorylineStatus,
   BackstageTrackStorylineRequest,
   BackstageTrackStorylineResponse,
   BackstageUniverseId,
+  BackstageUniverseRevision,
   BackstageUnknownPersistence,
   BackstageUpdateRosterRequest,
   BackstageUpdateRosterResponse,
+  BackstageUpsertStorylineDurableResponse,
+  BackstageUpsertStorylineRequest,
+  BackstageUpsertStorylineResponse,
+  BackstageUpsertStorylineUnknownResponse,
   BackstageWrestler
 } from "./backstageBooker.js";
 export {

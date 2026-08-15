@@ -63,6 +63,8 @@ function normalizeMutationPayload(
     case 'saveStoryline':
     case 'trackStoryline':
     case 'updateRoster':
+    case 'upsertStoryline':
+    case 'appendCanonBeat':
       return normalizeBackstageBookerIngressMutationPayload(
         operation.action,
         body,

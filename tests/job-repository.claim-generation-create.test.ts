@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const NON_REUSABLE_RESULT_STATE = {
+  gptResultReuse: {
+    reusable: false,
+    reason: 'backstage_canon_commit_outcome_unknown'
+  }
+};
+
 const getPoolMock = jest.fn();
 const isDatabaseConnectedMock = jest.fn();
 const queryMock = jest.fn();
@@ -22,10 +29,16 @@ jest.unstable_mockModule('../src/core/db/repositories/jobEventRepository.js', ()
 
 const {
   createJob,
-  findOrCreateGptJob
+  findOrCreateGptJob,
+  IdempotencyKeyConflictError
 } = await import('../src/core/db/repositories/jobRepository.js');
 
-function returnedJob(status: string, claimGeneration: string, jobType = 'gpt') {
+function returnedJob(
+  status: string,
+  claimGeneration: string,
+  jobType = 'gpt',
+  overrides: Record<string, unknown> = {}
+) {
   return {
     id: `job-${status}`,
     worker_id: 'queue',
@@ -34,7 +47,8 @@ function returnedJob(status: string, claimGeneration: string, jobType = 'gpt') {
     claim_generation: claimGeneration,
     input: {},
     created_at: new Date(),
-    updated_at: new Date()
+    updated_at: new Date(),
+    ...overrides
   };
 }
 
@@ -143,5 +157,239 @@ describe('jobRepository initial claim generations', () => {
     ) as [string, unknown[]] | undefined;
     expect(insertCall?.[0]).toContain('$23::bigint');
     expect(insertCall?.[1]?.[22]).toBe('1');
+  });
+
+  it.each([
+    ['derived', null],
+    ['explicit', 'c'.repeat(64)]
+  ] as const)(
+    'creates a reconciliation job instead of reusing a %s completed unknown receipt',
+    async (idempotencyOrigin, idempotencyKeyHash) => {
+      const fingerprintHash = 'a'.repeat(64);
+      const unknownReceipt = returnedJob('completed', '1', 'gpt', {
+        id: `job-unknown-${idempotencyOrigin}`,
+        request_fingerprint_hash: fingerprintHash,
+        idempotency_key_hash: idempotencyKeyHash,
+        idempotency_scope_hash: 'b'.repeat(64),
+        idempotency_until: new Date(Date.now() + 60_000),
+        autonomy_state: NON_REUSABLE_RESULT_STATE
+      });
+      clientQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        if (typeof sql !== 'string') {
+          return { rows: [] };
+        }
+        if (sql.includes('idempotency_key_hash = $2')) {
+          return { rows: [unknownReceipt] };
+        }
+        if (sql.includes('request_fingerprint_hash = $2')) {
+          // A real PostgreSQL query excludes every tagged completion. Returning
+          // one here also pins the defensive in-process reuse check.
+          return { rows: [unknownReceipt] };
+        }
+        if (sql.includes('INSERT INTO job_data')) {
+          return {
+            rows: [returnedJob('pending', String(params?.[22]), 'gpt', {
+              id: `job-reconcile-${idempotencyOrigin}`
+            })]
+          };
+        }
+        return { rows: [] };
+      });
+
+      const result = await findOrCreateGptJob({
+        workerId: 'api',
+        input: { gptId: 'backstage', body: { action: 'upsertStoryline' } },
+        requestFingerprintHash: fingerprintHash,
+        idempotencyScopeHash: 'b'.repeat(64),
+        ...(idempotencyKeyHash ? { idempotencyKeyHash } : {}),
+        idempotencyOrigin,
+        createOptions: { status: 'pending' }
+      });
+
+      expect(result).toMatchObject({
+        created: true,
+        deduped: false,
+        dedupeReason: 'new_job',
+        job: { id: `job-reconcile-${idempotencyOrigin}` }
+      });
+      const fingerprintLookup = clientQueryMock.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('request_fingerprint_hash = $2')
+      ) as [string, unknown[]] | undefined;
+      expect(fingerprintLookup?.[0]).toContain(
+        'autonomy_state @> \'{"gptResultReuse":{"reusable":false}}\'::jsonb'
+      );
+      expect(clientQueryMock.mock.calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO job_data')
+      )).toBe(true);
+    }
+  );
+
+  it('keeps an explicit key bound when an unknown receipt is retried with a changed fingerprint', async () => {
+    const existingFingerprintHash = 'a'.repeat(64);
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('idempotency_key_hash = $2')) {
+        return {
+          rows: [returnedJob('completed', '1', 'gpt', {
+            request_fingerprint_hash: existingFingerprintHash,
+            idempotency_key_hash: 'c'.repeat(64),
+            idempotency_scope_hash: 'b'.repeat(64),
+            idempotency_until: new Date(Date.now() + 60_000),
+            autonomy_state: NON_REUSABLE_RESULT_STATE
+          })]
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(findOrCreateGptJob({
+      workerId: 'api',
+      input: { gptId: 'backstage', body: { action: 'upsertStoryline' } },
+      requestFingerprintHash: 'd'.repeat(64),
+      idempotencyScopeHash: 'b'.repeat(64),
+      idempotencyKeyHash: 'c'.repeat(64),
+      idempotencyOrigin: 'explicit',
+      createOptions: { status: 'pending' }
+    })).rejects.toBeInstanceOf(IdempotencyKeyConflictError);
+
+    expect(clientQueryMock.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO job_data')
+    )).toBe(false);
+  });
+
+  it('creates another reconciliation job after an unknown receipt reconciliation fails', async () => {
+    const fingerprintHash = 'a'.repeat(64);
+    const scopeHash = 'b'.repeat(64);
+    const keyHash = 'c'.repeat(64);
+    const unknownReceipt = returnedJob('completed', '1', 'gpt', {
+      id: 'job-unknown-explicit-lineage',
+      request_fingerprint_hash: fingerprintHash,
+      idempotency_key_hash: keyHash,
+      idempotency_scope_hash: scopeHash,
+      idempotency_until: new Date(Date.now() + 60_000),
+      autonomy_state: NON_REUSABLE_RESULT_STATE
+    });
+    const reconciliationJobs: Array<Record<string, unknown>> = [];
+    clientQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (typeof sql !== 'string') {
+        return { rows: [] };
+      }
+      if (sql.includes('idempotency_key_hash = $2')) {
+        return { rows: [unknownReceipt] };
+      }
+      if (sql.includes('request_fingerprint_hash = $2')) {
+        const reusableStatuses = params?.[2] as string[];
+        const reusableReconciliation = reconciliationJobs
+          .slice()
+          .reverse()
+          .find(job => reusableStatuses.includes(String(job.status)));
+        return { rows: reusableReconciliation ? [reusableReconciliation] : [] };
+      }
+      if (sql.includes('INSERT INTO job_data')) {
+        const created = returnedJob('pending', String(params?.[22]), 'gpt', {
+          id: `job-reconcile-attempt-${reconciliationJobs.length + 1}`,
+          request_fingerprint_hash: fingerprintHash,
+          idempotency_key_hash: keyHash,
+          idempotency_scope_hash: scopeHash,
+          idempotency_until: new Date(Date.now() + 60_000),
+          autonomy_state: {}
+        });
+        reconciliationJobs.push(created);
+        return { rows: [created] };
+      }
+      return { rows: [] };
+    });
+
+    const options = {
+      workerId: 'api',
+      input: { gptId: 'backstage', body: { action: 'upsertStoryline' } },
+      requestFingerprintHash: fingerprintHash,
+      idempotencyScopeHash: scopeHash,
+      idempotencyKeyHash: keyHash,
+      idempotencyOrigin: 'explicit' as const,
+      createOptions: { status: 'pending' }
+    };
+    const firstRetry = await findOrCreateGptJob(options);
+    reconciliationJobs[0].status = 'failed';
+    const secondRetry = await findOrCreateGptJob(options);
+
+    expect(firstRetry).toMatchObject({
+      created: true,
+      job: { id: 'job-reconcile-attempt-1' }
+    });
+    expect(secondRetry).toMatchObject({
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+      job: { id: 'job-reconcile-attempt-2' }
+    });
+    const fingerprintLookups = clientQueryMock.mock.calls.filter(
+      ([sql]) => typeof sql === 'string' && sql.includes('request_fingerprint_hash = $2')
+    ) as Array<[string, unknown[]]>;
+    expect(fingerprintLookups).toHaveLength(2);
+    expect(fingerprintLookups[1]?.[1]?.[2]).not.toContain('failed');
+    expect(fingerprintLookups[1]?.[1]?.[2]).not.toContain('cancelled');
+  });
+
+  it.each(['failed', 'cancelled'])(
+    'continues to reuse an ordinary explicit %s result outside reconciliation',
+    async (status) => {
+      const terminalJob = returnedJob(status, '1', 'gpt', {
+        id: `job-ordinary-${status}`,
+        request_fingerprint_hash: 'a'.repeat(64),
+        idempotency_key_hash: 'c'.repeat(64),
+        idempotency_scope_hash: 'b'.repeat(64),
+        idempotency_until: new Date(Date.now() + 60_000),
+        autonomy_state: {}
+      });
+      clientQueryMock.mockImplementation(async (sql: unknown) => (
+        typeof sql === 'string' && sql.includes('idempotency_key_hash = $2')
+          ? { rows: [terminalJob] }
+          : { rows: [] }
+      ));
+
+      await expect(findOrCreateGptJob({
+        workerId: 'api',
+        input: { gptId: 'backstage', body: { action: 'updateRoster' } },
+        requestFingerprintHash: 'a'.repeat(64),
+        idempotencyScopeHash: 'b'.repeat(64),
+        idempotencyKeyHash: 'c'.repeat(64),
+        idempotencyOrigin: 'explicit',
+        createOptions: { status: 'pending' }
+      })).resolves.toMatchObject({
+        created: false,
+        deduped: true,
+        dedupeReason: 'reused_terminal_result',
+        job: { id: `job-ordinary-${status}` }
+      });
+    }
+  );
+
+  it('continues to reuse ordinary completed GPT results', async () => {
+    const completed = returnedJob('completed', '1', 'gpt', {
+      id: 'job-completed-reusable',
+      request_fingerprint_hash: 'a'.repeat(64),
+      idempotency_scope_hash: 'b'.repeat(64),
+      idempotency_until: new Date(Date.now() + 60_000),
+      autonomy_state: {}
+    });
+    clientQueryMock.mockImplementation(async (sql: unknown) => (
+      typeof sql === 'string' && sql.includes('request_fingerprint_hash = $2')
+        ? { rows: [completed] }
+        : { rows: [] }
+    ));
+
+    await expect(findOrCreateGptJob({
+      workerId: 'api',
+      input: { gptId: 'backstage', body: { action: 'updateRoster' } },
+      requestFingerprintHash: 'a'.repeat(64),
+      idempotencyScopeHash: 'b'.repeat(64),
+      idempotencyOrigin: 'derived',
+      createOptions: { status: 'pending' }
+    })).resolves.toMatchObject({
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_completed_result',
+      job: { id: 'job-completed-reusable' }
+    });
   });
 });
