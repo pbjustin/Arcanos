@@ -476,8 +476,12 @@ function confirmCapabilityRunWhenRequired(
     : null;
   if (
     isBackstageBookerAccessAuthenticated(req)
-    && action !== null
-    && (action === 'upsertStoryline' || action === 'appendCanonBeat')
+    && (
+      action === null
+      || action.length === 0
+      || action === 'upsertStoryline'
+      || action === 'appendCanonBeat'
+    )
   ) {
     let metadata: CapabilityMetadata | null;
     try {
@@ -994,7 +998,12 @@ function authorizeDedicatedBackstageCanonAction(
 
   if (
     metadata?.name === BACKSTAGE_MODULE_NAME
-    && (action === 'upsertStoryline' || action === 'appendCanonBeat')
+    && (
+      action === null
+      || action.length === 0
+      || action === 'upsertStoryline'
+      || action === 'appendCanonBeat'
+    )
   ) {
     next();
     return;

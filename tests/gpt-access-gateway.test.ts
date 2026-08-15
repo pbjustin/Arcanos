@@ -3339,6 +3339,38 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['missing', { payload: buildBackstageCanonPayload('upsertStoryline') }],
+    ['empty', {
+      action: '',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    }],
+  ])('returns shared validation for a dedicated request with %s action input', async (
+    _caseName,
+    body
+  ) => {
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'action must be a non-empty string.',
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it.each(['upsertStoryline', 'appendCanonBeat'] as const)(
     'runs dedicated %s canon writes without a second backend challenge',
     async (action) => {
