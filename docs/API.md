@@ -423,6 +423,33 @@ envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
+The Builder-specific contract at
+`GET /contracts/backstage_booker.openapi.v1.json` adds one narrow exception to
+the second confirmation step. Its `writeBackstageCanon` operation calls exactly
+`POST /gpt-access/capabilities/v1/backstage-booker/run`, authenticates with the
+purpose-bound `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`, and accepts only
+`upsertStoryline` or `appendCanonBeat`. The operation is marked
+`x-openai-isConsequential: true`; on this dedicated lane the backend relies on
+ChatGPT's Allow/Deny banner and does not issue its own confirmation challenge.
+The fixed lane may bypass generic `ARCANOS_GPT_ACCESS_SCOPES`
+`capabilities.run` authorization, but the exact `MCP_ALLOW_MODULE_ACTIONS`
+allowlist entries still apply. The bearer is accepted nowhere else and is
+distinct from both `ARCANOS_GPT_ACCESS_TOKEN` and
+`ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. Calls with the generic GPT Access
+credential, all four Phase One mutations, and every
+direct/control-plane/dispatch/legacy alias retain the existing confirmation
+contract; Phase One actions are unavailable on the dedicated lane.
+`universeId` selects data scope and never supplies authorization.
+
+This single-banner design trades an independently verified backend approval
+for trust in ChatGPT's consequential-action enforcement. The backend proves
+possession of the shared Action credential but not per-user identity or that a
+specific person saw the banner. The route remains restricted to the
+version-fenced, mutation-ID-idempotent canon writes; do not place the bearer in
+the schema, GPT instructions, chat, source, or logs. Builder configuration and
+rotation guidance are in
+[BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md).
+
 #### Backstage Booker Phase 1 contract
 
 The Phase One action set on `POST /gpt/backstage-booker` and its `backstage`
@@ -599,9 +626,14 @@ Phase 2A adds the `upsertStoryline` and `appendCanonBeat` module actions. They
 are module-action schemas, not top-level Arcanos command IDs, and do not change
 the seven Phase One request/response schemas. Both actions require an explicit
 `universeId`, a UUID `mutationId`, and an exact `expectedVersion`; canon writes
-never default to the `legacy` universe implicitly. They use the same
-control-plane `mcp:invoke` and one-use confirmation boundary as the Phase One
-mutations. No new direct `/backstage` compatibility route is introduced.
+never default to the `legacy` universe implicitly. Through the existing
+direct, canonical GPT, dispatch, module, queryroute, and legacy aliases they
+use the same control-plane `mcp:invoke` and one-use confirmation boundary as
+the Phase One mutations. The purpose-bound Backstage Booker Custom GPT lane
+may call only these two actions at the exact capability route with its
+dedicated bearer and ChatGPT consequential-action approval; it does not issue
+the second backend challenge. No new direct `/backstage` compatibility route
+is introduced.
 
 `upsertStoryline` creates or replaces one typed storyline aggregate. Creation
 uses `expectedVersion: 0`; updates must supply the current positive version.
@@ -1153,6 +1185,7 @@ These routes use the ActionPlan role/auth boundary and the separate ActionPlan e
 - `GET /_introspection/gpt/:gptId`
 - `GET /contracts/custom_gpt_route.openapi.v1.json`
 - `GET /contracts/arcanos_gaming.openapi.v1.json`
+- `GET /contracts/backstage_booker.openapi.v1.json`
 - `GET /contracts/job_status.openapi.v1.json`
 - `GET /contracts/job_result.openapi.v1.json`
 - `GET /contracts/action_plan_execution.openapi.v1.json`

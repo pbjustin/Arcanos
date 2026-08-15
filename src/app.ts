@@ -103,6 +103,7 @@ import {
 } from '@services/arcanosCoreRuntimeProviders.js';
 import { gamingSourceHttpBoundary } from '@services/gamingSourceHttpBoundary.js';
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
+import { backstageBookerHttpBoundary } from '@services/backstageBookerHttpBoundary.js';
 import { mcpHttpBodyParser } from './mcp/httpBodyParser.js';
 
 const SERVICE_NAME = 'arcanos-backend';
@@ -179,6 +180,10 @@ export function createApp(): Express {
   // the unsafe execution gate can inspect or short-circuit these paths.
   app.use('/gpt-access/gaming/sources', gamingSourceHttpBoundary);
   app.use('/gpt-access/gaming/sources', gamingSourceBodyParser);
+  // Backstage canon writes use a dedicated Builder bearer while the existing
+  // generic GPT Access bearer remains valid and retains backend confirmation.
+  // Establish both authentication lanes before broad request parsing.
+  app.use('/gpt-access', backstageBookerHttpBoundary);
   app.use(cors(config.cors));
   // Memory and durable-session payloads share one trust domain. Authenticate
   // every HTTP prefix before broad parsers can allocate or expose stored data.

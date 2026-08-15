@@ -18,6 +18,8 @@ import {
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const unsafeGateMock = jest.fn();
+const registerRoutesMock = jest.fn();
+let unsafeGatePassThrough = false;
 
 jest.unstable_mockModule('@core/init-openai.js', () => ({
   initOpenAI: jest.fn(),
@@ -27,7 +29,7 @@ jest.unstable_mockModule('@core/diagnostics.js', () => ({
   writePublicHealthResponse: jest.fn(),
 }));
 jest.unstable_mockModule('@routes/register.js', () => ({
-  registerRoutes: jest.fn(),
+  registerRoutes: registerRoutesMock,
 }));
 jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
   requestSelfHealingLoopEvaluation: jest.fn(async () => undefined),
@@ -71,8 +73,16 @@ jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
 jest.unstable_mockModule(
   '@transport/http/middleware/unsafeExecutionGate.js',
   () => ({
-    unsafeExecutionGate: (req: Request, res: Response) => {
+    unsafeExecutionGate: (
+      req: Request,
+      res: Response,
+      next: () => void
+    ) => {
       unsafeGateMock(req.method, req.originalUrl);
+      if (unsafeGatePassThrough) {
+        next();
+        return;
+      }
       res.status(418).json({ sentinel: 'unsafe-gate-reached' });
     },
   })
@@ -135,6 +145,18 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => {
 
 const { createApp } = await import('../src/app.js');
 const {
+  BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+  backstageBookerHttpBoundary,
+  isBackstageBookerHttpBoundaryApplied,
+} = await import('../src/services/backstageBookerHttpBoundary.js');
+const {
+  extractBackstageBookerAccessBearerToken,
+  isBackstageBookerAccessAuthenticated,
+} = await import('../src/services/backstageBookerAccessAuth.js');
+const { gptAccessAuthMiddleware } = await import(
+  '../src/services/gptAccessGateway.js'
+);
+const {
   GAMING_SOURCE_BODY_LIMIT_BYTES,
   gamingSourceBodyParser,
 } = await import('../src/services/gamingSourceBodyParser.js');
@@ -154,6 +176,8 @@ const {
 } = await import('../src/services/gamingSourceHttpRoutes.js');
 
 const TEST_TOKEN = 'gaming-source-http-boundary-token';
+const BACKSTAGE_BOOKER_TEST_TOKEN =
+  'backstage-booker-http-boundary-token-123456';
 const GLOBAL_GPT_ACCESS_TOKEN = 'global-gpt-access-token-for-boundary-tests';
 const INGESTION_PATH = '/gpt-access/gaming/sources/ingestions';
 const REFRESH_PATH = '/gpt-access/gaming/sources/refreshes';
@@ -173,6 +197,8 @@ const NON_CANONICAL_STATUS_CASES = [
   ['malformed percent sequence', `${STATUS_PATH}%GG`],
 ] as const;
 const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+const previousBackstageBookerToken =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
 const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
 const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
 let consoleLogMock: ReturnType<typeof jest.spyOn>;
@@ -254,7 +280,7 @@ async function sendAbsoluteFormRequest(
   app: express.Express,
   options: {
     body?: string;
-    headers?: Readonly<Record<string, string>>;
+    headers?: Readonly<Record<string, string | string[]>>;
     method: string;
     path: string;
   }
@@ -267,7 +293,7 @@ async function sendAbsoluteFormRequest(
     throw new Error('Expected a TCP listener for absolute-form request test.');
   }
 
-  const requestHeaders: Record<string, string | number> = {
+  const requestHeaders: Record<string, string | string[] | number> = {
     Host: 'example.test',
     ...(options.body !== undefined
       ? {
@@ -311,8 +337,12 @@ async function sendAbsoluteFormRequest(
 describe('Gaming source production HTTP boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    registerRoutesMock.mockReset();
+    unsafeGatePassThrough = false;
     consoleLogMock = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     process.env.ARCANOS_GPT_ACCESS_TOKEN = GLOBAL_GPT_ACCESS_TOKEN;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+      BACKSTAGE_BOOKER_TEST_TOKEN;
     process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = TEST_TOKEN;
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
   });
@@ -323,6 +353,10 @@ describe('Gaming source production HTTP boundary', () => {
 
   afterAll(() => {
     restoreEnvironmentVariable('ARCANOS_GPT_ACCESS_TOKEN', previousToken);
+    restoreEnvironmentVariable(
+      'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
+      previousBackstageBookerToken
+    );
     restoreEnvironmentVariable(
       'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
       previousGamingSourceToken
@@ -834,5 +868,174 @@ describe('Gaming source production HTTP boundary', () => {
     expectNoStoreSecurityHeaders(first);
     expect(second.status).toBe(429);
     expect(second.headers['cache-control']).toContain('no-store');
+  });
+});
+
+describe('Backstage Booker production HTTP boundary', () => {
+  function configureBackstageLeafRoute(): void {
+    registerRoutesMock.mockImplementation((app: express.Express) => {
+      // Mirror the leaf router's idempotent boundary and downstream generic
+      // authentication seam without executing a real canon mutation.
+      app.use('/gpt-access', backstageBookerHttpBoundary);
+      app.use('/gpt-access', (req, res, next) => {
+        if (isBackstageBookerHttpBoundaryApplied(req)) {
+          next();
+          return;
+        }
+        gptAccessAuthMiddleware(req, res, next);
+      });
+      app.post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH, (req, res) => {
+        res.status(200).json({
+          dedicated: isBackstageBookerAccessAuthenticated(req),
+        });
+      });
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    registerRoutesMock.mockReset();
+    unsafeGatePassThrough = false;
+    consoleLogMock = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = GLOBAL_GPT_ACCESS_TOKEN;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+      BACKSTAGE_BOOKER_TEST_TOKEN;
+    process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = TEST_TOKEN;
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+    configureBackstageLeafRoute();
+  });
+
+  afterEach(() => {
+    consoleLogMock.mockRestore();
+  });
+
+  afterAll(() => {
+    restoreEnvironmentVariable('ARCANOS_GPT_ACCESS_TOKEN', previousToken);
+    restoreEnvironmentVariable(
+      'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
+      previousBackstageBookerToken
+    );
+    restoreEnvironmentVariable(
+      'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
+      previousGamingSourceToken
+    );
+    restoreEnvironmentVariable('ARCANOS_GPT_ACCESS_SCOPES', previousScopes);
+  });
+
+  it.each([
+    ['wrong auth scheme', `Basic ${BACKSTAGE_BOOKER_TEST_TOKEN}`],
+    ['lowercase bearer scheme', `bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`],
+    ['extra separator whitespace', `Bearer  ${BACKSTAGE_BOOKER_TEST_TOKEN}`],
+    ['token whitespace', 'Bearer backstage booker token'],
+    ['empty token', 'Bearer '],
+  ])('does not parse a %s dedicated credential carrier', (
+    _caseName,
+    authorization
+  ) => {
+    expect(extractBackstageBookerAccessBearerToken(
+      sourceAccessRequestWithAuthorization(authorization)
+    )).toBeNull();
+  });
+
+  it('does not parse duplicate dedicated Authorization headers', () => {
+    const authorization = `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`;
+    expect(extractBackstageBookerAccessBearerToken(
+      sourceAccessRequestWithAuthorization(
+        authorization,
+        ['Authorization', authorization, 'Authorization', authorization]
+      )
+    )).toBeNull();
+  });
+
+  it('authenticates before CORS, broad parsing, and the unsafe execution gate', async () => {
+    const sentinel = 'backstage-unauthenticated-malformed-body-sentinel';
+    const response = await request(createApp())
+      .post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+      .set('Authorization', `Basic ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .set('Origin', 'https://example.com')
+      .send(`{"action":"upsertStoryline","payload":"${sentinel}"`);
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.headers).not.toHaveProperty('access-control-allow-origin');
+    expect(JSON.stringify(response.body)).not.toContain(sentinel);
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate dedicated auth at the full application boundary', async () => {
+    const authorization = `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`;
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body: JSON.stringify({ action: 'upsertStoryline', payload: {} }),
+      headers: {
+        Authorization: [authorization, authorization],
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error?.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('mounts the exact boundary idempotently and counts the shared rate budget once', async () => {
+    unsafeGatePassThrough = true;
+    const app = createApp();
+    const body = { action: 'upsertStoryline', payload: {} };
+
+    const first = await request(app)
+      .post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .send(body);
+    const second = await request(app)
+      .post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .send(body);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body).toEqual({ dedicated: true });
+    expect(second.body).toEqual({ dedicated: true });
+    expect(Number(first.headers['x-ratelimit-remaining']))
+      .toBe(Number(second.headers['x-ratelimit-remaining']) + 1);
+    expect(first.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    '/gpt-access/status',
+    '/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run',
+    '/gpt-access/capabilities/v1/backstage-booker/run/',
+  ])('does not let the dedicated bearer authorize another GPT Access route: %s', async (
+    path
+  ) => {
+    unsafeGatePassThrough = true;
+    const pendingRequest = path === '/gpt-access/status'
+      ? request(createApp()).get(path)
+      : request(createApp()).post(path).send({
+          action: 'upsertStoryline',
+          payload: {},
+        });
+    const response = await pendingRequest.set(
+      'Authorization',
+      `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+  });
+
+  it('preserves generic GPT Access authentication on the exact route', async () => {
+    unsafeGatePassThrough = true;
+    const response = await globallyAuthorized(
+      request(createApp()).post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+    ).send({ action: 'upsertStoryline', payload: {} });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ dedicated: false });
   });
 });

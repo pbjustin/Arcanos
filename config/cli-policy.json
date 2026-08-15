@@ -47,6 +47,7 @@
     "replacement": "[REDACTED]",
     "envNames": [
       "ARCANOS_GPT_ACCESS_TOKEN",
+      "ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN",
       "ARCANOS_GAMING_SOURCE_ACCESS_TOKEN",
       "DATABASE_URL",
       "OPENAI_API_KEY",

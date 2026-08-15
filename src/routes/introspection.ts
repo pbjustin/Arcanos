@@ -21,6 +21,11 @@ const ARCANOS_GAMING_OPENAPI_CONTRACT_PATH = path.resolve(
   "contracts",
   "arcanos_gaming.openapi.v1.json"
 );
+const BACKSTAGE_BOOKER_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  'contracts',
+  'backstage_booker.openapi.v1.json'
+);
 const JOB_RESULT_OPENAPI_CONTRACT_PATH = path.resolve(
   process.cwd(),
   'contracts',
@@ -62,6 +67,15 @@ router.get(
   asyncHandler(async (_req: Request, res: Response) => {
     const contract = await readOpenApiContract(ARCANOS_GAMING_OPENAPI_CONTRACT_PATH);
     res.set("cache-control", "no-store, max-age=0");
+    return res.json(contract);
+  })
+);
+
+router.get(
+  '/contracts/backstage_booker.openapi.v1.json',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readOpenApiContract(BACKSTAGE_BOOKER_OPENAPI_CONTRACT_PATH);
+    res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
   })
 );

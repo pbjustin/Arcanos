@@ -1,0 +1,1597 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Backstage Booker Custom GPT Action",
+    "version": "1.0.0",
+    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated, while durable canon writes use a dedicated Backstage Booker bearer and ChatGPT's consequential-action approval banner."
+  },
+  "servers": [
+    {
+      "url": "https://acranos-production.up.railway.app",
+      "description": "Canonical ARCANOS production deployment"
+    }
+  ],
+  "paths": {
+    "/gpt/backstage-booker": {
+      "post": {
+        "operationId": "runBackstageBooker",
+        "summary": "Generate or simulate with Backstage Booker",
+        "description": "Run one non-persistent Backstage Booker action. This operation accepts only booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon.",
+        "x-openai-isConsequential": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackstagePublicRequest"
+              },
+              "examples": {
+                "generateBooking": {
+                  "summary": "Generate a booking plan",
+                  "value": {
+                    "action": "generateBooking",
+                    "payload": {
+                      "universeId": "my-universe-2k26",
+                      "prompt": "Book Monday Night Raw around the current champions and active rivalries."
+                    }
+                  }
+                },
+                "simulateMatch": {
+                  "summary": "Simulate a match",
+                  "value": {
+                    "action": "simulateMatch",
+                    "payload": {
+                      "universeId": "my-universe-2k26",
+                      "match": {
+                        "wrestler1": "Rhea Ripley",
+                        "wrestler2": "Bianca Belair",
+                        "matchType": "Singles",
+                        "kayfabeMode": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The public Backstage Booker action completed in the preserved GPT route envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The public action or its payload was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The public request budget was exceeded.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Backstage Booker is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gpt-access/capabilities/v1/backstage-booker/run": {
+      "post": {
+        "operationId": "writeBackstageCanon",
+        "summary": "Write durable Backstage Booker canon",
+        "description": "Apply one exact, idempotent Phase 2 canon mutation with the dedicated Backstage Booker bearer. ChatGPT must show its consequential-action approval banner before sending this request.",
+        "x-openai-isConsequential": true,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackstageCanonWriteRequest"
+              },
+              "examples": {
+                "upsertStoryline": {
+                  "summary": "Create or update a storyline",
+                  "value": {
+                    "action": "upsertStoryline",
+                    "payload": {
+                      "universeId": "my-universe-2k26",
+                      "mutationId": "5d87478f-57a3-45e0-9d5a-6b9d56e94ec8",
+                      "expectedVersion": 0,
+                      "storyline": {
+                        "key": "raw-day-one-baseline",
+                        "title": "Monday Night Raw Day One",
+                        "summary": "The starting canon for this Universe.",
+                        "status": "active",
+                        "participantNames": []
+                      }
+                    }
+                  }
+                },
+                "appendCanonBeat": {
+                  "summary": "Append a canon beat to an existing storyline",
+                  "value": {
+                    "action": "appendCanonBeat",
+                    "payload": {
+                      "universeId": "my-universe-2k26",
+                      "mutationId": "9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c",
+                      "storylineKey": "raw-day-one-baseline",
+                      "expectedVersion": 1,
+                      "beat": {
+                        "kind": "development",
+                        "summary": "The challenger interrupts the champion.",
+                        "occurredAt": "2026-08-15T20:00:00Z",
+                        "participantNames": []
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The canon mutation was applied, replayed idempotently, or returned an explicit unknown commit outcome in the preserved capability envelope.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonWriteSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The closed canon request failed validation.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Backstage Booker bearer credential is required.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The dedicated canon action is not allowlisted or its execution scope is denied.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The expected storyline version or mutation id conflicts with durable canon.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Backstage Booker request budget was exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dedicated bearer authentication, the capability registry, execution identity, or durable canon persistence is temporarily unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Opaque Backstage Booker access token",
+        "description": "Required only for the fixed Backstage Booker canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
+      }
+    },
+    "headers": {
+      "NoStore": {
+        "description": "The response must not be stored by clients or intermediary caches.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "no-store"
+          ]
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "schemas": {
+      "BackstagePublicRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "generateBooking",
+              "generateBookingWithHRC",
+              "simulateMatch"
+            ]
+          },
+          "payload": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GenerateBookingActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/GenerateBookingWithHrcActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/SimulateMatchActionRequest"
+          }
+        ]
+      },
+      "GenerateBookingActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "generateBooking"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/GenerateBookingPayload"
+          }
+        }
+      },
+      "GenerateBookingWithHrcActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "generateBookingWithHRC"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/GenerateBookingPayload"
+          }
+        }
+      },
+      "SimulateMatchActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "simulateMatch"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SimulateMatchPayload"
+          }
+        }
+      },
+      "GenerateBookingPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "pattern": "\\S"
+          }
+        }
+      },
+      "SimulateMatchPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "match"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "match": {
+            "$ref": "#/components/schemas/MatchInput"
+          },
+          "rosters": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Wrestler"
+            }
+          },
+          "winProbModifier": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1,
+            "default": 0
+          }
+        }
+      },
+      "BackstageCanonWriteRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "upsertStoryline",
+              "appendCanonBeat"
+            ]
+          },
+          "payload": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UpsertStorylineActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/AppendCanonBeatActionRequest"
+          }
+        ]
+      },
+      "UpsertStorylineActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "upsertStoryline"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/UpsertStorylinePayload"
+          }
+        }
+      },
+      "AppendCanonBeatActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "appendCanonBeat"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AppendCanonBeatPayload"
+          }
+        }
+      },
+      "UpsertStorylinePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "expectedVersion",
+          "storyline"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "storyline": {
+            "$ref": "#/components/schemas/StorylineInput"
+          }
+        }
+      },
+      "AppendCanonBeatPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "storylineKey",
+          "expectedVersion",
+          "beat"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "storylineKey": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "beat": {
+            "$ref": "#/components/schemas/CanonBeatInput"
+          },
+          "nextStatus": {
+            "$ref": "#/components/schemas/StorylineStatus"
+          }
+        }
+      },
+      "UniverseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "default": "legacy"
+      },
+      "Uuid": {
+        "type": "string",
+        "format": "uuid",
+        "minLength": 36,
+        "maxLength": 36,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+      },
+      "PostgresText": {
+        "type": "string",
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "WrestlerName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120,
+        "pattern": "\\S",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PostgresText"
+          }
+        ]
+      },
+      "StorylineKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "\\S",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PostgresText"
+          }
+        ]
+      },
+      "StorylineTitle": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "\\S",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PostgresText"
+          }
+        ]
+      },
+      "StorylineSummary": {
+        "oneOf": [
+          {
+            "type": "string",
+            "maxLength": 10000,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PostgresText"
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "StorylineStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "active",
+          "paused",
+          "completed",
+          "cancelled"
+        ]
+      },
+      "ParticipantNames": {
+        "type": "array",
+        "maxItems": 50,
+        "uniqueItems": true,
+        "items": {
+          "$ref": "#/components/schemas/WrestlerName"
+        }
+      },
+      "StorylineInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "title",
+          "summary",
+          "status",
+          "participantNames"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "title": {
+            "$ref": "#/components/schemas/StorylineTitle"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StorylineSummary"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StorylineStatus"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/ParticipantNames"
+          }
+        }
+      },
+      "UtcTimestamp": {
+        "type": "string",
+        "pattern": "^(?!0000-)(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$"
+      },
+      "CanonBeatKind": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z][a-z0-9._:-]{0,63}$"
+      },
+      "CanonBeatSummary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 10000,
+        "pattern": "\\S",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PostgresText"
+          }
+        ]
+      },
+      "CanonBeatInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "summary",
+          "occurredAt",
+          "participantNames"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/CanonBeatKind"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CanonBeatSummary"
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/ParticipantNames"
+          },
+          "eventId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "supersedesBeatId": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        }
+      },
+      "BackstageCanonWriteSuccessResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UpsertStorylineSuccessEnvelope"
+          },
+          {
+            "$ref": "#/components/schemas/AppendCanonBeatSuccessEnvelope"
+          }
+        ]
+      },
+      "UpsertStorylineSuccessEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/UpsertStorylineResult"
+          }
+        }
+      },
+      "AppendCanonBeatSuccessEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/AppendCanonBeatResult"
+          }
+        }
+      },
+      "UpsertStorylineResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UpsertStorylineDurableResult"
+          },
+          {
+            "$ref": "#/components/schemas/UpsertStorylineUnknownResult"
+          }
+        ]
+      },
+      "UpsertStorylineDurableResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "applied",
+          "universeRevision",
+          "storyline",
+          "persistence"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "applied": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "storyline": {
+            "$ref": "#/components/schemas/Storyline"
+          },
+          "persistence": {
+            "$ref": "#/components/schemas/DurablePersistence"
+          }
+        }
+      },
+      "UpsertStorylineUnknownResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "applied",
+          "universeRevision",
+          "storyline",
+          "persistence"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "applied": {
+            "type": "null"
+          },
+          "universeRevision": {
+            "type": "null"
+          },
+          "storyline": {
+            "type": "null"
+          },
+          "persistence": {
+            "$ref": "#/components/schemas/UnknownPersistence"
+          }
+        }
+      },
+      "AppendCanonBeatResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AppendCanonBeatDurableResult"
+          },
+          {
+            "$ref": "#/components/schemas/AppendCanonBeatUnknownResult"
+          }
+        ]
+      },
+      "AppendCanonBeatDurableResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "applied",
+          "universeRevision",
+          "storyline",
+          "beat",
+          "persistence"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "applied": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "storyline": {
+            "$ref": "#/components/schemas/Storyline"
+          },
+          "beat": {
+            "$ref": "#/components/schemas/CanonBeat"
+          },
+          "persistence": {
+            "$ref": "#/components/schemas/DurablePersistence"
+          }
+        }
+      },
+      "AppendCanonBeatUnknownResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "mutationId",
+          "applied",
+          "universeRevision",
+          "storyline",
+          "beat",
+          "persistence"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "mutationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "applied": {
+            "type": "null"
+          },
+          "universeRevision": {
+            "type": "null"
+          },
+          "storyline": {
+            "type": "null"
+          },
+          "beat": {
+            "type": "null"
+          },
+          "persistence": {
+            "$ref": "#/components/schemas/UnknownPersistence"
+          }
+        }
+      },
+      "UniverseRevision": {
+        "type": "string",
+        "pattern": "^(?:0|[1-9][0-9]{0,19})$"
+      },
+      "Storyline": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "title",
+          "summary",
+          "status",
+          "participantNames",
+          "version",
+          "universeRevision",
+          "createdAt",
+          "updatedAt",
+          "closedAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "title": {
+            "$ref": "#/components/schemas/StorylineTitle"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StorylineSummary"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StorylineStatus"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/ParticipantNames"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "closedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UtcTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CanonBeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "storylineId",
+          "storylineKey",
+          "sequence",
+          "kind",
+          "summary",
+          "occurredAt",
+          "participantNames",
+          "eventId",
+          "supersedesBeatId",
+          "universeRevision",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "storylineId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "storylineKey": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CanonBeatKind"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CanonBeatSummary"
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/ParticipantNames"
+          },
+          "eventId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedesBeatId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          }
+        }
+      },
+      "DurablePersistence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "durable",
+          "backend",
+          "degraded"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "durable"
+            ]
+          },
+          "durable": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "postgresql"
+            ]
+          },
+          "degraded": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        }
+      },
+      "UnknownPersistence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "durable",
+          "backend",
+          "degraded",
+          "reason"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "unknown"
+            ]
+          },
+          "durable": {
+            "type": "null"
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "postgresql"
+            ]
+          },
+          "degraded": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "commit_outcome_unknown"
+            ]
+          }
+        }
+      },
+      "BackstageCanonErrorResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "degraded",
+              "unavailable"
+            ]
+          },
+          "service": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "error": {
+            "$ref": "#/components/schemas/BackstageError"
+          }
+        }
+      },
+      "BackstageError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RateLimitResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error",
+          "message",
+          "retryAfter"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "Rate limit exceeded"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "\\S"
+          },
+          "retryAfter": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "BackstagePublicSuccessResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "requestId",
+          "traceId",
+          "result",
+          "_route"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "$ref": "#/components/schemas/BackstagePublicResult"
+          },
+          "_route": {
+            "$ref": "#/components/schemas/BackstageRouteMeta"
+          }
+        }
+      },
+      "BackstagePublicResult": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000,
+            "pattern": "\\S",
+            "deprecated": true
+          },
+          {
+            "$ref": "#/components/schemas/GeneratedBookingResult"
+          },
+          {
+            "$ref": "#/components/schemas/GeneratedBookingWithHrcResult"
+          },
+          {
+            "$ref": "#/components/schemas/SimulatedMatchResult"
+          }
+        ]
+      },
+      "GeneratedBookingResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "storyline"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "storyline": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000,
+            "pattern": "\\S"
+          }
+        }
+      },
+      "GeneratedBookingWithHrcResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "storyline",
+          "hrc"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "storyline": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000,
+            "pattern": "\\S"
+          },
+          "hrc": {
+            "$ref": "#/components/schemas/HrcResult"
+          }
+        }
+      },
+      "SimulatedMatchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "result",
+          "hrc"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "result": {
+            "$ref": "#/components/schemas/MatchResult"
+          },
+          "hrc": {
+            "$ref": "#/components/schemas/HrcResult"
+          }
+        }
+      },
+      "HrcResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fidelity",
+          "resilience",
+          "verdict"
+        ],
+        "properties": {
+          "fidelity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "resilience": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "verdict": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      },
+      "Wrestler": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "overall"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          "overall": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "MatchInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "wrestler1",
+          "wrestler2",
+          "matchType"
+        ],
+        "properties": {
+          "wrestler1": {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          "wrestler2": {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          "matchType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "\\S"
+          },
+          "kayfabeMode": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "MatchResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/KayfabeMatchResult"
+          },
+          {
+            "$ref": "#/components/schemas/RealMatchResult"
+          }
+        ]
+      },
+      "KayfabeMatchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "match",
+          "result",
+          "via",
+          "interference",
+          "rating"
+        ],
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "via": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "interference": {
+            "$ref": "#/components/schemas/NullableWrestlerName"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/MatchRating"
+          }
+        }
+      },
+      "RealMatchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "match",
+          "winner",
+          "loser",
+          "probability",
+          "interference",
+          "rating"
+        ],
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "winner": {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          "loser": {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          "probability": {
+            "type": "object",
+            "minProperties": 2,
+            "maxProperties": 2,
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?:0\\.[0-9]{2}|1\\.00)$"
+            }
+          },
+          "interference": {
+            "$ref": "#/components/schemas/NullableWrestlerName"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/MatchRating"
+          }
+        }
+      },
+      "NullableWrestlerName": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/WrestlerName"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "MatchRating": {
+        "type": "string",
+        "pattern": "^(?:[1-4]\\.[0-9]|5\\.0)$"
+      },
+      "BackstageRouteMeta": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "gptId",
+          "module",
+          "route",
+          "action",
+          "timestamp"
+        ],
+        "properties": {
+          "gptId": {
+            "type": "string",
+            "enum": [
+              "backstage-booker"
+            ]
+          },
+          "module": {
+            "type": "string",
+            "enum": [
+              "BACKSTAGE:BOOKER"
+            ]
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "backstage-booker"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "generateBooking",
+              "generateBookingWithHRC",
+              "simulateMatch"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BackstagePublicErrorResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "error": {
+            "$ref": "#/components/schemas/BackstageError"
+          }
+        }
+      }
+    }
+  }
+}

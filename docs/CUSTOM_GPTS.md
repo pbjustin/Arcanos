@@ -85,6 +85,13 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - `https://<your-backend>/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
+The Backstage Booker builder uses its own fixed-path schema. It exposes one
+public generation/simulation operation and one consequential canon-write
+operation without exposing generic GPT Access or control-plane tools:
+
+- `https://<your-backend>/contracts/backstage_booker.openapi.v1.json`
+- [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md)
+
 Important:
 - Updating the repo file alone does not update an already-configured Custom GPT action.
 - Replace `<your-backend>` with the selected public HTTPS origin. For GPT Access, keep that origin aligned with `ARCANOS_GPT_ACCESS_BASE_URL`.
@@ -244,16 +251,16 @@ while staged. Fresh databases also retain the global constraints, so the same
 explicit migration is required to activate non-`legacy` durability; see
 `DATABASE_MIGRATIONS.md` for the rollout boundary.
 
-Operator mutations require the existing control-plane bearer, configured
-operator principal, `mcp:invoke` scope, and explicit confirmation. The same rule
-applies to configured Backstage GPT IDs and to GPT-selected `/dispatch`,
-`/modules/backstage-booker`, and `/queryroute` compatibility calls. Direct
-`/backstage/book-gpt` is also an operator mutation because it saves the generated
-storyline. Confirmation metadata or `x-confirmed` alone does not establish
-caller identity. GPT Access and HTTP MCP keep their separate protected trust
-boundaries; callers do not combine their bearer with the control-plane bearer.
+Outside the dedicated Builder lane, operator mutations require the existing
+control-plane bearer, configured operator principal, `mcp:invoke` scope, and
+explicit backend confirmation. That rule continues to apply to configured
+Backstage GPT IDs and GPT-selected `/dispatch`, `/modules/backstage-booker`,
+and `/queryroute` compatibility calls. Direct `/backstage/book-gpt` is also an
+operator mutation because it saves the generated storyline. Confirmation
+metadata or `x-confirmed` alone does not establish caller identity.
 
-**Spec sheet example:**
+**Existing direct/operator spec sheet example:**
+
 ```yaml
 name: Backstage Booker
 gpt_id: backstage-booker
@@ -274,6 +281,28 @@ body:
 success_response:
   description: Universe-scoped booking result plus _route metadata.
 ```
+
+The dedicated Builder configuration instead imports
+`contracts/backstage_booker.openapi.v1.json`. Its
+`writeBackstageCanon` operation accepts only `upsertStoryline` and
+`appendCanonBeat` at the exact
+`POST /gpt-access/capabilities/v1/backstage-booker/run` path. ChatGPT Builder
+stores the distinct `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` as API Key/Bearer
+authentication; it is not OAuth or a user password. The operation is marked
+consequential, and this narrow lane relies on ChatGPT's Allow/Deny banner as
+its one approval step rather than issuing a second backend challenge. Phase
+One mutations, generic GPT Access credentials, and direct/control-plane/legacy
+aliases retain their existing challenge flow. The dedicated bearer never
+grants generic or control-plane access. The lane may bypass generic
+`ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
+`MCP_ALLOW_MODULE_ACTIONS` allowlist remains mandatory. Phase One mutations are
+unavailable on the dedicated lane, and `universeId` remains data scope, not
+authorization.
+
+See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
+Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never
+put the credential in the imported schema, GPT instructions, chat, source, or
+logs.
 
 ### Arcanos Gaming
 **What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities. (`src/services/arcanos-gaming.ts`) (`src/services/gamingModes.ts`)
