@@ -16,7 +16,7 @@
       "post": {
         "operationId": "runBackstageBooker",
         "summary": "Generate or simulate with Backstage Booker",
-        "description": "Run one non-persistent Backstage Booker action. This operation accepts only booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon.",
+        "description": "Run one non-persistent Backstage Booker action synchronously. Accepts only booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon. executionMode is fixed to sync to avoid automatic heavy-prompt queueing.",
         "x-openai-isConsequential": false,
         "requestBody": {
           "required": true,
@@ -30,6 +30,7 @@
                   "summary": "Generate a booking plan",
                   "value": {
                     "action": "generateBooking",
+                    "executionMode": "sync",
                     "payload": {
                       "universeId": "my-universe-2k26",
                       "prompt": "Book Monday Night Raw around the current champions and active rivalries."
@@ -40,6 +41,7 @@
                   "summary": "Simulate a match",
                   "value": {
                     "action": "simulateMatch",
+                    "executionMode": "sync",
                     "payload": {
                       "universeId": "my-universe-2k26",
                       "match": {
@@ -93,6 +95,16 @@
           },
           "503": {
             "description": "Backstage Booker is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Synchronous Backstage Booker execution exceeded the route deadline.",
             "content": {
               "application/json": {
                 "schema": {
@@ -304,11 +316,20 @@
       }
     },
     "schemas": {
+      "BackstagePublicExecutionMode": {
+        "type": "string",
+        "enum": [
+          "sync"
+        ],
+        "default": "sync",
+        "description": "Required by the Builder contract to request inline execution and avoid automatic heavy-prompt queueing."
+      },
       "BackstagePublicRequest": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "action",
+          "executionMode",
           "payload"
         ],
         "properties": {
@@ -319,6 +340,9 @@
               "generateBookingWithHRC",
               "simulateMatch"
             ]
+          },
+          "executionMode": {
+            "$ref": "#/components/schemas/BackstagePublicExecutionMode"
           },
           "payload": {
             "type": "object"
@@ -341,6 +365,7 @@
         "additionalProperties": false,
         "required": [
           "action",
+          "executionMode",
           "payload"
         ],
         "properties": {
@@ -349,6 +374,9 @@
             "enum": [
               "generateBooking"
             ]
+          },
+          "executionMode": {
+            "$ref": "#/components/schemas/BackstagePublicExecutionMode"
           },
           "payload": {
             "$ref": "#/components/schemas/GenerateBookingPayload"
@@ -360,6 +388,7 @@
         "additionalProperties": false,
         "required": [
           "action",
+          "executionMode",
           "payload"
         ],
         "properties": {
@@ -368,6 +397,9 @@
             "enum": [
               "generateBookingWithHRC"
             ]
+          },
+          "executionMode": {
+            "$ref": "#/components/schemas/BackstagePublicExecutionMode"
           },
           "payload": {
             "$ref": "#/components/schemas/GenerateBookingPayload"
@@ -379,6 +411,7 @@
         "additionalProperties": false,
         "required": [
           "action",
+          "executionMode",
           "payload"
         ],
         "properties": {
@@ -387,6 +420,9 @@
             "enum": [
               "simulateMatch"
             ]
+          },
+          "executionMode": {
+            "$ref": "#/components/schemas/BackstagePublicExecutionMode"
           },
           "payload": {
             "$ref": "#/components/schemas/SimulateMatchPayload"
@@ -1243,8 +1279,6 @@
         "additionalProperties": true,
         "required": [
           "ok",
-          "requestId",
-          "traceId",
           "result",
           "_route"
         ],

@@ -27,6 +27,12 @@ The contract defines exactly two operations:
   `POST /gpt-access/capabilities/v1/backstage-booker/run` for only
   `upsertStoryline` and `appendCanonBeat`.
 
+Every `runBackstageBooker` request requires `executionMode: "sync"`. The fixed
+value requests inline execution and avoids automatic heavy-prompt queueing;
+the async result bridge is intentionally absent from this two-operation
+contract. A synchronous request that exceeds the bounded route deadline
+returns `504`.
+
 `writeBackstageCanon` is marked `x-openai-isConsequential: true`, so ChatGPT
 must display its Allow/Deny action banner before invoking it. The dedicated
 backend boundary accepts the Backstage credential only at that exact path and
@@ -98,6 +104,8 @@ credential there:
 ```text
 Use runBackstageBooker only for generateBooking, generateBookingWithHRC, and
 simulateMatch.
+Always keep executionMode set to "sync" for runBackstageBooker, as required by
+the Action schema.
 
 Use writeBackstageCanon only when the user explicitly asks to create or change
 durable canon through upsertStoryline or appendCanonBeat. Preserve the user's

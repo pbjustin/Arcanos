@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import Ajv2020 from 'ajv/dist/2020.js';
+
 const contractPath = join(
   process.cwd(),
   'contracts/backstage_booker.openapi.v1.json'
@@ -61,6 +63,17 @@ function actionEnumsForOneOf(contract: any, schemaName: string): string[] {
   );
 }
 
+function compileComponent(contract: any, schemaName: string) {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  return ajv.compile({
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    ...contract.components.schemas[schemaName],
+    components: {
+      schemas: contract.components.schemas,
+    },
+  });
+}
+
 describe('Backstage Booker Custom GPT builder contract', () => {
   it('exposes only the fixed public and dedicated canon-write operations', () => {
     const contract = loadContract();
@@ -90,7 +103,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       expect.objectContaining({
         type: 'object',
         additionalProperties: false,
-        required: ['action', 'payload'],
+        required: ['action', 'executionMode', 'payload'],
       })
     );
     expect(contract.components.schemas.BackstagePublicRequest.properties).toEqual({
@@ -98,8 +111,35 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         type: 'string',
         enum: ['generateBooking', 'generateBookingWithHRC', 'simulateMatch'],
       },
+      executionMode: {
+        $ref: '#/components/schemas/BackstagePublicExecutionMode',
+      },
       payload: { type: 'object' },
     });
+    expect(contract.components.schemas.BackstagePublicExecutionMode).toEqual(
+      expect.objectContaining({
+        type: 'string',
+        enum: ['sync'],
+        default: 'sync',
+      })
+    );
+    for (const schemaName of [
+      'GenerateBookingActionRequest',
+      'GenerateBookingWithHrcActionRequest',
+      'SimulateMatchActionRequest',
+    ]) {
+      expect(contract.components.schemas[schemaName]).toEqual(
+        expect.objectContaining({
+          type: 'object',
+          additionalProperties: false,
+          required: ['action', 'executionMode', 'payload'],
+        })
+      );
+      expect(contract.components.schemas[schemaName].properties.executionMode)
+        .toEqual({
+          $ref: '#/components/schemas/BackstagePublicExecutionMode',
+        });
+    }
     expect(actionEnumsForOneOf(contract, 'BackstagePublicRequest')).toEqual([
       'generateBooking',
       'generateBookingWithHRC',
@@ -110,6 +150,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '400',
       '429',
       '503',
+      '504',
     ]);
 
     const canonOperation = contract.paths[
@@ -143,6 +184,46 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     collectLocalRefs(contract).forEach((ref) => {
       expect(resolveLocalRef(contract, ref)).toBeDefined();
     });
+  });
+
+  it('keeps every public Builder example on the synchronous route', () => {
+    const contract = loadContract();
+    const validate = compileComponent(contract, 'BackstagePublicRequest');
+    const examples = Object.values(
+      contract.paths['/gpt/backstage-booker'].post.requestBody.content[
+        'application/json'
+      ].examples
+    ) as Array<{ value: Record<string, unknown> }>;
+
+    const requests = [
+      ...examples.map((example) => example.value),
+      {
+        action: 'generateBookingWithHRC',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Book a premium live event and evaluate the result.',
+        },
+      },
+    ];
+
+    for (const request of requests) {
+      expect(request.executionMode).toBe('sync');
+      expect({ valid: validate(request), errors: validate.errors }).toEqual({
+        valid: true,
+        errors: null,
+      });
+    }
+
+    const asynchronousExample = {
+      ...requests[0],
+      executionMode: 'async',
+    };
+    expect(validate(asynchronousExample)).toBe(false);
+    const missingExecutionMode = Object.fromEntries(
+      Object.entries(requests[0]).filter(([key]) => key !== 'executionMode')
+    );
+    expect(validate(missingExecutionMode)).toBe(false);
   });
 
   it('keeps the authenticated request closed to the two Phase 2 canon actions', () => {
@@ -309,11 +390,44 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(publicOperation.responses['200'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstagePublicSuccessResponse',
     });
+    for (const status of ['400', '503', '504']) {
+      expect(publicOperation.responses[status].content['application/json'].schema)
+        .toEqual({
+          $ref: '#/components/schemas/BackstagePublicErrorResponse',
+        });
+    }
     expect(schemas.BackstagePublicSuccessResponse).toEqual(expect.objectContaining({
       type: 'object',
       additionalProperties: true,
-      required: ['ok', 'requestId', 'traceId', 'result', '_route'],
+      required: ['ok', 'result', '_route'],
     }));
+    const validatePublicSuccess = compileComponent(
+      contract,
+      'BackstagePublicSuccessResponse'
+    );
+    const runtimeEnvelope = {
+      ok: true,
+      result: {
+        universeId: 'my-universe-2k26',
+        storyline: 'The champion answers the challenger.',
+      },
+      _route: {
+        requestId: 'request-backstage-public',
+        traceId: 'trace-backstage-public',
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'generateBooking',
+        timestamp: '2026-08-15T20:00:00.000Z',
+      },
+    };
+    expect({
+      valid: validatePublicSuccess(runtimeEnvelope),
+      errors: validatePublicSuccess.errors,
+    }).toEqual({
+      valid: true,
+      errors: null,
+    });
     expect(schemas.BackstageRouteMeta.properties.action.enum).toEqual([
       'generateBooking',
       'generateBookingWithHRC',
