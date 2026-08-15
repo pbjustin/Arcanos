@@ -349,30 +349,25 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     try {
       await applyCanonForwardMigration(observer);
       await observer.query(runtimeCanonVerifier);
+      await observer.query('SET search_path TO public, pg_catalog');
 
-      const dependencies = await observer.query<{
+      const defaults = await observer.query<{
         table_name: string;
-        function_schema: string;
-        function_name: string;
+        default_expression: string;
       }>(
         `SELECT
            table_class.relname AS table_name,
-           function_namespace.nspname AS function_schema,
-           function_proc.proname AS function_name
+           pg_get_expr(
+             attribute_default.adbin,
+             attribute_default.adrelid,
+             false
+           ) AS default_expression
          FROM pg_attrdef AS attribute_default
          INNER JOIN pg_class AS table_class
            ON table_class.oid = attribute_default.adrelid
          INNER JOIN pg_attribute AS attribute
            ON attribute.attrelid = attribute_default.adrelid
           AND attribute.attnum = attribute_default.adnum
-         INNER JOIN pg_depend AS dependency
-           ON dependency.classid = 'pg_attrdef'::REGCLASS
-          AND dependency.objid = attribute_default.oid
-          AND dependency.refclassid = 'pg_proc'::REGCLASS
-         INNER JOIN pg_proc AS function_proc
-           ON function_proc.oid = dependency.refobjid
-         INNER JOIN pg_namespace AS function_namespace
-           ON function_namespace.oid = function_proc.pronamespace
          WHERE table_class.relnamespace = 'public'::REGNAMESPACE
            AND table_class.relname = ANY($1::TEXT[])
            AND attribute.attname = 'id'
@@ -382,16 +377,14 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
           'backstage_storyline_threads'
         ]]
       );
-      expect(dependencies.rows).toEqual([
+      expect(defaults.rows).toEqual([
         {
           table_name: 'backstage_storyline_canon_beats',
-          function_schema: 'pg_catalog',
-          function_name: 'gen_random_uuid'
+          default_expression: 'pg_catalog.gen_random_uuid()'
         },
         {
           table_name: 'backstage_storyline_threads',
-          function_schema: 'pg_catalog',
-          function_name: 'gen_random_uuid'
+          default_expression: 'pg_catalog.gen_random_uuid()'
         }
       ]);
     } finally {
