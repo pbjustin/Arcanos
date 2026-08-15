@@ -10,6 +10,7 @@ import {
   type BackstageCanonBeatAppendInput,
   type BackstageCanonStorylineUpsertInput
 } from '../../src/core/db/repositories/backstageBookerRepository.js';
+import { TABLE_DEFINITIONS } from '../../src/core/db/schema.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
   POSTGRES_TEST_DATABASE_NAME,
@@ -51,6 +52,14 @@ const canonConcurrentIndexPhase = canonForwardMigration
 const canonTransactionalPhase = canonForwardMigration
   .slice(canonTransactionalPhaseStart)
   .trim();
+const runtimeCanonVerifier = TABLE_DEFINITIONS.find(sql =>
+  sql.includes(
+    '-- CREATE ... IF NOT EXISTS is intentionally paired with an exact catalog'
+  )
+);
+if (!runtimeCanonVerifier) {
+  throw new Error('Runtime Backstage canon catalog verifier is missing.');
+}
 
 async function applyCanonForwardMigration(client: Client): Promise<void> {
   await client.query(canonConcurrentIndexPhase);
@@ -195,6 +204,14 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     expect(target.rows[0]?.current_database).toBe(POSTGRES_TEST_DATABASE_NAME);
     expect(Number(target.rows[0]?.server_version_num)).toBeGreaterThanOrEqual(180_000);
 
+    await observer.query(
+      'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public'
+    );
+    const publicUuidFunction = await observer.query<{ installed: boolean }>(
+      `SELECT to_regprocedure('public.gen_random_uuid()') IS NOT NULL AS installed`
+    );
+    expect(publicUuidFunction.rows[0]?.installed).toBe(true);
+
     const preexisting = await observer.query<{ table_name: string }>(
       `SELECT table_name
        FROM information_schema.tables
@@ -318,6 +335,61 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       'fk_backstage_storyline_participants_wrestler',
       'uq_backstage_events_universe_id'
     ]);
+  }, 60_000);
+
+  test('normalizes UUID defaults independently of the runtime search path', async () => {
+    await observer.query(
+      `ALTER TABLE public.backstage_storyline_threads
+         ALTER COLUMN id SET DEFAULT public.gen_random_uuid();
+       ALTER TABLE public.backstage_storyline_canon_beats
+         ALTER COLUMN id SET DEFAULT public.gen_random_uuid();`
+    );
+    await observer.query('SET search_path TO "$user", public');
+
+    try {
+      await applyCanonForwardMigration(observer);
+      await observer.query(runtimeCanonVerifier);
+      await observer.query('SET search_path TO public, pg_catalog');
+
+      const defaults = await observer.query<{
+        table_name: string;
+        default_expression: string;
+      }>(
+        `SELECT
+           table_class.relname AS table_name,
+           pg_get_expr(
+             attribute_default.adbin,
+             attribute_default.adrelid,
+             false
+           ) AS default_expression
+         FROM pg_attrdef AS attribute_default
+         INNER JOIN pg_class AS table_class
+           ON table_class.oid = attribute_default.adrelid
+         INNER JOIN pg_attribute AS attribute
+           ON attribute.attrelid = attribute_default.adrelid
+          AND attribute.attnum = attribute_default.adnum
+         WHERE table_class.relnamespace = 'public'::REGNAMESPACE
+           AND table_class.relname = ANY($1::TEXT[])
+           AND attribute.attname = 'id'
+         ORDER BY table_class.relname`,
+        [[
+          'backstage_storyline_canon_beats',
+          'backstage_storyline_threads'
+        ]]
+      );
+      expect(defaults.rows).toEqual([
+        {
+          table_name: 'backstage_storyline_canon_beats',
+          default_expression: 'pg_catalog.gen_random_uuid()'
+        },
+        {
+          table_name: 'backstage_storyline_threads',
+          default_expression: 'pg_catalog.gen_random_uuid()'
+        }
+      ]);
+    } finally {
+      await observer.query('SET search_path TO public, pg_catalog');
+    }
   }, 60_000);
 
   test('serializes concurrent update CAS attempts without a revision gap', async () => {

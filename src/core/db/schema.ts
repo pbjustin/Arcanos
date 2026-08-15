@@ -894,7 +894,7 @@ export const TABLE_DEFINITIONS = [
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_storyline_threads (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     story_key TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -981,7 +981,7 @@ export const TABLE_DEFINITIONS = [
   )`,
 
   `CREATE TABLE IF NOT EXISTS backstage_storyline_canon_beats (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     storyline_id UUID NOT NULL,
     sequence INTEGER NOT NULL,
@@ -1138,7 +1138,7 @@ BEGIN
   ) ON COMMIT DROP;
 
   CREATE TEMP TABLE p2_expected_backstage_storyline_threads (
-    id UUID DEFAULT gen_random_uuid(),
+    id UUID DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     story_key TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -1227,7 +1227,7 @@ BEGIN
   ) ON COMMIT DROP;
 
   CREATE TEMP TABLE p2_expected_backstage_storyline_canon_beats (
-    id UUID DEFAULT gen_random_uuid(),
+    id UUID DEFAULT pg_catalog.gen_random_uuid(),
     universe_id TEXT NOT NULL,
     storyline_id UUID NOT NULL,
     sequence INTEGER NOT NULL,
