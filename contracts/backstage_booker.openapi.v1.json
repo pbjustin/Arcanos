@@ -93,6 +93,16 @@
               }
             }
           },
+          "500": {
+            "description": "Backstage Booker encountered an unexpected internal execution error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Backstage Booker is temporarily unavailable.",
             "content": {
@@ -266,6 +276,36 @@
               }
             }
           },
+          "413": {
+            "description": "The canon request exceeded the dedicated 256 KiB JSON transport limit.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The canon request used an unsupported or ambiguous JSON representation.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "The authenticated Backstage Booker request budget was exceeded.",
             "headers": {
@@ -280,6 +320,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Credential configuration or capability execution failed unexpectedly.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageCanonErrorResponse"
                 }
               }
             }

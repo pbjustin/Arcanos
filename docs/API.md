@@ -439,7 +439,10 @@ distinct from both `ARCANOS_GPT_ACCESS_TOKEN` and
 credential, all four Phase One mutations, and every
 direct/control-plane/dispatch/legacy alias retain the existing confirmation
 contract; Phase One actions are unavailable on the dedicated lane.
-`universeId` selects data scope and never supplies authorization.
+Authenticated canon bodies use strict UTF-8 JSON with a 256 KiB transport ceiling;
+malformed, oversized, and unsupported representations return bounded no-store
+error envelopes. `universeId` selects data scope and never supplies
+authorization.
 
 This single-banner design trades an independently verified backend approval
 for trust in ChatGPT's consequential-action enforcement. The backend proves

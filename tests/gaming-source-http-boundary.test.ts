@@ -145,6 +145,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => {
 
 const { createApp } = await import('../src/app.js');
 const {
+  BACKSTAGE_BOOKER_BODY_LIMIT_BYTES,
   BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
   backstageBookerHttpBoundary,
   isBackstageBookerHttpBoundaryApplied,
@@ -279,7 +280,8 @@ function sourceAccessRequestWithAuthorization(
 async function sendAbsoluteFormRequest(
   app: express.Express,
   options: {
-    body?: string;
+    body?: Buffer | string;
+    chunked?: boolean;
     headers?: Readonly<Record<string, string | string[]>>;
     method: string;
     path: string;
@@ -297,8 +299,10 @@ async function sendAbsoluteFormRequest(
     Host: 'example.test',
     ...(options.body !== undefined
       ? {
-          'Content-Length': Buffer.byteLength(options.body),
           'Content-Type': 'application/json',
+          ...(options.chunked
+            ? { 'Transfer-Encoding': 'chunked' }
+            : { 'Content-Length': Buffer.byteLength(options.body) }),
         }
       : {}),
     ...options.headers,
@@ -965,12 +969,27 @@ describe('Backstage Booker production HTTP boundary', () => {
     expect(unsafeGateMock).not.toHaveBeenCalled();
   });
 
-  it('rejects duplicate dedicated auth at the full application boundary', async () => {
-    const authorization = `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`;
+  it.each([
+    ['duplicate dedicated values', [
+      `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+    ]],
+    ['generic then dedicated values', [
+      `Bearer ${GLOBAL_GPT_ACCESS_TOKEN}`,
+      `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+    ]],
+    ['dedicated then generic values', [
+      `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      `Bearer ${GLOBAL_GPT_ACCESS_TOKEN}`,
+    ]],
+  ] as const)('rejects %s Authorization headers at the full application boundary', async (
+    _caseName,
+    authorization
+  ) => {
     const response = await sendAbsoluteFormRequest(createApp(), {
       body: JSON.stringify({ action: 'upsertStoryline', payload: {} }),
       headers: {
-        Authorization: [authorization, authorization],
+        Authorization: [...authorization],
       },
       method: 'POST',
       path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
@@ -980,6 +999,289 @@ describe('Backstage Booker production HTTP boundary', () => {
     expect(response.body.error?.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(response.headers['cache-control']).toContain('no-store');
     expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['malformed JSON', '{"action":"upsertStoryline","payload":'],
+    ['a primitive JSON body', 'true'],
+    ['an array JSON body', '[]'],
+  ])('returns the fixed canon validation envelope for %s', async (
+    _caseName,
+    body
+  ) => {
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body,
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a non-JSON media type', { 'Content-Type': 'text/plain' }],
+    ['an unsupported charset', {
+      'Content-Type': 'application/json; charset=iso-8859-1',
+    }],
+    ['conflicting charsets with UTF-8 last', {
+      'Content-Type': 'application/json; charset=iso-8859-1; charset=utf-8',
+    }],
+    ['conflicting charsets with UTF-8 first', {
+      'Content-Type': 'application/json; charset=utf-8; charset=iso-8859-1',
+    }],
+    ['a comma-combined media representation', {
+      'Content-Type': 'application/json; charset=utf-8, text/plain',
+    }],
+    ['an unsupported content encoding', { 'Content-Encoding': 'gzip' }],
+    ['a gzip transfer-coding list', {
+      'Transfer-Encoding': 'gzip, chunked',
+    }],
+    ['an identity transfer-coding list', {
+      'Transfer-Encoding': 'identity, chunked',
+    }],
+    ['duplicate content types', {
+      'Content-Type': ['application/json', 'application/json'],
+    }],
+  ] as const)('rejects %s with the documented media response', async (
+    _caseName,
+    representationHeaders
+  ) => {
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body: JSON.stringify({ action: 'upsertStoryline', payload: {} }),
+      chunked: Object.keys(representationHeaders).some(
+        (headerName) => headerName.toLowerCase() === 'transfer-encoding'
+      ),
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+        ...representationHeaders,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(415);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a non-ASCII media subtype', 'application/jſon'],
+    ['a non-ASCII charset parameter name', 'application/json; charſet=utf-8'],
+  ])('rejects %s without Unicode case-folding the ASCII grammar', async (
+    _caseName,
+    contentType
+  ) => {
+    const app = express();
+    app.use((req, _res, next) => {
+      req.headers['content-type'] = contentType;
+      next();
+    });
+    app.use('/gpt-access', backstageBookerHttpBoundary);
+    app.post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH, (_req, res) => {
+      res.status(200).json({ unexpected: true });
+    });
+
+    const response = await request(app)
+      .post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .send({ action: 'upsertStoryline', payload: {} });
+
+    expect(response.status).toBe(415);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a Unicode-case-folded transfer coding', 'chunKed', false],
+    ['a non-ASCII-whitespace transfer coding', '\u00a0chunked\u00a0', false],
+    ['coexisting Content-Length and Transfer-Encoding', 'chunked', true],
+  ] as const)('rejects %s reconstructed by an adapter', async (
+    _caseName,
+    transferEncoding,
+    retainContentLength
+  ) => {
+    const app = express();
+    app.use((req, _res, next) => {
+      req.headers['transfer-encoding'] = transferEncoding;
+      if (!retainContentLength) {
+        delete req.headers['content-length'];
+        for (let index = req.rawHeaders.length - 2; index >= 0; index -= 2) {
+          if (req.rawHeaders[index]?.toLowerCase() === 'content-length') {
+            req.rawHeaders.splice(index, 2);
+          }
+        }
+      }
+      req.rawHeaders.push('Transfer-Encoding', transferEncoding);
+      next();
+    });
+    app.use('/gpt-access', backstageBookerHttpBoundary);
+    app.post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH, (_req, res) => {
+      res.status(200).json({ unexpected: true });
+    });
+
+    const response = await request(app)
+      .post(BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .send({ action: 'upsertStoryline', payload: {} });
+
+    expect(response.status).toBe(415);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid UTF-8 before JSON normalization or the leaf route', async () => {
+    const body = Buffer.concat([
+      Buffer.from('{"action":"upsertStoryline","payload":{"value":"'),
+      Buffer.from([0xff]),
+      Buffer.from('"}}'),
+    ]);
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body,
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(JSON.stringify(response.body)).not.toContain('\ufffd');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a zero-byte chunked JSON body before the leaf route', async () => {
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body: '',
+      chunked: true,
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['declared-length', false],
+    ['chunked', true],
+  ] as const)('rejects a %s body above the dedicated byte limit', async (
+    _caseName,
+    chunked
+  ) => {
+    const sentinel = 'backstage-oversized-body-sentinel';
+    const body = JSON.stringify({
+      action: 'upsertStoryline',
+      payload: {
+        value: `${sentinel}${'x'.repeat(BACKSTAGE_BOOKER_BODY_LIMIT_BYTES)}`,
+      },
+    });
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body,
+      chunked,
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(413);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(JSON.stringify(response.body)).not.toContain(sentinel);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('admits a compact maximum-shape Unicode-escaped canon request', async () => {
+    unsafeGatePassThrough = true;
+    const escapedAstralCharacter = '\\uD83D\\uDE00';
+    const participantNames = Array.from({ length: 50 }, (_value, index) => (
+      `"${String(index).padStart(2, '0')}${escapedAstralCharacter.repeat(118)}"`
+    )).join(',');
+    const body = [
+      '{"action":"upsertStoryline","payload":{',
+      '"universeId":"phase-two",',
+      '"mutationId":"8d64dad3-f080-4bac-88ec-994005dc7152",',
+      '"expectedVersion":0,"storyline":{',
+      `"key":"${escapedAstralCharacter.repeat(240)}",`,
+      `"title":"${escapedAstralCharacter.repeat(240)}",`,
+      `"summary":"${escapedAstralCharacter.repeat(10_000)}",`,
+      '"status":"active",',
+      `"participantNames":[${participantNames}]}}}`,
+    ].join('');
+
+    expect(Buffer.byteLength(body)).toBeGreaterThan(128 * 1024);
+    expect(Buffer.byteLength(body)).toBeLessThan(BACKSTAGE_BOOKER_BODY_LIMIT_BYTES);
+    const response = await sendAbsoluteFormRequest(createApp(), {
+      body,
+      headers: {
+        Authorization: `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`,
+      },
+      method: 'POST',
+      path: BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ dedicated: true });
   });
 
   it('mounts the exact boundary idempotently and counts the shared rate budget once', async () => {

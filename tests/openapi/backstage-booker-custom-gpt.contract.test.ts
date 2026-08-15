@@ -149,6 +149,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '200',
       '400',
       '429',
+      '500',
       '503',
       '504',
     ]);
@@ -169,7 +170,10 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '403',
       '404',
       '409',
+      '413',
+      '415',
       '429',
+      '500',
       '503',
     ]);
     expect(contract.components.securitySchemes).toEqual({
@@ -453,11 +457,23 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       }));
       expect(schemas[envelopeName].properties.ok.enum).toEqual([true]);
     }
-    for (const status of ['400', '401', '404', '409', '503']) {
+    for (const status of [
+      '400',
+      '401',
+      '404',
+      '409',
+      '413',
+      '415',
+      '500',
+      '503',
+    ]) {
       expect(canonOperation.responses[status].content['application/json'].schema).toEqual({
         $ref: '#/components/schemas/BackstageCanonErrorResponse',
       });
     }
+    expect(publicOperation.responses['500'].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/BackstagePublicErrorResponse',
+    });
     expect(canonOperation.responses['403'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstageCanonForbiddenResponse',
     });

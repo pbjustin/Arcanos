@@ -37,9 +37,10 @@ returns `504`.
 must display its Allow/Deny action banner before invoking it. The dedicated
 backend boundary accepts the Backstage credential only at that exact path and
 only for those two canon actions. It retains schema validation, the module
-allowlist, rate limiting, no-store responses, version fencing, PostgreSQL
-transactions, and mutation-ID idempotency, but it does not issue the ordinary
-backend confirmation challenge. The fixed lane may bypass the generic
+allowlist, rate limiting, a strict 256 KiB UTF-8 JSON transport limit, no-store
+responses, version fencing, PostgreSQL transactions, and mutation-ID
+idempotency, but it does not issue the ordinary backend confirmation challenge.
+The fixed lane may bypass the generic
 `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` grant; it still requires the
 exact `MCP_ALLOW_MODULE_ACTIONS` entries for both canon actions.
 

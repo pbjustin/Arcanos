@@ -155,6 +155,9 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
 const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
+const { backstageBookerHttpBoundary } = await import(
+  '../src/services/backstageBookerHttpBoundary.js'
+);
 const {
   buildGptAccessHealthPayload,
   createGptAccessAiJob,
@@ -182,7 +185,10 @@ const OPENAPI_SERVER_URL_ENV_KEYS = [
 ] as const;
 let testAppNetworkSequence = 0;
 
-function buildApp(options: { trustProxy?: boolean } = {}) {
+function buildApp(options: {
+  preparseBackstage?: boolean;
+  trustProxy?: boolean;
+} = {}) {
   const app = express();
   testAppNetworkSequence += 1;
   const testRemoteAddress = `198.18.${Math.floor(testAppNetworkSequence / 254)}.${(testAppNetworkSequence % 254) + 1}`;
@@ -196,6 +202,9 @@ function buildApp(options: { trustProxy?: boolean } = {}) {
     });
     next();
   });
+  if (!options.preparseBackstage) {
+    app.use('/gpt-access', backstageBookerHttpBoundary);
+  }
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -3336,6 +3345,30 @@ describe('/gpt-access gateway', () => {
       timestamp: expect.any(String),
     }));
     expect(response.body).not.toHaveProperty('ok');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a host pre-parses the dedicated canon body', async () => {
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp({ preparseBackstage: true }))
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
