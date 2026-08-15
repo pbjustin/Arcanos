@@ -155,6 +155,9 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
 const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
+const { backstageBookerHttpBoundary } = await import(
+  '../src/services/backstageBookerHttpBoundary.js'
+);
 const {
   buildGptAccessHealthPayload,
   createGptAccessAiJob,
@@ -164,6 +167,8 @@ const {
 } = await import('../src/services/gptAccessGateway.js');
 
 const TEST_TOKEN = 'test-gpt-access-token';
+const BACKSTAGE_BOOKER_TEST_TOKEN =
+  'dedicated-backstage-booker-access-token-123456';
 const GAMING_SOURCE_TEST_TOKEN = 'dedicated-gaming-source-access-token-123456';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const CREATED_JOB_ID = '22222222-2222-4222-8222-222222222222';
@@ -180,7 +185,10 @@ const OPENAPI_SERVER_URL_ENV_KEYS = [
 ] as const;
 let testAppNetworkSequence = 0;
 
-function buildApp(options: { trustProxy?: boolean } = {}) {
+function buildApp(options: {
+  preparseBackstage?: boolean;
+  trustProxy?: boolean;
+} = {}) {
   const app = express();
   testAppNetworkSequence += 1;
   const testRemoteAddress = `198.18.${Math.floor(testAppNetworkSequence / 254)}.${(testAppNetworkSequence % 254) + 1}`;
@@ -194,6 +202,9 @@ function buildApp(options: { trustProxy?: boolean } = {}) {
     });
     next();
   });
+  if (!options.preparseBackstage) {
+    app.use('/gpt-access', backstageBookerHttpBoundary);
+  }
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -201,6 +212,13 @@ function buildApp(options: { trustProxy?: boolean } = {}) {
 
 function authorized(requestBuilder: request.Test): request.Test {
   return requestBuilder.set('Authorization', `Bearer ${TEST_TOKEN}`);
+}
+
+function backstageBookerAuthorized(requestBuilder: request.Test): request.Test {
+  return requestBuilder.set(
+    'Authorization',
+    `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`
+  );
 }
 
 function gamingSourceAuthorized(requestBuilder: request.Test): request.Test {
@@ -277,6 +295,38 @@ function storylineBeatAtSerializedBytes(targetBytes: number): { text: string } {
   return { text: 'x'.repeat(targetBytes - emptyPayloadBytes) };
 }
 
+function buildBackstageCanonPayload(
+  action: 'upsertStoryline' | 'appendCanonBeat'
+): Record<string, unknown> {
+  if (action === 'upsertStoryline') {
+    return {
+      universeId: 'phase-two',
+      mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+      expectedVersion: 0,
+      storyline: {
+        key: 'summer-feud',
+        title: 'Summer Feud',
+        summary: null,
+        status: 'draft',
+        participantNames: [],
+      },
+    };
+  }
+
+  return {
+    universeId: 'phase-two',
+    mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+    storylineKey: 'summer-feud',
+    expectedVersion: 1,
+    beat: {
+      kind: 'development',
+      summary: 'The challenger interrupts the champion.',
+      occurredAt: '2026-08-14T20:00:00Z',
+      participantNames: [],
+    },
+  };
+}
+
 function allowCoreSystemStateRun(): void {
   allowCapabilityRun('capabilities.run', 'ARCANOS:CORE:system_state');
   getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
@@ -330,6 +380,8 @@ function buildNestedObject(depth: number): Record<string, unknown> {
 
 describe('/gpt-access gateway', () => {
   const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+  const previousBackstageBookerToken =
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
   const previousGamingSourceToken = process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN;
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
   const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
@@ -351,6 +403,8 @@ describe('/gpt-access gateway', () => {
     responsesCreateMock.mockReset();
     hasValidOpenAiKeyMock.mockReturnValue(false);
     process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+      BACKSTAGE_BOOKER_TEST_TOKEN;
     process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = GAMING_SOURCE_TEST_TOKEN;
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
@@ -491,6 +545,13 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
     } else {
       process.env.ARCANOS_GPT_ACCESS_TOKEN = previousToken;
+    }
+
+    if (previousBackstageBookerToken === undefined) {
+      delete process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+        previousBackstageBookerToken;
     }
 
     if (previousGamingSourceToken === undefined) {
@@ -3209,6 +3270,298 @@ describe('/gpt-access gateway', () => {
       code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
       message: 'Capability or action not found.'
     });
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong', ['Bearer', 'wrong-backstage-booker-token'].join(' ')],
+  ])('denies %s authentication on the exact Backstage Booker lane', async (
+    _caseName,
+    authorization
+  ) => {
+    configureBackstageCapability('upsertStoryline');
+    let pendingRequest = request(buildApp())
+      .post('/gpt-access/capabilities/v1/backstage-booker/run');
+    if (authorization) {
+      pendingRequest = pendingRequest.set('Authorization', authorization);
+    }
+
+    const response = await pendingRequest.send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/gpt-access/health',
+    '/gpt-access/capabilities/v1/BACKSTAGE%3ABOOKER/run',
+    '/gpt-access/capabilities/v1/backstage/run',
+    '/gpt-access/capabilities/v1/backstage-booker/run/',
+  ])('does not accept the dedicated Backstage bearer outside the exact route: %s', async (
+    path
+  ) => {
+    configureBackstageCapability('upsertStoryline');
+    const pendingRequest = path === '/gpt-access/health'
+      ? backstageBookerAuthorized(request(buildApp()).get(path))
+      : backstageBookerAuthorized(request(buildApp()).post(path)).send({
+          action: 'upsertStoryline',
+          payload: buildBackstageCanonPayload('upsertStoryline'),
+        });
+
+    const response = await pendingRequest;
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the generic GPT Access bearer on the canon confirmation path', async () => {
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await authorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual(expect.objectContaining({
+      error: 'Confirmation required',
+      message: expect.any(String),
+      code: 'CONFIRMATION_REQUIRED',
+      method: 'POST',
+      confirmationRequired: true,
+      confirmationStatus: 'pending',
+      confirmationChallenge: expect.objectContaining({
+        id: expect.any(String),
+      }),
+      timestamp: expect.any(String),
+    }));
+    expect(response.body).not.toHaveProperty('ok');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a host pre-parses the dedicated canon body', async () => {
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp({ preparseBackstage: true }))
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'The Backstage Booker canon request is invalid.',
+      },
+    }));
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', { payload: buildBackstageCanonPayload('upsertStoryline') }],
+    ['empty', {
+      action: '',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    }],
+  ])('returns shared validation for a dedicated request with %s action input', async (
+    _caseName,
+    body
+  ) => {
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'action must be a non-empty string.',
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.headers['x-confirmation-status']).toBeUndefined();
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['upsertStoryline', 'appendCanonBeat'] as const)(
+    'runs dedicated %s canon writes without a second backend challenge',
+    async (action) => {
+      configureBackstageCapability(action);
+      dispatchModuleActionMock.mockResolvedValueOnce({ accepted: true });
+
+      const response = await backstageBookerAuthorized(
+        request(buildApp())
+          .post('/gpt-access/capabilities/v1/backstage-booker/run')
+      ).send({
+        action,
+        payload: buildBackstageCanonPayload(action),
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body).not.toHaveProperty('confirmationRequired');
+      expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+      expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+        'BACKSTAGE:BOOKER',
+        action,
+        expect.objectContaining({
+          universeId: 'phase-two',
+          mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+        })
+      );
+    }
+  );
+
+  it('maps a missing storyline through the dedicated canon bearer as a bounded 404', async () => {
+    configureBackstageCapability('appendCanonBeat');
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND')
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'appendCanonBeat',
+      payload: buildBackstageCanonPayload('appendCanonBeat'),
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_STORYLINE_NOT_FOUND',
+        message: 'The requested Backstage storyline was not found.',
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the fixed dedicated action grant instead of the generic capability scope', async () => {
+    configureBackstageCapability('upsertStoryline');
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    dispatchModuleActionMock.mockResolvedValueOnce({ accepted: true });
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the module-action allowlist for dedicated canon writes', async () => {
+    configureBackstageCapability('upsertStoryline');
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+      message: 'Capability action is not allowlisted for GPT Access execution.',
+    });
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('denies Phase 1 actions to the dedicated bearer while keeping generic confirmation', async () => {
+    configureBackstageCapability('updateRoster');
+    const body = {
+      action: 'updateRoster',
+      payload: {
+        universeId: 'phase-two',
+        wrestlers: [{ name: 'Valid Wrestler', overall: 90 }],
+      },
+    };
+
+    const dedicatedResponse = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send(body);
+    const genericResponse = await authorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send(body);
+
+    expect(dedicatedResponse.status).toBe(403);
+    expect(dedicatedResponse.body.error.code)
+      .toBe('BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED');
+    expect(dedicatedResponse.body).not.toHaveProperty('confirmationRequired');
+    expect(genericResponse.status).toBe(403);
+    expect(genericResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('never grants an unrecognized action through the dedicated bearer', async () => {
+    configureBackstageCapability('deleteUniverseCanon');
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .post('/gpt-access/capabilities/v1/backstage-booker/run')
+    ).send({
+      action: 'deleteUniverseCanon',
+      payload: {},
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code)
+      .toBe('BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED');
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the dedicated and generic credentials collide', async () => {
+    const collidingCredential =
+      'backstage-booker-colliding-purpose-bound-token-123456';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = collidingCredential;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = collidingCredential;
+    configureBackstageCapability('upsertStoryline');
+
+    const response = await request(buildApp())
+      .post('/gpt-access/capabilities/v1/backstage-booker/run')
+      .set('Authorization', `Bearer ${collidingCredential}`)
+      .send({
+        action: 'upsertStoryline',
+        payload: buildBackstageCanonPayload('upsertStoryline'),
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.body.error.code).toBe('GPT_ACCESS_INTERNAL_ERROR');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
   it('maps residual typed Backstage roster validation failures to capability client errors', async () => {

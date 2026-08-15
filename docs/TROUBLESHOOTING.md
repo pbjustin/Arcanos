@@ -56,6 +56,22 @@ If failing, inspect Railway build/deploy logs first.
 - Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/readyz` during deployment activation.
 - Production startup fails OpenAI configuration validation: verify that a real `OPENAI_API_KEY` is present without printing its value. Mock fallback is for explicit non-production/test paths and is not the normal production behavior.
 - Control-plane 401: send the dedicated `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` bearer credential; confirmation and approval values are not authentication.
+- Backstage Booker `CONFIRMATION_REQUIRED` from `writeBackstageCanon`: the
+  request used the unchanged generic GPT Access path instead of the dedicated
+  canon lane, or the deployed Builder/backend configuration is stale. Verify
+  the exact deployed contract, the saved Action's API Key/Bearer mode, and the
+  presence of the distinct `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` without
+  printing it. Do not lengthen `CONFIRMATION_CHALLENGE_TTL_MS` or substitute a
+  generic/control-plane credential as a workaround.
+- Backstage Booker `BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` 403: the dedicated
+  credential reached the exact canon route with an action other than
+  `upsertStoryline` or `appendCanonBeat`. Phase One and public actions are
+  unavailable on this lane; use only the operations exposed by
+  `contracts/backstage_booker.openapi.v1.json`.
+- Backstage Booker canon call has no ChatGPT Allow/Deny banner: re-import the
+  deployed `backstage_booker.openapi.v1.json`, verify `writeBackstageCanon` is
+  marked consequential, save the existing GPT, and reopen it before testing.
+  Do not send the mutation until the banner is present.
 - Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.
 - Worker-heal 429: direct `/workers/heal` and `/worker-helper/heal` share one
   10-request/15-minute budget per server-derived authenticated

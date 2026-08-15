@@ -26,6 +26,7 @@ npm install
 | ActionPlan OpenAPI contract | `contracts/action_plan_execution.openapi.v1.json` |
 | ActionPlan Python consumer constants | `daemon-python/arcanos/action_plan_execution_protocol.py` |
 | Backstage Booker module-action schemas | `packages/protocol/schemas/v1/backstage-booker/` |
+| Backstage Booker Custom GPT OpenAPI contract | `contracts/backstage_booker.openapi.v1.json` |
 | Backend/CLI OpenAPI contracts | `contracts/*.openapi.v1.json` and `contracts/backend_cli_contract.v1.json` |
 | Custom GPT bridge OpenAPI | `openapi/custom-gpt-bridge.yaml` |
 
@@ -52,6 +53,15 @@ indeterminate commit receipt; they never validate a `non_durable` canon result.
 Module normalization also enforces the canon participant array's 16,384-byte
 PostgreSQL JSONB text bound, which JSON Schema cannot express directly.
 The original seven action schema files remain unchanged.
+
+The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
+projection of this module-action family, not another protocol family. Keep its
+closed payloads aligned with the catalog schemas. It intentionally exposes
+only the three public generation/simulation actions through
+`runBackstageBooker` and only `upsertStoryline` or `appendCanonBeat` through the
+Bearer-authenticated, consequential `writeBackstageCanon` operation. Do not add
+generic GPT Access, control-plane, Phase One mutation, or confirmation-token
+shapes to that contract.
 
 Implemented protocol commands:
 - `task.create`

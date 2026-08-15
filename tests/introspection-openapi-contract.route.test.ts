@@ -135,6 +135,33 @@ describe('custom GPT OpenAPI contract route', () => {
       .toEqual([{ bearerAuth: [] }]);
   });
 
+  it('serves the dedicated Backstage Booker builder contract with no-store caching', async () => {
+    const response = await request(buildApp())
+      .get('/contracts/backstage_booker.openapi.v1.json');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.body.openapi).toBe('3.1.0');
+    expect(Object.keys(response.body.paths ?? {})).toEqual([
+      '/gpt/backstage-booker',
+      '/gpt-access/capabilities/v1/backstage-booker/run',
+    ]);
+    expect(response.body.paths?.['/gpt/backstage-booker']?.post?.operationId)
+      .toBe('runBackstageBooker');
+    expect(response.body.paths?.['/gpt/backstage-booker']?.post?.['x-openai-isConsequential'])
+      .toBe(false);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/run'
+    ]?.post?.operationId).toBe('writeBackstageCanon');
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/run'
+    ]?.post?.security).toEqual([{ bearerAuth: [] }]);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/run'
+    ]?.post?.['x-openai-isConsequential']).toBe(true);
+  });
+
   it('serves the canonical job-result contract with no-store caching', async () => {
     const response = await request(buildApp())
       .get('/contracts/job_result.openapi.v1.json');

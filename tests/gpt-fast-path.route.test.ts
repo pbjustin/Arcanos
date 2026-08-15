@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -30,6 +30,10 @@ jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
   logGptConnection: jest.fn(),
   logGptConnectionFailed: jest.fn(),
   logGptAckSent: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/transport/http/middleware/publicProviderAdmission.js', () => ({
+  publicProviderGptAdmission: (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
@@ -172,6 +176,35 @@ function buildDirectActionEnvelope() {
       action: 'query_and_wait',
       route: 'direct_action',
       timestamp: '2026-04-21T12:01:00.000Z',
+    },
+  };
+}
+
+function buildBackstageRouting(
+  action: 'generateBooking' | 'generateBookingWithHRC' | 'simulateMatch'
+) {
+  return {
+    ok: true,
+    plan: {
+      matchedId: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action,
+      availableActions: [
+        'generateBooking',
+        'generateBookingWithHRC',
+        'simulateMatch',
+      ],
+      moduleVersion: null,
+      moduleDescription: null,
+      matchMethod: 'exact',
+    },
+    _route: {
+      gptId: 'backstage-booker',
+      route: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      action,
+      timestamp: '2026-08-15T20:00:00.000Z',
     },
   };
 }
@@ -857,6 +890,186 @@ describe('GPT fast-path route branching', () => {
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'generateBooking',
+      {
+        universeId: 'builder-sync-universe',
+        prompt: 'x'.repeat(10_000),
+      },
+      {
+        universeId: 'builder-sync-universe',
+        storyline: 'The champion accepts a new challenge.',
+      },
+      false,
+    ],
+    [
+      'generateBookingWithHRC',
+      {
+        universeId: 'builder-sync-universe',
+        prompt: 'x'.repeat(10_000),
+      },
+      {
+        universeId: 'builder-sync-universe',
+        storyline: 'The challenger earns a title opportunity.',
+        hrc: {
+          fidelity: 0.9,
+          resilience: 0.8,
+          verdict: 'The booking preserves established canon.',
+        },
+      },
+      true,
+    ],
+    [
+      'simulateMatch',
+      {
+        universeId: 'builder-sync-universe',
+        match: {
+          wrestler1: 'Rhea Ripley',
+          wrestler2: 'Bianca Belair',
+          matchType: 'Singles',
+          kayfabeMode: true,
+        },
+      },
+      {
+        universeId: 'builder-sync-universe',
+        result: {
+          match: 'Rhea Ripley vs Bianca Belair',
+          result: 'Rhea Ripley wins',
+          via: 'Pinfall',
+          interference: null,
+          rating: '4.0',
+        },
+        hrc: {
+          fidelity: 0.9,
+          resilience: 0.8,
+          verdict: 'The simulated finish is canon-compatible.',
+        },
+      },
+      false,
+    ],
+  ] as const)(
+    'keeps Builder public %s requests synchronous and inline',
+    async (action, payload, result, preferAsync) => {
+      process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';
+      mockResolveGptRouting.mockResolvedValueOnce(buildBackstageRouting(action));
+      mockRouteGptRequest.mockResolvedValueOnce({
+        ok: true,
+        result,
+        _route: {
+          requestId: `request-${action}`,
+          traceId: `trace-${action}`,
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action,
+          route: 'backstage-booker',
+          timestamp: '2026-08-15T20:00:00.000Z',
+        },
+      });
+
+      let builderRequest = request(buildApp())
+        .post('/gpt/backstage-booker');
+      if (preferAsync) {
+        builderRequest = builderRequest.set('Prefer', 'respond-async');
+      }
+      const response = await builderRequest.send({
+        action,
+        executionMode: 'sync',
+        payload,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+      expect(response.body).toMatchObject({
+        ok: true,
+        result,
+        _route: {
+          requestId: `request-${action}`,
+          traceId: `trace-${action}`,
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action,
+          route: 'backstage-booker',
+        },
+      });
+      expect(response.body).not.toHaveProperty('requestId');
+      expect(response.body).not.toHaveProperty('traceId');
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+        gptId: 'backstage-booker',
+        body: {
+          action,
+          executionMode: 'sync',
+          payload,
+        },
+      }));
+    }
+  );
+
+  it('auto-queues a heavy Backstage public action when the sync sentinel is absent', async () => {
+    process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'generateBooking',
+        payload: {
+          universeId: 'builder-async-control-universe',
+          prompt: 'x'.repeat(10_000),
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'queued',
+      jobId: 'job-orchestrated',
+    });
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns the documented timeout response for synchronous Builder dispatch', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    const timeoutError = new Error('GPT route timeout after 6000ms');
+    timeoutError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValueOnce(timeoutError);
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'builder-timeout-universe',
+          prompt: 'Book a championship match.',
+        },
+      });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_TIMEOUT',
+        message: 'GPT route timeout after 6000ms',
+      },
+      _route: {
+        gptId: 'backstage-booker',
+      },
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('does not fast-path non-prompt-generation requests even when fast mode is requested', async () => {

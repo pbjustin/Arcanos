@@ -34,10 +34,11 @@ cp .env.example .env
 | `ARCANOS_JOB_READ_CAPABILITY_SECRET` | Yes for generic async job creation and reads | none | Dedicated 32–4096 character HMAC signing secret for job-specific read capabilities. It must contain no whitespace or placeholder text and must remain distinct from every other purpose-bound application credential. |
 | `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | No; rotation overlap only | none | Optional prior signing key accepted only for capability verification. It must satisfy the current-key credential rules and differ from the current key and every other purpose-bound credential. New tokens are never issued from it. |
 | `ARCANOS_JOB_READ_TOKEN` | Client-only for standalone generic job lookups | none | Optional transient CLI/daemon fallback containing the `jobReadToken` returned by one job-creation response. The backend does not use this as a signing secret; do not put it in shared server configuration. |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Bearer token for the generic GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or authorized generic GPT Access client configuration; never use it for the separate Gaming source lifecycle Actions. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Bearer token for the generic GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or authorized generic GPT Access client configuration; never use it for the separate Backstage Booker canon or Gaming source lifecycle Actions. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; only for the Backstage Booker canon Custom GPT Action on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for only `POST /gpt-access/capabilities/v1/backstage-booker/run`, where the request action must be `upsertStoryline` or `appendCanonBeat`. It must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and as API Key/Bearer authentication in the Backstage Booker Custom GPT Action only; do not set it on workers. It is not OAuth or a user password, never authenticates another GPT Access or Backstage alias, and is never accepted as a generic or control-plane credential. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; only for Gaming source lifecycle Actions on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for only `POST /gpt-access/gaming/sources/ingestions`, `POST /gpt-access/gaming/sources/refreshes`, and `GET /gpt-access/gaming/sources/ingestions/{ingestionId}`. It must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and in the Arcanos Gaming Custom GPT Action only; do not set it on workers. It never authenticates generic GPT Access routes, and the generic GPT Access token is rejected on these source routes. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | configured public base URL variables, local request origin, then `http://localhost:3000` | Public HTTPS origin advertised by `/gpt-access/openapi.json`; set this in Railway so public metadata is deterministic and never derived from spoofable request headers. Railway PR previews prefer Railway preview URL variables before inherited production URLs. |
-| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated generic gateway scope allowlist. The Gaming source lifecycle uses `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN`, not these scopes. Include `jobs.create,jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated generic gateway scope allowlist. The Backstage Booker canon and Gaming source lifecycle Actions use their own dedicated credentials, not these scopes. Include `jobs.create,jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
 | `ARCANOS_GPT_ACCESS_PRINCIPAL_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled principal for capabilities such as `ARCANOS:PRODUCTIVITY`; never source it from action payloads. |
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using the normal protected-digest startup wrapper and role launcher; omit for direct local `npm start`. |
@@ -349,6 +350,7 @@ The OpenAI client resolves keys in this order:
 | `TRUSTED_GPT_IDS` | empty | GPT IDs eligible for the trusted confirmation path. Membership alone does not bypass confirmation; the request must also present a non-empty `x-arcanos-confirm-token`. For a trusted ID, the current middleware treats that header as a presence marker rather than consuming or validating it against the one-time-token store. This setting is not caller authentication because request metadata can supply the ID; use it only behind middleware that authenticates the caller and binds the permitted identity. |
 | `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
+| `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` (2 minutes) | Lifetime of ordinary in-memory one-use backend confirmation challenges. It must be positive; invalid values fall back to the 2-minute default. This setting still applies to Phase One Backstage mutations, generic GPT Access credentials, and direct/control-plane/legacy aliases. The dedicated Backstage canon Action lane does not issue this second challenge, so changing this TTL is neither required nor recommended for that Builder flow. |
 | `ASK_ROUTE_MODE` | `gone` | Legacy ask-style migration switch. Set `compat` only while temporarily supporting old `/brain` callers. |
 
 ### HTTP control-plane authentication
@@ -392,6 +394,35 @@ Async canonical mutations carry this server-generated admission into the job
 payload. Worker-side routing must still resolve to the same Backstage action or
 the job fails closed; web and worker GPT routing configuration should therefore
 remain synchronized.
+
+The separate Backstage Booker canon Action lane accepts only the dedicated
+`ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` at the exact
+`POST /gpt-access/capabilities/v1/backstage-booker/run` path and allows only
+`upsertStoryline` and `appendCanonBeat`. On that purpose-bound lane, the
+imported OpenAPI contract marks the write operation consequential and the
+backend treats ChatGPT's Allow/Deny banner as the single approval step; it does
+not issue an additional time-limited challenge. This fixed lane may bypass the
+generic `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` grant, but the exact
+server-side `MCP_ALLOW_MODULE_ACTIONS` entries still apply. This deliberately
+trusts the ChatGPT Action platform to present and enforce that approval before
+sending the credentialed request. The credential is shared Action
+authentication rather than per-user identity, and `universeId` is data scope
+rather than authorization. Therefore the lane must remain limited to the
+version-fenced, mutation-ID-idempotent canon actions. The four Phase One
+mutations are unavailable on the dedicated lane; they, calls made with
+`ARCANOS_GPT_ACCESS_TOKEN`, and all direct, control-plane, dispatch, and legacy
+aliases retain their existing backend confirmation boundary.
+
+Store the dedicated value only in web-service secret configuration and the
+Backstage Booker Action's encrypted API Key/Bearer field. Never copy it into
+the schema, GPT instructions, chat, source, logs, or a worker service. The
+backend resolves it per request and has no previous-token overlap setting, so
+rotation requires a coordinated web-service and Builder update and causes a
+brief expected authentication gap between those two changes. Revoke the lane
+by deleting the web-service variable and redeploying; restore the prior Builder
+schema/authentication if rolling back the feature. Generic GPT Access and
+control-plane behavior remain available under their own credentials and
+confirmation rules.
 
 Reinforcement HTTP limits are also fixed rather than environment settings.
 `POST /reinforce` accepts a strict object JSON body up to 32 KiB;
@@ -726,10 +757,11 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Generic gateway bearer token. The gateway returns an auth/config error when this is missing. `GET /gpt-access/openapi.json` remains public. It is not accepted by the separate Gaming source lifecycle routes. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Generic gateway bearer token. The gateway returns an auth/config error when this is missing. `GET /gpt-access/openapi.json` remains public. It remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but must not be configured in the dedicated Backstage Booker Custom GPT. It is not accepted by the Gaming source lifecycle routes. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; web service canon Custom GPT Action only | none | Dedicated purpose-bound Bearer credential for exactly `POST /gpt-access/capabilities/v1/backstage-booker/run` with `upsertStoryline` or `appendCanonBeat`. It must be 32–4096 visible ASCII characters with no whitespace or placeholder form and distinct from every other application credential. Configure the same value only on the web service and in the Backstage Booker Custom GPT Action's API Key/Bearer field. Generic GPT Access and other Backstage routes reject it. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; web service source lifecycle only | none | Dedicated purpose-bound Bearer credential for exactly the three `/gpt-access/gaming/sources/*` lifecycle routes. It must be 32–4096 visible ASCII characters with no whitespace or placeholder form, and distinct from every other application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action. Generic GPT Access routes reject it. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | first valid configured public URL/domain, local request origin, then `http://localhost:3000` | Public origin for GPT Action OpenAPI metadata. Supported configured fallbacks include `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL`, `RAILWAY_PUBLIC_URL`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_STATIC_URL`. Non-local request hosts are ignored. Railway PR previews advertise `RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_PUBLIC_URL`, or `RAILWAY_STATIC_URL` before inherited production URLs. |
-| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, capability runs, and worker recovery | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Generic gateway scope allowlist. Gaming ingestion, refresh, and status use `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN`, not these scopes. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the protected async Trinity flow; add `workers.recover` only for confirmed worker recovery dispatch; add `capabilities.read` for discovery and `capabilities.run` only with `MCP_ALLOW_MODULE_ACTIONS` and confirmation. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, capability runs, and worker recovery | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Generic gateway scope allowlist. The dedicated Backstage canon and Gaming source lifecycle credentials do not use these scopes. A generic token can still reach the Backstage canon route only with `capabilities.run`, `MCP_ALLOW_MODULE_ACTIONS`, and backend confirmation. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the protected async Trinity flow; add `workers.recover` only for confirmed worker recovery dispatch; add `capabilities.read` for discovery. |
 | `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
 | `DATABASE_URL` or complete `PG*` set | Yes for durable async jobs | none | Required by `/gpt-access/jobs/create` persistence and by the worker queue. Web and worker services must share the same database. |
 | `JOB_WORKER_ID` | No | `async-queue` | Base worker identity for queue claims, logs, and heartbeat state. |
@@ -1033,6 +1065,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | commented empty | Optional verification-only old key for a bounded retained-job rotation overlap. |
 | `ARCANOS_JOB_READ_TOKEN` | commented empty | Client-only transient token for one standalone generic job lookup; never a shared backend signing key. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated API Key/Bearer credential for the exact Backstage Booker canon Action route and only `upsertStoryline` or `appendCanonBeat`. It is distinct from generic GPT Access and control-plane credentials and must never appear in the schema, instructions, chat, source, or logs. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated Bearer credential for only the Gaming source ingestion, refresh, and status routes. Configure the same value in the Arcanos Gaming Custom GPT Action; do not use the generic GPT Access or bridge credential and do not configure it on workers. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented scope list | Generic gateway scope allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be explicit before they enqueue, discover, execute capability work, or recover workers. Gaming source lifecycle Actions use the dedicated Gaming credential instead. |

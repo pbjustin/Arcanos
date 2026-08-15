@@ -111,6 +111,13 @@ import {
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
+import {
+  backstageBookerHttpBoundary,
+  isBackstageBookerHttpBoundaryApplied,
+} from '@services/backstageBookerHttpBoundary.js';
+import {
+  isBackstageBookerAccessAuthenticated,
+} from '@services/backstageBookerAccessAuth.js';
 
 const router = express.Router();
 configureLocalAgentActionExecutor(executeLocalAgentActionAsJob);
@@ -467,6 +474,36 @@ function confirmCapabilityRunWhenRequired(
     && typeof (req.body as Record<string, unknown>).action === 'string'
     ? ((req.body as Record<string, unknown>).action as string).trim()
     : null;
+  if (
+    isBackstageBookerAccessAuthenticated(req)
+    && (
+      action === null
+      || action.length === 0
+      || action === 'upsertStoryline'
+      || action === 'appendCanonBeat'
+    )
+  ) {
+    let metadata: CapabilityMetadata | null;
+    try {
+      metadata = getModuleMetadata(capabilityId);
+    } catch {
+      metadata = null;
+    }
+
+    if (metadata?.name === BACKSTAGE_MODULE_NAME) {
+      try {
+        req.logger?.info('backstage_booker_access.backend_confirmation_skipped', {
+          action,
+          capabilityId: BACKSTAGE_MODULE_NAME,
+          authorizationBoundary: 'dedicated-canon-action',
+        });
+      } catch {
+        // Approval diagnostics must not alter capability execution.
+      }
+      next();
+      return;
+    }
+  }
   const strictLocalAgentConfirmation =
     (capabilityId === LOCAL_AGENT_CAPABILITY_ID
       || capabilityId === LOCAL_AGENT_CAPABILITY_ROUTE)
@@ -917,6 +954,81 @@ function sendGptAccessUnavailable(
         message
       }
     }
+  });
+}
+
+const requireGenericCapabilityRunScope =
+  requireGptAccessScope('capabilities.run');
+
+function requireCapabilityRunScope(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (isBackstageBookerAccessAuthenticated(req)) {
+    next();
+    return;
+  }
+
+  requireGenericCapabilityRunScope(req, res, next);
+}
+
+function authorizeDedicatedBackstageCanonAction(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (!isBackstageBookerAccessAuthenticated(req)) {
+    next();
+    return;
+  }
+
+  const action = req.body
+    && typeof req.body === 'object'
+    && !Array.isArray(req.body)
+    && typeof (req.body as Record<string, unknown>).action === 'string'
+    ? ((req.body as Record<string, unknown>).action as string).trim()
+    : null;
+  let metadata: CapabilityMetadata | null;
+  try {
+    metadata = getModuleMetadata(req.params.id);
+  } catch {
+    metadata = null;
+  }
+
+  if (
+    metadata?.name === BACKSTAGE_MODULE_NAME
+    && (
+      action === null
+      || action.length === 0
+      || action === 'upsertStoryline'
+      || action === 'appendCanonBeat'
+    )
+  ) {
+    next();
+    return;
+  }
+
+  try {
+    req.logger?.warn('backstage_booker_access.authorization_denied', {
+      capabilityCanonical: metadata?.name === BACKSTAGE_MODULE_NAME,
+      reason: action === 'upsertStoryline' || action === 'appendCanonBeat'
+        ? 'capability_not_allowed'
+        : 'action_not_allowed',
+      statusCode: 403,
+    });
+  } catch {
+    // Authorization diagnostics must not alter the fixed public response.
+  }
+  res.status(403).json({
+    ok: false,
+    error: {
+      code: 'BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED',
+      message:
+        'Dedicated Backstage Booker access is limited to canon storyline mutations.',
+    },
+    ...(req.requestId ? { requestId: req.requestId } : {}),
+    ...(req.traceId ? { traceId: req.traceId } : {}),
   });
 }
 
@@ -1490,12 +1602,13 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
 });
 
 // Keep the leaf router safe when it is mounted without the production app.
-// Both narrow middleware functions are idempotent at the request boundary.
+// Narrow boundary middleware is idempotent at the request boundary.
 router.use(
   '/gpt-access/gaming/sources',
   gamingSourceHttpBoundary,
   gamingSourceBodyParser
 );
+router.use('/gpt-access', backstageBookerHttpBoundary);
 router.use('/gpt-access', securityHeaders);
 router.use(
   [
@@ -1508,7 +1621,10 @@ router.use(
 );
 router.use('/gpt-access/local-agent', localAgentProtocolRouter);
 router.use('/gpt-access', (req, res, next) => {
-  if (isGamingSourceHttpBoundaryApplied(req)) {
+  if (
+    isGamingSourceHttpBoundaryApplied(req)
+    || isBackstageBookerHttpBoundaryApplied(req)
+  ) {
     next();
     return;
   }
@@ -1523,7 +1639,10 @@ router.get('/gpt-access/openapi.json', (req, res) => {
 });
 
 router.use('/gpt-access', (req, res, next) => {
-  if (isGamingSourceHttpBoundaryApplied(req)) {
+  if (
+    isGamingSourceHttpBoundaryApplied(req)
+    || isBackstageBookerHttpBoundaryApplied(req)
+  ) {
     next();
     return;
   }
@@ -1546,8 +1665,9 @@ router.get(
 
 router.post(
   '/gpt-access/capabilities/v1/:id/run',
-  requireGptAccessScope('capabilities.run'),
+  requireCapabilityRunScope,
   requireGptAccessModuleRegistry,
+  authorizeDedicatedBackstageCanonAction,
   mapCapabilityRunConfirmationToken,
   validateCapabilityIdempotencyKey,
   preflightResearchCapabilityRun,

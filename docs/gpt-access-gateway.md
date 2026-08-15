@@ -25,9 +25,50 @@ Generic protected `/gpt-access/*` operations require bearer auth. `/gpt-access/o
 Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 ```
 
-`ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or authorized generic Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history. It must not be configured in the Arcanos Gaming Custom GPT Action: the Gaming source lifecycle has a separate, narrower credential.
+`ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or authorized generic Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history. It must not be configured in the Backstage Booker canon or Arcanos Gaming Custom GPT Actions: those surfaces have separate, narrower credentials.
 
 `ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` are special: they must be listed explicitly before `/gpt-access/jobs/create` can enqueue work, capability discovery can enumerate modules, or `/gpt-access/capabilities/v1/{id}/run` can execute a module action. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the confirmation gate (`x-confirmed: yes` or a confirmation challenge token).
+
+Those are the unchanged generic-bearer rules. The exact Backstage Booker canon
+route additionally supports the purpose-bound lane below; it does not weaken a
+generic credential's scope or confirmation requirements.
+
+### Backstage Booker canon Action
+
+The reviewed Backstage Booker Builder configuration imports
+`/contracts/backstage_booker.openapi.v1.json` and stores a separate credential
+as ChatGPT Builder API Key/Bearer authentication:
+
+```bash
+Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
+```
+
+This credential is accepted only for exact
+`POST /gpt-access/capabilities/v1/backstage-booker/run` with no trailing-slash
+alias. The dedicated lane fails closed unless `action` is `upsertStoryline` or
+`appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
+`403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token
+cannot authenticate another GPT Access, direct Backstage, dispatch, module,
+queryroute, control-plane, or legacy path.
+
+The lane may bypass the generic `ARCANOS_GPT_ACCESS_SCOPES`
+`capabilities.run` grant and the backend confirmation challenge, but stable
+preflight validation, `MCP_ALLOW_MODULE_ACTIONS`, service authorization, rate
+limits, no-store responses, version fencing, mutation-ID idempotency, and
+transactional persistence still apply. The Builder contract marks
+`writeBackstageCanon` consequential, so this design deliberately trusts
+ChatGPT's Allow/Deny banner as the one approval step. The bearer is shared
+Action authentication, not OAuth, a user password, or per-user identity, and
+`universeId` is not authorization.
+
+Keep the value distinct from `ARCANOS_GPT_ACCESS_TOKEN` and
+`ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`, store it only on the web service and in
+the Builder's encrypted authentication field, and never put it in the schema,
+instructions, chat, source, logs, or a worker. Ordinary confirmation challenges
+keep their 2-minute default; changing `CONFIRMATION_CHALLENGE_TTL_MS` is not a
+setup step for this lane. See
+[BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for Builder,
+rotation, revocation, rollback, and security-tradeoff guidance.
 
 ### Gaming source lifecycle Actions
 

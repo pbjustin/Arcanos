@@ -579,6 +579,22 @@ function timingSafeTokenEquals(providedToken: string, expectedToken: string): bo
     && providedToken.length === expectedToken.length;
 }
 
+function countRawAuthorizationHeaders(req: Request): number {
+  const rawHeaders = Array.isArray(req.rawHeaders) ? req.rawHeaders : [];
+  let count = 0;
+
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    if (
+      typeof rawHeaders[index] === 'string'
+      && rawHeaders[index].toLowerCase() === 'authorization'
+    ) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
 function readBearerToken(req: Request): string | null {
   const authorization = req.header('authorization');
   if (!authorization) {
@@ -597,6 +613,10 @@ function readBearerToken(req: Request): string | null {
 function readBearerTokenStatus(req: Request):
   | { ok: true; bearerValue: string }
   | { ok: false; reason: 'missing_auth' | 'invalid_auth' } {
+  if (countRawAuthorizationHeaders(req) > 1) {
+    return { ok: false, reason: 'invalid_auth' };
+  }
+
   const authorization = req.header('authorization');
   if (!authorization || authorization.trim().length === 0) {
     return { ok: false, reason: 'missing_auth' };

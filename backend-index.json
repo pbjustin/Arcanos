@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-14T22:37:48.657Z",
+  "generatedAt": "2026-08-15T18:24:08.603Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1544,7 +1544,13 @@
           "relativePath": "src/services/backstage-booker.ts"
         },
         {
+          "relativePath": "src/services/backstageBookerAccessAuth.ts"
+        },
+        {
           "relativePath": "src/services/backstageBookerContracts.ts"
+        },
+        {
+          "relativePath": "src/services/backstageBookerHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
@@ -4031,6 +4037,9 @@
         },
         {
           "relativePath": "tests/openapi/arcanos-gaming-custom-gpt.contract.test.ts"
+        },
+        {
+          "relativePath": "tests/openapi/backstage-booker-custom-gpt.contract.test.ts"
         },
         {
           "relativePath": "tests/openapi/custom-gpt-route.contract.test.ts"
