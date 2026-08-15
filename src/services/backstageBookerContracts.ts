@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import {
+  isValidBackstageCanonUtcTimestamp,
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   validateBackstageBookerActionPayload,
   type BackstageBookerAction,
@@ -614,11 +615,8 @@ function normalizeCanonParticipants(
   return normalized;
 }
 
-const CANON_UTC_TIMESTAMP_PATTERN =
-  /^(?!0000-)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$/u;
-
 function normalizeCanonTimestamp(value: string): string {
-  if (!CANON_UTC_TIMESTAMP_PATTERN.test(value)) {
+  if (!isValidBackstageCanonUtcTimestamp(value)) {
     return canonContractIssue(
       'appendCanonBeat',
       '/beat/occurredAt',

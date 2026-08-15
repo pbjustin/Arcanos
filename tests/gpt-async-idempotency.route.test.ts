@@ -2638,6 +2638,215 @@ describe('async /gpt idempotency', () => {
     });
   });
 
+  it('canonicalizes canon mutations before queue fingerprinting and preserves semantic conflicts', async () => {
+    const controlPlaneToken = 'async-canon-idempotency-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:async-canon-idempotency';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+
+    const bindings = new Map<string, { fingerprintHash: string; jobId: string }>();
+    findOrCreateGptJobMock.mockImplementation(async (options: {
+      idempotencyKeyHash: string;
+      requestFingerprintHash: string;
+    }) => {
+      const existing = bindings.get(options.idempotencyKeyHash);
+      if (existing && existing.fingerprintHash !== options.requestFingerprintHash) {
+        throw new MockIdempotencyKeyConflictError();
+      }
+      const binding = existing ?? {
+        fingerprintHash: options.requestFingerprintHash,
+        jobId: `job-canon-${bindings.size + 1}`,
+      };
+      bindings.set(options.idempotencyKeyHash, binding);
+      return {
+        job: { id: binding.jobId, status: 'pending' },
+        created: !existing,
+        deduped: Boolean(existing),
+        dedupeReason: existing ? 'reused_inflight_job' : 'new_job',
+      };
+    });
+    waitForQueuedGptJobCompletionMock.mockImplementation(async (jobId: string) => ({
+      state: 'pending',
+      job: { id: jobId, status: 'pending' },
+    }));
+
+    const scenarios = [
+      {
+        action: 'upsertStoryline',
+        idempotencyKey: 'canon-upsert-normalized-retry',
+        firstBody: {
+          universeId: 'phase-two',
+          mutationId: '8D64DAD3-F080-4BAC-88EC-994005DC7152',
+          expectedVersion: 0,
+          storyline: {
+            key: 'summer-feud',
+            title: 'Summer Feud',
+            summary: null,
+            status: 'draft',
+            participantNames: [],
+          },
+        },
+        equivalentBody: {
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          },
+        },
+        changedBody: {
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Changed Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          },
+        },
+      },
+      {
+        action: 'appendCanonBeat',
+        idempotencyKey: 'canon-beat-normalized-retry',
+        firstBody: {
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '9C3D1957-9F45-4A9C-99E7-F0B9022D7A4C',
+            storylineKey: 'summer-feud',
+            expectedVersion: 1,
+            beat: {
+              kind: 'angle',
+              summary: 'Contract signing',
+              occurredAt: '2026-08-14T12:34:56Z',
+              participantNames: [],
+              eventId: '11111111-1111-4111-8111-111111111111',
+            },
+          },
+        },
+        equivalentBody: {
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c',
+            storylineKey: 'summer-feud',
+            expectedVersion: 1,
+            beat: {
+              kind: 'angle',
+              summary: 'Contract signing',
+              occurredAt: '2026-08-14T12:34:56.000Z',
+              participantNames: [],
+              eventId: '11111111-1111-4111-8111-111111111111',
+            },
+          },
+        },
+        changedBody: {
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c',
+            storylineKey: 'summer-feud',
+            expectedVersion: 1,
+            beat: {
+              kind: 'angle',
+              summary: 'Changed contract signing',
+              occurredAt: '2026-08-14T12:34:56.000Z',
+              participantNames: [],
+              eventId: '11111111-1111-4111-8111-111111111111',
+            },
+          },
+        },
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const submit = (body: unknown) => request(buildApp())
+        .post('/gpt/backstage')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .set('Idempotency-Key', scenario.idempotencyKey)
+        .set('X-GPT-Action', scenario.action)
+        .set('X-GPT-Execution-Mode', 'async')
+        .set('X-Confirmed', 'yes')
+        .send(body);
+      const callOffset = findOrCreateGptJobMock.mock.calls.length;
+
+      const firstResponse = await submit(scenario.firstBody);
+      const equivalentResponse = await submit(scenario.equivalentBody);
+      const changedResponse = await submit(scenario.changedBody);
+      const firstOptions = findOrCreateGptJobMock.mock.calls[callOffset]?.[0];
+      const equivalentOptions = findOrCreateGptJobMock.mock.calls[callOffset + 1]?.[0];
+      const changedOptions = findOrCreateGptJobMock.mock.calls[callOffset + 2]?.[0];
+
+      expect(firstResponse.status).toBe(202);
+      expect(equivalentResponse.status).toBe(202);
+      expect(equivalentResponse.body).toMatchObject({ deduped: true });
+      expect(changedResponse.status).toBe(409);
+      expect(firstOptions?.requestFingerprintHash)
+        .toBe(equivalentOptions?.requestFingerprintHash);
+      expect(changedOptions?.requestFingerprintHash)
+        .not.toBe(firstOptions?.requestFingerprintHash);
+      expect(firstOptions?.input?.body).toEqual(equivalentOptions?.input?.body);
+      expect(firstOptions?.input?.body).toMatchObject({
+        action: scenario.action,
+        payload: scenario.equivalentBody.payload,
+      });
+    }
+  });
+
+  it('rejects invalid canon input before async planning with a bounded validation envelope', async () => {
+    const controlPlaneToken = 'invalid-async-canon-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:invalid-async-canon';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .set('X-GPT-Execution-Mode', 'async')
+      .send({
+        payload: {
+          universeId: 'phase-two',
+          mutationId: 'not-a-uuid',
+          expectedVersion: 0,
+          storyline: {},
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_BOOKER_INVALID',
+        message: 'Invalid Backstage Booker upsertStoryline payload.',
+        details: {
+          action: 'upsertStoryline',
+          issues: expect.any(Array),
+        },
+      },
+      _route: {
+        action: 'upsertStoryline',
+        route: 'backstage_canon_validation',
+      },
+    });
+    expect(response.body.error.details.issues.length).toBeLessThanOrEqual(16);
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['backstage', 'explicit async', undefined, true],
     ['backstage-booker', 'explicit async', undefined, true],

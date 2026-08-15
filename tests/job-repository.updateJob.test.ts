@@ -346,18 +346,43 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('AND lease_expires_at IS NOT NULL');
     expect(sql).toContain('AND lease_expires_at >= NOW()');
     expect(sql).toContain("$1::varchar(50) = 'cancelled'::varchar(50)");
+    expect(sql).toContain("$1::varchar(50) = 'completed'::varchar(50)");
+    expect(sql).toContain('AND $15::boolean');
     expect(sql).toContain('OR cancel_requested_at IS NULL');
     expect(sql).not.toContain('current_job');
     expect(sql).not.toContain('UNION ALL');
     expect(params.slice(9, 12)).toEqual(['job-1', 'worker-1', '7']);
     expect(params[12]).toBe(24 * 60 * 60 * 1_000);
     expect(params[13]).toBe(60 * 60 * 1_000);
+    expect(params[14]).toBe(false);
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.completed',
       metadata: expect.objectContaining({
         claimGeneration: '7'
       })
     }));
+  });
+
+  it('can let a completed result win a late cancellation request behind the live fence', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: 'job-1',
+        status: 'completed',
+        job_type: 'gpt',
+        worker_id: 'queue',
+        last_worker_id: 'worker-1',
+        claim_generation: '7'
+      }]
+    });
+
+    await updateClaimedJobTerminal('job-1', 'completed', {
+      fence,
+      output: { ok: true },
+      allowCompletionAfterCancellationRequest: true
+    });
+
+    const [, params] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(params[14]).toBe(true);
   });
 
   it('emits a generation-tagged event for fenced cancellation', async () => {

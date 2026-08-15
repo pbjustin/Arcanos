@@ -35,6 +35,14 @@ const POSTGRES_SUITES = [
     path: 'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts',
     databaseEnvironment: 'BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL',
   },
+  {
+    path: 'tests/integration/backstage-canon-storyline.pg18.integration.test.ts',
+    databaseEnvironment: 'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
+  },
+  {
+    path: 'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
+    databaseEnvironment: 'NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL',
+  },
 ];
 
 function buildDatabaseFreeEnvironment() {

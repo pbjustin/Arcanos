@@ -1,5 +1,18 @@
 export const DEFAULT_BACKSTAGE_UNIVERSE_ID = "legacy" as const;
 
+export const BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE =
+  "^(?!0000-)(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$";
+
+const backstageCanonUtcTimestampPattern = new RegExp(
+  BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE,
+  "u"
+);
+
+/** Return whether a value is a supported, calendar-valid UTC canon timestamp. */
+export function isValidBackstageCanonUtcTimestamp(value: unknown): value is string {
+  return typeof value === "string" && backstageCanonUtcTimestampPattern.test(value);
+}
+
 export const BACKSTAGE_BOOKER_ACTIONS = [
   "bookEvent",
   "updateRoster",

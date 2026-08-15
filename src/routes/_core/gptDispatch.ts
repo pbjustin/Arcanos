@@ -119,6 +119,9 @@ export type RouteMeta = {
   timestamp: string;
 };
 
+const BACKSTAGE_CANON_INTERNAL_ERROR_MESSAGE =
+  'Backstage canon request could not be completed.';
+
 export type RouteGptRequestInput = {
   gptId: string;
   body: any;
@@ -1937,6 +1940,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isCanonUnavailableFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageCanonUnavailableError(err);
+      const isUnclassifiedCanonFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && (action === 'upsertStoryline' || action === 'appendCanonBeat')
+        && !isBackstageCanonContractFailure
+        && !isCanonDomainFailure
+        && !isCanonUnavailableFailure;
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -1946,6 +1955,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? buildDispatchTimeoutMessage(timeoutMs)
         : isDispatchCancellation
         ? 'GPT job cancellation requested.'
+        : isUnclassifiedCanonFailure
+        ? BACKSTAGE_CANON_INTERNAL_ERROR_MESSAGE
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {

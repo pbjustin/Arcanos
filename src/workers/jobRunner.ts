@@ -120,6 +120,7 @@ interface JobExecutionOutcome {
   errorMessage?: string;
   retryable?: boolean;
   completionAutonomyState?: Record<string, unknown>;
+  completionWinsLateCancellation?: boolean;
 }
 
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
@@ -912,6 +913,12 @@ export async function executeQueuedGptRequest(params: {
   return {
     status: 'completed',
     output: envelope,
+    ...(
+      backstageMutationAdmission?.action === 'upsertStoryline'
+      || backstageMutationAdmission?.action === 'appendCanonBeat'
+        ? { completionWinsLateCancellation: true }
+        : {}
+    ),
     ...(commitOutcomeUnknown
       ? {
           completionAutonomyState: buildNonReusableGptResultAutonomyState(
@@ -1703,7 +1710,13 @@ export async function runWorkerConsumerSlot(
               'Queue job cancellation requested before terminal persistence.'
           );
         }
-        if (jobCancellationController.signal.aborted) {
+        const completedAdmittedCanonMutation =
+          outcome.status === 'completed'
+          && outcome.completionWinsLateCancellation === true;
+        if (
+          jobCancellationController.signal.aborted
+          && !completedAdmittedCanonMutation
+        ) {
           if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1736,16 +1749,21 @@ export async function runWorkerConsumerSlot(
             output: outcome.output,
             errorMessage: null,
             autonomyState: outcome.completionAutonomyState,
-            metadata: lifecycleDeadlines
+            metadata: lifecycleDeadlines,
+            allowCompletionAfterCancellationRequest:
+              outcome.completionWinsLateCancellation === true
           }
         );
         if (!terminalJob) {
-          if (await finalizeCancellationAfterTerminalCasMiss({
-            job,
-            fence: claimFence,
-            autonomyService,
-            jobStartedAtMs
-          })) {
+          if (
+            outcome.completionWinsLateCancellation !== true
+            && await finalizeCancellationAfterTerminalCasMiss({
+              job,
+              fence: claimFence,
+              autonomyService,
+              jobStartedAtMs
+            })
+          ) {
             continue;
           }
           await autonomyService.markJobLeaseLost(

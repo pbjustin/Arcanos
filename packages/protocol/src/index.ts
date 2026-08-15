@@ -1,7 +1,9 @@
 export { ARCANOS_PROTOCOL_COMMAND_IDS, ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS } from "./commands.js";
 export {
+  BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE,
   BACKSTAGE_BOOKER_ACTIONS,
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
+  isValidBackstageCanonUtcTimestamp,
   isBackstageBookerAction
 } from "./backstageBooker.js";
 export { ARCANOS_PROTOCOL_VERSION } from "./constants.js";

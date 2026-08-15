@@ -2,6 +2,16 @@
 -- Legacy saved prose and retained story beats are intentionally not imported:
 -- neither source carries enough structured lifecycle information to do so safely.
 
+-- Build the only index over an existing shared table without blocking ordinary
+-- reads and writes. This statement must remain outside every transaction block.
+-- A successful rerun is idempotent because the attached constraint retains this
+-- exact relation name. An interrupted invalid index fails closed in the verifier
+-- below and must be removed concurrently by an operator before retrying.
+-- The phase-aware runner must stop on the first error and must not submit this
+-- complete file as one query or wrap it in another transaction.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_backstage_events_universe_id
+  ON public.backstage_events (universe_id, id);
+
 BEGIN;
 SET LOCAL search_path = public, pg_catalog;
 
@@ -12,6 +22,10 @@ DO $$
 DECLARE
   existing_type "char";
   existing_definition TEXT;
+  candidate_index_oid OID;
+  candidate_index_valid BOOLEAN;
+  candidate_index_ready BOOLEAN;
+  candidate_index_live BOOLEAN;
 BEGIN
   SELECT constraint_row.contype, pg_get_constraintdef(constraint_row.oid, false)
     INTO existing_type, existing_definition
@@ -20,10 +34,48 @@ BEGIN
       AND constraint_row.conname = 'uq_backstage_events_universe_id';
 
   IF existing_definition IS NULL THEN
+    SELECT
+      index_class.oid,
+      index_row.indisvalid,
+      index_row.indisready,
+      index_row.indislive
+    INTO
+      candidate_index_oid,
+      candidate_index_valid,
+      candidate_index_ready,
+      candidate_index_live
+    FROM pg_class AS index_class
+    INNER JOIN pg_namespace AS index_namespace
+      ON index_namespace.oid = index_class.relnamespace
+    INNER JOIN pg_index AS index_row
+      ON index_row.indexrelid = index_class.oid
+    WHERE index_namespace.nspname = 'public'
+      AND index_class.relname = 'uq_backstage_events_universe_id';
+
+    IF candidate_index_oid IS NULL THEN
+      RAISE EXCEPTION 'uq_backstage_events_universe_id backing index is missing'
+        USING ERRCODE = '55000';
+    END IF;
+    IF NOT candidate_index_valid
+      OR NOT candidate_index_ready
+      OR NOT candidate_index_live
+    THEN
+      RAISE EXCEPTION 'uq_backstage_events_universe_id backing index is invalid or incomplete; remove it concurrently before retrying this migration'
+        USING ERRCODE = '55000';
+    END IF;
+
     ALTER TABLE backstage_events
       ADD CONSTRAINT uq_backstage_events_universe_id
-      UNIQUE (universe_id, id);
-  ELSIF existing_type <> 'u'
+      UNIQUE USING INDEX uq_backstage_events_universe_id;
+
+    SELECT constraint_row.contype, pg_get_constraintdef(constraint_row.oid, false)
+      INTO existing_type, existing_definition
+      FROM pg_constraint AS constraint_row
+      WHERE constraint_row.conrelid = 'backstage_events'::regclass
+        AND constraint_row.conname = 'uq_backstage_events_universe_id';
+  END IF;
+
+  IF existing_type <> 'u'
     OR regexp_replace(existing_definition, '[[:space:]]+', '', 'g')
       <> 'UNIQUE(universe_id,id)'
   THEN

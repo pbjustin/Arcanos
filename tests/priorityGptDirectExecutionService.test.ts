@@ -614,39 +614,239 @@ describe('priorityGptDirectExecutionService', () => {
     });
   });
 
-  it.each([
-    {
-      label: 'completion',
+  it('persists a completed canon receipt when cancellation arrives before terminal persistence', async () => {
+    const slot = { release: jest.fn() };
+    const mutationId = '8d64dad3-f080-4bac-88ec-994005dc7152';
+    const routeCompletion = createDeferred<{
+      ok: true;
+      result: Record<string, unknown>;
+    }>();
+    const result = {
+      universeId: 'phase-two',
+      mutationId,
+      applied: null,
+      universeRevision: null,
+      storyline: null,
+      persistence: {
+        status: 'unknown',
+        durable: null,
+        backend: 'postgresql',
+        degraded: true,
+        reason: 'commit_outcome_unknown',
+      },
+    };
+    recordJobHeartbeatMock
+      .mockResolvedValueOnce(createJob())
+      .mockResolvedValueOnce(createJob({
+        cancel_requested_at: new Date('2026-08-14T12:00:00.000Z'),
+        cancel_reason: 'Cancellation arrived after the canon mutation committed',
+      }));
+    routeGptRequestMock.mockReturnValue(routeCompletion.promise);
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'completed' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-canon-cancellation-race',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'upsertStoryline',
+          payload: { mutationId },
+        },
+        requestId: 'req-priority-direct-canon-cancellation-race',
+        backstageMutationAdmission: {
+          version: 1,
+          source: 'control-plane-http',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'upsertStoryline',
+          scope: 'mcp:invoke',
+          principalId: 'operator:priority-cancellation-race',
+        },
+      },
+      slot,
+    });
+
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls.length === 1,
+      'priority direct canon route start'
+    );
+    await jest.advanceTimersByTimeAsync(5_000);
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls[0]?.[0]?.parentAbortSignal?.aborted === true,
+      'priority direct late cancellation observation'
+    );
+
+    routeCompletion.resolve({ ok: true, result });
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct canon completion after cancellation'
+    );
+
+    expect(updateClaimedJobTerminalMock.mock.calls.map((call) => call[1])).toEqual([
+      'completed'
+    ]);
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-canon-cancellation-race',
+      'completed',
+      expect.objectContaining({
+        output: { ok: true, result },
+        allowCompletionAfterCancellationRequest: true,
+        autonomyState: expect.objectContaining({
+          gptResultReuse: {
+            reusable: false,
+            reason: 'backstage_canon_commit_outcome_unknown',
+          },
+        }),
+      })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'completed',
+      status: 'completed',
+      retryable: false,
+    });
+    expect(recordGptJobEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'cancelled' })
+    );
+  });
+
+  it('persists late cancellation instead of an ordinary completed GPT result', async () => {
+    const slot = { release: jest.fn() };
+    const routeCompletion = createDeferred<{
+      ok: true;
+      result: { text: string };
+    }>();
+    recordJobHeartbeatMock
+      .mockResolvedValueOnce(createJob())
+      .mockResolvedValueOnce(createJob({
+        cancel_requested_at: new Date('2026-08-14T12:00:00.000Z'),
+        cancel_reason: 'Cancel ordinary GPT work after provider completion',
+      }));
+    routeGptRequestMock.mockReturnValue(routeCompletion.promise);
+    updateClaimedJobTerminalMock.mockResolvedValue(createJob({ status: 'cancelled' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-ordinary-cancellation-race',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
       rawInput: {
         gptId: 'arcanos-build',
-        body: { prompt: 'Complete while cancellation races.' },
-        requestId: 'req-priority-direct-completion-race'
+        body: { prompt: 'Ordinary provider work.' },
+        requestId: 'req-priority-direct-ordinary-cancellation-race',
       },
-      routeResult: {
-        ok: true,
-        result: { text: 'done' }
-      },
-      firstTerminalStatus: 'completed'
-    },
-    {
-      label: 'failure',
+      slot,
+    });
+
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls.length === 1,
+      'priority direct ordinary route start'
+    );
+    await jest.advanceTimersByTimeAsync(5_000);
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls[0]?.[0]?.parentAbortSignal?.aborted === true,
+      'priority direct ordinary late cancellation observation'
+    );
+
+    routeCompletion.resolve({ ok: true, result: { text: 'provider completed' } });
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct ordinary cancellation persistence'
+    );
+
+    expect(updateClaimedJobTerminalMock.mock.calls.map((call) => call[1])).toEqual([
+      'cancelled'
+    ]);
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-direct-ordinary-cancellation-race',
+      'cancelled',
+      expect.objectContaining({
+        output: null,
+        errorMessage: 'Cancel ordinary GPT work after provider completion',
+      })
+    );
+    expect(updateClaimedJobTerminalMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'completed',
+      expect.objectContaining({ allowCompletionAfterCancellationRequest: true })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'cancelled',
+      status: 'cancelled',
+      retryable: false,
+    });
+    expect(recordGptJobEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'completed' })
+    );
+  });
+
+  it('finalizes ordinary GPT cancellation that lands during the completion CAS', async () => {
+    const slot = { release: jest.fn() };
+    const cancellationRow = createJob({
+      last_worker_id: 'api-priority-worker',
+      lease_expires_at: new Date(Date.now() + 60_000),
+      cancel_requested_at: new Date(),
+      cancel_reason: 'Cancellation landed during ordinary completion persistence',
+    });
+    routeGptRequestMock.mockResolvedValue({
+      ok: true,
+      result: { text: 'provider completed' },
+    });
+    getJobByIdMock.mockResolvedValue(cancellationRow);
+    updateClaimedJobTerminalMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createJob({ status: 'cancelled' }));
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-ordinary-cas-race',
+      claimGeneration: '1',
+      workerId: 'api-priority-worker',
       rawInput: {
         gptId: 'arcanos-build',
-        body: { prompt: 'Fail while cancellation races.' },
-        requestId: 'req-priority-direct-failure-race'
+        body: { prompt: 'Complete while a cancellation request races.' },
+        requestId: 'req-priority-direct-ordinary-cas-race',
       },
-      routeResult: {
-        ok: false,
-        error: {
-          code: 'MODULE_ERROR',
-          message: 'provider failed'
-        }
-      },
-      firstTerminalStatus: 'failed'
-    }
-  ])(
-    'lets cancellation win a priority-direct $label terminal CAS race',
-    async ({ rawInput, routeResult, firstTerminalStatus }) => {
+      slot,
+    });
+
+    await waitForMockCall(
+      () => slot.release.mock.calls.length === 1,
+      'priority direct ordinary completion CAS cancellation'
+    );
+
+    expect(updateClaimedJobTerminalMock.mock.calls.map((call) => call[1])).toEqual([
+      'completed',
+      'cancelled',
+    ]);
+    expect(updateClaimedJobTerminalMock).toHaveBeenNthCalledWith(
+      1,
+      'job-priority-direct-ordinary-cas-race',
+      'completed',
+      expect.objectContaining({
+        output: { ok: true, result: { text: 'provider completed' } },
+        allowCompletionAfterCancellationRequest: false,
+      })
+    );
+    expect(updateClaimedJobTerminalMock).toHaveBeenLastCalledWith(
+      'job-priority-direct-ordinary-cas-race',
+      'cancelled',
+      expect.objectContaining({
+        output: null,
+        errorMessage: 'Cancellation landed during ordinary completion persistence',
+      })
+    );
+    expect(recordGptJobEventMock).toHaveBeenCalledWith({
+      event: 'cancelled',
+      status: 'cancelled',
+      retryable: false,
+    });
+    expect(recordGptJobEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'completed' })
+    );
+  });
+
+  it(
+    'lets cancellation win a priority-direct failure terminal CAS race',
+    async () => {
       const slot = { release: jest.fn() };
       const cancellationRow = createJob({
         last_worker_id: 'api-priority-worker',
@@ -654,7 +854,13 @@ describe('priorityGptDirectExecutionService', () => {
         cancel_requested_at: new Date(),
         cancel_reason: 'Cancellation won the direct terminal race'
       });
-      routeGptRequestMock.mockResolvedValue(routeResult);
+      routeGptRequestMock.mockResolvedValue({
+        ok: false,
+        error: {
+          code: 'MODULE_ERROR',
+          message: 'provider failed'
+        }
+      });
       getJobByIdMock.mockResolvedValue(cancellationRow);
       updateClaimedJobTerminalMock
         .mockResolvedValueOnce(null)
@@ -664,17 +870,21 @@ describe('priorityGptDirectExecutionService', () => {
         jobId: 'job-priority-direct-cancel',
         claimGeneration: '1',
         workerId: 'api-priority-worker',
-        rawInput,
+        rawInput: {
+          gptId: 'arcanos-build',
+          body: { prompt: 'Fail while cancellation races.' },
+          requestId: 'req-priority-direct-failure-race'
+        },
         slot
       });
 
       await waitForMockCall(
         () => slot.release.mock.calls.length === 1,
-        `priority direct ${firstTerminalStatus} cancellation race`
+        'priority direct failed cancellation race'
       );
 
       expect(updateClaimedJobTerminalMock.mock.calls.map((call) => call[1])).toEqual([
-        firstTerminalStatus,
+        'failed',
         'cancelled'
       ]);
       expect(updateClaimedJobTerminalMock).toHaveBeenLastCalledWith(

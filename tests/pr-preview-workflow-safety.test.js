@@ -19,6 +19,54 @@ const providerBearingPrJobs = [
   },
 ];
 
+const postgresSuites = [
+  {
+    databaseEnvironment: 'LOCAL_AGENT_HARDENING_TEST_DATABASE_URL',
+    command: 'test:local-agent-postgres',
+    commandPath: 'local-agent-hardening.pg.integration',
+  },
+  {
+    databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/job-claim-fencing.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/dag-snapshot-generation.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'JOB_WORKER_BUDGET_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/job-worker-budget-identity.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'JOB_STALE_RECOVERY_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/backstage-roster-atomicity.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/backstage-canon-storyline.pg18.integration.test.ts',
+  },
+  {
+    databaseEnvironment: 'NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
+  },
+];
+
 function readWorkflow(path) {
   return readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 }
@@ -112,28 +160,17 @@ describe('native PR workflow safety', () => {
 
   it('runs PostgreSQL fencing suites against the exact disposable PostgreSQL 18 database', () => {
     const workflow = readWorkflow('.github/workflows/ci-cd.yml');
+    const packageJson = JSON.parse(readWorkflow('package.json'));
 
     expect(workflow).toContain('image: postgres:18-alpine');
     expect(workflow).toContain('POSTGRES_DB: arcanos_audit_pg18_20260727');
     expect(workflow).toContain("ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE: '1'");
-    expect(workflow).toContain('LOCAL_AGENT_HARDENING_TEST_DATABASE_URL:');
-    expect(workflow).toContain('JOB_CLAIM_FENCING_TEST_DATABASE_URL:');
-    expect(workflow).toContain('DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL:');
-    expect(workflow).toContain('JOB_WORKER_BUDGET_TEST_DATABASE_URL:');
-    expect(workflow).toContain('JOB_STALE_RECOVERY_TEST_DATABASE_URL:');
-    expect(workflow).toContain('BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL:');
-    expect(workflow).toContain('BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL:');
-    expect(readWorkflow('package.json')).toContain(
-      'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts'
-    );
+    for (const { databaseEnvironment, command, commandPath } of postgresSuites) {
+      expect(workflow).toContain(`${databaseEnvironment}:`);
+      expect(packageJson.scripts?.[command]).toContain(commandPath);
+    }
     expect(workflow).toContain('run: npm run test:local-agent-postgres');
     expect(workflow).toContain('run: npm run test:postgres-fencing');
-    expect(readWorkflow('package.json')).toContain(
-      'tests/integration/job-worker-budget-identity.pg18.integration.test.ts'
-    );
-    expect(readWorkflow('package.json')).toContain(
-      'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts'
-    );
     expect(workflow).toContain(
       'needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]'
     );

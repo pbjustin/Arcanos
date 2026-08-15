@@ -444,7 +444,11 @@ async function executeReservedPriorityGptDirectExecution(params: {
     }));
 
     stopHeartbeat();
-    if (cancellationController.signal.aborted) {
+    const completedAdmittedCanonMutation = envelope.ok && (
+      backstageMutationAdmission?.action === 'upsertStoryline'
+      || backstageMutationAdmission?.action === 'appendCanonBeat'
+    );
+    if (cancellationController.signal.aborted && !completedAdmittedCanonMutation) {
       const reason = cancellationController.signal.reason;
       throw reason instanceof Error
         ? reason
@@ -518,11 +522,15 @@ async function executeReservedPriorityGptDirectExecution(params: {
               )
             : {})
         },
-        metadata: computeGptJobLifecycleDeadlines('completed')
+        metadata: computeGptJobLifecycleDeadlines('completed'),
+        allowCompletionAfterCancellationRequest: completedAdmittedCanonMutation
       }
     );
     if (!terminalJob) {
-      if (await finalizeCancellationAfterTerminalCasMiss()) {
+      if (
+        !completedAdmittedCanonMutation
+        && await finalizeCancellationAfterTerminalCasMiss()
+      ) {
         return;
       }
       params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {

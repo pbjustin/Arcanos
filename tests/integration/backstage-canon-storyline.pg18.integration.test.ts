@@ -41,6 +41,21 @@ const canonRollbackMigration = readFileSync(
   ),
   'utf8'
 );
+const canonTransactionalPhaseStart = canonForwardMigration.indexOf('\nBEGIN;');
+if (canonTransactionalPhaseStart < 0) {
+  throw new Error('Backstage canon migration is missing its transactional phase.');
+}
+const canonConcurrentIndexPhase = canonForwardMigration
+  .slice(0, canonTransactionalPhaseStart)
+  .trim();
+const canonTransactionalPhase = canonForwardMigration
+  .slice(canonTransactionalPhaseStart)
+  .trim();
+
+async function applyCanonForwardMigration(client: Client): Promise<void> {
+  await client.query(canonConcurrentIndexPhase);
+  await client.query(canonTransactionalPhase);
+}
 
 const ownedTableNames = [
   'backstage_canon_heads',
@@ -198,7 +213,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     ownsInstallation = true;
 
     await observer.query(universeScopeForwardMigration);
-    await observer.query(canonForwardMigration);
+    await applyCanonForwardMigration(observer);
 
     pool = new Pool({
       connectionString: configuredConnectionString,
@@ -274,7 +289,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
 
   test('applies the Phase 1 and Phase 2 forward migrations idempotently', async () => {
     await observer.query(universeScopeForwardMigration);
-    await observer.query(canonForwardMigration);
+    await applyCanonForwardMigration(observer);
 
     const tables = await observer.query<{ table_name: string }>(
       `SELECT table_name

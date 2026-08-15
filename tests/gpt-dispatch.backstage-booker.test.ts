@@ -743,6 +743,49 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
 
+  it('does not expose unclassified canon repository details through the dispatch envelope', async () => {
+    const sensitiveRepositoryMessage =
+      'relation "backstage_storyline_threads" does not exist at /srv/arcanos/repository.ts:1382';
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new Error(sensitiveRepositoryMessage)
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'upsertStoryline',
+        payload: {},
+      },
+      requestId: 'req-backstage-canon-unclassified-repository-error',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: 'Backstage canon request could not be completed.',
+      },
+    });
+    expect(JSON.stringify(envelope)).not.toContain(sensitiveRepositoryMessage);
+    expect(JSON.stringify(envelope)).not.toContain('backstage_storyline_threads');
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-backstage-canon-unclassified-repository-error',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'upsertStoryline',
+        error: sensitiveRepositoryMessage,
+      })
+    );
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
   it.each(['backstage', 'backstage-booker'])(
     'maps transactional roster failures for canonical alias %s to a retryable persistence code',
     async (gptId) => {

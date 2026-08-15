@@ -839,9 +839,9 @@ export const TABLE_DEFINITIONS = [
          AND constraint_row.conname = 'uq_backstage_events_universe_id';
 
      IF existing_definition IS NULL THEN
-       ALTER TABLE backstage_events
-         ADD CONSTRAINT uq_backstage_events_universe_id
-         UNIQUE (universe_id, id);
+       RAISE EXCEPTION
+         'uq_backstage_events_universe_id is missing; apply 20260814_backstage_canon_storyline_v1.sql before starting this runtime against an existing database'
+         USING ERRCODE = '55000';
      ELSIF existing_type <> 'u'
        OR regexp_replace(existing_definition, '[[:space:]]+', '', 'g')
          <> 'UNIQUE(universe_id,id)' THEN

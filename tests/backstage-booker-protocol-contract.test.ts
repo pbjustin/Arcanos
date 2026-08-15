@@ -3,12 +3,14 @@ import { describe, expect, it } from '@jest/globals';
 import {
   ARCANOS_PROTOCOL_COMMAND_IDS,
   ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS,
+  BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE,
   BACKSTAGE_BOOKER_ACTIONS,
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   assertValidBackstageBookerActionData,
   assertValidBackstageBookerActionPayload,
   createProtocolAjv,
   getProtocolSchemaCatalog,
+  isValidBackstageCanonUtcTimestamp,
   validateBackstageBookerActionData,
   validateBackstageBookerActionPayload,
   type BackstageBookerAction,
@@ -363,7 +365,22 @@ describe('Backstage Booker protocol contract', () => {
     }
   });
 
-  it('validates closed canon beats, UTC timestamps, and bounded identities', () => {
+  it('validates closed canon beats, real UTC calendar timestamps, and bounded identities', () => {
+    const catalog = getProtocolSchemaCatalog();
+    expect(catalog.backstageBooker.canon.$defs.utcTimestamp.pattern).toBe(
+      BACKSTAGE_CANON_UTC_TIMESTAMP_PATTERN_SOURCE
+    );
+
+    for (const validTimestamp of [
+      '0001-01-01T00:00:00Z',
+      '0004-02-29T00:00:00.1Z',
+      '2000-02-29T12:34:56.123456789Z',
+      '2024-02-29T23:59:59Z',
+      '9999-12-31T23:59:59.999Z',
+    ]) {
+      expect(isValidBackstageCanonUtcTimestamp(validTimestamp)).toBe(true);
+    }
+
     expect(
       validateBackstageBookerActionPayload('appendCanonBeat', {
         universeId: 'promotion:raw',
@@ -388,7 +405,12 @@ describe('Backstage Booker protocol contract', () => {
       { ...canonBeatInput, occurredAt: '2026-08-14T16:00:00-04:00' },
       { ...canonBeatInput, occurredAt: '2026-13-14T20:00:00Z' },
       { ...canonBeatInput, occurredAt: '0000-01-01T00:00:00Z' },
+      { ...canonBeatInput, occurredAt: '1900-02-29T20:00:00Z' },
+      { ...canonBeatInput, occurredAt: '2026-02-29T20:00:00Z' },
+      { ...canonBeatInput, occurredAt: '2026-04-31T20:00:00Z' },
       { ...canonBeatInput, occurredAt: '2026-12-31T23:59:60Z' },
+      { ...canonBeatInput, occurredAt: '2026-12-31T23:59:59.1234567890Z' },
+      { ...canonBeatInput, occurredAt: '10000-01-01T00:00:00Z' },
       { ...canonBeatInput, participantNames: ['Rhea Ripley', 'Rhea Ripley'] },
       { ...canonBeatInput, eventId: 'not-a-uuid' },
       { ...canonBeatInput, draftOnly: true },
@@ -403,6 +425,25 @@ describe('Backstage Booker protocol contract', () => {
         }).ok
       ).toBe(false);
     }
+
+    for (const invalidTimestamp of [
+      '0000-01-01T00:00:00Z',
+      '1900-02-29T20:00:00Z',
+      '2026-02-29T20:00:00Z',
+      '2026-04-31T20:00:00Z',
+      '2026-12-31T23:59:59.1234567890Z',
+      '10000-01-01T00:00:00Z',
+    ]) {
+      expect(isValidBackstageCanonUtcTimestamp(invalidTimestamp)).toBe(false);
+    }
+
+    expect(validateBackstageBookerActionData('appendCanonBeat', {
+      ...validResponses.appendCanonBeat as Record<string, unknown>,
+      beat: {
+        ...canonBeatModel,
+        occurredAt: '2026-02-29T20:00:00Z',
+      },
+    }).ok).toBe(false);
 
     expect(
       validateBackstageBookerActionPayload('appendCanonBeat', {

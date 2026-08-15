@@ -166,6 +166,8 @@ export interface UpdateClaimedJobTerminalOptions {
   errorMessage?: string | null;
   autonomyState?: Record<string, unknown>;
   metadata?: UpdateJobMetadata;
+  /** Preserve an already-produced completion when cancellation is requested after execution returns. */
+  allowCompletionAfterCancellationRequest?: boolean;
 }
 
 export interface FailPendingJobIfUnclaimedOptions {
@@ -1152,6 +1154,10 @@ export async function updateClaimedJobTerminal(
        AND lease_expires_at >= NOW()
        AND (
          $1::varchar(50) = 'cancelled'::varchar(50)
+         OR (
+           $1::varchar(50) = 'completed'::varchar(50)
+           AND $15::boolean
+         )
          OR cancel_requested_at IS NULL
        )
      RETURNING *`,
@@ -1175,7 +1181,8 @@ export async function updateClaimedJobTerminal(
       fence.workerId,
       fence.claimGeneration,
       lifecycleFallbacks.askRetentionWindowMs,
-      lifecycleFallbacks.dagNodeRetentionWindowMs
+      lifecycleFallbacks.dagNodeRetentionWindowMs,
+      options.allowCompletionAfterCancellationRequest === true
     ]
   );
 
@@ -1314,9 +1321,14 @@ async function findReusableGptJobByFingerprint(
     idempotencyScopeHash: string;
     requestFingerprintHash: string;
     idempotencyOrigin: 'explicit' | 'derived';
+    reuseRetryableTerminalResults?: boolean;
   }
 ): Promise<JobData | null> {
-  const reusableStatuses = resolveReusableFingerprintStatuses(options.idempotencyOrigin);
+  const reusableStatuses = resolveReusableFingerprintStatuses(options.idempotencyOrigin)
+    .filter((status) => (
+      options.reuseRetryableTerminalResults !== false
+      || (status !== 'failed' && status !== 'cancelled')
+    ));
   const result = await client.query(
     `SELECT *
      FROM job_data
@@ -1402,6 +1414,7 @@ export async function findOrCreateGptJob(
       `${options.idempotencyScopeHash}:${options.requestFingerprintHash}`
     );
 
+    let explicitKeyRequiresReconciliation = false;
     if (options.idempotencyKeyHash) {
       const existingJobByKey = await findReusableGptJobByIdempotencyKey(client, {
         idempotencyScopeHash: options.idempotencyScopeHash,
@@ -1431,13 +1444,21 @@ export async function findOrCreateGptJob(
             dedupeReason: classifyGptJobReuse(existingJobByKey)
           };
         }
+
+        // A non-reusable completed result is a commit-unknown receipt. Keep
+        // reusing an in-flight or successful reconciliation, but do not let a
+        // failed/cancelled reconciliation pin this explicit-key lineage. The
+        // original key-bound receipt remains authoritative for changed-body
+        // conflict detection above.
+        explicitKeyRequiresReconciliation = true;
       }
     }
 
     const existingJobByFingerprint = await findReusableGptJobByFingerprint(client, {
       idempotencyScopeHash: options.idempotencyScopeHash,
       requestFingerprintHash: options.requestFingerprintHash,
-      idempotencyOrigin: options.idempotencyOrigin
+      idempotencyOrigin: options.idempotencyOrigin,
+      reuseRetryableTerminalResults: !explicitKeyRequiresReconciliation
     });
 
     if (existingJobByFingerprint && isGptJobResultReusable(existingJobByFingerprint)) {
