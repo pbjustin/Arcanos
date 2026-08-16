@@ -7,7 +7,8 @@ const mockCacheSet = jest.fn();
 jest.unstable_mockModule('../src/services/hrc.js', () => ({
   hrcCore: {
     evaluate: mockEvaluate
-  }
+  },
+  isHRCResultCacheable: () => true
 }));
 
 jest.unstable_mockModule('@platform/resilience/cache.js', () => ({

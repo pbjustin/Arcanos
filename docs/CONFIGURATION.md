@@ -350,7 +350,7 @@ The OpenAI client resolves keys in this order:
 
 `BOOKER_TOKEN_LIMIT` defaults to `1200` for ordinary generation. Configured positive values are honored up to Trinity's `1200`-token hard cap, while compact direct-answer prompts may use a smaller prompt-derived cap. A deployment retaining the historical value `512` will continue to use `512`; remove or update that variable to adopt the `1200` default.
 
-`BOOKER_GENERATION_STAGE_TIMEOUT_MS` defaults to `40000` for the Backstage Booker provider stage and is capped at `45000`. This service-owned override prevents long-form booking requests from inheriting Trinity's shorter generic direct-answer deadline. The HRC follow-up is separately bounded to 10 seconds and inherits request cancellation, retaining response-handling headroom inside the module's 60-second window.
+`BOOKER_GENERATION_STAGE_TIMEOUT_MS` defaults to `40000` for the Backstage Booker provider stage and is capped at `45000`. This service-owned override prevents long-form booking requests from inheriting Trinity's shorter generic direct-answer deadline. The HRC follow-up is separately bounded to 10 seconds and inherits request cancellation. Canonical requests through `POST /gpt/backstage-booker` or its `/gpt/backstage` alias enforce a 60-second outer route budget, even when a generic or DAG GPT route timeout is unset or lower, leaving response-handling headroom. This route-specific minimum does not change how requests are classified as synchronous, asynchronous, or DAG execution, and every other GPT route retains its existing timeout profile.
 
 ### Confirmation and automation
 | Variable | Default | Purpose |
@@ -1069,7 +1069,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
 | `GPT5_MODEL` | `gpt-5.1` (commented) | GPT-5-family model preference. Backstage normalizes only the obsolete exact `gpt-5` alias to `gpt-5.1`. |
 | `BOOKER_TOKEN_LIMIT` | `1200` (commented) | Standard Backstage Booker output budget. Positive values are honored up to Trinity's `1200`-token hard cap; compact direct-answer prompts can use a smaller derived cap. |
-| `BOOKER_GENERATION_STAGE_TIMEOUT_MS` | `40000` (commented) | Backstage-only provider stage timeout, capped at `45000` to retain headroom inside the 60-second module window. |
+| `BOOKER_GENERATION_STAGE_TIMEOUT_MS` | `40000` (commented) | Backstage-only provider stage timeout, capped at `45000`; both canonical Backstage GPT IDs enforce a 60-second outer route budget without changing execution-mode classification. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`, its compatibility alias, and `/api/bridge/health`. |
 | `ARCANOS_JOB_READ_CAPABILITY_SECRET` | commented empty | Required current server-side HMAC key for job-specific generic read capabilities; new tokens use only this key. |

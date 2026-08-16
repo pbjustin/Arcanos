@@ -4,7 +4,7 @@ import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { callStructuredResponse } from "@arcanos/openai";
-import { createLinkedAbortController, getRequestAbortSignal } from '@arcanos/runtime';
+import { createLinkedAbortController, getRequestAbortSignal, isAbortError } from '@arcanos/runtime';
 import type { ModuleDef } from './moduleLoader.js';
 
 export interface HRCResult {
@@ -22,6 +22,16 @@ interface ParsedHRCPayload {
 export interface HRCEvaluationOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+}
+
+const nonCacheableHRCResults = new WeakSet<HRCResult>();
+
+/**
+ * Reports whether an HRC result is safe to share across caller scopes.
+ * Abort fallbacks retain the public HRC result shape but must not enter the text cache.
+ */
+export function isHRCResultCacheable(result: HRCResult): boolean {
+  return !nonCacheableHRCResults.has(result);
 }
 
 function isHRCResult(value: unknown): value is ParsedHRCPayload {
@@ -95,17 +105,29 @@ export class HRCCore {
         source: 'HRC evaluation'
       });
 
-      return {
+      const result: HRCResult = {
         fidelity: Number(outputParsed.fidelity) || 0,
         resilience: Number(outputParsed.resilience) || 0,
         verdict: outputParsed.verdict
       };
+
+      if (evaluationSignal?.aborted) {
+        nonCacheableHRCResults.add(result);
+      }
+
+      return result;
     } catch (err) {
-      return {
+      const result: HRCResult = {
         fidelity: 0,
         resilience: 0,
         verdict: `Evaluation failed: ${resolveErrorMessage(err, 'unknown error')}`
       };
+
+      if (evaluationSignal?.aborted || isAbortError(err)) {
+        nonCacheableHRCResults.add(result);
+      }
+
+      return result;
     } finally {
       requestScope?.cleanup();
     }
