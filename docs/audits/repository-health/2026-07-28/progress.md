@@ -8,14 +8,14 @@ Status: current non-GPT-OSS dashboard through product PR
 reconciliation PR [#1431](https://github.com/pbjustin/Arcanos/pull/1431), and
 the prior reviewed delivery-maintenance state for
 [#1433](https://github.com/pbjustin/Arcanos/pull/1433). This targeted
-2026-08-16 update adds expired npm-audit exception removal in draft PR
+2026-08-16 update adds expired npm-audit exception removal in reviewed PR
 [#1444](https://github.com/pbjustin/Arcanos/pull/1444) only; unrelated entries
 retain their prior dated evidence bounds. No deployment or production credit is
 assigned to #1444
 
 Original audit capture: 2026-07-28
 
-Last reconciled: 2026-08-16 UTC for draft PR #1444 dependency remediation;
+Last reconciled: 2026-08-16 UTC for reviewed PR #1444 dependency remediation;
 other entries retain their prior evidence cutoffs
 
 This report is advisory evidence. Current tracked source, tests, required CI,
@@ -29,10 +29,10 @@ action. GPT-OSS is explicitly excluded from the active queue.
 - This file is the compact current dashboard and implementation order.
 - [findings.md](findings.md) is the normalized open/closed finding register
   through audit-scoped product PR #1432, delivery PRs #1428–#1430, and
-  documentation-only PR #1431, with the targeted draft-PR #1444 dependency
+  documentation-only PR #1431, with the targeted reviewed-PR #1444 dependency
   remediation update.
 - [evidence.md](evidence.md) is the PR, validation, preview, merge, production,
-  and provider-state ledger through product PR #1432 plus the bounded draft-PR
+  and provider-state ledger through product PR #1432 plus the bounded reviewed-PR
   #1444 dependency evidence.
 - [history-through-2026-07-31.md](history-through-2026-07-31.md) preserves the
   former long-form tracked narrative and its dated anchors.
@@ -416,7 +416,7 @@ and current-source review.
 | Repair the auxiliary Analyze Documentation Updates startup fixture by supplying its required sealed `ARCANOS_JOB_READ_CAPABILITY_SECRET` test value | Next workflow-maintenance slice | Reviewed in PR #1433 at published implementation commit `63c31baa`. Direct exact-commit workflow run [`31626739806`](https://github.com/pbjustin/Arcanos/actions/runs/31626739806) cleared the former startup failure and completed in configured allow-partial mode; it generated zero sections with six dependency failures and no validated proposal, so proposal validation skipped normally. Merge remains required for source closure |
 | Harden the runtime-image Railway CLI bootstrap exposed by #1432 promotion | Before retrying #1432 production promotion | Reviewed in PR #1433 at published implementation commit `63c31baa`. All surfaced CI passed; Railway Compatibility run [`31626187034`](https://github.com/pbjustin/Arcanos/actions/runs/31626187034), job `94213819744`, verified the pinned archive checksum and built image `sha256:69ab55f9e73ef4b12f099b0d240f77fbd9ffc534153b32bd34623d93c74cb3fd`. Exact isolated Railway preview `c88804be-b13b-46b0-b860-63304bdd5984` built both roles successfully and passed readiness plus 112/112 sealed requests. Merge and any separately authorized paired production retry remain outstanding |
 | Restore or verify native Railway PR-environment creation | Before relying on automatic preview evidence | PR #1433 did not materialize a native environment despite enabled PR settings. Its exact preview was created manually from credential-empty base `8d5594c5-075e-4ad5-8fad-9e6e0866032d`; no production target was touched. Treat native automation as unverified until a later new PR creates and tears down its environment automatically |
-| Re-review and remove the temporary npm-audit platform-profile exception rather than extending it silently | 2026-08-10 | Draft PR #1444 removes the remaining exact exception graph, pins patched registry releases for `brace-expansion`, `fast-uri`, `ip-address`, and `undici`, and restores the registry artifact for `express-rate-limit@8.3.0`. Its initial published candidate passed required CI and independent local review; the provenance and ledger corrections in the current branch revision still require exact-head CI and merge. No deployment or production credit is assigned |
+| Re-review and remove the temporary npm-audit platform-profile exception rather than extending it silently | 2026-08-10 | Reviewed PR #1444 implementation commit `18d4db05e26f5c8488968f4918cf2d1ec991e978` removes the remaining exact exception graph, pins patched registry releases for `brace-expansion`, `fast-uri`, `ip-address`, and `undici`, and restores the registry artifact for `express-rate-limit@8.3.0`. Exact-head CI/CD run [`31971267116`](https://github.com/pbjustin/Arcanos/actions/runs/31971267116), PR CI run [`31971267160`](https://github.com/pbjustin/Arcanos/actions/runs/31971267160), and `All Checks Complete` passed. Merge remains required; no deployment or production credit is assigned |
 | Reverify preview teardown and other provider lifecycle state | Before claiming cleanup | The #1422 and #1423 preview absences were previously attested. A 2026-08-10 Railway inventory did not contain #1424 preview `275ef5a6-1c59-4820-9330-40ef34465ec3`, and both former preview health URLs returned HTTP 404. #1427 preview cleanup run `31468287960` passed after merge and the transient preview deployment was reported inactive; this supports preview teardown, not deletion of every historical artifact. #1427's nine non-production merge-SHA deployment records were also inactive at the 2026-08-11 GitHub readback. #1432 cleanup run `31620988938` checked only the separately named `worker-diagnostics-pr-1432-e2e` environment and found none; it did not delete or attest teardown of the standard `Arcanos-pr-1432` preview. Manually created #1433 environment `c88804be-b13b-46b0-b860-63304bdd5984` is intentionally active while the PR is open; teardown is required after the PR lifecycle and is not yet claimed |
 | Restore automatic paired production promotion | Before expecting a merge to promote automatically | Closed by PRs #1428–#1430. The hold is exact sentinel `none`; a dedicated production project-token secret and explicit project/environment/web/worker variables are configured; native Railway triggers remain disabled; runs `31531116356` and `31535958799` automatically promoted and jointly verified exact pairs, and #1432 run `31622197454` started automatically before failing in its worker image build. The obsolete web-only repository variable was removed. The documented non-atomic partial-failure reconciliation remains an operational residual |
 | Reverify production topology, edge policy, logs, retained-job inventory, and drain readiness | Before the next audit-scoped production promotion | #1427 retains the bounded job/schema/279-row protection evidence. Automatic #1431 acceptance verified its exact documentation-only target/role/readiness/active-ID state and watchdog. #1432 then failed during the worker image build before web enqueue, leaving #1431 active and Slice 2 unpromoted. Live new-row retention/deletion, live self-heal effects, edge-policy detail, log-retention duration, and a measured provider-level rollback remain unexercised |
