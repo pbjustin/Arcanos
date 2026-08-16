@@ -55,12 +55,13 @@ import {
   type BackstageContext,
   type PostgresBackstageBookerRepository
 } from '@core/db/repositories/backstageBookerRepository.js';
-import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
+import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BackstageRosterPersistenceError,
   isRetryableBackstageRosterPersistenceCause,
@@ -1299,17 +1300,15 @@ async function buildStructuredBookingPrompt(
 
 /**
  * Resolve the model used for backstage booking generation.
- * Inputs/outputs: none -> explicit USER_GPT_ID override when present, otherwise the shared GPT-5 model fallback.
- * Edge cases: trims legacy env overrides so blank strings do not block the standard fallback model.
+ * Inputs/outputs: none -> the shared GPT-5 model preference.
+ * Edge cases: trims the configured model and maps the obsolete base `gpt-5` alias to the reasoning-disable-capable GPT-5.1 baseline.
  */
 function resolveBackstageBookerModel(): string {
-  const configuredUserModel = getEnv('USER_GPT_ID')?.trim();
-  //audit Assumption: legacy USER_GPT_ID overrides should remain supported, but blank/missing values must not break backstage generation; failure risk: booker path 500s in environments that only configure the shared model stack; expected invariant: a usable model is always selected when global OpenAI config is healthy; handling strategy: prefer USER_GPT_ID when present, else fall back to getGPT5Model().
-  if (configuredUserModel) {
-    return configuredUserModel;
-  }
-
-  return getGPT5Model();
+  //audit Assumption: USER_GPT_ID identifies a user-facing GPT and is not an OpenAI provider model; failure risk: forwarding that alias as `model` makes Booker and HRC generation fail; expected invariant: provider selection comes only from the shared model configuration; handling strategy: use getGPT5Model() and normalize only the exact legacy gpt-5 alias to GPT-5.1.
+  const resolvedModel = getGPT5Model().trim();
+  return resolvedModel.trim().toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
+    ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
+    : resolvedModel;
 }
 
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {

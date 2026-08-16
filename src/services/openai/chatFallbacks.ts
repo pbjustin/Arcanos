@@ -300,6 +300,9 @@ const executeChatCompletionRequest = async (
     messages: payload.messages,
     includeRoutingMessage: true
   });
+  if (typeof payload.reasoning_effort === 'string') {
+    requestPayload.reasoning = { effort: payload.reasoning_effort };
+  }
 
   const remainingRequestMs = getRequestRemainingMs();
   const configuredTimeoutMs =

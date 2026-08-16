@@ -99,7 +99,7 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
-  it('honors explicit direct-answer model and token overrides at the provider boundary', async () => {
+  it('honors explicit direct-answer provider overrides and timeout at the provider boundary', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit
     }));
@@ -120,7 +120,8 @@ describe('runDirectAnswerStage', () => {
       undefined,
       'trinity_req_direct_answer_override',
       'gpt-5.1',
-      1200
+      1200,
+      4_321
     );
 
     expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 1200);
@@ -128,17 +129,76 @@ describe('runDirectAnswerStage', () => {
       expect.anything(),
       expect.objectContaining({
         model: 'gpt-5.1',
-        max_completion_tokens: 1200
+        max_completion_tokens: 1200,
+        reasoning_effort: 'none',
+        timeoutMs: 4_321
       })
     );
     expect(loggerInfoMock).toHaveBeenCalledWith(
       'trinity.direct_answer.execution_plan',
       expect.objectContaining({
         model: 'gpt-5.1',
-        tokenLimit: 1200
+        tokenLimit: 1200,
+        timeoutMs: 4_321
       })
     );
   });
+
+  it('disables reasoning for the configured GPT-5.6 Terra direct-answer model', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete Terra booking output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.6-terra',
+      fallbackFlag: false
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build five short booking bullets.',
+      undefined,
+      undefined,
+      'trinity_req_direct_answer_terra',
+      'gpt-5.6-terra',
+      240
+    );
+
+    expect(createSingleChatCompletionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'gpt-5.6-terra',
+        reasoning_effort: 'none',
+        max_completion_tokens: 240
+      })
+    );
+  });
+
+  it.each(['gpt-5', 'gpt-5.6-pro', 'custom-booker-model'])(
+    'does not send an unsupported reasoning override for %s',
+    async (model) => {
+      createSingleChatCompletionMock.mockResolvedValue({
+        choices: [{ message: { content: 'Complete booking output.' }, finish_reason: 'stop' }],
+        activeModel: model,
+        fallbackFlag: false
+      });
+
+      await runDirectAnswerStage(
+        {} as never,
+        'No relevant memory context is available.',
+        'Build a complete wrestling show.',
+        undefined,
+        undefined,
+        'trinity_req_direct_answer_unclassified',
+        model,
+        1200
+      );
+
+      const providerParams = createSingleChatCompletionMock.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(providerParams).not.toHaveProperty('reasoning_effort');
+    }
+  );
 
   it('derives truncation flags from provider finish_reason length', async () => {
     createSingleChatCompletionMock.mockResolvedValue({

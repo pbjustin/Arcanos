@@ -107,6 +107,60 @@ describe('backstage-booker generateBooking', () => {
     });
   });
 
+  it('normalizes the obsolete base GPT-5 alias to the GPT-5.1 direct-answer baseline', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.1' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.1'
+        })
+      })
+    }));
+  });
+
+  it('does not treat the legacy user-facing GPT ID as a provider model', async () => {
+    mockGetEnv.mockImplementation((name: string) =>
+      name === 'USER_GPT_ID' ? 'backstage-booker' : undefined
+    );
+    mockGetGPT5Model.mockReturnValue('gpt-5.6-terra');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.6-terra' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.6-terra'
+        })
+      })
+    }));
+  });
+
+  it('preserves an explicit positive Booker token limit for ordinary generation', async () => {
+    mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+      name === 'BOOKER_TOKEN_LIMIT' ? 512 : fallback
+    );
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ tokenLimit: 512 }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 512
+        })
+      })
+    }));
+  });
+
   it('short-circuits exact-literal anti-simulation prompts before OpenAI executes', async () => {
     await expect(
       generateBooking(

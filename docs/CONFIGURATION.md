@@ -344,6 +344,12 @@ The OpenAI client resolves keys in this order:
 5. `FINE_TUNED_MODEL_ID`
 6. `gpt-4.1`
 
+### GPT-5 and Backstage Booker generation
+
+`GPT5_MODEL` selects the GPT-5-family model, with `GPT51_MODEL` and then `gpt-5.1` as compatibility fallbacks. For Backstage Booker direct answers, the obsolete exact `gpt-5` alias is normalized to `gpt-5.1`; supported GPT-5.1 and GPT-5.6 Sol/Terra/Luna requests explicitly disable reasoning so their bounded output budget remains available for visible text.
+
+`BOOKER_TOKEN_LIMIT` defaults to `1200` for ordinary generation. Configured positive values are honored up to Trinity's `1200`-token hard cap, while compact direct-answer prompts may use a smaller prompt-derived cap. A deployment retaining the historical value `512` will continue to use `512`; remove or update that variable to adopt the `1200` default.
+
 ### Confirmation and automation
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -1059,6 +1065,8 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `NODE_ENV` | `development` | Runtime mode. |
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
+| `GPT5_MODEL` | `gpt-5.1` (commented) | GPT-5-family model preference. Backstage normalizes only the obsolete exact `gpt-5` alias to `gpt-5.1`. |
+| `BOOKER_TOKEN_LIMIT` | `1200` (commented) | Standard Backstage Booker output budget. Positive values are honored up to Trinity's `1200`-token hard cap; compact direct-answer prompts can use a smaller derived cap. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`, its compatibility alias, and `/api/bridge/health`. |
 | `ARCANOS_JOB_READ_CAPABILITY_SECRET` | commented empty | Required current server-side HMAC key for job-specific generic read capabilities; new tokens use only this key. |
