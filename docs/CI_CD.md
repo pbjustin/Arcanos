@@ -78,16 +78,10 @@ Release automation boundaries:
   TypeScript stubs consumed by type-check and build.
 - The trusted default-branch copy of `scripts/check-npm-audit.js` is the
   authoritative production-vulnerability policy. It rejects incomplete or
-  internally inconsistent audit-v2 reports and every unregistered advisory,
-  package, or dependency path. Advisories disclosed on 2026-08-03 whose patched
-  releases are not yet available from npm have temporary exact-advisory and
-  exact-node exceptions bound to exact aggregate and per-advisory severities,
-  one complete observed platform graph (Linux npm 10 or Windows npm 10/11), a
-  record-consistent severity histogram, the candidate lockfile's exact versions,
-  sources, integrity hashes, profile-specific propagated dependency sets, and
-  remediation metadata; review and remove them no later than 2026-08-10.
-  Workflows record npm's raw audit exit code while relying on the fail-closed
-  policy classification.
+  internally inconsistent audit-v2 reports and treats every reported
+  vulnerability as actionable; there is no npm advisory, package, dependency
+  path, or platform-profile exception registry. Workflows record npm's raw audit
+  exit code while relying on this fail-closed zero-vulnerability policy.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing

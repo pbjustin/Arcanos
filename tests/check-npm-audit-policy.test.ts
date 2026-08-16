@@ -4,15 +4,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ipKeyGenerator } from 'express-rate-limit';
+
+type Severity = 'info' | 'low' | 'moderate' | 'high' | 'critical';
+
 type AuditVulnerability = {
   name: string;
-  severity: string;
+  severity: Severity;
   via: Array<
     | string
     | {
         name: string;
         dependency: string;
-        severity: string;
+        severity: Severity;
         source: number;
         url: string;
       }
@@ -21,188 +25,45 @@ type AuditVulnerability = {
   fixAvailable: boolean | Record<string, unknown>;
 };
 
-type CandidatePackageLock = {
-  lockfileVersion?: unknown;
-  packages?: Record<string, Record<string, unknown> | null>;
-};
-
 const auditPolicyScriptPath = fileURLToPath(
   new URL('../scripts/check-npm-audit.js', import.meta.url),
 );
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+const severities: Severity[] = [
+  'info',
+  'low',
+  'moderate',
+  'high',
+  'critical',
+];
 
-const temporaryDirectExceptions = [
-  {
-    name: 'brace-expansion',
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-rgw5-rvv9-x895',
-        severity: 'high',
-      },
-    ],
-    node: 'vendor/minimatch-9.0.7/node_modules/brace-expansion',
-  },
-  {
-    name: 'fast-uri',
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-7p8r-x3mc-p8w7',
-        severity: 'high',
-      },
-    ],
-    node: 'node_modules/fast-uri',
-  },
-  {
-    name: 'ip-address',
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-mwp4-54f8-5fhr',
-        severity: 'high',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-4xrf-jv44-h6hh',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-22jq-vg5j-6vgg',
-        severity: 'moderate',
-      },
-    ],
-    node: 'node_modules/ip-address',
-  },
-  {
-    name: 'undici',
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-8xcm-r25x-g524',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-4cwx-7wf7-3272',
-        severity: 'high',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-m8rv-5g2x-5cg5',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-jr45-8vmc-qm54',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-v3r7-h72x-cjcm',
-        severity: 'moderate',
-      },
-    ],
-    node: 'node_modules/undici',
-  },
-] as const;
+function runAuditScript(args: string[]) {
+  return spawnSync(process.execPath, [auditPolicyScriptPath, ...args], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
+}
 
-const expectedSeverityByPackage = {
-  '@modelcontextprotocol/sdk': 'high',
-  ajv: 'high',
-  'brace-expansion': 'high',
-  cheerio: 'moderate',
-  'express-rate-limit': 'high',
-  'fast-uri': 'high',
-  'ip-address': 'high',
-  undici: 'high',
-} as const;
-const requiredTemporaryExceptionNames = Object.keys(
-  expectedSeverityByPackage,
-).filter(name => !['brace-expansion', 'cheerio'].includes(name));
-
-const directAdvisorySeverityCases = temporaryDirectExceptions.flatMap(
-  exception =>
-    exception.advisories.map(advisory => ({
-      name: exception.name,
-      url: advisory.url,
-      severity: advisory.severity,
-    })),
-);
-
-const expectedFixAvailableByPackage = {
-  '@modelcontextprotocol/sdk': {
-    name: '@modelcontextprotocol/sdk',
-    version: '1.20.2',
-    isSemVerMajor: true,
-  },
-  ajv: {
-    name: 'ajv',
-    version: '8.16.0',
-    isSemVerMajor: true,
-  },
-  'brace-expansion': false,
-  cheerio: {
-    name: 'cheerio',
-    version: '1.0.0',
-    isSemVerMajor: true,
-  },
-  'express-rate-limit': {
-    name: '@modelcontextprotocol/sdk',
-    version: '1.20.2',
-    isSemVerMajor: true,
-  },
-  'fast-uri': {
-    name: 'ajv',
-    version: '8.16.0',
-    isSemVerMajor: true,
-  },
-  'ip-address': {
-    name: '@modelcontextprotocol/sdk',
-    version: '1.20.2',
-    isSemVerMajor: true,
-  },
-  undici: {
-    name: 'cheerio',
-    version: '1.0.0',
-    isSemVerMajor: true,
-  },
-} as const;
-
-const temporaryExceptionLockNodes = [
-  'node_modules/@modelcontextprotocol/sdk',
-  'node_modules/ajv',
-  'vendor/minimatch-9.0.7/node_modules/brace-expansion',
-  'node_modules/cheerio',
-  'node_modules/express-rate-limit',
-  'node_modules/fast-uri',
-  'node_modules/ip-address',
-  'node_modules/undici',
-] as const;
-const lockIdentityDriftCases = temporaryExceptionLockNodes.flatMap(node =>
-  (['version', 'resolved', 'integrity'] as const).map(field => ({ node, field })),
-);
-
-function runAuditReport(report: unknown, candidateLockPath?: string) {
+function runAuditReportText(reportText: string) {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-policy-'));
   const reportPath = path.join(directory, 'audit.json');
 
   try {
-    writeFileSync(reportPath, JSON.stringify(report), 'utf8');
-    const args = [auditPolicyScriptPath, reportPath];
-    if (candidateLockPath) {
-      args.push(candidateLockPath);
-    }
-
-    return spawnSync(process.execPath, args, {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    });
+    writeFileSync(reportPath, reportText, 'utf8');
+    return runAuditScript([reportPath]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
 
-function runAuditPolicy(
+function runAuditReport(report: unknown) {
+  return runAuditReportText(JSON.stringify(report));
+}
+
+function completeAuditReport(
   vulnerabilities: Record<string, unknown>,
-  candidateLockPath?: string,
-) {
-  const counts = {
+): Record<string, unknown> {
+  const counts: Record<Severity | 'total', number> = {
     info: 0,
     low: 0,
     moderate: 0,
@@ -212,63 +73,43 @@ function runAuditPolicy(
   };
 
   for (const vulnerability of Object.values(vulnerabilities)) {
-    const severity =
+    if (
       vulnerability &&
       typeof vulnerability === 'object' &&
       !Array.isArray(vulnerability) &&
       'severity' in vulnerability &&
-      typeof vulnerability.severity === 'string'
-        ? vulnerability.severity
-        : 'high';
-
-    if (severity in counts && severity !== 'total') {
-      counts[severity as keyof Omit<typeof counts, 'total'>] += 1;
-    } else {
-      counts.high += 1;
+      severities.includes(vulnerability.severity as Severity)
+    ) {
+      counts[vulnerability.severity as Severity] += 1;
     }
   }
 
-  return runAuditReport(
-    {
-      auditReportVersion: 2,
-      vulnerabilities,
-      metadata: { vulnerabilities: counts },
-    },
-    candidateLockPath,
-  );
-}
-
-function runAuditPolicyWithLockText(
-  vulnerabilities: Record<string, unknown>,
-  lockText: string,
-) {
-  const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-lock-'));
-  const candidateLockPath = path.join(directory, 'package-lock.json');
-
-  try {
-    writeFileSync(candidateLockPath, lockText, 'utf8');
-    return runAuditPolicy(vulnerabilities, candidateLockPath);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
-
-function readCandidateLock(): CandidatePackageLock {
-  return JSON.parse(
-    readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
-  ) as CandidatePackageLock;
-}
-
-function runAuditPolicyWithMutatedLock(
-  vulnerabilities: Record<string, unknown>,
-  mutate: (candidateLock: CandidatePackageLock) => void,
-) {
-  const candidateLock = readCandidateLock();
-  mutate(candidateLock);
-  return runAuditPolicyWithLockText(
+  return {
+    auditReportVersion: 2,
     vulnerabilities,
-    JSON.stringify(candidateLock),
-  );
+    metadata: { vulnerabilities: counts },
+  };
+}
+
+function advisory(
+  name: string,
+  severity: Severity = 'high',
+): AuditVulnerability {
+  return {
+    name,
+    severity,
+    via: [
+      {
+        name,
+        dependency: name,
+        severity,
+        source: 9_999_999,
+        url: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
+      },
+    ],
+    nodes: [`node_modules/${name}`],
+    fixAvailable: false,
+  };
 }
 
 function parseStdout(result: { stdout: string; stderr: string }) {
@@ -285,712 +126,124 @@ function parseStdout(result: { stdout: string; stderr: string }) {
   }
 }
 
-function advisory(
-  name: string,
-  severity: 'low' | 'moderate' | 'high' | 'critical' = 'high',
-  url = 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
-  node = `node_modules/${name}`,
-): AuditVulnerability {
-  return {
-    name,
-    severity,
-    via: [
-      {
-        name,
-        dependency: name,
-        severity,
-        source: 9_999_999,
-        url,
-      },
-    ],
-    nodes: [node],
-    fixAvailable: false,
-  };
-}
-
-function exactDirectVulnerability(
-  exception: (typeof temporaryDirectExceptions)[number],
-): AuditVulnerability {
-  const vulnerability = advisory(
-    exception.name,
-    exception.severity,
-    exception.advisories[0].url,
-    exception.node,
-  );
-  vulnerability.via = exception.advisories.map((advisory, index) => ({
-    name: exception.name,
-    dependency: exception.name,
-    severity: advisory.severity,
-    source: 9_000_000 + index,
-    url: advisory.url,
-  }));
-  vulnerability.fixAvailable = cloneExpectedFixAvailable(exception.name);
-  return vulnerability;
-}
-
-function cloneExpectedFixAvailable(name: string) {
-  const expected =
-    expectedFixAvailableByPackage[
-      name as keyof typeof expectedFixAvailableByPackage
-    ];
-  if (typeof expected === 'boolean') {
-    return expected;
-  }
-  return expected ? { ...expected } : false;
-}
-
-function propagatedVulnerability(
-  name: string,
-  severity: 'low' | 'moderate' | 'high' | 'critical',
-  via: string[],
-  node: string,
-): AuditVulnerability {
-  return {
-    name,
-    severity,
-    via,
-    nodes: [node],
-    fixAvailable: cloneExpectedFixAvailable(name),
-  };
-}
-
-function currentVulnerabilityGraph(): Record<string, AuditVulnerability> {
-  const directVulnerabilities = Object.fromEntries(
-    temporaryDirectExceptions.map(exception => [
-      exception.name,
-      exactDirectVulnerability(exception),
-    ]),
-  );
-
-  return {
-    '@modelcontextprotocol/sdk': propagatedVulnerability(
-      '@modelcontextprotocol/sdk',
-      'high',
-      ['ajv', 'express-rate-limit'],
-      'node_modules/@modelcontextprotocol/sdk',
-    ),
-    ajv: propagatedVulnerability(
-      'ajv',
-      'high',
-      ['fast-uri'],
-      'node_modules/ajv',
-    ),
-    cheerio: propagatedVulnerability(
-      'cheerio',
-      'moderate',
-      ['undici'],
-      'node_modules/cheerio',
-    ),
-    'express-rate-limit': propagatedVulnerability(
-      'express-rate-limit',
-      'high',
-      ['ip-address'],
-      'node_modules/express-rate-limit',
-    ),
-    ...directVulnerabilities,
-  };
-}
-
-function completeVulnerabilityGraph(
-  overrides: Record<string, AuditVulnerability>,
-): Record<string, AuditVulnerability> {
-  return { ...currentVulnerabilityGraph(), ...overrides };
-}
-
-function linuxNpm10VulnerabilityGraph(): Record<string, AuditVulnerability> {
-  const vulnerabilities = currentVulnerabilityGraph();
-  delete vulnerabilities['brace-expansion'];
-  delete vulnerabilities.cheerio;
-
-  for (const name of [
-    '@modelcontextprotocol/sdk',
-    'ajv',
-    'express-rate-limit',
-    'fast-uri',
-    'ip-address',
-    'undici',
-  ]) {
-    vulnerabilities[name].fixAvailable = true;
-  }
-  vulnerabilities['@modelcontextprotocol/sdk'].via = [
-    'express-rate-limit',
-  ];
-
-  return vulnerabilities;
-}
-
 describe('npm audit policy', () => {
-  it('includes child-process output when policy JSON parsing fails', () => {
-    expect(() => parseStdout({ stdout: '', stderr: 'spawn failed' })).toThrow(
-      'Failed to parse audit policy output as JSON.\n' +
-        'Stdout: <empty>\n' +
-        'Stderr: spawn failed',
-    );
-  });
+  it('accepts a complete clean audit report without exceptions', () => {
+    const result = runAuditReport(completeAuditReport({}));
 
-  it('fails closed when a report omits every known temporary advisory record', () => {
-    const result = runAuditPolicy({});
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toContain(
-      'npm audit report is missing required temporary advisory records',
-    );
-    for (const name of requiredTemporaryExceptionNames) {
-      expect(result.stderr).toContain(name);
-    }
-  });
-
-  it.each([
-    ['axios', 'high'],
-    ['lodash', 'high'],
-    ['knex', 'high'],
-    ['@hono/node-server', 'moderate'],
-    ['hono', 'moderate'],
-    ['@modelcontextprotocol/sdk', 'moderate'],
-    ['unexpected-package', 'low'],
-  ] as const)('fails for a %s vulnerability with no package exceptions', (name, severity) => {
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({ [name]: advisory(name, severity) }),
-    );
-    const output = parseStdout(result);
-    const target = output.actionable.find(
-      (entry: { name: string }) => entry.name === name,
-    );
-
-    expect(result.status).toBe(1);
-    expect(target?.severity).toBe(severity);
-  });
-
-  it('pins the patched SDK-scoped Hono release without an audit exception', () => {
-    const packageJson = JSON.parse(
-      readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
-    );
-    const candidateLock = readCandidateLock();
-
-    expect(packageJson.overrides['@modelcontextprotocol/sdk'].hono).toBe(
-      '4.12.34',
-    );
-    expect(candidateLock.packages?.['node_modules/hono']).toMatchObject({
-      version: '4.12.34',
-      resolved: 'https://registry.npmjs.org/hono/-/hono-4.12.34.tgz',
-      integrity:
-        'sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==',
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(parseStdout(result)).toEqual({
+      auditReportVersion: 2,
+      ignored: [],
+      actionable: [],
     });
   });
 
-  it.each(temporaryDirectExceptions)(
-    'temporarily accepts only the registered advisory URLs and node for $name',
-    exception => {
-      const result = runAuditPolicy(
-        completeVulnerabilityGraph({
-          [exception.name]: exactDirectVulnerability(exception),
-        }),
-      );
-      const output = parseStdout(result);
+  it.each(severities)('makes every %s vulnerability actionable', severity => {
+    const vulnerability = advisory('unexpected-package', severity);
+    const result = runAuditReport(
+      completeAuditReport({ 'unexpected-package': vulnerability }),
+    );
 
-      expect(result.status).toBe(0);
-      expect(output.actionable).toEqual([]);
-      expect(
-        output.ignored.map((entry: { name: string }) => entry.name),
-      ).toContain(exception.name);
-    },
-  );
-
-  it('keeps a new advisory on an excepted package actionable', () => {
-    const exception = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'fast-uri',
-    )!;
-    const vulnerability = exactDirectVulnerability(exception);
-    vulnerability.via.push({
-      name: 'fast-uri',
-      dependency: 'fast-uri',
-      severity: 'moderate',
-      source: 9_100_000,
-      url: 'https://github.com/advisories/GHSA-new1-new2-new3',
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe('');
+    expect(parseStdout(result)).toEqual({
+      auditReportVersion: 2,
+      ignored: [],
+      actionable: [
+        {
+          name: 'unexpected-package',
+          severity,
+          via: [
+            {
+              name: 'unexpected-package',
+              source: 9_999_999,
+              url: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
+            },
+          ],
+          fixAvailable: false,
+          nodes: ['node_modules/unexpected-package'],
+        },
+      ],
     });
-
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({ 'fast-uri': vulnerability }),
-    );
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('fast-uri');
   });
 
-  it.each(temporaryDirectExceptions)(
-    'requires the complete registered advisory URL set for $name',
-    exception => {
-      const vulnerability = exactDirectVulnerability(exception);
-      vulnerability.via.pop();
-
-      const result = runAuditPolicy(
-        completeVulnerabilityGraph({ [exception.name]: vulnerability }),
+  it.each(['brace-expansion', 'fast-uri', 'ip-address', 'undici'])(
+    'does not retain an exception for %s',
+    packageName => {
+      const vulnerability = advisory(packageName);
+      const result = runAuditReport(
+        completeAuditReport({ [packageName]: vulnerability }),
       );
-      const output = parseStdout(result);
 
       expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toContain(exception.name);
-    },
-  );
-
-  it('keeps an exact advisory URL actionable when its dependency identity differs', () => {
-    const exception = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'fast-uri',
-    )!;
-    const vulnerability = exactDirectVulnerability(exception);
-    const directAdvisory = vulnerability.via[0];
-    if (typeof directAdvisory !== 'string') {
-      directAdvisory.dependency = 'different-package';
-    }
-
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({ 'fast-uri': vulnerability }),
-    );
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('fast-uri');
-  });
-
-  it.each(temporaryDirectExceptions)(
-    'keeps $name actionable at any unregistered dependency node',
-    exception => {
-      const vulnerability = exactDirectVulnerability(exception);
-      vulnerability.nodes = [`${exception.node}/unexpected`];
-
-      const result = runAuditPolicy(
-        completeVulnerabilityGraph({ [exception.name]: vulnerability }),
-      );
-      const output = parseStdout(result);
-
-      expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toContain(exception.name);
-    },
-  );
-
-  it('accepts the exact current direct and propagated vulnerability graph', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(0);
-    expect(output.actionable).toEqual([]);
-    expect(
-      output.ignored.map((entry: { name: string }) => entry.name).sort(),
-    ).toEqual(Object.keys(vulnerabilities).sort());
-  });
-
-  it('accepts the Windows npm 10 graph that omits the vendored brace advisory', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-    delete vulnerabilities['brace-expansion'];
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(0);
-    expect(output.actionable).toEqual([]);
-    expect(output.ignored).toHaveLength(7);
-  });
-
-  it('accepts the Linux npm 10 graph that also omits propagated cheerio', () => {
-    const vulnerabilities = linuxNpm10VulnerabilityGraph();
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(0);
-    expect(output.actionable).toEqual([]);
-    expect(output.ignored).toHaveLength(6);
-    expect(
-      output.ignored.map((entry: { name: string }) => entry.name),
-    ).toContain('undici');
-  });
-
-  it('rejects an omitted cheerio record when its direct undici advisory is not exact', () => {
-    const vulnerabilities = linuxNpm10VulnerabilityGraph();
-    const undici = vulnerabilities.undici;
-    const directAdvisory = undici.via[0];
-    if (typeof directAdvisory !== 'string') {
-      directAdvisory.url =
-        'https://github.com/advisories/GHSA-new1-new2-new3';
-    }
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('undici');
-  });
-
-  it.each([
-    '@modelcontextprotocol/sdk',
-    'ajv',
-    'express-rate-limit',
-    'fast-uri',
-    'ip-address',
-    'undici',
-  ])('requires the exact Linux npm 10 remediation metadata for %s', name => {
-    const vulnerabilities = linuxNpm10VulnerabilityGraph();
-    vulnerabilities[name].fixAvailable = cloneExpectedFixAvailable(name);
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain(name);
-  });
-
-  it('requires the exact Linux npm 10 SDK propagation set', () => {
-    const vulnerabilities = linuxNpm10VulnerabilityGraph();
-    vulnerabilities['@modelcontextprotocol/sdk'].via = [
-      'ajv',
-      'express-rate-limit',
-    ];
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('@modelcontextprotocol/sdk');
-  });
-
-  it('rejects a hybrid graph with vendored brace but no cheerio record', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-    delete vulnerabilities.cheerio;
-
-    const result = runAuditPolicy(vulnerabilities);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toContain(
-      'npm audit report does not match a supported platform graph',
-    );
-  });
-
-  it.each(requiredTemporaryExceptionNames)(
-    'fails closed when the audit report omits the known %s record',
-    name => {
-      const vulnerabilities = currentVulnerabilityGraph();
-      delete vulnerabilities[name];
-
-      const result = runAuditPolicy(vulnerabilities);
-
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe('');
-      expect(result.stderr).toContain(
-        'npm audit report is missing required temporary advisory records',
-      );
-      expect(result.stderr).toContain(name);
-    },
-  );
-
-  it.each(Object.entries(expectedSeverityByPackage))(
-    'requires the exact aggregate severity for %s',
-    (name, expectedSeverity) => {
-      const vulnerabilities = currentVulnerabilityGraph();
-      expect(vulnerabilities[name].severity).toBe(expectedSeverity);
-      vulnerabilities[name].severity = 'critical';
-
-      const result = runAuditPolicy(vulnerabilities);
-      const output = parseStdout(result);
-
-      expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toContain(name);
-    },
-  );
-
-  it.each(directAdvisorySeverityCases)(
-    'requires the exact advisory severity for $name $url',
-    ({ name, url, severity }) => {
-      const exception = temporaryDirectExceptions.find(
-        candidate => candidate.name === name,
-      )!;
-      const vulnerability = exactDirectVulnerability(exception);
-      const directAdvisory = vulnerability.via.find(
-        entry => typeof entry !== 'string' && entry.url === url,
-      );
-      if (!directAdvisory || typeof directAdvisory === 'string') {
-        throw new Error(`Missing direct advisory fixture: ${url}`);
-      }
-      expect(directAdvisory.severity).toBe(severity);
-      directAdvisory.severity = 'critical';
-
-      const result = runAuditPolicy(
-        completeVulnerabilityGraph({ [name]: vulnerability }),
-      );
-      const output = parseStdout(result);
-
-      expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toContain(name);
-    },
-  );
-
-  it.each(Object.keys(expectedFixAvailableByPackage))(
-    'requires the exact current remediation metadata for %s',
-    name => {
-      const vulnerabilities = currentVulnerabilityGraph();
-      const currentFix = vulnerabilities[name].fixAvailable;
-      vulnerabilities[name].fixAvailable =
-        typeof currentFix === 'boolean'
-          ? !currentFix
-          : { ...currentFix, version: `${String(currentFix.version)}-changed` };
-
-      const result = runAuditPolicy(vulnerabilities);
-      const output = parseStdout(result);
-
-      expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toContain(name);
-    },
-  );
-
-  it.each([
-    'ajv',
-    'express-rate-limit',
-  ])(
-    'requires the complete SDK propagation set when %s is missing',
-    missingVia => {
-      const vulnerabilities = currentVulnerabilityGraph();
-      vulnerabilities['@modelcontextprotocol/sdk'].via = vulnerabilities[
-        '@modelcontextprotocol/sdk'
-      ].via.filter(entry => entry !== missingVia);
-
-      const result = runAuditPolicy(vulnerabilities);
-      const output = parseStdout(result);
-
-      expect(result.status).toBe(1);
-      expect(
-        output.actionable.map((entry: { name: string }) => entry.name),
-      ).toEqual(['@modelcontextprotocol/sdk']);
-    },
-  );
-
-  it.each(lockIdentityDriftCases)(
-    'fails closed when $node has a mismatched lock $field',
-    ({ node, field }) => {
-      const result = runAuditPolicyWithMutatedLock({}, candidateLock => {
-        const lockedNode = candidateLock.packages?.[node];
-        if (!lockedNode) {
-          throw new Error(`Missing test fixture node: ${node}`);
-        }
-        lockedNode[field] = `${String(lockedNode[field])}-mismatch`;
+      expect(parseStdout(result)).toMatchObject({
+        ignored: [],
+        actionable: [{ name: packageName, severity: 'high' }],
       });
-
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe('');
-      expect(result.stderr).toContain(
-        'candidate package-lock.json does not match temporary audit exception identities',
-      );
     },
   );
 
-  it('fails closed when a registered lock identity is missing', () => {
-    const result = runAuditPolicyWithMutatedLock({}, candidateLock => {
-      delete candidateLock.packages?.['node_modules/cheerio'];
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      'candidate package-lock.json does not match temporary audit exception identities',
-    );
-  });
-
-  it('fails closed when a registered lock identity is malformed', () => {
-    const result = runAuditPolicyWithMutatedLock({}, candidateLock => {
-      if (!candidateLock.packages) {
-        throw new Error('Missing test fixture packages');
-      }
-      candidateLock.packages['node_modules/cheerio'] = null;
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      'candidate package-lock.json does not match temporary audit exception identities',
-    );
-  });
-
-  it('fails closed when the candidate lockfile is malformed JSON', () => {
-    const result = runAuditPolicyWithLockText({}, '{');
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toContain(
-      'candidate package-lock.json is missing or malformed',
-    );
-  });
-
-  it('keeps propagated findings actionable unless every via edge is ignored', () => {
-    const undiciException = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'undici',
-    )!;
-    const vulnerabilities = completeVulnerabilityGraph({
-      undici: exactDirectVulnerability(undiciException),
-      cheerio: propagatedVulnerability(
-        'cheerio',
-        'moderate',
-        ['undici', 'unexpected-package'],
-        'node_modules/cheerio',
-      ),
-    });
-
-    const result = runAuditPolicy(vulnerabilities);
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.ignored.map((entry: { name: string }) => entry.name),
-    ).toContain('undici');
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('cheerio');
-  });
-
-  it('does not waive a propagated finding without its matching ignored dependency', () => {
-    const fastUriException = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'fast-uri',
-    )!;
-    const fastUri = exactDirectVulnerability(fastUriException);
-    const directAdvisory = fastUri.via[0];
-    if (typeof directAdvisory !== 'string') {
-      directAdvisory.url =
-        'https://github.com/advisories/GHSA-new1-new2-new3';
-    }
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({ 'fast-uri': fastUri }),
-    );
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toEqual(expect.arrayContaining(['fast-uri', 'ajv']));
-  });
-
-  it('keeps propagated findings at unexpected nodes actionable', () => {
-    const fastUriException = temporaryDirectExceptions.find(
-      candidate => candidate.name === 'fast-uri',
-    )!;
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({
-        'fast-uri': exactDirectVulnerability(fastUriException),
-        ajv: propagatedVulnerability(
-          'ajv',
-          'high',
-          ['fast-uri'],
-          'node_modules/parent/node_modules/ajv',
-        ),
-      }),
-    );
-    const output = parseStdout(result);
-
-    expect(result.status).toBe(1);
-    expect(
-      output.ignored.map((entry: { name: string }) => entry.name),
-    ).toContain('fast-uri');
-    expect(
-      output.actionable.map((entry: { name: string }) => entry.name),
-    ).toContain('ajv');
-  });
-
-  it('preserves dependency paths, fixes, and direct and propagated advisory evidence', () => {
-    const vulnerability = advisory('example-package', 'critical');
-    vulnerability.via.push('propagated-package');
-    vulnerability.nodes.push('node_modules/parent/node_modules/example-package');
-    vulnerability.fixAvailable = {
-      name: 'example-package',
+  it('preserves direct and propagated evidence for actionable findings', () => {
+    const direct = advisory('direct-package', 'critical');
+    direct.fixAvailable = {
+      name: 'direct-package',
       version: '2.0.0',
       isSemVerMajor: true,
     };
-
-    const result = runAuditPolicy(
-      completeVulnerabilityGraph({ 'example-package': vulnerability }),
+    const propagated: AuditVulnerability = {
+      name: 'parent-package',
+      severity: 'critical',
+      via: ['direct-package'],
+      nodes: ['node_modules/parent-package'],
+      fixAvailable: true,
+    };
+    const result = runAuditReport(
+      completeAuditReport({
+        'direct-package': direct,
+        'parent-package': propagated,
+      }),
     );
-    const output = parseStdout(result);
 
     expect(result.status).toBe(1);
-    expect(output.actionable).toContainEqual({
-      name: 'example-package',
-      severity: 'critical',
-      via: [
-        {
-          name: 'example-package',
-          source: 9_999_999,
-          url: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
+    expect(parseStdout(result).actionable).toEqual([
+      expect.objectContaining({
+        name: 'direct-package',
+        severity: 'critical',
+        fixAvailable: {
+          name: 'direct-package',
+          version: '2.0.0',
+          isSemVerMajor: true,
         },
-        'propagated-package',
-      ],
-      fixAvailable: {
-        name: 'example-package',
-        version: '2.0.0',
-        isSemVerMajor: true,
+        nodes: ['node_modules/direct-package'],
+      }),
+      {
+        name: 'parent-package',
+        severity: 'critical',
+        via: ['direct-package'],
+        fixAvailable: true,
+        nodes: ['node_modules/parent-package'],
       },
-      nodes: [
-        'node_modules/example-package',
-        'node_modules/parent/node_modules/example-package',
-      ],
-    });
+    ]);
   });
 
   it.each([
     null,
     [],
     {},
-    { auditReportVersion: 1, vulnerabilities: {} },
-    { auditReportVersion: 2 },
-    { auditReportVersion: 2, vulnerabilities: null },
-    { auditReportVersion: 2, vulnerabilities: [] },
+    { auditReportVersion: 1, vulnerabilities: {}, metadata: {} },
     { auditReportVersion: 2, vulnerabilities: {} },
     {
       auditReportVersion: 2,
-      vulnerabilities: {},
-      metadata: {
-        vulnerabilities: {
-          info: 0,
-          low: 0,
-          moderate: 0,
-          high: 1,
-          critical: 0,
-          total: 1,
-        },
-      },
+      vulnerabilities: [],
+      metadata: { vulnerabilities: {} },
     },
     {
       auditReportVersion: 2,
       vulnerabilities: {},
-      metadata: {
-        vulnerabilities: {
-          info: 0,
-          low: 0,
-          moderate: 0,
-          high: 0,
-          critical: 0,
-          total: 1,
-        },
-      },
+      metadata: { vulnerabilities: { total: 0 } },
     },
-  ])('fails closed for an incomplete or malformed audit report: %p', report => {
+  ])('fails closed for an incomplete report: %p', report => {
     const result = runAuditReport(report);
 
     expect(result.status).toBe(1);
@@ -1000,22 +253,14 @@ describe('npm audit policy', () => {
     );
   });
 
-  it('fails closed when metadata severity buckets contradict the records', () => {
-    const vulnerabilities = currentVulnerabilityGraph();
-    const result = runAuditReport({
-      auditReportVersion: 2,
-      vulnerabilities,
-      metadata: {
-        vulnerabilities: {
-          info: 0,
-          low: 0,
-          moderate: 0,
-          high: 8,
-          critical: 0,
-          total: 8,
-        },
-      },
-    });
+  it('fails closed when metadata counts contradict vulnerability records', () => {
+    const report = completeAuditReport({ package: advisory('package', 'high') });
+    const metadata = report.metadata as {
+      vulnerabilities: Record<string, number>;
+    };
+    metadata.vulnerabilities.high = 0;
+    metadata.vulnerabilities.low = 1;
+    const result = runAuditReport(report);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe('');
@@ -1024,21 +269,137 @@ describe('npm audit policy', () => {
     );
   });
 
-  it('fails closed for a malformed vulnerability entry', () => {
-    const result = runAuditPolicy({
-      ...currentVulnerabilityGraph(),
-      'malformed-package': null,
-    });
+  it('fails closed for an unrecognized vulnerability severity', () => {
+    const report = completeAuditReport({ package: advisory('package') });
+    (report.vulnerabilities as Record<string, AuditVulnerability>)[
+      'package'
+    ].severity = 'unknown' as Severity;
+    const result = runAuditReport(report);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain(
       'npm audit report is not a complete version 2 vulnerability report',
     );
+  });
+
+  it('fails closed for empty, malformed, missing, or omitted input', () => {
+    const empty = runAuditReportText('');
+    const malformed = runAuditReportText('{');
+    const missing = runAuditScript([
+      path.join(tmpdir(), 'arcanos-missing-audit-report.json'),
+    ]);
+    const omitted = runAuditScript([]);
+
+    expect(empty.status).toBe(1);
+    expect(empty.stderr).toContain('npm audit report is empty');
+    expect(malformed.status).toBe(1);
+    expect(malformed.stderr).toContain('npm audit report is not valid JSON');
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('npm audit report is missing or unreadable');
+    expect(omitted.status).toBe(1);
+    expect(omitted.stderr).toContain(
+      'Usage: node scripts/check-npm-audit.js <audit-report.json>',
+    );
+  });
+
+  it('pins patched registry artifacts and unchanged parent packages', () => {
+    const rootPackage = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
+    );
+    const vendorPackage = JSON.parse(
+      readFileSync(
+        path.join(repositoryRoot, 'vendor/minimatch-9.0.7/package.json'),
+        'utf8',
+      ),
+    );
+    const packageLock = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
+    );
+
+    expect(rootPackage.overrides).toMatchObject({
+      'express-rate-limit': '8.3.0',
+      'fast-uri': '3.1.5',
+      'ip-address': '10.3.1',
+      undici: '7.29.0',
+    });
+    expect(rootPackage.overrides['brace-expansion']).toBeUndefined();
+    expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.9');
+
+    const expectedLockIdentities = {
+      'vendor/minimatch-9.0.7/node_modules/brace-expansion': {
+        version: '5.0.9',
+        resolved:
+          'https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz',
+        integrity:
+          'sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==',
+      },
+      'node_modules/express-rate-limit': {
+        version: '8.3.0',
+        resolved:
+          'https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.3.0.tgz',
+        integrity:
+          'sha512-KJzBawY6fB9FiZGdE/0aftepZ91YlaGIrV8vgblRM3J8X+dHx/aiowJWwkx6LIGyuqGiANsjSwwrbb8mifOJ4Q==',
+      },
+      'node_modules/fast-uri': {
+        version: '3.1.5',
+        resolved:
+          'https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz',
+        integrity:
+          'sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==',
+      },
+      'node_modules/ip-address': {
+        version: '10.3.1',
+        resolved:
+          'https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz',
+        integrity:
+          'sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==',
+      },
+      'node_modules/undici': {
+        version: '7.29.0',
+        resolved:
+          'https://registry.npmjs.org/undici/-/undici-7.29.0.tgz',
+        integrity:
+          'sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==',
+      },
+    };
+    for (const [node, identity] of Object.entries(expectedLockIdentities)) {
+      expect(packageLock.packages[node]).toMatchObject(identity);
+    }
+
+    expect(packageLock.packages['node_modules/@modelcontextprotocol/sdk'].version).toBe(
+      '1.30.0',
+    );
+    expect(packageLock.packages['node_modules/ajv'].version).toBe('8.18.0');
+    expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.1.2');
+  });
+
+  it('preserves mapped IPv4 identities and IPv6 subnet grouping', () => {
+    expect(ipKeyGenerator('::ffff:203.0.113.10', 64)).toBe('203.0.113.10');
+    expect(ipKeyGenerator('::ffff:203.0.113.11', 64)).toBe('203.0.113.11');
+
+    const firstSubnetKey = ipKeyGenerator('2001:db8:abcd:12::1', 64);
+    const sameSubnetKey = ipKeyGenerator('2001:db8:abcd:12:ffff::2', 64);
+    const otherSubnetKey = ipKeyGenerator('2001:db8:abcd:13::1', 64);
+
+    expect(firstSubnetKey).toBe('2001:db8:abcd:12::/64');
+    expect(sameSubnetKey).toBe(firstSubnetKey);
+    expect(otherSubnetKey).toBe('2001:db8:abcd:13::/64');
+    expect(otherSubnetKey).not.toBe(firstSubnetKey);
+  });
+
+  it('contains no temporary npm vulnerability exception registry', () => {
+    const policy = readFileSync(auditPolicyScriptPath, 'utf8');
+
+    expect(policy).not.toMatch(/temporaryDirectExceptions/);
+    expect(policy).not.toMatch(/temporaryPropagatedExceptions/);
+    expect(policy).not.toMatch(/Review no later than 2026-08-10/);
+    expect(policy).not.toMatch(/GHSA-/);
+    expect(policy).not.toMatch(/candidate package-lock\.json/);
   });
 
   it.each(['.github/workflows/ci-cd.yml', '.github/workflows/arcanos-release.yml'])(
-    'records npm status but makes the fail-closed repository policy authoritative in %s',
+    'makes the fail-closed repository policy authoritative in %s',
     workflowPath => {
       const workflow = readFileSync(
         path.join(repositoryRoot, workflowPath),
@@ -1054,15 +415,17 @@ describe('npm audit policy', () => {
       expect(workflow).not.toContain('|| policy_exit=$?');
       expect(workflow).not.toContain('audit_exit != 0');
       expect(workflow).not.toMatch(/npm audit[^\n]*\|\|\s*true/);
+      if (workflowPath === '.github/workflows/ci-cd.yml') {
+        expect(workflow).toContain(
+          'node scripts/check-npm-audit.js npm-audit.json',
+        );
+      } else {
+        expect(workflow).toContain(
+          'node "$AUDIT_POLICY_PATH" npm-audit.json',
+        );
+      }
     },
   );
-
-  it('keeps a static near-term review deadline for the temporary exceptions', () => {
-    const policy = readFileSync(auditPolicyScriptPath, 'utf8');
-
-    expect(policy).toContain('Review no later than 2026-08-10');
-    expect(policy).not.toContain('Date.now');
-  });
 
   it.each(['.github/workflows/ci-cd.yml', '.github/workflows/arcanos-release.yml'])(
     'pins Python audit tooling and has no vulnerability ignores in %s',
@@ -1079,30 +442,4 @@ describe('npm audit policy', () => {
       expect(workflow).not.toContain('--ignore-vuln');
     },
   );
-
-  it('locks the vendored brace-expansion patch to its immutable commit', () => {
-    const expectedDependency =
-      'git+https://github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59';
-    const vendorPackage = JSON.parse(
-      readFileSync(
-        path.join(repositoryRoot, 'vendor/minimatch-9.0.7/package.json'),
-        'utf8',
-      ),
-    );
-    const packageLock = JSON.parse(
-      readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
-    );
-    const lockedVendor = packageLock.packages['vendor/minimatch-9.0.7'];
-    const lockedBraceExpansion =
-      packageLock.packages[
-        'vendor/minimatch-9.0.7/node_modules/brace-expansion'
-      ];
-
-    expect(vendorPackage.dependencies['brace-expansion']).toBe(expectedDependency);
-    expect(lockedVendor.dependencies['brace-expansion']).toBe(expectedDependency);
-    expect(lockedBraceExpansion.version).toBe('5.0.8');
-    expect(lockedBraceExpansion.resolved).toContain(
-      'github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59',
-    );
-  });
 });

@@ -1,10 +1,9 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-12 UTC, after audit-scoped product PR #1432,
-delivery-control PRs #1428–#1430, and documentation-only PR #1431 merged and
-delivery-maintenance PR #1433 reached reviewed implementation commit
-`63c31baa1bff8d7e1d21035214168012a1e860e7`. #1433 remains unmerged; exact
-#1432 remains unpromoted and the exact #1431 production pair remains active
+Last reconciled: 2026-08-16 UTC for reviewed PR #1444 dependency remediation.
+Other evidence retains the prior 2026-08-12 cutoff through audit-scoped product
+PR #1432, delivery-control PRs #1428–#1430, documentation-only PR #1431, and
+the then-reviewed delivery-maintenance state for PR #1433
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -21,6 +20,37 @@ remain authoritative.
 | Contained preview | Served commit identity and the explicitly exposed sealed/read-only contract | Normal production handlers, credentials, provider calls, PostgreSQL behavior unless specifically connected, or production state |
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
+
+## PR #1444 — expired npm-audit exception removal
+
+| Field | Value |
+| --- | --- |
+| Base | `90ae27ac87436768a168525218ae59c93d13bbbb` |
+| Initial published candidate | `20b29aeeba5e03d8c7c95fcf30a2305534b4240e` |
+| Reviewed implementation head | `18d4db05e26f5c8488968f4918cf2d1ec991e978` |
+| PR state | Reviewed; merge remains open and live PR metadata remains authoritative |
+
+The candidate replaces the four remaining temporary exception leaves with
+patched registry releases for `brace-expansion`, `fast-uri`, `ip-address`, and
+`undici`; restores the same-version `express-rate-limit@8.3.0` registry artifact;
+and reduces the trusted audit policy to complete npm audit-v2 validation with
+every reported vulnerability actionable. Initial exact-candidate CI/CD run
+[`31940951028`](https://github.com/pbjustin/Arcanos/actions/runs/31940951028)
+passed `Security Audit`, unit, integration, build, Railway compatibility,
+deployment-readiness, and `All Checks Complete`; the security job recorded raw
+npm audit exit `0` with `ignored: []` and `actionable: []`. Independent review
+on Node `20.19.0` and npm `10.8.2` passed a cold-cache release-style install,
+the production audit and policy with exits `0`, 37/37 focused policy/release
+tests, and `npm run type-check`. The review identified placeholder commit
+identity and stale audit-ledger state; reviewed implementation head
+`18d4db05e26f5c8488968f4918cf2d1ec991e978` corrects both. Exact-head CI/CD run
+[`31971267116`](https://github.com/pbjustin/Arcanos/actions/runs/31971267116)
+passed Security Audit, lint/type, build, unit, integration, PostgreSQL, Redis,
+Railway Compatibility, Deployment Readiness, and `All Checks Complete`; PR CI
+run [`31971267160`](https://github.com/pbjustin/Arcanos/actions/runs/31971267160)
+also passed. The preview lifecycle correctly skipped sealed E2E without a
+preview opt-in. Merge remains required before source closure, and no deployment
+or production evidence is credited.
 
 ## PR #1432 — predictive/reactive self-heal approval
 
