@@ -124,6 +124,23 @@ describe('backstage-booker generateBooking', () => {
     }));
   });
 
+  it('falls back to the GPT-5.1 direct-answer baseline when the shared model is blank', async () => {
+    mockGetGPT5Model.mockReturnValue('   ');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.1' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.1'
+        })
+      })
+    }));
+  });
+
   it('does not treat the legacy user-facing GPT ID as a provider model', async () => {
     mockGetEnv.mockImplementation((name: string) =>
       name === 'USER_GPT_ID' ? 'backstage-booker' : undefined

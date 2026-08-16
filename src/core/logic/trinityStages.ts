@@ -680,7 +680,7 @@ export async function runDirectAnswerStage(
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
-        timeoutMs: stageTimeoutMs,
+        ...(useAggregateAbortContext ? {} : { timeoutMs: stageTimeoutMs }),
         preserveAggregateAbortContext: useAggregateAbortContext,
         ...(directAnswerReasoningEffort
           ? { reasoning_effort: directAnswerReasoningEffort }

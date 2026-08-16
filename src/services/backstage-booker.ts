@@ -1301,12 +1301,12 @@ async function buildStructuredBookingPrompt(
 /**
  * Resolve the model used for backstage booking generation.
  * Inputs/outputs: none -> the shared GPT-5 model preference.
- * Edge cases: trims the configured model and maps the obsolete base `gpt-5` alias to the reasoning-disable-capable GPT-5.1 baseline.
+ * Edge cases: trims the configured model, falls back from blank values, and maps the obsolete base `gpt-5` alias to the reasoning-disable-capable GPT-5.1 baseline.
  */
 function resolveBackstageBookerModel(): string {
   //audit Assumption: USER_GPT_ID identifies a user-facing GPT and is not an OpenAI provider model; failure risk: forwarding that alias as `model` makes Booker and HRC generation fail; expected invariant: provider selection comes only from the shared model configuration; handling strategy: use getGPT5Model() and normalize only the exact legacy gpt-5 alias to GPT-5.1.
   const resolvedModel = getGPT5Model().trim();
-  return resolvedModel.trim().toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
+  return !resolvedModel || resolvedModel.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
     ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
     : resolvedModel;
 }

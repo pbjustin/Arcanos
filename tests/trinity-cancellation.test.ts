@@ -355,6 +355,7 @@ describe('Trinity cancellation and optional side effects', () => {
     await modelStarted.promise;
     expect(observedSignal).toBe(controller.signal);
     expect(observedAggregateFlag).toBe(true);
+    expect(mockCreateSingleChatCompletion.mock.calls[0]?.[1]).not.toHaveProperty('timeoutMs');
     expect(mockRetrieveModel).not.toHaveBeenCalled();
     controller.abort(parentAbort);
     await Promise.resolve();
