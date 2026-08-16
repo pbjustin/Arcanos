@@ -89,10 +89,10 @@ describe('backstage-booker generateBooking', () => {
         moduleId: 'BACKSTAGE:BOOKER',
         sourceEndpoint: 'backstage-booker.generateBooking',
         requestedAction: 'generateBooking',
-        tokenLimit: 1200,
+        tokenLimit: 2400,
         body: expect.objectContaining({
           model: 'gpt-5.1-test',
-          tokenLimit: 1200,
+          tokenLimit: 2400,
         }),
       }),
       context: expect.objectContaining({
@@ -101,7 +101,8 @@ describe('backstage-booker generateBooking', () => {
           answerMode: 'direct',
           strictUserVisibleOutput: true,
           directAnswerModelOverride: 'gpt-5.1-test',
-          directAnswerTokenLimitOverride: 1200,
+          directAnswerTokenLimitOverride: 2400,
+          directAnswerTokenCapOverride: 2400,
           directAnswerUserIntentPrompt: 'Generate three rivalries for RAW after WrestleMania.',
           modelStageTimeoutMs: 40_000,
         }),
@@ -190,7 +191,29 @@ describe('backstage-booker generateBooking', () => {
       input: expect.objectContaining({ tokenLimit: 512 }),
       context: expect.objectContaining({
         runOptions: expect.objectContaining({
-          directAnswerTokenLimitOverride: 512
+          directAnswerTokenLimitOverride: 512,
+          directAnswerTokenCapOverride: 2400
+        })
+      })
+    }));
+  });
+
+  it('caps an oversized Booker token limit at the Backstage-only ceiling', async () => {
+    mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+      name === 'BOOKER_TOKEN_LIMIT' ? 5_000 : fallback
+    );
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        tokenLimit: 2400,
+        body: expect.objectContaining({ tokenLimit: 2400 })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 2400,
+          directAnswerTokenCapOverride: 2400
         })
       })
     }));
@@ -206,10 +229,11 @@ describe('backstage-booker generateBooking', () => {
       await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
 
       expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
-        input: expect.objectContaining({ tokenLimit: 1200 }),
+        input: expect.objectContaining({ tokenLimit: 2400 }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            directAnswerTokenLimitOverride: 1200
+            directAnswerTokenLimitOverride: 2400,
+            directAnswerTokenCapOverride: 2400
           })
         })
       }));

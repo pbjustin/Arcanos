@@ -57,6 +57,7 @@ import {
 } from './shared/backstage/backstageStoryline.js';
 import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
+  BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
   BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
   BACKSTAGE_MODULE_ROUTE,
   BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
@@ -1513,6 +1514,8 @@ async function runBackstageRouteBudgetFixture(
     || trinityRunOptions.directAnswerModelOverride
       !== 'native-pr-preview-synthetic'
     || trinityRunOptions.directAnswerTokenLimitOverride !== 512
+    || trinityRunOptions.directAnswerTokenCapOverride
+      !== BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX
     || trinityRunOptions.directAnswerUserIntentPrompt
       !== 'sealed synthetic provider delay'
     || trinityRunOptions.modelStageTimeoutMs !== generationStageTimeoutMs

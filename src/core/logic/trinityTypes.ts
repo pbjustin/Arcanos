@@ -235,8 +235,10 @@ export interface TrinityRunOptions {
   /** @deprecated Backward-compatible alias; normalize through `resolveIntentMode()` and prefer `intentMode`. */
   requestIntent?: TrinityIntentMode;
   directAnswerModelOverride?: string;
-  /** Optional caller-owned direct-answer output budget; Trinity still enforces its hard token cap. */
+  /** Optional caller-owned direct-answer output budget; Trinity enforces the effective direct-answer cap. */
   directAnswerTokenLimitOverride?: number;
+  /** Optional trusted direct-answer cap exception; invalid values fall back to Trinity's 1,200-token cap and valid values never exceed 2,400. */
+  directAnswerTokenCapOverride?: number;
   /** Original user directive for honesty checks when the execution prompt contains trusted context. */
   directAnswerUserIntentPrompt?: string;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
