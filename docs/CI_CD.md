@@ -253,6 +253,22 @@ storyline fixtures carry no credentials, contact no provider, and do not reach
 memory, a confirmation challenge/token store, persistence effects, or any other
 protected effect.
 
+The exact `POST /backstage/generation-contract` surface accepts only the
+server-owned `route-budget-provider-delay` and `hrc-timeout-retry-cache`
+selectors. The route-budget case uses the production Backstage route-ID policy,
+the real route timeout resolver, the shared Trinity run-options builder, and the
+reviewed request-abort runtime around a 13,250 ms synthetic provider seam. The
+runner independently requires at least 13,000 ms of wall-clock response time,
+proving the hosted request crossed both former 6-second and 12-second boundaries
+while retaining the 40-second provider and 60-second route budgets. The sealed
+20-second case timeout is reported as `effectivePerCaseMaxRequestTimeoutMs`
+separately from the caller-configured default. The HRC case executes the pure
+cache orchestration seam
+shared by production HRC: a real bounded synthetic timeout returns a marked
+noncacheable fallback, the next call evaluates successfully, and the third is
+served from the one successful cache write. Neither selector imports or calls a
+provider, uses credentials, performs network I/O, or reaches a protected effect.
+
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
 `effective-limits` selector. It imports the config-free core used by the
 production MCP pre-parser and feeds it six deterministic, chunked,
@@ -301,7 +317,8 @@ dispatcher/canary/fixture seam, and config-free production MCP pre-parser core
 are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
-Research abort-drain wrapper and exact request-abort runtime source are also
+Research abort-drain wrapper, Backstage action/timeout policy, GPT route timeout
+resolver, HRC cache policy, and exact request-abort runtime source are also
 semantic-digest pinned; only the reviewed timeout and AsyncLocalStorage
 capabilities are admitted. A tracked checker-only TypeScript resolver points the
 contained graph at that reviewed source without depending on ignored build
@@ -313,12 +330,13 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 113-request plan is the
+evidence, not Railway control-plane provenance. The fixed 115-request plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial. It
+worker-role approval-contract denial, plus two sealed Backstage generation
+timeout/cache cases. It
 checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
 synthetic-provenance headers; it is not real bearer-auth, provider, storage,
 queue, or worker-execution evidence.
@@ -370,7 +388,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 113-request E2E runs in a separate job that has no Railway secret. It
+The sealed 115-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and

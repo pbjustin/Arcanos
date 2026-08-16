@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const responsesCreate = jest.fn();
 const query = jest.fn();
@@ -60,8 +60,10 @@ jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
 
 const originalGpt5Model = process.env.GPT5_MODEL;
 const originalBookerTokenLimit = process.env.BOOKER_TOKEN_LIMIT;
+const originalBookerGenerationStageTimeoutMs = process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS;
 process.env.GPT5_MODEL = 'gpt-5';
 process.env.BOOKER_TOKEN_LIMIT = '1200';
+process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS = '40000';
 
 const { generateBooking } = await import('../src/services/backstage-booker.js');
 
@@ -76,6 +78,10 @@ function restoreEnv(name: string, value: string | undefined): void {
 afterAll(() => {
   restoreEnv('GPT5_MODEL', originalGpt5Model);
   restoreEnv('BOOKER_TOKEN_LIMIT', originalBookerTokenLimit);
+  restoreEnv(
+    'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+    originalBookerGenerationStageTimeoutMs
+  );
 });
 
 describe('backstage-booker generateBooking real provider chain', () => {
@@ -101,6 +107,10 @@ describe('backstage-booker generateBooking real provider chain', () => {
         total_tokens: 15
       }
     });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('preserves the Booker model and token budget through the Responses request', async () => {
@@ -144,5 +154,41 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ).resolves.toBe(
       "I can't verify current external state here without live access. Rivalry matrix output."
     );
+  });
+
+  it('allows the provider to finish after the generic twelve-second direct-answer deadline', async () => {
+    jest.useFakeTimers();
+    responsesCreate.mockImplementationOnce(
+      () => new Promise(resolve => {
+        setTimeout(() => resolve({
+          id: 'resp_backstage_slow_booking',
+          model: 'gpt-5.1',
+          status: 'completed',
+          output_text: 'Long-form booking output.',
+          output: [],
+          usage: {
+            input_tokens: 20,
+            output_tokens: 12,
+            total_tokens: 32
+          }
+        }), 13_000);
+      })
+    );
+
+    const bookingPromise = generateBooking(
+      'Generate a complete long-form Raw card with coherent story progression.'
+    );
+    const completionExpectation = expect(bookingPromise).resolves.toBe(
+      'Long-form booking output.'
+    );
+
+    await jest.advanceTimersByTimeAsync(13_001);
+
+    await completionExpectation;
+    const [, options] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      { signal?: AbortSignal }
+    ];
+    expect(options.signal?.aborted).toBe(false);
   });
 });

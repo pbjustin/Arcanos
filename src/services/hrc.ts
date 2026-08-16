@@ -4,7 +4,13 @@ import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { callStructuredResponse } from "@arcanos/openai";
+import { createLinkedAbortController, getRequestAbortSignal } from '@arcanos/runtime';
+import {
+  markHRCResultNonCacheableForAbort,
+} from '@shared/hrcEvaluationPolicy.js';
 import type { ModuleDef } from './moduleLoader.js';
+
+export { isHRCResultCacheable } from '@shared/hrcEvaluationPolicy.js';
 
 export interface HRCResult {
   fidelity: number;
@@ -16,6 +22,11 @@ interface ParsedHRCPayload {
   fidelity: number | string;
   resilience: number | string;
   verdict: string;
+}
+
+export interface HRCEvaluationOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 function isHRCResult(value: unknown): value is ParsedHRCPayload {
@@ -41,7 +52,7 @@ function isHRCResult(value: unknown): value is ParsedHRCPayload {
  * Targets the project's fine-tuned model by default and can be overridden via HRC_MODEL.
  */
 export class HRCCore {
-  async evaluate(input: string): Promise<HRCResult> {
+  async evaluate(input: string, options: HRCEvaluationOptions = {}): Promise<HRCResult> {
     const { adapter } = getOpenAIClientOrAdapter();
     if (!adapter) {
       return {
@@ -50,6 +61,22 @@ export class HRCCore {
         verdict: 'OpenAI adapter not configured'
       };
     }
+
+    const timeoutMs =
+      typeof options.timeoutMs === 'number' &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? Math.max(1, Math.trunc(options.timeoutMs))
+        : null;
+    const parentSignal = options.signal ?? getRequestAbortSignal();
+    const requestScope = timeoutMs === null
+      ? null
+      : createLinkedAbortController({
+          timeoutMs,
+          parentSignal,
+          abortMessage: `HRC evaluation timed out after ${timeoutMs}ms`
+        });
+    const evaluationSignal = requestScope?.signal ?? parentSignal;
 
     try {
       // Use config layer for env access (adapter boundary pattern)
@@ -68,22 +95,33 @@ export class HRCCore {
         ],
         text: { format: { type: 'json_object' } },
         temperature: 0
-      }, undefined, {
+      }, evaluationSignal ? { signal: evaluationSignal } : undefined, {
         validate: isHRCResult,
         source: 'HRC evaluation'
       });
 
-      return {
+      const result: HRCResult = {
         fidelity: Number(outputParsed.fidelity) || 0,
         resilience: Number(outputParsed.resilience) || 0,
         verdict: outputParsed.verdict
       };
+
+      return markHRCResultNonCacheableForAbort(result, {
+        signal: evaluationSignal,
+      });
     } catch (err) {
-      return {
+      const result: HRCResult = {
         fidelity: 0,
         resilience: 0,
         verdict: `Evaluation failed: ${resolveErrorMessage(err, 'unknown error')}`
       };
+
+      return markHRCResultNonCacheableForAbort(result, {
+        signal: evaluationSignal,
+        error: err,
+      });
+    } finally {
+      requestScope?.cleanup();
     }
   }
 }

@@ -72,7 +72,11 @@ import {
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
   isBackstageStorylineValidationError
 } from '@shared/backstage/backstageStoryline.js';
-import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  BACKSTAGE_MODULE_NAME,
+  BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  isBackstageGptRoute,
+} from '@shared/backstage/backstageActionPolicy.js';
 import {
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
@@ -1412,10 +1416,14 @@ router.post(
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
     explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
+  const backstageRoute = isBackstageGptRoute(routeGptId);
   const routeTimeoutMs = directGamingRoute
     ? DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS
     : resolveGptRouteHardTimeoutMs({
         profile: routeTimeoutProfile,
+        ...(backstageRoute
+          ? { minimumMsOverride: BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS }
+          : {}),
         ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
           ? {
               defaultMsOverride: Math.max(

@@ -32,6 +32,13 @@ export interface NativePrPreviewE2eContract {
       payloadOver: 'payload-over';
     }>;
   }>;
+  readonly backstageGeneration: Readonly<{
+    path: '/backstage/generation-contract';
+    fixtures: Readonly<{
+      routeBudget: 'route-budget-provider-delay';
+      hrcRetryCache: 'hrc-timeout-retry-cache';
+    }>;
+  }>;
   readonly mcpBodyCap: Readonly<{
     path: '/mcp/body-cap-contract';
     fixtures: Readonly<{

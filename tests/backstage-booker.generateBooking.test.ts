@@ -103,9 +103,26 @@ describe('backstage-booker generateBooking', () => {
           directAnswerModelOverride: 'gpt-5.1-test',
           directAnswerTokenLimitOverride: 1200,
           directAnswerUserIntentPrompt: 'Generate three rivalries for RAW after WrestleMania.',
+          modelStageTimeoutMs: 40_000,
         }),
       }),
     });
+  });
+
+  it('caps an oversized Booker generation stage timeout below the module deadline', async () => {
+    mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+      name === 'BOOKER_GENERATION_STAGE_TIMEOUT_MS' ? 90_000 : fallback
+    );
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          modelStageTimeoutMs: 45_000
+        })
+      })
+    }));
   });
 
   it('normalizes the obsolete base GPT-5 alias to the GPT-5.1 direct-answer baseline', async () => {

@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'c77e452f9b9d0f76e4d45cc3e8edea59f62434ca986c5c26c1de5c30e813066d';
+  '935852fbb8b53d5c6e767cb685c9d80fda9c68f67a114410c6341492e50fa990';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -53,11 +53,13 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/http/clientJsonPayload.ts',
   'src/shared/http/clientResponseCommon.ts',
   'src/shared/http/errors.ts',
+  'src/shared/http/gptRouteTimeout.ts',
   'src/shared/http/sendBoundedJsonResponse.ts',
   'src/shared/http/sendPreparedJsonResponse.ts',
   'src/shared/http/validation.ts',
   'src/shared/jobs/jobLinks.ts',
   'src/shared/jobs/jobReadCapability.ts',
+  'src/shared/hrcEvaluationPolicy.ts',
   'src/shared/researchRequest.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
@@ -181,6 +183,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
         '@arcanos/runtime/requestAbort',
         new Set([
           'getRequestAbortContext:getRequestAbortContext',
+          'runWithRequestAbortTimeout:runWithRequestAbortTimeout',
         ]),
       ],
       ['express', new Set(['default:express'])],
@@ -542,6 +545,18 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageStoryline.ts',
     '1352383228608e77a2b1d86a0bf9cafdc928809753f11036553a94b83468c148',
+  ],
+  [
+    'src/shared/backstage/backstageActionPolicy.ts',
+    '064d434605643c70222511a43275093c783a4f6938019a8e837fd0867f2216e7',
+  ],
+  [
+    'src/shared/hrcEvaluationPolicy.ts',
+    'c5a75922f94a345f3205c91c26cba7199578c38407dfde548641ed5ac6b946f9',
+  ],
+  [
+    'src/shared/http/gptRouteTimeout.ts',
+    '2f4232f2555db98cefdd4f4613d73eff134e724c5713ed37f80d9706659f112f',
   ],
   [
     'src/shared/researchRequest.ts',

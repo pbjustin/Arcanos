@@ -64,6 +64,12 @@ import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
+  BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
+  BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
+  buildBackstageBookerTrinityRunOptions,
+  resolveBackstageGenerationStageTimeoutMs,
+} from '@shared/backstage/backstageActionPolicy.js';
+import {
   BackstageRosterPersistenceError,
   isRetryableBackstageRosterPersistenceCause,
   parseBackstageRosterPayload,
@@ -1312,6 +1318,14 @@ function resolveBackstageBookerModel(): string {
     : resolvedModel;
 }
 
+function resolveBackstageBookerGenerationStageTimeoutMs(): number {
+  const configuredTimeoutMs = getEnvNumber(
+    'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+    BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
+  );
+  return resolveBackstageGenerationStageTimeoutMs(configuredTimeoutMs);
+}
+
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
   const serialized = JSON.stringify(data);
   if (typeof serialized !== 'string') {
@@ -2283,6 +2297,13 @@ export async function generateBooking(
     input.prompt,
     configuredTokenLimit > 0 ? configuredTokenLimit : TRINITY_HARD_TOKEN_CAP
   );
+  const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
+  const trinityRunOptions = buildBackstageBookerTrinityRunOptions({
+    model,
+    tokenLimit,
+    userIntentPrompt: input.prompt,
+    modelStageTimeoutMs: generationStageTimeoutMs,
+  });
   const instructions = structuredScope
     ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
     : await buildLegacyStructuredBookingPrompt(input.prompt);
@@ -2309,13 +2330,7 @@ export async function generateBooking(
       context: {
         client,
         runtimeBudget: createRuntimeBudget(),
-        runOptions: {
-          answerMode: 'direct',
-          strictUserVisibleOutput: true,
-          directAnswerModelOverride: model,
-          directAnswerTokenLimitOverride: tokenLimit,
-          directAnswerUserIntentPrompt: input.prompt
-        }
+        runOptions: trinityRunOptions
       }
     });
     const output = trinityResult.result;
@@ -2827,7 +2842,9 @@ export const BackstageBookerModule = {
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
-        hrc: normalizeHrcResult(await evaluateWithHRC(storyline))
+        hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
+          timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS
+        }))
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);
     },

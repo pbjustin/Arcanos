@@ -223,6 +223,7 @@ const GPT_ROUTE_TEST_ENV_KEYS = [
   'GPT_FAST_PATH_TIMEOUT_MS',
   'GPT_PUBLIC_RESPONSE_MAX_BYTES',
   'GPT_ROUTE_ASYNC_CORE_DEFAULT',
+  'GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS',
   'GPT_ROUTE_HARD_TIMEOUT_MS',
   'PRIORITY_QUEUE_ENABLED',
 ] as const;
@@ -1038,11 +1039,106 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('returns the documented timeout response for synchronous Builder dispatch', async () => {
+  it.each(['backstage-booker', 'backstage'])(
+    'returns the documented sixty-second timeout response for synchronous Builder dispatch through %s',
+    async (gptId) => {
+      process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
+      mockResolveGptRouting.mockResolvedValueOnce(
+        buildBackstageRouting('generateBooking')
+      );
+      const timeoutError = new Error('GPT route timeout after 60000ms');
+      timeoutError.name = 'AbortError';
+      mockRouteGptRequest.mockRejectedValueOnce(timeoutError);
+
+      const response = await request(buildApp())
+        .post(`/gpt/${gptId}`)
+        .send({
+          action: 'generateBooking',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'builder-timeout-universe',
+            prompt: 'Book a championship match.',
+          },
+        });
+
+      expect(response.status).toBe(504);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: 'MODULE_TIMEOUT',
+          message: 'GPT route timeout after 60000ms',
+        },
+        _route: {
+          gptId,
+        },
+      });
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps delayed synchronous Builder generation alive beyond the generic six-second route default', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
+    mockResolveGptRouting
+      .mockResolvedValueOnce(buildBackstageRouting('generateBookingWithHRC'))
+      .mockResolvedValueOnce(buildBackstageRouting('generateBooking'));
+
+    const delayedDispatch = async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 6_250));
+      return {
+        ok: true,
+        result: 'Delayed provider-backed booking result.',
+        _route: {
+          requestId: 'request-delayed-booker',
+          traceId: 'trace-delayed-booker',
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage-booker',
+          timestamp: '2026-08-16T12:00:00.000Z',
+        },
+      };
+    };
+    mockRouteGptRequest
+      .mockImplementationOnce(delayedDispatch)
+      .mockImplementationOnce(delayedDispatch);
+
+    const [canonicalResponse, aliasResponse] = await Promise.all([
+      request(buildApp())
+        .post('/gpt/backstage-booker')
+        .send({
+          action: 'generateBookingWithHRC',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'builder-delayed-canonical-universe',
+            prompt: 'Book and evaluate a championship match.',
+          },
+        }),
+      request(buildApp())
+        .post('/gpt/backstage')
+        .send({
+          action: 'generateBooking',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'builder-delayed-alias-universe',
+            prompt: 'Book a championship match.',
+          },
+        }),
+    ]);
+
+    expect([canonicalResponse.status, aliasResponse.status]).toEqual([200, 200]);
+    expect(canonicalResponse.body.result).toBe('Delayed provider-backed booking result.');
+    expect(aliasResponse.body.result).toBe('Delayed provider-backed booking result.');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('keeps the Backstage outer budget at sixty seconds for DAG-classified synchronous generation', async () => {
+    process.env.GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS = '8000';
     mockResolveGptRouting.mockResolvedValueOnce(
       buildBackstageRouting('generateBooking')
     );
-    const timeoutError = new Error('GPT route timeout after 6000ms');
+    const timeoutError = new Error('GPT route timeout after 60000ms');
     timeoutError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValueOnce(timeoutError);
 
@@ -1052,24 +1148,19 @@ describe('GPT fast-path route branching', () => {
         action: 'generateBooking',
         executionMode: 'sync',
         payload: {
-          universeId: 'builder-timeout-universe',
-          prompt: 'Book a championship match.',
+          universeId: 'builder-dag-timeout-universe',
+          prompt: 'Run a DAG workflow to book a championship match.',
         },
       });
 
     expect(response.status).toBe(504);
     expect(response.body).toMatchObject({
-      ok: false,
       error: {
         code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 6000ms',
-      },
-      _route: {
-        gptId: 'backstage-booker',
+        message: 'GPT route timeout after 60000ms',
       },
     });
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('does not fast-path non-prompt-generation requests even when fast mode is requested', async () => {

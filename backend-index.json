@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-16T04:33:42.000Z",
+  "generatedAt": "2026-08-16T07:54:08.786Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2466,6 +2466,9 @@
         },
         {
           "relativePath": "src/shared/hashUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/hrcEvaluationPolicy.ts"
         },
         {
           "relativePath": "src/shared/http/aiDegradedHeaders.ts"
