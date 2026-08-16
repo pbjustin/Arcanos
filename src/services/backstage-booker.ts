@@ -90,6 +90,10 @@ import type { ModuleActionMetadata } from './moduleLoader.js';
 
 export type { Wrestler } from '@shared/backstage/backstageRoster.js';
 
+const DEFAULT_BOOKER_GENERATION_STAGE_TIMEOUT_MS = 40_000;
+const MAX_BOOKER_GENERATION_STAGE_TIMEOUT_MS = 45_000;
+const BOOKER_HRC_EVALUATION_TIMEOUT_MS = 10_000;
+
 export interface MatchInput {
   wrestler1: string;
   wrestler2: string;
@@ -1312,6 +1316,19 @@ function resolveBackstageBookerModel(): string {
     : resolvedModel;
 }
 
+function resolveBackstageBookerGenerationStageTimeoutMs(): number {
+  const configuredTimeoutMs = getEnvNumber(
+    'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+    DEFAULT_BOOKER_GENERATION_STAGE_TIMEOUT_MS
+  );
+  const preferredTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? Math.trunc(configuredTimeoutMs)
+      : DEFAULT_BOOKER_GENERATION_STAGE_TIMEOUT_MS;
+
+  return Math.max(1, Math.min(preferredTimeoutMs, MAX_BOOKER_GENERATION_STAGE_TIMEOUT_MS));
+}
+
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
   const serialized = JSON.stringify(data);
   if (typeof serialized !== 'string') {
@@ -2283,6 +2300,7 @@ export async function generateBooking(
     input.prompt,
     configuredTokenLimit > 0 ? configuredTokenLimit : TRINITY_HARD_TOKEN_CAP
   );
+  const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
   const instructions = structuredScope
     ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
     : await buildLegacyStructuredBookingPrompt(input.prompt);
@@ -2314,7 +2332,8 @@ export async function generateBooking(
           strictUserVisibleOutput: true,
           directAnswerModelOverride: model,
           directAnswerTokenLimitOverride: tokenLimit,
-          directAnswerUserIntentPrompt: input.prompt
+          directAnswerUserIntentPrompt: input.prompt,
+          modelStageTimeoutMs: generationStageTimeoutMs
         }
       }
     });
@@ -2827,7 +2846,9 @@ export const BackstageBookerModule = {
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
-        hrc: normalizeHrcResult(await evaluateWithHRC(storyline))
+        hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
+          timeoutMs: BOOKER_HRC_EVALUATION_TIMEOUT_MS
+        }))
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);
     },

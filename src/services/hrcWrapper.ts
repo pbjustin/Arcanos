@@ -1,4 +1,4 @@
-import { hrcCore, type HRCResult } from './hrc.js';
+import { hrcCore, type HRCEvaluationOptions, type HRCResult } from './hrc.js';
 import { queryCache } from "@platform/resilience/cache.js";
 import { createSHA256Hash } from "@shared/hashUtils.js";
 import {
@@ -15,7 +15,10 @@ function cacheKey(text: string): string {
 /**
  * Evaluates text through HRC with caching. Returns fallback scores on failure.
  */
-export async function evaluateWithHRC(text: string): Promise<HRCResult> {
+export async function evaluateWithHRC(
+  text: string,
+  options: HRCEvaluationOptions = {}
+): Promise<HRCResult> {
   if (!text.trim()) return HRC_FALLBACK;
 
   const key = cacheKey(text);
@@ -23,7 +26,7 @@ export async function evaluateWithHRC(text: string): Promise<HRCResult> {
   if (cached) return cached;
 
   try {
-    const result = await hrcCore.evaluate(text);
+    const result = await hrcCore.evaluate(text, options);
     queryCache.set(key, result);
     return result;
   } catch {

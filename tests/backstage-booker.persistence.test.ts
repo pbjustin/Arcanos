@@ -301,6 +301,26 @@ describe('Backstage Booker service persistence outcomes', () => {
     );
   });
 
+  it('bounds the HRC follow-up after a generated booking', async () => {
+    const result = await BackstageBookerModule.actions.generateBookingWithHRC({
+      universeId: 'hrc-timeout-universe',
+      prompt: 'Review the complete Raw card.'
+    });
+
+    expect(result).toEqual({
+      universeId: 'hrc-timeout-universe',
+      storyline: 'Generated booking',
+      hrc: {
+        fidelity: 1,
+        resilience: 1,
+        verdict: 'PASS'
+      }
+    });
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('Generated booking', {
+      timeoutMs: 10_000
+    });
+  });
+
   it('preserves a raw top-level event field through the module action adapter', async () => {
     const event = {
       event: 'WrestleMania',
