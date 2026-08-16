@@ -1,375 +1,114 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
-// Temporary exceptions for advisories published on 2026-08-03 whose accepted
-// repository remediation remains temporary. Review no later than 2026-08-10
-// and remove each exception as soon as a stable patched path is available.
-const temporaryDirectExceptions = {
-  'brace-expansion': {
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-rgw5-rvv9-x895',
-        severity: 'high',
-      },
-    ],
-    identity: {
-      node: 'vendor/minimatch-9.0.7/node_modules/brace-expansion',
-      version: '5.0.8',
-      resolved:
-        'git+ssh://git@github.com/juliangruber/brace-expansion.git#96a63c0011c0288846ad41773c73e3fbd0906b59',
-      integrity:
-        'sha512-BgHSva7M0cHAkCKopVjMPI93ycF9FDOk/EFQQl4ZOOMOzddm0dQFnlX4jW87oVeQe+Dxef82XumA6NBSQxBdWA==',
-    },
-    fixAvailable: false,
-  },
-  'fast-uri': {
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-7p8r-x3mc-p8w7',
-        severity: 'high',
-      },
-    ],
-    identity: {
-      node: 'node_modules/fast-uri',
-      version: '3.1.4',
-      resolved:
-        'https://codeload.github.com/fastify/fast-uri/tar.gz/refs/tags/v3.1.4',
-      integrity:
-        'sha512-w1d9PDFY3xOqTzTD9Nmyyfv1WQJ8lGtAQMbKVwwmACHqYjK3Wfh+Ko1HLqarlQZQr5rKoaVz4MvHAIj33Qzw0A==',
-    },
-    fixAvailable: {
-      name: 'ajv',
-      version: '8.16.0',
-      isSemVerMajor: true,
-    },
-  },
-  'ip-address': {
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-mwp4-54f8-5fhr',
-        severity: 'high',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-4xrf-jv44-h6hh',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-22jq-vg5j-6vgg',
-        severity: 'moderate',
-      },
-    ],
-    identity: {
-      node: 'node_modules/ip-address',
-      version: '10.1.1',
-      resolved:
-        'https://registry.npmjs.org/ip-address/-/ip-address-10.1.1.tgz',
-      integrity:
-        'sha512-1FMu8/N15Ck1BL551Jf42NYIoin2unWjLQ2Fze/DXryJRl5twqtwNHlO39qERGbIOcKYWHdgRryhOC+NG4eaLw==',
-    },
-    fixAvailable: {
-      name: '@modelcontextprotocol/sdk',
-      version: '1.20.2',
-      isSemVerMajor: true,
-    },
-  },
-  undici: {
-    severity: 'high',
-    advisories: [
-      {
-        url: 'https://github.com/advisories/GHSA-8xcm-r25x-g524',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-4cwx-7wf7-3272',
-        severity: 'high',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-m8rv-5g2x-5cg5',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-jr45-8vmc-qm54',
-        severity: 'moderate',
-      },
-      {
-        url: 'https://github.com/advisories/GHSA-v3r7-h72x-cjcm',
-        severity: 'moderate',
-      },
-    ],
-    identity: {
-      node: 'node_modules/undici',
-      version: '7.28.0',
-      resolved: 'https://registry.npmjs.org/undici/-/undici-7.28.0.tgz',
-      integrity:
-        'sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==',
-    },
-    fixAvailable: {
-      name: 'cheerio',
-      version: '1.0.0',
-      isSemVerMajor: true,
-    },
-  },
-};
-
-const temporaryPropagatedExceptions = {
-  '@modelcontextprotocol/sdk': {
-    severity: 'high',
-    via: ['ajv', 'express-rate-limit'],
-    identity: {
-      node: 'node_modules/@modelcontextprotocol/sdk',
-      version: '1.30.0',
-      resolved:
-        'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz',
-      integrity:
-        'sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==',
-    },
-    fixAvailable: {
-      name: '@modelcontextprotocol/sdk',
-      version: '1.20.2',
-      isSemVerMajor: true,
-    },
-  },
-  ajv: {
-    severity: 'high',
-    via: ['fast-uri'],
-    identity: {
-      node: 'node_modules/ajv',
-      version: '8.18.0',
-      resolved: 'https://registry.npmjs.org/ajv/-/ajv-8.18.0.tgz',
-      integrity:
-        'sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A==',
-    },
-    fixAvailable: {
-      name: 'ajv',
-      version: '8.16.0',
-      isSemVerMajor: true,
-    },
-  },
-  cheerio: {
-    severity: 'moderate',
-    via: ['undici'],
-    identity: {
-      node: 'node_modules/cheerio',
-      version: '1.1.2',
-      resolved:
-        'https://registry.npmjs.org/cheerio/-/cheerio-1.1.2.tgz',
-      integrity:
-        'sha512-IkxPpb5rS/d1IiLbHMgfPuS0FgiWTtFIm/Nj+2woXDLTZ7fOT2eqzgYbdMlLweqlHbsZjxEChoVK+7iph7jyQg==',
-    },
-    fixAvailable: {
-      name: 'cheerio',
-      version: '1.0.0',
-      isSemVerMajor: true,
-    },
-  },
-  'express-rate-limit': {
-    severity: 'high',
-    via: ['ip-address'],
-    identity: {
-      node: 'node_modules/express-rate-limit',
-      version: '8.3.0',
-      resolved:
-        'https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0',
-      integrity:
-        'sha512-qWCW0wv8JTa9dqgeZCYUbnGbF8W/DXcKXhLuyl+NkxEjxfMWuGJVejPZiXg68o+pUOjixaCAuhJ9FqHSkbBYxg==',
-    },
-    fixAvailable: {
-      name: '@modelcontextprotocol/sdk',
-      version: '1.20.2',
-      isSemVerMajor: true,
-    },
-  },
-};
-
-const vulnerabilitySeverities = new Set([
+const vulnerabilitySeverities = [
   'info',
   'low',
   'moderate',
   'high',
   'critical',
-]);
-const temporaryExceptionIdentities = [
-  ...Object.values(temporaryDirectExceptions),
-  ...Object.values(temporaryPropagatedExceptions),
-].map(exception => exception.identity);
-// npm 10.8.2 on the Linux CI runner emits a coherent six-record graph with
-// different remediation metadata and SDK propagation than npm 10 on Windows.
-// npm 11 on Windows additionally reports the vendored brace-expansion node.
-// Select one whole profile so field-level variants cannot be mixed and matched.
-const platformOptionalTemporaryExceptionNames = new Set([
-  'brace-expansion',
-  'cheerio',
-]);
-const requiredTemporaryExceptionNames = new Set([
-  ...Object.keys(temporaryDirectExceptions),
-  ...Object.keys(temporaryPropagatedExceptions),
-].filter(name => !platformOptionalTemporaryExceptionNames.has(name)));
-const linuxNpm10DirectExpectations = {
-  'fast-uri': { fixAvailable: true },
-  'ip-address': { fixAvailable: true },
-  undici: { fixAvailable: true },
-};
-const linuxNpm10PropagatedExpectations = {
-  '@modelcontextprotocol/sdk': {
-    via: ['express-rate-limit'],
-    fixAvailable: true,
-  },
-  ajv: { via: ['fast-uri'], fixAvailable: true },
-  'express-rate-limit': { via: ['ip-address'], fixAvailable: true },
-};
-
+];
+const vulnerabilitySeveritySet = new Set(vulnerabilitySeverities);
+const vulnerabilityCountKeys = [...vulnerabilitySeverities, 'total'];
 const reportPath = process.argv[2];
-const candidateLockPath = process.argv[3]
-  ? path.resolve(process.argv[3])
-  : path.resolve(process.cwd(), 'package-lock.json');
 
 if (!reportPath) {
-  console.error(
-    'Usage: node scripts/check-npm-audit.js <audit-report.json> [package-lock.json]',
-  );
-  process.exit(1);
+  fail('Usage: node scripts/check-npm-audit.js <audit-report.json>');
 }
 
-const reportText = fs.readFileSync(reportPath, 'utf8').trim();
+let reportText;
+try {
+  reportText = fs.readFileSync(reportPath, 'utf8').trim();
+} catch {
+  fail('npm audit report is missing or unreadable');
+}
+
 if (!reportText) {
-  console.error('npm audit report is empty');
-  process.exit(1);
+  fail('npm audit report is empty');
 }
 
 let report;
 try {
   report = JSON.parse(reportText);
 } catch {
-  console.error('npm audit report is not valid JSON');
+  fail('npm audit report is not valid JSON');
+}
+
+if (!isCompleteVersionTwoReport(report)) {
+  fail('npm audit report is not a complete version 2 vulnerability report');
+}
+
+const actionable = Object.entries(report.vulnerabilities).map(
+  ([name, vulnerability]) => projectVulnerability(name, vulnerability),
+);
+
+console.log(
+  JSON.stringify(
+    {
+      auditReportVersion: report.auditReportVersion,
+      ignored: [],
+      actionable,
+    },
+    null,
+    2,
+  ),
+);
+
+if (actionable.length > 0) {
+  process.exitCode = 1;
+}
+
+function fail(message) {
+  console.error(message);
   process.exit(1);
 }
 
-let candidateLock;
-try {
-  const candidateLockText = fs.readFileSync(candidateLockPath, 'utf8').trim();
-  if (!candidateLockText) {
-    throw new Error('empty candidate lock');
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCompleteVersionTwoReport(candidate) {
+  if (
+    !isRecord(candidate) ||
+    candidate.auditReportVersion !== 2 ||
+    !isRecord(candidate.vulnerabilities) ||
+    !isRecord(candidate.metadata) ||
+    !isRecord(candidate.metadata.vulnerabilities)
+  ) {
+    return false;
   }
-  candidateLock = JSON.parse(candidateLockText);
-} catch {
-  console.error('candidate package-lock.json is missing or malformed');
-  process.exit(1);
-}
 
-if (
-  !isRecord(candidateLock) ||
-  candidateLock.lockfileVersion !== 3 ||
-  !isRecord(candidateLock.packages) ||
-  !temporaryExceptionIdentities.every(identity =>
-    hasExactLockIdentity(candidateLock, identity),
-  )
-) {
-  console.error(
-    'candidate package-lock.json does not match temporary audit exception identities',
-  );
-  process.exit(1);
-}
-const vulnerabilityCountKeys = [
-  'info',
-  'low',
-  'moderate',
-  'high',
-  'critical',
-  'total',
-];
-const vulnerabilityCounts = report?.metadata?.vulnerabilities;
-const hasCompleteVulnerabilityCounts =
-  vulnerabilityCounts &&
-  typeof vulnerabilityCounts === 'object' &&
-  !Array.isArray(vulnerabilityCounts) &&
-  vulnerabilityCountKeys.every(
-    key =>
-      Number.isInteger(vulnerabilityCounts[key]) &&
-      vulnerabilityCounts[key] >= 0,
-  );
+  const vulnerabilityEntries = Object.entries(candidate.vulnerabilities);
+  const reportedCounts = candidate.metadata.vulnerabilities;
+  if (
+    !vulnerabilityCountKeys.every(
+      key => Number.isInteger(reportedCounts[key]) && reportedCounts[key] >= 0,
+    ) ||
+    reportedCounts.total !== vulnerabilityEntries.length ||
+    reportedCounts.total !==
+      vulnerabilitySeverities.reduce(
+        (total, severity) => total + reportedCounts[severity],
+        0,
+      )
+  ) {
+    return false;
+  }
 
-const vulnerabilityRecords =
-  report?.vulnerabilities &&
-  typeof report.vulnerabilities === 'object' &&
-  !Array.isArray(report.vulnerabilities)
-    ? Object.values(report.vulnerabilities)
-    : [];
-const actualVulnerabilityCounts = {
-  info: 0,
-  low: 0,
-  moderate: 0,
-  high: 0,
-  critical: 0,
-};
-const hasRecognizedVulnerabilitySeverities = vulnerabilityRecords.every(
-  vulnerability => {
+  const actualCounts = Object.fromEntries(
+    vulnerabilitySeverities.map(severity => [severity, 0]),
+  );
+  for (const [, vulnerability] of vulnerabilityEntries) {
     if (
       !isRecord(vulnerability) ||
-      !vulnerabilitySeverities.has(vulnerability.severity)
+      !vulnerabilitySeveritySet.has(vulnerability.severity)
     ) {
       return false;
     }
+    actualCounts[vulnerability.severity] += 1;
+  }
 
-    actualVulnerabilityCounts[vulnerability.severity] += 1;
-    return true;
-  },
-);
-const hasMatchingVulnerabilityCounts =
-  hasCompleteVulnerabilityCounts &&
-  hasRecognizedVulnerabilitySeverities &&
-  [...vulnerabilitySeverities].every(
-    severity =>
-      vulnerabilityCounts[severity] === actualVulnerabilityCounts[severity],
+  return vulnerabilitySeverities.every(
+    severity => reportedCounts[severity] === actualCounts[severity],
   );
-
-if (
-  !report ||
-  typeof report !== 'object' ||
-  Array.isArray(report) ||
-  report.auditReportVersion !== 2 ||
-  !report.vulnerabilities ||
-  typeof report.vulnerabilities !== 'object' ||
-  Array.isArray(report.vulnerabilities) ||
-  !hasCompleteVulnerabilityCounts ||
-  vulnerabilityCounts.total !== Object.keys(report.vulnerabilities).length ||
-  vulnerabilityCounts.total !==
-    vulnerabilityCounts.info +
-      vulnerabilityCounts.low +
-      vulnerabilityCounts.moderate +
-      vulnerabilityCounts.high +
-      vulnerabilityCounts.critical ||
-  !hasMatchingVulnerabilityCounts
-) {
-  console.error('npm audit report is not a complete version 2 vulnerability report');
-  process.exit(1);
-}
-
-const missingRequiredTemporaryExceptions = [
-  ...requiredTemporaryExceptionNames,
-].filter(name => !Object.hasOwn(report.vulnerabilities, name));
-if (missingRequiredTemporaryExceptions.length > 0) {
-  console.error(
-    `npm audit report is missing required temporary advisory records: ${missingRequiredTemporaryExceptions.join(', ')}`,
-  );
-  process.exit(1);
-}
-
-const hasCheerioRecord = Object.hasOwn(report.vulnerabilities, 'cheerio');
-const hasBraceExpansionRecord = Object.hasOwn(
-  report.vulnerabilities,
-  'brace-expansion',
-);
-const temporaryAuditProfile = hasCheerioRecord
-  ? 'standard'
-  : !hasBraceExpansionRecord
-    ? 'linux-npm10'
-    : null;
-if (!temporaryAuditProfile) {
-  console.error('npm audit report does not match a supported platform graph');
-  process.exit(1);
 }
 
 function projectViaEntry(entry) {
@@ -377,7 +116,7 @@ function projectViaEntry(entry) {
     return entry;
   }
 
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+  if (!isRecord(entry)) {
     return {
       name: null,
       source: null,
@@ -392,217 +131,14 @@ function projectViaEntry(entry) {
   };
 }
 
-function isRecord(value) {
-  return value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function hasExactLockIdentity(candidateLock, identity) {
-  const lockedNode = candidateLock.packages[identity.node];
-  return (
-    isRecord(lockedNode) &&
-    lockedNode.version === identity.version &&
-    lockedNode.resolved === identity.resolved &&
-    lockedNode.integrity === identity.integrity
-  );
-}
-
-function hasExactNodes(record, expectedNodes) {
-  return (
-    Array.isArray(record.nodes) &&
-    record.nodes.length === expectedNodes.length &&
-    new Set(record.nodes).size === record.nodes.length &&
-    record.nodes.every(
-      node => typeof node === 'string' && expectedNodes.includes(node),
-    )
-  );
-}
-
-function hasExactFixAvailable(actual, expected) {
-  if (typeof expected === 'boolean') {
-    return actual === expected;
-  }
-
-  if (!isRecord(actual) || !isRecord(expected)) {
-    return false;
-  }
-
-  const expectedKeys = Object.keys(expected).sort();
-  const actualKeys = Object.keys(actual).sort();
-  return (
-    actualKeys.length === expectedKeys.length &&
-    actualKeys.every((key, index) => key === expectedKeys[index]) &&
-    expectedKeys.every(key => actual[key] === expected[key])
-  );
-}
-
-function hasValidCommonShape(
-  name,
-  record,
-  expectedNodes,
-  expectedFixAvailable,
-  expectedSeverity,
-) {
-  return (
-    isRecord(record) &&
-    record.name === name &&
-    record.severity === expectedSeverity &&
-    Array.isArray(record.via) &&
-    record.via.length > 0 &&
-    hasExactNodes(record, expectedNodes) &&
-    hasExactFixAvailable(record.fixAvailable, expectedFixAvailable)
-  );
-}
-
-function getDirectProfileExpectation(name, exception) {
-  if (temporaryAuditProfile === 'linux-npm10') {
-    return linuxNpm10DirectExpectations[name];
-  }
-
-  return { fixAvailable: exception.fixAvailable };
-}
-
-function getPropagatedProfileExpectation(name, exception) {
-  if (temporaryAuditProfile === 'linux-npm10') {
-    return linuxNpm10PropagatedExpectations[name];
-  }
-
-  return { via: exception.via, fixAvailable: exception.fixAvailable };
-}
-
-function isIgnoredDirectVulnerability(name, vulnerability) {
-  const exception = temporaryDirectExceptions[name];
-  const profileExpectation = exception
-    ? getDirectProfileExpectation(name, exception)
-    : undefined;
-  if (
-    !exception ||
-    !profileExpectation ||
-    !hasValidCommonShape(
-      name,
-      vulnerability,
-      [exception.identity.node],
-      profileExpectation.fixAvailable,
-      exception.severity,
-    )
-  ) {
-    return false;
-  }
-
-  const advisoryUrls = new Set();
-  for (const entry of vulnerability.via) {
-    const expectedAdvisory = isRecord(entry)
-      ? exception.advisories.find(advisory => advisory.url === entry.url)
-      : undefined;
-    if (
-      !isRecord(entry) ||
-      entry.name !== name ||
-      entry.dependency !== name ||
-      !Number.isInteger(entry.source) ||
-      entry.source <= 0 ||
-      typeof entry.url !== 'string' ||
-      !expectedAdvisory ||
-      entry.severity !== expectedAdvisory.severity ||
-      advisoryUrls.has(entry.url)
-    ) {
-      return false;
-    }
-
-    advisoryUrls.add(entry.url);
-  }
-
-  return advisoryUrls.size === exception.advisories.length;
-}
-
-function isIgnoredPropagatedVulnerability(
-  name,
-  vulnerability,
-  ignoredNames,
-) {
-  const exception = temporaryPropagatedExceptions[name];
-  const profileExpectation = exception
-    ? getPropagatedProfileExpectation(name, exception)
-    : undefined;
-  if (
-    !exception ||
-    !profileExpectation ||
-    !hasValidCommonShape(
-      name,
-      vulnerability,
-      [exception.identity.node],
-      profileExpectation.fixAvailable,
-      exception.severity,
-    )
-  ) {
-    return false;
-  }
-
-  return (
-    vulnerability.via.length === profileExpectation.via.length &&
-    new Set(vulnerability.via).size === profileExpectation.via.length &&
-    vulnerability.via.every(
-      entry =>
-        typeof entry === 'string' &&
-        profileExpectation.via.includes(entry) &&
-        ignoredNames.has(entry),
-    )
-  );
-}
-
 function projectVulnerability(name, vulnerability) {
-  const record = isRecord(vulnerability) ? vulnerability : {};
-
   return {
     name,
-    severity: record.severity ?? 'unknown',
-    via: Array.isArray(record.via) ? record.via.map(projectViaEntry) : [],
-    fixAvailable: record.fixAvailable ?? null,
-    nodes: Array.isArray(record.nodes) ? record.nodes : [],
+    severity: vulnerability.severity,
+    via: Array.isArray(vulnerability.via)
+      ? vulnerability.via.map(projectViaEntry)
+      : [],
+    fixAvailable: vulnerability.fixAvailable ?? null,
+    nodes: Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [],
   };
-}
-
-const vulnerabilityEntries = Object.entries(report.vulnerabilities);
-const ignoredNames = new Set(
-  vulnerabilityEntries
-    .filter(([name, vulnerability]) =>
-      isIgnoredDirectVulnerability(name, vulnerability),
-    )
-    .map(([name]) => name),
-);
-
-let addedPropagatedException = true;
-while (addedPropagatedException) {
-  addedPropagatedException = false;
-
-  for (const [name, vulnerability] of vulnerabilityEntries) {
-    if (
-      !ignoredNames.has(name) &&
-      isIgnoredPropagatedVulnerability(name, vulnerability, ignoredNames)
-    ) {
-      ignoredNames.add(name);
-      addedPropagatedException = true;
-    }
-  }
-}
-
-const ignored = [];
-const actionable = [];
-for (const [name, vulnerability] of vulnerabilityEntries) {
-  const projected = projectVulnerability(name, vulnerability);
-  if (ignoredNames.has(name)) {
-    ignored.push(projected);
-  } else {
-    actionable.push(projected);
-  }
-}
-
-const output = {
-  auditReportVersion: report.auditReportVersion,
-  ignored,
-  actionable,
-};
-
-console.log(JSON.stringify(output, null, 2));
-
-if (actionable.length > 0) {
-  process.exit(1);
 }
