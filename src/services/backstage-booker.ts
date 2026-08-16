@@ -23,6 +23,7 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { TRINITY_HARD_TOKEN_CAP } from '@core/logic/trinityConstants.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
@@ -2277,9 +2278,10 @@ export async function generateBooking(
   }
 
   const model = resolveBackstageBookerModel();
+  const configuredTokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', TRINITY_HARD_TOKEN_CAP);
   const tokenLimit = resolveBackstageBookerTokenLimit(
     input.prompt,
-    getEnvNumber('BOOKER_TOKEN_LIMIT', 1200)
+    configuredTokenLimit > 0 ? configuredTokenLimit : TRINITY_HARD_TOKEN_CAP
   );
   const instructions = structuredScope
     ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
@@ -2311,7 +2313,8 @@ export async function generateBooking(
           answerMode: 'direct',
           strictUserVisibleOutput: true,
           directAnswerModelOverride: model,
-          directAnswerTokenLimitOverride: tokenLimit
+          directAnswerTokenLimitOverride: tokenLimit,
+          directAnswerUserIntentPrompt: input.prompt
         }
       }
     });

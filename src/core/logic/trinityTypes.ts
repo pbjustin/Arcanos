@@ -237,6 +237,8 @@ export interface TrinityRunOptions {
   directAnswerModelOverride?: string;
   /** Optional caller-owned direct-answer output budget; Trinity still enforces its hard token cap. */
   directAnswerTokenLimitOverride?: number;
+  /** Original user directive for honesty checks when the execution prompt contains trusted context. */
+  directAnswerUserIntentPrompt?: string;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }
 

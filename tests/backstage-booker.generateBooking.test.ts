@@ -102,6 +102,7 @@ describe('backstage-booker generateBooking', () => {
           strictUserVisibleOutput: true,
           directAnswerModelOverride: 'gpt-5.1-test',
           directAnswerTokenLimitOverride: 1200,
+          directAnswerUserIntentPrompt: 'Generate three rivalries for RAW after WrestleMania.',
         }),
       }),
     });
@@ -177,6 +178,26 @@ describe('backstage-booker generateBooking', () => {
       })
     }));
   });
+
+  it.each([0, -1])(
+    'uses the default Booker token limit when the configured value is %s',
+    async (configuredTokenLimit) => {
+      mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+        name === 'BOOKER_TOKEN_LIMIT' ? configuredTokenLimit : fallback
+      );
+
+      await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({ tokenLimit: 1200 }),
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            directAnswerTokenLimitOverride: 1200
+          })
+        })
+      }));
+    }
+  );
 
   it('short-circuits exact-literal anti-simulation prompts before OpenAI executes', async () => {
     await expect(
