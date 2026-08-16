@@ -99,6 +99,47 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
+  it('honors explicit direct-answer model and token overrides at the provider boundary', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Expanded booking output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      usage: { total_tokens: 142 },
+      id: 'resp_direct_answer_override',
+      created: 123
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete wrestling show.',
+      undefined,
+      undefined,
+      'trinity_req_direct_answer_override',
+      'gpt-5.1',
+      1200
+    );
+
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 1200);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'gpt-5.1',
+        max_completion_tokens: 1200
+      })
+    );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.direct_answer.execution_plan',
+      expect.objectContaining({
+        model: 'gpt-5.1',
+        tokenLimit: 1200
+      })
+    );
+  });
+
   it('derives truncation flags from provider finish_reason length', async () => {
     createSingleChatCompletionMock.mockResolvedValue({
       choices: [{ message: { content: 'Partial answer' }, finish_reason: 'length' }],

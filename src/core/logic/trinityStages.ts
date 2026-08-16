@@ -614,7 +614,7 @@ export async function runFinalStage(
  * Execute Trinity's strict direct-answer mode as a single model call.
  * Inputs: shared OpenAI client, memory context summary, sanitized user prompt, optional cognitive domain, and runtime budget.
  * Outputs: normalized final-stage style payload with model, usage, and fallback metadata.
- * Edge cases: enforces a smaller token budget for explicit list-shaped direct answers to reduce verbosity and timeout pressure.
+ * Edge cases: caller overrides remain bounded by Trinity's hard token cap; otherwise explicit list-shaped answers use a smaller prompt-derived budget.
  */
 export async function runDirectAnswerStage(
   client: OpenAI,
@@ -624,6 +624,7 @@ export async function runDirectAnswerStage(
   runtimeBudget?: RuntimeBudget,
   requestId?: string,
   directAnswerModelOverride?: string,
+  directAnswerTokenLimitOverride?: number,
   explicitTimeoutMs?: number,
   preserveAggregateAbortContext = false
 ): Promise<TrinityFinalOutput> {
@@ -633,10 +634,15 @@ export async function runDirectAnswerStage(
     typeof directAnswerModelOverride === 'string' && directAnswerModelOverride.trim().length > 0
       ? directAnswerModelOverride.trim()
       : getFallbackModel();
-  const directAnswerTokenLimit = resolveTrinityDirectAnswerTokenLimit(
-    auditSafePrompt,
-    APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
-  );
+  const directAnswerTokenLimit =
+    typeof directAnswerTokenLimitOverride === 'number' &&
+    Number.isFinite(directAnswerTokenLimitOverride) &&
+    directAnswerTokenLimitOverride > 0
+      ? Math.max(1, Math.trunc(directAnswerTokenLimitOverride))
+      : resolveTrinityDirectAnswerTokenLimit(
+          auditSafePrompt,
+          APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
+        );
   const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);

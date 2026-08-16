@@ -975,6 +975,7 @@ export async function runThroughBrain(
               runtimeBudget,
               requestId,
               options.directAnswerModelOverride,
+              options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
               options.preserveAggregateAbortContext
             )

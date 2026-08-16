@@ -2280,7 +2280,7 @@ export async function generateBooking(
   const model = resolveBackstageBookerModel();
   const tokenLimit = resolveBackstageBookerTokenLimit(
     input.prompt,
-    getEnvNumber('BOOKER_TOKEN_LIMIT', 512)
+    getEnvNumber('BOOKER_TOKEN_LIMIT', 1200)
   );
   const instructions = structuredScope
     ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
@@ -2310,7 +2310,9 @@ export async function generateBooking(
         runtimeBudget: createRuntimeBudget(),
         runOptions: {
           answerMode: 'direct',
-          strictUserVisibleOutput: true
+          strictUserVisibleOutput: true,
+          directAnswerModelOverride: model,
+          directAnswerTokenLimitOverride: tokenLimit
         }
       }
     });
@@ -2326,7 +2328,7 @@ export async function generateBooking(
     return assertValidBackstageBookerActionData('generateBooking', clean) as string;
   } catch (error) {
     console.error('Failed to generate booking storyline:', error);
-    throw new Error('Booking generation failed');
+    throw new Error('Booking generation failed', { cause: error });
   }
 }
 

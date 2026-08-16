@@ -106,7 +106,9 @@ describe('runTrinityWritingPipeline', () => {
         requestId: 'req-write-1',
         runtimeBudget,
         runOptions: {
-          answerMode: 'direct'
+          answerMode: 'direct',
+          directAnswerModelOverride: 'gpt-5.1',
+          directAnswerTokenLimitOverride: 1200
         }
       }
     });
@@ -129,6 +131,8 @@ describe('runTrinityWritingPipeline', () => {
       undefined,
       {
         answerMode: 'direct',
+        directAnswerModelOverride: 'gpt-5.1',
+        directAnswerTokenLimitOverride: 1200,
         sourceEndpoint: 'write'
       },
       runtimeBudget
