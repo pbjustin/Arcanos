@@ -23,6 +23,7 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { TRINITY_HARD_TOKEN_CAP } from '@core/logic/trinityConstants.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
@@ -55,12 +56,13 @@ import {
   type BackstageContext,
   type PostgresBackstageBookerRepository
 } from '@core/db/repositories/backstageBookerRepository.js';
-import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
+import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BackstageRosterPersistenceError,
   isRetryableBackstageRosterPersistenceCause,
@@ -1299,17 +1301,15 @@ async function buildStructuredBookingPrompt(
 
 /**
  * Resolve the model used for backstage booking generation.
- * Inputs/outputs: none -> explicit USER_GPT_ID override when present, otherwise the shared GPT-5 model fallback.
- * Edge cases: trims legacy env overrides so blank strings do not block the standard fallback model.
+ * Inputs/outputs: none -> the shared GPT-5 model preference.
+ * Edge cases: trims the configured model, falls back from blank values, and maps the obsolete base `gpt-5` alias to the reasoning-disable-capable GPT-5.1 baseline.
  */
 function resolveBackstageBookerModel(): string {
-  const configuredUserModel = getEnv('USER_GPT_ID')?.trim();
-  //audit Assumption: legacy USER_GPT_ID overrides should remain supported, but blank/missing values must not break backstage generation; failure risk: booker path 500s in environments that only configure the shared model stack; expected invariant: a usable model is always selected when global OpenAI config is healthy; handling strategy: prefer USER_GPT_ID when present, else fall back to getGPT5Model().
-  if (configuredUserModel) {
-    return configuredUserModel;
-  }
-
-  return getGPT5Model();
+  //audit Assumption: USER_GPT_ID identifies a user-facing GPT and is not an OpenAI provider model; failure risk: forwarding that alias as `model` makes Booker and HRC generation fail; expected invariant: provider selection comes only from the shared model configuration; handling strategy: use getGPT5Model() and normalize only the exact legacy gpt-5 alias to GPT-5.1.
+  const resolvedModel = getGPT5Model().trim();
+  return !resolvedModel || resolvedModel.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
+    ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
+    : resolvedModel;
 }
 
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
@@ -2278,9 +2278,10 @@ export async function generateBooking(
   }
 
   const model = resolveBackstageBookerModel();
+  const configuredTokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', TRINITY_HARD_TOKEN_CAP);
   const tokenLimit = resolveBackstageBookerTokenLimit(
     input.prompt,
-    getEnvNumber('BOOKER_TOKEN_LIMIT', 512)
+    configuredTokenLimit > 0 ? configuredTokenLimit : TRINITY_HARD_TOKEN_CAP
   );
   const instructions = structuredScope
     ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
@@ -2310,7 +2311,10 @@ export async function generateBooking(
         runtimeBudget: createRuntimeBudget(),
         runOptions: {
           answerMode: 'direct',
-          strictUserVisibleOutput: true
+          strictUserVisibleOutput: true,
+          directAnswerModelOverride: model,
+          directAnswerTokenLimitOverride: tokenLimit,
+          directAnswerUserIntentPrompt: input.prompt
         }
       }
     });
@@ -2326,7 +2330,7 @@ export async function generateBooking(
     return assertValidBackstageBookerActionData('generateBooking', clean) as string;
   } catch (error) {
     console.error('Failed to generate booking storyline:', error);
-    throw new Error('Booking generation failed');
+    throw new Error('Booking generation failed', { cause: error });
   }
 }
 

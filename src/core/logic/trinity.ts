@@ -735,6 +735,11 @@ export async function runThroughBrain(
     : outputControls.answerMode === 'direct'
       ? 'explicit_answer_mode'
       : null;
+  const directAnswerUserIntentPrompt =
+    typeof options.directAnswerUserIntentPrompt === 'string' &&
+    options.directAnswerUserIntentPrompt.trim().length > 0
+      ? options.directAnswerUserIntentPrompt.trim()
+      : prompt;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
@@ -975,6 +980,7 @@ export async function runThroughBrain(
               runtimeBudget,
               requestId,
               options.directAnswerModelOverride,
+              options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
               options.preserveAggregateAbortContext
             )
@@ -999,8 +1005,8 @@ export async function runThroughBrain(
       );
       const directAnswerNeedsCurrentStateLimitation =
         (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
-        /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(prompt) &&
-        /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(prompt);
+        /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(directAnswerUserIntentPrompt) &&
+        /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(directAnswerUserIntentPrompt);
       if (honestyFilteredFinal.blocked || directAnswerNeedsCurrentStateLimitation) {
         directAnswerReasoningHonesty.responseMode = 'partial_refusal';
         if (
@@ -1018,7 +1024,7 @@ export async function runThroughBrain(
       }
       const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
         text: honestyFilteredFinal.text,
-        userPrompt: prompt,
+        userPrompt: directAnswerUserIntentPrompt,
         capabilityFlags,
         outputControls,
         reasoningHonesty: directAnswerReasoningHonesty

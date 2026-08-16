@@ -239,6 +239,38 @@ describe('Trinity cancellation and optional side effects', () => {
     expect(mockRecordTrinityJudgedFeedback).not.toHaveBeenCalled();
   });
 
+  it('forwards direct-answer provider overrides through runThroughBrain', async () => {
+    mockCreateSingleChatCompletion.mockResolvedValueOnce(
+      completion('Expanded booking output.', 'gpt-5.1')
+    );
+
+    await runThroughBrain(
+      client,
+      'Build a complete wrestling show.',
+      undefined,
+      undefined,
+      {
+        answerMode: 'direct',
+        disableOptionalSideEffects: true,
+        directAnswerModelOverride: 'gpt-5.1',
+        directAnswerTokenLimitOverride: 777,
+        modelStageTimeoutMs: 4_321
+      },
+      createRuntimeBudgetWithLimit(10_000, 0)
+    );
+
+    expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(mockCreateSingleChatCompletion).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({
+        model: 'gpt-5.1',
+        max_completion_tokens: 777,
+        reasoning_effort: 'none',
+        timeoutMs: 4_321
+      })
+    );
+  });
+
   it('treats a parent abort during intake as terminal instead of starting direct-answer recovery', async () => {
     const controller = new AbortController();
     const parentAbort = Object.assign(new Error('client disconnected'), { name: 'AbortError' });
@@ -323,6 +355,7 @@ describe('Trinity cancellation and optional side effects', () => {
     await modelStarted.promise;
     expect(observedSignal).toBe(controller.signal);
     expect(observedAggregateFlag).toBe(true);
+    expect(mockCreateSingleChatCompletion.mock.calls[0]?.[1]).not.toHaveProperty('timeoutMs');
     expect(mockRetrieveModel).not.toHaveBeenCalled();
     controller.abort(parentAbort);
     await Promise.resolve();

@@ -95,6 +95,12 @@ const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
 const validatedModelCache = new Map<string, number>();
 
+function supportsDisabledReasoningEffort(model: string): boolean {
+  const normalizedModel = model.trim().toLowerCase();
+  return /^gpt-5\.1(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
+    || /^gpt-5\.6(?:$|-\d{4}-\d{2}-\d{2}$|-(?:sol|terra|luna)(?:-\d{4}-\d{2}-\d{2})?$)/.test(normalizedModel);
+}
+
 function normalizeCompletionProviderMetadata(
   response: unknown,
   output: string
@@ -614,7 +620,7 @@ export async function runFinalStage(
  * Execute Trinity's strict direct-answer mode as a single model call.
  * Inputs: shared OpenAI client, memory context summary, sanitized user prompt, optional cognitive domain, and runtime budget.
  * Outputs: normalized final-stage style payload with model, usage, and fallback metadata.
- * Edge cases: enforces a smaller token budget for explicit list-shaped direct answers to reduce verbosity and timeout pressure.
+ * Edge cases: caller overrides remain bounded by Trinity's hard token cap; otherwise explicit list-shaped answers use a smaller prompt-derived budget.
  */
 export async function runDirectAnswerStage(
   client: OpenAI,
@@ -624,6 +630,7 @@ export async function runDirectAnswerStage(
   runtimeBudget?: RuntimeBudget,
   requestId?: string,
   directAnswerModelOverride?: string,
+  directAnswerTokenLimitOverride?: number,
   explicitTimeoutMs?: number,
   preserveAggregateAbortContext = false
 ): Promise<TrinityFinalOutput> {
@@ -633,12 +640,20 @@ export async function runDirectAnswerStage(
     typeof directAnswerModelOverride === 'string' && directAnswerModelOverride.trim().length > 0
       ? directAnswerModelOverride.trim()
       : getFallbackModel();
-  const directAnswerTokenLimit = resolveTrinityDirectAnswerTokenLimit(
-    auditSafePrompt,
-    APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
-  );
+  const directAnswerTokenLimit =
+    typeof directAnswerTokenLimitOverride === 'number' &&
+    Number.isFinite(directAnswerTokenLimitOverride) &&
+    directAnswerTokenLimitOverride > 0
+      ? Math.max(1, Math.trunc(directAnswerTokenLimitOverride))
+      : resolveTrinityDirectAnswerTokenLimit(
+          auditSafePrompt,
+          APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
+        );
   const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
+  const directAnswerReasoningEffort = supportsDisabledReasoningEffort(directAnswerModel)
+    ? 'none' as const
+    : undefined;
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
   const stageTimeoutMs = resolveDirectAnswerStageTimeoutMs(runtimeBudget, explicitTimeoutMs);
   const aggregateSignal = preserveAggregateAbortContext
@@ -653,7 +668,8 @@ export async function runDirectAnswerStage(
     model: directAnswerModel,
     timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
     aggregateAbortContext: useAggregateAbortContext,
-    tokenLimit: cappedTokenLimit
+    tokenLimit: cappedTokenLimit,
+    reasoningEffort: directAnswerReasoningEffort
   });
 
   let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
@@ -664,7 +680,11 @@ export async function runDirectAnswerStage(
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
+        ...(useAggregateAbortContext ? {} : { timeoutMs: stageTimeoutMs }),
         preserveAggregateAbortContext: useAggregateAbortContext,
+        ...(directAnswerReasoningEffort
+          ? { reasoning_effort: directAnswerReasoningEffort }
+          : {}),
         ...directAnswerTokenParams
       });
 

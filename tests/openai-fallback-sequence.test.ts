@@ -128,6 +128,65 @@ describe('createChatCompletionWithFallback', () => {
     });
   });
 
+  it('emits chat reasoning effort in the Responses request shape', async () => {
+    const createSpy = jest.fn().mockResolvedValue({
+      id: 'resp_reasoning_effort',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: 'Complete booking output.',
+      output: []
+    });
+    const client = {
+      responses: {
+        create: createSpy
+      }
+    } as any;
+
+    await createSingleChatCompletion(client, {
+      model: 'gpt-5.1',
+      messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
+      max_completion_tokens: 777,
+      reasoning_effort: 'none'
+    });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gpt-5.1',
+        max_output_tokens: 777,
+        reasoning: { effort: 'none' }
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('omits blank chat reasoning effort from the Responses request shape', async () => {
+    const createSpy = jest.fn().mockResolvedValue({
+      id: 'resp_blank_reasoning_effort',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: 'Complete booking output.',
+      output: []
+    });
+    const client = {
+      responses: {
+        create: createSpy
+      }
+    } as any;
+
+    await createSingleChatCompletion(client, {
+      model: 'gpt-5.1',
+      messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
+      max_completion_tokens: 777,
+      reasoning_effort: '   ' as never
+    });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning');
+    expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
+  });
+
   it('falls through to another model when a fallback-sequence attempt is incomplete', async () => {
     const primaryModel = getDefaultModel();
     const gpt5Model = getGPT5Model();

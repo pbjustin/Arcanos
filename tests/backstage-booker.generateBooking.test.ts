@@ -52,7 +52,7 @@ describe('backstage-booker generateBooking', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetEnv.mockReturnValue(undefined);
-    mockGetEnvNumber.mockReturnValue(512);
+    mockGetEnvNumber.mockImplementation((_name: string, fallback: number) => fallback);
     mockGetEnvBoolean.mockReturnValue(false);
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
@@ -80,7 +80,7 @@ describe('backstage-booker generateBooking', () => {
     });
   });
 
-  it('falls back to the shared GPT-5 model when USER_GPT_ID is absent', async () => {
+  it('uses the shared GPT-5 model and default output budget when USER_GPT_ID is absent', async () => {
     await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith({
@@ -89,10 +89,10 @@ describe('backstage-booker generateBooking', () => {
         moduleId: 'BACKSTAGE:BOOKER',
         sourceEndpoint: 'backstage-booker.generateBooking',
         requestedAction: 'generateBooking',
-        tokenLimit: 512,
+        tokenLimit: 1200,
         body: expect.objectContaining({
           model: 'gpt-5.1-test',
-          tokenLimit: 512,
+          tokenLimit: 1200,
         }),
       }),
       context: expect.objectContaining({
@@ -100,10 +100,104 @@ describe('backstage-booker generateBooking', () => {
         runOptions: expect.objectContaining({
           answerMode: 'direct',
           strictUserVisibleOutput: true,
+          directAnswerModelOverride: 'gpt-5.1-test',
+          directAnswerTokenLimitOverride: 1200,
+          directAnswerUserIntentPrompt: 'Generate three rivalries for RAW after WrestleMania.',
         }),
       }),
     });
   });
+
+  it('normalizes the obsolete base GPT-5 alias to the GPT-5.1 direct-answer baseline', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.1' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.1'
+        })
+      })
+    }));
+  });
+
+  it('falls back to the GPT-5.1 direct-answer baseline when the shared model is blank', async () => {
+    mockGetGPT5Model.mockReturnValue('   ');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.1' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.1'
+        })
+      })
+    }));
+  });
+
+  it('does not treat the legacy user-facing GPT ID as a provider model', async () => {
+    mockGetEnv.mockImplementation((name: string) =>
+      name === 'USER_GPT_ID' ? 'backstage-booker' : undefined
+    );
+    mockGetGPT5Model.mockReturnValue('gpt-5.6-terra');
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({ model: 'gpt-5.6-terra' })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerModelOverride: 'gpt-5.6-terra'
+        })
+      })
+    }));
+  });
+
+  it('preserves an explicit positive Booker token limit for ordinary generation', async () => {
+    mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+      name === 'BOOKER_TOKEN_LIMIT' ? 512 : fallback
+    );
+
+    await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ tokenLimit: 512 }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 512
+        })
+      })
+    }));
+  });
+
+  it.each([0, -1])(
+    'uses the default Booker token limit when the configured value is %s',
+    async (configuredTokenLimit) => {
+      mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
+        name === 'BOOKER_TOKEN_LIMIT' ? configuredTokenLimit : fallback
+      );
+
+      await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
+
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({ tokenLimit: 1200 }),
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            directAnswerTokenLimitOverride: 1200
+          })
+        })
+      }));
+    }
+  );
 
   it('short-circuits exact-literal anti-simulation prompts before OpenAI executes', async () => {
     await expect(
@@ -126,6 +220,11 @@ describe('backstage-booker generateBooking', () => {
       input: expect.objectContaining({
         prompt: expect.stringContaining('<<EXECUTION_MODE>>'),
         tokenLimit: 400,
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 400,
+        })
       })
     }));
     const dispatchedPrompt = (mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } }).input.prompt;
@@ -179,7 +278,32 @@ describe('backstage-booker generateBooking', () => {
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
         tokenLimit: 240
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 240
+        })
       })
     }));
+  });
+
+  it('preserves the provider failure as the internal cause of the public booking error', async () => {
+    const providerError = Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    );
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerError);
+
+    try {
+      await generateBooking('Generate three rivalries for RAW after WrestleMania.');
+      throw new Error('Expected generateBooking to reject.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Booking generation failed');
+      expect((error as Error & { cause?: unknown }).cause).toBe(providerError);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
