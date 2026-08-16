@@ -74,7 +74,8 @@ import {
 } from '@shared/backstage/backstageStoryline.js';
 import {
   BACKSTAGE_MODULE_NAME,
-  BACKSTAGE_MODULE_ROUTE,
+  BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  isBackstageGptRoute,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
@@ -208,8 +209,6 @@ const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS = 40_000;
-const BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS = 60_000;
-const BACKSTAGE_GPT_IDS = new Set([BACKSTAGE_MODULE_ROUTE, 'backstage']);
 const QUERY_AND_WAIT_DIRECT_ACTION_REASON = 'query_and_wait_direct_action';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
@@ -1417,7 +1416,7 @@ router.post(
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
     explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
-  const backstageRoute = BACKSTAGE_GPT_IDS.has(routeGptId.trim().toLowerCase());
+  const backstageRoute = isBackstageGptRoute(routeGptId);
   const routeTimeoutMs = directGamingRoute
     ? DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS
     : resolveGptRouteHardTimeoutMs({

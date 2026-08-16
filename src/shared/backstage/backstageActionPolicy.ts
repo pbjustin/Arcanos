@@ -4,6 +4,10 @@ export const BACKSTAGE_DEFAULT_ACTION = 'generateBooking';
 export const BACKSTAGE_MUTATION_SCOPE = 'mcp:invoke';
 export const BACKSTAGE_MUTATION_CONFIRMATION_PROTOCOL =
   'backstage-mutation-confirmation-v1';
+export const BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS = 60_000;
+export const BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS = 40_000;
+export const BACKSTAGE_GENERATION_STAGE_TIMEOUT_MAX_MS = 45_000;
+export const BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS = 10_000;
 
 export const BACKSTAGE_PUBLIC_ACTIONS = Object.freeze([
   'generateBooking',
@@ -28,8 +32,52 @@ export const BACKSTAGE_ACTIONS = Object.freeze([
 export type BackstageAction = (typeof BACKSTAGE_ACTIONS)[number];
 export type BackstageMutationAction = (typeof BACKSTAGE_MUTATION_ACTIONS)[number];
 
+export interface BackstageBookerTrinityRunOptions {
+  answerMode: 'direct';
+  strictUserVisibleOutput: true;
+  directAnswerModelOverride: string;
+  directAnswerTokenLimitOverride: number;
+  directAnswerUserIntentPrompt: string;
+  modelStageTimeoutMs: number;
+}
+
 const backstagePublicActionSet = new Set<string>(BACKSTAGE_PUBLIC_ACTIONS);
 const backstageMutationActionSet = new Set<string>(BACKSTAGE_MUTATION_ACTIONS);
+const backstageGptRouteSet = new Set([BACKSTAGE_MODULE_ROUTE, 'backstage']);
+
+export function isBackstageGptRoute(value: string): boolean {
+  return backstageGptRouteSet.has(value.trim().toLowerCase());
+}
+
+export function resolveBackstageGenerationStageTimeoutMs(
+  configuredTimeoutMs: number
+): number {
+  const preferredTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? Math.trunc(configuredTimeoutMs)
+      : BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS;
+
+  return Math.max(
+    1,
+    Math.min(preferredTimeoutMs, BACKSTAGE_GENERATION_STAGE_TIMEOUT_MAX_MS)
+  );
+}
+
+export function buildBackstageBookerTrinityRunOptions(params: {
+  model: string;
+  tokenLimit: number;
+  userIntentPrompt: string;
+  modelStageTimeoutMs: number;
+}): BackstageBookerTrinityRunOptions {
+  return {
+    answerMode: 'direct',
+    strictUserVisibleOutput: true,
+    directAnswerModelOverride: params.model,
+    directAnswerTokenLimitOverride: params.tokenLimit,
+    directAnswerUserIntentPrompt: params.userIntentPrompt,
+    modelStageTimeoutMs: params.modelStageTimeoutMs,
+  };
+}
 
 export function resolveBackstageGptAction(value: unknown): BackstageAction | null {
   if (value === undefined || value === null || value === '') {

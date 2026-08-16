@@ -1,9 +1,9 @@
 import {
   hrcCore,
-  isHRCResultCacheable,
   type HRCEvaluationOptions,
   type HRCResult
 } from './hrc.js';
+import { runCachedHrcEvaluation } from '@shared/hrcEvaluationPolicy.js';
 import { queryCache } from "@platform/resilience/cache.js";
 import { createSHA256Hash } from "@shared/hashUtils.js";
 import {
@@ -27,18 +27,12 @@ export async function evaluateWithHRC(
   if (!text.trim()) return HRC_FALLBACK;
 
   const key = cacheKey(text);
-  const cached = queryCache.get(key) as HRCResult | null;
-  if (cached) return cached;
-
-  try {
-    const result = await hrcCore.evaluate(text, options);
-    if (isHRCResultCacheable(result)) {
-      queryCache.set(key, result);
-    }
-    return result;
-  } catch {
-    return HRC_FALLBACK;
-  }
+  return runCachedHrcEvaluation({
+    cache: queryCache,
+    cacheKey: key,
+    evaluate: () => hrcCore.evaluate(text, options),
+    fallback: HRC_FALLBACK,
+  });
 }
 
 /**

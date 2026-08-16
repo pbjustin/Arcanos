@@ -97,6 +97,19 @@ the PostgreSQL 18 CI suite remains authoritative. The fixtures use no
 credentials, provider, memory, confirmation challenge/token store, persistence
 effect, or protected effect.
 
+The sealed `POST /backstage/generation-contract` selectors are
+`route-budget-provider-delay` and `hrc-timeout-retry-cache`. The first uses the
+production Backstage route-ID policy, route timeout resolver, provider-stage
+policy, shared Trinity run-options builder, and reviewed request-abort runtime to
+await a 13,250 ms synthetic provider seam; the live runner separately requires at
+least 13,000 ms before accepting the response. Its sealed 20-second request
+timeout is reported separately from the caller-configured default in
+`effectivePerCaseMaxRequestTimeoutMs`. The second uses the production HRC cache
+orchestration seam to prove a
+real bounded synthetic timeout fallback is noncacheable, a retry succeeds, and a
+third read comes from the single successful cache write. Both are credential-free
+component proofs: provider/network boundaries and protected effects stay disabled.
+
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
 executes the config-free core used by the production MCP pre-parser against six
 server-owned chunked JSON streams without `Content-Length`: exact and one byte

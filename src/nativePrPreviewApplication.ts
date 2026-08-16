@@ -1,5 +1,8 @@
 import express from 'express';
-import { getRequestAbortContext } from '@arcanos/runtime/requestAbort';
+import {
+  getRequestAbortContext,
+  runWithRequestAbortTimeout,
+} from '@arcanos/runtime/requestAbort';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -13,6 +16,7 @@ import {
 } from './core/db/repositories/backstageStorylineRepository.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
+  NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
@@ -52,11 +56,26 @@ import {
   type StorylineBeat,
 } from './shared/backstage/backstageStoryline.js';
 import {
+  BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
+  BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
   BACKSTAGE_MODULE_ROUTE,
+  BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  buildBackstageBookerTrinityRunOptions,
   buildBackstageMutationConfirmationFingerprintBody,
+  isBackstageGptRoute,
   isBackstageMutationAction,
+  resolveBackstageGenerationStageTimeoutMs,
   resolveBackstageGptAction,
 } from './shared/backstage/backstageActionPolicy.js';
+import {
+  isHRCResultCacheable,
+  markHRCResultNonCacheableForAbort,
+  runCachedHrcEvaluation,
+} from './shared/hrcEvaluationPolicy.js';
+import {
+  GPT_ROUTE_HARD_TIMEOUT_BOUNDS,
+  resolveGptRouteHardTimeoutMs,
+} from './shared/http/gptRouteTimeout.js';
 import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
@@ -79,6 +98,7 @@ import {
 const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
+const MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES = 4 * 1024;
 const MAX_MCP_BODY_CAP_RESPONSE_BYTES = 8 * 1024;
 const MAX_SELF_HEAL_APPROVAL_RESPONSE_BYTES = 8 * 1024;
 const MAX_GAMING_CANARY_RESPONSE_BYTES = 2 * 1024;
@@ -121,6 +141,9 @@ const RESEARCH_FIXTURE_NAMES = new Set<string>(
 const STORYLINE_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.fixtures)
 );
+const BACKSTAGE_GENERATION_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures)
+);
 const MCP_BODY_CAP_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures)
 );
@@ -136,6 +159,9 @@ const STORAGE_COMPONENT_TOPIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const RESEARCH_CANCELLATION_TIMEOUT_MS = 150;
 const RESEARCH_CANCELLATION_PARENT_TIMEOUT_MS = 1_000;
 const RESEARCH_CANCELLATION_DRAIN_DELAY_MS = 50;
+const BACKSTAGE_SYNTHETIC_PROVIDER_DELAY_MS = 13_250;
+const BACKSTAGE_SYNTHETIC_HRC_TIMEOUT_MS = 25;
+const BACKSTAGE_SYNTHETIC_HRC_DELAY_MS = 50;
 const RESEARCH_CANCELLATION_STAGES = [
   'dns',
   'fetch',
@@ -1457,6 +1483,224 @@ async function runStorylineFixture(
   }
 }
 
+interface SyntheticHrcResult {
+  fidelity: number;
+  resilience: number;
+  verdict: string;
+}
+
+async function runBackstageRouteBudgetFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  if (!isBackstageGptRoute(BACKSTAGE_MODULE_ROUTE)) {
+    throw new Error('PREVIEW_BACKSTAGE_CANONICAL_ROUTE_POLICY_INVALID');
+  }
+  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
+    minimumMsOverride: BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  });
+  const generationStageTimeoutMs = resolveBackstageGenerationStageTimeoutMs(
+    BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
+  );
+  const trinityRunOptions = buildBackstageBookerTrinityRunOptions({
+    model: 'native-pr-preview-synthetic',
+    tokenLimit: 512,
+    userIntentPrompt: 'sealed synthetic provider delay',
+    modelStageTimeoutMs: generationStageTimeoutMs,
+  });
+  if (
+    trinityRunOptions.answerMode !== 'direct'
+    || trinityRunOptions.strictUserVisibleOutput !== true
+    || trinityRunOptions.directAnswerModelOverride
+      !== 'native-pr-preview-synthetic'
+    || trinityRunOptions.directAnswerTokenLimitOverride !== 512
+    || trinityRunOptions.directAnswerUserIntentPrompt
+      !== 'sealed synthetic provider delay'
+    || trinityRunOptions.modelStageTimeoutMs !== generationStageTimeoutMs
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_TRINITY_RUN_OPTIONS_INVALID');
+  }
+  let providerCompleted = false;
+
+  await runWithRequestAbortTimeout(
+    {
+      timeoutMs: routeTimeoutMs,
+      abortMessage: 'Synthetic Backstage route budget elapsed.',
+    },
+    async () => {
+      const routeContext = getRequestAbortContext();
+      if (routeContext?.timeoutMs !== routeTimeoutMs) {
+        throw new Error('PREVIEW_BACKSTAGE_ROUTE_CONTEXT_INVALID');
+      }
+      await runWithRequestAbortTimeout(
+        {
+          timeoutMs: trinityRunOptions.modelStageTimeoutMs,
+          parentSignal: routeContext.signal,
+          abortMessage: 'Synthetic Backstage provider stage elapsed.',
+        },
+        async () => {
+          const generationContext = getRequestAbortContext();
+          if (
+            generationContext?.timeoutMs
+            !== trinityRunOptions.modelStageTimeoutMs
+          ) {
+            throw new Error('PREVIEW_BACKSTAGE_GENERATION_CONTEXT_INVALID');
+          }
+          await delay(BACKSTAGE_SYNTHETIC_PROVIDER_DELAY_MS, undefined, {
+            signal: generationContext.signal,
+          });
+          providerCompleted = true;
+        }
+      );
+    }
+  );
+
+  if (!providerCompleted) {
+    throw new Error('PREVIEW_BACKSTAGE_PROVIDER_FIXTURE_INCOMPLETE');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    canonicalRouteRecognized: true,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    generationStageTimeoutMs,
+    genericRouteBoundaryMs: GPT_ROUTE_HARD_TIMEOUT_BOUNDS.defaultMs,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    syntheticProviderCompleted: true,
+    routeTimeoutMs,
+    schemaVersion: 1,
+    syntheticProviderDelayMs: BACKSTAGE_SYNTHETIC_PROVIDER_DELAY_MS,
+    trinityRunOptions: {
+      answerMode: trinityRunOptions.answerMode,
+      modelStageTimeoutMs: trinityRunOptions.modelStageTimeoutMs,
+      strictUserVisibleOutput: trinityRunOptions.strictUserVisibleOutput,
+    },
+  };
+}
+
+async function runBackstageHrcRetryCacheFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const values = new Map<string, SyntheticHrcResult>();
+  let evaluationCalls = 0;
+  let cacheWrites = 0;
+  const cacheKey = 'sealed-backstage-hrc-result';
+  const cache = {
+    get(key: string): SyntheticHrcResult | null {
+      return values.get(key) ?? null;
+    },
+    set(key: string, value: SyntheticHrcResult): void {
+      cacheWrites += 1;
+      values.set(key, value);
+    },
+  };
+  const fallback: SyntheticHrcResult = {
+    fidelity: 0,
+    resilience: 0,
+    verdict: 'Synthetic HRC timeout fallback',
+  };
+  const success: SyntheticHrcResult = {
+    fidelity: 0.98,
+    resilience: 0.97,
+    verdict: 'Synthetic HRC retry succeeded',
+  };
+  const evaluate = async (): Promise<SyntheticHrcResult> => {
+    evaluationCalls += 1;
+    if (evaluationCalls === 1) {
+      let evaluationSignal: AbortSignal | undefined;
+      try {
+        await runWithRequestAbortTimeout(
+          {
+            timeoutMs: BACKSTAGE_SYNTHETIC_HRC_TIMEOUT_MS,
+            abortMessage: 'Synthetic HRC evaluation timed out.',
+          },
+          async () => {
+            const context = getRequestAbortContext();
+            if (!context) {
+              throw new Error('PREVIEW_BACKSTAGE_HRC_CONTEXT_MISSING');
+            }
+            evaluationSignal = context.signal;
+            await delay(BACKSTAGE_SYNTHETIC_HRC_DELAY_MS, undefined, {
+              signal: context.signal,
+            });
+          }
+        );
+      } catch (error) {
+        return markHRCResultNonCacheableForAbort(fallback, {
+          signal: evaluationSignal,
+          error,
+        });
+      }
+      throw new Error('PREVIEW_BACKSTAGE_HRC_TIMEOUT_NOT_OBSERVED');
+    }
+    return success;
+  };
+  const run = () => runCachedHrcEvaluation({
+    cache,
+    cacheKey,
+    evaluate,
+    fallback,
+  });
+
+  const first = await run();
+  const firstCacheable = isHRCResultCacheable(first);
+  const second = await run();
+  const third = await run();
+  if (
+    first !== fallback
+    || firstCacheable
+    || second !== success
+    || third !== success
+    || evaluationCalls !== 2
+    || cacheWrites !== 1
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_HRC_CACHE_POLICY_INVALID');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: true,
+    cacheWrites,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    evaluationCalls,
+    externalNetworkAttempted: false,
+    fixture,
+    hrcEvaluationTimeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
+    first: {
+      cacheable: firstCacheable,
+      verdict: first.verdict,
+    },
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    second: {
+      cacheable: isHRCResultCacheable(second),
+      verdict: second.verdict,
+    },
+    syntheticTimeoutMs: BACKSTAGE_SYNTHETIC_HRC_TIMEOUT_MS,
+    thirdServedFromCache: third === second,
+  };
+}
+
+async function runBackstageGenerationFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const fixtures = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures;
+  switch (fixture) {
+    case fixtures.routeBudget:
+      return runBackstageRouteBudgetFixture(fixture);
+    case fixtures.hrcRetryCache:
+      return runBackstageHrcRetryCacheFixture(fixture);
+    default:
+      throw new Error('PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID');
+  }
+}
+
 function cloneJob(job: GenericJobData): GenericJobData {
   const cloned = structuredClone(job);
   for (const [key, value] of Object.entries(job)) {
@@ -2478,6 +2722,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'GET /readyz',
     'HEAD /readyz',
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
@@ -2594,6 +2839,7 @@ export function createNativePrPreviewApplication(
       rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath
       || rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath
       || rawPath === NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
       || gamingSourcePath
     ) {
       response.setHeader(
@@ -3261,6 +3507,50 @@ export function createNativePrPreviewApplication(
             logEvent: 'native_pr_preview.backstage_storyline_fixture',
             maxBytes: MAX_STORYLINE_RESPONSE_BYTES,
             statusCode: result.statusCode,
+          }
+        ))
+        .catch(next);
+      return undefined;
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path,
+    (request, response, next) => {
+      const body = request.body as unknown;
+      const bodyKeys =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body)
+          : [];
+      const fixture =
+        bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+          ? (body as { fixture?: unknown }).fixture
+          : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !BACKSTAGE_GENERATION_FIXTURE_NAMES.has(fixture)
+      ) {
+        return sendBoundedJsonResponse(
+          request,
+          response,
+          { error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID' },
+          {
+            logEvent: 'native_pr_preview.backstage_generation_fixture_invalid',
+            maxBytes: MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES,
+            statusCode: 400,
+          }
+        );
+      }
+
+      void runBackstageGenerationFixture(fixture)
+        .then(payload => sendBoundedJsonResponse(
+          request,
+          response,
+          payload,
+          {
+            logEvent: 'native_pr_preview.backstage_generation_fixture',
+            maxBytes: MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES,
+            statusCode: 200,
           }
         ))
         .catch(next);

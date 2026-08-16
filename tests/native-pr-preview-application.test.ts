@@ -6,6 +6,7 @@ import {
   createNativePrPreviewReadinessState,
 } from '../src/nativePrPreviewApplication.js';
 import {
+  NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -940,6 +941,102 @@ describe('native PR contained application', () => {
       expectNoStore(response);
       expect(response.headers.location).toBeUndefined();
       expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('executes sealed Backstage generation budget and HRC cache fixtures', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const routeBudget = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.routeBudget });
+    const hrcRetryCache = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.hrcRetryCache });
+
+    expect(routeBudget.status).toBe(200);
+    expect(routeBudget.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      canonicalRouteRecognized: true,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.routeBudget,
+      generationStageTimeoutMs: 40_000,
+      genericRouteBoundaryMs: 6_000,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      routeTimeoutMs: 60_000,
+      schemaVersion: 1,
+      syntheticProviderCompleted: true,
+      syntheticProviderDelayMs: 13_250,
+      trinityRunOptions: {
+        answerMode: 'direct',
+        modelStageTimeoutMs: 40_000,
+        strictUserVisibleOutput: true,
+      },
+    });
+    expect(hrcRetryCache.status).toBe(200);
+    expect(hrcRetryCache.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: true,
+      cacheWrites: 1,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      evaluationCalls: 2,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.hrcRetryCache,
+      first: {
+        cacheable: false,
+        verdict: 'Synthetic HRC timeout fallback',
+      },
+      hrcEvaluationTimeoutMs: 10_000,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      second: {
+        cacheable: true,
+        verdict: 'Synthetic HRC retry succeeded',
+      },
+      syntheticTimeoutMs: 25,
+      thirdServedFromCache: true,
+    });
+
+    for (const response of [routeBudget, hrcRetryCache]) {
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+    }
+  }, 25_000);
+
+  it('keeps Backstage generation fixtures sealed', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const responses = await Promise.all([
+      request(app).post(contract.path).send({ fixture: 'unlisted' }),
+      request(app)
+        .post(contract.path)
+        .send({ fixture: contract.fixtures.hrcRetryCache, extra: true }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',
+      });
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
     }
   });
 

@@ -18,6 +18,7 @@ export const NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   Object.freeze({
     bindings: Object.freeze([
       'getRequestAbortContext:getRequestAbortContext',
+      'runWithRequestAbortTimeout:runWithRequestAbortTimeout',
     ]),
     filePath: 'dist/nativePrPreviewApplication.js',
     specifier: '../packages/arcanos-runtime/dist/requestAbort.js',

@@ -15,7 +15,9 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 113;
+const MAX_REQUESTS = 115;
+const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
+const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
 const FIXTURE_CREATED_AT = '2026-07-30T00:00:00.000Z';
 const FIXTURE_COMPLETED_AT = '2026-07-30T00:00:01.000Z';
@@ -377,6 +379,25 @@ function backstageStorylineCase(caseId, fixtureName, status) {
     method: 'POST',
     path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
     pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageStoryline.path,
+    role: 'web',
+  };
+}
+
+function backstageGenerationCase(caseId, fixtureName) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: 200,
+    expectedType: 'backstage-generation-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.path,
+    requestTimeoutMs: BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS,
     role: 'web',
   };
 }
@@ -759,6 +780,14 @@ export function buildNativePrPreviewRequestPlan() {
       'backstage-storyline-payload-over',
       'payloadOver',
       400
+    ),
+    backstageGenerationCase(
+      'backstage-generation-route-budget',
+      'routeBudget'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-hrc-retry-cache',
+      'hrcRetryCache'
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -1667,6 +1696,52 @@ function expectedBackstageStorylineContractPayload(requestCase) {
   };
 }
 
+function expectedBackstageGenerationContractPayload(requestCase) {
+  const base = {
+    accepted: true,
+    cacheBoundaryReached: requestCase.fixtureName === 'hrcRetryCache',
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture: requestCase.fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+  };
+  if (requestCase.fixtureName === 'routeBudget') {
+    return {
+      ...base,
+      canonicalRouteRecognized: true,
+      generationStageTimeoutMs: 40_000,
+      genericRouteBoundaryMs: 6_000,
+      routeTimeoutMs: 60_000,
+      syntheticProviderCompleted: true,
+      syntheticProviderDelayMs: 13_250,
+      trinityRunOptions: {
+        answerMode: 'direct',
+        modelStageTimeoutMs: 40_000,
+        strictUserVisibleOutput: true,
+      },
+    };
+  }
+  return {
+    ...base,
+    cacheWrites: 1,
+    evaluationCalls: 2,
+    first: {
+      cacheable: false,
+      verdict: 'Synthetic HRC timeout fallback',
+    },
+    hrcEvaluationTimeoutMs: 10_000,
+    second: {
+      cacheable: true,
+      verdict: 'Synthetic HRC retry succeeded',
+    },
+    syntheticTimeoutMs: 25,
+    thirdServedFromCache: true,
+  };
+}
+
 function expectedMcpBodyCapContractPayload(requestCase) {
   if (requestCase.fixtureName !== 'effectiveLimits') {
     fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
@@ -2287,6 +2362,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedResearchContractPayload(requestCase);
     case 'backstage-storyline-contract':
       return expectedBackstageStorylineContractPayload(requestCase);
+    case 'backstage-generation-contract':
+      return expectedBackstageGenerationContractPayload(requestCase);
     case 'mcp-body-cap-contract':
       return expectedMcpBodyCapContractPayload(requestCase);
     case 'self-heal-approval-contract':
@@ -2365,11 +2442,16 @@ async function executeRequestCase(
   options,
   fetchImpl,
   deadlineMs,
-  aggregateState
+  aggregateState,
+  monotonicNow
 ) {
   const cancellationProofStartedAt =
     requestCase.caseId === 'research-workflow-cancellation-drain'
-      ? performance.now()
+      ? monotonicNow()
+      : null;
+  const generationProofStartedAt =
+    requestCase.caseId === 'backstage-generation-route-budget'
+      ? monotonicNow()
       : null;
   const baseUrl =
     requestCase.role === 'web' ? options.webBaseUrl : options.workerBaseUrl;
@@ -2380,7 +2462,10 @@ async function executeRequestCase(
   }
   const timeoutMs = Math.max(
     1,
-    Math.min(options.requestTimeoutMs, remainingMs)
+    Math.min(
+      requestCase.requestTimeoutMs ?? options.requestTimeoutMs,
+      remainingMs
+    )
   );
   const correlation = nativePrPreviewCaseCorrelation(requestCase);
   const requestHeaders = {
@@ -2469,6 +2554,7 @@ async function executeRequestCase(
       requestCase.expectedType.startsWith('gaming-canary')
       || requestCase.expectedType.startsWith('gaming-query')
       || requestCase.expectedType === 'gaming-source'
+      || requestCase.expectedType === 'backstage-generation-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
     )
     && response.headers.get(
@@ -2496,11 +2582,21 @@ async function executeRequestCase(
   validateResponseBody(requestCase, bodyBytes, options);
   if (
     cancellationProofStartedAt !== null
-    && performance.now() - cancellationProofStartedAt
+    && monotonicNow() - cancellationProofStartedAt
       < RESEARCH_CANCELLATION_MIN_RESPONSE_MS
   ) {
     fail(
       'NATIVE_PR_PREVIEW_CANCELLATION_DRAIN_TOO_EARLY',
+      requestCase.caseId
+    );
+  }
+  if (
+    generationProofStartedAt !== null
+    && monotonicNow() - generationProofStartedAt
+      < BACKSTAGE_GENERATION_MIN_RESPONSE_MS
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_TOO_EARLY',
       requestCase.caseId
     );
   }
@@ -2513,6 +2609,12 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(generationProofStartedAt === null
+      ? {}
+      : {
+          minimumResponseMs: BACKSTAGE_GENERATION_MIN_RESPONSE_MS,
+          minimumResponseMsVerified: true,
+        }),
   };
 }
 
@@ -2520,6 +2622,7 @@ export async function runNativePrPreviewE2e({
   args,
   fetchImpl = globalThis.fetch,
   localGitState = undefined,
+  monotonicNow = () => performance.now(),
 } = {}) {
   const options = parseNativePrPreviewE2eArguments(
     args ?? [],
@@ -2534,6 +2637,13 @@ export async function runNativePrPreviewE2e({
     workerHost: new URL(options.workerBaseUrl).hostname,
   };
   const limits = {
+    effectivePerCaseMaxRequestTimeoutMs: Math.max(
+      options.requestTimeoutMs,
+      ...requestPlan.map(
+        (requestCase) =>
+          requestCase.requestTimeoutMs ?? options.requestTimeoutMs
+      )
+    ),
     maxAggregateResponseBytes: MAX_AGGREGATE_RESPONSE_BYTES,
     maxRequests: MAX_REQUESTS,
     maxResponseBytes: options.maxResponseBytes,
@@ -2583,7 +2693,8 @@ export async function runNativePrPreviewE2e({
       options,
       fetchImpl,
       deadlineMs,
-      aggregateState
+      aggregateState,
+      monotonicNow
     );
     checks.push(check);
     if (requestCase.caseId.endsWith('-readiness-initial')) {

@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   NativePrPreviewE2eError,
@@ -134,6 +133,7 @@ function responseHeadersForCase(
     requestCase.expectedType.startsWith('gaming-canary')
     || requestCase.expectedType.startsWith('gaming-query')
     || requestCase.expectedType === 'gaming-source'
+    || requestCase.expectedType === 'backstage-generation-contract'
     || requestCase.expectedType === 'self-heal-approval-contract';
   return {
     'cache-control': 'no-store',
@@ -171,6 +171,7 @@ function responseHeadersForCase(
 
 function buildMockFetch(requestPlan, override = undefined) {
   let requestIndex = 0;
+  let monotonicTimeMs = 0;
   const calls = [];
   const fetchImpl = async (url, init) => {
     const requestCase = requestPlan[requestIndex];
@@ -196,7 +197,10 @@ function buildMockFetch(requestPlan, override = undefined) {
       return overriddenResponse;
     }
     if (requestCase.caseId === 'research-workflow-cancellation-drain') {
-      await delay(325);
+      monotonicTimeMs += 325;
+    }
+    if (requestCase.caseId === 'backstage-generation-route-budget') {
+      monotonicTimeMs += 13_250;
     }
     const body = responseBodyForCase(requestCase);
     const bodyBytes = Buffer.byteLength(body ?? '');
@@ -211,6 +215,7 @@ function buildMockFetch(requestPlan, override = undefined) {
   return {
     calls,
     fetchImpl,
+    monotonicNow: () => monotonicTimeMs,
     get requestCount() {
       return requestIndex;
     },
@@ -232,6 +237,8 @@ test('validates an exact native PR target without network access by default', as
   assert.equal(result.executed, false);
   assert.equal(result.networkAttempted, false);
   assert.equal(result.summary.status, 'PASS');
+  assert.equal(result.limits.requestTimeoutMs, 5_000);
+  assert.equal(result.limits.effectivePerCaseMaxRequestTimeoutMs, 20_000);
   assert.equal(
     result.summary.plannedRequests,
     buildNativePrPreviewRequestPlan().length
@@ -369,11 +376,12 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 113);
+  assert.equal(requestPlan.length, 115);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
       && expectedType !== 'backstage-storyline-contract'
+      && expectedType !== 'backstage-generation-contract'
       && expectedType !== 'mcp-body-cap-contract'
       && expectedType !== 'self-heal-approval-contract'
       && !caseId.startsWith('gaming-')
@@ -396,6 +404,12 @@ test('executes the bounded credential-free matrix and detects identity stability
       expectedType === 'backstage-storyline-contract'
     ).length,
     4
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'backstage-generation-contract'
+    ).length,
+    2
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -634,6 +648,73 @@ test('executes the bounded credential-free matrix and detects identity stability
       validationCode: 'BACKSTAGE_STORYLINE_INVALID',
     }
   );
+  const routeBudgetCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-route-budget'
+  );
+  const hrcRetryCacheCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-hrc-retry-cache'
+  );
+  assert.ok(routeBudgetCase);
+  assert.ok(hrcRetryCacheCase);
+  assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(routeBudgetCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      cacheBoundaryReached: false,
+      canonicalRouteRecognized: true,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: 'route-budget-provider-delay',
+      generationStageTimeoutMs: 40_000,
+      genericRouteBoundaryMs: 6_000,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      routeTimeoutMs: 60_000,
+      schemaVersion: 1,
+      syntheticProviderCompleted: true,
+      syntheticProviderDelayMs: 13_250,
+      trinityRunOptions: {
+        answerMode: 'direct',
+        modelStageTimeoutMs: 40_000,
+        strictUserVisibleOutput: true,
+      },
+    }
+  );
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(hrcRetryCacheCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      cacheBoundaryReached: true,
+      cacheWrites: 1,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      evaluationCalls: 2,
+      externalNetworkAttempted: false,
+      fixture: 'hrc-timeout-retry-cache',
+      first: {
+        cacheable: false,
+        verdict: 'Synthetic HRC timeout fallback',
+      },
+      hrcEvaluationTimeoutMs: 10_000,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      second: {
+        cacheable: true,
+        verdict: 'Synthetic HRC retry succeeded',
+      },
+      syntheticTimeoutMs: 25,
+      thirdServedFromCache: true,
+    }
+  );
   const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
     caseId === 'mcp-body-cap-effective-limits'
   );
@@ -746,19 +827,44 @@ test('executes the bounded credential-free matrix and detects identity stability
     args: validArguments('--execute', '--allow-network'),
     fetchImpl: mock.fetchImpl,
     localGitState: LOCAL_GIT_STATE,
+    monotonicNow: mock.monotonicNow,
   });
 
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 113);
+  assert.equal(result.summary.requestsMade, 115);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 113);
+  assert.equal(result.checks.length, 115);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 113);
+  assert.equal(mock.requestCount, 115);
+  assert.deepEqual(
+    result.checks.find(({ caseId }) =>
+      caseId === 'backstage-generation-route-budget'
+    ),
+    {
+      bodySha256: result.checks.find(({ caseId }) =>
+        caseId === 'backstage-generation-route-budget'
+      ).bodySha256,
+      caseId: 'backstage-generation-route-budget',
+      httpStatus: 200,
+      method: 'POST',
+      minimumResponseMs: 13_000,
+      minimumResponseMsVerified: true,
+      pathTemplate: '/backstage/generation-contract',
+      responseBytes: Buffer.byteLength(JSON.stringify(
+        expectedNativePrPreviewResponseBody(routeBudgetCase, {
+          commitSha: COMMIT_SHA,
+          prNumber: PR_NUMBER,
+        })
+      )),
+      role: 'web',
+      simulatedAuth: false,
+    }
+  );
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -796,6 +902,18 @@ test('executes the bounded credential-free matrix and detects identity stability
     1
   );
   for (const { init } of backstageStorylineCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
+    assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const backstageGenerationCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/backstage/generation-contract')
+  );
+  assert.equal(backstageGenerationCalls.length, 2);
+  for (const { init } of backstageGenerationCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
     assert.equal(
@@ -890,8 +1008,12 @@ test('executes the bounded credential-free matrix and detects identity stability
 test('pins the emitted preview imports to the built request-abort runtime', () => {
   const [applicationContract, drainContract] =
     NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT;
-  const applicationSource =
-    `import { getRequestAbortContext } from '${applicationContract.specifier}';`;
+  const applicationSource = [
+    'import {',
+    '  getRequestAbortContext,',
+    '  runWithRequestAbortTimeout,',
+    `} from '${applicationContract.specifier}';`,
+  ].join('\n');
   const drainSource = [
     'import {',
     '  createAbortError,',
@@ -927,8 +1049,8 @@ test('pins the emitted preview imports to the built request-abort runtime', () =
     findNativePrPreviewDistImportSourceViolations(
       applicationContract,
       applicationSource.replace(
-        'getRequestAbortContext }',
-        'getRequestAbortContext, createAbortError }'
+        'runWithRequestAbortTimeout,',
+        'runWithRequestAbortTimeout, createAbortError,'
       )
     ),
     [
@@ -962,11 +1084,46 @@ test('rejects a cancellation proof that returns before its drain window', async 
       args: validArguments('--execute', '--allow-network'),
       fetchImpl: mock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
     }),
     (error) =>
       error instanceof NativePrPreviewE2eError
       && error.code === 'NATIVE_PR_PREVIEW_CANCELLATION_DRAIN_TOO_EARLY'
       && error.caseId === 'research-workflow-cancellation-drain'
+  );
+});
+
+test('rejects a Backstage generation proof that returns before the former direct-answer boundary', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const mock = buildMockFetch(requestPlan, (requestCase) => {
+    if (requestCase.caseId !== 'backstage-generation-route-budget') {
+      return undefined;
+    }
+    const body = responseBodyForCase(requestCase);
+    const response = new Response(body, {
+      headers: responseHeadersForCase(
+        requestCase,
+        Buffer.byteLength(body)
+      ),
+      status: requestCase.expectedStatus,
+    });
+    Object.defineProperty(response, 'url', {
+      value: `${WEB_BASE_URL}${requestCase.path}`,
+    });
+    return response;
+  });
+
+  await assert.rejects(
+    runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      fetchImpl: mock.fetchImpl,
+      localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
+    }),
+    (error) =>
+      error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_TOO_EARLY'
+      && error.caseId === 'backstage-generation-route-budget'
   );
 });
 
@@ -1004,6 +1161,7 @@ test('rejects extra response fields and an incorrect media type', async () => {
       args: validArguments('--execute', '--allow-network'),
       fetchImpl: bodyMismatchMock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
+      monotonicNow: bodyMismatchMock.monotonicNow,
     }),
     (error) =>
       error instanceof NativePrPreviewE2eError
@@ -1040,6 +1198,7 @@ test('rejects extra response fields and an incorrect media type', async () => {
       args: validArguments('--execute', '--allow-network'),
       fetchImpl: contentTypeMock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
+      monotonicNow: contentTypeMock.monotonicNow,
     }),
     (error) =>
       error instanceof NativePrPreviewE2eError
@@ -1118,6 +1277,7 @@ test('rejects missing synthetic provenance and correlation or security header dr
         args: validArguments('--execute', '--allow-network'),
         fetchImpl: mock.fetchImpl,
         localGitState: LOCAL_GIT_STATE,
+        monotonicNow: mock.monotonicNow,
       }),
       (error) =>
         error instanceof NativePrPreviewE2eError
@@ -1148,6 +1308,7 @@ test('returns a stable case-scoped failure without consuming a mismatched body',
       args: validArguments('--execute', '--allow-network'),
       fetchImpl: mock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
     }),
     (error) =>
       error instanceof NativePrPreviewE2eError
