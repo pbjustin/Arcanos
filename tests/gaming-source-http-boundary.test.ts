@@ -147,6 +147,7 @@ const { createApp } = await import('../src/app.js');
 const {
   BACKSTAGE_BOOKER_BODY_LIMIT_BYTES,
   BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+  BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX,
   backstageBookerHttpBoundary,
   isBackstageBookerHttpBoundaryApplied,
 } = await import('../src/services/backstageBookerHttpBoundary.js');
@@ -180,6 +181,8 @@ const TEST_TOKEN = 'gaming-source-http-boundary-token';
 const BACKSTAGE_BOOKER_TEST_TOKEN =
   'backstage-booker-http-boundary-token-123456';
 const GLOBAL_GPT_ACCESS_TOKEN = 'global-gpt-access-token-for-boundary-tests';
+const BACKSTAGE_UNIVERSE_READ_PATH =
+  `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/my-universe-2k26`;
 const INGESTION_PATH = '/gpt-access/gaming/sources/ingestions';
 const REFRESH_PATH = '/gpt-access/gaming/sources/refreshes';
 const STATUS_ID = '019fe3cd-8c01-7f01-8d2d-caa951bc4b9b';
@@ -893,6 +896,12 @@ describe('Backstage Booker production HTTP boundary', () => {
           dedicated: isBackstageBookerAccessAuthenticated(req),
         });
       });
+      app.get(BACKSTAGE_UNIVERSE_READ_PATH, (req, res) => {
+        res.status(200).json({
+          dedicated: isBackstageBookerAccessAuthenticated(req),
+          universeId: req.params.universeId ?? 'my-universe-2k26',
+        });
+      });
     });
   }
 
@@ -967,6 +976,63 @@ describe('Backstage Booker production HTTP boundary', () => {
     expect(response.headers).not.toHaveProperty('access-control-allow-origin');
     expect(JSON.stringify(response.body)).not.toContain(sentinel);
     expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps exact-ID universe reads on the dedicated boundary before generic auth', async () => {
+    unsafeGatePassThrough = true;
+    const dedicatedResponse = await request(createApp())
+      .get(BACKSTAGE_UNIVERSE_READ_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`);
+    const genericResponse = await request(createApp())
+      .get(BACKSTAGE_UNIVERSE_READ_PATH)
+      .set('Authorization', `Bearer ${GLOBAL_GPT_ACCESS_TOKEN}`);
+
+    expect(dedicatedResponse.status).toBe(200);
+    expect(dedicatedResponse.body).toEqual({
+      dedicated: true,
+      universeId: 'my-universe-2k26',
+    });
+    expect(dedicatedResponse.headers['cache-control']).toContain('no-store');
+    expect(genericResponse.status).toBe(401);
+    expect(genericResponse.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(genericResponse.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['malformed', '{"value":"backstage-read-malformed-sentinel"'],
+    ['oversized', JSON.stringify({
+      value: `backstage-read-oversized-sentinel-${'x'.repeat(300 * 1024)}`,
+    })],
+  ])('rejects an authenticated %s GET body before broad parsing', async (
+    _caseName,
+    body
+  ) => {
+    const response = await request(createApp())
+      .get(BACKSTAGE_UNIVERSE_READ_PATH)
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'The Backstage universe read request is invalid.',
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(JSON.stringify(response.body)).not.toContain('backstage-read-');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('protects malformed descendants of the universe-read namespace', async () => {
+    const response = await request(createApp()).get(
+      `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/bad%2Funiverse/extra`
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
   });
 
   it.each([

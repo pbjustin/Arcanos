@@ -424,30 +424,50 @@ own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
 The Builder-specific contract at
-`GET /contracts/backstage_booker.openapi.v1.json` adds one narrow exception to
-the second confirmation step. Its `writeBackstageCanon` operation calls exactly
-`POST /gpt-access/capabilities/v1/backstage-booker/run`, authenticates with the
-purpose-bound `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`, and accepts only
-`upsertStoryline` or `appendCanonBeat`. The operation is marked
-`x-openai-isConsequential: true`; on this dedicated lane the backend relies on
-ChatGPT's Allow/Deny banner and does not issue its own confirmation challenge.
-The fixed lane may bypass generic `ARCANOS_GPT_ACCESS_SCOPES`
-`capabilities.run` authorization, but the exact `MCP_ALLOW_MODULE_ACTIONS`
-allowlist entries still apply. The bearer is accepted nowhere else and is
-distinct from both `ARCANOS_GPT_ACCESS_TOKEN` and
-`ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. Calls with the generic GPT Access
-credential, all four Phase One mutations, and every
-direct/control-plane/dispatch/legacy alias retain the existing confirmation
-contract; Phase One actions are unavailable on the dedicated lane.
-Authenticated canon bodies use strict UTF-8 JSON with a 256 KiB transport ceiling;
-malformed, oversized, and unsupported representations return bounded no-store
-error envelopes. `universeId` selects data scope and never supplies
-authorization.
+`GET /contracts/backstage_booker.openapi.v1.json` defines three operations. In
+addition to the public generation/simulation operation, `getBackstageUniverse`
+calls exactly
+`GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
+requires the purpose-bound `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`, is marked
+`x-openai-isConsequential: false`, and reads one repeatable PostgreSQL snapshot
+without module dispatch, generation, confirmation, persistence, or an in-memory
+fallback. Each of the snapshot's seven bounded data statements has a 3.5-second
+transaction-local PostgreSQL timeout so an unavailable read becomes a retryable
+`503` rather than an empty result. The read-specific SQL bounds legacy names,
+event fields, story-beat payload transfer, and saved-storyline fields before
+Node materializes them. It exposes no collection listing or display-name
+lookup. The response is a closed projection: at most 25 roster entries, 5
+recent events, 5 recent story beats, 5 saved storylines, 8 typed canon
+storylines, and 12 active canon beats; strings, participant arrays, and the
+serialized response are also bounded. `truncation` reports trimming and
+omissions after those source queries. It does not count older rows beyond
+`sourceQueryLimits`; a collection equal to its source limit may therefore be a
+recent window rather than complete history. Because there is no
+universe registry, an ID with no stored rows returns an empty `200` snapshot
+with `hasPersistedData: false`.
+
+The `writeBackstageCanon` operation calls exactly
+`POST /gpt-access/capabilities/v1/backstage-booker/run`, uses the same dedicated
+credential, and accepts only `upsertStoryline` or `appendCanonBeat`. The
+operation is marked `x-openai-isConsequential: true`; on this dedicated lane the
+backend relies on ChatGPT's Allow/Deny banner and does not issue its own
+confirmation challenge. The fixed write lane may bypass generic
+`ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
+`MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The dedicated bearer
+is accepted only on those exact read/write paths and is distinct from both
+`ARCANOS_GPT_ACCESS_TOKEN` and `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. The generic
+GPT Access credential is not accepted for the universe read; its existing
+confirmation path for the canon capability run remains unchanged. All four
+Phase One mutations and every direct/control-plane/dispatch/legacy alias retain
+the existing confirmation contract. Authenticated canon bodies use strict
+UTF-8 JSON with a 256 KiB transport ceiling; malformed, oversized, and
+unsupported representations return bounded no-store error envelopes.
+`universeId` selects data scope and never supplies authorization.
 
 This single-banner design trades an independently verified backend approval
 for trust in ChatGPT's consequential-action enforcement. The backend proves
 possession of the shared Action credential but not per-user identity or that a
-specific person saw the banner. The route remains restricted to the
+specific person saw the banner. The write route remains restricted to the
 version-fenced, mutation-ID-idempotent canon writes; do not place the bearer in
 the schema, GPT instructions, chat, source, or logs. Builder configuration and
 rotation guidance are in

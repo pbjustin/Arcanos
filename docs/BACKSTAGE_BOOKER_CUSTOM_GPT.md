@@ -1,15 +1,15 @@
 # Backstage Booker Custom GPT
 
 This is the Builder-facing configuration for the existing **Backstage Booker**
-Custom GPT. It adds a narrow canon-writing lane with one visible ChatGPT
-consequential-action approval instead of a second, time-limited backend
-confirmation challenge.
+Custom GPT. It adds a narrow authenticated exact-ID universe read and a
+canon-writing lane with one visible ChatGPT consequential-action approval
+instead of a second, time-limited backend confirmation challenge.
 
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
 - Repository contract: [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
-- Schema version: `1.0.0`
+- Schema version: `1.1.0`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
@@ -19,19 +19,35 @@ confirmation challenge.
   schema, GPT instructions, chat, source, logs, screenshots, or a worker
   service.
 
-The contract defines exactly two operations:
+The contract defines exactly three operations:
 
 - `runBackstageBooker` -> `POST /gpt/backstage-booker` for the public
   `generateBooking`, `generateBookingWithHRC`, and `simulateMatch` actions.
+- `getBackstageUniverse` ->
+  `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`
+  for one authenticated, non-consequential, read-only PostgreSQL snapshot.
 - `writeBackstageCanon` ->
   `POST /gpt-access/capabilities/v1/backstage-booker/run` for only
   `upsertStoryline` and `appendCanonBeat`.
 
 Every `runBackstageBooker` request requires `executionMode: "sync"`. The fixed
 value requests inline execution and avoids automatic heavy-prompt queueing;
-the async result bridge is intentionally absent from this two-operation
+the async result bridge is intentionally absent from this focused
 contract. A synchronous request that exceeds the bounded route deadline
 returns `504`.
+
+`getBackstageUniverse` is marked `x-openai-isConsequential: false`. It accepts
+only the dedicated Backstage bearer, never the generic GPT Access token, and
+does not enter module dispatch, generation, confirmation, or persistence. It
+uses an exact `universeId`; no list, display-name lookup, or registry is
+exposed. Because the data model has no universe registry, an ID with no stored
+rows returns `200` with `hasPersistedData: false`, not a claim that a named
+universe does or does not exist. The snapshot is bounded and reports response
+truncation explicitly. Each of its seven bounded data statements has a
+3.5-second transaction-local PostgreSQL timeout; a failed snapshot returns a
+retryable `503` and is never presented as an empty universe. Legacy payloads
+are projected to bounded scalar fields in PostgreSQL before Node materializes
+them. `sourceQueryLimits` are recent-data windows rather than total counts.
 
 `writeBackstageCanon` is marked `x-openai-isConsequential: true`, so ChatGPT
 must display its Allow/Deny action banner before invoking it. The dedicated
@@ -55,8 +71,12 @@ The tradeoff is explicit: the backend authenticates possession of a shared
 Action bearer token, but cannot independently prove that a particular person
 saw or accepted ChatGPT's banner. The design therefore trusts the ChatGPT
 Action platform to enforce the consequential flag before sending the request.
-Anyone who obtains the bearer can exercise this narrow endpoint without
-establishing per-user identity. Keep the credential purpose-bound, rotate it
+Anyone who obtains the bearer can read any valid exact universe ID and can
+exercise the narrow canon endpoint without establishing per-user identity.
+This contract therefore assumes a private GPT within one trust domain. Do not
+publish it or use it across tenant-separated universes without first adding
+server-side credential-to-universe or per-user authorization. Keep the
+credential purpose-bound, rotate it
 after suspected exposure, and use a different authentication design if
 per-user identity or an independently verified approval is required.
 
@@ -64,8 +84,9 @@ The credential is deliberately not interchangeable with
 `ARCANOS_GPT_ACCESS_TOKEN` or `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. It cannot
 call generic GPT Access operations, direct Backstage routes, control-plane
 routes, GPT-selected `/dispatch`, `/modules/backstage-booker`, `/queryroute`,
-or legacy aliases. Conversely, the generic GPT Access credential continues to
-use its scope, allowlist, and backend confirmation rules on a capability run.
+or legacy aliases. Conversely, the generic GPT Access credential cannot read
+stored Backstage universe content through this endpoint and continues to use
+its scope, allowlist, and backend confirmation rules on a capability run.
 All Phase One mutations (`bookEvent`, `updateRoster`, `trackStoryline`, and
 `saveStoryline`) and every direct/control-plane/legacy mutation retain the
 existing backend confirmation contract.
@@ -87,14 +108,16 @@ the exact backend revision and contract route are deployed:
    Do not create a second ARCANOS Action schema.
 3. Under Authentication, select **API Key** and **Bearer**, then enter the same
    dedicated credential in the authentication field.
-4. Verify the imported operation IDs are exactly `runBackstageBooker` and
-   `writeBackstageCanon`; the latter must be shown as consequential. The schema
-   must not contain `confirmation_token`.
+4. Verify the imported operation IDs are exactly `runBackstageBooker`,
+   `getBackstageUniverse`, and `writeBackstageCanon`. The read must be shown as
+   non-consequential and the write as consequential. The schema must not
+   contain `confirmation_token`.
 5. Preserve the GPT's name, instructions, knowledge, conversation starters,
    model selection, visibility, and sharing settings except for the reviewed
    Action/instruction changes. Save the same GPT.
-6. Reopen the saved GPT. Check one public generation/simulation request, then
-   perform a separately authorized canon write in an isolated test universe.
+6. Reopen the saved GPT. Check one public generation/simulation request and one
+   exact-ID read, then perform a separately authorized canon write in an
+   isolated test universe.
    Confirm the Allow/Deny banner appears before `writeBackstageCanon`, denial
    sends no mutation, allowance produces one response, and the response does
    not ask for a second confirmation token.
@@ -107,6 +130,17 @@ Use runBackstageBooker only for generateBooking, generateBookingWithHRC, and
 simulateMatch.
 Always keep executionMode set to "sync" for runBackstageBooker, as required by
 the Action schema.
+
+Use getBackstageUniverse when the user asks to retrieve or inspect already
+stored Backstage state and provides an exact universeId. Preserve the ID
+exactly. Never guess it from a display name, enumerate universe IDs, or use a
+booking-generation or mutation action as a read substitute. Treat
+hasPersistedData false as "no stored Backstage rows were observed," not as
+proof that a separately named universe does not exist. If truncation.truncated
+is true, disclose the listed sections and omitted counts.
+Treat any collection equal to its sourceQueryLimits value as a bounded recent
+window, not proof that no older records exist; omittedItems does not count rows
+outside those source windows.
 
 Use writeBackstageCanon only when the user explicitly asks to create or change
 durable canon through upsertStoryline or appendCanonBeat. Preserve the user's

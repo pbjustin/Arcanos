@@ -46,6 +46,10 @@ const STORYLINE_SHARED_URL = new URL(
   '../src/shared/backstage/backstageStoryline.ts',
   import.meta.url
 );
+const UNIVERSE_READ_PROJECTION_URL = new URL(
+  '../src/shared/backstage/backstageUniverseReadProjection.ts',
+  import.meta.url
+);
 const BACKSTAGE_REVIEW_CONTRACT_URL = new URL(
   '../src/shared/backstage/backstageReviewContract.ts',
   import.meta.url
@@ -112,6 +116,11 @@ async function readStorylineRepositorySource() {
 
 async function readStorylineSharedSource() {
   return (await readFile(STORYLINE_SHARED_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readUniverseReadProjectionSource() {
+  return (await readFile(UNIVERSE_READ_PROJECTION_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -237,6 +246,37 @@ describe('native PR preview import boundary', () => {
     expect(findUnsafeRuntimeSyntax(
       'src/shared/backstage/backstageStoryline.ts',
       driftedSharedContract
+    )).toEqual(expect.arrayContaining([
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
+  it('admits and pins the pure saved-storyline read projector without its database service', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining([
+        'src/shared/backstage/backstageUniverseReadProjection.ts',
+      ])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/core/db/repositories/backstageBookerRepository.ts',
+        'src/services/backstageUniverseRead.ts',
+      ])
+    );
+
+    const projectionSource = await readUniverseReadProjectionSource();
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/backstage/backstageUniverseReadProjection.ts',
+      projectionSource
+    )).toEqual([]);
+    const driftedProjection = replaceRequired(
+      projectionSource,
+      'export const BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS = 1_500;',
+      'export const BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS = 1_499;'
+    );
+    expect(findUnsafeRuntimeSyntax(
+      'src/shared/backstage/backstageUniverseReadProjection.ts',
+      driftedProjection
     )).toEqual(expect.arrayContaining([
       expect.stringContaining('critical entry file semantic digest'),
     ]));

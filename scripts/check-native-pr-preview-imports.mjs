@@ -50,6 +50,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageActionPolicy.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
+  'src/shared/backstage/backstageUniverseReadProjection.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
@@ -556,6 +557,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageStoryline.ts',
     '1352383228608e77a2b1d86a0bf9cafdc928809753f11036553a94b83468c148',
+  ],
+  [
+    'src/shared/backstage/backstageUniverseReadProjection.ts',
+    '2863d0395730e728db26126d86dc6f36a143dc5902ea0420a925335d552e40bf',
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',

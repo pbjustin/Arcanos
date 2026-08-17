@@ -230,6 +230,15 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     ownsInstallation = true;
 
     await observer.query(universeScopeForwardMigration);
+    // The universe-scope migration intentionally preserves the historical
+    // story-beat shape. loadContext reads the current runtime projection, so
+    // this disposable fixture also needs the two runtime projection columns.
+    await observer.query(
+      `ALTER TABLE public.backstage_story_beats
+         ADD COLUMN IF NOT EXISTS serialized_data TEXT;
+       ALTER TABLE public.backstage_story_beats
+         ADD COLUMN IF NOT EXISTS storage_sequence BIGINT;`
+    );
     await applyCanonForwardMigration(observer);
 
     pool = new Pool({
@@ -391,6 +400,32 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       await observer.query('SET search_path TO public, pg_catalog');
     }
   }, 60_000);
+
+  test('trims saved-storyline leading whitespace before applying the read projection cap', async () => {
+    const trimStartWhitespace = (
+      '\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680'
+      + '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A'
+      + '\u2028\u2029\u202F\u205F\u3000\uFEFF'
+    ).repeat(100);
+    const meaningfulContent = 'N'.repeat(1_502);
+
+    await repository.saveStoryline(
+      universeA,
+      'leading-whitespace',
+      `${trimStartWhitespace}${meaningfulContent}`
+    );
+
+    const context = await repository.loadContext(universeA, {
+      universeReadProjection: true
+    });
+
+    expect(context.storylines).toEqual([
+      expect.objectContaining({
+        storyKey: 'leading-whitespace',
+        storyline: 'N'.repeat(1_501)
+      })
+    ]);
+  });
 
   test('serializes concurrent update CAS attempts without a revision gap', async () => {
     const created = await repository.upsertStoryline(

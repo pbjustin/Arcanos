@@ -30,6 +30,7 @@ export interface NativePrPreviewE2eContract {
       lifecycleExact: 'lifecycle-exact';
       phaseOneUniverseBinding: 'phase-one-universe-binding';
       payloadOver: 'payload-over';
+      savedStorylineProjection: 'saved-storyline-projection';
     }>;
   }>;
   readonly backstageGeneration: Readonly<{

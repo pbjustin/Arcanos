@@ -3,6 +3,9 @@ import { join } from 'node:path';
 
 import Ajv2020 from 'ajv/dist/2020.js';
 
+import type { BackstageContext } from '../../src/core/db/repositories/backstageBookerRepository.js';
+import { readBackstageUniverse } from '../../src/services/backstageUniverseRead.js';
+
 const contractPath = join(
   process.cwd(),
   'contracts/backstage_booker.openapi.v1.json'
@@ -75,11 +78,11 @@ function compileComponent(contract: any, schemaName: string) {
 }
 
 describe('Backstage Booker Custom GPT builder contract', () => {
-  it('exposes only the fixed public and dedicated canon-write operations', () => {
+  it('exposes only the fixed public, exact-ID read, and canon-write operations', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.0.0');
+    expect(contract.info.version).toBe('1.1.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -90,6 +93,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(Object.keys(contract.paths)).toEqual([
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
     ]);
 
     const publicOperation = contract.paths['/gpt/backstage-booker'].post;
@@ -176,19 +180,78 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '500',
       '503',
     ]);
+
+    const readOperation = contract.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ].get;
+    expect(readOperation.operationId).toBe('getBackstageUniverse');
+    expect(readOperation.security).toEqual([{ bearerAuth: [] }]);
+    expect(readOperation['x-openai-isConsequential']).toBe(false);
+    expect(readOperation.requestBody).toBeUndefined();
+    expect(readOperation.parameters).toEqual([
+      expect.objectContaining({
+        name: 'universeId',
+        in: 'path',
+        required: true,
+        schema: { $ref: '#/components/schemas/UniverseReadId' },
+      }),
+    ]);
+    expect(Object.keys(readOperation.responses)).toEqual([
+      '200',
+      '400',
+      '401',
+      '429',
+      '500',
+      '503',
+    ]);
     expect(contract.components.securitySchemes).toEqual({
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'Opaque Backstage Booker access token',
         description:
-          'Required only for the fixed Backstage Booker canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes.',
+          'Required only for the fixed Backstage Booker exact-ID universe-read and canon-write operations. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes.',
       },
     });
 
     collectLocalRefs(contract).forEach((ref) => {
       expect(resolveLocalRef(contract, ref)).toBeDefined();
     });
+  });
+
+  it('stays within the ChatGPT Action metadata and response-size limits', () => {
+    const contract = loadContract();
+    const operationMethods = new Set([
+      'get',
+      'put',
+      'post',
+      'delete',
+      'options',
+      'head',
+      'patch',
+      'trace',
+    ]);
+
+    for (const pathItem of Object.values(contract.paths) as Array<Record<string, any>>) {
+      for (const [method, operation] of Object.entries(pathItem)) {
+        if (!operationMethods.has(method)) continue;
+        for (const field of ['summary', 'description'] as const) {
+          if (typeof operation[field] === 'string') {
+            expect(operation[field].length).toBeLessThanOrEqual(300);
+          }
+        }
+        for (const parameter of operation.parameters ?? []) {
+          if (typeof parameter.description === 'string') {
+            expect(parameter.description.length).toBeLessThanOrEqual(700);
+          }
+        }
+      }
+    }
+
+    expect(
+      contract.components.schemas.BackstageUniverseReadResponseLimits.properties
+        .serializedResultBytes.const
+    ).toBeLessThan(100_000);
   });
 
   it('keeps every public Builder example on the synchronous route', () => {
@@ -229,6 +292,232 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       Object.entries(requests[0]).filter(([key]) => key !== 'executionMode')
     );
     expect(validate(missingExecutionMode)).toBe(false);
+  });
+
+  it('keeps the exact-ID universe read closed, bounded, and non-consequential', () => {
+    const contract = loadContract();
+    const schemas = contract.components.schemas;
+    const operation = contract.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ].get;
+    const validateSuccess = compileComponent(
+      contract,
+      'BackstageUniverseReadSuccessResponse'
+    );
+    const emptySnapshot: any = {
+      ok: true,
+      result: {
+        universeId: 'my-universe-2k26',
+        source: 'postgresql',
+        hasPersistedData: false,
+        sourceQueryLimits: {
+          roster: 25,
+          recentEvents: 5,
+          recentStoryBeats: 5,
+          savedStorylines: 5,
+          canonStorylines: 50,
+          activeCanonBeats: 100,
+        },
+        responseLimits: {
+          roster: 25,
+          recentEvents: 5,
+          recentStoryBeats: 5,
+          savedStorylines: 5,
+          canonStorylines: 8,
+          activeCanonBeats: 12,
+          participantNamesPerItem: 10,
+          canonSummaryCodePoints: 1000,
+          legacySummaryCodePoints: 500,
+          savedStorylineCodePoints: 1500,
+          serializedResultBytes: 61440,
+        },
+        truncation: {
+          truncated: false,
+          sections: [],
+          omittedItems: {
+            roster: 0,
+            recentEvents: 0,
+            recentStoryBeats: 0,
+            savedStorylines: 0,
+            canonStorylines: 0,
+            activeCanonBeats: 0,
+            participantNames: 0,
+          },
+        },
+        snapshot: {
+          roster: [],
+          recentEvents: [],
+          recentStoryBeats: [],
+          savedStorylines: [],
+          canon: {
+            revision: '0',
+            storylines: [],
+            activeBeats: [],
+          },
+        },
+      },
+    };
+
+    expect({
+      valid: validateSuccess(emptySnapshot),
+      errors: validateSuccess.errors,
+    }).toEqual({ valid: true, errors: null });
+
+    const populatedSnapshot = structuredClone(emptySnapshot);
+    populatedSnapshot.result.hasPersistedData = true;
+    populatedSnapshot.result.snapshot.canon.revision = '6';
+    populatedSnapshot.result.snapshot.roster.push({
+      name: 'Becky Lynch',
+      overall: 94,
+    });
+    populatedSnapshot.result.snapshot.canon.storylines.push({
+      id: '11111111-1111-4111-8111-111111111111',
+      key: 'raw-main-event',
+      title: 'Raw Main Event',
+      summary: 'Becky Lynch faces Lyra Valkyria.',
+      status: 'active',
+      participantNames: ['Becky Lynch', 'Lyra Valkyria'],
+      version: 5,
+      universeRevision: '6',
+      createdAt: '2026-08-16T20:00:00.000Z',
+      updatedAt: '2026-08-16T21:00:00.000Z',
+      closedAt: null,
+    });
+    expect({
+      valid: validateSuccess(populatedSnapshot),
+      errors: validateSuccess.errors,
+    }).toEqual({ valid: true, errors: null });
+
+    const overLimit = structuredClone(emptySnapshot);
+    overLimit.result.snapshot.canon.storylines = Array.from(
+      { length: 9 },
+      () => populatedSnapshot.result.snapshot.canon.storylines[0]!
+    );
+    expect(validateSuccess(overLimit)).toBe(false);
+    expect(validateSuccess({
+      ...emptySnapshot,
+      unexpected: true,
+    })).toBe(false);
+
+    expect(schemas.BackstageUniverseReadSnapshot.properties).toEqual(
+      expect.objectContaining({
+        roster: expect.objectContaining({ maxItems: 25 }),
+        recentEvents: expect.objectContaining({ maxItems: 5 }),
+        recentStoryBeats: expect.objectContaining({ maxItems: 5 }),
+        savedStorylines: expect.objectContaining({ maxItems: 5 }),
+      })
+    );
+    expect(schemas.BackstageUniverseReadCanonContext.properties).toEqual(
+      expect.objectContaining({
+        storylines: expect.objectContaining({ maxItems: 8 }),
+        activeBeats: expect.objectContaining({ maxItems: 12 }),
+      })
+    );
+    expect(schemas.BackstageUniverseReadParticipantNames.maxItems).toBe(10);
+    expect(schemas.BackstageUniverseReadSourceLimits.description)
+      .toContain('windows, not total counts');
+    expect(schemas.BackstageUniverseReadTruncation.description)
+      .toContain('excludes older rows outside sourceQueryLimits');
+    const truncationSections = schemas.BackstageUniverseReadTruncation
+      .properties.sections;
+    expect(truncationSections.maxItems).toBe(truncationSections.items.enum.length);
+    expect(truncationSections.items.enum).toEqual(expect.arrayContaining([
+      'snapshot.roster.name',
+      'snapshot.savedStorylines.key',
+      'snapshot.canon.storylines.key',
+      'snapshot.canon.storylines.title',
+      'snapshot.canon.activeBeats.storylineKey',
+    ]));
+    expect(
+      schemas.BackstageUniverseReadCanonStoryline.properties.summary.oneOf[0]
+        .maxLength
+    ).toBe(1000);
+    expect(
+      schemas.BackstageUniverseReadSavedStoryline.properties.storylineExcerpt
+        .maxLength
+    ).toBe(1500);
+
+    for (const response of Object.values(operation.responses) as any[]) {
+      expect(response.headers['Cache-Control']).toEqual({
+        $ref: '#/components/headers/NoStore',
+      });
+    }
+    expect(JSON.stringify(operation)).not.toContain('confirmation');
+  });
+
+  it('validates real empty, populated, and truncated read projections', async () => {
+    const contract = loadContract();
+    const validateSuccess = compileComponent(
+      contract,
+      'BackstageUniverseReadSuccessResponse'
+    );
+    const universeId = 'my-universe-2k26';
+    const baseContext = (): BackstageContext => ({
+      roster: [],
+      events: [],
+      storyBeats: [],
+      storylines: [],
+      canonContext: {
+        universeId,
+        revision: '0',
+        storylines: [],
+        activeBeats: [],
+      },
+    });
+    const populated = baseContext();
+    populated.roster.push({ name: 'Becky Lynch', overall: 94 });
+    populated.canonContext.revision = '6';
+    populated.canonContext.storylines.push({
+      id: '11111111-1111-4111-8111-111111111111',
+      universeId,
+      storyKey: 'raw-main-event',
+      title: 'Raw Main Event',
+      summary: 'Becky Lynch faces Lyra Valkyria.',
+      status: 'active',
+      version: 5,
+      participantNames: ['Becky Lynch', 'Lyra Valkyria'],
+      createdRevision: '1',
+      updatedRevision: '6',
+      createdAt: new Date('2026-08-16T20:00:00.000Z'),
+      updatedAt: new Date('2026-08-16T21:00:00.000Z'),
+      closedAt: null,
+    });
+    const truncated = baseContext();
+    truncated.canonContext.revision = '50';
+    truncated.canonContext.storylines = Array.from({ length: 50 }, (_, index) => ({
+      id: '11111111-1111-4111-8111-111111111111',
+      universeId,
+      storyKey: `story-${index}`,
+      title: `Story ${index}`,
+      summary: 'x'.repeat(10_000),
+      status: 'active' as const,
+      version: 1,
+      participantNames: Array.from({ length: 20 }, (_unused, participantIndex) =>
+        `Wrestler ${participantIndex}`
+      ),
+      createdRevision: '1',
+      updatedRevision: '50',
+      createdAt: new Date('2026-08-16T20:00:00.000Z'),
+      updatedAt: new Date('2026-08-16T21:00:00.000Z'),
+      closedAt: null,
+    }));
+
+    for (const context of [baseContext(), populated, truncated]) {
+      const result = await readBackstageUniverse(universeId, {
+        reader: { loadContext: async () => context },
+      });
+      const envelope = {
+        ok: true,
+        result,
+        requestId: 'r'.repeat(128),
+        traceId: 't'.repeat(128),
+      };
+      expect({ valid: validateSuccess(envelope), errors: validateSuccess.errors })
+        .toEqual({ valid: true, errors: null });
+      const serialized = JSON.stringify(envelope);
+      expect(serialized.length).toBeLessThan(100_000);
+      expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThan(100_000);
+    }
   });
 
   it('keeps the authenticated request closed to the two Phase 2 canon actions', () => {
@@ -303,6 +592,13 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const append = loadProtocolSchema('appendCanonBeat.request.schema.json');
 
     expect(schemas.UniverseId).toEqual(common.$defs.universeId);
+    expect(schemas.UniverseReadId).toEqual({
+      type: common.$defs.universeId.type,
+      minLength: common.$defs.universeId.minLength,
+      maxLength: common.$defs.universeId.maxLength,
+      pattern: common.$defs.universeId.pattern,
+    });
+    expect(schemas.UniverseReadId).not.toHaveProperty('default');
     expect(schemas.Uuid.pattern).toBe(canon.$defs.uuid.pattern);
     expect(schemas.UtcTimestamp.pattern).toBe(canon.$defs.utcTimestamp.pattern);
     expect(schemas.StorylineStatus.enum).toEqual(canon.$defs.storylineStatus.enum);

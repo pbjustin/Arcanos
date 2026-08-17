@@ -12,6 +12,10 @@ import {
   PostgresBackstageBookerRepository,
   resolveBackstageCanonDomainErrorHttpStatus
 } from '../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS,
+  BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS,
+} from '../src/shared/backstage/backstageUniverseReadProjection.js';
 
 interface HarnessEvent {
   id: string;
@@ -146,6 +150,9 @@ class BackstageRepositoryHarness {
     }
     if (sql === 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED') {
       return this.result();
+    }
+    if (sql === "SELECT set_config('statement_timeout', $1, TRUE)") {
+      return this.result([{ set_config: values[0] }]);
     }
     if (sql.startsWith('SELECT pg_advisory_xact_lock(')) {
       return this.result([{}]);
@@ -388,6 +395,80 @@ describe('PostgresBackstageBookerRepository', () => {
         expect.objectContaining({ data: { beat: 'Newer legacy projection' } })
       ])
     );
+  });
+
+  it('applies a bounded statement timeout inside an opted-in read snapshot', async () => {
+    const harness = new BackstageRepositoryHarness();
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    await repository.loadContext('legacy', { statementTimeoutMs: 3_500 });
+
+    const beginIndex = harness.commands.indexOf(
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    );
+    const timeoutIndex = harness.commands.indexOf(
+      "SELECT set_config('statement_timeout', $1, TRUE)"
+    );
+    expect(timeoutIndex).toBeGreaterThan(beginIndex);
+    expect(harness.commandValues[timeoutIndex]).toEqual(['3500ms']);
+    expect(harness.commands.at(-1)).toBe('COMMIT');
+  });
+
+  it('uses source-bounded legacy SQL only for the universe-read projection', async () => {
+    const commands: string[] = [];
+    const values: unknown[][] = [];
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, queryValues: unknown[] = []) => {
+          commands.push(normalizeSql(sql));
+          values.push(queryValues);
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => undefined,
+      }),
+    } as unknown as Pool;
+    const repository = new PostgresBackstageBookerRepository(pool);
+
+    await expect(repository.loadContext('legacy', {
+      statementTimeoutMs: 3_500,
+      universeReadProjection: true,
+    })).resolves.toEqual(expect.objectContaining({
+      roster: [],
+      events: [],
+      storyBeats: [],
+      storylines: [],
+    }));
+
+    const sql = commands.join('\n');
+    expect(sql).toContain('LEFT(BTRIM(name), 121) AS name');
+    expect(sql).toContain(
+      'ORDER BY backstage_wrestlers.updated_at DESC, backstage_wrestlers.name ASC'
+    );
+    expect(sql).toContain('jsonb_strip_nulls(jsonb_build_object(');
+    expect(sql).toContain(
+      "CASE WHEN serialized_data IS NOT NULL THEN '{}'::jsonb ELSE data END AS data"
+    );
+    expect(sql).toContain(
+      "octet_length(convert_to(serialized_data, 'UTF8')) <= 16384"
+    );
+    expect(sql).toContain('LEFT(BTRIM(story_key), 241) AS story_key');
+    expect(sql).toContain('LEFT(LTRIM(storyline, $2), $3) AS storyline');
+    const storylineQueryIndex = commands.findIndex(command =>
+      command.includes('LEFT(LTRIM(storyline, $2), $3) AS storyline')
+    );
+    expect(storylineQueryIndex).toBeGreaterThan(-1);
+    const storylineQueryValues = values[storylineQueryIndex];
+    expect(storylineQueryValues?.[0]).toBe('legacy');
+    const trimStartCharacters = storylineQueryValues?.[1];
+    expect(trimStartCharacters).toBe(
+      BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS
+    );
+    expect((trimStartCharacters as string).trimStart()).toBe('');
+    expect(storylineQueryValues?.[2]).toBe(
+      BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS
+    );
+    expect(values).toContainEqual(['3500ms']);
+    expect(commands.at(-1)).toBe('COMMIT');
   });
 
   it('rolls an entire roster update back after a mid-command write failure', async () => {

@@ -146,6 +146,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
     ]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.operationId)
       .toBe('runBackstageBooker');
@@ -160,6 +161,15 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.paths?.[
       '/gpt-access/capabilities/v1/backstage-booker/run'
     ]?.post?.['x-openai-isConsequential']).toBe(true);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ]?.get?.operationId).toBe('getBackstageUniverse');
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ]?.get?.security).toEqual([{ bearerAuth: [] }]);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ]?.get?.['x-openai-isConsequential']).toBe(false);
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {

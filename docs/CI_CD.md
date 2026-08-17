@@ -229,8 +229,8 @@ the public schema and production guard, which admit no preview-only field;
 preview provenance.
 
 The exact `POST /backstage/storyline-contract` surface accepts only the
-server-owned `lifecycle-exact`, `phase-one-universe-binding`, and `payload-over`
-selectors. `lifecycle-exact`
+server-owned `lifecycle-exact`, `phase-one-universe-binding`, `payload-over`, and
+`saved-storyline-projection` selectors. `lifecycle-exact`
 calls the real storyline validator, response selector, and repository
 transaction helper through a fresh per-request in-memory query adapter. Its two
 mutations prove the exact 16,384-byte beat boundary, 100-beat retention,
@@ -239,9 +239,14 @@ inclusion. The Phase One selector routes independent mutations through two
 universe-aware adapters and uses the pure confirmation-envelope builder shared
 with the production gate to prove that changing only `universeId` changes the
 fingerprint input; it does not issue or verify a confirmation token.
-`payload-over` proves a 16,385-byte beat is rejected before the
-repository helper is reached. This is a contained component E2E, not a database
-E2E: it does not connect to PostgreSQL or prove SQL-engine locking or atomicity.
+`payload-over` proves a 16,385-byte beat is rejected before the repository
+helper is reached. `saved-storyline-projection` executes the production-shared
+pure projector over 2,500 leading ECMAScript whitespace code points followed by
+1,501 meaningful code points and returns a truncated 1,500-code-point excerpt.
+It explicitly reports `databaseBoundaryReached: false` and
+`sqlProjectionExecuted: false`. This is a contained component E2E, not a
+database E2E: it does not connect to PostgreSQL or prove SQL-engine locking or
+atomicity.
 The PostgreSQL 18 CI suite remains authoritative for those properties. The
 storyline fixtures carry no credentials, contact no provider, and do not reach
 memory, a confirmation challenge/token store, persistence effects, or any other
@@ -316,7 +321,8 @@ are also pinned by comment/format-normalized semantic digests: every semantic
 edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
 format-only edits do not. The central Research helper, pure public Gaming
-dispatcher/canary/fixture seam, and config-free production MCP pre-parser core
+dispatcher/canary/fixture seam, pure saved-storyline excerpt projector, and
+config-free production MCP pre-parser core
 are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
@@ -333,13 +339,16 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 116-request plan is the
+evidence, not Railway control-plane provenance. The fixed 117-request plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, plus three sealed Backstage generation
-timeout/cache/review-completion cases. It
+worker-role approval-contract denial, three sealed Backstage generation
+timeout/cache/review-completion cases, and one sealed saved-storyline excerpt
+projection case. The excerpt case executes the production-shared pure projector
+over the full ECMAScript leading-whitespace set and explicitly reports that no
+database or SQL projection ran; PostgreSQL 18 CI remains the SQL-engine proof. It
 checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
 synthetic-provenance headers; it is not real bearer-auth, provider, storage,
 queue, or worker-execution evidence.
@@ -391,7 +400,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 116-request E2E runs in a separate job that has no Railway secret. It
+The sealed 117-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and
