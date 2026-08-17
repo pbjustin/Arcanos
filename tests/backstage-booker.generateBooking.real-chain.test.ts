@@ -148,31 +148,56 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(options.signal?.aborted).toBe(false);
   });
 
-  it('accepts a completed provider response that uses more than 1,200 output tokens', async () => {
+  it('completes a near-limit full-state review through the bounded provider path', async () => {
+    const providerReview = [
+      '1. The show has a coherent through-line.',
+      '2. The results and ratings establish the hierarchy.',
+      '3. The promos and segments advance the central conflict.',
+      '4. The rivalries preserve established continuity.',
+      '5. The pacing needs one earlier transition.',
+      '6. The unfinished matches should determine the next branch.'
+    ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_extended_booking',
       model: 'gpt-5.1',
       status: 'completed',
-      output_text: 'Complete extended booking review.',
+      output_text: providerReview,
       output: [],
       usage: {
         input_tokens: 1_100,
-        output_tokens: 1_600,
-        total_tokens: 2_700
+        output_tokens: 1_500,
+        total_tokens: 2_600
       }
     });
+    const directive = 'BACKEND REVIEW REQUEST:\nEvaluate this complete Raw card and its established continuity.\n';
+    const trailer = '\nEND SHOW STATE';
+    const stateSeed = [
+      'Recorded match result, rating, headcanon segment, and rivalry development.',
+      'Punk said "book the match and write the next chapter."',
+      'Becky Lynch vs. Lyra Valkyria remains unfinished.'
+    ].join(' ');
+    const stateLength = 9_800 - directive.length - trailer.length;
+    const fullShowReviewPrompt = directive + stateSeed
+      .repeat(Math.ceil(stateLength / stateSeed.length))
+      .slice(0, stateLength) + trailer;
+    expect(fullShowReviewPrompt).toHaveLength(9_800);
 
     await expect(
-      generateBooking('Review a complete nine-match Raw card and its established continuity.')
-    ).resolves.toBe('Complete extended booking review.');
+      generateBooking(fullShowReviewPrompt)
+    ).resolves.toBe(providerReview);
 
     const [request] = responsesCreate.mock.calls[0] as unknown as [
       Record<string, unknown>
     ];
     expect(request).toEqual(expect.objectContaining({
       model: 'gpt-5.1',
-      max_output_tokens: 2400
+      max_output_tokens: 1600
     }));
+    const serializedInput = JSON.stringify(request.input);
+    expect(serializedInput).toContain('Return exactly 6 top-level numbered bullets:');
+    expect(serializedInput).toContain('Synthesize instead of recapping');
+    expect(serializedInput).toContain('Punk said \\"book the match and write the next chapter.\\"');
+    expect(serializedInput).not.toContain('Open with a quick human check-in or gut reaction');
   });
 
   it('continues to reject partial output that exhausts the extended Booker budget', async () => {
@@ -185,8 +210,8 @@ describe('backstage-booker generateBooking real provider chain', () => {
       output: [],
       usage: {
         input_tokens: 1_100,
-        output_tokens: 2_400,
-        total_tokens: 3_500
+        output_tokens: 1_600,
+        total_tokens: 2_700
       }
     });
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -212,6 +237,96 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ).resolves.toBe(
       "I can't verify current external state here without live access. Rivalry matrix output."
     );
+  });
+
+  it('preserves all bounded review bullets when honesty adds a caveat before the first item', async () => {
+    const providerReview = [
+      '**1. Overall verdict: the card delivered a disciplined escalation.**',
+      '**2. Match results: Alpha winner preserved the planned hierarchy.**',
+      '**3. Promos and segments: Bravo segment sharpened the central conflict.**',
+      '**4. Rivalry continuity: Charlie thread honored the established canon.**',
+      '**5. Pacing and structure: Delta transition kept the second hour moving.**',
+      '**6. Remaining matches: Echo finish should determine the next branch.**'
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_honest_review',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: providerReview,
+      output: [],
+      usage: {
+        input_tokens: 120,
+        output_tokens: 90,
+        total_tokens: 210
+      }
+    });
+
+    const result = await generateBooking(
+      'Review this completed Raw card using current external events.'
+    );
+    const bullets = result.split('\n').filter(line => /^\d+\.\s/.test(line));
+
+    expect(bullets).toHaveLength(6);
+    expect(bullets[0]).toContain(
+      "I can't verify current external state here without live access."
+    );
+    expect(bullets[0]).toContain(
+      'Overall verdict: the card delivered a disciplined escalation.'
+    );
+    expect(bullets.slice(1)).toEqual([
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ]);
+    const [request] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>
+    ];
+    expect(request).toEqual(expect.objectContaining({
+      max_output_tokens: 1600
+    }));
+  });
+
+  it('keeps a six-bullet review when honesty replaces an unsupported current-state claim', async () => {
+    const providerReview = [
+      '1. Overall verdict: current external events confirm this is the strongest active WWE card.',
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_unsupported_live_claim',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: providerReview,
+      output: [],
+      usage: {
+        input_tokens: 120,
+        output_tokens: 90,
+        total_tokens: 210
+      }
+    });
+
+    const result = await generateBooking(
+      'Review this completed Raw card using current external events.'
+    );
+    const bullets = result.split('\n').filter(line => /^\d+\.\s/.test(line));
+
+    expect(bullets).toHaveLength(6);
+    expect(bullets[0]).toContain(
+      "I can't verify current external state here without live access."
+    );
+    expect(result).not.toContain('confirm this is the strongest active WWE card');
+    expect(bullets.slice(1)).toEqual([
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ]);
   });
 
   it('allows the provider to finish after the generic twelve-second direct-answer deadline', async () => {

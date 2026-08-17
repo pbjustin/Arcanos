@@ -248,8 +248,9 @@ memory, a confirmation challenge/token store, persistence effects, or any other
 protected effect.
 
 The exact `POST /backstage/generation-contract` surface accepts only the
-server-owned `route-budget-provider-delay` and `hrc-timeout-retry-cache`
-selectors. The route-budget case uses the production Backstage route-ID policy,
+server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`, and
+`review-completion-contract` selectors. The route-budget case uses the
+production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
 reviewed request-abort runtime around a 13,250 ms synthetic provider seam. The
 runner independently requires at least 13,000 ms of wall-clock response time,
@@ -260,7 +261,15 @@ separately from the caller-configured default. The HRC case executes the pure
 cache orchestration seam
 shared by production HRC: a real bounded synthetic timeout returns a marked
 noncacheable fallback, the next call evaluates successfully, and the third is
-served from the one successful cache write. Neither selector imports or calls a
+served from the one successful cache write. The review-completion case executes
+the production-shared full-review classifier, Trinity direct-answer list
+normalizer, 1,600-token/style policy, and Booker review output contract against
+fixed named-event and narrow-event scopes, mixed and state-field directives,
+balanced and unmatched quotes, astral-letter apostrophes, quoted contractions,
+Markdown markers, inline/collapsed honesty caveats, and spaced/single initials.
+It proves that the canonical six-bullet response style overrides an earlier
+three-bullet user request and asserts a deterministic bound on
+quoted-contraction delimiter-disambiguation work. None of the selectors calls a
 provider, uses credentials, performs network I/O, or reaches a protected effect.
 
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
@@ -324,13 +333,13 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 115-request plan is the
+evidence, not Railway control-plane provenance. The fixed 116-request plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, plus two sealed Backstage generation
-timeout/cache cases. It
+worker-role approval-contract denial, plus three sealed Backstage generation
+timeout/cache/review-completion cases. It
 checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
 synthetic-provenance headers; it is not real bearer-auth, provider, storage,
 queue, or worker-execution evidence.
@@ -382,7 +391,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 115-request E2E runs in a separate job that has no Railway secret. It
+The sealed 116-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and

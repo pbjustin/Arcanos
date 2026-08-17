@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 115;
+const MAX_REQUESTS = 116;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -788,6 +788,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-hrc-retry-cache',
       'hrcRetryCache'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-review-completion',
+      'reviewCompletion'
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -1724,22 +1728,110 @@ function expectedBackstageGenerationContractPayload(requestCase) {
       },
     };
   }
-  return {
-    ...base,
-    cacheWrites: 1,
-    evaluationCalls: 2,
-    first: {
-      cacheable: false,
-      verdict: 'Synthetic HRC timeout fallback',
-    },
-    hrcEvaluationTimeoutMs: 10_000,
-    second: {
-      cacheable: true,
-      verdict: 'Synthetic HRC retry succeeded',
-    },
-    syntheticTimeoutMs: 25,
-    thirdServedFromCache: true,
-  };
+  if (requestCase.fixtureName === 'hrcRetryCache') {
+    return {
+      ...base,
+      cacheWrites: 1,
+      evaluationCalls: 2,
+      first: {
+        cacheable: false,
+        verdict: 'Synthetic HRC timeout fallback',
+      },
+      hrcEvaluationTimeoutMs: 10_000,
+      second: {
+        cacheable: true,
+        verdict: 'Synthetic HRC retry succeeded',
+      },
+      syntheticTimeoutMs: 25,
+      thirdServedFromCache: true,
+    };
+  }
+  if (requestCase.fixtureName === 'reviewCompletion') {
+    return {
+      ...base,
+      classification: {
+        astralQuotedDirectiveParity: true,
+        balancedPostQuoteRebookOrdinary: true,
+        balancedQuotedDirectiveIgnored: true,
+        explicitRebookDirectiveOrdinary: true,
+        fullReviewBounded: true,
+        mixedCreativeOrdinary: true,
+        namedEventReviewsBounded: true,
+        narrowAnalysisOrdinary: true,
+        narrowNamedEventReviewsOrdinary: true,
+        politeReviewBounded: true,
+        quotedContractionsIgnored: true,
+        stateFieldsIgnored: true,
+        unmatchedQuoteRebookOrdinary: true,
+      },
+      contracts: {
+        authoritativeSixBulletOverride: true,
+        backstageCaveatReview: true,
+        backstageCollapsedCaveatReview: true,
+        backstageInitialsReview: true,
+        backstageMarkdownReview: true,
+        backstageSingleInitialReview: true,
+        quotedContractionWorkBound: true,
+        reviewStyleInstruction: true,
+        reviewTokenLimit: true,
+        trinityCollapsedDirectAnswer: true,
+        trinityDirectAnswer: true,
+      },
+      normalization: {
+        authoritativeReviewBulletCount: 6,
+        caveatReview: [
+          "1. I can't verify current external state here without live access. Overall verdict: the card delivered a disciplined escalation.",
+          '2. Match results: Alpha winner preserved the planned hierarchy.',
+          '3. Promos and segments: Bravo segment sharpened the central conflict.',
+          '4. Rivalry continuity: Charlie thread honored the established canon.',
+          '5. Pacing and structure: Delta transition kept the second hour moving.',
+          '6. Remaining matches: Echo finish should determine the next branch.',
+        ].join('\n'),
+        collapsedCaveatReview: [
+          "1. I can't verify current external state here without live access.",
+          '2. Match results: Alpha winner preserved the planned hierarchy.',
+          '3. Promos and segments: Bravo segment sharpened the central conflict.',
+          '4. Rivalry continuity: Charlie thread honored the established canon.',
+          '5. Pacing and structure: Delta transition kept the second hour moving.',
+          '6. Remaining matches: Echo finish should determine the next branch.',
+        ].join('\n'),
+        initialsReview:
+          '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.',
+        markdownReview: [
+          '1. The card has a coherent through-line.',
+          '2. The results preserve the planned hierarchy.',
+          '3. The promos sharpen the central conflict.',
+          '4. The rivalries honor established continuity.',
+          '5. The pacing builds toward the closing stretch.',
+          '6. The unfinished matches should determine the next branch.',
+        ].join('\n'),
+        numberedBulletCount: 6,
+        quoteLookaheadScans: 4,
+        quotedContractionCount: 256,
+        singleInitialReview:
+          '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.',
+      },
+      policy: {
+        authoritativeBulletCount: 6,
+        namedEventTokenLimit: 1_600,
+        responseStyleInstruction: [
+          'Return exactly 6 top-level numbered bullets:',
+          '1. Overall verdict and the show\'s strongest through-line.',
+          '2. Match results and ratings that most affected the show.',
+          '3. Promos, headcanon, and non-match segments that mattered most.',
+          '4. Rivalry development and continuity strengths or problems.',
+          '5. Pacing, booking logic, and the highest-value correction.',
+          '6. The remaining matches and the best next step.',
+          'Use no more than two concise sentences per bullet.',
+          'No preamble, headings, sub-bullets, alternative full card, conclusion, or production-notes appendix.',
+          'Synthesize instead of recapping: do not re-list the supplied show state, results, ratings, or segments.',
+          'Treat matches identified as still to come as unresolved; never invent their results.',
+        ].join('\n'),
+        tokenLimit: 1_600,
+      },
+    };
+  }
+  fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
 }
 
 function expectedMcpBodyCapContractPayload(requestCase) {

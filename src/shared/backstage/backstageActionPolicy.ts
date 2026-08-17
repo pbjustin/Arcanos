@@ -36,6 +36,7 @@ export type BackstageMutationAction = (typeof BACKSTAGE_MUTATION_ACTIONS)[number
 
 export interface BackstageBookerTrinityRunOptions {
   answerMode: 'direct';
+  internalMode: false;
   strictUserVisibleOutput: true;
   directAnswerModelOverride: string;
   directAnswerTokenLimitOverride: number;
@@ -87,6 +88,7 @@ export function buildBackstageBookerTrinityRunOptions(params: {
 }): BackstageBookerTrinityRunOptions {
   return {
     answerMode: 'direct',
+    internalMode: false,
     strictUserVisibleOutput: true,
     directAnswerModelOverride: params.model,
     directAnswerTokenLimitOverride: params.tokenLimit,

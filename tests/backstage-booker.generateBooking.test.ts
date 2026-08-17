@@ -99,6 +99,7 @@ describe('backstage-booker generateBooking', () => {
         client: expect.anything(),
         runOptions: expect.objectContaining({
           answerMode: 'direct',
+          internalMode: false,
           strictUserVisibleOutput: true,
           directAnswerModelOverride: 'gpt-5.1-test',
           directAnswerTokenLimitOverride: 2400,
@@ -108,6 +109,311 @@ describe('backstage-booker generateBooking', () => {
         }),
       }),
     });
+  });
+
+  it('uses a bounded synthesis contract for a full-show review', async () => {
+    const prompt = [
+      'Review this completed portion of Raw and preserve the established continuity.',
+      ...Array.from(
+        { length: 24 },
+        (_, index) => `Match ${index + 1}: recorded result, rating, rivalry development, and headcanon segment ${index + 1}.`
+      ),
+      'Punk closed his promo with: "Book the match and write the next chapter."',
+      'CM Punk delivered his promo. Becky Lynch vs. Lyra Valkyria and the main event are still to come.'
+    ].join('\n');
+
+    await expect(generateBooking(prompt)).resolves.toBe('1. Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Return exactly 6 top-level numbered bullets:'),
+        tokenLimit: 1600,
+        body: expect.objectContaining({ tokenLimit: 1600 })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 1600,
+          directAnswerTokenCapOverride: 2400
+        })
+      })
+    }));
+    const dispatchedPrompt = (mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(dispatchedPrompt).toContain('Synthesize instead of recapping');
+    expect(dispatchedPrompt).toContain('never invent their results');
+    expect(dispatchedPrompt).toContain('Complete the six-bullet review and stop after bullet 6.');
+    expect(dispatchedPrompt).not.toContain('Open with a quick human check-in or gut reaction');
+    expect(dispatchedPrompt).not.toContain('Highlight consequences, momentum shifts');
+  });
+
+  it.each([
+    'Write a concise review of this card.',
+    'Review Raw.',
+    'Generate an assessment of Raw so far.',
+    'Provide an evaluation of this booking.',
+    'Rate this show and generate a score.',
+    'I would like a review of this completed Raw card.',
+    'I want your assessment.',
+    'I need feedback on this booking.',
+    "I'd like you to review this completed show.",
+    'I’d like you to review this completed show.',
+    'Review my Raw.',
+    'Review our SmackDown.',
+    'Review the current NXT.',
+    "Review this week's Raw.",
+    "Review last night's show.",
+    'Review the WWE Raw show.',
+    'Review Raw tonight.',
+    'Review the WrestleMania card.',
+    'Review this "completed" show.',
+    "Review this 'completed' show.",
+    'Review the "WrestleMania" card.',
+    'Review the WrestleMania card overall.',
+    'Review the WrestleMania card in three bullets.',
+    'Review this Full Gear show.',
+    'Review this Full Gear show in six bullets.',
+    'Review SummerSlam.',
+    'Review SummerSlam tonight.',
+    'Give me feedback on this WrestleMania card.',
+    'Review this completed Raw card in three bullets.',
+    'Please briefly review this completed show.',
+    'Please, briefly review this completed show.',
+    'Kindly, review this completed show.',
+    'Could you kindly assess this card?',
+    'Answer directly: review this completed card.',
+    'Answer directly, review this completed card.',
+    'Answer directly. Review this complete card and keep unfinished matches unresolved.',
+    'Answer directly.\nReview this complete card and keep unfinished matches unresolved.',
+    'BACKEND REVIEW REQUEST: Review this completed Raw card and preserve continuity.',
+    'BACKEND REVIEW REQUEST — Review this completed Raw card and preserve continuity.',
+    'BACKEND REVIEW REQUEST, Review this completed Raw card and preserve continuity.',
+    'BACKEND REVIEW REQUEST:\nReview this completed Raw card and preserve continuity.',
+    'Review this completed Raw card.\nFinish: Cody won clean.',
+    'Review this completed Raw card.\nBooking: conservative.',
+    'Review this completed Raw card.\nContinue: false.',
+    'Review this completed Raw card.\nDraft: final.',
+    'Review this completed Raw card.\nBooking Notes: Cody stays strong.',
+    'Review this completed Raw card.\nFinish Type: pinfall.',
+    'Review this completed Raw card.\nBooking logic was conservative throughout.',
+    'Review this completed Raw card.\nPromo: "Book/rebook the main event," Punk said.',
+    'Review this completed Raw card.\nRebook the unfinished main event, Punk suggested.',
+    "Review this completed Raw card. 'Plans' remain recorded. 'Rebook the main event,' Punk said.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. ‘Rebook the main event,’ Punk said.',
+    "Review this completed Raw card. '\u{1D400}'\u{1D401} spoke. Rebook the main event,' Punk said."
+  ])('recognizes an explicit review request without confusing it for creative generation: %s', async prompt => {
+    await expect(generateBooking(prompt)).resolves.toBe('1. Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Return exactly 6 top-level numbered bullets:'),
+        tokenLimit: 1_600
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          internalMode: false,
+          directAnswerTokenLimitOverride: 1_600
+        })
+      })
+    }));
+  });
+
+  it.each([
+    'Review this show and book Becky Lynch vs. Lyra Valkyria next.',
+    'Review this show, rebook Becky Lynch vs. Lyra Valkyria next.',
+    'Review this show: rewrite the unfinished main event.',
+    'Review this show / draft a different closing angle.',
+    'Review this show. Then book Becky Lynch vs. Lyra Valkyria next.',
+    'Review this show; also draft a different closing angle.',
+    'Review this show before rebooking the unfinished main event.',
+    'Review this show—rebook the unfinished main event.',
+    'Review this show;rebook the unfinished main event.',
+    'Review this show but rebook the unfinished main event.',
+    'Review this show - rebook the unfinished main event.',
+    'Review this show/rebook the unfinished main event.',
+    'Review this show, but I also want you to rebook the unfinished main event.',
+    "Review this show, but I'd also like you to rebook the unfinished main event.",
+    'Review this show, but I’d also like you to rebook the unfinished main event.',
+    'Review this show and then you should rebook the unfinished main event.',
+    'Review this show, also rebook the unfinished main event.',
+    'Review this show.\nRebook: Cody beats Gunther.',
+    'Review this show.\nDraft: a new main event.',
+    "Review the wrestlers' completed show; rebook the unfinished main event.",
+    'Review this completed Raw card.\nRecorded show state.\nRebook the unfinished main event.',
+    'Review this completed Raw card.\nRebook the unfinished main event.\nRecorded result: Cody won.',
+    'Review this completed show.\nRecorded result one.\nRebook the unfinished main event.\nRecorded result two.',
+    'Book Becky Lynch vs. Lyra Valkyria next.\nReview this completed show.',
+    'Supplied show-state dialogue follows:\n"Review the match before you judge it," Punk said.',
+    'Supplied show-state dialogue follows:\n"We finished the card. Review this show before judging it," Punk said.',
+    "Supplied show-state dialogue follows:\n'We finished the card. Review this show before judging it,' Punk said.",
+    'Supplied show-state dialogue follows:\n“We finished the card. Review this show before judging it,” Punk said.',
+    "Supplied show-state dialogue follows:\n'We can't review this show before booking it,' Punk said.",
+    'Supplied show-state dialogue follows:\n‘We can’t review this show before booking it,’ Punk said.',
+    '"Review the match before you judge it," Punk said.\nContinue the current booking.',
+    '(Review this show before you judge it), Punk said.',
+    'Analyze whether Cody should turn heel at WrestleMania.',
+    'Evaluate if Cody should retain the title.',
+    'Evaluate the Raw main-event finish.',
+    'Evaluate the completed Raw main-event finish.',
+    'Evaluate the WrestleMania main event.',
+    'Review the Full Gear main-event finish.',
+    'Review BodySlam.',
+    "Evaluate the completed Raw women's division.",
+    'Evaluate the finish of this show.',
+    "Analyze Cody's title reign on Raw.",
+    'Give me a recommendation for who should beat Gunther.',
+    'Give me a recommendation for the Raw main event.',
+    'Give me a recommendation for the PLE main event.',
+    'Evaluate the PLE undercard.',
+    "Evaluate this PLE women's division.",
+    'Give me a recommendation for the completed Raw main event.',
+    'Give me a recommendation for the full Raw roster.',
+    'Give me a recommendation about booking Cody as champion.',
+    'Review the promo from this show.',
+    'Generate an analysis of whether Cody should turn heel.',
+    "Analyze Cody's title reign on Raw.\n‘The wrestlers’ agreement matters. Review this completed show before judging it,’ Punk said.",
+    "Analyze Cody's title reign on Raw.\n'The wrestlers' agreement matters. Review this completed show before judging it,' Punk said.",
+    'Review this completed show.\n‘Good show’ was the verdict. I’d also like you to rebook the main event.',
+    "Review this completed Raw card. 'Recorded dialogue is missing its close. Rebook the main event.",
+    'Review this completed Raw card. “Recorded dialogue is missing its close. Rebook the main event.',
+    "Review this completed Raw card. 'Recorded dialogue.' Rebook the main event.",
+    "Review this completed Raw card. 'Recorded dialogue. Rebook the main event,' Punk said. Rebook the actual main event.",
+    "Review this completed Raw card. 'Plans' remain recorded. Rebook the actual main event. 'More state' follows.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. Rebook the actual main event. ‘More state’ follows.',
+    "Review this completed Raw card. 'Boss' remains recorded. Rebook the actual main event. 'More state' follows.",
+    "Review this completed show. 'Good results' then rebook the main event 'afterward'.",
+    'Review this completed show. ‘Good results’ then rebook the main event ‘afterward’.',
+    'Review this completed show. "Good results" then rebook the main event "afterward".',
+    'Book Becky Lynch vs. Lyra Valkyria next.\nSegment title: The Review',
+    'Continue the current booking.\nPunk asked everyone to evaluate the champion.',
+    'Continue the current booking.\nReview: 4/5',
+    'Continue the current booking.\n"Review the match before you judge it," Punk said.'
+  ])('keeps creative or state-only review language on ordinary booking mode: %s', async prompt => {
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Open with a quick human check-in or gut reaction'),
+        tokenLimit: 2_400
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 2_400
+        })
+      })
+    }));
+  });
+
+  it('removes review preambles, extra bullets, and sentences beyond the review contract', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        'Quick gut check: the show has a clear spine.',
+        '',
+        '## Full review',
+        '1) J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud. This third sentence must be removed.',
+        '2) The results protect the right wrestlers. The ratings support the hierarchy.',
+        '3) The promo work advances the central conflict. The headcanon segments add connective tissue.',
+        '4) The rivalries remain coherent. One transition needs a cleaner motivation.',
+        '5) The pacing builds steadily. Move one recap earlier.',
+        '6) Becky vs. Lyra remains unresolved. Let the match determine the next branch.',
+        '7) This overflow bullet must be removed.'
+      ].join('\n')
+    });
+
+    await expect(
+      generateBooking('Review and assess the completed show state; two matches are still to come.')
+    ).resolves.toBe([
+      '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.',
+      '2. The results protect the right wrestlers. The ratings support the hierarchy.',
+      '3. The promo work advances the central conflict. The headcanon segments add connective tissue.',
+      '4. The rivalries remain coherent. One transition needs a cleaner motivation.',
+      '5. The pacing builds steadily. Move one recap earlier.',
+      '6. Becky vs. Lyra remains unresolved. Let the match determine the next branch.'
+    ].join('\n'));
+  });
+
+  it('normalizes Markdown-wrapped review markers in the Booker output contract', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '**1. The card has a coherent through-line.**',
+        '__2) The results preserve the planned hierarchy.__',
+        '**3. The promos sharpen the central conflict.**',
+        '__4) The rivalries honor established continuity.__',
+        '**5. The pacing builds toward the closing stretch.**',
+        '__6) The unfinished matches should determine the next branch.__'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. The card has a coherent through-line.',
+      '2. The results preserve the planned hierarchy.',
+      '3. The promos sharpen the central conflict.',
+      '4. The rivalries honor established continuity.',
+      '5. The pacing builds toward the closing stretch.',
+      '6. The unfinished matches should determine the next branch.'
+    ].join('\n'));
+  });
+
+  it('preserves two review sentences around single proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud. This third sentence must be removed.',
+        '2. J. Dillon backed the champion. His decision clarified the feud. This third sentence must be removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.',
+      '2. J. Dillon backed the champion. His decision clarified the feud.'
+    ].join('\n'));
+  });
+
+  it('does not protect structural outline labels as proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. Option A. Then continue. Third removed.',
+        '2. option B. Next continue. Third removed.',
+        '3. Segment A. Continue the feud. Third removed.',
+        '4. Point A. Continue the feud. Third removed.',
+        '5. Section A. Continue the feud. Third removed.',
+        '6. Item A. Continue the feud. Third removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. Option A. Then continue.',
+      '2. option B. Next continue.',
+      '3. Segment A. Continue the feud.',
+      '4. Point A. Continue the feud.',
+      '5. Section A. Continue the feud.',
+      '6. Item A. Continue the feud.'
+    ].join('\n'));
+  });
+
+  it('does not protect leading outline initials as proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. A. Continue the feud. Third removed.',
+        '2. B. Next continue. Third removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. A. Continue the feud.',
+      '2. B. Next continue.'
+    ].join('\n'));
+  });
+
+  it('normalizes an unnumbered review into bounded numbered prose groups', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: 'Quick gut check: The show has a coherent spine. Punk gives it urgency. The unfinished matches should remain unresolved.'
+    });
+
+    await expect(generateBooking('Assess this show so far.')).resolves.toBe([
+      '1. The show has a coherent spine. Punk gives it urgency.',
+      '2. The unfinished matches should remain unresolved.'
+    ].join('\n'));
   });
 
   it('caps an oversized Booker generation stage timeout below the module deadline', async () => {

@@ -71,6 +71,15 @@ import {
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  applyBackstageReviewOutputContract,
+  buildBackstageReviewResponseStyleInstruction,
+  collectTopLevelListItems,
+  resolveBoundedBackstageReviewTokenLimit,
+  shouldUseBoundedBackstageReviewMode,
+  stripBackstageDirectAnswerPreamblePrefix,
+  stripMarkdownFormatting,
+} from '@shared/backstage/backstageReviewContract.js';
+import {
   BackstageRosterPersistenceError,
   isRetryableBackstageRosterPersistenceCause,
   parseBackstageRosterPayload,
@@ -865,61 +874,6 @@ function parseBackstageDirectAnswerOutputContract(prompt: string): BackstageDire
   };
 }
 
-function stripMarkdownFormatting(value: string): string {
-  return value
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/__(.+?)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[(.+?)\]\([^)]+\)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function stripBackstageDirectAnswerPreamblePrefix(value: string): string {
-  return value.replace(
-    /^(?:quick\s+gut\s+check|gut\s+read|quick\s+take|direct\s+answer|bottom\s+line)\s*:\s*/i,
-    ''
-  ).trim();
-}
-
-function collectTopLevelListItems(text: string): string[] {
-  const items: string[] = [];
-  let currentItem = '';
-
-  for (const line of text.split(/\r?\n/)) {
-    const trimmedLine = line.trim();
-    const indentation = line.match(/^\s*/)?.[0].length ?? 0;
-
-    if (!trimmedLine || /^---+$/.test(trimmedLine) || /^#{1,6}\s+/.test(trimmedLine)) {
-      continue;
-    }
-
-    const isTopLevelItem = indentation <= 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
-    const isNestedItem = indentation > 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
-
-    if (isTopLevelItem) {
-      if (currentItem) {
-        items.push(currentItem.trim());
-      }
-      currentItem = trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '');
-      continue;
-    }
-
-    if (currentItem) {
-      const appendedLine = isNestedItem
-        ? trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '')
-        : trimmedLine;
-      currentItem = `${currentItem} ${appendedLine}`.trim();
-    }
-  }
-
-  if (currentItem) {
-    items.push(currentItem.trim());
-  }
-
-  return items;
-}
-
 function compactBackstageBulletItem(item: string, requiresShortBullets: boolean): string {
   const normalizedItem = stripBackstageDirectAnswerPreamblePrefix(stripMarkdownFormatting(item));
 
@@ -967,8 +921,13 @@ function applyBackstageDirectAnswerOutputContract(
 
 function buildBackstageResponseStyleInstruction(
   directAnswerMode: boolean,
-  directAnswerContract: BackstageDirectAnswerOutputContract | null
+  directAnswerContract: BackstageDirectAnswerOutputContract | null,
+  boundedReviewMode: boolean
 ): string {
+  if (boundedReviewMode) {
+    return buildBackstageReviewResponseStyleInstruction();
+  }
+
   if (!directAnswerMode) {
     return `${BOOKING_RESPONSE_GUIDELINES().trim()}${buildBackstageResponseStyleSuffix(false)}`;
   }
@@ -990,6 +949,14 @@ function buildBackstageResponseStyleInstruction(
 }
 
 function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimit: number): number {
+  const boundedReviewTokenLimit = resolveBoundedBackstageReviewTokenLimit(
+    prompt,
+    defaultTokenLimit
+  );
+  if (boundedReviewTokenLimit !== null) {
+    return boundedReviewTokenLimit;
+  }
+
   if (!shouldPreferDirectAnswerMode(prompt)) {
     return defaultTokenLimit;
   }
@@ -1005,6 +972,7 @@ function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimi
 
 async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<string> {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1102,10 +1070,12 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       `<<RECENT_EVENTS>>\n${eventsBlock}`,
       `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
       `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    return boundedReviewMode
+      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', (error as Error).message);
     const legacyState = readFallbackUniverseState(DEFAULT_BACKSTAGE_UNIVERSE_ID);
@@ -1125,10 +1095,12 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
       `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    return boundedReviewMode
+      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   }
 }
 
@@ -1154,6 +1126,7 @@ function buildBookingPrompt(
   canonBlocks: BackstageCanonPromptBlocks | null = null
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1173,10 +1146,12 @@ function buildBookingPrompt(
       : []),
     `<<RECENT_STORY_BEATS>>\n${blocks.storyBeats}`,
     `<<SAVED_STORYLINES>>\n${blocks.savedStorylines}`,
-    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
   ];
 
-  return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+  return boundedReviewMode
+    ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+    : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
 }
 
 function promptBlocksFromCanonContext(
@@ -2341,6 +2316,12 @@ export async function generateBooking(
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
+    if (shouldUseBoundedBackstageReviewMode(input.prompt)) {
+      return assertValidBackstageBookerActionData(
+        'generateBooking',
+        applyBackstageReviewOutputContract(clean)
+      ) as string;
+    }
     if (shouldPreferDirectAnswerMode(input.prompt)) {
       return assertValidBackstageBookerActionData(
         'generateBooking',

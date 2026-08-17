@@ -37,6 +37,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
+      reviewCompletion: 'review-completion-contract',
     }),
   }),
   mcpBodyCap: Object.freeze({

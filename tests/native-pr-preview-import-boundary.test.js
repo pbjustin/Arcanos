@@ -46,6 +46,18 @@ const STORYLINE_SHARED_URL = new URL(
   '../src/shared/backstage/backstageStoryline.ts',
   import.meta.url
 );
+const BACKSTAGE_REVIEW_CONTRACT_URL = new URL(
+  '../src/shared/backstage/backstageReviewContract.ts',
+  import.meta.url
+);
+const TRINITY_DIRECT_ANSWER_MODE_URL = new URL(
+  '../src/core/logic/trinityDirectAnswerMode.ts',
+  import.meta.url
+);
+const DIRECT_ANSWER_MODE_URL = new URL(
+  '../src/services/directAnswerMode.ts',
+  import.meta.url
+);
 const MCP_HTTP_BODY_PARSER_CORE_URL = new URL(
   '../src/mcp/httpBodyParserCore.ts',
   import.meta.url
@@ -100,6 +112,21 @@ async function readStorylineRepositorySource() {
 
 async function readStorylineSharedSource() {
   return (await readFile(STORYLINE_SHARED_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageReviewContractSource() {
+  return (await readFile(BACKSTAGE_REVIEW_CONTRACT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readTrinityDirectAnswerModeSource() {
+  return (await readFile(TRINITY_DIRECT_ANSWER_MODE_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readDirectAnswerModeSource() {
+  return (await readFile(DIRECT_ANSWER_MODE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -213,6 +240,70 @@ describe('native PR preview import boundary', () => {
     )).toEqual(expect.arrayContaining([
       expect.stringContaining('critical entry file semantic digest'),
     ]));
+  });
+
+  it('admits and pins only the pure Backstage review completion seam', async () => {
+    const reviewedFiles = [
+      'src/core/logic/trinityDirectAnswerMode.ts',
+      'src/services/directAnswerMode.ts',
+      'src/shared/backstage/backstageReviewContract.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/services/backstage-booker.ts',
+        'src/services/openai.ts',
+        'src/core/logic/trinityWritingPipeline.ts',
+      ])
+    );
+
+    const sources = [
+      await readTrinityDirectAnswerModeSource(),
+      await readDirectAnswerModeSource(),
+      await readBackstageReviewContractSource(),
+    ];
+    for (let index = 0; index < reviewedFiles.length; index += 1) {
+      expect(findUnsafeRuntimeSyntax(
+        reviewedFiles[index],
+        sources[index]
+      )).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        reviewedFiles[0],
+        replaceRequired(
+          sources[0],
+          "export const TRINITY_DIRECT_ANSWER_STAGE = 'ARCANOS-DIRECT-ANSWER';",
+          "export const TRINITY_DIRECT_ANSWER_STAGE = 'ARCANOS-DIRECT-ANSWER-DRIFT';"
+        ),
+      ],
+      [
+        reviewedFiles[1],
+        replaceRequired(
+          sources[1],
+          "  | 'simple_informational_prompt';",
+          "  | 'simple_informational_prompt' | 'preview_drift';"
+        ),
+      ],
+      [
+        reviewedFiles[2],
+        replaceRequired(
+          sources[2],
+          'export const BACKSTAGE_REVIEW_BULLET_COUNT = 6;',
+          'export const BACKSTAGE_REVIEW_BULLET_COUNT = 7;'
+        ),
+      ],
+    ];
+    for (const [filePath, driftedSource] of semanticDrifts) {
+      expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
   });
 
   it('pins the central Research helper and its one reviewed Reflect read', async () => {

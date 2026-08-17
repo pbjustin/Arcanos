@@ -37,6 +37,7 @@ export interface NativePrPreviewE2eContract {
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
+      reviewCompletion: 'review-completion-contract';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{

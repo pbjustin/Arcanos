@@ -15,6 +15,10 @@ import {
   applyBackstageStorylineMutation,
 } from './core/db/repositories/backstageStorylineRepository.js';
 import {
+  applyTrinityDirectAnswerOutputContract,
+  parseTrinityDirectAnswerOutputContract,
+} from './core/logic/trinityDirectAnswerMode.js';
+import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
@@ -68,6 +72,13 @@ import {
   resolveBackstageGenerationStageTimeoutMs,
   resolveBackstageGptAction,
 } from './shared/backstage/backstageActionPolicy.js';
+import {
+  applyBackstageReviewOutputContract,
+  buildBackstageReviewResponseStyleInstruction,
+  inspectBackstageReviewClassification,
+  resolveBoundedBackstageReviewTokenLimit,
+  shouldUseBoundedBackstageReviewMode,
+} from './shared/backstage/backstageReviewContract.js';
 import {
   isHRCResultCacheable,
   markHRCResultNonCacheableForAbort,
@@ -163,6 +174,48 @@ const RESEARCH_CANCELLATION_DRAIN_DELAY_MS = 50;
 const BACKSTAGE_SYNTHETIC_PROVIDER_DELAY_MS = 13_250;
 const BACKSTAGE_SYNTHETIC_HRC_TIMEOUT_MS = 25;
 const BACKSTAGE_SYNTHETIC_HRC_DELAY_MS = 50;
+const BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS = 128;
+const BACKSTAGE_REVIEW_CAVEAT_OUTPUT = [
+  "1. I can't verify current external state here without live access. Overall verdict: the card delivered a disciplined escalation.",
+  '2. Match results: Alpha winner preserved the planned hierarchy.',
+  '3. Promos and segments: Bravo segment sharpened the central conflict.',
+  '4. Rivalry continuity: Charlie thread honored the established canon.',
+  '5. Pacing and structure: Delta transition kept the second hour moving.',
+  '6. Remaining matches: Echo finish should determine the next branch.',
+].join('\n');
+const BACKSTAGE_REVIEW_COLLAPSED_CAVEAT_OUTPUT = [
+  "1. I can't verify current external state here without live access.",
+  '2. Match results: Alpha winner preserved the planned hierarchy.',
+  '3. Promos and segments: Bravo segment sharpened the central conflict.',
+  '4. Rivalry continuity: Charlie thread honored the established canon.',
+  '5. Pacing and structure: Delta transition kept the second hour moving.',
+  '6. Remaining matches: Echo finish should determine the next branch.',
+].join('\n');
+const BACKSTAGE_REVIEW_MARKDOWN_OUTPUT = [
+  '1. The card has a coherent through-line.',
+  '2. The results preserve the planned hierarchy.',
+  '3. The promos sharpen the central conflict.',
+  '4. The rivalries honor established continuity.',
+  '5. The pacing builds toward the closing stretch.',
+  '6. The unfinished matches should determine the next branch.',
+].join('\n');
+const BACKSTAGE_REVIEW_INITIALS_OUTPUT =
+  '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.';
+const BACKSTAGE_REVIEW_SINGLE_INITIAL_OUTPUT =
+  '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.';
+const BACKSTAGE_REVIEW_STYLE_INSTRUCTION = [
+  'Return exactly 6 top-level numbered bullets:',
+  '1. Overall verdict and the show\'s strongest through-line.',
+  '2. Match results and ratings that most affected the show.',
+  '3. Promos, headcanon, and non-match segments that mattered most.',
+  '4. Rivalry development and continuity strengths or problems.',
+  '5. Pacing, booking logic, and the highest-value correction.',
+  '6. The remaining matches and the best next step.',
+  'Use no more than two concise sentences per bullet.',
+  'No preamble, headings, sub-bullets, alternative full card, conclusion, or production-notes appendix.',
+  'Synthesize instead of recapping: do not re-list the supplied show state, results, ratings, or segments.',
+  'Treat matches identified as still to come as unresolved; never invent their results.',
+].join('\n');
 const RESEARCH_CANCELLATION_STAGES = [
   'dns',
   'fetch',
@@ -1510,6 +1563,7 @@ async function runBackstageRouteBudgetFixture(
   });
   if (
     trinityRunOptions.answerMode !== 'direct'
+    || trinityRunOptions.internalMode !== false
     || trinityRunOptions.strictUserVisibleOutput !== true
     || trinityRunOptions.directAnswerModelOverride
       !== 'native-pr-preview-synthetic'
@@ -1690,6 +1744,278 @@ async function runBackstageHrcRetryCacheFixture(
   };
 }
 
+function runBackstageReviewCompletionFixture(
+  fixture: string
+): Record<string, unknown> {
+  const fullReviewPrompt =
+    'BACKEND REVIEW REQUEST: Please briefly review this completed Raw card using current external events.';
+  const namedEventReviewPrompts = [
+    'Review the WrestleMania card.',
+    'Review this "completed" show.',
+    "Review this 'completed' show.",
+    'Review the "WrestleMania" card.',
+    'Review the WrestleMania card overall.',
+    'Review the WrestleMania card in three bullets.',
+    'Give me feedback on this WrestleMania card.',
+    'Review this Full Gear show.',
+    'Review this Full Gear show in six bullets.',
+    'Review SummerSlam.',
+    'Review SummerSlam tonight.',
+  ];
+  const narrowNamedEventReviewPrompts = [
+    'Evaluate the WrestleMania main event.',
+    'Review the Full Gear main-event finish.',
+    'Review BodySlam.',
+  ];
+  const balancedQuotedDirectivePrompts = [
+    "Review this completed Raw card. 'Recorded dialogue. Rebook the main event,' Punk said.",
+    "Review this completed Raw card. 'Plans' remain recorded. 'Rebook the main event,' Punk said.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. ‘Rebook the main event,’ Punk said.',
+  ];
+  const balancedPostQuoteRebookPrompts = [
+    "Review this completed Raw card. 'Recorded dialogue.' Rebook the main event.",
+    "Review this completed Raw card. 'Plans' remain recorded. Rebook the actual main event. 'More state' follows.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. Rebook the actual main event. ‘More state’ follows.',
+  ];
+  const straightPluralAttributedPrompt = [
+    "Analyze Cody's title reign on Raw.",
+    "'The wrestlers' agreement matters. Review this completed show before judging it,' Punk said.",
+  ].join('\n');
+  const unmatchedQuoteRebookPrompts = [
+    "Review this completed Raw card. 'Recorded dialogue is missing its close. Rebook the main event.",
+    'Review this completed Raw card. “Recorded dialogue is missing its close. Rebook the main event.',
+  ];
+  const asciiQuotedDirectivePrompt =
+    "Review this completed Raw card. 'A'B spoke. Rebook the main event,' Punk said.";
+  const astralQuotedDirectivePrompt =
+    "Review this completed Raw card. '\u{1D400}'\u{1D401} spoke. Rebook the main event,' Punk said.";
+  const asciiContractions = Array.from(
+    { length: BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS },
+    () => "we can't infer another result"
+  ).join(' ');
+  const curlyContractions = Array.from(
+    { length: BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS },
+    () => 'we can’t infer another result'
+  ).join(' ');
+  const quotedContractionState = [
+    `'${asciiContractions}. Review this show before booking it,' Punk said.`,
+    `‘${curlyContractions}. Rebook the main event,’ Punk said.`,
+  ].join('\n');
+  const quoteDiagnostics = inspectBackstageReviewClassification(
+    quotedContractionState
+  );
+  const asciiQuoteDiagnostics = inspectBackstageReviewClassification(
+    asciiQuotedDirectivePrompt
+  );
+  const astralQuoteDiagnostics = inspectBackstageReviewClassification(
+    astralQuotedDirectivePrompt
+  );
+  const namedEventTokenLimit = resolveBoundedBackstageReviewTokenLimit(
+    namedEventReviewPrompts[0] ?? '',
+    2_400
+  );
+  const classification = {
+    astralQuotedDirectiveParity:
+      asciiQuoteDiagnostics.boundedReviewMode
+      && astralQuoteDiagnostics.boundedReviewMode
+      && asciiQuoteDiagnostics.quoteLookaheadScans
+        === astralQuoteDiagnostics.quoteLookaheadScans
+      && resolveBoundedBackstageReviewTokenLimit(
+        astralQuotedDirectivePrompt,
+        2_400
+      ) === 1_600,
+    balancedPostQuoteRebookOrdinary:
+      balancedPostQuoteRebookPrompts.every(prompt =>
+        !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+      ),
+    balancedQuotedDirectiveIgnored: balancedQuotedDirectivePrompts.every(
+      prompt => shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === 1_600
+    ),
+    fullReviewBounded: shouldUseBoundedBackstageReviewMode(
+      fullReviewPrompt
+    ),
+    politeReviewBounded: shouldUseBoundedBackstageReviewMode(
+      'I want your assessment.'
+    ),
+    mixedCreativeOrdinary: !shouldUseBoundedBackstageReviewMode(
+      "Review this show, but I'd also like you to rebook the unfinished main event."
+    ),
+    narrowAnalysisOrdinary: !shouldUseBoundedBackstageReviewMode(
+      "Analyze Cody's title reign on Raw."
+    ),
+    namedEventReviewsBounded: namedEventReviewPrompts.every(prompt =>
+      shouldUseBoundedBackstageReviewMode(prompt)
+      && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === 1_600
+    ),
+    narrowNamedEventReviewsOrdinary: narrowNamedEventReviewPrompts.every(
+      prompt => !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+    ),
+    quotedContractionsIgnored:
+      !quoteDiagnostics.boundedReviewMode
+      && !shouldUseBoundedBackstageReviewMode(straightPluralAttributedPrompt)
+      && resolveBoundedBackstageReviewTokenLimit(
+        straightPluralAttributedPrompt,
+        2_400
+      ) === null,
+    stateFieldsIgnored: shouldUseBoundedBackstageReviewMode([
+      'Review this completed Raw card.',
+      'Booking Notes: Cody stays strong.',
+      'Finish Type: pinfall.',
+    ].join('\n')),
+    explicitRebookDirectiveOrdinary: !shouldUseBoundedBackstageReviewMode([
+      'Review this completed Raw card.',
+      'Rebook: Cody beats Gunther.',
+    ].join('\n')),
+    unmatchedQuoteRebookOrdinary: unmatchedQuoteRebookPrompts.every(
+      prompt => !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+    ),
+  };
+
+  const reviewTokenLimit = resolveBoundedBackstageReviewTokenLimit(
+    fullReviewPrompt,
+    2_400
+  );
+  const reviewStyleInstruction = buildBackstageReviewResponseStyleInstruction();
+  const authoritativeReviewPrompt = [
+    '<<BOOKING_DIRECTIVE>>\nReview this completed Raw card in three bullets.',
+    `<<RESPONSE_STYLE>>\n${reviewStyleInstruction}`,
+    'Complete the six-bullet review and stop after bullet 6.',
+  ].join('\n\n');
+  const authoritativeReviewContract = parseTrinityDirectAnswerOutputContract(
+    authoritativeReviewPrompt
+  );
+  const authoritativeReview = applyBackstageReviewOutputContract(
+    applyTrinityDirectAnswerOutputContract(
+      BACKSTAGE_REVIEW_MARKDOWN_OUTPUT,
+      authoritativeReviewPrompt
+    )
+  );
+
+  const trinityReview = applyTrinityDirectAnswerOutputContract([
+    "I can't verify current external state here without live access. **1. Overall verdict: the card delivered a disciplined escalation.**",
+    '**2. Match results: Alpha winner preserved the planned hierarchy.**',
+    '__3) Promos and segments: Bravo segment sharpened the central conflict.__',
+    '**4. Rivalry continuity: Charlie thread honored the established canon.**',
+    '__5) Pacing and structure: Delta transition kept the second hour moving.__',
+    '**6. Remaining matches: Echo finish should determine the next branch.**',
+  ].join('\n'), 'Answer directly in six numbered bullets.');
+  const caveatReview = applyBackstageReviewOutputContract(trinityReview);
+  const collapsedTrinityReview = applyTrinityDirectAnswerOutputContract(
+    [
+      "I can't verify current external state here without live access.",
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.',
+    ].join(' '),
+    'Answer directly in six numbered bullets.'
+  );
+  const collapsedCaveatReview = applyBackstageReviewOutputContract(
+    collapsedTrinityReview
+  );
+  const markdownReview = applyBackstageReviewOutputContract([
+    '**1. The card has a coherent through-line.**',
+    '__2) The results preserve the planned hierarchy.__',
+    '**3. The promos sharpen the central conflict.**',
+    '__4) The rivalries honor established continuity.__',
+    '**5. The pacing builds toward the closing stretch.**',
+    '__6) The unfinished matches should determine the next branch.__',
+  ].join('\n'));
+  const initialsReview = applyBackstageReviewOutputContract(
+    '1) J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud. This third sentence must be removed.'
+  );
+  const singleInitialReview = applyBackstageReviewOutputContract(
+    '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud. This overflow sentence should be removed.'
+  );
+  const outlineLabelReview = applyBackstageReviewOutputContract([
+    '1. Option A. Then continue. Third removed.',
+    '2. option B. Next continue. Third removed.',
+    '3. Segment A. Continue the feud. Third removed.',
+    '4. Point A. Continue the feud. Third removed.',
+    '5. Section A. Continue the feud. Third removed.',
+    '6. Item A. Continue the feud. Third removed.',
+  ].join('\n'));
+  const leadingOutlineLabelReview = applyBackstageReviewOutputContract([
+    '1. A. Continue the feud. Third removed.',
+    '2. B. Next continue. Third removed.',
+  ].join('\n'));
+  const contracts = {
+    authoritativeSixBulletOverride:
+      authoritativeReviewContract?.requestedBulletCount === 6
+      && authoritativeReview === BACKSTAGE_REVIEW_MARKDOWN_OUTPUT
+      && authoritativeReview.split('\n').length === 6,
+    trinityDirectAnswer: trinityReview === BACKSTAGE_REVIEW_CAVEAT_OUTPUT,
+    trinityCollapsedDirectAnswer:
+      collapsedTrinityReview === BACKSTAGE_REVIEW_COLLAPSED_CAVEAT_OUTPUT,
+    backstageCaveatReview: caveatReview === BACKSTAGE_REVIEW_CAVEAT_OUTPUT,
+    backstageCollapsedCaveatReview:
+      collapsedCaveatReview === BACKSTAGE_REVIEW_COLLAPSED_CAVEAT_OUTPUT,
+    backstageMarkdownReview: markdownReview === BACKSTAGE_REVIEW_MARKDOWN_OUTPUT,
+    backstageInitialsReview: initialsReview === BACKSTAGE_REVIEW_INITIALS_OUTPUT,
+    backstageSingleInitialReview:
+      singleInitialReview === BACKSTAGE_REVIEW_SINGLE_INITIAL_OUTPUT
+      && outlineLabelReview === [
+        '1. Option A. Then continue.',
+        '2. option B. Next continue.',
+        '3. Segment A. Continue the feud.',
+        '4. Point A. Continue the feud.',
+        '5. Section A. Continue the feud.',
+        '6. Item A. Continue the feud.',
+      ].join('\n')
+      && leadingOutlineLabelReview === [
+        '1. A. Continue the feud.',
+        '2. B. Next continue.',
+      ].join('\n'),
+    reviewStyleInstruction:
+      reviewStyleInstruction === BACKSTAGE_REVIEW_STYLE_INSTRUCTION,
+    reviewTokenLimit: reviewTokenLimit === 1_600,
+    quotedContractionWorkBound: quoteDiagnostics.quoteLookaheadScans === 4,
+  };
+  if (
+    Object.values(classification).some(value => !value)
+    || Object.values(contracts).some(value => !value)
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_REVIEW_COMPLETION_CONTRACT_INVALID');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    classification,
+    contracts,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    normalization: {
+      authoritativeReviewBulletCount: authoritativeReview.split('\n').length,
+      caveatReview,
+      collapsedCaveatReview,
+      initialsReview,
+      markdownReview,
+      numberedBulletCount: caveatReview.split('\n').length,
+      quotedContractionCount: BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS * 2,
+      quoteLookaheadScans: quoteDiagnostics.quoteLookaheadScans,
+      singleInitialReview,
+    },
+    policy: {
+      authoritativeBulletCount:
+        authoritativeReviewContract?.requestedBulletCount ?? null,
+      namedEventTokenLimit,
+      responseStyleInstruction: reviewStyleInstruction,
+      tokenLimit: reviewTokenLimit,
+    },
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+  };
+}
+
 async function runBackstageGenerationFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -1699,6 +2025,8 @@ async function runBackstageGenerationFixture(
       return runBackstageRouteBudgetFixture(fixture);
     case fixtures.hrcRetryCache:
       return runBackstageHrcRetryCacheFixture(fixture);
+    case fixtures.reviewCompletion:
+      return runBackstageReviewCompletionFixture(fixture);
     default:
       throw new Error('PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID');
   }
