@@ -1772,14 +1772,14 @@ router.all(
   `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/:universeId`,
   requireBackstageBookerAccessAuthentication,
   (req, res) => {
-    res.setHeader('Allow', 'GET');
+    res.setHeader('Allow', 'GET, HEAD');
     sendGptAccessResult(res, {
       statusCode: 405,
       payload: {
         ok: false,
         error: {
           code: 'METHOD_NOT_ALLOWED',
-          message: 'This Backstage universe endpoint supports GET only.',
+          message: 'This Backstage universe endpoint supports GET and HEAD only.',
         },
         ...(req.requestId ? { requestId: req.requestId } : {}),
         ...(req.traceId ? { traceId: req.traceId } : {}),

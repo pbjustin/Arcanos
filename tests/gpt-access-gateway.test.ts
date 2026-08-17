@@ -3360,6 +3360,25 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('supports an authenticated HEAD request for one exact Backstage universe', async () => {
+    readBackstageUniverseMock.mockResolvedValueOnce(
+      buildBackstageUniverseReadResult()
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).head(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers.allow).toBeUndefined();
+    expect(readBackstageUniverseMock).toHaveBeenCalledTimes(1);
+    expect(readBackstageUniverseMock).toHaveBeenCalledWith('my-universe-2k26');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('returns a successful empty snapshot because no universe registry exists', async () => {
     readBackstageUniverseMock.mockResolvedValueOnce(
       buildBackstageUniverseReadResult('empty-universe', false)
@@ -3462,8 +3481,11 @@ describe('/gpt-access gateway', () => {
 
     expect(listResponse.status).toBe(404);
     expect(methodResponse.status).toBe(405);
-    expect(methodResponse.headers.allow).toBe('GET');
-    expect(methodResponse.body.error.code).toBe('METHOD_NOT_ALLOWED');
+    expect(methodResponse.headers.allow).toBe('GET, HEAD');
+    expect(methodResponse.body.error).toEqual({
+      code: 'METHOD_NOT_ALLOWED',
+      message: 'This Backstage universe endpoint supports GET and HEAD only.',
+    });
     expect(readBackstageUniverseMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
