@@ -99,6 +99,7 @@ describe('backstage-booker generateBooking', () => {
         client: expect.anything(),
         runOptions: expect.objectContaining({
           answerMode: 'direct',
+          internalMode: false,
           strictUserVisibleOutput: true,
           directAnswerModelOverride: 'gpt-5.1-test',
           directAnswerTokenLimitOverride: 2400,
@@ -108,6 +109,132 @@ describe('backstage-booker generateBooking', () => {
         }),
       }),
     });
+  });
+
+  it('uses a bounded synthesis contract for a full-show review', async () => {
+    const prompt = [
+      'Review this completed portion of Raw and preserve the established continuity.',
+      ...Array.from(
+        { length: 24 },
+        (_, index) => `Match ${index + 1}: recorded result, rating, rivalry development, and headcanon segment ${index + 1}.`
+      ),
+      'Punk closed his promo with: "Book the match and write the next chapter."',
+      'CM Punk delivered his promo. Becky Lynch vs. Lyra Valkyria and the main event are still to come.'
+    ].join('\n');
+
+    await expect(generateBooking(prompt)).resolves.toBe('1. Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Return exactly 6 top-level numbered bullets:'),
+        tokenLimit: 1600,
+        body: expect.objectContaining({ tokenLimit: 1600 })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 1600,
+          directAnswerTokenCapOverride: 2400
+        })
+      })
+    }));
+    const dispatchedPrompt = (mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(dispatchedPrompt).toContain('Synthesize instead of recapping');
+    expect(dispatchedPrompt).toContain('never invent their results');
+    expect(dispatchedPrompt).toContain('Complete the six-bullet review and stop after bullet 6.');
+    expect(dispatchedPrompt).not.toContain('Open with a quick human check-in or gut reaction');
+    expect(dispatchedPrompt).not.toContain('Highlight consequences, momentum shifts');
+  });
+
+  it.each([
+    'Write a concise review of this card.',
+    'Generate an assessment of Raw so far.',
+    'Provide an evaluation of this booking.',
+    'Rate this show and generate a score.',
+    'Answer directly. Review this complete card and keep unfinished matches unresolved.',
+    'Answer directly.\nReview this complete card and keep unfinished matches unresolved.',
+    'BACKEND REVIEW REQUEST:\nReview this completed Raw card and preserve continuity.'
+  ])('recognizes an explicit review request without confusing it for creative generation: %s', async prompt => {
+    await expect(generateBooking(prompt)).resolves.toBe('1. Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Return exactly 6 top-level numbered bullets:'),
+        tokenLimit: 1_600
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          internalMode: false,
+          directAnswerTokenLimitOverride: 1_600
+        })
+      })
+    }));
+  });
+
+  it.each([
+    'Review this show and book Becky Lynch vs. Lyra Valkyria next.',
+    'Review this show, rebook Becky Lynch vs. Lyra Valkyria next.',
+    'Review this show: rewrite the unfinished main event.',
+    'Review this show / draft a different closing angle.',
+    'Book Becky Lynch vs. Lyra Valkyria next.\nSegment title: The Review',
+    'Continue the current booking.\nPunk asked everyone to evaluate the champion.',
+    'Continue the current booking.\nReview: 4/5',
+    'Continue the current booking.\n"Review the match before you judge it," Punk said.'
+  ])('keeps creative or state-only review language on ordinary booking mode: %s', async prompt => {
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Open with a quick human check-in or gut reaction'),
+        tokenLimit: 2_400
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 2_400
+        })
+      })
+    }));
+  });
+
+  it('removes review preambles, extra bullets, and sentences beyond the review contract', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        'Quick gut check: the show has a clear spine.',
+        '',
+        '## Full review',
+        '1) A.J. Styles retained the U.S. title vs. Cody Rhodes. Punk anchors the show. A third sentence must be removed.',
+        '2) The results protect the right wrestlers. The ratings support the hierarchy.',
+        '3) The promo work advances the central conflict. The headcanon segments add connective tissue.',
+        '4) The rivalries remain coherent. One transition needs a cleaner motivation.',
+        '5) The pacing builds steadily. Move one recap earlier.',
+        '6) Becky vs. Lyra remains unresolved. Let the match determine the next branch.',
+        '7) This overflow bullet must be removed.'
+      ].join('\n')
+    });
+
+    await expect(
+      generateBooking('Review and assess the completed show state; two matches are still to come.')
+    ).resolves.toBe([
+      '1. A.J. Styles retained the U.S. title vs. Cody Rhodes. Punk anchors the show.',
+      '2. The results protect the right wrestlers. The ratings support the hierarchy.',
+      '3. The promo work advances the central conflict. The headcanon segments add connective tissue.',
+      '4. The rivalries remain coherent. One transition needs a cleaner motivation.',
+      '5. The pacing builds steadily. Move one recap earlier.',
+      '6. Becky vs. Lyra remains unresolved. Let the match determine the next branch.'
+    ].join('\n'));
+  });
+
+  it('normalizes an unnumbered review into bounded numbered prose groups', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: 'Quick gut check: The show has a coherent spine. Punk gives it urgency. The unfinished matches should remain unresolved.'
+    });
+
+    await expect(generateBooking('Assess this show so far.')).resolves.toBe([
+      '1. The show has a coherent spine. Punk gives it urgency.',
+      '2. The unfinished matches should remain unresolved.'
+    ].join('\n'));
   });
 
   it('caps an oversized Booker generation stage timeout below the module deadline', async () => {

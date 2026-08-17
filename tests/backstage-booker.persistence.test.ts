@@ -302,6 +302,26 @@ describe('Backstage Booker service persistence outcomes', () => {
   });
 
   it('bounds the HRC follow-up after a generated booking', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: [
+        'Quick gut check: this preamble must be removed.',
+        '1. The overall verdict is positive. Punk supplies the through-line. This sentence is extra.',
+        '2. The results establish a clear hierarchy. The ratings support it.',
+        '3. The promos advance the central conflict. The segments add connective tissue.',
+        '4. The rivalries remain coherent. One transition needs motivation.',
+        '5. The pacing builds steadily. Move one recap earlier.',
+        '6. Becky vs. Lyra remains unresolved. Let the match determine the next branch.',
+        '7. This overflow bullet must be removed.'
+      ].join('\n')
+    });
+    const expectedStoryline = [
+      '1. The overall verdict is positive. Punk supplies the through-line.',
+      '2. The results establish a clear hierarchy. The ratings support it.',
+      '3. The promos advance the central conflict. The segments add connective tissue.',
+      '4. The rivalries remain coherent. One transition needs motivation.',
+      '5. The pacing builds steadily. Move one recap earlier.',
+      '6. Becky vs. Lyra remains unresolved. Let the match determine the next branch.'
+    ].join('\n');
     const result = await BackstageBookerModule.actions.generateBookingWithHRC({
       universeId: 'hrc-timeout-universe',
       prompt: 'Review the complete Raw card.'
@@ -309,16 +329,48 @@ describe('Backstage Booker service persistence outcomes', () => {
 
     expect(result).toEqual({
       universeId: 'hrc-timeout-universe',
-      storyline: 'Generated booking',
+      storyline: expectedStoryline,
       hrc: {
         fidelity: 1,
         resilience: 1,
         verdict: 'PASS'
       }
     });
-    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('Generated booking', {
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        tokenLimit: 1_600,
+        body: expect.objectContaining({ tokenLimit: 1_600 })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          internalMode: false,
+          directAnswerTokenLimitOverride: 1_600,
+          directAnswerTokenCapOverride: 2_400
+        })
+      })
+    }));
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith(expectedStoryline, {
       timeoutMs: 10_000
     });
+    expect(mockRunTrinityWritingPipeline.mock.invocationCallOrder[0]).toBeLessThan(
+      mockEvaluateWithHRC.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
+  });
+
+  it('does not start HRC when bounded review generation fails', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('provider output incomplete'));
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      BackstageBookerModule.actions.generateBookingWithHRC({
+        universeId: 'hrc-generation-failure-universe',
+        prompt: 'Assess the complete Raw card.'
+      })
+    ).rejects.toThrow('Booking generation failed');
+
+    expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 
   it('preserves a raw top-level event field through the module action adapter', async () => {

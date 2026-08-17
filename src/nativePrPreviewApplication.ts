@@ -1510,6 +1510,7 @@ async function runBackstageRouteBudgetFixture(
   });
   if (
     trinityRunOptions.answerMode !== 'direct'
+    || trinityRunOptions.internalMode !== false
     || trinityRunOptions.strictUserVisibleOutput !== true
     || trinityRunOptions.directAnswerModelOverride
       !== 'native-pr-preview-synthetic'

@@ -133,6 +133,26 @@ interface BackstageDirectAnswerOutputContract {
   requiresShortBullets: boolean;
 }
 
+const BACKSTAGE_REVIEW_TOKEN_LIMIT_MAX = 1_600;
+const BACKSTAGE_REVIEW_BULLET_COUNT = 6;
+const BACKSTAGE_REVIEW_REQUEST_VERB_PATTERN =
+  /^(?:review|critique|assess|evaluate|analy[sz]e|rate|grade)\b/i;
+const BACKSTAGE_REVIEW_NOUN_PATTERN =
+  /^(?:me\s+)?(?:(?:a|an|the|this|my|our)\s+)?(?:(?:brief|concise|critical|detailed|full|honest|new|short)\s+)*(?:review|critique|assessment|evaluation|analysis|rating|grade|score|feedback|recommendation)\b/i;
+const BACKSTAGE_CREATIVE_REQUEST_VERB_PATTERN =
+  /^(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b/i;
+const BACKSTAGE_REQUEST_PREFIX_PATTERN =
+  /^(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to\s+)/i;
+const BACKSTAGE_DIRECT_STYLE_CLAUSE_PATTERN =
+  /^(?:(?:answer|respond|reply|say)\s+directly|just\s+answer|(?:do\s+not|don't|no|without)\s+(?:simulate|simulation|role-?play|pretend)|no\s+hypothetical(?:\s+runs?)?|hypothetical\s+run)\b/i;
+const BACKSTAGE_DIRECTIVE_HEADING_PATTERN =
+  /^(?:#{1,6}\s*)?(?:(?:backend|backstage|booker|booking|show)\s+)*(?:review\s+)?(?:request|directive|task|instructions?)\s*:?$/i;
+const BACKSTAGE_STATE_FIELD_PATTERN = /^(?:review|rating|score)\s*:/i;
+const BACKSTAGE_REQUEST_CLAUSE_SEPARATOR_PATTERN =
+  /(?:[.!?;]\s+|\s+(?:and\s+then|and|then|also)\s+|[,/:]\s+(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b))/i;
+const BACKSTAGE_REVIEW_ABBREVIATION_PATTERN =
+  /\b(?:[a-z]\.){2,}|\b(?:dr|mr|mrs|ms|no|prof|sr|jr|st|vs)\./gi;
+
 interface EventData {
   [key: string]: unknown;
 }
@@ -894,20 +914,20 @@ function collectTopLevelListItems(text: string): string[] {
       continue;
     }
 
-    const isTopLevelItem = indentation <= 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
-    const isNestedItem = indentation > 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
+    const isTopLevelItem = indentation <= 1 && /^(?:[-*]|\d+[.)])\s+/.test(trimmedLine);
+    const isNestedItem = indentation > 1 && /^(?:[-*]|\d+[.)])\s+/.test(trimmedLine);
 
     if (isTopLevelItem) {
       if (currentItem) {
         items.push(currentItem.trim());
       }
-      currentItem = trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '');
+      currentItem = trimmedLine.replace(/^(?:[-*]|\d+[.)])\s+/, '');
       continue;
     }
 
     if (currentItem) {
       const appendedLine = isNestedItem
-        ? trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '')
+        ? trimmedLine.replace(/^(?:[-*]|\d+[.)])\s+/, '')
         : trimmedLine;
       currentItem = `${currentItem} ${appendedLine}`.trim();
     }
@@ -965,10 +985,158 @@ function applyBackstageDirectAnswerOutputContract(
   return stripBackstageDirectAnswerPreamblePrefix(stripMarkdownFormatting(output));
 }
 
+function shouldUseBoundedBackstageReviewMode(prompt: string): boolean {
+  const normalizedPrompt = prompt.trim();
+  if (!normalizedPrompt) {
+    return false;
+  }
+
+  const nonEmptyLines = normalizedPrompt
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const firstLine = nonEmptyLines[0] ?? '';
+  const secondLine = nonEmptyLines[1] ?? '';
+  const firstLineHasReviewRequest = firstLine
+    .split(BACKSTAGE_REQUEST_CLAUSE_SEPARATOR_PATTERN)
+    .map(normalizeBackstageRequestClause)
+    .some(isBackstageReviewRequestClause);
+  const secondLineContinuesDirective = /^(?:and|then|also)\b/i.test(secondLine);
+  const firstLineIsDirectiveHeading = BACKSTAGE_DIRECTIVE_HEADING_PATTERN.test(firstLine);
+  const firstLineIsDirectStyleOnly = BACKSTAGE_DIRECT_STYLE_CLAUSE_PATTERN.test(firstLine)
+    && !firstLineHasReviewRequest;
+  const leadingScope = secondLine && (firstLineIsDirectiveHeading || firstLineIsDirectStyleOnly)
+    ? secondLine
+    : secondLine && secondLineContinuesDirective
+      ? `${firstLine} ${secondLine}`
+      : firstLine;
+  const trailingScope = nonEmptyLines.at(-1) ?? '';
+  const scopes = trailingScope && trailingScope !== leadingScope
+    ? [leadingScope, trailingScope]
+    : [leadingScope];
+
+  for (const scope of scopes) {
+    const clauses = scope
+      .split(BACKSTAGE_REQUEST_CLAUSE_SEPARATOR_PATTERN)
+      .map(normalizeBackstageRequestClause)
+      .filter(Boolean)
+      .slice(0, 6);
+    const hasReviewRequest = clauses.some(isBackstageReviewRequestClause);
+    if (!hasReviewRequest) {
+      if (scope === leadingScope && clauses.some(isBackstageCreativeRequestClause)) {
+        return false;
+      }
+      continue;
+    }
+
+    return !clauses.some(isBackstageCreativeRequestClause);
+  }
+
+  return false;
+}
+
+function normalizeBackstageRequestClause(value: string): string {
+  let normalized = value.trim().replace(/^["'([{]+/, '').trim();
+  while (BACKSTAGE_REQUEST_PREFIX_PATTERN.test(normalized)) {
+    normalized = normalized.replace(BACKSTAGE_REQUEST_PREFIX_PATTERN, '').trim();
+  }
+  return normalized;
+}
+
+function isBackstageReviewRequestClause(clause: string): boolean {
+  if (
+    !clause
+    || BACKSTAGE_DIRECT_STYLE_CLAUSE_PATTERN.test(clause)
+    || BACKSTAGE_STATE_FIELD_PATTERN.test(clause)
+  ) {
+    return false;
+  }
+  const reviewVerbMatch = clause.match(BACKSTAGE_REVIEW_REQUEST_VERB_PATTERN);
+  if (reviewVerbMatch) {
+    return clause.slice(reviewVerbMatch[0].length).trim().length > 0;
+  }
+
+  const requestMatch = clause.match(/^(?:give|provide|write|generate|create|draft)\b(?<object>.*)$/i);
+  return BACKSTAGE_REVIEW_NOUN_PATTERN.test(requestMatch?.groups?.object?.trim() ?? '');
+}
+
+function isBackstageCreativeRequestClause(clause: string): boolean {
+  const requestMatch = clause.match(BACKSTAGE_CREATIVE_REQUEST_VERB_PATTERN);
+  if (!requestMatch) {
+    return false;
+  }
+
+  const verb = requestMatch[0].toLowerCase();
+  if (verb === 'book' || ['rebook', 'rewrite', 'redo', 'rework'].includes(verb)) {
+    return true;
+  }
+
+  const requestedObject = clause.slice(requestMatch[0].length).trim();
+  return !BACKSTAGE_REVIEW_NOUN_PATTERN.test(requestedObject);
+}
+
+function splitBackstageReviewSentences(value: string): string[] {
+  const protectedAbbreviations = value.replace(
+    BACKSTAGE_REVIEW_ABBREVIATION_PATTERN,
+    match => match.replace(/\./g, '\u0000')
+  );
+  return protectedAbbreviations
+    .split(/(?<=[.!?])\s+/)
+    .map(sentence => sentence.replace(/\u0000/g, '.').trim())
+    .filter(Boolean);
+}
+
+function compactBackstageReviewBulletItem(item: string): string {
+  const normalizedItem = stripBackstageDirectAnswerPreamblePrefix(
+    stripMarkdownFormatting(item)
+  );
+  const sentences = splitBackstageReviewSentences(normalizedItem);
+  return sentences.length > 2
+    ? sentences.slice(0, 2).join(' ')
+    : normalizedItem;
+}
+
+function applyBackstageReviewOutputContract(output: string): string {
+  let listItems = collectTopLevelListItems(output);
+  if (listItems.length === 0) {
+    const normalizedOutput = stripBackstageDirectAnswerPreamblePrefix(
+      stripMarkdownFormatting(output)
+    );
+    const proseSentences = splitBackstageReviewSentences(normalizedOutput)
+      .slice(0, BACKSTAGE_REVIEW_BULLET_COUNT * 2);
+    listItems = [];
+    for (let index = 0; index < proseSentences.length; index += 2) {
+      listItems.push(proseSentences.slice(index, index + 2).join(' '));
+    }
+  }
+
+  return listItems
+    .slice(0, BACKSTAGE_REVIEW_BULLET_COUNT)
+    .map((item, index) => `${index + 1}. ${compactBackstageReviewBulletItem(item)}`)
+    .join('\n');
+}
+
 function buildBackstageResponseStyleInstruction(
   directAnswerMode: boolean,
-  directAnswerContract: BackstageDirectAnswerOutputContract | null
+  directAnswerContract: BackstageDirectAnswerOutputContract | null,
+  boundedReviewMode: boolean
 ): string {
+  if (boundedReviewMode) {
+    return [
+      `Return exactly ${BACKSTAGE_REVIEW_BULLET_COUNT} top-level numbered bullets:`,
+      '1. Overall verdict and the show\'s strongest through-line.',
+      '2. Match results and ratings that most affected the show.',
+      '3. Promos, headcanon, and non-match segments that mattered most.',
+      '4. Rivalry development and continuity strengths or problems.',
+      '5. Pacing, booking logic, and the highest-value correction.',
+      '6. The remaining matches and the best next step.',
+      'Use no more than two concise sentences per bullet.',
+      'No preamble, headings, sub-bullets, alternative full card, conclusion, or production-notes appendix.',
+      'Synthesize instead of recapping: do not re-list the supplied show state, results, ratings, or segments.',
+      'Treat matches identified as still to come as unresolved; never invent their results.'
+    ].join('\n');
+  }
+
   if (!directAnswerMode) {
     return `${BOOKING_RESPONSE_GUIDELINES().trim()}${buildBackstageResponseStyleSuffix(false)}`;
   }
@@ -990,6 +1158,10 @@ function buildBackstageResponseStyleInstruction(
 }
 
 function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimit: number): number {
+  if (shouldUseBoundedBackstageReviewMode(prompt)) {
+    return Math.min(defaultTokenLimit, BACKSTAGE_REVIEW_TOKEN_LIMIT_MAX);
+  }
+
   if (!shouldPreferDirectAnswerMode(prompt)) {
     return defaultTokenLimit;
   }
@@ -1005,6 +1177,7 @@ function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimi
 
 async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<string> {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1102,10 +1275,12 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       `<<RECENT_EVENTS>>\n${eventsBlock}`,
       `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
       `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    return boundedReviewMode
+      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', (error as Error).message);
     const legacyState = readFallbackUniverseState(DEFAULT_BACKSTAGE_UNIVERSE_ID);
@@ -1125,10 +1300,12 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
       `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    return boundedReviewMode
+      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   }
 }
 
@@ -1154,6 +1331,7 @@ function buildBookingPrompt(
   canonBlocks: BackstageCanonPromptBlocks | null = null
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1173,10 +1351,12 @@ function buildBookingPrompt(
       : []),
     `<<RECENT_STORY_BEATS>>\n${blocks.storyBeats}`,
     `<<SAVED_STORYLINES>>\n${blocks.savedStorylines}`,
-    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
+    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
   ];
 
-  return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+  return boundedReviewMode
+    ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+    : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
 }
 
 function promptBlocksFromCanonContext(
@@ -2341,6 +2521,12 @@ export async function generateBooking(
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
+    if (shouldUseBoundedBackstageReviewMode(input.prompt)) {
+      return assertValidBackstageBookerActionData(
+        'generateBooking',
+        applyBackstageReviewOutputContract(clean)
+      ) as string;
+    }
     if (shouldPreferDirectAnswerMode(input.prompt)) {
       return assertValidBackstageBookerActionData(
         'generateBooking',

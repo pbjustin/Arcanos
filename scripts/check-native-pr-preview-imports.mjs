@@ -548,7 +548,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',
-    '95529240c102b1e2b63f11925da778c48c2f0e9ae55512623b5f96f9eb8ab7c4',
+    '022f1e9d77a92170792a769ff29dbd7df107a1bb5ff21e14d925f55e0ead2e61',
   ],
   [
     'src/shared/hrcEvaluationPolicy.ts',
