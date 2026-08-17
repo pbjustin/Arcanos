@@ -165,6 +165,18 @@ describe('backstage-booker generateBooking', () => {
     "Review last night's show.",
     'Review the WWE Raw show.',
     'Review Raw tonight.',
+    'Review the WrestleMania card.',
+    'Review this "completed" show.',
+    "Review this 'completed' show.",
+    'Review the "WrestleMania" card.',
+    'Review the WrestleMania card overall.',
+    'Review the WrestleMania card in three bullets.',
+    'Review this Full Gear show.',
+    'Review this Full Gear show in six bullets.',
+    'Review SummerSlam.',
+    'Review SummerSlam tonight.',
+    'Give me feedback on this WrestleMania card.',
+    'Review this completed Raw card in three bullets.',
     'Please briefly review this completed show.',
     'Please, briefly review this completed show.',
     'Kindly, review this completed show.',
@@ -185,7 +197,10 @@ describe('backstage-booker generateBooking', () => {
     'Review this completed Raw card.\nFinish Type: pinfall.',
     'Review this completed Raw card.\nBooking logic was conservative throughout.',
     'Review this completed Raw card.\nPromo: "Book/rebook the main event," Punk said.',
-    'Review this completed Raw card.\nRebook the unfinished main event, Punk suggested.'
+    'Review this completed Raw card.\nRebook the unfinished main event, Punk suggested.',
+    "Review this completed Raw card. 'Plans' remain recorded. 'Rebook the main event,' Punk said.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. ‘Rebook the main event,’ Punk said.',
+    "Review this completed Raw card. '\u{1D400}'\u{1D401} spoke. Rebook the main event,' Punk said."
   ])('recognizes an explicit review request without confusing it for creative generation: %s', async prompt => {
     await expect(generateBooking(prompt)).resolves.toBe('1. Rivalry matrix output');
 
@@ -241,6 +256,9 @@ describe('backstage-booker generateBooking', () => {
     'Evaluate if Cody should retain the title.',
     'Evaluate the Raw main-event finish.',
     'Evaluate the completed Raw main-event finish.',
+    'Evaluate the WrestleMania main event.',
+    'Review the Full Gear main-event finish.',
+    'Review BodySlam.',
     "Evaluate the completed Raw women's division.",
     'Evaluate the finish of this show.',
     "Analyze Cody's title reign on Raw.",
@@ -255,7 +273,18 @@ describe('backstage-booker generateBooking', () => {
     'Review the promo from this show.',
     'Generate an analysis of whether Cody should turn heel.',
     "Analyze Cody's title reign on Raw.\n‘The wrestlers’ agreement matters. Review this completed show before judging it,’ Punk said.",
+    "Analyze Cody's title reign on Raw.\n'The wrestlers' agreement matters. Review this completed show before judging it,' Punk said.",
     'Review this completed show.\n‘Good show’ was the verdict. I’d also like you to rebook the main event.',
+    "Review this completed Raw card. 'Recorded dialogue is missing its close. Rebook the main event.",
+    'Review this completed Raw card. “Recorded dialogue is missing its close. Rebook the main event.',
+    "Review this completed Raw card. 'Recorded dialogue.' Rebook the main event.",
+    "Review this completed Raw card. 'Recorded dialogue. Rebook the main event,' Punk said. Rebook the actual main event.",
+    "Review this completed Raw card. 'Plans' remain recorded. Rebook the actual main event. 'More state' follows.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. Rebook the actual main event. ‘More state’ follows.',
+    "Review this completed Raw card. 'Boss' remains recorded. Rebook the actual main event. 'More state' follows.",
+    "Review this completed show. 'Good results' then rebook the main event 'afterward'.",
+    'Review this completed show. ‘Good results’ then rebook the main event ‘afterward’.',
+    'Review this completed show. "Good results" then rebook the main event "afterward".',
     'Book Becky Lynch vs. Lyra Valkyria next.\nSegment title: The Review',
     'Continue the current booking.\nPunk asked everyone to evaluate the champion.',
     'Continue the current booking.\nReview: 4/5',
@@ -323,6 +352,56 @@ describe('backstage-booker generateBooking', () => {
       '4. The rivalries honor established continuity.',
       '5. The pacing builds toward the closing stretch.',
       '6. The unfinished matches should determine the next branch.'
+    ].join('\n'));
+  });
+
+  it('preserves two review sentences around single proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud. This third sentence must be removed.',
+        '2. J. Dillon backed the champion. His decision clarified the feud. This third sentence must be removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.',
+      '2. J. Dillon backed the champion. His decision clarified the feud.'
+    ].join('\n'));
+  });
+
+  it('does not protect structural outline labels as proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. Option A. Then continue. Third removed.',
+        '2. option B. Next continue. Third removed.',
+        '3. Segment A. Continue the feud. Third removed.',
+        '4. Point A. Continue the feud. Third removed.',
+        '5. Section A. Continue the feud. Third removed.',
+        '6. Item A. Continue the feud. Third removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. Option A. Then continue.',
+      '2. option B. Next continue.',
+      '3. Segment A. Continue the feud.',
+      '4. Point A. Continue the feud.',
+      '5. Section A. Continue the feud.',
+      '6. Item A. Continue the feud.'
+    ].join('\n'));
+  });
+
+  it('does not protect leading outline initials as proper-name initials', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '1. A. Continue the feud. Third removed.',
+        '2. B. Next continue. Third removed.'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. A. Continue the feud.',
+      '2. B. Next continue.'
     ].join('\n'));
   });
 

@@ -56,7 +56,7 @@ const BACKSTAGE_CREATIVE_STATE_FIELD_PATTERN =
 const BACKSTAGE_SCALAR_STATE_FIELD_PATTERN =
   /^draft\s*:\s*(?:complete|completed|final|false|pending|true|v?\d+(?:\.\d+)*)\b/i;
 const BACKSTAGE_ATTRIBUTED_DIALOGUE_PATTERN =
-  /,\s*(?:[\p{L}\p{N}][\p{L}\p{N}'’.-]*(?:\s+[\p{L}\p{N}][\p{L}\p{N}'’.-]*){0,2})\s+(?:asked|replied|said|suggested|told|wrote)\b[^.!?]*[.!?]?$/iu;
+  /,\s*["'”’)]?\s*(?:[\p{L}\p{N}][\p{L}\p{N}'’.-]*(?:\s+[\p{L}\p{N}][\p{L}\p{N}'’.-]*){0,2})\s+(?:asked|replied|said|suggested|told|wrote)\b[^.!?]*[.!?]?$/iu;
 const BACKSTAGE_FULL_REVIEW_STATE_TARGET_PATTERN = /^(?:show|booking)\s+state\b/i;
 const BACKSTAGE_FULL_REVIEW_CONTEXTUAL_TARGET_PATTERN =
   /^(?:this|that|my|our|current|completed?|complete|full|entire|supplied|recorded|the|a|an|this\s+week['’]s|last\s+night['’]s)\s+(?:(?:current|completed?|complete|full|entire|supplied|recorded|whole|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)-match|raw|smackdown|nxt|dynamite|collision)\s+){0,3}(?:show|card|episode|universe)\b/i;
@@ -70,15 +70,27 @@ const BACKSTAGE_FULL_REVIEW_COMPLETED_PORTION_PATTERN =
   /^(?:(?:this|that|the|my|our)\s+)?(?:completed?|complete)\s+(?:portion|part)\s+of\s+(?:raw|smackdown|nxt|dynamite|collision)\b/i;
 const BACKSTAGE_FULL_REVIEW_EVENT_PATTERN =
   /^(?:(?:this|that|the|completed?|complete|full|entire)\s+)?(?:premium\s+live\s+event|pay[- ]per[- ]view|ppv|ple)(?:\s+(?:show|card|event|so\s+far))?$/i;
+const BACKSTAGE_FULL_REVIEW_NAMED_CONTAINER_PATTERN =
+  /^(?:(?:this|that|the|my|our|current|completed?|complete|full|entire)\s+)?(?:[\p{L}\p{N}&'’.-]+\s+){1,8}(?:show|card|episode|event)(?:\s+(?:so\s+far|tonight|overall|in\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:(?:brief|concise|short)\s+)?(?:numbered\s+)?bullets?))?$/iu;
+const BACKSTAGE_FULL_REVIEW_NAMED_EVENT_PATTERN =
+  /^(?:(?:this|that|the|my|our|current|completed?|complete|full|entire)\s+)?(?:wrestlemania|summerslam)(?:\s+\d+)?(?:\s+(?:so\s+far|tonight|overall|in\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:(?:brief|concise|short)\s+)?(?:numbered\s+)?bullets?))?$/i;
 const BACKSTAGE_NARROW_REVIEW_TARGET_SUFFIX_PATTERN =
   /^(?:['’]s\b|\s+(?:main[- ]event|match|finish|opener|segment|promo|angle|decision|logic|opponent|title|champion)\b)/i;
+const BACKSTAGE_NAMED_EVENT_NARROW_SCOPE_PATTERN =
+  /\b(?:main[- ]event|match|finish|opener|segment|promo|angle|decision|logic|opponent|title|champion|division|roster|undercard)\b/i;
 const BACKSTAGE_DECISION_REVIEW_SCOPE_PATTERN =
   /^(?:(?:of|on|for|about)\s+)?(?:whether|if|who|what|when|where|why|how|which|should|can|could|would|will|is|are|do|does|did)\b/i;
 const BACKSTAGE_REQUEST_CLAUSE_SEPARATOR_PATTERN =
-  /(?:\r?\n+|[.!?]\s+|;\s*|\s+(?:and\s+then|and|then|before|after|while|but|or)\s+|\s+also\s+(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|[,/:]\s*(?=(?:(?:also|then)\s+)?(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|\s*(?:[–—]|\s-\s)\s*(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b))/i;
+  /(?:\u0008\s*|\r?\n+|[.!?]\s+|;\s*|\s+(?:and\s+then|and|then|but|or)\s+|\s+also\s+(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|[,/:]\s*(?=(?:(?:also|then)\s+)?(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|\s*(?:[–—]|\s-\s)\s*(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b))/i;
 const BACKSTAGE_LIST_ITEM_PATTERN = /^(?:[-*]|\d+[.)])\s+/;
 const BACKSTAGE_REVIEW_ABBREVIATION_PATTERN =
   /\b(?:[a-z]\.[ \t]*){2,}|\b(?:dr|mr|mrs|ms|no|prof|sr|jr|st|vs)\./gi;
+const BACKSTAGE_REVIEW_LEADING_NAME_INITIAL_PATTERN =
+  /^(J)\.(?=[ \t]+(?!(?:A|An|But|Finally|He|Her|His|However|It|Next|She|That|The|Then|They|This|We)\b)\p{Lu}[\p{L}\p{M}'’.-]*\b)/u;
+// A single initial is syntactically indistinguishable from an outline label. Preserve
+// only the evidenced J. name shapes and otherwise let the two-sentence cap win.
+const BACKSTAGE_REVIEW_MIDDLE_NAME_J_INITIAL_PATTERN =
+  /\b(\p{Lu}[\p{Ll}\p{M}'’-]+[ \t]+)(J)\.(?=[ \t]+(?!(?:A|An|But|Finally|He|Her|His|However|It|Next|She|That|The|Then|They|This|We)\b)\p{Lu}[\p{L}\p{M}'’.-]*\b)/gu;
 
 export function stripMarkdownFormatting(value: string): string {
   return value
@@ -144,79 +156,113 @@ function maskBackstageQuotedRequestText(
   value: string,
   diagnostics?: BackstageReviewClassificationDiagnostics
 ): string {
+  const characters = Array.from(value);
+  const remainingClosingQuoteCandidates = new Map<string, number>();
   let closingQuote: '"' | '\'' | '”' | '’' | null = null;
-  let maskedValue = '';
+  const maskedCharacters: string[] = [];
 
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] ?? '';
-    const previousCharacter = value[index - 1] ?? '';
-    const nextCharacter = value[index + 1] ?? '';
-    const isInWordApostrophe = (character === '\'' || character === '’')
-      && /[\p{L}\p{N}]/u.test(previousCharacter)
-      && /[\p{L}\p{N}]/u.test(nextCharacter);
-    const shouldScanForLaterClosingQuote = closingQuote === character
+  const isWordCharacter = (character: string): boolean =>
+    /[\p{L}\p{N}]/u.test(character);
+  const isInWordApostropheAt = (index: number): boolean => {
+    const character = characters[index] ?? '';
+    return (character === '\'' || character === '’')
+      && isWordCharacter(characters[index - 1] ?? '')
+      && isWordCharacter(characters[index + 1] ?? '');
+  };
+  const isClosingQuoteCandidateAt = (index: number): boolean => {
+    const character = characters[index] ?? '';
+    return (character === '"' || character === '\'' || character === '”' || character === '’')
+      && !isInWordApostropheAt(index);
+  };
+
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index] ?? '';
+    if (!isClosingQuoteCandidateAt(index)) {
+      continue;
+    }
+    remainingClosingQuoteCandidates.set(
+      character,
+      (remainingClosingQuoteCandidates.get(character) ?? 0) + 1
+    );
+  }
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] ?? '';
+    const previousCharacter = characters[index - 1] ?? '';
+    const nextCharacter = characters[index + 1] ?? '';
+    const isInWordApostrophe = isInWordApostropheAt(index);
+    if (isClosingQuoteCandidateAt(index)) {
+      remainingClosingQuoteCandidates.set(
+        character,
+        Math.max(0, (remainingClosingQuoteCandidates.get(character) ?? 0) - 1)
+      );
+    }
+    const isClosingQuoteBoundary = closingQuote === character
       && !isInWordApostrophe;
-    if (shouldScanForLaterClosingQuote && diagnostics) {
+    if (isClosingQuoteBoundary && diagnostics) {
       diagnostics.quoteLookaheadScans += 1;
     }
-    const hasLaterClosingQuote = shouldScanForLaterClosingQuote
-      && Array.from(value.slice(index + 1)).some((candidate, offset) => {
-        if (candidate !== character) {
-          return false;
-        }
-        const candidateIndex = index + offset + 1;
-        return !(
-          /[\p{L}\p{N}]/u.test(value[candidateIndex - 1] ?? '')
-          && /[\p{L}\p{N}]/u.test(value[candidateIndex + 1] ?? '')
-        );
-      });
-    const isInternalPluralPossessive = closingQuote === character
-      && previousCharacter.toLowerCase() === 's'
-      && /[\s.,;:!?]/u.test(nextCharacter)
-      && hasLaterClosingQuote;
 
     if (closingQuote) {
-      if (character === closingQuote && !isInWordApostrophe && !isInternalPluralPossessive) {
+      if (isClosingQuoteBoundary) {
         closingQuote = null;
-        maskedValue += character;
+        maskedCharacters.push(character, '\u0008');
       } else if (/\s/u.test(character)) {
-        maskedValue += '\u0001';
+        maskedCharacters.push('\u0001');
       } else if (character === ';') {
-        maskedValue += '\u0002';
+        maskedCharacters.push('\u0002');
       } else if (character === '–') {
-        maskedValue += '\u0003';
+        maskedCharacters.push('\u0003');
       } else if (character === '—') {
-        maskedValue += '\u0004';
+        maskedCharacters.push('\u0004');
       } else if (character === ',') {
-        maskedValue += '\u0005';
+        maskedCharacters.push('\u0005');
       } else if (character === '/') {
-        maskedValue += '\u0006';
+        maskedCharacters.push('\u0006');
       } else if (character === ':') {
-        maskedValue += '\u0007';
+        maskedCharacters.push('\u0007');
       } else {
-        maskedValue += character;
+        maskedCharacters.push(character);
       }
       continue;
     }
 
     const isUnquotedPluralPossessive = character === '\''
-      && /[\p{L}\p{N}]/u.test(previousCharacter)
+      && isWordCharacter(previousCharacter)
       && (!nextCharacter || /[\s.,;:!?]/u.test(nextCharacter));
     if (!isInWordApostrophe && !isUnquotedPluralPossessive) {
+      let candidateClosingQuote: '"' | '\'' | '”' | '’' | null = null;
       if (character === '"') {
-        closingQuote = '"';
+        candidateClosingQuote = '"';
       } else if (character === '\'') {
-        closingQuote = '\'';
+        candidateClosingQuote = '\'';
       } else if (character === '“') {
-        closingQuote = '”';
+        candidateClosingQuote = '”';
       } else if (character === '‘') {
-        closingQuote = '’';
+        candidateClosingQuote = '’';
+      }
+      if (
+        candidateClosingQuote
+        && (remainingClosingQuoteCandidates.get(candidateClosingQuote) ?? 0) > 0
+      ) {
+        closingQuote = candidateClosingQuote;
       }
     }
-    maskedValue += character;
+    maskedCharacters.push(character);
   }
 
-  return maskedValue;
+  const maskedSegments = maskedCharacters.join('').split('\u0008');
+  return maskedSegments.map((segment, index) => {
+    if (index === maskedSegments.length - 1) {
+      return segment;
+    }
+
+    const followingSegment = maskedSegments[index + 1] ?? '';
+    const hasFollowingCreativeRequest = isBackstageCreativeRequestClause(
+      normalizeBackstageRequestClause(followingSegment)
+    );
+    return `${segment}${hasFollowingCreativeRequest ? '\u0008' : ''}`;
+  }).join('');
 }
 
 function splitBackstageRequestClauses(
@@ -232,7 +278,8 @@ function splitBackstageRequestClauses(
       .replace(/\u0004/g, '—')
       .replace(/\u0005/g, ',')
       .replace(/\u0006/g, '/')
-      .replace(/\u0007/g, ':'));
+      .replace(/\u0007/g, ':')
+      .replace(/\u0008/g, ''));
 }
 
 function evaluateBoundedBackstageReviewMode(
@@ -302,12 +349,31 @@ function hasBackstageContextualFullReviewTarget(
   return !BACKSTAGE_NARROW_REVIEW_TARGET_SUFFIX_PATTERN.test(targetSuffix);
 }
 
+function hasBackstageNamedFullReviewTarget(value: string): boolean {
+  if (BACKSTAGE_NAMED_EVENT_NARROW_SCOPE_PATTERN.test(value)) {
+    return false;
+  }
+
+  return BACKSTAGE_FULL_REVIEW_NAMED_CONTAINER_PATTERN.test(value)
+    || BACKSTAGE_FULL_REVIEW_NAMED_EVENT_PATTERN.test(value);
+}
+
+function stripBackstageQuotedTargetTokens(value: string): string {
+  return value
+    .replace(/"([\p{L}\p{M}\p{N}&.-]+)"/gu, '$1')
+    .replace(/'([\p{L}\p{M}\p{N}&.-]+)'/gu, '$1')
+    .replace(/“([\p{L}\p{M}\p{N}&.-]+)”/gu, '$1')
+    .replace(/‘([\p{L}\p{M}\p{N}&.-]+)’/gu, '$1');
+}
+
 function isBackstageFullReviewScope(value: string): boolean {
   const normalizedValue = value.trim().replace(/[.!?;:]+$/, '').trim();
-  const normalizedTargetValue = normalizedValue
-    .replace(/^(?:and\s+)?(?:review|critique|assess|evaluate|analy[sz]e|rate|grade)\s+/i, '')
-    .replace(/^(?:of|on|for|about)\s+/i, '')
-    .trim();
+  const normalizedTargetValue = stripBackstageQuotedTargetTokens(
+    normalizedValue
+      .replace(/^(?:and\s+)?(?:review|critique|assess|evaluate|analy[sz]e|rate|grade)\s+/i, '')
+      .replace(/^(?:of|on|for|about)\s+/i, '')
+      .trim()
+  );
   return Boolean(normalizedTargetValue)
     && !BACKSTAGE_DECISION_REVIEW_SCOPE_PATTERN.test(normalizedTargetValue)
     && (
@@ -336,6 +402,7 @@ function isBackstageFullReviewScope(value: string): boolean {
         normalizedTargetValue,
         BACKSTAGE_FULL_REVIEW_CONTEXTUAL_BOOKING_PATTERN
       )
+      || hasBackstageNamedFullReviewTarget(normalizedTargetValue)
     );
 }
 
@@ -359,6 +426,7 @@ function isBackstageReviewRequestClause(clause: string): boolean {
     !clause
     || BACKSTAGE_DIRECT_STYLE_CLAUSE_PATTERN.test(clause)
     || BACKSTAGE_STATE_FIELD_PATTERN.test(clause)
+    || BACKSTAGE_ATTRIBUTED_DIALOGUE_PATTERN.test(clause)
   ) {
     return false;
   }
@@ -404,10 +472,19 @@ function isBackstageCreativeRequestClause(clause: string): boolean {
 }
 
 function splitBackstageReviewSentences(value: string): string[] {
-  const protectedAbbreviations = value.replace(
-    BACKSTAGE_REVIEW_ABBREVIATION_PATTERN,
-    match => match.replace(/\./g, '\u0000')
-  );
+  const protectedAbbreviations = value
+    .replace(
+      BACKSTAGE_REVIEW_ABBREVIATION_PATTERN,
+      match => match.replace(/\./g, '\u0000')
+    )
+    .replace(
+      BACKSTAGE_REVIEW_MIDDLE_NAME_J_INITIAL_PATTERN,
+      (_match, prefix: string, initial: string) => `${prefix}${initial}\u0000`
+    )
+    .replace(
+      BACKSTAGE_REVIEW_LEADING_NAME_INITIAL_PATTERN,
+      (_match, initial: string) => `${initial}\u0000`
+    );
   return protectedAbbreviations
     .split(/(?<=[.!?])\s+/)
     .map(sentence => sentence.replace(/\u0000/g, '.').trim())

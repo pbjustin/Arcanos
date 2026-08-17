@@ -16,6 +16,7 @@ import {
 } from './core/db/repositories/backstageStorylineRepository.js';
 import {
   applyTrinityDirectAnswerOutputContract,
+  parseTrinityDirectAnswerOutputContract,
 } from './core/logic/trinityDirectAnswerMode.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
@@ -200,6 +201,8 @@ const BACKSTAGE_REVIEW_MARKDOWN_OUTPUT = [
 ].join('\n');
 const BACKSTAGE_REVIEW_INITIALS_OUTPUT =
   '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.';
+const BACKSTAGE_REVIEW_SINGLE_INITIAL_OUTPUT =
+  '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.';
 const BACKSTAGE_REVIEW_STYLE_INSTRUCTION = [
   'Return exactly 6 top-level numbered bullets:',
   '1. Overall verdict and the show\'s strongest through-line.',
@@ -1746,6 +1749,46 @@ function runBackstageReviewCompletionFixture(
 ): Record<string, unknown> {
   const fullReviewPrompt =
     'BACKEND REVIEW REQUEST: Please briefly review this completed Raw card using current external events.';
+  const namedEventReviewPrompts = [
+    'Review the WrestleMania card.',
+    'Review this "completed" show.',
+    "Review this 'completed' show.",
+    'Review the "WrestleMania" card.',
+    'Review the WrestleMania card overall.',
+    'Review the WrestleMania card in three bullets.',
+    'Give me feedback on this WrestleMania card.',
+    'Review this Full Gear show.',
+    'Review this Full Gear show in six bullets.',
+    'Review SummerSlam.',
+    'Review SummerSlam tonight.',
+  ];
+  const narrowNamedEventReviewPrompts = [
+    'Evaluate the WrestleMania main event.',
+    'Review the Full Gear main-event finish.',
+    'Review BodySlam.',
+  ];
+  const balancedQuotedDirectivePrompts = [
+    "Review this completed Raw card. 'Recorded dialogue. Rebook the main event,' Punk said.",
+    "Review this completed Raw card. 'Plans' remain recorded. 'Rebook the main event,' Punk said.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. ‘Rebook the main event,’ Punk said.',
+  ];
+  const balancedPostQuoteRebookPrompts = [
+    "Review this completed Raw card. 'Recorded dialogue.' Rebook the main event.",
+    "Review this completed Raw card. 'Plans' remain recorded. Rebook the actual main event. 'More state' follows.",
+    'Review this completed Raw card. ‘Plans’ remain recorded. Rebook the actual main event. ‘More state’ follows.',
+  ];
+  const straightPluralAttributedPrompt = [
+    "Analyze Cody's title reign on Raw.",
+    "'The wrestlers' agreement matters. Review this completed show before judging it,' Punk said.",
+  ].join('\n');
+  const unmatchedQuoteRebookPrompts = [
+    "Review this completed Raw card. 'Recorded dialogue is missing its close. Rebook the main event.",
+    'Review this completed Raw card. “Recorded dialogue is missing its close. Rebook the main event.',
+  ];
+  const asciiQuotedDirectivePrompt =
+    "Review this completed Raw card. 'A'B spoke. Rebook the main event,' Punk said.";
+  const astralQuotedDirectivePrompt =
+    "Review this completed Raw card. '\u{1D400}'\u{1D401} spoke. Rebook the main event,' Punk said.";
   const asciiContractions = Array.from(
     { length: BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS },
     () => "we can't infer another result"
@@ -1761,7 +1804,35 @@ function runBackstageReviewCompletionFixture(
   const quoteDiagnostics = inspectBackstageReviewClassification(
     quotedContractionState
   );
+  const asciiQuoteDiagnostics = inspectBackstageReviewClassification(
+    asciiQuotedDirectivePrompt
+  );
+  const astralQuoteDiagnostics = inspectBackstageReviewClassification(
+    astralQuotedDirectivePrompt
+  );
+  const namedEventTokenLimit = resolveBoundedBackstageReviewTokenLimit(
+    namedEventReviewPrompts[0] ?? '',
+    2_400
+  );
   const classification = {
+    astralQuotedDirectiveParity:
+      asciiQuoteDiagnostics.boundedReviewMode
+      && astralQuoteDiagnostics.boundedReviewMode
+      && asciiQuoteDiagnostics.quoteLookaheadScans
+        === astralQuoteDiagnostics.quoteLookaheadScans
+      && resolveBoundedBackstageReviewTokenLimit(
+        astralQuotedDirectivePrompt,
+        2_400
+      ) === 1_600,
+    balancedPostQuoteRebookOrdinary:
+      balancedPostQuoteRebookPrompts.every(prompt =>
+        !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+      ),
+    balancedQuotedDirectiveIgnored: balancedQuotedDirectivePrompts.every(
+      prompt => shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === 1_600
+    ),
     fullReviewBounded: shouldUseBoundedBackstageReviewMode(
       fullReviewPrompt
     ),
@@ -1774,7 +1845,21 @@ function runBackstageReviewCompletionFixture(
     narrowAnalysisOrdinary: !shouldUseBoundedBackstageReviewMode(
       "Analyze Cody's title reign on Raw."
     ),
-    quotedContractionsIgnored: !quoteDiagnostics.boundedReviewMode,
+    namedEventReviewsBounded: namedEventReviewPrompts.every(prompt =>
+      shouldUseBoundedBackstageReviewMode(prompt)
+      && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === 1_600
+    ),
+    narrowNamedEventReviewsOrdinary: narrowNamedEventReviewPrompts.every(
+      prompt => !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+    ),
+    quotedContractionsIgnored:
+      !quoteDiagnostics.boundedReviewMode
+      && !shouldUseBoundedBackstageReviewMode(straightPluralAttributedPrompt)
+      && resolveBoundedBackstageReviewTokenLimit(
+        straightPluralAttributedPrompt,
+        2_400
+      ) === null,
     stateFieldsIgnored: shouldUseBoundedBackstageReviewMode([
       'Review this completed Raw card.',
       'Booking Notes: Cody stays strong.',
@@ -1784,6 +1869,10 @@ function runBackstageReviewCompletionFixture(
       'Review this completed Raw card.',
       'Rebook: Cody beats Gunther.',
     ].join('\n')),
+    unmatchedQuoteRebookOrdinary: unmatchedQuoteRebookPrompts.every(
+      prompt => !shouldUseBoundedBackstageReviewMode(prompt)
+        && resolveBoundedBackstageReviewTokenLimit(prompt, 2_400) === null
+    ),
   };
 
   const reviewTokenLimit = resolveBoundedBackstageReviewTokenLimit(
@@ -1791,6 +1880,20 @@ function runBackstageReviewCompletionFixture(
     2_400
   );
   const reviewStyleInstruction = buildBackstageReviewResponseStyleInstruction();
+  const authoritativeReviewPrompt = [
+    '<<BOOKING_DIRECTIVE>>\nReview this completed Raw card in three bullets.',
+    `<<RESPONSE_STYLE>>\n${reviewStyleInstruction}`,
+    'Complete the six-bullet review and stop after bullet 6.',
+  ].join('\n\n');
+  const authoritativeReviewContract = parseTrinityDirectAnswerOutputContract(
+    authoritativeReviewPrompt
+  );
+  const authoritativeReview = applyBackstageReviewOutputContract(
+    applyTrinityDirectAnswerOutputContract(
+      BACKSTAGE_REVIEW_MARKDOWN_OUTPUT,
+      authoritativeReviewPrompt
+    )
+  );
 
   const trinityReview = applyTrinityDirectAnswerOutputContract([
     "I can't verify current external state here without live access. **1. Overall verdict: the card delivered a disciplined escalation.**",
@@ -1826,7 +1929,26 @@ function runBackstageReviewCompletionFixture(
   const initialsReview = applyBackstageReviewOutputContract(
     '1) J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud. This third sentence must be removed.'
   );
+  const singleInitialReview = applyBackstageReviewOutputContract(
+    '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud. This overflow sentence should be removed.'
+  );
+  const outlineLabelReview = applyBackstageReviewOutputContract([
+    '1. Option A. Then continue. Third removed.',
+    '2. option B. Next continue. Third removed.',
+    '3. Segment A. Continue the feud. Third removed.',
+    '4. Point A. Continue the feud. Third removed.',
+    '5. Section A. Continue the feud. Third removed.',
+    '6. Item A. Continue the feud. Third removed.',
+  ].join('\n'));
+  const leadingOutlineLabelReview = applyBackstageReviewOutputContract([
+    '1. A. Continue the feud. Third removed.',
+    '2. B. Next continue. Third removed.',
+  ].join('\n'));
   const contracts = {
+    authoritativeSixBulletOverride:
+      authoritativeReviewContract?.requestedBulletCount === 6
+      && authoritativeReview === BACKSTAGE_REVIEW_MARKDOWN_OUTPUT
+      && authoritativeReview.split('\n').length === 6,
     trinityDirectAnswer: trinityReview === BACKSTAGE_REVIEW_CAVEAT_OUTPUT,
     trinityCollapsedDirectAnswer:
       collapsedTrinityReview === BACKSTAGE_REVIEW_COLLAPSED_CAVEAT_OUTPUT,
@@ -1835,6 +1957,20 @@ function runBackstageReviewCompletionFixture(
       collapsedCaveatReview === BACKSTAGE_REVIEW_COLLAPSED_CAVEAT_OUTPUT,
     backstageMarkdownReview: markdownReview === BACKSTAGE_REVIEW_MARKDOWN_OUTPUT,
     backstageInitialsReview: initialsReview === BACKSTAGE_REVIEW_INITIALS_OUTPUT,
+    backstageSingleInitialReview:
+      singleInitialReview === BACKSTAGE_REVIEW_SINGLE_INITIAL_OUTPUT
+      && outlineLabelReview === [
+        '1. Option A. Then continue.',
+        '2. option B. Next continue.',
+        '3. Segment A. Continue the feud.',
+        '4. Point A. Continue the feud.',
+        '5. Section A. Continue the feud.',
+        '6. Item A. Continue the feud.',
+      ].join('\n')
+      && leadingOutlineLabelReview === [
+        '1. A. Continue the feud.',
+        '2. B. Next continue.',
+      ].join('\n'),
     reviewStyleInstruction:
       reviewStyleInstruction === BACKSTAGE_REVIEW_STYLE_INSTRUCTION,
     reviewTokenLimit: reviewTokenLimit === 1_600,
@@ -1857,6 +1993,7 @@ function runBackstageReviewCompletionFixture(
     externalNetworkAttempted: false,
     fixture,
     normalization: {
+      authoritativeReviewBulletCount: authoritativeReview.split('\n').length,
       caveatReview,
       collapsedCaveatReview,
       initialsReview,
@@ -1864,8 +2001,12 @@ function runBackstageReviewCompletionFixture(
       numberedBulletCount: caveatReview.split('\n').length,
       quotedContractionCount: BACKSTAGE_REVIEW_CONTRACTION_REPETITIONS * 2,
       quoteLookaheadScans: quoteDiagnostics.quoteLookaheadScans,
+      singleInitialReview,
     },
     policy: {
+      authoritativeBulletCount:
+        authoritativeReviewContract?.requestedBulletCount ?? null,
+      namedEventTokenLimit,
       responseStyleInstruction: reviewStyleInstruction,
       tokenLimit: reviewTokenLimit,
     },

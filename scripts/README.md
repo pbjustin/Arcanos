@@ -111,10 +111,12 @@ real bounded synthetic timeout fallback is noncacheable, a retry succeeds, and a
 third read comes from the single successful cache write. The review-completion
 case executes the production-shared full-review classifier, Trinity direct-answer
 list normalizer, 1,600-token/style policy, and Booker review output contract
-against server-owned mixed, narrow, quoted-contraction, state-field,
-Markdown-marker, inline/collapsed honesty-caveat, and spaced-initial fixtures.
-The contraction case also asserts a deterministic bound on suffix-lookahead
-work. All three are credential-free component proofs:
+against server-owned named-event, narrow-event, mixed, state-field, balanced and
+unmatched quote, astral-letter apostrophe, quoted-contraction, Markdown-marker,
+inline/collapsed honesty-caveat, and spaced/single-initial fixtures. It also
+proves that the canonical six-bullet response style overrides an earlier
+three-bullet user request. The contraction case asserts a deterministic bound
+on quote-delimiter disambiguation work. All three are credential-free component proofs:
 provider/network boundaries and protected effects stay disabled.
 
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It

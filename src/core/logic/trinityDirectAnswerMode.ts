@@ -24,6 +24,9 @@ const DIRECT_ANSWER_BULLET_COUNT_WORDS: Record<string, number> = {
 
 const DIRECT_ANSWER_BULLET_COUNT_PATTERN =
   /\b(?:(?<digit>\d{1,2})|(?<word>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:short\s+|brief\s+|compact\s+)?(?:top-level\s+)?(?:numbered\s+)?bullets?\b/i;
+const DIRECT_ANSWER_STRUCTURED_RESPONSE_STYLE_MARKER = '<<RESPONSE_STYLE>>';
+const DIRECT_ANSWER_STRUCTURED_RESPONSE_STYLE_BULLET_COUNT_PATTERN =
+  /^\s*return exactly\s+(?:(?<digit>\d{1,2})|(?<word>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:short\s+|brief\s+|compact\s+)?(?:top-level\s+)?(?:numbered\s+)?bullets?\b/i;
 
 const DIRECT_ANSWER_SHORT_BULLET_PATTERN =
   /\b(?:short|brief|compact)\s+bullets?\b/i;
@@ -120,6 +123,24 @@ function resolveRequestedBulletCount(
   }
 
   return DIRECT_ANSWER_BULLET_COUNT_WORDS[normalizedCountText];
+}
+
+function matchStructuredResponseStyleBulletCount(
+  prompt: string
+): RegExpMatchArray | null {
+  const responseStyleMarkerIndex = prompt.lastIndexOf(
+    DIRECT_ANSWER_STRUCTURED_RESPONSE_STYLE_MARKER
+  );
+  if (responseStyleMarkerIndex < 0) {
+    return null;
+  }
+
+  const responseStyleSection = prompt.slice(
+    responseStyleMarkerIndex + DIRECT_ANSWER_STRUCTURED_RESPONSE_STYLE_MARKER.length
+  );
+  return responseStyleSection.match(
+    DIRECT_ANSWER_STRUCTURED_RESPONSE_STYLE_BULLET_COUNT_PATTERN
+  );
 }
 
 function collectTopLevelListItems(
@@ -264,7 +285,9 @@ function buildDirectAnswerResponseShapeInstruction(
 export function parseTrinityDirectAnswerOutputContract(
   prompt: string
 ): TrinityDirectAnswerOutputContract | null {
-  const matchedBulletCount = prompt.match(DIRECT_ANSWER_BULLET_COUNT_PATTERN);
+  //audit Assumption: the final structured response-style section is the service-owned output contract; failure risk: an earlier user-visible count in the embedded directive truncates a stricter downstream shape; expected invariant: structured prompts use their final response-style count while ordinary prompts retain first-match parsing; handling strategy: prefer only the canonical final response-style marker and otherwise preserve the existing generic match.
+  const matchedBulletCount = matchStructuredResponseStyleBulletCount(prompt)
+    ?? prompt.match(DIRECT_ANSWER_BULLET_COUNT_PATTERN);
   const requestedBulletCount = resolveRequestedBulletCount(
     matchedBulletCount?.groups?.digit ?? matchedBulletCount?.groups?.word
   );

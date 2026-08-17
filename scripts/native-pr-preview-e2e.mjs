@@ -1750,19 +1750,27 @@ function expectedBackstageGenerationContractPayload(requestCase) {
     return {
       ...base,
       classification: {
+        astralQuotedDirectiveParity: true,
+        balancedPostQuoteRebookOrdinary: true,
+        balancedQuotedDirectiveIgnored: true,
         explicitRebookDirectiveOrdinary: true,
         fullReviewBounded: true,
         mixedCreativeOrdinary: true,
+        namedEventReviewsBounded: true,
         narrowAnalysisOrdinary: true,
+        narrowNamedEventReviewsOrdinary: true,
         politeReviewBounded: true,
         quotedContractionsIgnored: true,
         stateFieldsIgnored: true,
+        unmatchedQuoteRebookOrdinary: true,
       },
       contracts: {
+        authoritativeSixBulletOverride: true,
         backstageCaveatReview: true,
         backstageCollapsedCaveatReview: true,
         backstageInitialsReview: true,
         backstageMarkdownReview: true,
+        backstageSingleInitialReview: true,
         quotedContractionWorkBound: true,
         reviewStyleInstruction: true,
         reviewTokenLimit: true,
@@ -1770,6 +1778,7 @@ function expectedBackstageGenerationContractPayload(requestCase) {
         trinityDirectAnswer: true,
       },
       normalization: {
+        authoritativeReviewBulletCount: 6,
         caveatReview: [
           "1. I can't verify current external state here without live access. Overall verdict: the card delivered a disciplined escalation.",
           '2. Match results: Alpha winner preserved the planned hierarchy.',
@@ -1799,8 +1808,12 @@ function expectedBackstageGenerationContractPayload(requestCase) {
         numberedBulletCount: 6,
         quoteLookaheadScans: 4,
         quotedContractionCount: 256,
+        singleInitialReview:
+          '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.',
       },
       policy: {
+        authoritativeBulletCount: 6,
+        namedEventTokenLimit: 1_600,
         responseStyleInstruction: [
           'Return exactly 6 top-level numbered bullets:',
           '1. Overall verdict and the show\'s strongest through-line.',

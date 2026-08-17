@@ -519,7 +519,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/core/logic/trinityDirectAnswerMode.ts',
-    '13935c7fef7ca5b796db4137890ca9c8fb22eaa8888ca1cf55d8b8226b964d7c',
+    '4878dac54ceff0e1425c3e455954bd0fcd48efa903872f8a3cf415ddff8d94f2',
   ],
   [
     'src/services/directAnswerMode.ts',
@@ -563,7 +563,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',
-    '34f711b163b9c3cbf0e0b66ca5f0a68b4aa933e690aee52a13213edd0e6b9155',
+    'e413bf2b84f358cc6dce8ad1ff39bfd9c4322629b55acbd94b74d2582ce6dcd5',
   ],
   [
     'src/shared/hrcEvaluationPolicy.ts',

@@ -724,25 +724,37 @@ test('executes the bounded credential-free matrix and detects identity stability
     { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
   );
   assert.deepEqual(reviewCompletionPayload.classification, {
+    astralQuotedDirectiveParity: true,
+    balancedPostQuoteRebookOrdinary: true,
+    balancedQuotedDirectiveIgnored: true,
     explicitRebookDirectiveOrdinary: true,
     fullReviewBounded: true,
     mixedCreativeOrdinary: true,
+    namedEventReviewsBounded: true,
     narrowAnalysisOrdinary: true,
+    narrowNamedEventReviewsOrdinary: true,
     politeReviewBounded: true,
     quotedContractionsIgnored: true,
     stateFieldsIgnored: true,
+    unmatchedQuoteRebookOrdinary: true,
   });
   assert.deepEqual(reviewCompletionPayload.contracts, {
+    authoritativeSixBulletOverride: true,
     backstageCaveatReview: true,
     backstageCollapsedCaveatReview: true,
     backstageInitialsReview: true,
     backstageMarkdownReview: true,
+    backstageSingleInitialReview: true,
     quotedContractionWorkBound: true,
     reviewStyleInstruction: true,
     reviewTokenLimit: true,
     trinityCollapsedDirectAnswer: true,
     trinityDirectAnswer: true,
   });
+  assert.equal(
+    reviewCompletionPayload.normalization.authoritativeReviewBulletCount,
+    6
+  );
   assert.equal(reviewCompletionPayload.normalization.numberedBulletCount, 6);
   assert.equal(reviewCompletionPayload.normalization.quoteLookaheadScans, 4);
   assert.equal(reviewCompletionPayload.normalization.quotedContractionCount, 256);
@@ -754,10 +766,16 @@ test('executes the bounded credential-free matrix and detects identity stability
     reviewCompletionPayload.normalization.initialsReview,
     '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.'
   );
+  assert.equal(
+    reviewCompletionPayload.normalization.singleInitialReview,
+    '1. Bret J. Hart won cleanly. His follow-up promo advanced the feud.'
+  );
   assert.match(
     reviewCompletionPayload.normalization.collapsedCaveatReview,
     /^1\. I can't verify current external state here without live access\.\n2\. Match results:/u
   );
+  assert.equal(reviewCompletionPayload.policy.authoritativeBulletCount, 6);
+  assert.equal(reviewCompletionPayload.policy.namedEventTokenLimit, 1_600);
   assert.equal(reviewCompletionPayload.policy.tokenLimit, 1_600);
   assert.match(
     reviewCompletionPayload.policy.responseStyleInstruction,

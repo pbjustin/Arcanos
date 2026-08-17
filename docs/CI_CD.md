@@ -264,11 +264,13 @@ noncacheable fallback, the next call evaluates successfully, and the third is
 served from the one successful cache write. The review-completion case executes
 the production-shared full-review classifier, Trinity direct-answer list
 normalizer, 1,600-token/style policy, and Booker review output contract against
-fixed mixed, narrow, quoted-contraction, state-field, Markdown-marker,
-inline/collapsed honesty-caveat, and spaced-initial inputs. It also asserts a
-deterministic bound on quoted-contraction suffix-lookahead work. None of the
-selectors calls a provider, uses credentials, performs network I/O, or reaches
-a protected effect.
+fixed named-event and narrow-event scopes, mixed and state-field directives,
+balanced and unmatched quotes, astral-letter apostrophes, quoted contractions,
+Markdown markers, inline/collapsed honesty caveats, and spaced/single initials.
+It proves that the canonical six-bullet response style overrides an earlier
+three-bullet user request and asserts a deterministic bound on
+quoted-contraction delimiter-disambiguation work. None of the selectors calls a
+provider, uses credentials, performs network I/O, or reaches a protected effect.
 
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
 `effective-limits` selector. It imports the config-free core used by the

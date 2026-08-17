@@ -101,6 +101,43 @@ describe('trinityDirectAnswerMode', () => {
     ].join('\n'));
   });
 
+  it('uses the final structured response-style count over an earlier embedded user count', () => {
+    const structuredPrompt = [
+      '<<BOOKING_DIRECTIVE>>',
+      'Review this completed show in three short bullets.',
+      '<<CURRENT_ROSTER>>',
+      'The supplied state mentions a five-bullet recap.',
+      '<<RESPONSE_STYLE>>',
+      'Return exactly 6 top-level numbered bullets:',
+      'Use no more than two concise sentences per bullet.'
+    ].join('\n');
+    const providerOutput = Array.from(
+      { length: 6 },
+      (_, index) => `${index + 1}. Review item ${index + 1}.`
+    ).join('\n');
+
+    expect(parseTrinityDirectAnswerOutputContract(structuredPrompt)).toEqual({
+      requestedBulletCount: 6,
+      requiresShortBullets: true
+    });
+    expect(buildTrinityDirectAnswerSystemInstruction('', structuredPrompt)).toContain(
+      'Return only 6 top-level numbered bullets.'
+    );
+    expect(applyTrinityDirectAnswerOutputContract(
+      providerOutput,
+      structuredPrompt
+    )).toBe(providerOutput);
+  });
+
+  it('retains first-match bullet parsing for ordinary direct-answer prompts', () => {
+    expect(parseTrinityDirectAnswerOutputContract(
+      'Answer in three short bullets. The quoted source later asks for five bullets.'
+    )).toEqual({
+      requestedBulletCount: 3,
+      requiresShortBullets: true
+    });
+  });
+
   it('does not split sequential references inside a single requested bullet', () => {
     expect(applyTrinityDirectAnswerOutputContract(
       '1. Compare step 2. Configure it and 3. Verify it.',
