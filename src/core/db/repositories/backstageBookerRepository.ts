@@ -16,6 +16,12 @@ const BACKSTAGE_SAVED_STORYLINE_ADVISORY_LOCK_NAMESPACE = 0x41524341;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
 const BACKSTAGE_CANON_CONTEXT_STORYLINE_LIMIT = 50;
 const BACKSTAGE_CANON_CONTEXT_BEAT_LIMIT = 100;
+// Keep PostgreSQL's pre-projection LTRIM aligned with JavaScript trimStart()
+// so valid content cannot sit beyond the bounded storyline transfer window.
+const BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS =
+  '\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680'
+  + '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A'
+  + '\u2028\u2029\u202F\u205F\u3000\uFEFF';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -2028,8 +2034,11 @@ export class PostgresBackstageBookerRepository {
          )`;
     const savedStorylineSelection = universeReadProjection
       ? `LEFT(BTRIM(story_key), 241) AS story_key,
-         LEFT(storyline, 1501) AS storyline`
+         LEFT(LTRIM(storyline, $2), 1501) AS storyline`
       : 'story_key, storyline';
+    const savedStorylineValues = universeReadProjection
+      ? [normalizedUniverseId, BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS]
+      : [normalizedUniverseId];
     return this.readSnapshot('loadContext', async client => {
       const rosterResult = await client.query<BackstageWrestlerRow>(
         `SELECT ${rosterNameSelection}, overall, updated_at
@@ -2082,7 +2091,7 @@ export class PostgresBackstageBookerRepository {
          WHERE universe_id = $1
          ORDER BY updated_at DESC, id DESC
          LIMIT 5`,
-        [normalizedUniverseId]
+        savedStorylineValues
       );
       const canonContext = await this.loadCanonContextFromClient(
         client,

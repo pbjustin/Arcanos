@@ -448,7 +448,18 @@ describe('PostgresBackstageBookerRepository', () => {
       "octet_length(convert_to(serialized_data, 'UTF8')) <= 16384"
     );
     expect(sql).toContain('LEFT(BTRIM(story_key), 241) AS story_key');
-    expect(sql).toContain('LEFT(storyline, 1501) AS storyline');
+    expect(sql).toContain('LEFT(LTRIM(storyline, $2), 1501) AS storyline');
+    const storylineQueryIndex = commands.findIndex(command =>
+      command.includes('LEFT(LTRIM(storyline, $2), 1501) AS storyline')
+    );
+    expect(storylineQueryIndex).toBeGreaterThan(-1);
+    const storylineQueryValues = values[storylineQueryIndex];
+    expect(storylineQueryValues?.[0]).toBe('legacy');
+    const trimStartCharacters = storylineQueryValues?.[1];
+    expect(typeof trimStartCharacters).toBe('string');
+    expect((trimStartCharacters as string).length).toBeGreaterThan(0);
+    expect((trimStartCharacters as string).trimStart()).toBe('');
+    expect(trimStartCharacters).toContain('\uFEFF');
     expect(values).toContainEqual(['3500ms']);
     expect(commands.at(-1)).toBe('COMMIT');
   });

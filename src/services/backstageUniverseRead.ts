@@ -191,10 +191,14 @@ function projectRequiredContent(
   section: string,
   truncatedSections: Set<string>
 ): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  if (typeof value !== 'string') {
     throw new TypeError(`${label} must be a non-empty string.`);
   }
-  return truncateCodePoints(value, maximum, section, truncatedSections);
+  const normalized = value.trimStart();
+  if (normalized.trimEnd().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string.`);
+  }
+  return truncateCodePoints(normalized, maximum, section, truncatedSections);
 }
 
 function readFirstText(

@@ -291,4 +291,22 @@ describe('Backstage universe read projection', () => {
       'snapshot.savedStorylines.storylineExcerpt',
     ]));
   });
+
+  it('normalizes leading whitespace before bounding a saved-storyline excerpt', async () => {
+    const context = populatedContext();
+    const leadingWhitespace = (
+      ' \t\n\v\f\r\u00A0\u1680\u2000\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'
+    ).repeat(100);
+    context.storylines[0]!.storyline = `${leadingWhitespace}${'N'.repeat(1_501)}`;
+
+    const result = await readBackstageUniverse(UNIVERSE_ID, {
+      reader: { loadContext: async () => context },
+    });
+
+    expect(result.snapshot.savedStorylines[0]!.storylineExcerpt)
+      .toBe('N'.repeat(1_500));
+    expect(result.truncation.sections).toContain(
+      'snapshot.savedStorylines.storylineExcerpt'
+    );
+  });
 });
