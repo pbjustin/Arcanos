@@ -180,6 +180,7 @@ const BACKSTAGE_DECISION_REVIEW_SCOPE_PATTERN =
   /^(?:(?:of|on|for|about)\s+)?(?:whether|if|who|what|when|where|why|how|which|should|can|could|would|will|is|are|do|does|did)\b/i;
 const BACKSTAGE_REQUEST_CLAUSE_SEPARATOR_PATTERN =
   /(?:\r?\n+|[.!?]\s+|;\s*|\s+(?:and\s+then|and|then|before|after|while|but|or)\s+|\s+also\s+(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|[,/:]\s*(?=(?:(?:also|then)\s+)?(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b)|\s*(?:[–—]|\s-\s)\s*(?=(?:please\s+)?(?:book|write|generate|create|build|draft|continue|advance|develop|finish|rebook|rewrite|redo|rework)\b))/i;
+const BACKSTAGE_LIST_ITEM_PATTERN = /^(?:[-*]|\d+[.)])\s+/;
 const BACKSTAGE_REVIEW_ABBREVIATION_PATTERN =
   /\b(?:[a-z]\.[ \t]*){2,}|\b(?:dr|mr|mrs|ms|no|prof|sr|jr|st|vs)\./gi;
 
@@ -938,26 +939,31 @@ function collectTopLevelListItems(text: string): string[] {
 
   for (const line of text.split(/\r?\n/)) {
     const trimmedLine = line.trim();
+    const normalizedListLine = stripMarkdownFormatting(trimmedLine);
     const indentation = line.match(/^\s*/)?.[0].length ?? 0;
 
     if (!trimmedLine || /^---+$/.test(trimmedLine) || /^#{1,6}\s+/.test(trimmedLine)) {
       continue;
     }
 
-    const isTopLevelItem = indentation <= 1 && /^(?:[-*]|\d+[.)])\s+/.test(trimmedLine);
-    const isNestedItem = indentation > 1 && /^(?:[-*]|\d+[.)])\s+/.test(trimmedLine);
+    const hasNormalizedListMarker = BACKSTAGE_LIST_ITEM_PATTERN.test(normalizedListLine);
+    const listMarkerSource = BACKSTAGE_LIST_ITEM_PATTERN.test(trimmedLine)
+      ? trimmedLine
+      : normalizedListLine;
+    const isTopLevelItem = indentation <= 1 && hasNormalizedListMarker;
+    const isNestedItem = indentation > 1 && hasNormalizedListMarker;
 
     if (isTopLevelItem) {
       if (currentItem) {
         items.push(currentItem.trim());
       }
-      currentItem = trimmedLine.replace(/^(?:[-*]|\d+[.)])\s+/, '');
+      currentItem = listMarkerSource.replace(BACKSTAGE_LIST_ITEM_PATTERN, '');
       continue;
     }
 
     if (currentItem) {
       const appendedLine = isNestedItem
-        ? trimmedLine.replace(/^(?:[-*]|\d+[.)])\s+/, '')
+        ? listMarkerSource.replace(BACKSTAGE_LIST_ITEM_PATTERN, '')
         : trimmedLine;
       currentItem = `${currentItem} ${appendedLine}`.trim();
     }
@@ -1027,6 +1033,7 @@ function maskBackstageQuotedRequestText(value: string): string {
       && /[\p{L}\p{N}]/u.test(previousCharacter)
       && /[\p{L}\p{N}]/u.test(nextCharacter);
     const hasLaterClosingQuote = closingQuote === character
+      && !isInWordApostrophe
       && Array.from(value.slice(index + 1)).some((candidate, offset) => {
         if (candidate !== character) {
           return false;

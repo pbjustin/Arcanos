@@ -233,6 +233,8 @@ describe('backstage-booker generateBooking', () => {
     'Supplied show-state dialogue follows:\n"We finished the card. Review this show before judging it," Punk said.',
     "Supplied show-state dialogue follows:\n'We finished the card. Review this show before judging it,' Punk said.",
     'Supplied show-state dialogue follows:\n“We finished the card. Review this show before judging it,” Punk said.',
+    "Supplied show-state dialogue follows:\n'We can't review this show before booking it,' Punk said.",
+    'Supplied show-state dialogue follows:\n‘We can’t review this show before booking it,’ Punk said.',
     '"Review the match before you judge it," Punk said.\nContinue the current booking.',
     '(Review this show before you judge it), Punk said.',
     'Analyze whether Cody should turn heel at WrestleMania.',
@@ -299,6 +301,28 @@ describe('backstage-booker generateBooking', () => {
       '4. The rivalries remain coherent. One transition needs a cleaner motivation.',
       '5. The pacing builds steadily. Move one recap earlier.',
       '6. Becky vs. Lyra remains unresolved. Let the match determine the next branch.'
+    ].join('\n'));
+  });
+
+  it('normalizes Markdown-wrapped review markers in the Booker output contract', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
+        '**1. The card has a coherent through-line.**',
+        '__2) The results preserve the planned hierarchy.__',
+        '**3. The promos sharpen the central conflict.**',
+        '__4) The rivalries honor established continuity.__',
+        '**5. The pacing builds toward the closing stretch.**',
+        '__6) The unfinished matches should determine the next branch.__'
+      ].join('\n')
+    });
+
+    await expect(generateBooking('Review this completed Raw card.')).resolves.toBe([
+      '1. The card has a coherent through-line.',
+      '2. The results preserve the planned hierarchy.',
+      '3. The promos sharpen the central conflict.',
+      '4. The rivalries honor established continuity.',
+      '5. The pacing builds toward the closing stretch.',
+      '6. The unfinished matches should determine the next branch.'
     ].join('\n'));
   });
 
