@@ -944,7 +944,7 @@ describe('native PR contained application', () => {
     }
   });
 
-  it('executes sealed Backstage generation budget and HRC cache fixtures', async () => {
+  it('executes sealed Backstage generation, HRC cache, and review completion fixtures', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
     const routeBudget = await request(app)
@@ -953,6 +953,9 @@ describe('native PR contained application', () => {
     const hrcRetryCache = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.hrcRetryCache });
+    const reviewCompletion = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.reviewCompletion });
 
     expect(routeBudget.status).toBe(200);
     expect(routeBudget.body).toEqual({
@@ -1002,8 +1005,87 @@ describe('native PR contained application', () => {
       syntheticTimeoutMs: 25,
       thirdServedFromCache: true,
     });
+    expect(reviewCompletion.status).toBe(200);
+    expect(reviewCompletion.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      classification: {
+        explicitRebookDirectiveOrdinary: true,
+        fullReviewBounded: true,
+        mixedCreativeOrdinary: true,
+        narrowAnalysisOrdinary: true,
+        politeReviewBounded: true,
+        quotedContractionsIgnored: true,
+        stateFieldsIgnored: true,
+      },
+      contracts: {
+        backstageCaveatReview: true,
+        backstageCollapsedCaveatReview: true,
+        backstageInitialsReview: true,
+        backstageMarkdownReview: true,
+        quotedContractionWorkBound: true,
+        reviewStyleInstruction: true,
+        reviewTokenLimit: true,
+        trinityCollapsedDirectAnswer: true,
+        trinityDirectAnswer: true,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.reviewCompletion,
+      normalization: {
+        caveatReview: [
+          "1. I can't verify current external state here without live access. Overall verdict: the card delivered a disciplined escalation.",
+          '2. Match results: Alpha winner preserved the planned hierarchy.',
+          '3. Promos and segments: Bravo segment sharpened the central conflict.',
+          '4. Rivalry continuity: Charlie thread honored the established canon.',
+          '5. Pacing and structure: Delta transition kept the second hour moving.',
+          '6. Remaining matches: Echo finish should determine the next branch.',
+        ].join('\n'),
+        collapsedCaveatReview: [
+          "1. I can't verify current external state here without live access.",
+          '2. Match results: Alpha winner preserved the planned hierarchy.',
+          '3. Promos and segments: Bravo segment sharpened the central conflict.',
+          '4. Rivalry continuity: Charlie thread honored the established canon.',
+          '5. Pacing and structure: Delta transition kept the second hour moving.',
+          '6. Remaining matches: Echo finish should determine the next branch.',
+        ].join('\n'),
+        initialsReview:
+          '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.',
+        markdownReview: [
+          '1. The card has a coherent through-line.',
+          '2. The results preserve the planned hierarchy.',
+          '3. The promos sharpen the central conflict.',
+          '4. The rivalries honor established continuity.',
+          '5. The pacing builds toward the closing stretch.',
+          '6. The unfinished matches should determine the next branch.',
+        ].join('\n'),
+        numberedBulletCount: 6,
+        quoteLookaheadScans: 4,
+        quotedContractionCount: 256,
+      },
+      policy: {
+        responseStyleInstruction: [
+          'Return exactly 6 top-level numbered bullets:',
+          '1. Overall verdict and the show\'s strongest through-line.',
+          '2. Match results and ratings that most affected the show.',
+          '3. Promos, headcanon, and non-match segments that mattered most.',
+          '4. Rivalry development and continuity strengths or problems.',
+          '5. Pacing, booking logic, and the highest-value correction.',
+          '6. The remaining matches and the best next step.',
+          'Use no more than two concise sentences per bullet.',
+          'No preamble, headings, sub-bullets, alternative full card, conclusion, or production-notes appendix.',
+          'Synthesize instead of recapping: do not re-list the supplied show state, results, ratings, or segments.',
+          'Treat matches identified as still to come as unresolved; never invent their results.',
+        ].join('\n'),
+        tokenLimit: 1_600,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+    });
 
-    for (const response of [routeBudget, hrcRetryCache]) {
+    for (const response of [routeBudget, hrcRetryCache, reviewCompletion]) {
       expectContainedResponseHeaders(
         response,
         'native-pr-preview',

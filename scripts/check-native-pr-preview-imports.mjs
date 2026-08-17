@@ -34,6 +34,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
+  'src/core/logic/trinityDirectAnswerMode.ts',
   'src/core/db/repositories/backstageStorylineRepository.ts',
   'src/lib/errors/responses.ts',
   'src/mcp/httpBodyParserCore.ts',
@@ -42,10 +43,12 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
   'src/services/gamingModes.ts',
+  'src/services/directAnswerMode.ts',
   'src/services/gamingPublicDispatcher.ts',
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
@@ -83,7 +86,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
+  /^src\/services\/(?!(?:directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -515,6 +518,14 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
+    'src/core/logic/trinityDirectAnswerMode.ts',
+    '13935c7fef7ca5b796db4137890ca9c8fb22eaa8888ca1cf55d8b8226b964d7c',
+  ],
+  [
+    'src/services/directAnswerMode.ts',
+    'a4002ca1d79e508ffa8d95d52383e0db7ddac56e54704d583d82eb0746ff6b63',
+  ],
+  [
     'src/services/gamingPublicDispatcher.ts',
     'fae5727fc7b800cdda980172ee8739a3362cd6e91ecdcff7de8e229cb724f2f0',
   ],
@@ -549,6 +560,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageActionPolicy.ts',
     '022f1e9d77a92170792a769ff29dbd7df107a1bb5ff21e14d925f55e0ead2e61',
+  ],
+  [
+    'src/shared/backstage/backstageReviewContract.ts',
+    '34f711b163b9c3cbf0e0b66ca5f0a68b4aa933e690aee52a13213edd0e6b9155',
   ],
   [
     'src/shared/hrcEvaluationPolicy.ts',

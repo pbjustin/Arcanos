@@ -98,7 +98,8 @@ credentials, provider, memory, confirmation challenge/token store, persistence
 effect, or protected effect.
 
 The sealed `POST /backstage/generation-contract` selectors are
-`route-budget-provider-delay` and `hrc-timeout-retry-cache`. The first uses the
+`route-budget-provider-delay`, `hrc-timeout-retry-cache`, and
+`review-completion-contract`. The first uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
 await a 13,250 ms synthetic provider seam; the live runner separately requires at
@@ -107,8 +108,14 @@ timeout is reported separately from the caller-configured default in
 `effectivePerCaseMaxRequestTimeoutMs`. The second uses the production HRC cache
 orchestration seam to prove a
 real bounded synthetic timeout fallback is noncacheable, a retry succeeds, and a
-third read comes from the single successful cache write. Both are credential-free
-component proofs: provider/network boundaries and protected effects stay disabled.
+third read comes from the single successful cache write. The review-completion
+case executes the production-shared full-review classifier, Trinity direct-answer
+list normalizer, 1,600-token/style policy, and Booker review output contract
+against server-owned mixed, narrow, quoted-contraction, state-field,
+Markdown-marker, inline/collapsed honesty-caveat, and spaced-initial fixtures.
+The contraction case also asserts a deterministic bound on suffix-lookahead
+work. All three are credential-free component proofs:
+provider/network boundaries and protected effects stay disabled.
 
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
 executes the config-free core used by the production MCP pre-parser against six

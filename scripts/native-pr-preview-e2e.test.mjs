@@ -376,7 +376,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 115);
+  assert.equal(requestPlan.length, 116);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -409,7 +409,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    2
+    3
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -654,8 +654,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const hrcRetryCacheCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-hrc-retry-cache'
   );
+  const reviewCompletionCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-review-completion'
+  );
   assert.ok(routeBudgetCase);
   assert.ok(hrcRetryCacheCase);
+  assert.ok(reviewCompletionCase);
   assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(routeBudgetCase, {
@@ -714,6 +718,50 @@ test('executes the bounded credential-free matrix and detects identity stability
       syntheticTimeoutMs: 25,
       thirdServedFromCache: true,
     }
+  );
+  const reviewCompletionPayload = expectedNativePrPreviewResponseBody(
+    reviewCompletionCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(reviewCompletionPayload.classification, {
+    explicitRebookDirectiveOrdinary: true,
+    fullReviewBounded: true,
+    mixedCreativeOrdinary: true,
+    narrowAnalysisOrdinary: true,
+    politeReviewBounded: true,
+    quotedContractionsIgnored: true,
+    stateFieldsIgnored: true,
+  });
+  assert.deepEqual(reviewCompletionPayload.contracts, {
+    backstageCaveatReview: true,
+    backstageCollapsedCaveatReview: true,
+    backstageInitialsReview: true,
+    backstageMarkdownReview: true,
+    quotedContractionWorkBound: true,
+    reviewStyleInstruction: true,
+    reviewTokenLimit: true,
+    trinityCollapsedDirectAnswer: true,
+    trinityDirectAnswer: true,
+  });
+  assert.equal(reviewCompletionPayload.normalization.numberedBulletCount, 6);
+  assert.equal(reviewCompletionPayload.normalization.quoteLookaheadScans, 4);
+  assert.equal(reviewCompletionPayload.normalization.quotedContractionCount, 256);
+  assert.match(
+    reviewCompletionPayload.normalization.caveatReview,
+    /^1\. I can't verify current external state here without live access\. Overall verdict:/u
+  );
+  assert.equal(
+    reviewCompletionPayload.normalization.initialsReview,
+    '1. J. J. Dillon backed A.J. Styles after the U.S. title match. His decision clarified the feud.'
+  );
+  assert.match(
+    reviewCompletionPayload.normalization.collapsedCaveatReview,
+    /^1\. I can't verify current external state here without live access\.\n2\. Match results:/u
+  );
+  assert.equal(reviewCompletionPayload.policy.tokenLimit, 1_600);
+  assert.match(
+    reviewCompletionPayload.policy.responseStyleInstruction,
+    /^Return exactly 6 top-level numbered bullets:/u
   );
   const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
     caseId === 'mcp-body-cap-effective-limits'
@@ -833,14 +881,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 115);
+  assert.equal(result.summary.requestsMade, 116);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 115);
+  assert.equal(result.checks.length, 116);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 115);
+  assert.equal(mock.requestCount, 116);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -912,7 +960,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 2);
+  assert.equal(backstageGenerationCalls.length, 3);
   for (const { init } of backstageGenerationCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
