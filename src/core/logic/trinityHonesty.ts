@@ -214,7 +214,10 @@ function splitIntoReviewLines(text: string): string[] {
       lines.push('');
       continue;
     }
-    if (/^[-*]\s/.test(trimmedLine) || /^\d+\.\s/.test(trimmedLine)) {
+    if (
+      /^[-*]\s/.test(trimmedLine)
+      || /^(?:\*\*|__)?\d+[.)]\s/.test(trimmedLine)
+    ) {
       lines.push(trimmedLine);
       continue;
     }
@@ -258,11 +261,11 @@ function isNumericSentencePeriod(line: string, index: number): boolean {
 function isNumberedListMarkerPeriod(line: string, index: number): boolean {
   const prefix = line.slice(0, index + 1);
   const nextCharacter = line[index + 1] ?? '';
-  return /^\s*\d+\.$/.test(prefix) && (!nextCharacter || /\s/.test(nextCharacter));
+  return /^\s*(?:\*\*|__)?\d+\.$/.test(prefix) && (!nextCharacter || /\s/.test(nextCharacter));
 }
 
 function isCurrentSegmentNumberedListMarker(segment: string, nextCharacter: string): boolean {
-  return /^\d+\.$/.test(segment.trim()) && (!nextCharacter || /\s/.test(nextCharacter));
+  return /^(?:\*\*|__)?\d+\.$/.test(segment.trim()) && (!nextCharacter || /\s/.test(nextCharacter));
 }
 
 function splitLineIntoSegments(line: string): string[] {

@@ -38,6 +38,91 @@ describe('trinityDirectAnswerMode', () => {
     ].join('\n'));
   });
 
+  it('preserves an inline honesty caveat with the first item and retains all requested bullets', () => {
+    const normalizedOutput = applyTrinityDirectAnswerOutputContract(
+      [
+        "I can't verify current external state here without live access. **1. Overall verdict remains grounded in the supplied card.**",
+        '**2. Match results stay distinct.**',
+        '**3. Promo feedback stays distinct.**',
+        '**4. Pacing feedback stays distinct.**',
+        '**5. Continuity feedback stays distinct.**',
+        '**6. Remaining-match guidance stays distinct.**'
+      ].join('\n'),
+      'Answer directly in six numbered bullets.'
+    );
+
+    expect(normalizedOutput).toBe([
+      "1. I can't verify current external state here without live access. Overall verdict remains grounded in the supplied card.",
+      '2. Match results stay distinct.',
+      '3. Promo feedback stays distinct.',
+      '4. Pacing feedback stays distinct.',
+      '5. Continuity feedback stays distinct.',
+      '6. Remaining-match guidance stays distinct.'
+    ].join('\n'));
+  });
+
+  it('attaches a standalone honesty caveat to the first item and retains all requested bullets', () => {
+    const normalizedOutput = applyTrinityDirectAnswerOutputContract(
+      [
+        "I can't verify current external state here without live access.",
+        '1. Overall verdict remains grounded in the supplied card.',
+        '2. Match results stay distinct.',
+        '3. Promo feedback stays distinct.',
+        '4. Pacing feedback stays distinct.',
+        '5. Continuity feedback stays distinct.',
+        '6. Remaining-match guidance stays distinct.'
+      ].join('\n'),
+      'Answer directly in six numbered bullets.'
+    );
+
+    expect(normalizedOutput).toBe([
+      "1. I can't verify current external state here without live access. Overall verdict remains grounded in the supplied card.",
+      '2. Match results stay distinct.',
+      '3. Promo feedback stays distinct.',
+      '4. Pacing feedback stays distinct.',
+      '5. Continuity feedback stays distinct.',
+      '6. Remaining-match guidance stays distinct.'
+    ].join('\n'));
+  });
+
+  it('restores collapsed bullets when honesty replaces the original first item', () => {
+    const normalizedOutput = applyTrinityDirectAnswerOutputContract(
+      "I can't verify current external state here without live access. 2. Match results stay distinct. 3. Promo feedback stays distinct. 4. Pacing feedback stays distinct. 5. Continuity feedback stays distinct. 6. Remaining-match guidance stays distinct.",
+      'Answer directly in six numbered bullets.'
+    );
+
+    expect(normalizedOutput).toBe([
+      "1. I can't verify current external state here without live access.",
+      '2. Match results stay distinct.',
+      '3. Promo feedback stays distinct.',
+      '4. Pacing feedback stays distinct.',
+      '5. Continuity feedback stays distinct.',
+      '6. Remaining-match guidance stays distinct.'
+    ].join('\n'));
+  });
+
+  it('does not split sequential references inside a single requested bullet', () => {
+    expect(applyTrinityDirectAnswerOutputContract(
+      '1. Compare step 2. Configure it and 3. Verify it.',
+      'Answer directly in one numbered bullet.'
+    )).toBe('1. Compare step 2. Configure it and 3. Verify it.');
+  });
+
+  it('drops a benign inline preamble while retaining parenthesized numbered items', () => {
+    const normalizedOutput = applyTrinityDirectAnswerOutputContract(
+      [
+        'Quick gut check: 1) Strong card spine.',
+        '2) Tighten the middle segment.'
+      ].join('\n'),
+      'Answer directly in two numbered bullets.'
+    );
+
+    expect(normalizedOutput).toBe([
+      '1. Strong card spine.',
+      '2. Tighten the middle segment.'
+    ].join('\n'));
+  });
+
   it('keeps SWTOR numbered guide answers top-level and sequential when the model adds nested detail', () => {
     const normalizedOutput = applyTrinityDirectAnswerOutputContract(
       [

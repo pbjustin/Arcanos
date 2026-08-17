@@ -483,15 +483,17 @@ the module-action schemas. Their existing `success`, `eventID`, `storyline`,
 `roster`, and `result` fields stay in place as applicable; `universeId`,
 canonical result aliases, and `persistence` are additive. `generateBooking`
 may likewise return its legacy raw storyline string through the module action
-for compatibility. Explicit review-only directives (including requests to
-review, critique, assess, evaluate, analyze, rate, grade, or provide an
-evaluation) use an internal bounded synthesis mode: six concise evaluation
-bullets, no exhaustive show-state recap, no invented result for a match
-identified as unfinished, and at most 1,600 output tokens. Classification uses
-the leading request clause, with a trailing request-clause fallback, so quoted
-review or booking words inside supplied show state do not change the mode.
-Explicit mixed rebooking or rewriting requests retain the ordinary creative
-booking mode and its configured output budget. This response shaping changes
+for compatibility. Explicit full-show, card, or booking-state review-only
+directives (including requests to review, critique, assess, evaluate, analyze,
+rate, grade, or provide an evaluation) use an internal bounded synthesis mode:
+six concise evaluation bullets, no exhaustive show-state recap, no invented
+result for a match identified as unfinished, and at most 1,600 output tokens.
+Classification uses a quote-aware scan of directive-shaped request clauses
+throughout the prompt. An explicit mixed request to book, rebook, rewrite,
+draft, or continue vetoes the bounded mode and retains the ordinary creative
+booking mode and its configured output budget. Quoted or attributed dialogue
+inside supplied show state is inert, while narrow decision analysis or
+recommendations also stay in ordinary mode. This response shaping changes
 neither action payloads nor response schemas.
 
 Mutation results expose one of these persistence receipts:

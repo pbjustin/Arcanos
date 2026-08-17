@@ -239,6 +239,96 @@ describe('backstage-booker generateBooking real provider chain', () => {
     );
   });
 
+  it('preserves all bounded review bullets when honesty adds a caveat before the first item', async () => {
+    const providerReview = [
+      '**1. Overall verdict: the card delivered a disciplined escalation.**',
+      '**2. Match results: Alpha winner preserved the planned hierarchy.**',
+      '**3. Promos and segments: Bravo segment sharpened the central conflict.**',
+      '**4. Rivalry continuity: Charlie thread honored the established canon.**',
+      '**5. Pacing and structure: Delta transition kept the second hour moving.**',
+      '**6. Remaining matches: Echo finish should determine the next branch.**'
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_honest_review',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: providerReview,
+      output: [],
+      usage: {
+        input_tokens: 120,
+        output_tokens: 90,
+        total_tokens: 210
+      }
+    });
+
+    const result = await generateBooking(
+      'Review this completed Raw card using current external events.'
+    );
+    const bullets = result.split('\n').filter(line => /^\d+\.\s/.test(line));
+
+    expect(bullets).toHaveLength(6);
+    expect(bullets[0]).toContain(
+      "I can't verify current external state here without live access."
+    );
+    expect(bullets[0]).toContain(
+      'Overall verdict: the card delivered a disciplined escalation.'
+    );
+    expect(bullets.slice(1)).toEqual([
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ]);
+    const [request] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>
+    ];
+    expect(request).toEqual(expect.objectContaining({
+      max_output_tokens: 1600
+    }));
+  });
+
+  it('keeps a six-bullet review when honesty replaces an unsupported current-state claim', async () => {
+    const providerReview = [
+      '1. Overall verdict: current external events confirm this is the strongest active WWE card.',
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_unsupported_live_claim',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: providerReview,
+      output: [],
+      usage: {
+        input_tokens: 120,
+        output_tokens: 90,
+        total_tokens: 210
+      }
+    });
+
+    const result = await generateBooking(
+      'Review this completed Raw card using current external events.'
+    );
+    const bullets = result.split('\n').filter(line => /^\d+\.\s/.test(line));
+
+    expect(bullets).toHaveLength(6);
+    expect(bullets[0]).toContain(
+      "I can't verify current external state here without live access."
+    );
+    expect(result).not.toContain('confirm this is the strongest active WWE card');
+    expect(bullets.slice(1)).toEqual([
+      '2. Match results: Alpha winner preserved the planned hierarchy.',
+      '3. Promos and segments: Bravo segment sharpened the central conflict.',
+      '4. Rivalry continuity: Charlie thread honored the established canon.',
+      '5. Pacing and structure: Delta transition kept the second hour moving.',
+      '6. Remaining matches: Echo finish should determine the next branch.'
+    ]);
+  });
+
   it('allows the provider to finish after the generic twelve-second direct-answer deadline', async () => {
     jest.useFakeTimers();
     responsesCreate.mockImplementationOnce(
