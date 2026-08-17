@@ -57,6 +57,7 @@ import {
   InvocationBudget,
   recordSessionTokens,
   getSessionTokenUsage,
+  resolveDirectAnswerTokenCap,
   registerRetry,
   detectDowngrade,
   logTrinityTelemetry,
@@ -982,7 +983,8 @@ export async function runThroughBrain(
               options.directAnswerModelOverride,
               options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
-              options.preserveAggregateAbortContext
+              options.preserveAggregateAbortContext,
+              options.directAnswerTokenCapOverride
             )
         });
       } catch (error) {
@@ -1198,7 +1200,7 @@ export async function runThroughBrain(
         remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
         tierSoftCap,
         effectiveLimit,
-        tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
+        tokenCapApplied: resolveDirectAnswerTokenCap(options.directAnswerTokenCapOverride),
         sessionTokensUsed: effectiveTokenAuditSessionId ? getSessionTokenUsage(effectiveTokenAuditSessionId) : undefined,
         downgradeDetected: false,
         latencyMs,

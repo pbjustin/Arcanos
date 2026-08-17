@@ -8,6 +8,8 @@ export const BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS = 60_000;
 export const BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS = 40_000;
 export const BACKSTAGE_GENERATION_STAGE_TIMEOUT_MAX_MS = 45_000;
 export const BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS = 10_000;
+export const BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT = 2400;
+export const BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX = 2400;
 
 export const BACKSTAGE_PUBLIC_ACTIONS = Object.freeze([
   'generateBooking',
@@ -37,6 +39,7 @@ export interface BackstageBookerTrinityRunOptions {
   strictUserVisibleOutput: true;
   directAnswerModelOverride: string;
   directAnswerTokenLimitOverride: number;
+  directAnswerTokenCapOverride: number;
   directAnswerUserIntentPrompt: string;
   modelStageTimeoutMs: number;
 }
@@ -63,6 +66,19 @@ export function resolveBackstageGenerationStageTimeoutMs(
   );
 }
 
+export function resolveBackstageGenerationTokenLimit(
+  configuredTokenLimit: number
+): number {
+  if (!Number.isFinite(configuredTokenLimit) || configuredTokenLimit <= 0) {
+    return BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT;
+  }
+
+  return Math.min(
+    Math.max(1, Math.trunc(configuredTokenLimit)),
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX
+  );
+}
+
 export function buildBackstageBookerTrinityRunOptions(params: {
   model: string;
   tokenLimit: number;
@@ -74,6 +90,7 @@ export function buildBackstageBookerTrinityRunOptions(params: {
     strictUserVisibleOutput: true,
     directAnswerModelOverride: params.model,
     directAnswerTokenLimitOverride: params.tokenLimit,
+    directAnswerTokenCapOverride: BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
     directAnswerUserIntentPrompt: params.userIntentPrompt,
     modelStageTimeoutMs: params.modelStageTimeoutMs,
   };

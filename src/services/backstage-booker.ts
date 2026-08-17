@@ -23,7 +23,6 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
-import { TRINITY_HARD_TOKEN_CAP } from '@core/logic/trinityConstants.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
@@ -65,9 +64,11 @@ import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
+  BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
   BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
   buildBackstageBookerTrinityRunOptions,
   resolveBackstageGenerationStageTimeoutMs,
+  resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
   BackstageRosterPersistenceError,
@@ -988,7 +989,7 @@ function buildBackstageResponseStyleInstruction(
   ].join('\n');
 }
 
-function resolveBackstageBookerTokenLimit(prompt: string, defaultTokenLimit: number): number {
+function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimit: number): number {
   if (!shouldPreferDirectAnswerMode(prompt)) {
     return defaultTokenLimit;
   }
@@ -2292,10 +2293,14 @@ export async function generateBooking(
   }
 
   const model = resolveBackstageBookerModel();
-  const configuredTokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', TRINITY_HARD_TOKEN_CAP);
-  const tokenLimit = resolveBackstageBookerTokenLimit(
+  const configuredTokenLimit = getEnvNumber(
+    'BOOKER_TOKEN_LIMIT',
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const defaultTokenLimit = resolveBackstageGenerationTokenLimit(configuredTokenLimit);
+  const tokenLimit = resolveBackstageBookerPromptTokenLimit(
     input.prompt,
-    configuredTokenLimit > 0 ? configuredTokenLimit : TRINITY_HARD_TOKEN_CAP
+    defaultTokenLimit
   );
   const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
   const trinityRunOptions = buildBackstageBookerTrinityRunOptions({

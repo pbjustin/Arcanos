@@ -62,7 +62,7 @@ const originalGpt5Model = process.env.GPT5_MODEL;
 const originalBookerTokenLimit = process.env.BOOKER_TOKEN_LIMIT;
 const originalBookerGenerationStageTimeoutMs = process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS;
 process.env.GPT5_MODEL = 'gpt-5';
-process.env.BOOKER_TOKEN_LIMIT = '1200';
+process.env.BOOKER_TOKEN_LIMIT = '2400';
 process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS = '40000';
 
 const { generateBooking } = await import('../src/services/backstage-booker.js');
@@ -136,7 +136,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ];
     expect(request).toEqual(expect.objectContaining({
       model: 'gpt-5.1',
-      max_output_tokens: 1200,
+      max_output_tokens: 2400,
       reasoning: { effort: 'none' }
     }));
     expect(request).not.toHaveProperty('reasoning_effort');
@@ -146,6 +146,64 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(JSON.stringify(request.input)).toContain('Current external events');
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.signal?.aborted).toBe(false);
+  });
+
+  it('accepts a completed provider response that uses more than 1,200 output tokens', async () => {
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_extended_booking',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: 'Complete extended booking review.',
+      output: [],
+      usage: {
+        input_tokens: 1_100,
+        output_tokens: 1_600,
+        total_tokens: 2_700
+      }
+    });
+
+    await expect(
+      generateBooking('Review a complete nine-match Raw card and its established continuity.')
+    ).resolves.toBe('Complete extended booking review.');
+
+    const [request] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>
+    ];
+    expect(request).toEqual(expect.objectContaining({
+      model: 'gpt-5.1',
+      max_output_tokens: 2400
+    }));
+  });
+
+  it('continues to reject partial output that exhausts the extended Booker budget', async () => {
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_incomplete_booking',
+      model: 'gpt-5.1',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_text: 'Partial booking review that must not be returned.',
+      output: [],
+      usage: {
+        input_tokens: 1_100,
+        output_tokens: 2_400,
+        total_tokens: 3_500
+      }
+    });
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await generateBooking('Review a complete nine-match Raw card and its established continuity.');
+      throw new Error('Expected generateBooking to reject partial provider output.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Booking generation failed');
+      expect((error as Error & { cause?: unknown }).cause).toEqual(expect.objectContaining({
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        incompleteReason: 'max_output_tokens'
+      }));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it('retains the honesty caveat when the user directive requests current external events', async () => {

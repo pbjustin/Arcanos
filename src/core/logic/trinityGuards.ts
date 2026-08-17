@@ -8,7 +8,10 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 import type { Tier } from './trinityTier.js';
-import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
+import {
+  TRINITY_DIRECT_ANSWER_TOKEN_CAP_OVERRIDE_MAX,
+  TRINITY_HARD_TOKEN_CAP
+} from './trinityConstants.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import { createAbortError } from '@arcanos/runtime';
@@ -332,6 +335,25 @@ export class Watchdog {
 
 export function enforceTokenCap(requested?: number): number {
   return Math.min(requested ?? TRINITY_HARD_TOKEN_CAP, TRINITY_HARD_TOKEN_CAP);
+}
+
+export function resolveDirectAnswerTokenCap(override?: number): number {
+  if (typeof override !== 'number' || !Number.isFinite(override) || override <= 0) {
+    return TRINITY_HARD_TOKEN_CAP;
+  }
+
+  return Math.min(
+    Math.max(1, Math.trunc(override)),
+    TRINITY_DIRECT_ANSWER_TOKEN_CAP_OVERRIDE_MAX
+  );
+}
+
+export function enforceDirectAnswerTokenCap(
+  requested?: number,
+  override?: number
+): number {
+  const effectiveCap = resolveDirectAnswerTokenCap(override);
+  return Math.min(requested ?? effectiveCap, effectiveCap);
 }
 
 // --- Session Token Auditor ---

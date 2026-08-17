@@ -144,6 +144,71 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
+  it('keeps ordinary direct-answer requests under Trinity\'s 1,200-token cap', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Bounded ordinary output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a long ordinary direct answer.',
+      undefined,
+      undefined,
+      'trinity_req_default_cap',
+      'gpt-5.1',
+      2_400
+    );
+
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 1_200);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.direct_answer.execution_plan',
+      expect.objectContaining({
+        tokenLimit: 1_200,
+        tokenCapApplied: 1_200
+      })
+    );
+  });
+
+  it('honors a trusted direct-answer cap exception without exceeding 2,400 tokens', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete extended booking output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete extended wrestling show.',
+      undefined,
+      undefined,
+      'trinity_req_extended_cap',
+      'gpt-5.1',
+      5_000,
+      undefined,
+      false,
+      5_000
+    );
+
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 2_400);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.direct_answer.execution_plan',
+      expect.objectContaining({
+        tokenLimit: 2_400,
+        tokenCapApplied: 2_400
+      })
+    );
+  });
+
   it('disables reasoning for the configured GPT-5.6 Terra direct-answer model', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit

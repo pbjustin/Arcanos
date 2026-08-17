@@ -40,7 +40,11 @@ import type {
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
 import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
-import { enforceTokenCap } from './trinityGuards.js';
+import {
+  enforceDirectAnswerTokenCap,
+  enforceTokenCap,
+  resolveDirectAnswerTokenCap
+} from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
@@ -620,7 +624,7 @@ export async function runFinalStage(
  * Execute Trinity's strict direct-answer mode as a single model call.
  * Inputs: shared OpenAI client, memory context summary, sanitized user prompt, optional cognitive domain, and runtime budget.
  * Outputs: normalized final-stage style payload with model, usage, and fallback metadata.
- * Edge cases: caller overrides remain bounded by Trinity's hard token cap; otherwise explicit list-shaped answers use a smaller prompt-derived budget.
+ * Edge cases: caller output budgets remain bounded by Trinity's default cap unless an explicit trusted cap exception is supplied; otherwise explicit list-shaped answers use a smaller prompt-derived budget.
  */
 export async function runDirectAnswerStage(
   client: OpenAI,
@@ -632,7 +636,8 @@ export async function runDirectAnswerStage(
   directAnswerModelOverride?: string,
   directAnswerTokenLimitOverride?: number,
   explicitTimeoutMs?: number,
-  preserveAggregateAbortContext = false
+  preserveAggregateAbortContext = false,
+  directAnswerTokenCapOverride?: number
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -649,7 +654,11 @@ export async function runDirectAnswerStage(
           auditSafePrompt,
           APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
         );
-  const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
+  const effectiveTokenCap = resolveDirectAnswerTokenCap(directAnswerTokenCapOverride);
+  const cappedTokenLimit = enforceDirectAnswerTokenCap(
+    directAnswerTokenLimit,
+    directAnswerTokenCapOverride
+  );
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
   const directAnswerReasoningEffort = supportsDisabledReasoningEffort(directAnswerModel)
     ? 'none' as const
@@ -669,6 +678,7 @@ export async function runDirectAnswerStage(
     timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
     aggregateAbortContext: useAggregateAbortContext,
     tokenLimit: cappedTokenLimit,
+    tokenCapApplied: effectiveTokenCap,
     reasoningEffort: directAnswerReasoningEffort
   });
 
