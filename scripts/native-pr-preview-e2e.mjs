@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 116;
+const MAX_REQUESTS = 117;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -780,6 +780,11 @@ export function buildNativePrPreviewRequestPlan() {
       'backstage-storyline-payload-over',
       'payloadOver',
       400
+    ),
+    backstageStorylineCase(
+      'backstage-saved-storyline-projection',
+      'savedStorylineProjection',
+      200
     ),
     backstageGenerationCase(
       'backstage-generation-route-budget',
@@ -1656,6 +1661,29 @@ function expectedBackstageStorylineContractPayload(requestCase) {
       transactionComponentExecuted: false,
       validationCompleted: true,
       validationCode: 'BACKSTAGE_STORYLINE_INVALID',
+    };
+  }
+  if (requestCase.fixtureName === 'savedStorylineProjection') {
+    return {
+      accepted: true,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      ...base,
+      providerBoundaryReached: false,
+      sqlProjectionExecuted: false,
+      universeReadProjection: {
+        componentExecuted: true,
+        excerptCodePoints: 1_500,
+        excerptLimitCodePoints: 1_500,
+        leadingWhitespaceCodePoints: 2_500,
+        leadingWhitespaceTrimmed: true,
+        meaningfulInputCodePoints: 1_501,
+        repositoryTransferLimitCodePoints: 1_501,
+        storylineExcerpt: 'N'.repeat(1_500),
+        truncated: true,
+      },
     };
   }
   if (requestCase.fixtureName !== 'lifecycleExact') {
@@ -2646,6 +2674,7 @@ async function executeRequestCase(
       requestCase.expectedType.startsWith('gaming-canary')
       || requestCase.expectedType.startsWith('gaming-query')
       || requestCase.expectedType === 'gaming-source'
+      || requestCase.expectedType === 'backstage-storyline-contract'
       || requestCase.expectedType === 'backstage-generation-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
     )

@@ -8,6 +8,10 @@ import {
   type BackstageContext,
   type PostgresBackstageBookerRepository,
 } from '@core/db/repositories/backstageBookerRepository.js';
+import {
+  BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
+  projectBackstageSavedStorylineExcerpt,
+} from '@shared/backstage/backstageUniverseReadProjection.js';
 
 export const BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES = 60 * 1024;
 // loadContext performs seven bounded SELECTs; 3.5s each leaves room for the
@@ -33,7 +37,7 @@ export const BACKSTAGE_UNIVERSE_READ_RESPONSE_LIMITS = Object.freeze({
   participantNamesPerItem: 10,
   canonSummaryCodePoints: 1_000,
   legacySummaryCodePoints: 500,
-  savedStorylineCodePoints: 1_500,
+  savedStorylineCodePoints: BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
   serializedResultBytes: BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES,
 });
 
@@ -179,23 +183,6 @@ function projectRequiredText(
   }
   const normalized = value.trim();
   if (normalized.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string.`);
-  }
-  return truncateCodePoints(normalized, maximum, section, truncatedSections);
-}
-
-function projectRequiredContent(
-  value: string,
-  label: string,
-  maximum: number,
-  section: string,
-  truncatedSections: Set<string>
-): string {
-  if (typeof value !== 'string') {
-    throw new TypeError(`${label} must be a non-empty string.`);
-  }
-  const normalized = value.trimStart();
-  if (normalized.trimEnd().length === 0) {
     throw new TypeError(`${label} must be a non-empty string.`);
   }
   return truncateCodePoints(normalized, maximum, section, truncatedSections);
@@ -457,6 +444,12 @@ function buildBackstageUniverseReadResult(
     .slice(0, BACKSTAGE_UNIVERSE_READ_RESPONSE_LIMITS.savedStorylines)
     .map(storyline => {
     assertUniverseIdentity(storyline.universeId, universeId);
+    const storylineProjection = projectBackstageSavedStorylineExcerpt(
+      storyline.storyline
+    );
+    if (storylineProjection.truncated) {
+      truncatedSections.add('snapshot.savedStorylines.storylineExcerpt');
+    }
     return {
       id: storyline.id,
       key: projectRequiredText(
@@ -466,13 +459,7 @@ function buildBackstageUniverseReadResult(
         'snapshot.savedStorylines.key',
         truncatedSections
       ),
-      storylineExcerpt: projectRequiredContent(
-        storyline.storyline,
-        'Backstage saved storyline text',
-        BACKSTAGE_UNIVERSE_READ_RESPONSE_LIMITS.savedStorylineCodePoints,
-        'snapshot.savedStorylines.storylineExcerpt',
-        truncatedSections
-      ),
+      storylineExcerpt: storylineProjection.storylineExcerpt,
       createdAt: toIsoTimestamp(
         storyline.createdAt,
         'Backstage saved storyline createdAt'

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T18:17:28.749Z",
+  "generatedAt": "2026-08-17T19:34:02.253Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2391,6 +2391,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageStoryline.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageUniverseReadProjection.ts"
         },
         {
           "relativePath": "src/shared/constants.ts"

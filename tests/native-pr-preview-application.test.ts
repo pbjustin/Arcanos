@@ -347,6 +347,32 @@ function expectedStorylinePayloadOver(fixture: string) {
   };
 }
 
+function expectedSavedStorylineProjection(fixture: string) {
+  return {
+    accepted: true,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    sqlProjectionExecuted: false,
+    universeReadProjection: {
+      componentExecuted: true,
+      excerptCodePoints: 1_500,
+      excerptLimitCodePoints: 1_500,
+      leadingWhitespaceCodePoints: 2_500,
+      leadingWhitespaceTrimmed: true,
+      meaningfulInputCodePoints: 1_501,
+      repositoryTransferLimitCodePoints: 1_501,
+      storylineExcerpt: 'N'.repeat(1_500),
+      truncated: true,
+    },
+  };
+}
+
 function expectedPhaseOneUniverseBinding(fixture: string) {
   return {
     accepted: true,
@@ -856,6 +882,13 @@ describe('native PR contained application', () => {
         status: 400,
         body: expectedStorylinePayloadOver(fixtures.payloadOver),
       },
+      {
+        fixture: fixtures.savedStorylineProjection,
+        status: 200,
+        body: expectedSavedStorylineProjection(
+          fixtures.savedStorylineProjection
+        ),
+      },
     ];
 
     for (const requestCase of cases) {
@@ -868,7 +901,12 @@ describe('native PR contained application', () => {
       expect(response.headers['x-response-bytes']).toBe(
         String(Buffer.byteLength(response.text, 'utf8'))
       );
-      expectNoStore(response);
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
       expect(response.headers.location).toBeUndefined();
       expect(response.headers['set-cookie']).toBeUndefined();
     }

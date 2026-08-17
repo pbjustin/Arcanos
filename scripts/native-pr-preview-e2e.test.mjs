@@ -133,6 +133,7 @@ function responseHeadersForCase(
     requestCase.expectedType.startsWith('gaming-canary')
     || requestCase.expectedType.startsWith('gaming-query')
     || requestCase.expectedType === 'gaming-source'
+    || requestCase.expectedType === 'backstage-storyline-contract'
     || requestCase.expectedType === 'backstage-generation-contract'
     || requestCase.expectedType === 'self-heal-approval-contract';
   return {
@@ -376,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 116);
+  assert.equal(requestPlan.length, 117);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -403,7 +404,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-storyline-contract'
     ).length,
-    4
+    5
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -513,6 +514,39 @@ test('executes the bounded credential-free matrix and detects identity stability
   );
   assert.ok(lifecycleCase);
   assert.ok(repeatedLifecycleCase);
+  const savedStorylineProjectionCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-saved-storyline-projection'
+  );
+  assert.ok(savedStorylineProjectionCase);
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(savedStorylineProjectionCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: 'saved-storyline-projection',
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      sqlProjectionExecuted: false,
+      universeReadProjection: {
+        componentExecuted: true,
+        excerptCodePoints: 1_500,
+        excerptLimitCodePoints: 1_500,
+        leadingWhitespaceCodePoints: 2_500,
+        leadingWhitespaceTrimmed: true,
+        meaningfulInputCodePoints: 1_501,
+        repositoryTransferLimitCodePoints: 1_501,
+        storylineExcerpt: 'N'.repeat(1_500),
+        truncated: true,
+      },
+    }
+  );
   const cancellationCase = requestPlan.find(({ caseId }) =>
     caseId === 'research-workflow-cancellation-drain'
   );
@@ -899,14 +933,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 116);
+  assert.equal(result.summary.requestsMade, 117);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 116);
+  assert.equal(result.checks.length, 117);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 116);
+  assert.equal(mock.requestCount, 117);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -954,12 +988,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageStorylineCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/storyline-contract')
   );
-  assert.equal(backstageStorylineCalls.length, 5);
+  assert.equal(backstageStorylineCalls.length, 6);
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    4
+    5
   );
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>
@@ -1287,6 +1321,15 @@ test('rejects missing synthetic provenance and correlation or security header dr
     },
     {
       caseId: 'self-heal-approval-denied-outcomes',
+      code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-saved-storyline-projection',
       code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
       mutate(headers) {
         delete headers[

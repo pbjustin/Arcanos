@@ -12,6 +12,10 @@ import {
   PostgresBackstageBookerRepository,
   resolveBackstageCanonDomainErrorHttpStatus
 } from '../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS,
+  BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS,
+} from '../src/shared/backstage/backstageUniverseReadProjection.js';
 
 interface HarnessEvent {
   id: string;
@@ -448,18 +452,21 @@ describe('PostgresBackstageBookerRepository', () => {
       "octet_length(convert_to(serialized_data, 'UTF8')) <= 16384"
     );
     expect(sql).toContain('LEFT(BTRIM(story_key), 241) AS story_key');
-    expect(sql).toContain('LEFT(LTRIM(storyline, $2), 1501) AS storyline');
+    expect(sql).toContain('LEFT(LTRIM(storyline, $2), $3) AS storyline');
     const storylineQueryIndex = commands.findIndex(command =>
-      command.includes('LEFT(LTRIM(storyline, $2), 1501) AS storyline')
+      command.includes('LEFT(LTRIM(storyline, $2), $3) AS storyline')
     );
     expect(storylineQueryIndex).toBeGreaterThan(-1);
     const storylineQueryValues = values[storylineQueryIndex];
     expect(storylineQueryValues?.[0]).toBe('legacy');
     const trimStartCharacters = storylineQueryValues?.[1];
-    expect(typeof trimStartCharacters).toBe('string');
-    expect((trimStartCharacters as string).length).toBeGreaterThan(0);
+    expect(trimStartCharacters).toBe(
+      BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS
+    );
     expect((trimStartCharacters as string).trimStart()).toBe('');
-    expect(trimStartCharacters).toContain('\uFEFF');
+    expect(storylineQueryValues?.[2]).toBe(
+      BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS
+    );
     expect(values).toContainEqual(['3500ms']);
     expect(commands.at(-1)).toBe('COMMIT');
   });

@@ -60,6 +60,12 @@ import {
   type StorylineBeat,
 } from './shared/backstage/backstageStoryline.js';
 import {
+  BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
+  BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS,
+  BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS,
+  projectBackstageSavedStorylineExcerpt,
+} from './shared/backstage/backstageUniverseReadProjection.js';
+import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
   BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
@@ -1521,6 +1527,60 @@ function runStorylinePayloadOverFixture(
   throw new Error('PREVIEW_BACKSTAGE_STORYLINE_OVER_LIMIT_ACCEPTED');
 }
 
+function runSavedStorylineProjectionFixture(
+  fixture: string
+): SyntheticStorylineResult {
+  const leadingWhitespace =
+    BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS.repeat(100);
+  const meaningfulContent = 'N'.repeat(
+    BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS
+  );
+  const projection = projectBackstageSavedStorylineExcerpt(
+    `${leadingWhitespace}${meaningfulContent}`
+  );
+  const excerptCodePoints = Array.from(projection.storylineExcerpt).length;
+  const leadingWhitespaceCodePoints = Array.from(leadingWhitespace).length;
+  requireStorylineFixtureInvariant(
+    leadingWhitespace.trimStart().length === 0
+    && leadingWhitespaceCodePoints
+      > BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS
+    && projection.storylineExcerpt
+      === 'N'.repeat(BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS)
+    && excerptCodePoints === BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS
+    && projection.truncated,
+    'PREVIEW_BACKSTAGE_SAVED_STORYLINE_PROJECTION_INVALID'
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      sqlProjectionExecuted: false,
+      universeReadProjection: {
+        componentExecuted: true,
+        excerptCodePoints,
+        excerptLimitCodePoints:
+          BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
+        leadingWhitespaceCodePoints,
+        leadingWhitespaceTrimmed: true,
+        meaningfulInputCodePoints: Array.from(meaningfulContent).length,
+        repositoryTransferLimitCodePoints:
+          BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS,
+        storylineExcerpt: projection.storylineExcerpt,
+        truncated: projection.truncated,
+      },
+    },
+  };
+}
+
 async function runStorylineFixture(
   fixture: string
 ): Promise<SyntheticStorylineResult> {
@@ -1532,6 +1592,8 @@ async function runStorylineFixture(
       return runPhaseOneUniverseBindingFixture(fixture);
     case fixtures.payloadOver:
       return runStorylinePayloadOverFixture(fixture);
+    case fixtures.savedStorylineProjection:
+      return runSavedStorylineProjectionFixture(fixture);
     default:
       throw new Error('PREVIEW_BACKSTAGE_STORYLINE_FIXTURE_INVALID');
   }
@@ -3170,6 +3232,7 @@ export function createNativePrPreviewApplication(
       rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath
       || rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath
       || rawPath === NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
       || gamingSourcePath
     ) {
