@@ -147,6 +147,7 @@ describe('custom GPT OpenAPI contract route', () => {
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
     ]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.operationId)
       .toBe('runBackstageBooker');
@@ -169,6 +170,15 @@ describe('custom GPT OpenAPI contract route', () => {
     ]?.get?.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths?.[
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}'
+    ]?.get?.['x-openai-isConsequential']).toBe(false);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary'
+    ]?.get?.operationId).toBe('getBackstageStoryline');
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary'
+    ]?.get?.security).toEqual([{ bearerAuth: [] }]);
+    expect(response.body.paths?.[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary'
     ]?.get?.['x-openai-isConsequential']).toBe(false);
   });
 

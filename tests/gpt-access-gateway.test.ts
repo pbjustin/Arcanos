@@ -50,6 +50,7 @@ const initializeModuleRegistryMock = jest.fn<() => Promise<void>>();
 const hasValidOpenAiKeyMock = jest.fn();
 const responsesCreateMock = jest.fn();
 const readBackstageUniverseMock = jest.fn();
+const readBackstageStorylineSummaryMock = jest.fn();
 const fakeOpenAIClient = {
   responses: {
     create: responsesCreateMock
@@ -60,6 +61,7 @@ class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 class MockModuleNotFoundError extends Error {}
 class MockModuleActionNotFoundError extends Error {}
+class MockBackstageStorylineSummaryReadRequestError extends Error {}
 
 jest.unstable_mockModule('../src/core/diagnostics.js', () => ({
   writePublicHealthResponse: writePublicHealthResponseMock
@@ -102,6 +104,9 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/services/backstageUniverseRead.js', () => ({
+  BackstageStorylineSummaryReadRequestError:
+    MockBackstageStorylineSummaryReadRequestError,
+  readBackstageStorylineSummary: readBackstageStorylineSummaryMock,
   readBackstageUniverse: readBackstageUniverseMock,
 }));
 
@@ -387,6 +392,34 @@ function buildBackstageUniverseReadResult(
         storylines: [],
         activeBeats: [],
       },
+    },
+  };
+}
+
+function buildBackstageStorylineSummaryReadResult(
+  offset = 0,
+  hasMore = true
+): Record<string, unknown> {
+  return {
+    universeId: 'my-universe-2k26',
+    source: 'postgresql',
+    pageCodePointLimit: 4_000,
+    storyline: {
+      id: '11111111-1111-4111-8111-111111111111',
+      key: 'raw/day one?100% + 🎤',
+      title: 'Monday Night Raw Day One',
+      status: 'active',
+      version: 5,
+      universeRevision: '6',
+      updatedAt: '2026-08-16T21:30:00.000Z',
+    },
+    summaryPage: {
+      text: 'Full stored summary page.',
+      startCodePoint: offset,
+      endCodePointExclusive: offset + 25,
+      totalCodePoints: hasMore ? 5_000 : offset + 25,
+      hasMore,
+      nextOffset: hasMore ? offset + 25 : null,
     },
   };
 }
@@ -3523,6 +3556,159 @@ describe('/gpt-access gateway', () => {
     expect(response.body.error.code).toBe('BACKSTAGE_BOOKER_AUTH_UNAVAILABLE');
     expect(response.headers['cache-control']).toContain('no-store');
     expect(readBackstageUniverseMock).not.toHaveBeenCalled();
+  });
+
+  it('reads one exact full storyline-summary page with reserved key characters', async () => {
+    const storylineKey = 'raw/day one?100% + 🎤';
+    readBackstageStorylineSummaryMock.mockResolvedValueOnce(
+      buildBackstageStorylineSummaryReadResult()
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary')
+        .query({ storylineKey })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      result: buildBackstageStorylineSummaryReadResult(),
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(readBackstageStorylineSummaryMock).toHaveBeenCalledWith(
+      'my-universe-2k26',
+      storylineKey,
+      { offset: 0 }
+    );
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('passes a canonical continuation offset and version fence to the storyline reader', async () => {
+    readBackstageStorylineSummaryMock.mockResolvedValueOnce(
+      buildBackstageStorylineSummaryReadResult(4_000, false)
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary')
+        .query({
+          storylineKey: 'raw-day-one-baseline',
+          offset: '4000',
+          expectedVersion: '5',
+        })
+    );
+
+    expect(response.status).toBe(200);
+    expect(readBackstageStorylineSummaryMock).toHaveBeenCalledWith(
+      'my-universe-2k26',
+      'raw-day-one-baseline',
+      { offset: 4_000, expectedVersion: 5 }
+    );
+  });
+
+  it.each([
+    ['missing continuation version', '?storylineKey=raw-day-one-baseline&offset=4000'],
+    ['duplicate key', '?storylineKey=first&storylineKey=second'],
+    ['duplicate offset', '?storylineKey=raw-day-one-baseline&offset=0&offset=1'],
+    ['unknown field', '?storylineKey=raw-day-one-baseline&include=all'],
+    ['noncanonical offset', '?storylineKey=raw-day-one-baseline&offset=04000&expectedVersion=5'],
+    ['padded key', '?storylineKey=%20raw-day-one-baseline%20'],
+    ['empty key', '?storylineKey='],
+  ])('rejects an invalid storyline-summary query: %s', async (_caseName, query) => {
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        `/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary${query}`
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageStorylineSummaryMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong', 'Bearer test-wrong-backstage-token'],
+    ['generic', `Bearer ${TEST_TOKEN}`],
+  ])('denies %s authentication on the storyline-summary read', async (
+    _caseName,
+    authorization
+  ) => {
+    let pendingRequest = request(buildApp())
+      .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary')
+      .query({ storylineKey: 'raw-day-one-baseline' });
+    if (authorization) {
+      pendingRequest = pendingRequest.set('Authorization', authorization);
+    }
+
+    const response = await pendingRequest;
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageStorylineSummaryMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND'),
+      404,
+      'BACKSTAGE_STORYLINE_NOT_FOUND',
+    ],
+    [
+      new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT'),
+      409,
+      'BACKSTAGE_STORYLINE_VERSION_CONFLICT',
+    ],
+    [
+      new BackstageBookerRepositoryUnavailableError(
+        'loadCanonStorylineSummary',
+        new Error('test-only database outage')
+      ),
+      503,
+      'BACKSTAGE_STORYLINE_READ_UNAVAILABLE',
+    ],
+  ])('maps an exact storyline read failure to %s', async (
+    error,
+    expectedStatus,
+    expectedCode
+  ) => {
+    readBackstageStorylineSummaryMock.mockRejectedValueOnce(error);
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary')
+        .query({ storylineKey: 'raw-day-one-baseline' })
+    );
+
+    expect(response.status).toBe(expectedStatus);
+    expect(response.body.error.code).toBe(expectedCode);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the storyline-summary leaf GET-only and rejects bodies before parsing', async () => {
+    const methodResponse = await backstageBookerAuthorized(
+      request(buildApp()).post(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary?storylineKey=raw-day-one-baseline'
+      )
+    );
+    const bodyResponse = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary?storylineKey=raw-day-one-baseline')
+        .set('Content-Type', 'application/json')
+        .send('{"must":"not parse"')
+    );
+
+    expect(methodResponse.status).toBe(405);
+    expect(methodResponse.headers.allow).toBe('GET, HEAD');
+    expect(bodyResponse.status).toBe(400);
+    expect(bodyResponse.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(readBackstageStorylineSummaryMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
   it.each([

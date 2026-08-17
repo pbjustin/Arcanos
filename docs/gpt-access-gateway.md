@@ -30,8 +30,8 @@ Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 `ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` are special: they must be listed explicitly before `/gpt-access/jobs/create` can enqueue work, capability discovery can enumerate modules, or `/gpt-access/capabilities/v1/{id}/run` can execute a module action. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the confirmation gate (`x-confirmed: yes` or a confirmation challenge token).
 
 Those are the unchanged generic-bearer rules. The exact Backstage Booker canon
-route additionally supports the purpose-bound lane below; its universe read
-requires only that dedicated credential. Neither weakens a generic credential's
+route additionally supports the purpose-bound lane below; its universe and
+storyline reads require only that dedicated credential. Neither weakens a generic credential's
 scope or confirmation requirements.
 
 ### Backstage Booker protected Actions
@@ -46,11 +46,13 @@ Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 
 This credential is accepted only for the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
-and exact `POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
-trailing-slash aliases. The read is non-consequential, exposes no list or
-display-name lookup, and returns a bounded PostgreSQL snapshot with explicit
-truncation metadata; it never falls back to process memory. An ID with no
-stored rows returns `hasPersistedData: false`. The dedicated write lane fails
+and its fixed `/storyline-summary` exact-key read, plus the exact
+`POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
+trailing-slash aliases. Both reads are non-consequential and expose no list or
+display-name lookup. They return a bounded PostgreSQL snapshot with explicit
+truncation metadata or a fixed 4,000-code-point, version-fenced full-summary
+page; neither falls back to process memory. An ID with no stored rows returns
+`hasPersistedData: false`. The dedicated write lane fails
 closed unless `action` is `upsertStoryline` or
 `appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
 `403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token

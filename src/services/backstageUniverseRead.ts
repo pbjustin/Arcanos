@@ -1,9 +1,11 @@
 import * as coreDb from '@core/db/index.js';
 import {
   BACKSTAGE_UNIVERSE_ID_PATTERN,
+  BackstageCanonDomainError,
   BackstageBookerRepositoryUnavailableError,
   createBackstageBookerRepository,
   type BackstageCanonBeatRecord,
+  type BackstageCanonStorylineSummaryRecord,
   type BackstageCanonStorylineRecord,
   type BackstageContext,
   type PostgresBackstageBookerRepository,
@@ -17,6 +19,8 @@ export const BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES = 60 * 1024;
 // loadContext performs seven bounded SELECTs; 3.5s each leaves room for the
 // pool's connection wait and HTTP overhead inside ChatGPT's 45s Action limit.
 export const BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS = 3_500;
+export const BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS = 4_000;
+export const BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS = 10_000;
 
 export const BACKSTAGE_UNIVERSE_READ_SOURCE_LIMITS = Object.freeze({
   roster: 25,
@@ -138,13 +142,111 @@ export interface ReadBackstageUniverseOptions {
   reader?: BackstageUniverseContextReader;
 }
 
-function getBackstageUniverseContextReader(): PostgresBackstageBookerRepository {
+export interface BackstageStorylineSummaryReader {
+  loadCanonStorylineSummary(
+    universeId: string,
+    storyKey: string,
+    options?: { statementTimeoutMs?: number }
+  ): Promise<BackstageCanonStorylineSummaryRecord | null>;
+}
+
+export interface ReadBackstageStorylineSummaryOptions {
+  reader?: BackstageStorylineSummaryReader;
+  offset?: number;
+  expectedVersion?: number;
+}
+
+export interface BackstageStorylineSummaryReadResult {
+  universeId: string;
+  source: 'postgresql';
+  pageCodePointLimit: typeof BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS;
+  storyline: {
+    id: string;
+    key: string;
+    title: string;
+    status: BackstageCanonStorylineRecord['status'];
+    version: number;
+    universeRevision: string;
+    updatedAt: string;
+  };
+  summaryPage: {
+    text: string | null;
+    startCodePoint: number;
+    endCodePointExclusive: number;
+    totalCodePoints: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
+}
+
+export class BackstageStorylineSummaryReadRequestError extends Error {
+  readonly code = 'GPT_ACCESS_VALIDATION_ERROR';
+
+  constructor(message = 'The Backstage storyline summary read request is invalid.') {
+    super(message);
+    this.name = 'BackstageStorylineSummaryReadRequestError';
+  }
+}
+
+function getBackstageReadRepository(
+  operation: 'loadContext' | 'loadCanonStorylineSummary'
+): PostgresBackstageBookerRepository {
   const getPool = typeof coreDb.getPool === 'function' ? coreDb.getPool : null;
   const pool = getPool?.() ?? null;
   if (!pool) {
-    throw new BackstageBookerRepositoryUnavailableError('loadContext');
+    throw new BackstageBookerRepositoryUnavailableError(operation);
   }
   return createBackstageBookerRepository(pool);
+}
+
+function assertExactStorylineKey(storyKey: string): void {
+  if (
+    typeof storyKey !== 'string'
+    || storyKey !== storyKey.trim()
+    || storyKey.length === 0
+    || Array.from(storyKey).length > 240
+  ) {
+    throw new BackstageStorylineSummaryReadRequestError();
+  }
+  for (let index = 0; index < storyKey.length; index += 1) {
+    const codeUnit = storyKey.charCodeAt(index);
+    if (codeUnit === 0) {
+      throw new BackstageStorylineSummaryReadRequestError();
+    }
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const trailingCodeUnit = storyKey.charCodeAt(index + 1);
+      if (!(trailingCodeUnit >= 0xdc00 && trailingCodeUnit <= 0xdfff)) {
+        throw new BackstageStorylineSummaryReadRequestError();
+      }
+      index += 1;
+      continue;
+    }
+    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      throw new BackstageStorylineSummaryReadRequestError();
+    }
+  }
+}
+
+function assertStorylineSummaryReadPagination(
+  offset: number,
+  expectedVersion: number | undefined
+): void {
+  if (
+    !Number.isSafeInteger(offset)
+    || offset < 0
+    || offset > BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS
+    || (
+      expectedVersion !== undefined
+      && (
+        !Number.isSafeInteger(expectedVersion)
+        || expectedVersion < 1
+        || expectedVersion > 2_147_483_647
+      )
+    )
+    || (offset > 0 && expectedVersion === undefined)
+  ) {
+    throw new BackstageStorylineSummaryReadRequestError();
+  }
 }
 
 function toIsoTimestamp(value: Date | string, label: string): string {
@@ -601,10 +703,93 @@ export async function readBackstageUniverse(
     throw new TypeError('universeId must be a valid Backstage universe identifier.');
   }
 
-  const reader = options.reader ?? getBackstageUniverseContextReader();
+  const reader = options.reader ?? getBackstageReadRepository('loadContext');
   const context = await reader.loadContext(universeId, {
     statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS,
     universeReadProjection: true,
   });
   return buildBackstageUniverseReadResult(universeId, context);
+}
+
+/**
+ * Read one exact durable canon storyline summary in fixed Unicode-code-point
+ * pages. Continuation pages require a version fence so callers cannot combine
+ * text from two different storyline revisions.
+ */
+export async function readBackstageStorylineSummary(
+  universeId: string,
+  storyKey: string,
+  options: ReadBackstageStorylineSummaryOptions = {}
+): Promise<BackstageStorylineSummaryReadResult> {
+  if (
+    typeof universeId !== 'string'
+    || universeId !== universeId.trim()
+    || !BACKSTAGE_UNIVERSE_ID_PATTERN.test(universeId)
+  ) {
+    throw new BackstageStorylineSummaryReadRequestError();
+  }
+  assertExactStorylineKey(storyKey);
+  const offset = options.offset ?? 0;
+  assertStorylineSummaryReadPagination(offset, options.expectedVersion);
+
+  const reader = options.reader
+    ?? getBackstageReadRepository('loadCanonStorylineSummary');
+  const storyline = await reader.loadCanonStorylineSummary(
+    universeId,
+    storyKey,
+    { statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS }
+  );
+  if (!storyline) {
+    throw new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND');
+  }
+  if (storyline.universeId !== universeId || storyline.storyKey !== storyKey) {
+    throw new TypeError('Backstage storyline summary read returned mixed scope data.');
+  }
+  if (
+    options.expectedVersion !== undefined
+    && storyline.version !== options.expectedVersion
+  ) {
+    throw new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT');
+  }
+
+  const summaryCodePoints = storyline.summary === null
+    ? []
+    : Array.from(storyline.summary);
+  if (offset > summaryCodePoints.length) {
+    throw new BackstageStorylineSummaryReadRequestError();
+  }
+  const endCodePointExclusive = Math.min(
+    summaryCodePoints.length,
+    offset + BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS
+  );
+  const hasMore = endCodePointExclusive < summaryCodePoints.length;
+  const text = storyline.summary === null
+    ? null
+    : summaryCodePoints.slice(offset, endCodePointExclusive).join('');
+
+  return {
+    universeId,
+    source: 'postgresql',
+    pageCodePointLimit: BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
+    storyline: {
+      id: storyline.id,
+      key: storyline.storyKey,
+      title: storyline.title,
+      status: storyline.status,
+      version: storyline.version,
+      universeRevision: storyline.updatedRevision,
+      updatedAt: toIsoTimestamp(
+        storyline.updatedAt,
+        'Backstage canon storyline updatedAt'
+      ),
+    },
+    summaryPage: {
+      text,
+      startCodePoint: offset,
+      endCodePointExclusive,
+      totalCodePoints: summaryCodePoints.length,
+      hasMore,
+      nextOffset: hasMore ? endCodePointExclusive : null,
+    },
+  };
 }

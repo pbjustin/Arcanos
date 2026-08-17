@@ -114,9 +114,11 @@ import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 import {
+  BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX,
   BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX,
   backstageBookerHttpBoundary,
   isBackstageBookerHttpBoundaryApplied,
+  isBackstageBookerStorylineSummaryReadRequest,
   isBackstageBookerUniverseReadRequest,
 } from '@services/backstageBookerHttpBoundary.js';
 import {
@@ -124,7 +126,9 @@ import {
   requireBackstageBookerAccessAuthentication,
 } from '@services/backstageBookerAccessAuth.js';
 import {
+  BackstageStorylineSummaryReadRequestError,
   readBackstageUniverse,
+  readBackstageStorylineSummary,
 } from '@services/backstageUniverseRead.js';
 
 const router = express.Router();
@@ -965,10 +969,10 @@ function sendGptAccessUnavailable(
   });
 }
 
-function sendBackstageUniverseReadError(
+function sendBackstageReadError(
   req: express.Request,
   res: express.Response,
-  statusCode: 400 | 500 | 503,
+  statusCode: 400 | 404 | 409 | 500 | 503,
   code: string,
   message: string
 ): void {
@@ -990,6 +994,70 @@ function sendBackstageUniverseReadError(
   });
 }
 
+type BackstageStorylineSummaryQuery =
+  | {
+      ok: true;
+      storylineKey: string;
+      offset: number;
+      expectedVersion?: number;
+    }
+  | { ok: false };
+
+function parseCanonicalQueryInteger(
+  value: unknown,
+  maximum: number,
+  allowZero: boolean
+): number | null {
+  if (
+    typeof value !== 'string'
+    || !(allowZero ? /^(?:0|[1-9]\d*)$/u : /^[1-9]\d*$/u).test(value)
+  ) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : null;
+}
+
+function parseBackstageStorylineSummaryQuery(
+  req: express.Request
+): BackstageStorylineSummaryQuery {
+  const allowedKeys = new Set(['storylineKey', 'offset', 'expectedVersion']);
+  const queryKeys = Object.keys(req.query);
+  if (
+    !queryKeys.includes('storylineKey')
+    || queryKeys.some(key => !allowedKeys.has(key))
+    || typeof req.query.storylineKey !== 'string'
+    || req.query.storylineKey !== req.query.storylineKey.trim()
+    || req.query.storylineKey.length === 0
+    || Array.from(req.query.storylineKey).length > 240
+  ) {
+    return { ok: false };
+  }
+  const offset = req.query.offset === undefined
+    ? 0
+    : parseCanonicalQueryInteger(req.query.offset, 10_000, true);
+  const expectedVersion = req.query.expectedVersion === undefined
+    ? undefined
+    : parseCanonicalQueryInteger(
+        req.query.expectedVersion,
+        2_147_483_647,
+        false
+      );
+  if (
+    offset === null
+    || expectedVersion === null
+    || (offset > 0 && expectedVersion === undefined)
+  ) {
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    storylineKey: req.query.storylineKey,
+    offset,
+    ...(expectedVersion === undefined ? {} : { expectedVersion }),
+  };
+}
+
 const getBackstageUniverse = asyncHandler(async (req, res) => {
   const universeId = req.params.universeId;
   const contentLength = req.get('content-length');
@@ -1003,7 +1071,7 @@ const getBackstageUniverse = asyncHandler(async (req, res) => {
     || Object.keys(req.query).length > 0
     || hasRequestBody
   ) {
-    sendBackstageUniverseReadError(
+    sendBackstageReadError(
       req,
       res,
       400,
@@ -1049,7 +1117,7 @@ const getBackstageUniverse = asyncHandler(async (req, res) => {
     } catch {
       // Diagnostics must not alter the fixed public response.
     }
-    sendBackstageUniverseReadError(
+    sendBackstageReadError(
       req,
       res,
       unavailable ? 503 : 500,
@@ -1060,6 +1128,109 @@ const getBackstageUniverse = asyncHandler(async (req, res) => {
         ? 'Backstage universe data is temporarily unavailable.'
         : 'Backstage universe data could not be read safely.'
     );
+  }
+});
+
+const getBackstageStoryline = asyncHandler(async (req, res) => {
+  const universeId = req.params.universeId;
+  const query = parseBackstageStorylineSummaryQuery(req);
+  const contentLength = req.get('content-length');
+  const hasRequestBody = req.get('transfer-encoding') !== undefined
+    || (contentLength !== undefined && contentLength !== '0');
+  if (
+    !isBackstageBookerStorylineSummaryReadRequest(req)
+    || typeof universeId !== 'string'
+    || universeId !== universeId.trim()
+    || !BACKSTAGE_UNIVERSE_ID_PATTERN.test(universeId)
+    || !query.ok
+    || hasRequestBody
+  ) {
+    sendBackstageReadError(
+      req,
+      res,
+      400,
+      'GPT_ACCESS_VALIDATION_ERROR',
+      'The Backstage storyline summary read request is invalid.'
+    );
+    return;
+  }
+
+  try {
+    const result = await readBackstageStorylineSummary(
+      universeId,
+      query.storylineKey,
+      {
+        offset: query.offset,
+        ...(query.expectedVersion === undefined
+          ? {}
+          : { expectedVersion: query.expectedVersion }),
+      }
+    );
+    try {
+      req.logger?.info('backstage_storyline_summary_read.completed', {
+        universeId,
+        version: result.storyline.version,
+        offset: result.summaryPage.startCodePoint,
+        hasMore: result.summaryPage.hasMore,
+      });
+    } catch {
+      // Diagnostics must not alter the read response.
+    }
+    sendGptAccessResult(res, {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        result,
+        ...(req.requestId ? { requestId: req.requestId } : {}),
+        ...(req.traceId ? { traceId: req.traceId } : {}),
+      },
+    });
+  } catch (error: unknown) {
+    const unavailable = error instanceof BackstageBookerRepositoryUnavailableError;
+    const validation = error instanceof BackstageStorylineSummaryReadRequestError;
+    const domainCode = isBackstageCanonDomainError(error) ? error.code : null;
+    const notFound = domainCode === 'BACKSTAGE_STORYLINE_NOT_FOUND';
+    const versionConflict = domainCode === 'BACKSTAGE_STORYLINE_VERSION_CONFLICT';
+    const statusCode = validation
+      ? 400
+      : notFound
+        ? 404
+        : versionConflict
+          ? 409
+          : unavailable
+            ? 503
+            : 500;
+    const code = validation
+      ? 'GPT_ACCESS_VALIDATION_ERROR'
+      : notFound
+        ? 'BACKSTAGE_STORYLINE_NOT_FOUND'
+        : versionConflict
+          ? 'BACKSTAGE_STORYLINE_VERSION_CONFLICT'
+          : unavailable
+            ? 'BACKSTAGE_STORYLINE_READ_UNAVAILABLE'
+            : 'BACKSTAGE_STORYLINE_READ_FAILED';
+    const message = validation
+      ? 'The Backstage storyline summary read request is invalid.'
+      : notFound
+        ? 'No stored Backstage canon storyline was found for this exact universe and key.'
+        : versionConflict
+          ? 'The Backstage storyline changed between summary pages; restart at offset 0.'
+          : unavailable
+            ? 'Backstage storyline summary data is temporarily unavailable.'
+            : 'Backstage storyline summary data could not be read safely.';
+    try {
+      req.logger?.[unavailable ? 'warn' : 'error']?.(
+        'backstage_storyline_summary_read.failed',
+        {
+          universeId,
+          code,
+          offset: query.offset,
+        }
+      );
+    } catch {
+      // Diagnostics must not alter the fixed public response.
+    }
+    sendBackstageReadError(req, res, statusCode, code, message);
   }
 });
 
@@ -1760,6 +1931,32 @@ router.get(
   requireGptAccessScope('capabilities.read'),
   requireGptAccessModuleRegistry,
   listGptAccessCapabilities
+);
+
+router.get(
+  `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/:universeId${BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX}`,
+  requireBackstageBookerAccessAuthentication,
+  getBackstageStoryline
+);
+
+router.all(
+  `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/:universeId${BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX}`,
+  requireBackstageBookerAccessAuthentication,
+  (req, res) => {
+    res.setHeader('Allow', 'GET, HEAD');
+    sendGptAccessResult(res, {
+      statusCode: 405,
+      payload: {
+        ok: false,
+        error: {
+          code: 'METHOD_NOT_ALLOWED',
+          message: 'This Backstage storyline summary endpoint supports GET and HEAD only.',
+        },
+        ...(req.requestId ? { requestId: req.requestId } : {}),
+        ...(req.traceId ? { traceId: req.traceId } : {}),
+      },
+    });
+  }
 );
 
 router.get(

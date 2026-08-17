@@ -147,6 +147,7 @@ const { createApp } = await import('../src/app.js');
 const {
   BACKSTAGE_BOOKER_BODY_LIMIT_BYTES,
   BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH,
+  BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX,
   BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX,
   backstageBookerHttpBoundary,
   isBackstageBookerHttpBoundaryApplied,
@@ -183,6 +184,8 @@ const BACKSTAGE_BOOKER_TEST_TOKEN =
 const GLOBAL_GPT_ACCESS_TOKEN = 'global-gpt-access-token-for-boundary-tests';
 const BACKSTAGE_UNIVERSE_READ_PATH =
   `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/my-universe-2k26`;
+const BACKSTAGE_STORYLINE_SUMMARY_READ_PATH =
+  `${BACKSTAGE_UNIVERSE_READ_PATH}${BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX}`;
 const INGESTION_PATH = '/gpt-access/gaming/sources/ingestions';
 const REFRESH_PATH = '/gpt-access/gaming/sources/refreshes';
 const STATUS_ID = '019fe3cd-8c01-7f01-8d2d-caa951bc4b9b';
@@ -902,6 +905,12 @@ describe('Backstage Booker production HTTP boundary', () => {
           universeId: req.params.universeId ?? 'my-universe-2k26',
         });
       });
+      app.get(BACKSTAGE_STORYLINE_SUMMARY_READ_PATH, (req, res) => {
+        res.status(200).json({
+          dedicated: isBackstageBookerAccessAuthenticated(req),
+          summaryPage: true,
+        });
+      });
     });
   }
 
@@ -999,6 +1008,29 @@ describe('Backstage Booker production HTTP boundary', () => {
     expect(unsafeGateMock).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps exact storyline-summary reads on the dedicated pre-parser boundary', async () => {
+    unsafeGatePassThrough = true;
+    const dedicatedResponse = await request(createApp())
+      .get(BACKSTAGE_STORYLINE_SUMMARY_READ_PATH)
+      .query({ storylineKey: 'raw/day one?100% + 🎤' })
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`);
+    const genericResponse = await request(createApp())
+      .get(BACKSTAGE_STORYLINE_SUMMARY_READ_PATH)
+      .query({ storylineKey: 'raw-day-one-baseline' })
+      .set('Authorization', `Bearer ${GLOBAL_GPT_ACCESS_TOKEN}`);
+
+    expect(dedicatedResponse.status).toBe(200);
+    expect(dedicatedResponse.body).toEqual({
+      dedicated: true,
+      summaryPage: true,
+    });
+    expect(dedicatedResponse.headers['cache-control']).toContain('no-store');
+    expect(genericResponse.status).toBe(401);
+    expect(genericResponse.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(genericResponse.headers['cache-control']).toContain('no-store');
+    expect(unsafeGateMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['malformed', '{"value":"backstage-read-malformed-sentinel"'],
     ['oversized', JSON.stringify({
@@ -1021,6 +1053,22 @@ describe('Backstage Booker production HTTP boundary', () => {
     });
     expect(response.headers['cache-control']).toContain('no-store');
     expect(JSON.stringify(response.body)).not.toContain('backstage-read-');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an authenticated storyline-summary body before broad parsing', async () => {
+    const sentinel = 'backstage-storyline-summary-body-sentinel';
+    const response = await request(createApp())
+      .get(BACKSTAGE_STORYLINE_SUMMARY_READ_PATH)
+      .query({ storylineKey: 'raw-day-one-baseline' })
+      .set('Authorization', `Bearer ${BACKSTAGE_BOOKER_TEST_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send(`{"value":"${sentinel}"`);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(JSON.stringify(response.body)).not.toContain(sentinel);
+    expect(response.headers['cache-control']).toContain('no-store');
     expect(unsafeGateMock).not.toHaveBeenCalled();
   });
 

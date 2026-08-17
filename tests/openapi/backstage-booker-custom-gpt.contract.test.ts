@@ -3,8 +3,14 @@ import { join } from 'node:path';
 
 import Ajv2020 from 'ajv/dist/2020.js';
 
-import type { BackstageContext } from '../../src/core/db/repositories/backstageBookerRepository.js';
-import { readBackstageUniverse } from '../../src/services/backstageUniverseRead.js';
+import type {
+  BackstageCanonStorylineSummaryRecord,
+  BackstageContext,
+} from '../../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  readBackstageStorylineSummary,
+  readBackstageUniverse,
+} from '../../src/services/backstageUniverseRead.js';
 
 const contractPath = join(
   process.cwd(),
@@ -78,11 +84,11 @@ function compileComponent(contract: any, schemaName: string) {
 }
 
 describe('Backstage Booker Custom GPT builder contract', () => {
-  it('exposes only the fixed public, exact-ID read, and canon-write operations', () => {
+  it('exposes only the fixed public, exact reads, and canon-write operations', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.1.0');
+    expect(contract.info.version).toBe('1.2.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -94,6 +100,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
     ]);
 
     const publicOperation = contract.paths['/gpt/backstage-booker'].post;
@@ -204,13 +211,57 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '500',
       '503',
     ]);
+    const storylineReadOperation = contract.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary'
+    ].get;
+    expect(storylineReadOperation.operationId)
+      .toBe('getBackstageStoryline');
+    expect(storylineReadOperation.security).toEqual([{ bearerAuth: [] }]);
+    expect(storylineReadOperation['x-openai-isConsequential']).toBe(false);
+    expect(storylineReadOperation.requestBody).toBeUndefined();
+    expect(storylineReadOperation.parameters).toEqual([
+      expect.objectContaining({
+        name: 'universeId',
+        in: 'path',
+        required: true,
+        schema: { $ref: '#/components/schemas/UniverseReadId' },
+      }),
+      expect.objectContaining({
+        name: 'storylineKey',
+        in: 'query',
+        required: true,
+        schema: { $ref: '#/components/schemas/StorylineReadKey' },
+      }),
+      expect.objectContaining({
+        name: 'offset',
+        in: 'query',
+        required: false,
+        schema: expect.objectContaining({ default: 0, maximum: 10_000 }),
+      }),
+      expect.objectContaining({
+        name: 'expectedVersion',
+        in: 'query',
+        required: false,
+        schema: expect.objectContaining({ minimum: 1 }),
+      }),
+    ]);
+    expect(Object.keys(storylineReadOperation.responses)).toEqual([
+      '200',
+      '400',
+      '401',
+      '404',
+      '409',
+      '429',
+      '500',
+      '503',
+    ]);
     expect(contract.components.securitySchemes).toEqual({
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'Opaque Backstage Booker access token',
         description:
-          'Required only for the fixed Backstage Booker exact-ID universe-read and canon-write operations. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes.',
+          'Required only for the fixed Backstage Booker exact-universe reads and canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes.',
       },
     });
 
@@ -252,6 +303,38 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       contract.components.schemas.BackstageUniverseReadResponseLimits.properties
         .serializedResultBytes.const
     ).toBeLessThan(100_000);
+    const maximumStorylinePageEnvelope = {
+      ok: true,
+      result: {
+        universeId: 'u'.repeat(128),
+        source: 'postgresql',
+        pageCodePointLimit: 4_000,
+        storyline: {
+          id: '11111111-1111-4111-8111-111111111111',
+          key: 'k'.repeat(240),
+          title: 't'.repeat(240),
+          status: 'active',
+          version: 2_147_483_647,
+          universeRevision: '9223372036854775807',
+          updatedAt: '2026-08-16T21:30:00.000Z',
+        },
+        summaryPage: {
+          text: '🤼'.repeat(4_000),
+          startCodePoint: 6_000,
+          endCodePointExclusive: 10_000,
+          totalCodePoints: 10_000,
+          hasMore: false,
+          nextOffset: null,
+        },
+      },
+      requestId: 'r'.repeat(128),
+      traceId: 't'.repeat(128),
+    };
+    expect(JSON.stringify(maximumStorylinePageEnvelope).length).toBeLessThan(100_000);
+    expect(Buffer.byteLength(
+      JSON.stringify(maximumStorylinePageEnvelope),
+      'utf8'
+    )).toBeLessThan(100_000);
   });
 
   it('keeps every public Builder example on the synchronous route', () => {
@@ -437,6 +520,61 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         .maxLength
     ).toBe(1500);
 
+    for (const response of Object.values(operation.responses) as any[]) {
+      expect(response.headers['Cache-Control']).toEqual({
+        $ref: '#/components/headers/NoStore',
+      });
+    }
+    expect(JSON.stringify(operation)).not.toContain('confirmation');
+  });
+
+  it('validates the real exact storyline reader against its paginated response schema', async () => {
+    const contract = loadContract();
+    const operation = contract.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary'
+    ].get;
+    const validateSuccess = compileComponent(
+      contract,
+      'BackstageStorylineSummaryReadSuccessResponse'
+    );
+    const storylineKey = 'raw/day one?100% + 🎤';
+    const summary = '🤼'.repeat(10_000);
+    const storyline: BackstageCanonStorylineSummaryRecord = {
+      id: '11111111-1111-4111-8111-111111111111',
+      universeId: 'my-universe-2k26',
+      storyKey: storylineKey,
+      title: 'Monday Night Raw Day One',
+      summary,
+      status: 'active',
+      version: 5,
+      createdRevision: '1',
+      updatedRevision: '6',
+      createdAt: new Date('2026-08-16T20:30:00.000Z'),
+      updatedAt: new Date('2026-08-16T21:30:00.000Z'),
+      closedAt: null,
+    };
+    const result = await readBackstageStorylineSummary(
+      'my-universe-2k26',
+      storylineKey,
+      {
+        reader: { loadCanonStorylineSummary: async () => storyline },
+      }
+    );
+    const envelope = {
+      ok: true,
+      result,
+      requestId: 'r'.repeat(128),
+      traceId: 't'.repeat(128),
+    };
+
+    expect({ valid: validateSuccess(envelope), errors: validateSuccess.errors })
+      .toEqual({ valid: true, errors: null });
+    expect(Array.from(result.summaryPage.text!)).toHaveLength(4_000);
+    expect(result.summaryPage.nextOffset).toBe(4_000);
+    expect(
+      contract.components.schemas.BackstageStorylineSummaryPage.properties.text
+        .oneOf[0].maxLength
+    ).toBe(4_000);
     for (const response of Object.values(operation.responses) as any[]) {
       expect(response.headers['Cache-Control']).toEqual({
         $ref: '#/components/headers/NoStore',
@@ -655,6 +793,13 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       maxLength: canon.$defs.storylineKey.maxLength,
       pattern: canon.$defs.storylineKey.pattern,
     }));
+    const validateStorylineReadKey = compileComponent(
+      contract,
+      'StorylineReadKey'
+    );
+    expect(validateStorylineReadKey('raw/day one?100% + 🎤')).toBe(true);
+    expect(validateStorylineReadKey(' raw-day-one-baseline')).toBe(false);
+    expect(validateStorylineReadKey('raw-day-one-baseline ')).toBe(false);
     expect(schemas.StorylineTitle).toEqual(expect.objectContaining({
       minLength: canon.$defs.storylineTitle.minLength,
       maxLength: canon.$defs.storylineTitle.maxLength,

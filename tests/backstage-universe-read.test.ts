@@ -2,17 +2,41 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import {
   BackstageBookerRepositoryUnavailableError,
+  type BackstageCanonStorylineSummaryRecord,
   type BackstageContext,
 } from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
+  BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
+  BackstageStorylineSummaryReadRequestError,
   BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS,
   BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES,
+  readBackstageStorylineSummary,
   readBackstageUniverse,
 } from '../src/services/backstageUniverseRead.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const STORYLINE_ID = '11111111-1111-4111-8111-111111111111';
 const BEAT_ID = '22222222-2222-4222-8222-222222222222';
+
+function canonStorylineSummaryRecord(
+  summary: string | null,
+  storyKey = 'raw/day one?100% + 🎤'
+): BackstageCanonStorylineSummaryRecord {
+  return {
+    id: STORYLINE_ID,
+    universeId: UNIVERSE_ID,
+    storyKey,
+    title: 'Monday Night Raw Day One',
+    summary,
+    status: 'active',
+    version: 5,
+    createdRevision: '1',
+    updatedRevision: '6',
+    createdAt: new Date('2026-08-16T20:30:00.000Z'),
+    updatedAt: new Date('2026-08-16T21:30:00.000Z'),
+    closedAt: null,
+  };
+}
 
 function emptyContext(): BackstageContext {
   return {
@@ -308,5 +332,194 @@ describe('Backstage universe read projection', () => {
     expect(result.truncation.sections).toContain(
       'snapshot.savedStorylines.storylineExcerpt'
     );
+  });
+});
+
+describe('Backstage exact storyline summary read', () => {
+  it('reconstructs a 10,000-code-point Unicode summary in three version-fenced pages', async () => {
+    const storyKey = 'raw/day one?100% + 🎤';
+    const summary = Array.from(
+      { length: 10_000 },
+      (_value, index) => index % 2 === 0 ? '🤼' : String(index % 10)
+    ).join('');
+    const loadCanonStorylineSummary = jest.fn(async () =>
+      canonStorylineSummaryRecord(summary, storyKey)
+    );
+    const reader = { loadCanonStorylineSummary };
+
+    const first = await readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      storyKey,
+      { reader }
+    );
+    const second = await readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      storyKey,
+      { reader, offset: first.summaryPage.nextOffset!, expectedVersion: 5 }
+    );
+    const third = await readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      storyKey,
+      { reader, offset: second.summaryPage.nextOffset!, expectedVersion: 5 }
+    );
+
+    expect(loadCanonStorylineSummary).toHaveBeenCalledTimes(3);
+    expect(loadCanonStorylineSummary).toHaveBeenNthCalledWith(
+      1,
+      UNIVERSE_ID,
+      storyKey,
+      { statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS }
+    );
+    expect(first).toMatchObject({
+      universeId: UNIVERSE_ID,
+      source: 'postgresql',
+      pageCodePointLimit: BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
+      storyline: {
+        id: STORYLINE_ID,
+        key: storyKey,
+        version: 5,
+        universeRevision: '6',
+      },
+      summaryPage: {
+        startCodePoint: 0,
+        endCodePointExclusive: 4_000,
+        totalCodePoints: 10_000,
+        hasMore: true,
+        nextOffset: 4_000,
+      },
+    });
+    expect(second.summaryPage).toMatchObject({
+      startCodePoint: 4_000,
+      endCodePointExclusive: 8_000,
+      hasMore: true,
+      nextOffset: 8_000,
+    });
+    expect(third.summaryPage).toMatchObject({
+      startCodePoint: 8_000,
+      endCodePointExclusive: 10_000,
+      hasMore: false,
+      nextOffset: null,
+    });
+    expect([
+      first.summaryPage.text,
+      second.summaryPage.text,
+      third.summaryPage.text,
+    ].join('')).toBe(summary);
+    expect(Array.from(first.summaryPage.text!)).toHaveLength(4_000);
+    expect(Array.from(second.summaryPage.text!)).toHaveLength(4_000);
+    expect(Array.from(third.summaryPage.text!)).toHaveLength(2_000);
+  });
+
+  it('rejects a noncanonical key with outer whitespace before repository access', async () => {
+    const loadCanonStorylineSummary = jest.fn();
+
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      '  raw/day one?100% + 🎤  ',
+      { reader: { loadCanonStorylineSummary } }
+    )).rejects.toBeInstanceOf(BackstageStorylineSummaryReadRequestError);
+    expect(loadCanonStorylineSummary).not.toHaveBeenCalled();
+  });
+
+  it('requires a version fence after page zero and rejects offsets beyond the summary', async () => {
+    const loadCanonStorylineSummary = jest.fn(async () =>
+      canonStorylineSummaryRecord('short summary', 'short-story')
+    );
+    const reader = { loadCanonStorylineSummary };
+
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'short-story',
+      { reader, offset: 1 }
+    )).rejects.toBeInstanceOf(BackstageStorylineSummaryReadRequestError);
+    expect(loadCanonStorylineSummary).not.toHaveBeenCalled();
+
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'short-story',
+      { reader, offset: 14, expectedVersion: 5 }
+    )).rejects.toBeInstanceOf(BackstageStorylineSummaryReadRequestError);
+    expect(loadCanonStorylineSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a version conflict before exposing a continuation from changed canon', async () => {
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'raw-day-one-baseline',
+      {
+        reader: {
+          loadCanonStorylineSummary: async () =>
+            canonStorylineSummaryRecord('changed', 'raw-day-one-baseline'),
+        },
+        offset: 1,
+        expectedVersion: 4,
+      }
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_STORYLINE_VERSION_CONFLICT',
+    });
+  });
+
+  it('preserves null and empty summaries as distinct values', async () => {
+    const nullResult = await readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'null-summary',
+      {
+        reader: {
+          loadCanonStorylineSummary: async () =>
+            canonStorylineSummaryRecord(null, 'null-summary'),
+        },
+      }
+    );
+    const emptyResult = await readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'empty-summary',
+      {
+        reader: {
+          loadCanonStorylineSummary: async () =>
+            canonStorylineSummaryRecord('', 'empty-summary'),
+        },
+      }
+    );
+
+    expect(nullResult.summaryPage).toEqual({
+      text: null,
+      startCodePoint: 0,
+      endCodePointExclusive: 0,
+      totalCodePoints: 0,
+      hasMore: false,
+      nextOffset: null,
+    });
+    expect(emptyResult.summaryPage).toEqual({
+      text: '',
+      startCodePoint: 0,
+      endCodePointExclusive: 0,
+      totalCodePoints: 0,
+      hasMore: false,
+      nextOffset: null,
+    });
+  });
+
+  it('preserves not-found and repository-unavailable failures without fallback', async () => {
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'missing-story',
+      {
+        reader: { loadCanonStorylineSummary: async () => null },
+      }
+    )).rejects.toMatchObject({ code: 'BACKSTAGE_STORYLINE_NOT_FOUND' });
+
+    const unavailable = new BackstageBookerRepositoryUnavailableError(
+      'loadCanonStorylineSummary',
+      new Error('test-only database outage')
+    );
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'raw-day-one-baseline',
+      {
+        reader: {
+          loadCanonStorylineSummary: async () => Promise.reject(unavailable),
+        },
+      }
+    )).rejects.toBe(unavailable);
   });
 });

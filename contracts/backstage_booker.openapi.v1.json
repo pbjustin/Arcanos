@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.1.0",
-    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated. Exact-ID universe reads and durable canon writes use a dedicated Backstage Booker bearer; only canon writes require ChatGPT's consequential-action approval banner."
+    "version": "1.2.0",
+    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated. Exact universe and storyline reads plus durable canon writes use a dedicated Backstage Booker bearer; only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
     {
@@ -476,6 +476,189 @@
           }
         }
       }
+    },
+    "/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary": {
+      "get": {
+        "operationId": "getBackstageStoryline",
+        "summary": "Read one full Backstage storyline summary",
+        "description": "Read an exact canon storyline summary from PostgreSQL in fixed 4,000-code-point pages. Use the exact key; every continuation page must resend the version returned by page zero as expectedVersion.",
+        "x-openai-isConsequential": false,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "universeId",
+            "in": "path",
+            "required": true,
+            "description": "The exact Backstage universe storage ID.",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseReadId"
+            },
+            "example": "my-universe-2k26"
+          },
+          {
+            "name": "storylineKey",
+            "in": "query",
+            "required": true,
+            "description": "The exact durable canon storyline key. Preserve spaces, punctuation, case, and Unicode exactly.",
+            "schema": {
+              "$ref": "#/components/schemas/StorylineReadKey"
+            },
+            "example": "raw-day-one-baseline"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Zero-based Unicode code-point offset. Omit for page zero; use nextOffset for a continuation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": false,
+            "description": "Storyline version returned by page zero. Required whenever offset is greater than zero.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One exact, versioned summary page from durable PostgreSQL canon.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageStorylineSummaryReadSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The exact storyline read selector or pagination request was invalid.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Backstage Booker bearer credential is required.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No stored canon storyline matched the exact universe and storyline key.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The storyline version changed; discard collected pages and restart at offset zero.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Backstage Booker request budget was exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Stored storyline data could not be projected safely.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dedicated authentication or the PostgreSQL storyline read is temporarily unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -484,7 +667,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Opaque Backstage Booker access token",
-        "description": "Required only for the fixed Backstage Booker exact-ID universe-read and canon-write operations. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
+        "description": "Required only for the fixed Backstage Booker exact-universe reads and canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
       }
     },
     "headers": {
@@ -506,6 +689,161 @@
       }
     },
     "schemas": {
+      "BackstageStorylineSummaryReadSuccessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "result": {
+            "$ref": "#/components/schemas/BackstageStorylineSummaryReadResult"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "BackstageStorylineSummaryReadResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "source",
+          "pageCodePointLimit",
+          "storyline",
+          "summaryPage"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseReadId"
+          },
+          "source": {
+            "type": "string",
+            "const": "postgresql"
+          },
+          "pageCodePointLimit": {
+            "type": "integer",
+            "const": 4000
+          },
+          "storyline": {
+            "$ref": "#/components/schemas/BackstageStorylineSummaryMetadata"
+          },
+          "summaryPage": {
+            "$ref": "#/components/schemas/BackstageStorylineSummaryPage"
+          }
+        }
+      },
+      "BackstageStorylineSummaryMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "title",
+          "status",
+          "version",
+          "universeRevision",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "title": {
+            "$ref": "#/components/schemas/StorylineTitle"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StorylineStatus"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          }
+        }
+      },
+      "BackstageStorylineSummaryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "startCodePoint",
+          "endCodePointExclusive",
+          "totalCodePoints",
+          "hasMore",
+          "nextOffset"
+        ],
+        "properties": {
+          "text": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000,
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PostgresText"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startCodePoint": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "endCodePointExclusive": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "totalCodePoints": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextOffset": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "BackstageUniverseReadSuccessResponse": {
         "type": "object",
         "additionalProperties": false,
@@ -1421,6 +1759,18 @@
         "allOf": [
           {
             "$ref": "#/components/schemas/PostgresText"
+          }
+        ]
+      },
+      "StorylineReadKey": {
+        "description": "An exact persisted storyline key without leading or trailing whitespace.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          {
+            "type": "string",
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
           }
         ]
       },

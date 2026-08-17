@@ -86,8 +86,8 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
 The Backstage Booker builder uses its own fixed-path schema. It exposes one
-public generation/simulation operation, one protected non-consequential
-exact-ID universe read, and one consequential canon-write operation without
+public generation/simulation operation, two protected non-consequential exact
+reads, and one consequential canon-write operation without
 exposing generic GPT Access or control-plane tools:
 
 - `https://<your-backend>/contracts/backstage_booker.openapi.v1.json`
@@ -194,9 +194,10 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
   `saveStoryline`, `upsertStoryline`, `appendCanonBeat`
 (`src/services/backstage-booker.ts`)
 
-The Builder-only `getBackstageUniverse` HTTP operation is not a tenth module
-action. It reads a bounded snapshot for one explicitly supplied universe ID
-through the protected GPT Access boundary and never enters module dispatch.
+The Builder-only `getBackstageUniverse` and
+`getBackstageStoryline` HTTP operations are not module actions. They
+read one bounded exact-universe snapshot or one exact storyline summary page
+through the protected GPT Access boundary and never enter module dispatch.
 
 The original seven Backstage Booker actions accept an optional `universeId`. Omitted scope
 uses the backward-compatible `legacy` universe; explicit IDs are bounded to
@@ -293,6 +294,10 @@ The dedicated Builder configuration instead imports
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. The
 read is bounded, returns `hasPersistedData: false` when that scope has no stored
 rows, and exposes neither a universe list nor display-name lookup. Its
+`getBackstageStoryline` operation reads one exact canon key through the
+fixed `.../universes/{universeId}/storyline-summary` leaf. It returns the
+unmodified summary in 4,000-code-point pages and requires the page-zero version
+on every continuation. Its
 `writeBackstageCanon` operation accepts only `upsertStoryline` and
 `appendCanonBeat` at the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` path. ChatGPT Builder
@@ -307,7 +312,8 @@ may bypass generic `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run`
 authorization, but the exact `MCP_ALLOW_MODULE_ACTIONS` allowlist remains
 mandatory. Phase One mutations are unavailable on the dedicated lane, and
 `universeId` remains data scope, not authorization: any holder of the shared
-dedicated bearer can read any valid exact universe ID.
+dedicated bearer can read any valid exact universe ID and any exact storyline
+key within that scope.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
 Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never

@@ -20,6 +20,8 @@ export const BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH =
   '/gpt-access/capabilities/v1/backstage-booker/run';
 export const BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX =
   '/gpt-access/capabilities/v1/backstage-booker/universes';
+export const BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX =
+  '/storyline-summary';
 export const BACKSTAGE_BOOKER_BODY_LIMIT_BYTES = 256 * 1024;
 const fatalUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
 // Intentionally omit Unicode case folding: HTTP media-type tokens are ASCII.
@@ -94,6 +96,29 @@ export function isBackstageBookerUniverseReadRequest(req: Request): boolean {
   }
   const encodedUniverseId = requestPath.slice(
     BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX.length + 1
+  );
+  return encodedUniverseId.length > 0 && !encodedUniverseId.includes('/');
+}
+
+/** Match the canonical exact-universe storyline-summary GET/HEAD leaf. */
+export function isBackstageBookerStorylineSummaryReadRequest(
+  req: Request
+): boolean {
+  const method = req.method.toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    return false;
+  }
+  const requestPath = readRequestPath(req);
+  const suffix = BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX;
+  if (
+    !requestPath.startsWith(`${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/`)
+    || !requestPath.endsWith(suffix)
+  ) {
+    return false;
+  }
+  const encodedUniverseId = requestPath.slice(
+    BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX.length + 1,
+    -suffix.length
   );
   return encodedUniverseId.length > 0 && !encodedUniverseId.includes('/');
 }

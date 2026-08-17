@@ -58,11 +58,12 @@ The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
 projection of this module-action family, not another protocol family. Keep its
 closed payloads aligned with the catalog schemas. It intentionally exposes
 only the three public generation/simulation actions through
-`runBackstageBooker`; one dedicated-Bearer, non-consequential exact-ID database
-projection through `getBackstageUniverse`; and only `upsertStoryline` or
+`runBackstageBooker`; two dedicated-Bearer, non-consequential exact database
+reads through `getBackstageUniverse` and `getBackstageStoryline`; and
+only `upsertStoryline` or
 `appendCanonBeat` through the Bearer-authenticated, consequential
-`writeBackstageCanon` operation. The read is an HTTP/Builder projection rather
-than a tenth module action, because the module policy partitions every
+`writeBackstageCanon` operation. The reads are HTTP/Builder projections rather
+than tenth or eleventh module actions, because the module policy partitions every
 non-public Backstage action as mutation-capable. Do not add generic GPT Access,
 control-plane, Phase One mutation, list-universe, or confirmation-token shapes
 to that contract.

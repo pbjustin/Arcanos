@@ -61,7 +61,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | Document | Lifecycle | Scope |
 | --- | --- | --- |
 | [Arcanos Gaming Custom GPT](ARCANOS_GAMING_CUSTOM_GPT.md) | Docs-as-contract | Builder instructions and OpenAPI contract expectations. |
-| [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | Purpose-bound exact-ID universe read and canon Action authentication, single-banner write approval, Builder setup, rotation, and rollback. |
+| [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | Purpose-bound exact universe and paged storyline-summary reads plus canon Action authentication, single-banner write approval, Builder setup, rotation, and rollback. |
 | [MCP server](ARCANOS_MCP_SERVER.md) | Companion | Current MCP transports, tools, principals, and gates. |
 | [CEF hardening controls](cef-hardening-controls.md) | Companion | CEF dispatch and validation controls. |
 | [CLEAR 2.0](CLEAR_METHOD_2_0.md) | Companion | CLEAR scoring and decision behavior. |
