@@ -230,6 +230,15 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     ownsInstallation = true;
 
     await observer.query(universeScopeForwardMigration);
+    // The universe-scope migration intentionally preserves the historical
+    // story-beat shape. loadContext reads the current runtime projection, so
+    // this disposable fixture also needs the two runtime projection columns.
+    await observer.query(
+      `ALTER TABLE public.backstage_story_beats
+         ADD COLUMN IF NOT EXISTS serialized_data TEXT;
+       ALTER TABLE public.backstage_story_beats
+         ADD COLUMN IF NOT EXISTS storage_sequence BIGINT;`
+    );
     await applyCanonForwardMigration(observer);
 
     pool = new Pool({
