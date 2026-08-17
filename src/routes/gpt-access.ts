@@ -58,6 +58,8 @@ import {
   normalizeBackstageBookerSchemaDrivenActionPayload,
 } from '@services/backstageBookerContracts.js';
 import {
+  BACKSTAGE_UNIVERSE_ID_PATTERN,
+  BackstageBookerRepositoryUnavailableError,
   isBackstageCanonDomainError,
 } from '@core/db/repositories/backstageBookerRepository.js';
 import {
@@ -112,12 +114,18 @@ import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 import {
+  BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX,
   backstageBookerHttpBoundary,
   isBackstageBookerHttpBoundaryApplied,
+  isBackstageBookerUniverseReadRequest,
 } from '@services/backstageBookerHttpBoundary.js';
 import {
   isBackstageBookerAccessAuthenticated,
+  requireBackstageBookerAccessAuthentication,
 } from '@services/backstageBookerAccessAuth.js';
+import {
+  readBackstageUniverse,
+} from '@services/backstageUniverseRead.js';
 
 const router = express.Router();
 configureLocalAgentActionExecutor(executeLocalAgentActionAsJob);
@@ -957,6 +965,104 @@ function sendGptAccessUnavailable(
   });
 }
 
+function sendBackstageUniverseReadError(
+  req: express.Request,
+  res: express.Response,
+  statusCode: 400 | 500 | 503,
+  code: string,
+  message: string
+): void {
+  sendGptAccessResult(res, {
+    statusCode,
+    payload: {
+      ok: false,
+      ...(statusCode === 503
+        ? { status: 'unavailable', service: 'backstage-booker' }
+        : {}),
+      error: {
+        code,
+        message,
+        ...(statusCode === 503 ? { retryable: true } : {}),
+      },
+      ...(req.requestId ? { requestId: req.requestId } : {}),
+      ...(req.traceId ? { traceId: req.traceId } : {}),
+    },
+  });
+}
+
+const getBackstageUniverse = asyncHandler(async (req, res) => {
+  const universeId = req.params.universeId;
+  const contentLength = req.get('content-length');
+  const hasRequestBody = req.get('transfer-encoding') !== undefined
+    || (contentLength !== undefined && contentLength !== '0');
+  if (
+    !isBackstageBookerUniverseReadRequest(req)
+    || typeof universeId !== 'string'
+    || universeId !== universeId.trim()
+    || !BACKSTAGE_UNIVERSE_ID_PATTERN.test(universeId)
+    || Object.keys(req.query).length > 0
+    || hasRequestBody
+  ) {
+    sendBackstageUniverseReadError(
+      req,
+      res,
+      400,
+      'GPT_ACCESS_VALIDATION_ERROR',
+      'The Backstage universe read request is invalid.'
+    );
+    return;
+  }
+
+  try {
+    const result = await readBackstageUniverse(universeId);
+    try {
+      req.logger?.info('backstage_universe_read.completed', {
+        universeId,
+        hasPersistedData: result.hasPersistedData,
+        canonRevision: result.snapshot.canon.revision,
+        truncated: result.truncation.truncated,
+      });
+    } catch {
+      // Diagnostics must not alter the read response.
+    }
+    sendGptAccessResult(res, {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        result,
+        ...(req.requestId ? { requestId: req.requestId } : {}),
+        ...(req.traceId ? { traceId: req.traceId } : {}),
+      },
+    });
+  } catch (error: unknown) {
+    const unavailable = error instanceof BackstageBookerRepositoryUnavailableError;
+    try {
+      req.logger?.[unavailable ? 'warn' : 'error']?.(
+        'backstage_universe_read.failed',
+        {
+          universeId,
+          code: unavailable
+            ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
+            : 'BACKSTAGE_UNIVERSE_READ_FAILED',
+        }
+      );
+    } catch {
+      // Diagnostics must not alter the fixed public response.
+    }
+    sendBackstageUniverseReadError(
+      req,
+      res,
+      unavailable ? 503 : 500,
+      unavailable
+        ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
+        : 'BACKSTAGE_UNIVERSE_READ_FAILED',
+      unavailable
+        ? 'Backstage universe data is temporarily unavailable.'
+        : 'Backstage universe data could not be read safely.'
+    );
+  }
+});
+
 const requireGenericCapabilityRunScope =
   requireGptAccessScope('capabilities.run');
 
@@ -1654,6 +1760,32 @@ router.get(
   requireGptAccessScope('capabilities.read'),
   requireGptAccessModuleRegistry,
   listGptAccessCapabilities
+);
+
+router.get(
+  `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/:universeId`,
+  requireBackstageBookerAccessAuthentication,
+  getBackstageUniverse
+);
+
+router.all(
+  `${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/:universeId`,
+  requireBackstageBookerAccessAuthentication,
+  (req, res) => {
+    res.setHeader('Allow', 'GET');
+    sendGptAccessResult(res, {
+      statusCode: 405,
+      payload: {
+        ok: false,
+        error: {
+          code: 'METHOD_NOT_ALLOWED',
+          message: 'This Backstage universe endpoint supports GET only.',
+        },
+        ...(req.requestId ? { requestId: req.requestId } : {}),
+        ...(req.traceId ? { traceId: req.traceId } : {}),
+      },
+    });
+  }
 );
 
 router.get(

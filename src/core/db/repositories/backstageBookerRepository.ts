@@ -152,6 +152,13 @@ export interface BackstageContext {
   canonContext: BackstageCanonContext;
 }
 
+export interface BackstageContextReadOptions {
+  /** PostgreSQL statement timeout applied locally to the read-only transaction. */
+  statementTimeoutMs?: number;
+  /** Bound legacy scalar transfer for the authenticated universe-read projection. */
+  universeReadProjection?: boolean;
+}
+
 interface BackstageWrestlerRow {
   name: string;
   overall: number | string;
@@ -1281,14 +1288,30 @@ export class PostgresBackstageBookerRepository {
 
   private async readSnapshot<T>(
     operation: string,
-    callback: (client: PoolClient) => Promise<T>
+    callback: (client: PoolClient) => Promise<T>,
+    options: BackstageContextReadOptions = {}
   ): Promise<T> {
+    const statementTimeoutMs = options.statementTimeoutMs;
+    if (
+      statementTimeoutMs !== undefined
+      && (!Number.isSafeInteger(statementTimeoutMs)
+        || statementTimeoutMs < 1
+        || statementTimeoutMs > 44_000)
+    ) {
+      throw new TypeError('statementTimeoutMs must be an integer from 1 through 44000.');
+    }
     const client = await this.connect(operation);
     let transactionStarted = false;
     let releaseError: Error | undefined;
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       transactionStarted = true;
+      if (statementTimeoutMs !== undefined) {
+        await client.query(
+          "SELECT set_config('statement_timeout', $1, TRUE)",
+          [`${statementTimeoutMs}ms`]
+        );
+      }
       const result = await callback(client);
       await client.query('COMMIT');
       return result;
@@ -1954,19 +1977,70 @@ export class PostgresBackstageBookerRepository {
     });
   }
 
-  async loadContext(universeId: string): Promise<BackstageContext> {
+  async loadContext(
+    universeId: string,
+    options: BackstageContextReadOptions = {}
+  ): Promise<BackstageContext> {
     const normalizedUniverseId = normalizeUniverseId(universeId);
+    const universeReadProjection = options.universeReadProjection === true;
+    const rosterNameSelection = universeReadProjection
+      ? 'LEFT(BTRIM(name), 121) AS name'
+      : 'name';
+    const eventDataSelection = universeReadProjection
+      ? `jsonb_strip_nulls(jsonb_build_object(
+           'name', CASE WHEN jsonb_typeof(data -> 'name') = 'string'
+             THEN LEFT(BTRIM(data ->> 'name'), 241) END,
+           'title', CASE WHEN jsonb_typeof(data -> 'title') = 'string'
+             THEN LEFT(BTRIM(data ->> 'title'), 241) END,
+           'eventName', CASE WHEN jsonb_typeof(data -> 'eventName') = 'string'
+             THEN LEFT(BTRIM(data ->> 'eventName'), 241) END,
+           'showName', CASE WHEN jsonb_typeof(data -> 'showName') = 'string'
+             THEN LEFT(BTRIM(data ->> 'showName'), 241) END,
+           'summary', CASE WHEN jsonb_typeof(data -> 'summary') = 'string'
+             THEN LEFT(BTRIM(data ->> 'summary'), 501) END,
+           'description', CASE WHEN jsonb_typeof(data -> 'description') = 'string'
+             THEN LEFT(BTRIM(data ->> 'description'), 501) END,
+           'result', CASE WHEN jsonb_typeof(data -> 'result') = 'string'
+             THEN LEFT(BTRIM(data ->> 'result'), 501) END,
+           'notes', CASE WHEN jsonb_typeof(data -> 'notes') = 'string'
+             THEN LEFT(BTRIM(data ->> 'notes'), 501) END
+         )) AS data`
+      : 'data';
+    const storyBeatDataSelection = universeReadProjection
+      ? "CASE WHEN serialized_data IS NOT NULL THEN '{}'::jsonb ELSE data END AS data"
+      : 'data';
+    const storyBeatEligibility = universeReadProjection
+      ? `(serialized_data IS NOT NULL
+           AND octet_length(convert_to(serialized_data, 'UTF8')) <= 16384)
+         OR (
+           serialized_data IS NULL
+           AND jsonb_typeof(data) = 'object'
+           AND created_at IS NOT NULL
+           AND isfinite(created_at)
+           AND octet_length(convert_to(data::TEXT, 'UTF8')) <= 16384
+         )`
+      : `serialized_data IS NOT NULL
+         OR (
+           jsonb_typeof(data) = 'object'
+           AND created_at IS NOT NULL
+           AND isfinite(created_at)
+           AND octet_length(convert_to(data::TEXT, 'UTF8')) <= 16384
+         )`;
+    const savedStorylineSelection = universeReadProjection
+      ? `LEFT(BTRIM(story_key), 241) AS story_key,
+         LEFT(storyline, 1501) AS storyline`
+      : 'story_key, storyline';
     return this.readSnapshot('loadContext', async client => {
       const rosterResult = await client.query<BackstageWrestlerRow>(
-        `SELECT name, overall, updated_at
+        `SELECT ${rosterNameSelection}, overall, updated_at
          FROM backstage_wrestlers
          WHERE universe_id = $1
-         ORDER BY updated_at DESC, name ASC
+         ORDER BY backstage_wrestlers.updated_at DESC, backstage_wrestlers.name ASC
          LIMIT 25`,
         [normalizedUniverseId]
       );
       const eventsResult = await client.query<BackstageEventRow>(
-        `SELECT id, universe_id, data, created_at
+        `SELECT id, universe_id, ${eventDataSelection}, created_at
          FROM backstage_events
          WHERE universe_id = $1
          ORDER BY created_at DESC, id DESC
@@ -1979,21 +2053,15 @@ export class PostgresBackstageBookerRepository {
            SELECT
              id,
              universe_id,
-             data,
+             ${storyBeatDataSelection},
              serialized_data,
              storage_sequence,
              created_at
            FROM backstage_story_beats
-           WHERE universe_id = $1
-             AND (
-               serialized_data IS NOT NULL
-               OR (
-                 jsonb_typeof(data) = 'object'
-                 AND created_at IS NOT NULL
-                 AND isfinite(created_at)
-                 AND octet_length(convert_to(data::TEXT, 'UTF8')) <= 16384
-               )
-           )
+            WHERE universe_id = $1
+              AND (
+               ${storyBeatEligibility}
+            )
            ORDER BY
              (serialized_data IS NULL) ASC,
              CASE WHEN serialized_data IS NOT NULL THEN storage_sequence END DESC,
@@ -2009,7 +2077,7 @@ export class PostgresBackstageBookerRepository {
         [normalizedUniverseId]
       );
       const storylinesResult = await client.query<BackstageStorylineRow>(
-        `SELECT id, universe_id, story_key, storyline, created_at, updated_at
+        `SELECT id, universe_id, ${savedStorylineSelection}, created_at, updated_at
          FROM backstage_storylines
          WHERE universe_id = $1
          ORDER BY updated_at DESC, id DESC
@@ -2028,7 +2096,7 @@ export class PostgresBackstageBookerRepository {
         storylines: storylinesResult.rows.map(mapStorylineRow),
         canonContext
       };
-    });
+    }, options);
   }
 
   async loadRoster(universeId: string): Promise<BackstageWrestler[]> {

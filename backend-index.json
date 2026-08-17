@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T07:48:41.780Z",
+  "generatedAt": "2026-08-17T18:17:28.749Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1554,6 +1554,9 @@
         },
         {
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
+        },
+        {
+          "relativePath": "src/services/backstageUniverseRead.ts"
         },
         {
           "relativePath": "src/services/bridgeSocket.ts"
@@ -3239,6 +3242,9 @@
         },
         {
           "relativePath": "tests/backstage-storyline-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-universe-read.test.ts"
         },
         {
           "relativePath": "tests/backstage.route.test.ts"

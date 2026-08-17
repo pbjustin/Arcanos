@@ -10,6 +10,7 @@ import { securityHeaders } from '@platform/runtime/security.js';
 
 import {
   authenticateBackstageBookerAccessRequest,
+  backstageBookerAccessAuthMiddleware,
   establishBackstageBookerAccessAuthentication,
 } from './backstageBookerAccessAuth.js';
 import { gptAccessAuthMiddleware } from './gptAccessGateway.js';
@@ -17,6 +18,8 @@ import { gptAccessRateLimit } from './gptAccessRateLimit.js';
 
 export const BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH =
   '/gpt-access/capabilities/v1/backstage-booker/run';
+export const BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX =
+  '/gpt-access/capabilities/v1/backstage-booker/universes';
 export const BACKSTAGE_BOOKER_BODY_LIMIT_BYTES = 256 * 1024;
 const fatalUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
 // Intentionally omit Unicode case folding: HTTP media-type tokens are ASCII.
@@ -68,6 +71,31 @@ function readRequestPath(req: Request): string {
 export function isBackstageBookerCapabilityRunRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST'
     && readRequestPath(req) === BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH;
+}
+
+/** Keep the whole private read namespace behind the dedicated bearer. */
+export function isBackstageBookerUniverseReadNamespaceRequest(
+  req: Request
+): boolean {
+  const requestPath = readRequestPath(req);
+  return requestPath === BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX
+    || requestPath.startsWith(`${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/`);
+}
+
+/** Match the canonical exact-ID GET/HEAD shape; leaf validation checks the ID. */
+export function isBackstageBookerUniverseReadRequest(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    return false;
+  }
+  const requestPath = readRequestPath(req);
+  if (!requestPath.startsWith(`${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/`)) {
+    return false;
+  }
+  const encodedUniverseId = requestPath.slice(
+    BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX.length + 1
+  );
+  return encodedUniverseId.length > 0 && !encodedUniverseId.includes('/');
 }
 
 export function isBackstageBookerHttpBoundaryApplied(req: Request): boolean {
@@ -161,7 +189,8 @@ function hasParsedObjectBody(req: Request): boolean {
 function sendInvalidBackstageBookerRequest(
   req: Request,
   res: Response,
-  statusCode: 400 | 413 | 415 = 400
+  statusCode: 400 | 413 | 415 = 400,
+  message = 'The Backstage Booker canon request is invalid.'
 ): void {
   try {
     req.logger?.warn?.('backstage_booker_access.request_rejected', {
@@ -180,12 +209,30 @@ function sendInvalidBackstageBookerRequest(
     ok: false,
     error: {
       code: 'GPT_ACCESS_VALIDATION_ERROR',
-      message: 'The Backstage Booker canon request is invalid.',
+      message,
     },
     ...(req.requestId ? { requestId: req.requestId } : {}),
     ...(req.traceId ? { traceId: req.traceId } : {}),
   });
 }
+
+const rejectBackstageUniverseReadBody: RequestHandler = (
+  req,
+  res,
+  next
+): void => {
+  if (!hasRequestBody(req)) {
+    next();
+    return;
+  }
+
+  sendInvalidBackstageBookerRequest(
+    req,
+    res,
+    400,
+    'The Backstage universe read request is invalid.'
+  );
+};
 
 const parseBackstageBookerRequestBody: RequestHandler = (
   req,
@@ -266,7 +313,10 @@ export function createBackstageBookerHttpBoundary(
   const rateLimit = options.rateLimit ?? gptAccessRateLimit;
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (!isBackstageBookerCapabilityRunRequest(req)) {
+    const isCapabilityRun = isBackstageBookerCapabilityRunRequest(req);
+    const isUniverseReadNamespace =
+      isBackstageBookerUniverseReadNamespaceRequest(req);
+    if (!isCapabilityRun && !isUniverseReadNamespace) {
       next();
       return;
     }
@@ -309,8 +359,11 @@ export function createBackstageBookerHttpBoundary(
       securityHeaders,
       setBackstageBookerNoStoreHeaders,
       rateLimit,
-      authenticate,
-      parseBackstageBookerRequestBody,
+      isUniverseReadNamespace
+        ? backstageBookerAccessAuthMiddleware
+        : authenticate,
+      ...(isUniverseReadNamespace ? [rejectBackstageUniverseReadBody] : []),
+      ...(isCapabilityRun ? [parseBackstageBookerRequestBody] : []),
     ];
     let middlewareIndex = 0;
     const advance = ((error?: unknown): void => {

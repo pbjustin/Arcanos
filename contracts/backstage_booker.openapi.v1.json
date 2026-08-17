@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.0.0",
-    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated, while durable canon writes use a dedicated Backstage Booker bearer and ChatGPT's consequential-action approval banner."
+    "version": "1.1.0",
+    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated. Exact-ID universe reads and durable canon writes use a dedicated Backstage Booker bearer; only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
     {
@@ -356,6 +356,126 @@
           }
         }
       }
+    },
+    "/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}": {
+      "get": {
+        "operationId": "getBackstageUniverse",
+        "summary": "Read one stored Backstage universe",
+        "description": "Read one bounded PostgreSQL snapshot by exact universe ID with the dedicated Backstage bearer. This non-consequential operation never generates or writes, exposes no list or display-name lookup, and returns hasPersistedData false for an empty stored scope.",
+        "x-openai-isConsequential": false,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "universeId",
+            "in": "path",
+            "required": true,
+            "description": "The exact Backstage universe storage ID.",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseReadId"
+            },
+            "example": "my-universe-2k26"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bounded read-only snapshot, including an explicit hasPersistedData signal.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The exact-ID read request was invalid.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Backstage Booker bearer credential is required.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Backstage Booker request budget was exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Stored data could not be projected safely.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dedicated authentication or the PostgreSQL read snapshot is temporarily unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -364,7 +484,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Opaque Backstage Booker access token",
-        "description": "Required only for the fixed Backstage Booker canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
+        "description": "Required only for the fixed Backstage Booker exact-ID universe-read and canon-write operations. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
       }
     },
     "headers": {
@@ -386,6 +506,594 @@
       }
     },
     "schemas": {
+      "BackstageUniverseReadSuccessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "result": {
+            "$ref": "#/components/schemas/BackstageUniverseReadResult"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "BackstageUniverseReadResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "source",
+          "hasPersistedData",
+          "sourceQueryLimits",
+          "responseLimits",
+          "truncation",
+          "snapshot"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
+          },
+          "source": {
+            "type": "string",
+            "const": "postgresql"
+          },
+          "hasPersistedData": {
+            "type": "boolean",
+            "description": "True when the bounded read observed at least one stored row or a nonzero canon revision. This is not a registry-existence claim."
+          },
+          "sourceQueryLimits": {
+            "$ref": "#/components/schemas/BackstageUniverseReadSourceLimits"
+          },
+          "responseLimits": {
+            "$ref": "#/components/schemas/BackstageUniverseReadResponseLimits"
+          },
+          "truncation": {
+            "$ref": "#/components/schemas/BackstageUniverseReadTruncation"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/BackstageUniverseReadSnapshot"
+          }
+        }
+      },
+      "BackstageUniverseReadSourceLimits": {
+        "type": "object",
+        "description": "Maximum recent rows inspected per storage section. A collection at its source limit can have older rows outside this snapshot; these limits are windows, not total counts.",
+        "additionalProperties": false,
+        "required": [
+          "roster",
+          "recentEvents",
+          "recentStoryBeats",
+          "savedStorylines",
+          "canonStorylines",
+          "activeCanonBeats"
+        ],
+        "properties": {
+          "roster": {
+            "type": "integer",
+            "const": 25
+          },
+          "recentEvents": {
+            "type": "integer",
+            "const": 5
+          },
+          "recentStoryBeats": {
+            "type": "integer",
+            "const": 5
+          },
+          "savedStorylines": {
+            "type": "integer",
+            "const": 5
+          },
+          "canonStorylines": {
+            "type": "integer",
+            "const": 50
+          },
+          "activeCanonBeats": {
+            "type": "integer",
+            "const": 100
+          }
+        }
+      },
+      "BackstageUniverseReadResponseLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "roster",
+          "recentEvents",
+          "recentStoryBeats",
+          "savedStorylines",
+          "canonStorylines",
+          "activeCanonBeats",
+          "participantNamesPerItem",
+          "canonSummaryCodePoints",
+          "legacySummaryCodePoints",
+          "savedStorylineCodePoints",
+          "serializedResultBytes"
+        ],
+        "properties": {
+          "roster": {
+            "type": "integer",
+            "const": 25
+          },
+          "recentEvents": {
+            "type": "integer",
+            "const": 5
+          },
+          "recentStoryBeats": {
+            "type": "integer",
+            "const": 5
+          },
+          "savedStorylines": {
+            "type": "integer",
+            "const": 5
+          },
+          "canonStorylines": {
+            "type": "integer",
+            "const": 8
+          },
+          "activeCanonBeats": {
+            "type": "integer",
+            "const": 12
+          },
+          "participantNamesPerItem": {
+            "type": "integer",
+            "const": 10
+          },
+          "canonSummaryCodePoints": {
+            "type": "integer",
+            "const": 1000
+          },
+          "legacySummaryCodePoints": {
+            "type": "integer",
+            "const": 500
+          },
+          "savedStorylineCodePoints": {
+            "type": "integer",
+            "const": 1500
+          },
+          "serializedResultBytes": {
+            "type": "integer",
+            "const": 61440
+          }
+        }
+      },
+      "BackstageUniverseReadTruncation": {
+        "type": "object",
+        "description": "Reports field trimming and items omitted after the bounded source queries. omittedItems excludes older rows outside sourceQueryLimits.",
+        "additionalProperties": false,
+        "required": [
+          "truncated",
+          "sections",
+          "omittedItems"
+        ],
+        "properties": {
+          "truncated": {
+            "type": "boolean"
+          },
+          "sections": {
+            "type": "array",
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "snapshot.roster",
+                "snapshot.roster.name",
+                "snapshot.recentEvents",
+                "snapshot.recentEvents.label",
+                "snapshot.recentEvents.summary",
+                "snapshot.recentStoryBeats",
+                "snapshot.recentStoryBeats.label",
+                "snapshot.recentStoryBeats.summary",
+                "snapshot.savedStorylines",
+                "snapshot.savedStorylines.key",
+                "snapshot.savedStorylines.storylineExcerpt",
+                "snapshot.canon.storylines",
+                "snapshot.canon.storylines.key",
+                "snapshot.canon.storylines.title",
+                "snapshot.canon.storylines.summary",
+                "snapshot.canon.storylines.participantNames",
+                "snapshot.canon.activeBeats",
+                "snapshot.canon.activeBeats.storylineKey",
+                "snapshot.canon.activeBeats.summary",
+                "snapshot.canon.activeBeats.participantNames"
+              ]
+            }
+          },
+          "omittedItems": {
+            "$ref": "#/components/schemas/BackstageUniverseReadOmittedItems"
+          }
+        }
+      },
+      "BackstageUniverseReadOmittedItems": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "roster",
+          "recentEvents",
+          "recentStoryBeats",
+          "savedStorylines",
+          "canonStorylines",
+          "activeCanonBeats",
+          "participantNames"
+        ],
+        "properties": {
+          "roster": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recentEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recentStoryBeats": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "savedStorylines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "canonStorylines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activeCanonBeats": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "participantNames": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "BackstageUniverseReadSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "roster",
+          "recentEvents",
+          "recentStoryBeats",
+          "savedStorylines",
+          "canon"
+        ],
+        "properties": {
+          "roster": {
+            "type": "array",
+            "maxItems": 25,
+            "items": {
+              "$ref": "#/components/schemas/Wrestler"
+            }
+          },
+          "recentEvents": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/BackstageUniverseReadLegacyEntry"
+            }
+          },
+          "recentStoryBeats": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/BackstageUniverseReadLegacyEntry"
+            }
+          },
+          "savedStorylines": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/BackstageUniverseReadSavedStoryline"
+            }
+          },
+          "canon": {
+            "$ref": "#/components/schemas/BackstageUniverseReadCanonContext"
+          }
+        }
+      },
+      "BackstageUniverseReadLegacyEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "summary",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "label": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          }
+        }
+      },
+      "BackstageUniverseReadSavedStoryline": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "storylineExcerpt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "storylineExcerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1500
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          }
+        }
+      },
+      "BackstageUniverseReadCanonContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "storylines",
+          "activeBeats"
+        ],
+        "properties": {
+          "revision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "storylines": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/BackstageUniverseReadCanonStoryline"
+            }
+          },
+          "activeBeats": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/components/schemas/BackstageUniverseReadCanonBeat"
+            }
+          }
+        }
+      },
+      "BackstageUniverseReadParticipantNames": {
+        "type": "array",
+        "maxItems": 10,
+        "uniqueItems": true,
+        "items": {
+          "$ref": "#/components/schemas/WrestlerName"
+        }
+      },
+      "BackstageUniverseReadCanonStoryline": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "title",
+          "summary",
+          "status",
+          "participantNames",
+          "version",
+          "universeRevision",
+          "createdAt",
+          "updatedAt",
+          "closedAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "title": {
+            "$ref": "#/components/schemas/StorylineTitle"
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/StorylineStatus"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/BackstageUniverseReadParticipantNames"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "closedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UtcTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BackstageUniverseReadCanonBeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "storylineId",
+          "storylineKey",
+          "sequence",
+          "kind",
+          "summary",
+          "occurredAt",
+          "participantNames",
+          "eventId",
+          "supersedesBeatId",
+          "universeRevision",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "storylineId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "storylineKey": {
+            "$ref": "#/components/schemas/StorylineKey"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CanonBeatKind"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "participantNames": {
+            "$ref": "#/components/schemas/BackstageUniverseReadParticipantNames"
+          },
+          "eventId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedesBeatId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "universeRevision": {
+            "$ref": "#/components/schemas/UniverseRevision"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          }
+        }
+      },
+      "BackstageUniverseReadErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "status": {
+            "type": "string",
+            "const": "unavailable"
+          },
+          "service": {
+            "type": "string",
+            "const": "backstage-booker"
+          },
+          "error": {
+            "$ref": "#/components/schemas/BackstageError"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
       "BackstagePublicExecutionMode": {
         "type": "string",
         "enum": [
@@ -676,6 +1384,12 @@
         "maxLength": 128,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
         "default": "legacy"
+      },
+      "UniverseReadId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
       },
       "Uuid": {
         "type": "string",

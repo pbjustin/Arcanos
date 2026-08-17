@@ -15,7 +15,10 @@ import {
   BackstageBookerContractError,
   BackstageCanonUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
-import { BackstageCanonDomainError } from '../src/core/db/repositories/backstageBookerRepository.js';
+import {
+  BackstageBookerRepositoryUnavailableError,
+  BackstageCanonDomainError,
+} from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
   ResearchRequestValidationError,
   RESEARCH_MODULE_NAME,
@@ -46,6 +49,7 @@ const dispatchModuleActionMock = jest.fn();
 const initializeModuleRegistryMock = jest.fn<() => Promise<void>>();
 const hasValidOpenAiKeyMock = jest.fn();
 const responsesCreateMock = jest.fn();
+const readBackstageUniverseMock = jest.fn();
 const fakeOpenAIClient = {
   responses: {
     create: responsesCreateMock
@@ -95,6 +99,10 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   initializeModuleRegistry: initializeModuleRegistryMock,
   ModuleNotFoundError: MockModuleNotFoundError,
   ModuleActionNotFoundError: MockModuleActionNotFoundError
+}));
+
+jest.unstable_mockModule('../src/services/backstageUniverseRead.js', () => ({
+  readBackstageUniverse: readBackstageUniverseMock,
 }));
 
 jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
@@ -323,6 +331,62 @@ function buildBackstageCanonPayload(
       summary: 'The challenger interrupts the champion.',
       occurredAt: '2026-08-14T20:00:00Z',
       participantNames: [],
+    },
+  };
+}
+
+function buildBackstageUniverseReadResult(
+  universeId = 'my-universe-2k26',
+  hasPersistedData = true
+): Record<string, unknown> {
+  return {
+    universeId,
+    source: 'postgresql',
+    hasPersistedData,
+    sourceQueryLimits: {
+      roster: 25,
+      recentEvents: 5,
+      recentStoryBeats: 5,
+      savedStorylines: 5,
+      canonStorylines: 50,
+      activeCanonBeats: 100,
+    },
+    responseLimits: {
+      roster: 25,
+      recentEvents: 5,
+      recentStoryBeats: 5,
+      savedStorylines: 5,
+      canonStorylines: 8,
+      activeCanonBeats: 12,
+      participantNamesPerItem: 10,
+      canonSummaryCodePoints: 1000,
+      legacySummaryCodePoints: 500,
+      savedStorylineCodePoints: 1500,
+      serializedResultBytes: 61440,
+    },
+    truncation: {
+      truncated: false,
+      sections: [],
+      omittedItems: {
+        roster: 0,
+        recentEvents: 0,
+        recentStoryBeats: 0,
+        savedStorylines: 0,
+        canonStorylines: 0,
+        activeCanonBeats: 0,
+        participantNames: 0,
+      },
+    },
+    snapshot: {
+      roster: [],
+      recentEvents: [],
+      recentStoryBeats: [],
+      savedStorylines: [],
+      canon: {
+        revision: hasPersistedData ? '6' : '0',
+        storylines: [],
+        activeBeats: [],
+      },
     },
   };
 }
@@ -3270,6 +3334,173 @@ describe('/gpt-access gateway', () => {
       code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
       message: 'Capability or action not found.'
     });
+  });
+
+  it('reads one exact Backstage universe with the dedicated bearer and no confirmation', async () => {
+    readBackstageUniverseMock.mockResolvedValueOnce(
+      buildBackstageUniverseReadResult()
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      result: buildBackstageUniverseReadResult(),
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    expect(response.body).not.toHaveProperty('confirmationRequired');
+    expect(readBackstageUniverseMock).toHaveBeenCalledTimes(1);
+    expect(readBackstageUniverseMock).toHaveBeenCalledWith('my-universe-2k26');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a successful empty snapshot because no universe registry exists', async () => {
+    readBackstageUniverseMock.mockResolvedValueOnce(
+      buildBackstageUniverseReadResult('empty-universe', false)
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/empty-universe'
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.hasPersistedData).toBe(false);
+    expect(response.body.result.snapshot.canon.revision).toBe('0');
+    expect(response.headers['cache-control']).toContain('no-store');
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong', 'Bearer test-wrong-backstage-token'],
+    ['generic', `Bearer ${TEST_TOKEN}`],
+  ])('denies %s authentication on the Backstage universe read', async (
+    _caseName,
+    authorization
+  ) => {
+    let pendingRequest = request(buildApp()).get(
+      '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+    );
+    if (authorization) {
+      pendingRequest = pendingRequest.set('Authorization', authorization);
+    }
+
+    const response = await pendingRequest;
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toEqual({
+      code: 'UNAUTHORIZED_GPT_ACCESS',
+      message: 'Backstage Booker bearer authentication is required.',
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageUniverseMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/gpt-access/capabilities/v1/backstage-booker/universes/%20my-universe-2k26',
+    '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/',
+    '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26%2Fother',
+    '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26?include=all',
+  ])('rejects a noncanonical Backstage universe read: %s', async (path) => {
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(path)
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageUniverseMock).not.toHaveBeenCalled();
+  });
+
+  it('maps a PostgreSQL snapshot outage to a retryable bounded 503', async () => {
+    readBackstageUniverseMock.mockRejectedValueOnce(
+      new BackstageBookerRepositoryUnavailableError(
+        'loadContext',
+        new Error('test-only database outage')
+      )
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+      )
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unavailable',
+      service: 'backstage-booker',
+      error: {
+        code: 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE',
+        message: 'Backstage universe data is temporarily unavailable.',
+        retryable: true,
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the read namespace dedicated and exposes no collection listing', async () => {
+    const listResponse = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        '/gpt-access/capabilities/v1/backstage-booker/universes'
+      )
+    );
+    const methodResponse = await backstageBookerAuthorized(
+      request(buildApp()).post(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+      )
+    );
+
+    expect(listResponse.status).toBe(404);
+    expect(methodResponse.status).toBe(405);
+    expect(methodResponse.headers.allow).toBe('GET');
+    expect(methodResponse.body.error.code).toBe('METHOD_NOT_ALLOWED');
+    expect(readBackstageUniverseMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an authenticated GET body before the broad JSON parser', async () => {
+    const sentinel = 'universe-read-body-must-not-be-parsed';
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26')
+        .set('Content-Type', 'application/json')
+        .send(`{"value":"${sentinel}"`)
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'The Backstage universe read request is invalid.',
+    });
+    expect(JSON.stringify(response.body)).not.toContain(sentinel);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageUniverseMock).not.toHaveBeenCalled();
+  });
+
+  it('fails the universe read closed when its dedicated credential collides', async () => {
+    const collidingCredential =
+      'backstage-booker-read-colliding-purpose-bound-token-123456';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = collidingCredential;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = collidingCredential;
+
+    const response = await request(buildApp())
+      .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26')
+      .set('Authorization', `Bearer ${collidingCredential}`);
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_BOOKER_AUTH_UNAVAILABLE');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(readBackstageUniverseMock).not.toHaveBeenCalled();
   });
 
   it.each([

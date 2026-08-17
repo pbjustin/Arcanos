@@ -86,8 +86,9 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
 The Backstage Booker builder uses its own fixed-path schema. It exposes one
-public generation/simulation operation and one consequential canon-write
-operation without exposing generic GPT Access or control-plane tools:
+public generation/simulation operation, one protected non-consequential
+exact-ID universe read, and one consequential canon-write operation without
+exposing generic GPT Access or control-plane tools:
 
 - `https://<your-backend>/contracts/backstage_booker.openapi.v1.json`
 - [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md)
@@ -193,6 +194,10 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
   `saveStoryline`, `upsertStoryline`, `appendCanonBeat`
 (`src/services/backstage-booker.ts`)
 
+The Builder-only `getBackstageUniverse` HTTP operation is not a tenth module
+action. It reads a bounded snapshot for one explicitly supplied universe ID
+through the protected GPT Access boundary and never enters module dispatch.
+
 The original seven Backstage Booker actions accept an optional `universeId`. Omitted scope
 uses the backward-compatible `legacy` universe; explicit IDs are bounded to
 128 characters and use the portable `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, and
@@ -283,21 +288,26 @@ success_response:
 ```
 
 The dedicated Builder configuration instead imports
-`contracts/backstage_booker.openapi.v1.json`. Its
+`contracts/backstage_booker.openapi.v1.json`. Its non-consequential
+`getBackstageUniverse` operation reads one exact ID at
+`GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. The
+read is bounded, returns `hasPersistedData: false` when that scope has no stored
+rows, and exposes neither a universe list nor display-name lookup. Its
 `writeBackstageCanon` operation accepts only `upsertStoryline` and
 `appendCanonBeat` at the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` path. ChatGPT Builder
 stores the distinct `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` as API Key/Bearer
-authentication; it is not OAuth or a user password. The operation is marked
-consequential, and this narrow lane relies on ChatGPT's Allow/Deny banner as
-its one approval step rather than issuing a second backend challenge. Phase
-One mutations, generic GPT Access credentials, and direct/control-plane/legacy
-aliases retain their existing challenge flow. The dedicated bearer never
-grants generic or control-plane access. The lane may bypass generic
-`ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
-`MCP_ALLOW_MODULE_ACTIONS` allowlist remains mandatory. Phase One mutations are
-unavailable on the dedicated lane, and `universeId` remains data scope, not
-authorization.
+authentication; it is not OAuth or a user password. Only the write operation
+is marked consequential, and that narrow lane relies on ChatGPT's Allow/Deny
+banner as its one approval step rather than issuing a second backend challenge.
+Phase One mutations, generic GPT Access credentials, and
+direct/control-plane/legacy aliases retain their existing challenge flow. The
+dedicated bearer never grants generic or control-plane access. The write lane
+may bypass generic `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run`
+authorization, but the exact `MCP_ALLOW_MODULE_ACTIONS` allowlist remains
+mandatory. Phase One mutations are unavailable on the dedicated lane, and
+`universeId` remains data scope, not authorization: any holder of the shared
+dedicated bearer can read any valid exact universe ID.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
 Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never

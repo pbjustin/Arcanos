@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { buildAuthenticatedCredentialActorKey } from '@platform/runtime/security.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
@@ -148,3 +148,92 @@ export function isBackstageBookerAccessAuthenticated(req: Request): boolean {
     backstageBookerAccessAuthenticated
   ] === true;
 }
+
+function sendBackstageBookerAccessError(
+  req: Request,
+  res: Response,
+  statusCode: 401 | 503,
+  code: 'BACKSTAGE_BOOKER_AUTH_UNAVAILABLE' | 'UNAUTHORIZED_GPT_ACCESS',
+  message: string
+): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  res.status(statusCode).json({
+    ok: false,
+    error: {
+      code,
+      message,
+    },
+    ...(req.requestId ? { requestId: req.requestId } : {}),
+    ...(req.traceId ? { traceId: req.traceId } : {}),
+  });
+}
+
+/** Authenticate the dedicated bearer without granting generic GPT Access. */
+export const backstageBookerAccessAuthMiddleware: RequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const result = authenticateBackstageBookerAccessRequest(req);
+  if (!result.ok) {
+    const configurationUnavailable = result.reason === 'configuration_unavailable';
+    const statusCode = configurationUnavailable ? 503 : 401;
+    try {
+      req.logger?.[configurationUnavailable ? 'error' : 'warn']?.(
+        'backstage_booker_access.auth.denied',
+        {
+          reason: result.reason,
+          statusCode,
+          method: req.method,
+        }
+      );
+    } catch {
+      // Authentication diagnostics must not alter the fixed public response.
+    }
+    sendBackstageBookerAccessError(
+      req,
+      res,
+      statusCode,
+      configurationUnavailable
+        ? 'BACKSTAGE_BOOKER_AUTH_UNAVAILABLE'
+        : 'UNAUTHORIZED_GPT_ACCESS',
+      configurationUnavailable
+        ? 'Backstage Booker authentication is unavailable.'
+        : 'Backstage Booker bearer authentication is required.'
+    );
+    return;
+  }
+
+  establishBackstageBookerAccessAuthentication(req, result.credential);
+  try {
+    req.logger?.info('backstage_booker_access.authenticated', {
+      authMode: 'dedicated',
+      capabilityId: 'BACKSTAGE:BOOKER',
+      method: req.method,
+    });
+  } catch {
+    // Authentication diagnostics must not alter request handling.
+  }
+  next();
+};
+
+/** Defense in depth for protected Backstage leaf routes. */
+export const requireBackstageBookerAccessAuthentication: RequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (isBackstageBookerAccessAuthenticated(req)) {
+    next();
+    return;
+  }
+
+  sendBackstageBookerAccessError(
+    req,
+    res,
+    401,
+    'UNAUTHORIZED_GPT_ACCESS',
+    'Backstage Booker bearer authentication is required.'
+  );
+};

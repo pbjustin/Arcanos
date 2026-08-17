@@ -68,6 +68,11 @@ If failing, inspect Railway build/deploy logs first.
   `upsertStoryline` or `appendCanonBeat`. Phase One and public actions are
   unavailable on this lane; use only the operations exposed by
   `contracts/backstage_booker.openapi.v1.json`.
+- Backstage Booker `getBackstageUniverse` returns `401`: verify the saved Action
+  uses the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` in API Key/Bearer
+  mode. The generic GPT Access token is deliberately rejected. A retryable
+  `BACKSTAGE_UNIVERSE_READ_UNAVAILABLE` instead means the bounded PostgreSQL
+  snapshot failed; it never means the universe was empty.
 - Backstage Booker canon call has no ChatGPT Allow/Deny banner: re-import the
   deployed `backstage_booker.openapi.v1.json`, verify `writeBackstageCanon` is
   marked consequential, save the existing GPT, and reopen it before testing.
