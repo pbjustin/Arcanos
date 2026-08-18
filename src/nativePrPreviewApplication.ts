@@ -63,7 +63,10 @@ import {
   BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
   BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS,
   BACKSTAGE_SAVED_STORYLINE_TRIM_START_CHARACTERS,
+  BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS,
+  BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
   projectBackstageSavedStorylineExcerpt,
+  projectBackstageStorylineSummaryPage,
 } from './shared/backstage/backstageUniverseReadProjection.js';
 import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
@@ -1581,6 +1584,188 @@ function runSavedStorylineProjectionFixture(
   };
 }
 
+function runStorylineSummaryPaginationFixture(
+  fixture: string
+): SyntheticStorylineResult {
+  const universeId = 'preview-summary';
+  const storyKey = 'raw-day-one-baseline';
+  const version = 7;
+  const summary = Array.from(
+    { length: BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS },
+    (_, index) => index % 2 === 0 ? '🤼' : 'A'
+  ).join('');
+  const storyline = {
+    universeId,
+    storyKey,
+    summary,
+    version,
+  };
+  const first = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    { offset: 0 }
+  );
+  const second = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    {
+      offset: BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
+      expectedVersion: version,
+    }
+  );
+  const third = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    {
+      offset: BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS * 2,
+      expectedVersion: version,
+    }
+  );
+  requireStorylineFixtureInvariant(
+    first.ok && second.ok && third.ok,
+    'PREVIEW_BACKSTAGE_STORYLINE_SUMMARY_PAGE_REJECTED'
+  );
+  const pageTexts = [
+    first.summaryPage.text,
+    second.summaryPage.text,
+    third.summaryPage.text,
+  ];
+  requireStorylineFixtureInvariant(
+    pageTexts.every((text): text is string => typeof text === 'string')
+      && pageTexts.join('') === summary
+      && Array.from(pageTexts[0]).length === 4_000
+      && Array.from(pageTexts[1]).length === 4_000
+      && Array.from(pageTexts[2]).length === 2_000
+      && pageTexts[0].length === 6_000
+      && pageTexts[1].length === 6_000
+      && pageTexts[2].length === 3_000
+      && first.summaryPage.startCodePoint === 0
+      && first.summaryPage.endCodePointExclusive === 4_000
+      && first.summaryPage.hasMore
+      && first.summaryPage.nextOffset === 4_000
+      && second.summaryPage.startCodePoint === 4_000
+      && second.summaryPage.endCodePointExclusive === 8_000
+      && second.summaryPage.hasMore
+      && second.summaryPage.nextOffset === 8_000
+      && third.summaryPage.startCodePoint === 8_000
+      && third.summaryPage.endCodePointExclusive === 10_000
+      && !third.summaryPage.hasMore
+      && third.summaryPage.nextOffset === null,
+    'PREVIEW_BACKSTAGE_STORYLINE_SUMMARY_PAGING_INVALID'
+  );
+
+  const versionConflict = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    { offset: 4_000, expectedVersion: version + 1 }
+  );
+  const nullSummary = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    { ...storyline, summary: null },
+    { offset: 0 }
+  );
+  const emptySummary = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    { ...storyline, summary: '' },
+    { offset: 0 }
+  );
+  const outOfRange = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    {
+      offset: BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS + 1,
+      expectedVersion: version,
+    }
+  );
+  const scopeMismatch = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    { ...storyline, universeId: 'preview-other' },
+    { offset: 0 }
+  );
+  const notFound = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    null,
+    { offset: 0 }
+  );
+  requireStorylineFixtureInvariant(
+    !versionConflict.ok && versionConflict.reason === 'version-conflict'
+      && nullSummary.ok && nullSummary.summaryPage.text === null
+      && nullSummary.summaryPage.totalCodePoints === 0
+      && emptySummary.ok && emptySummary.summaryPage.text === ''
+      && emptySummary.summaryPage.totalCodePoints === 0
+      && !outOfRange.ok && outOfRange.reason === 'offset-out-of-range'
+      && !scopeMismatch.ok && scopeMismatch.reason === 'scope-mismatch'
+      && !notFound.ok && notFound.reason === 'not-found',
+    'PREVIEW_BACKSTAGE_STORYLINE_SUMMARY_EDGE_CONTRACT_INVALID'
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      accepted: true,
+      authenticationBoundaryReached: false,
+      canonicalRouteReached: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      sqlProjectionExecuted: false,
+      storylineSummaryPagination: {
+        componentExecuted: true,
+        emptySummaryPreserved: true,
+        exactMaximumCodePoints: 10_000,
+        exactReconstructionVerified: true,
+        notFoundRejected: true,
+        nullSummaryPreserved: true,
+        outOfRangeRejected: true,
+        pageCodePointLimit: 4_000,
+        pages: [
+          {
+            endCodePointExclusive: 4_000,
+            hasMore: true,
+            nextOffset: 4_000,
+            startCodePoint: 0,
+            textCodePoints: 4_000,
+            textCodeUnits: 6_000,
+          },
+          {
+            endCodePointExclusive: 8_000,
+            hasMore: true,
+            nextOffset: 8_000,
+            startCodePoint: 4_000,
+            textCodePoints: 4_000,
+            textCodeUnits: 6_000,
+          },
+          {
+            endCodePointExclusive: 10_000,
+            hasMore: false,
+            nextOffset: null,
+            startCodePoint: 8_000,
+            textCodePoints: 2_000,
+            textCodeUnits: 3_000,
+          },
+        ],
+        scopeMismatchRejected: true,
+        unicodeCodePointPagingVerified: true,
+        versionFenceVerified: true,
+      },
+    },
+  };
+}
+
 async function runStorylineFixture(
   fixture: string
 ): Promise<SyntheticStorylineResult> {
@@ -1594,6 +1779,8 @@ async function runStorylineFixture(
       return runStorylinePayloadOverFixture(fixture);
     case fixtures.savedStorylineProjection:
       return runSavedStorylineProjectionFixture(fixture);
+    case fixtures.summaryPagination:
+      return runStorylineSummaryPaginationFixture(fixture);
     default:
       throw new Error('PREVIEW_BACKSTAGE_STORYLINE_FIXTURE_INVALID');
   }

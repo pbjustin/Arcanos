@@ -377,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 117);
+  assert.equal(requestPlan.length, 118);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -404,7 +404,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-storyline-contract'
     ).length,
-    5
+    6
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -933,14 +933,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 117);
+  assert.equal(result.summary.requestsMade, 118);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 117);
+  assert.equal(result.checks.length, 118);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 117);
+  assert.equal(mock.requestCount, 118);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -988,12 +988,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageStorylineCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/storyline-contract')
   );
-  assert.equal(backstageStorylineCalls.length, 6);
+  assert.equal(backstageStorylineCalls.length, 7);
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    5
+    6
   );
   assert.equal(
     backstageStorylineCalls.filter(({ url }) =>

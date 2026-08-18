@@ -560,7 +560,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageUniverseReadProjection.ts',
-    '2863d0395730e728db26126d86dc6f36a143dc5902ea0420a925335d552e40bf',
+    '262585c6236dae39abf47a8fa44c96a910cb362f292a61d5f0a1401abb173bef',
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',

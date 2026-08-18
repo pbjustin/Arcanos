@@ -12,15 +12,21 @@ import {
 } from '@core/db/repositories/backstageBookerRepository.js';
 import {
   BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS,
+  BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS,
+  BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
   projectBackstageSavedStorylineExcerpt,
+  projectBackstageStorylineSummaryPage,
+} from '@shared/backstage/backstageUniverseReadProjection.js';
+
+export {
+  BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS,
+  BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS,
 } from '@shared/backstage/backstageUniverseReadProjection.js';
 
 export const BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES = 60 * 1024;
 // loadContext performs seven bounded SELECTs; 3.5s each leaves room for the
 // pool's connection wait and HTTP overhead inside ChatGPT's 45s Action limit.
 export const BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS = 3_500;
-export const BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS = 4_000;
-export const BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS = 10_000;
 
 export const BACKSTAGE_UNIVERSE_READ_SOURCE_LIMITS = Object.freeze({
   roster: 25,
@@ -739,33 +745,33 @@ export async function readBackstageStorylineSummary(
     storyKey,
     { statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS }
   );
-  if (!storyline) {
-    throw new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND');
-  }
-  if (storyline.universeId !== universeId || storyline.storyKey !== storyKey) {
-    throw new TypeError('Backstage storyline summary read returned mixed scope data.');
-  }
-  if (
-    options.expectedVersion !== undefined
-    && storyline.version !== options.expectedVersion
-  ) {
-    throw new BackstageCanonDomainError('BACKSTAGE_STORYLINE_VERSION_CONFLICT');
-  }
-
-  const summaryCodePoints = storyline.summary === null
-    ? []
-    : Array.from(storyline.summary);
-  if (offset > summaryCodePoints.length) {
-    throw new BackstageStorylineSummaryReadRequestError();
-  }
-  const endCodePointExclusive = Math.min(
-    summaryCodePoints.length,
-    offset + BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS
+  const projection = projectBackstageStorylineSummaryPage(
+    universeId,
+    storyKey,
+    storyline,
+    { offset, expectedVersion: options.expectedVersion }
   );
-  const hasMore = endCodePointExclusive < summaryCodePoints.length;
-  const text = storyline.summary === null
-    ? null
-    : summaryCodePoints.slice(offset, endCodePointExclusive).join('');
+  if (!projection.ok) {
+    switch (projection.reason) {
+      case 'not-found':
+        throw new BackstageCanonDomainError('BACKSTAGE_STORYLINE_NOT_FOUND');
+      case 'offset-out-of-range':
+        throw new BackstageStorylineSummaryReadRequestError();
+      case 'scope-mismatch':
+        throw new TypeError(
+          'Backstage storyline summary read returned mixed scope data.'
+        );
+      case 'version-conflict':
+        throw new BackstageCanonDomainError(
+          'BACKSTAGE_STORYLINE_VERSION_CONFLICT'
+        );
+    }
+  }
+  if (!storyline) {
+    throw new TypeError(
+      'Backstage storyline summary projection accepted a missing record.'
+    );
+  }
 
   return {
     universeId,
@@ -783,13 +789,6 @@ export async function readBackstageStorylineSummary(
         'Backstage canon storyline updatedAt'
       ),
     },
-    summaryPage: {
-      text,
-      startCodePoint: offset,
-      endCodePointExclusive,
-      totalCodePoints: summaryCodePoints.length,
-      hasMore,
-      nextOffset: hasMore ? endCodePointExclusive : null,
-    },
+    summaryPage: projection.summaryPage,
   };
 }
