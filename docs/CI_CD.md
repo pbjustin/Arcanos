@@ -339,7 +339,7 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 117-request plan is the
+evidence, not Railway control-plane provenance. The fixed 118-request plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
@@ -400,7 +400,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 117-request E2E runs in a separate job that has no Railway secret. It
+The sealed 118-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and

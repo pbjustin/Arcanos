@@ -424,7 +424,7 @@ own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
 The Builder-specific contract at
-`GET /contracts/backstage_booker.openapi.v1.json` defines three operations. In
+`GET /contracts/backstage_booker.openapi.v1.json` defines four operations. In
 addition to the public generation/simulation operation, `getBackstageUniverse`
 calls exactly
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
@@ -446,6 +446,18 @@ recent window rather than complete history. Because there is no
 universe registry, an ID with no stored rows returns an empty `200` snapshot
 with `hasPersistedData: false`.
 
+When that snapshot truncates a canon storyline summary, the non-consequential
+`getBackstageStoryline` operation calls
+`GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary`
+with the exact `storylineKey`. It performs a direct indexed PostgreSQL lookup
+inside a repeatable-read, read-only transaction and returns the unmodified
+stored summary in fixed 4,000-Unicode-code-point pages. Page zero may omit
+`expectedVersion`; every nonzero `offset` must carry the version returned by
+page zero. A changed version returns `409 BACKSTAGE_STORYLINE_VERSION_CONFLICT`
+so callers cannot combine two revisions. An absent exact universe/key pair is
+`404 BACKSTAGE_STORYLINE_NOT_FOUND`; a database outage is retryable `503`.
+This path has no list, generation, mutation, confirmation, or memory fallback.
+
 The `writeBackstageCanon` operation calls exactly
 `POST /gpt-access/capabilities/v1/backstage-booker/run`, uses the same dedicated
 credential, and accepts only `upsertStoryline` or `appendCanonBeat`. The
@@ -456,7 +468,7 @@ confirmation challenge. The fixed write lane may bypass generic
 `MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The dedicated bearer
 is accepted only on those exact read/write paths and is distinct from both
 `ARCANOS_GPT_ACCESS_TOKEN` and `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. The generic
-GPT Access credential is not accepted for the universe read; its existing
+GPT Access credential is not accepted for either Backstage read; its existing
 confirmation path for the canon capability run remains unchanged. All four
 Phase One mutations and every direct/control-plane/dispatch/legacy alias retain
 the existing confirmation contract. Authenticated canon bodies use strict

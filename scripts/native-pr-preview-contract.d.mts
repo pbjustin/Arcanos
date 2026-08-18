@@ -31,6 +31,7 @@ export interface NativePrPreviewE2eContract {
       phaseOneUniverseBinding: 'phase-one-universe-binding';
       payloadOver: 'payload-over';
       savedStorylineProjection: 'saved-storyline-projection';
+      summaryPagination: 'summary-pagination';
     }>;
   }>;
   readonly backstageGeneration: Readonly<{

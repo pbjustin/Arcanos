@@ -11,6 +11,7 @@ import {
   type BackstageCanonStorylineUpsertInput
 } from '../../src/core/db/repositories/backstageBookerRepository.js';
 import { TABLE_DEFINITIONS } from '../../src/core/db/schema.js';
+import { readBackstageStorylineSummary } from '../../src/services/backstageUniverseRead.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
   POSTGRES_TEST_DATABASE_NAME,
@@ -425,6 +426,53 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         storyline: 'N'.repeat(1_501)
       })
     ]);
+  });
+
+  test('exact-reads and reconstructs a maximum canon summary through PostgreSQL', async () => {
+    const storyKey = 'raw/day one?100% + 🎤';
+    const summary = '🤼'.repeat(10_000);
+    await repository.upsertStoryline(storylineInput(
+      universeA,
+      storyKey,
+      [],
+      { summary }
+    ));
+
+    const first = await readBackstageStorylineSummary(
+      universeA,
+      storyKey,
+      { reader: repository }
+    );
+    const second = await readBackstageStorylineSummary(
+      universeA,
+      storyKey,
+      {
+        reader: repository,
+        offset: first.summaryPage.nextOffset!,
+        expectedVersion: first.storyline.version,
+      }
+    );
+    const third = await readBackstageStorylineSummary(
+      universeA,
+      storyKey,
+      {
+        reader: repository,
+        offset: second.summaryPage.nextOffset!,
+        expectedVersion: first.storyline.version,
+      }
+    );
+
+    expect([
+      first.summaryPage.text,
+      second.summaryPage.text,
+      third.summaryPage.text,
+    ].join('')).toBe(summary);
+    expect(third.summaryPage).toMatchObject({
+      endCodePointExclusive: 10_000,
+      totalCodePoints: 10_000,
+      hasMore: false,
+      nextOffset: null,
+    });
   });
 
   test('serializes concurrent update CAS attempts without a revision gap', async () => {

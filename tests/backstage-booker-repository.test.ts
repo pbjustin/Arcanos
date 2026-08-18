@@ -414,6 +414,76 @@ describe('PostgresBackstageBookerRepository', () => {
     expect(harness.commands.at(-1)).toBe('COMMIT');
   });
 
+  it('reads one exact full canon storyline summary in a bounded read-only snapshot', async () => {
+    const commands: string[] = [];
+    const values: unknown[][] = [];
+    const fullSummary = '🤼'.repeat(10_000);
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, queryValues: unknown[] = []) => {
+          const normalized = normalizeSql(sql);
+          commands.push(normalized);
+          values.push(queryValues);
+          if (normalized.includes('FROM backstage_storyline_threads')) {
+            return {
+              rows: [{
+                id: '11111111-1111-4111-8111-111111111111',
+                universe_id: 'my-universe-2k26',
+                story_key: 'raw/day one?100% + 🎤',
+                title: 'Monday Night Raw Day One',
+                summary: fullSummary,
+                status: 'active',
+                version: 5,
+                created_revision: '1',
+                updated_revision: '6',
+                created_at: '2026-08-16T20:30:00.000Z',
+                updated_at: '2026-08-16T21:30:00.000Z',
+                closed_at: null,
+              }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => undefined,
+      }),
+    } as unknown as Pool;
+    const repository = new PostgresBackstageBookerRepository(pool);
+
+    const result = await repository.loadCanonStorylineSummary(
+      'my-universe-2k26',
+      'raw/day one?100% + 🎤',
+      { statementTimeoutMs: 3_500 }
+    );
+
+    expect(result).toMatchObject({
+      universeId: 'my-universe-2k26',
+      storyKey: 'raw/day one?100% + 🎤',
+      summary: fullSummary,
+      version: 5,
+      updatedRevision: '6',
+    });
+    expect(result).not.toHaveProperty('participantNames');
+    expect(commands[0]).toBe(
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    );
+    expect(commands[1]).toBe("SELECT set_config('statement_timeout', $1, TRUE)");
+    const storylineQueryIndex = commands.findIndex(command =>
+      command.includes('FROM backstage_storyline_threads')
+    );
+    expect(storylineQueryIndex).toBeGreaterThan(1);
+    expect(commands[storylineQueryIndex]).toContain(
+      'WHERE universe_id = $1 AND story_key = $2'
+    );
+    expect(commands[storylineQueryIndex]).not.toContain('LEFT(');
+    expect(values[storylineQueryIndex]).toEqual([
+      'my-universe-2k26',
+      'raw/day one?100% + 🎤',
+    ]);
+    expect(commands.at(-1)).toBe('COMMIT');
+    expect(commands.join(' ')).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|LOCK)\b/u);
+  });
+
   it('uses source-bounded legacy SQL only for the universe-read projection', async () => {
     const commands: string[] = [];
     const values: unknown[][] = [];

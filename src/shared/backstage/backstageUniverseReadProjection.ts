@@ -1,5 +1,7 @@
 export const BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS = 1_501;
 export const BACKSTAGE_SAVED_STORYLINE_EXCERPT_CODE_POINTS = 1_500;
+export const BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS = 4_000;
+export const BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS = 10_000;
 
 // PostgreSQL's explicit LTRIM character set must stay aligned with
 // ECMAScript trimStart() so the bounded transfer cannot hide valid content.
@@ -12,6 +14,36 @@ export interface BackstageSavedStorylineExcerptProjection {
   storylineExcerpt: string;
   truncated: boolean;
 }
+
+export interface BackstageStorylineSummaryPageProjection {
+  text: string | null;
+  startCodePoint: number;
+  endCodePointExclusive: number;
+  totalCodePoints: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+interface BackstageStorylineSummaryProjectionRecord {
+  universeId: string;
+  storyKey: string;
+  summary: string | null;
+  version: number;
+}
+
+export type BackstageStorylineSummaryProjectionResult =
+  | {
+      ok: true;
+      summaryPage: BackstageStorylineSummaryPageProjection;
+    }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'offset-out-of-range'
+        | 'scope-mismatch'
+        | 'version-conflict';
+    };
 
 /**
  * Project one saved storyline after the repository's bounded transfer.
@@ -42,5 +74,69 @@ export function projectBackstageSavedStorylineExcerpt(
           .join('')
       : normalized,
     truncated,
+  };
+}
+
+/**
+ * Project one exact canon storyline summary page after the caller has resolved
+ * the durable record. The scope and version checks stay coupled to Unicode
+ * code-point paging so both the protected reader and the contained preview use
+ * the same continuation behavior.
+ */
+export function projectBackstageStorylineSummaryPage(
+  universeId: string,
+  storyKey: string,
+  storyline: BackstageStorylineSummaryProjectionRecord | null,
+  options: {
+    offset: number;
+    expectedVersion?: number;
+  }
+): BackstageStorylineSummaryProjectionResult {
+  if (!storyline) {
+    return { ok: false, reason: 'not-found' };
+  }
+  if (
+    storyline.universeId !== universeId
+    || storyline.storyKey !== storyKey
+  ) {
+    return { ok: false, reason: 'scope-mismatch' };
+  }
+  if (
+    options.expectedVersion !== undefined
+    && storyline.version !== options.expectedVersion
+  ) {
+    return { ok: false, reason: 'version-conflict' };
+  }
+
+  const summaryCodePoints = storyline.summary === null
+    ? []
+    : Array.from(storyline.summary);
+  if (
+    !Number.isSafeInteger(options.offset)
+    || options.offset < 0
+    || options.offset > summaryCodePoints.length
+  ) {
+    return { ok: false, reason: 'offset-out-of-range' };
+  }
+  const endCodePointExclusive = Math.min(
+    summaryCodePoints.length,
+    options.offset + BACKSTAGE_STORYLINE_SUMMARY_PAGE_CODE_POINTS
+  );
+  const hasMore = endCodePointExclusive < summaryCodePoints.length;
+
+  return {
+    ok: true,
+    summaryPage: {
+      text: storyline.summary === null
+        ? null
+        : summaryCodePoints
+            .slice(options.offset, endCodePointExclusive)
+            .join(''),
+      startCodePoint: options.offset,
+      endCodePointExclusive,
+      totalCodePoints: summaryCodePoints.length,
+      hasMore,
+      nextOffset: hasMore ? endCodePointExclusive : null,
+    },
   };
 }

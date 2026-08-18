@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 117;
+const MAX_REQUESTS = 118;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -784,6 +784,11 @@ export function buildNativePrPreviewRequestPlan() {
     backstageStorylineCase(
       'backstage-saved-storyline-projection',
       'savedStorylineProjection',
+      200
+    ),
+    backstageStorylineCase(
+      'backstage-storyline-summary-pagination',
+      'summaryPagination',
       200
     ),
     backstageGenerationCase(
@@ -1683,6 +1688,59 @@ function expectedBackstageStorylineContractPayload(requestCase) {
         repositoryTransferLimitCodePoints: 1_501,
         storylineExcerpt: 'N'.repeat(1_500),
         truncated: true,
+      },
+    };
+  }
+  if (requestCase.fixtureName === 'summaryPagination') {
+    return {
+      accepted: true,
+      authenticationBoundaryReached: false,
+      canonicalRouteReached: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      ...base,
+      providerBoundaryReached: false,
+      sqlProjectionExecuted: false,
+      storylineSummaryPagination: {
+        componentExecuted: true,
+        emptySummaryPreserved: true,
+        exactMaximumCodePoints: 10_000,
+        exactReconstructionVerified: true,
+        notFoundRejected: true,
+        nullSummaryPreserved: true,
+        outOfRangeRejected: true,
+        pageCodePointLimit: 4_000,
+        pages: [
+          {
+            endCodePointExclusive: 4_000,
+            hasMore: true,
+            nextOffset: 4_000,
+            startCodePoint: 0,
+            textCodePoints: 4_000,
+            textCodeUnits: 6_000,
+          },
+          {
+            endCodePointExclusive: 8_000,
+            hasMore: true,
+            nextOffset: 8_000,
+            startCodePoint: 4_000,
+            textCodePoints: 4_000,
+            textCodeUnits: 6_000,
+          },
+          {
+            endCodePointExclusive: 10_000,
+            hasMore: false,
+            nextOffset: null,
+            startCodePoint: 8_000,
+            textCodePoints: 2_000,
+            textCodeUnits: 3_000,
+          },
+        ],
+        scopeMismatchRejected: true,
+        unicodeCodePointPagingVerified: true,
+        versionFenceVerified: true,
       },
     };
   }

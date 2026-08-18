@@ -373,6 +373,62 @@ function expectedSavedStorylineProjection(fixture: string) {
   };
 }
 
+function expectedStorylineSummaryPagination(fixture: string) {
+  return {
+    accepted: true,
+    authenticationBoundaryReached: false,
+    canonicalRouteReached: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    sqlProjectionExecuted: false,
+    storylineSummaryPagination: {
+      componentExecuted: true,
+      emptySummaryPreserved: true,
+      exactMaximumCodePoints: 10_000,
+      exactReconstructionVerified: true,
+      notFoundRejected: true,
+      nullSummaryPreserved: true,
+      outOfRangeRejected: true,
+      pageCodePointLimit: 4_000,
+      pages: [
+        {
+          endCodePointExclusive: 4_000,
+          hasMore: true,
+          nextOffset: 4_000,
+          startCodePoint: 0,
+          textCodePoints: 4_000,
+          textCodeUnits: 6_000,
+        },
+        {
+          endCodePointExclusive: 8_000,
+          hasMore: true,
+          nextOffset: 8_000,
+          startCodePoint: 4_000,
+          textCodePoints: 4_000,
+          textCodeUnits: 6_000,
+        },
+        {
+          endCodePointExclusive: 10_000,
+          hasMore: false,
+          nextOffset: null,
+          startCodePoint: 8_000,
+          textCodePoints: 2_000,
+          textCodeUnits: 3_000,
+        },
+      ],
+      scopeMismatchRejected: true,
+      unicodeCodePointPagingVerified: true,
+      versionFenceVerified: true,
+    },
+  };
+}
+
 function expectedPhaseOneUniverseBinding(fixture: string) {
   return {
     accepted: true,
@@ -887,6 +943,13 @@ describe('native PR contained application', () => {
         status: 200,
         body: expectedSavedStorylineProjection(
           fixtures.savedStorylineProjection
+        ),
+      },
+      {
+        fixture: fixtures.summaryPagination,
+        status: 200,
+        body: expectedStorylineSummaryPagination(
+          fixtures.summaryPagination
         ),
       },
     ];

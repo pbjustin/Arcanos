@@ -108,6 +108,11 @@ export interface BackstageCanonStorylineRecord {
   closedAt: Date | null;
 }
 
+export type BackstageCanonStorylineSummaryRecord = Omit<
+  BackstageCanonStorylineRecord,
+  'participantNames'
+>;
+
 export interface BackstageCanonBeatRecord {
   id: string;
   universeId: string;
@@ -1870,6 +1875,43 @@ export class PostgresBackstageBookerRepository {
     return this.readSnapshot('loadCanonContext', client =>
       this.loadCanonContextFromClient(client, normalizedUniverseId)
     );
+  }
+
+  async loadCanonStorylineSummary(
+    universeId: string,
+    storyKey: string,
+    options: BackstageContextReadOptions = {}
+  ): Promise<BackstageCanonStorylineSummaryRecord | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedStoryKey = normalizeRequiredString(storyKey, 'storyKey', 240);
+    return this.readSnapshot('loadCanonStorylineSummary', async client => {
+      const result = await client.query<BackstageCanonStorylineRow>(
+        `SELECT
+           id,
+           universe_id,
+           story_key,
+           title,
+           summary,
+           status,
+           version,
+           created_revision::TEXT AS created_revision,
+           updated_revision::TEXT AS updated_revision,
+           created_at,
+           updated_at,
+           closed_at
+         FROM backstage_storyline_threads
+         WHERE universe_id = $1
+           AND story_key = $2`,
+        [normalizedUniverseId, normalizedStoryKey]
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return null;
+      }
+      const { participantNames, ...storyline } = mapCanonStorylineRow(row);
+      void participantNames;
+      return storyline;
+    }, options);
   }
 
   async bookEvent(

@@ -73,6 +73,14 @@ If failing, inspect Railway build/deploy logs first.
   mode. The generic GPT Access token is deliberately rejected. A retryable
   `BACKSTAGE_UNIVERSE_READ_UNAVAILABLE` instead means the bounded PostgreSQL
   snapshot failed; it never means the universe was empty.
+- Backstage Booker `getBackstageStoryline` returns `404`: the exact
+  universe/key pair did not match a stored durable canon storyline. Preserve
+  the key exactly; do not create or rewrite canon as a read workaround. A
+  `BACKSTAGE_STORYLINE_VERSION_CONFLICT` means canon changed between pages:
+  discard every collected page and restart at offset 0. A retryable
+  `BACKSTAGE_STORYLINE_READ_UNAVAILABLE` is a PostgreSQL read failure, not a
+  missing or empty summary. A `401` has the same dedicated-Bearer checks as
+  `getBackstageUniverse`.
 - Backstage Booker canon call has no ChatGPT Allow/Deny banner: re-import the
   deployed `backstage_booker.openapi.v1.json`, verify `writeBackstageCanon` is
   marked consequential, save the existing GPT, and reopen it before testing.

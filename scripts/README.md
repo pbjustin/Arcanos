@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 69-request plan without network access.
+untracked worktree, limits, and the fixed 118-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -81,7 +81,8 @@ That built runtime is also semantic-digest pinned after comments and line-ending
 normalization.
 
 The sealed `POST /backstage/storyline-contract` selectors are
-`lifecycle-exact`, `phase-one-universe-binding`, and `payload-over`.
+`lifecycle-exact`, `phase-one-universe-binding`, `payload-over`,
+`saved-storyline-projection`, and `summary-pagination`.
 `lifecycle-exact` calls the real storyline
 validator, response selector, and repository transaction helper against a fresh
 per-request in-memory query adapter. Its two mutations prove the exact
@@ -96,6 +97,14 @@ E2E only: it does not reach PostgreSQL or prove SQL-engine locking or atomicity;
 the PostgreSQL 18 CI suite remains authoritative. The fixtures use no
 credentials, provider, memory, confirmation challenge/token store, persistence
 effect, or protected effect.
+
+`saved-storyline-projection` executes the production-shared legacy excerpt
+projector. `summary-pagination` executes the production-shared canon summary
+page projector over a server-owned 10,000-code-point mixed BMP/astral string.
+It proves three exact 4,000/4,000/2,000-code-point pages, exact reconstruction,
+version-fence rejection, scope and offset rejection, and distinct null versus
+empty results while returning metadata only. It does not import or invoke the
+normal protected GET route, bearer authentication, or a database reader.
 
 The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`, and

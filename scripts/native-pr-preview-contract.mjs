@@ -31,6 +31,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       phaseOneUniverseBinding: 'phase-one-universe-binding',
       payloadOver: 'payload-over',
       savedStorylineProjection: 'saved-storyline-projection',
+      summaryPagination: 'summary-pagination',
     }),
   }),
   backstageGeneration: Object.freeze({

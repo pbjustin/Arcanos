@@ -1,7 +1,8 @@
 # Backstage Booker Custom GPT
 
 This is the Builder-facing configuration for the existing **Backstage Booker**
-Custom GPT. It adds a narrow authenticated exact-ID universe read and a
+Custom GPT. It adds narrow authenticated exact-universe and exact-storyline
+reads plus a
 canon-writing lane with one visible ChatGPT consequential-action approval
 instead of a second, time-limited backend confirmation challenge.
 
@@ -9,7 +10,7 @@ instead of a second, time-limited backend confirmation challenge.
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
 - Repository contract: [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
-- Schema version: `1.1.0`
+- Schema version: `1.2.0`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
@@ -19,13 +20,16 @@ instead of a second, time-limited backend confirmation challenge.
   schema, GPT instructions, chat, source, logs, screenshots, or a worker
   service.
 
-The contract defines exactly three operations:
+The contract defines exactly four operations:
 
 - `runBackstageBooker` -> `POST /gpt/backstage-booker` for the public
   `generateBooking`, `generateBookingWithHRC`, and `simulateMatch` actions.
 - `getBackstageUniverse` ->
   `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`
   for one authenticated, non-consequential, read-only PostgreSQL snapshot.
+- `getBackstageStoryline` ->
+  `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary`
+  for the full summary of one exact durable canon storyline in fixed pages.
 - `writeBackstageCanon` ->
   `POST /gpt-access/capabilities/v1/backstage-booker/run` for only
   `upsertStoryline` and `appendCanonBeat`.
@@ -49,6 +53,19 @@ retryable `503` and is never presented as an empty universe. Legacy payloads
 are projected to bounded scalar fields in PostgreSQL before Node materializes
 them. `sourceQueryLimits` are recent-data windows rather than total counts.
 
+`getBackstageStoryline` is also non-consequential and uses the same
+dedicated bearer, PostgreSQL-only read path, no-store policy, rate limit, body
+rejection, and 3.5-second statement timeout. It performs one exact indexed
+lookup by `universeId` plus `storylineKey`; it does not list storylines, enter
+module dispatch, generate content, write canon, or use an in-memory fallback.
+The key is a query parameter because valid canon keys can contain spaces,
+slashes, punctuation, and Unicode. The service returns at most 4,000 Unicode
+code points per page and preserves the stored summary exactly, including the
+difference between `null` and an empty string. Page zero returns the storyline
+version. Every nonzero `offset` must include that value as `expectedVersion`;
+a `409 BACKSTAGE_STORYLINE_VERSION_CONFLICT` means the caller must discard the
+collected pages and restart at offset zero.
+
 `writeBackstageCanon` is marked `x-openai-isConsequential: true`, so ChatGPT
 must display its Allow/Deny action banner before invoking it. The dedicated
 backend boundary accepts the Backstage credential only at that exact path and
@@ -71,7 +88,8 @@ The tradeoff is explicit: the backend authenticates possession of a shared
 Action bearer token, but cannot independently prove that a particular person
 saw or accepted ChatGPT's banner. The design therefore trusts the ChatGPT
 Action platform to enforce the consequential flag before sending the request.
-Anyone who obtains the bearer can read any valid exact universe ID and can
+Anyone who obtains the bearer can read any valid exact universe ID, including
+full summaries selected by an exact storyline key, and can
 exercise the narrow canon endpoint without establishing per-user identity.
 This contract therefore assumes a private GPT within one trust domain. Do not
 publish it or use it across tenant-separated universes without first adding
@@ -109,14 +127,15 @@ the exact backend revision and contract route are deployed:
 3. Under Authentication, select **API Key** and **Bearer**, then enter the same
    dedicated credential in the authentication field.
 4. Verify the imported operation IDs are exactly `runBackstageBooker`,
-   `getBackstageUniverse`, and `writeBackstageCanon`. The read must be shown as
-   non-consequential and the write as consequential. The schema must not
-   contain `confirmation_token`.
+   `getBackstageUniverse`, `getBackstageStoryline`, and
+   `writeBackstageCanon`. Both reads must be shown as non-consequential and the
+   write as consequential. The schema must not contain `confirmation_token`.
 5. Preserve the GPT's name, instructions, knowledge, conversation starters,
    model selection, visibility, and sharing settings except for the reviewed
    Action/instruction changes. Save the same GPT.
 6. Reopen the saved GPT. Check one public generation/simulation request and one
-   exact-ID read, then perform a separately authorized canon write in an
+   exact-ID snapshot read, one paged storyline-summary read, then perform a
+   separately authorized canon write in an
    isolated test universe.
    Confirm the Allow/Deny banner appears before `writeBackstageCanon`, denial
    sends no mutation, allowance produces one response, and the response does
@@ -141,6 +160,19 @@ is true, disclose the listed sections and omitted counts.
 Treat any collection equal to its sourceQueryLimits value as a bounded recent
 window, not proof that no older records exist; omittedItems does not count rows
 outside those source windows.
+
+When snapshot.canon.storylines.summary is listed as truncated and the full
+stored summary is needed, use getBackstageStoryline with the exact
+universeId and storyline key. Start with offset 0. If hasMore is true, call it
+again with nextOffset and the exact storyline.version returned by page zero as
+expectedVersion. Continue until hasMore is false, then concatenate text in
+offset order without trimming, rewriting, or inserting separators. Keep null
+distinct from an empty string. If the backend returns
+BACKSTAGE_STORYLINE_VERSION_CONFLICT, discard every collected page, report that
+canon changed during the read, and restart at offset 0 only if the user still
+wants the current version. Never use generation or a mutation as a read
+substitute, and never claim that a bounded universe preview is the full stored
+summary.
 
 Use writeBackstageCanon only when the user explicitly asks to create or change
 durable canon through upsertStoryline or appendCanonBeat. Preserve the user's
