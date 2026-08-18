@@ -203,7 +203,12 @@ export function resolveCliTimeoutMs(timeoutMs: number | undefined, policy: CliPo
 }
 
 export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT_CLI_POLICY): string {
-  let redacted = stripUnsafeCliOutputControls(value);
+  const controlSanitization = stripUnsafeCliOutputControls(value);
+  if (controlSanitization.unsafe) {
+    return truncateCliOutput(policy.redactionPolicy.replacement, policy);
+  }
+
+  let redacted = controlSanitization.value;
   for (const envName of policy.redactionPolicy.envNames) {
     redacted = redactNamedAssignment(redacted, envName, policy.redactionPolicy.replacement);
   }
@@ -227,15 +232,55 @@ export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT
 const DEFAULT_IGNORABLE_CODE_POINT_PATTERN = /[\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
 const C1_CONTROL_STRING_INTRODUCERS = new Set([0x90, 0x98, 0x9D, 0x9E, 0x9F]);
 
-function stripUnsafeCliOutputControls(value: string): string {
+interface TerminalSequenceConsumption {
+  end: number;
+  safe: boolean;
+}
+
+interface CliOutputControlSanitization {
+  value: string;
+  unsafe: boolean;
+}
+
+function safeTerminalSequence(end: number): TerminalSequenceConsumption {
+  return { end, safe: true };
+}
+
+function unsafeTerminalSequence(end: number): TerminalSequenceConsumption {
+  return { end, safe: false };
+}
+
+function isIgnorableTerminalControl(codePoint: number): boolean {
+  return codePoint === 0x00 || codePoint === 0x07 || codePoint === 0x7F;
+}
+
+// Strip bounded non-displaying decoration. Any control that can mutate terminal
+// position or content, or any ambiguous sequence, fails closed for the payload.
+function stripUnsafeCliOutputControls(value: string): CliOutputControlSanitization {
   const normalized = value.replace(DEFAULT_IGNORABLE_CODE_POINT_PATTERN, "");
-  let sanitized = "";
+  const sanitized: string[] = [];
   let index = 0;
+  let plainTextStart = 0;
 
   while (index < normalized.length) {
-    const terminalSequenceEnd = consumeTerminalSequenceAt(normalized, index);
-    if (terminalSequenceEnd !== undefined) {
-      index = terminalSequenceEnd;
+    if (normalized[index] === "\r") {
+      if (normalized[index + 1] === "\n") {
+        index += 2;
+        continue;
+      }
+      return { value: "", unsafe: true };
+    }
+
+    const terminalSequence = consumeTerminalSequenceAt(normalized, index);
+    if (terminalSequence !== undefined) {
+      if (!terminalSequence.safe) {
+        return { value: "", unsafe: true };
+      }
+      if (plainTextStart < index) {
+        sanitized.push(normalized.slice(plainTextStart, index));
+      }
+      index = terminalSequence.end;
+      plainTextStart = index;
       continue;
     }
 
@@ -243,29 +288,34 @@ function stripUnsafeCliOutputControls(value: string): string {
     if (codePoint === undefined) {
       break;
     }
-    if (isUnsafeC0OrC1Control(codePoint)) {
+    if (codePoint === 0x09 || codePoint === 0x0A) {
       index += 1;
       continue;
     }
+    if (isIgnorableTerminalControl(codePoint)) {
+      if (plainTextStart < index) {
+        sanitized.push(normalized.slice(plainTextStart, index));
+      }
+      index += 1;
+      plainTextStart = index;
+      continue;
+    }
+    if (isC0OrC1Control(codePoint)) {
+      return { value: "", unsafe: true };
+    }
 
-    const character = String.fromCodePoint(codePoint);
-    sanitized += character;
-    index += character.length;
+    index += codePoint > 0xFFFF ? 2 : 1;
   }
 
-  return sanitized;
+  if (plainTextStart < normalized.length) {
+    sanitized.push(normalized.slice(plainTextStart));
+  }
+
+  return { value: sanitized.join(""), unsafe: false };
 }
 
 function isC0OrC1Control(codePoint: number): boolean {
   return codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F);
-}
-
-function isUnsafeC0OrC1Control(codePoint: number): boolean {
-  return codePoint <= 0x08
-    || codePoint === 0x0B
-    || codePoint === 0x0C
-    || (codePoint >= 0x0E && codePoint <= 0x1F)
-    || (codePoint >= 0x7F && codePoint <= 0x9F);
 }
 
 function isTerminalRecordBoundary(codePoint: number): boolean {
@@ -277,134 +327,97 @@ function isTerminalRecordBoundary(codePoint: number): boolean {
     || codePoint === 0x2029;
 }
 
-function isTerminalSequenceIntroducer(codePoint: number): boolean {
-  return codePoint === 0x1B
-    || codePoint === 0x9B
-    || C1_CONTROL_STRING_INTRODUCERS.has(codePoint);
-}
-
-function consumeCsiSequence(value: string, start: number): number {
+function consumeCsiSequence(
+  value: string,
+  start: number
+): TerminalSequenceConsumption {
   let index = start;
-  let parsingIntermediates = false;
+  let standardSgrParameters = true;
 
   while (index < value.length) {
     const codePoint = value.charCodeAt(index);
     if (isTerminalRecordBoundary(codePoint)) {
-      return index;
+      return unsafeTerminalSequence(index);
     }
     if (isC0OrC1Control(codePoint)) {
-      // Return the nested introducer so the outer scanner redispatches from it.
-      if (isTerminalSequenceIntroducer(codePoint)) {
-        return index;
+      if (isIgnorableTerminalControl(codePoint)) {
+        index += 1;
+        continue;
+      }
+      return unsafeTerminalSequence(index + 1);
+    }
+    if (codePoint >= 0x30 && codePoint <= 0x3F) {
+      if (!(
+        (codePoint >= 0x30 && codePoint <= 0x39)
+        || codePoint === 0x3A
+        || codePoint === 0x3B
+      )) {
+        standardSgrParameters = false;
       }
       index += 1;
       continue;
     }
-    if (!parsingIntermediates && codePoint >= 0x30 && codePoint <= 0x3F) {
-      index += 1;
-      continue;
-    }
     if (codePoint >= 0x20 && codePoint <= 0x2F) {
-      parsingIntermediates = true;
-      index += 1;
-      continue;
+      return unsafeTerminalSequence(index + 1);
     }
     if (codePoint >= 0x40 && codePoint <= 0x7E) {
-      return index + 1;
+      const standardSgr = codePoint === 0x6D && standardSgrParameters;
+      return standardSgr
+        ? safeTerminalSequence(index + 1)
+        : unsafeTerminalSequence(index + 1);
     }
-    return value.length;
+    return unsafeTerminalSequence(index + 1);
   }
 
-  return value.length;
+  return unsafeTerminalSequence(value.length);
 }
 
-function consumeGenericEscapeSequence(value: string, start: number): number {
+function consumeControlString(
+  value: string,
+  start: number,
+  osc: boolean
+): TerminalSequenceConsumption {
   let index = start;
 
   while (index < value.length) {
     const codePoint = value.charCodeAt(index);
     if (isTerminalRecordBoundary(codePoint)) {
-      return index;
-    }
-    if (isC0OrC1Control(codePoint)) {
-      // Return the nested introducer so the outer scanner redispatches from it.
-      if (isTerminalSequenceIntroducer(codePoint)) {
-        return index;
-      }
-      index += 1;
-      continue;
-    }
-    if (codePoint >= 0x20 && codePoint <= 0x2F) {
-      index += 1;
-      continue;
-    }
-    if (codePoint >= 0x30 && codePoint <= 0x7E) {
-      return index + 1;
-    }
-    return value.length;
-  }
-
-  return value.length;
-}
-
-function consumeControlString(value: string, start: number, osc: boolean): number {
-  let index = start;
-
-  while (index < value.length) {
-    const codePoint = value.charCodeAt(index);
-    if (isTerminalRecordBoundary(codePoint)) {
-      return index;
+      return unsafeTerminalSequence(index);
     }
     if (osc && codePoint === 0x07) {
-      return index + 1;
+      return safeTerminalSequence(index + 1);
     }
     if (codePoint === 0x9C) {
-      return index + 1;
+      return safeTerminalSequence(index + 1);
     }
     if (codePoint === 0x1B) {
-      let terminatorIndex = index + 1;
-      while (terminatorIndex < value.length && isC0OrC1Control(value.charCodeAt(terminatorIndex))) {
-        const embeddedCodePoint = value.charCodeAt(terminatorIndex);
-        if (isTerminalRecordBoundary(embeddedCodePoint)) {
-          break;
-        }
-        if (osc && embeddedCodePoint === 0x07) {
-          return terminatorIndex + 1;
-        }
-        if (embeddedCodePoint === 0x9C) {
-          return terminatorIndex + 1;
-        }
-        terminatorIndex += 1;
+      return value[index + 1] === "\\"
+        ? safeTerminalSequence(index + 2)
+        : unsafeTerminalSequence(index + 1);
+    }
+    if (isC0OrC1Control(codePoint)) {
+      if (isIgnorableTerminalControl(codePoint)) {
+        index += 1;
+        continue;
       }
-      if (terminatorIndex < value.length && value[terminatorIndex] === "\\") {
-        return terminatorIndex + 1;
-      }
-      index = terminatorIndex;
-      continue;
+      return unsafeTerminalSequence(index + 1);
     }
     index += 1;
   }
 
-  return value.length;
+  return unsafeTerminalSequence(value.length);
 }
 
-function consumeEscapeSequence(value: string, start: number): number {
-  let commandIndex = start + 1;
-  while (commandIndex < value.length) {
-    const codePoint = value.charCodeAt(commandIndex);
-    if (isTerminalRecordBoundary(codePoint)) {
-      return commandIndex;
-    }
-    if (!isC0OrC1Control(codePoint)) {
-      break;
-    }
-    if (isTerminalSequenceIntroducer(codePoint)) {
-      return commandIndex;
-    }
-    commandIndex += 1;
-  }
+function consumeEscapeSequence(
+  value: string,
+  start: number
+): TerminalSequenceConsumption {
+  const commandIndex = start + 1;
   if (commandIndex >= value.length) {
-    return value.length;
+    return unsafeTerminalSequence(value.length);
+  }
+  if (isC0OrC1Control(value.charCodeAt(commandIndex))) {
+    return unsafeTerminalSequence(commandIndex + 1);
   }
 
   const command = value[commandIndex];
@@ -417,10 +430,13 @@ function consumeEscapeSequence(value: string, start: number): number {
   if (command === "P" || command === "X" || command === "^" || command === "_") {
     return consumeControlString(value, commandIndex + 1, false);
   }
-  return consumeGenericEscapeSequence(value, commandIndex);
+  return unsafeTerminalSequence(commandIndex + 1);
 }
 
-function consumeTerminalSequenceAt(value: string, start: number): number | undefined {
+function consumeTerminalSequenceAt(
+  value: string,
+  start: number
+): TerminalSequenceConsumption | undefined {
   const codePoint = value.charCodeAt(start);
   if (codePoint === 0x1B) {
     return consumeEscapeSequence(value, start);

@@ -245,14 +245,12 @@ describe("CLI security policy helpers", () => {
     )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
   });
 
-  it.each(["\u000B", "\u000C", "\uFEFF", "\u0085", "\u001C", "\u00A0"])(
-    "uses shared fail-closed Unicode assignment boundaries for %p",
+  it.each(["\uFEFF", "\u00A0"])(
+    "normalizes safe Unicode assignment boundaries for %p",
     (separator) => {
       const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
       const structured = '{"page":"private-page-id"}';
-      const visibleSeparator = ["\u000B", "\u000C", "\u0085", "\u001C", "\uFEFF"].includes(separator)
-        ? ""
-        : separator;
+      const visibleSeparator = separator === "\uFEFF" ? "" : separator;
 
       expect(redactCliOutput(
         `${envName}${separator}=${separator}${structured} tail`
@@ -264,6 +262,17 @@ describe("CLI security policy helpers", () => {
     }
   );
 
+  it.each(["\u000B", "\u000C", "\u0085", "\u001C"])(
+    "fails closed for unsafe standalone terminal control %p",
+    (control) => {
+      const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+
+      expect(redactCliOutput(
+        `${envName}${control}={"page":"private-page-id"} tail`
+      )).toBe("[REDACTED]");
+    }
+  );
+
   it("normalizes ANSI and unsafe display controls before named redaction", () => {
     const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
     const coloredName = envName.replace("NOTION", "NOT\x1B[31mION\x1B[0m");
@@ -271,7 +280,6 @@ describe("CLI security policy helpers", () => {
       + '{ "page": [ "private-page-id" ] }\x1B[0m tail';
     const dcsName = envName.replace("NOTION", "NOT\x1BPqhidden\x1B\\ION");
     const apcName = envName.replace("NOTION", "NOT\x9Fhidden\x9CION");
-    const decscName = envName.replace("NOTION", "NOT\x1B7ION");
 
     expect(redactCliOutput(input)).toBe(`${envName}=[REDACTED] tail`);
     expect(redactCliOutput(
@@ -281,39 +289,26 @@ describe("CLI security policy helpers", () => {
       `${apcName}={"page":"private-page-id"} tail`
     )).toBe(`${envName}=[REDACTED] tail`);
     expect(redactCliOutput(
-      `\x1B7${decscName}={"page":"private-page-id"} tail`
-    )).toBe(`${envName}=[REDACTED] tail`);
+      `\x1B7${envName}={"page":"private-page-id"} tail`
+    )).toBe("[REDACTED]");
     expect(redactCliOutput(
       `${envName}=\x1B]unterminated-private-page-id`
-    )).toBe(`${envName}=`);
+    )).toBe("[REDACTED]");
   });
 
   it.each([
-    ["CSI with a default ignorable", "\x1B[3\u200B1m"],
-    ["CSI with NUL", "\x1B[3\x001m"],
-    ["CSI with BEL", "\x1B[3\x071m"],
-    ["CSI with C1 ST", "\x1B[3\x9C1m"],
-    ["CSI with nested C1 CSI", "\x1B[3\x9B1m"],
-    ["C1 CSI with NUL", "\x9B3\x001m"],
-    ["C1 CSI with BEL", "\x9B3\x071m"],
-    ["C1 CSI with C1 ST", "\x9B3\x9C1m"],
-    ["generic ESC with NUL", "\x1B\x007"],
-    ["generic ESC with BEL", "\x1B\x077"],
-    ["generic ESC with C1 ST", "\x1B\x9C7"],
-    ["generic ESC with nested ESC", "\x1B\x1B7"],
-    ["CSI introducer split by NUL", "\x1B\x00[31m"],
-    ["CSI introducer split by BEL", "\x1B\x07[31m"],
-    ["CSI introducer split by C1 ST", "\x1B\x9C[31m"],
-    ["DCS with a default ignorable", "\x1BPqhid\u200Bden\x1B\\"],
-    ["DCS with NUL", "\x1BPqhid\x00den\x1B\\"],
-    ["OSC with a default ignorable", "\x1B]0;hid\u200Bden\x07"],
-    ["OSC with NUL", "\x1B]0;hid\x00den\x07"],
-    ["OSC with earlier equals noise", "\x1B]0;foo=bar\x07"],
-    ["C1 CSI redispatched to ESC CSI", "\x9B\x1B[31m"],
-    ["ESC redispatched to C1 CSI", "\x1B\x9B31m"],
-    ["C1 CSI redispatched to generic ESC", "\x9B\x1B7"],
-    ["ESC redispatched to C1 OSC", "\x1B\x9D0;hidden\x07"]
-  ])("redacts a sensitive assignment through hidden %s controls", (_name, terminalSequence) => {
+    ["empty SGR", "\x1B[m"],
+    ["semicolon SGR", "\x1B[0;31m"],
+    ["extended semicolon SGR", "\x1B[38;2;255;0;0m"],
+    ["extended colon SGR", "\x1B[38:2::255:0:0m"],
+    ["C1 CSI SGR", "\x9B31m"],
+    ["SGR with a default ignorable", "\x1B[3\u200B1m"],
+    ["SGR with NUL", "\x1B[3\x001m"],
+    ["SGR with BEL", "\x1B[3\x071m"],
+    ["SGR with DEL", "\x1B[3\x7F1m"],
+    ["C1 SGR with NUL", "\x9B3\x001m"],
+    ["C1 SGR with BEL", "\x9B3\x071m"]
+  ])("redacts a sensitive assignment through safe %s formatting", (_name, terminalSequence) => {
     const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
     const obfuscatedName = envName.replace("NOTION", `NOT${terminalSequence}ION`);
 
@@ -323,50 +318,111 @@ describe("CLI security policy helpers", () => {
   });
 
   it.each([
-    ["CSI ending at a nested ESC", "\x1B[3\x1B1m", "NOTmION"],
-    ["C1 CSI consuming the next letter", "\x1B\x9B7", "NOTON"],
-    ["OSC with an early BEL", "\x1B]0;hid\x07den\x07", "NOTdenION"],
-    ["DCS with an early C1 ST", "\x1BPqhid\x9Cden\x1B\\", "NOTdenION"],
-    ["C1 DCS with an early C1 ST", "\x90qhid\x9Cden\x9C", "NOTdenION"],
-    ["OSC with an early C1 ST", "\x1B]0;hid\x9Cden\x07", "NOTdenION"],
-    ["C1 OSC with an early BEL", "\x9D0;hid\x07den\x9C", "NOTdenION"]
-  ])("preserves a genuinely display-mutated %s assignment", (_name, terminalSequence, visibleSegment) => {
+    ["OSC terminated by BEL", "\x1B]0;hidden\x07"],
+    ["OSC terminated by ESC ST", "\x1B]0;hidden\x1B\\"],
+    ["C1 OSC terminated by C1 ST", "\x9D0;hidden\x9C"],
+    ["DCS terminated by ESC ST", "\x1BPqhidden\x1B\\"],
+    ["SOS terminated by ESC ST", "\x1BXhidden\x1B\\"],
+    ["PM terminated by ESC ST", "\x1B^hidden\x1B\\"],
+    ["APC terminated by ESC ST", "\x1B_hidden\x1B\\"],
+    ["C1 DCS terminated by C1 ST", "\x90qhidden\x9C"],
+    ["C1 SOS terminated by C1 ST", "\x98hidden\x9C"],
+    ["C1 PM terminated by C1 ST", "\x9Ehidden\x9C"],
+    ["C1 APC terminated by C1 ST", "\x9Fhidden\x9C"]
+  ])("redacts through a complete dropped %s", (_name, terminalSequence) => {
     const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
-    const visibleName = envName.replace("NOTION", visibleSegment);
     const obfuscatedName = envName.replace("NOTION", `NOT${terminalSequence}ION`);
-    const publicValue = '{"page":"public-page-id"}';
 
-    expect(redactCliOutput(`${obfuscatedName}=${publicValue} tail`))
-      .toBe(`${visibleName}=${publicValue} tail`);
+    expect(redactCliOutput(`${obfuscatedName}={"page":"private-page-id"} tail`))
+      .toBe(`${envName}=[REDACTED] tail`);
+  });
+
+  it("preserves safe record formatting and drops harmless standalone controls", () => {
+    const input = "tab\tline\nnext\r\nthird\u2028fourth\u2029fifth";
+
+    expect(redactCliOutput(input)).toBe(input);
+    expect(redactCliOutput("A\x00B\x07C\x7FD")).toBe("ABCD");
   });
 
   it.each([
-    ["TAB", "\t", "\t"],
-    ["LF", "\n", "\n"],
-    ["CR", "\r", "\r"],
-    ["NEL", "\u0085", ""],
-    ["line separator", "\u2028", "\u2028"],
-    ["paragraph separator", "\u2029", "\u2029"]
-  ])("keeps %s as a hard terminal-sequence boundary", (_name, boundary, visibleBoundary) => {
-    expect(redactCliOutput(`A\x1B[31${boundary}mB`)).toBe(`A${visibleBoundary}mB`);
-    expect(redactCliOutput(`A\x1B#${boundary}8B`)).toBe(`A${visibleBoundary}8B`);
-    expect(redactCliOutput(`A\x1B]hidden${boundary}B`)).toBe(`A${visibleBoundary}B`);
+    ["backspace", "\x08"],
+    ["vertical tab", "\x0B"],
+    ["form feed", "\x0C"],
+    ["shift out", "\x0E"],
+    ["shift in", "\x0F"],
+    ["bare carriage return", "\r"],
+    ["C1 next line", "\x85"],
+    ["incomplete ESC", "\x1B"],
+    ["generic ESC", "\x1B7"],
+    ["incomplete CSI", "\x1B[31"],
+    ["CSI with an intermediate", "\x1B[1$m"],
+    ["private CSI", "\x1B[?25l"],
+    ["non-SGR CSI", "\x1B[1D"],
+    ["C1 non-SGR CSI", "\x9B1D"],
+    ["incomplete OSC", "\x1B]hidden"],
+    ["incomplete DCS", "\x1BPqhidden"],
+    ["nested ESC in CSI", "\x1B[3\x1B1m"],
+    ["nested C1 CSI", "\x1B[3\x9B1m"],
+    ["split ESC CSI with NUL", "\x1B\x00[31m"],
+    ["split ESC CSI with BEL", "\x1B\x07[31m"],
+    ["split ESC CSI with DEL", "\x1B\x7F[31m"],
+    ["OSC with nested ESC", "\x1B]hidden\x1BX\x07"]
+  ])("fails closed for %s", (_name, unsafeControl) => {
+    expect(redactCliOutput(`public-prefix${unsafeControl}private-sentinel`))
+      .toBe("[REDACTED]");
   });
 
-  it.each([
-    ["TAB", "\t", "\t"],
-    ["LF", "\n", "\n"],
-    ["CR", "\r", "\r"],
-    ["NEL", "\u0085", ""],
-    ["line separator", "\u2028", "\u2028"],
-    ["paragraph separator", "\u2029", "\u2029"]
-  ])("does not reconstruct a sensitive name across a %s boundary", (_name, boundary, visibleBoundary) => {
-    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
-    const sourceName = envName.replace("NOTION", `NOT\x1B[31${boundary}mION`);
-    const visibleName = envName.replace("NOTION", `NOT${visibleBoundary}mION`);
+  it.each(["\t", "\n", "\r", "\r\n", "\u2028", "\u2029"])(
+    "fails closed when a hard boundary %p interrupts a terminal sequence",
+    (boundary) => {
+      expect(redactCliOutput(`A\x1B[31${boundary}mB`)).toBe("[REDACTED]");
+      expect(redactCliOutput(`A\x1B]hidden${boundary}B\x07`)).toBe("[REDACTED]");
+      expect(redactCliOutput(`A\x1BPqhidden${boundary}B\x1B\\`)).toBe("[REDACTED]");
+    }
+  );
 
-    expect(redactCliOutput(`${sourceName}=PUBLIC_SENTINEL tail`))
-      .toBe(`${visibleName}=PUBLIC_SENTINEL tail`);
+  it.each((() => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN";
+    const value = "private-secret-value";
+    const bad = `X${envName.slice(1)}=${value}`;
+
+    return [
+      ["bare carriage-return overwrite", `${bad}\rA`],
+      ["cursor-horizontal-absolute overwrite", `${bad}\x1B[1GA`],
+      ["horizontal-position-absolute overwrite", `${bad}\x1B[1\u0060A`],
+      ["cursor-position overwrite", `${bad}\x1B[1;1HA`],
+      ["horizontal-vertical-position overwrite", `${bad}\x1B[1;1fA`],
+      ["DEC cursor save and restore", `\x1B7${bad}\x1B8A`],
+      ["CSI cursor save and restore", `\x1B[s${bad}\x1B[uA`],
+      ["delete-character overwrite", `AX${envName.slice(1)}=${value}\x1B[2G\x1B[1P`],
+      ["insert-character overwrite", `${envName.slice(1)}=${value}\x1B[1G\x1B[1@A`],
+      ["repeat-preceding-character synthesis", `${envName.replace("ACCESS", "AC\x1B[1bES\x1B[1b")}=${value}`],
+      ["insert-mode overwrite", `${envName.slice(1)}=${value}\x1B[1G\x1B[4hA\x1B[4l`],
+      ["cross-row cursor overwrite", `${bad}\n\x1B[1A\x1B[1GA`]
+    ];
+  })())("fails closed for terminal reconstruction via %s", (_name, source) => {
+    expect(redactCliOutput(source)).toBe("[REDACTED]");
+    expect(redactCliOutput(source)).not.toContain("private-secret-value");
+  });
+
+  it("uses the configured replacement when terminal mutation forces fail-closed redaction", () => {
+    const source = "XRCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=private-secret-value\x1B[1GA";
+    const policy = {
+      ...DEFAULT_CLI_POLICY,
+      redactionPolicy: {
+        ...DEFAULT_CLI_POLICY.redactionPolicy,
+        replacement: "token=masked-marker"
+      }
+    };
+
+    expect(redactCliOutput(source, policy)).toBe("token=masked-marker");
+    expect(redactCliOutput(source, {
+      ...policy,
+      outputPolicy: {
+        maxChars: 5,
+        truncationMarker: "..."
+      }
+    })).toBe("token...");
   });
 
   it("does not collapse visible env-name supersequences", () => {

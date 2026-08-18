@@ -235,15 +235,15 @@ def test_redaction_uses_shared_fail_closed_unicode_assignment_boundaries(
         apply_truncation=False,
     )
 
-    visible_separator = (
-        ""
-        if separator in ("\u000b", "\u000c", "\u0085", "\u001c", "\ufeff")
-        else separator
-    )
-    assert padded == (
-        f"{secret_name}{visible_separator}={visible_separator}{replacement} tail"
-    )
-    assert adjacent == f"{secret_name}={replacement} SAFE_FLAG=true"
+    if separator in ("\u000b", "\u000c", "\u0085", "\u001c"):
+        assert padded == replacement
+        assert adjacent == replacement
+    else:
+        visible_separator = "" if separator == "\ufeff" else separator
+        assert padded == (
+            f"{secret_name}{visible_separator}={visible_separator}{replacement} tail"
+        )
+        assert adjacent == f"{secret_name}={replacement} SAFE_FLAG=true"
     assert "private-page-id" not in padded
     assert "private-page-id" not in adjacent
 
@@ -347,43 +347,44 @@ def test_redaction_normalizes_ansi_and_unsafe_controls_before_named_redaction(
     assert redacted == f"{secret_name}={replacement} tail"
     assert dcs_redacted == f"{secret_name}={replacement} tail"
     assert apc_redacted == f"{secret_name}={replacement} tail"
-    assert decsc_redacted == f"{secret_name}={replacement} tail"
-    assert unterminated_osc == f"{secret_name}="
+    assert decsc_redacted == replacement
+    assert unterminated_osc == replacement
 
 
 @pytest.mark.parametrize(
-    ("name", "terminal_sequence"),
+    ("name", "terminal_sequence", "unsafe"),
     [
-        ("CSI with a default ignorable", "\x1b[3\u200b1m"),
-        ("CSI with NUL", "\x1b[3\x001m"),
-        ("CSI with BEL", "\x1b[3\x071m"),
-        ("CSI with C1 ST", "\x1b[3\x9c1m"),
-        ("CSI with nested C1 CSI", "\x1b[3\x9b1m"),
-        ("C1 CSI with NUL", "\x9b3\x001m"),
-        ("C1 CSI with BEL", "\x9b3\x071m"),
-        ("C1 CSI with C1 ST", "\x9b3\x9c1m"),
-        ("generic ESC with NUL", "\x1b\x007"),
-        ("generic ESC with BEL", "\x1b\x077"),
-        ("generic ESC with C1 ST", "\x1b\x9c7"),
-        ("generic ESC with nested ESC", "\x1b\x1b7"),
-        ("C1 CSI before an ESC CSI", "\x9b\x1b[31m"),
-        ("ESC before a C1 CSI", "\x1b\x9b31m"),
-        ("C1 CSI before a generic ESC", "\x9b\x1b7"),
-        ("ESC before a C1 OSC", "\x1b\x9d0;hidden\x07"),
-        ("CSI introducer split by NUL", "\x1b\x00[31m"),
-        ("CSI introducer split by BEL", "\x1b\x07[31m"),
-        ("CSI introducer split by C1 ST", "\x1b\x9c[31m"),
-        ("DCS with a default ignorable", "\x1bPqhid\u200bden\x1b\\"),
-        ("DCS with NUL", "\x1bPqhid\x00den\x1b\\"),
-        ("OSC with a default ignorable", "\x1b]0;hid\u200bden\x07"),
-        ("OSC with NUL", "\x1b]0;hid\x00den\x07"),
-        ("OSC with earlier equals noise", "\x1b]0;foo=bar\x07"),
+        ("CSI with a default ignorable", "\x1b[3\u200b1m", False),
+        ("CSI with NUL", "\x1b[3\x001m", False),
+        ("CSI with BEL", "\x1b[3\x071m", False),
+        ("CSI with C1 ST", "\x1b[3\x9c1m", True),
+        ("CSI with nested C1 CSI", "\x1b[3\x9b1m", True),
+        ("C1 CSI with NUL", "\x9b3\x001m", False),
+        ("C1 CSI with BEL", "\x9b3\x071m", False),
+        ("C1 CSI with C1 ST", "\x9b3\x9c1m", True),
+        ("generic ESC with NUL", "\x1b\x007", True),
+        ("generic ESC with BEL", "\x1b\x077", True),
+        ("generic ESC with C1 ST", "\x1b\x9c7", True),
+        ("generic ESC with nested ESC", "\x1b\x1b7", True),
+        ("C1 CSI before an ESC CSI", "\x9b\x1b[31m", True),
+        ("ESC before a C1 CSI", "\x1b\x9b31m", True),
+        ("C1 CSI before a generic ESC", "\x9b\x1b7", True),
+        ("ESC before a C1 OSC", "\x1b\x9d0;hidden\x07", True),
+        ("CSI introducer split by NUL", "\x1b\x00[31m", True),
+        ("CSI introducer split by BEL", "\x1b\x07[31m", True),
+        ("CSI introducer split by C1 ST", "\x1b\x9c[31m", True),
+        ("DCS with a default ignorable", "\x1bPqhid\u200bden\x1b\\", False),
+        ("DCS with NUL", "\x1bPqhid\x00den\x1b\\", False),
+        ("OSC with a default ignorable", "\x1b]0;hid\u200bden\x07", False),
+        ("OSC with NUL", "\x1b]0;hid\x00den\x07", False),
+        ("OSC with earlier equals noise", "\x1b]0;foo=bar\x07", False),
     ],
 )
 def test_redaction_fail_closed_for_controls_embedded_in_terminal_grammar(
     monkeypatch,
     name: str,
     terminal_sequence: str,
+    unsafe: bool,
 ) -> None:
     secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
     replacement = "[REDACTED]"
@@ -406,20 +407,21 @@ def test_redaction_fail_closed_for_controls_embedded_in_terminal_grammar(
         apply_truncation=False,
     )
 
-    assert redacted == f"{secret_name}={replacement} tail", name
+    expected = replacement if unsafe else f"{secret_name}={replacement} tail"
+    assert redacted == expected, name
     assert "private-page-id" not in redacted
 
 
 @pytest.mark.parametrize(
-    ("name", "terminal_sequence", "visible_infix"),
+    ("name", "terminal_sequence", "visible_infix", "unsafe"),
     [
-        ("CSI ending at a nested ESC", "\x1b[3\x1b1m", "m"),
-        ("C1 CSI consuming the next letter", "\x1b\x9b7", ""),
-        ("DCS ending at an early C1 ST", "\x1bPqhid\x9cden\x1b\\", "den"),
-        ("C1 DCS ending at an early ST", "\x90qhid\x9cden\x9c", "den"),
-        ("OSC ending at an early BEL", "\x1b]0;hid\x07den\x07", "den"),
-        ("OSC ending at an early C1 ST", "\x1b]0;hid\x9cden\x07", "den"),
-        ("C1 OSC ending at an early BEL", "\x9d0;hid\x07den\x9c", "den"),
+        ("CSI ending at a nested ESC", "\x1b[3\x1b1m", "m", True),
+        ("C1 CSI consuming the next letter", "\x1b\x9b7", "", True),
+        ("DCS ending at an early C1 ST", "\x1bPqhid\x9cden\x1b\\", "den", True),
+        ("C1 DCS ending at an early ST", "\x90qhid\x9cden\x9c", "den", True),
+        ("OSC ending at an early BEL", "\x1b]0;hid\x07den\x07", "den", False),
+        ("OSC ending at an early C1 ST", "\x1b]0;hid\x9cden\x07", "den", False),
+        ("C1 OSC ending at an early BEL", "\x9d0;hid\x07den\x9c", "den", True),
     ],
 )
 def test_redaction_preserves_genuine_visible_terminal_mutations(
@@ -427,6 +429,7 @@ def test_redaction_preserves_genuine_visible_terminal_mutations(
     name: str,
     terminal_sequence: str,
     visible_infix: str,
+    unsafe: bool,
 ) -> None:
     secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
     monkeypatch.setattr(
@@ -446,10 +449,12 @@ def test_redaction_preserves_genuine_visible_terminal_mutations(
     if name == "C1 CSI consuming the next letter":
         visible_name = secret_name.replace("NOTION", "NOTON")
 
-    assert redact_output(
+    redacted = redact_output(
         f"{source_name}=PUBLIC_SENTINEL tail",
         apply_truncation=False,
-    ) == f"{visible_name}=PUBLIC_SENTINEL tail"
+    )
+    expected = "[REDACTED]" if unsafe else f"{visible_name}=PUBLIC_SENTINEL tail"
+    assert redacted == expected
 
 
 def test_redaction_does_not_collapse_visible_env_name_supersequences(
@@ -508,130 +513,322 @@ def test_redaction_does_not_collapse_visible_env_name_supersequences(
         assert "[REDACTED]" not in redacted
 
 
-def test_terminal_scanner_preserves_record_separators_only_outside_sequences(
-) -> None:
-    source = "A\x00B\x1fC\x1b[3\x001mD\x1b\x1f7E"
+def test_terminal_scanner_preserves_safe_controls_and_line_shape() -> None:
+    source = (
+        "A\tB\nC\r\nD\u2028E\u2029F"
+        "\x00\x07\x7f"
+        "\x1b[mG\x1b[38;2:255:0:1mH\x1b[0mI\x9b31mJ"
+        "\x1b[3\x7f1mK"
+    )
 
-    assert strip_unsafe_output_controls(source) == "ABCDE"
+    assert strip_unsafe_output_controls(source) == (
+        "A\tB\nC\r\nD\u2028E\u2029FGHIJK"
+    )
+
+
+@pytest.mark.parametrize(
+    "control_string",
+    [
+        "\x1b]0;title\x07",
+        "\x1b]8;;https://example.test\x1b\\",
+        "\x1bPpayload\x1b\\",
+        "\x1bXpayload\x9c",
+        "\x1b^payload\x1b\\",
+        "\x1b_payload\x9c",
+        "\x90payload\x9c",
+        "\x98payload\x9c",
+        "\x9d0;title\x07",
+        "\x9epayload\x9c",
+        "\x9fpayload\x9c",
+        "\x1bPpayload\x00\x07\x7f\x1b\\",
+    ],
+)
+def test_terminal_scanner_drops_only_complete_control_strings(
+    control_string: str,
+) -> None:
+    assert strip_unsafe_output_controls(f"A{control_string}B") == "AB"
+
+
+@pytest.mark.parametrize(
+    "unsafe_control",
+    [
+        "\x08",
+        "\r",
+        "\x0b",
+        "\x0c",
+        "\x0e",
+        "\x0f",
+        "\x18",
+        "\x1a",
+        "\x1f",
+        "\x85",
+        "\x9c",
+        "\x1b7",
+        "\x1b[1D",
+        "\x9b1D",
+        "\x1b[4G",
+        "\x1b[1;4H",
+        "\x1b[4f",
+        "\x1b[s",
+        "\x1b[u",
+        "\x1b[1P",
+        "\x1b[1@",
+        "\x1b[1b",
+        "\x1b[4h",
+        "\x1b[4l",
+        "\x1b[31",
+        "\x1b[?31m",
+        "\x1b[1$m",
+        "\x1b]unterminated",
+    ],
+)
+def test_display_mutating_or_ambiguous_controls_fail_closed(
+    monkeypatch,
+    unsafe_control: str,
+) -> None:
+    replacement = "[CONTROL_REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [],
+            }
+        },
+    )
+    source = f"public-prefix{unsafe_control}private-suffix"
+
+    assert strip_unsafe_output_controls(source) == ""
+    assert redact_output(source, apply_truncation=False) == replacement
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["\t", "\n", "\r", "\r\n", "\u2028", "\u2029"],
+)
+def test_terminal_sequences_cannot_cross_safe_output_boundaries(
+    monkeypatch,
+    boundary: str,
+) -> None:
+    replacement = "[CONTROL_REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [],
+            }
+        },
+    )
+
+    for source in (
+        f"A\x1b[31{boundary}mB",
+        f"A\x9b31{boundary}mB",
+        f"A\x1b]payload{boundary}tail\x07B",
+        f"A\x1bPpayload{boundary}tail\x1b\\B",
+    ):
+        assert strip_unsafe_output_controls(source) == ""
+        assert redact_output(source, apply_truncation=False) == replacement
+
+
+@pytest.mark.parametrize(
+    "obfuscated_infix",
+    [
+        "NOTX\x08ION",
+        "NOTX\x1b[1DION",
+        "NOTX\x9b1DION",
+        "NOT\x1b7X\x1b8ION",
+        "NOT\x1b[sX\x1b[uION",
+    ],
+)
+def test_display_overwrite_cannot_bypass_sensitive_assignment_redaction(
+    monkeypatch,
+    obfuscated_infix: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    replacement = "[CONTROL_REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    source_name = secret_name.replace("NOTION", obfuscated_infix)
+    source = f'{source_name}={{"page":"private-page-id"}} tail'
+
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert redacted == replacement
+    assert "private-page-id" not in redacted
+
+
+def test_terminal_reconstruction_corpus_fails_closed(monkeypatch) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_ACCESS_" + "TOKEN"
+    secret_value = "private-secret-value"
+    replacement = "[CONTROL_REDACTED]"
+    bad = f"X{secret_name[1:]}={secret_value}"
+    repeated_name = secret_name.replace("ACCESS", "AC\x1b[1bES\x1b[1b")
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    cases = [
+        ("bare carriage-return overwrite", f"{bad}\rA"),
+        ("cursor-horizontal-absolute overwrite", f"{bad}\x1b[1GA"),
+        ("horizontal-position-absolute overwrite", f"{bad}\x1b[1`A"),
+        ("cursor-position overwrite", f"{bad}\x1b[1;1HA"),
+        ("horizontal-vertical-position overwrite", f"{bad}\x1b[1;1fA"),
+        ("DEC cursor save and restore", f"\x1b7{bad}\x1b8A"),
+        ("CSI cursor save and restore", f"\x1b[s{bad}\x1b[uA"),
+        (
+            "delete-character overwrite",
+            f"AX{secret_name[1:]}={secret_value}\x1b[2G\x1b[1P",
+        ),
+        (
+            "insert-character overwrite",
+            f"{secret_name[1:]}={secret_value}\x1b[1G\x1b[1@A",
+        ),
+        (
+            "repeat-preceding-character synthesis",
+            f"{repeated_name}={secret_value}",
+        ),
+        (
+            "insert-mode overwrite",
+            f"{secret_name[1:]}={secret_value}\x1b[1G\x1b[4hA\x1b[4l",
+        ),
+        ("cross-row cursor overwrite", f"{bad}\n\x1b[1A\x1b[1GA"),
+    ]
+
+    for name, source in cases:
+        redacted = redact_output(source, apply_truncation=False)
+
+        assert redacted == replacement, name
+        assert secret_value not in redacted, name
+
+
+def test_preserve_mode_fails_closed_per_nul_or_unit_separator_frame(
+    monkeypatch,
+) -> None:
+    replacement = "[CONTROL_REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [],
+            }
+        },
+    )
+    source = "safe\x00bad\x08private\x1ftail\x00\x1b[31mgreen\x1b[0m"
+
+    assert strip_unsafe_output_controls(source) == ""
     assert strip_unsafe_output_controls(
         source,
         preserve_record_separators=True,
-    ) == "A\x00B\x1fC\x001mD\x1f7E"
-
-
-@pytest.mark.parametrize(
-    ("boundary", "visible_boundary"),
-    [
-        ("\t", "\t"),
-        ("\n", "\n"),
-        ("\r", "\r"),
-        ("\x85", ""),
-        ("\u2028", "\u2028"),
-        ("\u2029", "\u2029"),
-    ],
-)
-def test_terminal_scanner_stops_at_output_record_boundaries(
-    boundary: str,
-    visible_boundary: str,
-) -> None:
-    source = f"A\x1b[31{boundary}mB"
-
-    assert strip_unsafe_output_controls(source) == f"A{visible_boundary}mB"
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        ("A\x1b\n7B", "A\n7B"),
-        ("A\x9b31\nmB", "A\nmB"),
-        ("A\x1bPpayload\ntail\x1b\\B", "A\ntailB"),
-        ("A\x1b]payload\ntail\x07B", "A\ntailB"),
-    ],
-)
-def test_every_terminal_scanner_state_stops_at_record_boundaries(
-    source: str,
-    expected: str,
-) -> None:
-    assert strip_unsafe_output_controls(source) == expected
-
-
-@pytest.mark.parametrize(
-    ("boundary", "visible_boundary"),
-    [
-        ("\t", "\t"),
-        ("\n", "\n"),
-        ("\r", "\r"),
-        ("\x85", ""),
-        ("\u2028", "\u2028"),
-        ("\u2029", "\u2029"),
-    ],
-)
-def test_record_boundaries_prevent_sensitive_name_reconstruction(
-    monkeypatch,
-    boundary: str,
-    visible_boundary: str,
-) -> None:
-    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
-    monkeypatch.setattr(
-        "arcanos.cli.cli_policy.load_cli_policy",
-        lambda: {
-            "redactionPolicy": {
-                "replacement": "[REDACTED]",
-                "envNames": [secret_name],
-            }
-        },
-    )
-    source_name = secret_name.replace(
-        "NOTION",
-        f"NOT\x1b[31{boundary}mION",
-    )
-    visible_name = secret_name.replace(
-        "NOTION",
-        f"NOT{visible_boundary}mION",
-    )
-
-    redacted = redact_output(
-        f"{source_name}=PUBLIC_SENTINEL tail",
-        apply_truncation=False,
-    )
-
-    assert redacted == f"{visible_name}=PUBLIC_SENTINEL tail"
-    assert "[REDACTED]" not in redacted
-
-
-@pytest.mark.parametrize("boundary", ["\x00", "\x1f"])
-def test_preserved_record_separators_prevent_sensitive_name_reconstruction(
-    monkeypatch,
-    boundary: str,
-) -> None:
-    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
-    monkeypatch.setattr(
-        "arcanos.cli.cli_policy.load_cli_policy",
-        lambda: {
-            "redactionPolicy": {
-                "replacement": "[REDACTED]",
-                "envNames": [secret_name],
-            }
-        },
-    )
-    source_name = secret_name.replace(
-        "NOTION",
-        f"NOT\x1b[31{boundary}mION",
-    )
-    source = f"{source_name}=PUBLIC_SENTINEL tail"
-    visible_name = secret_name.replace(
-        "NOTION",
-        f"NOT{boundary}mION",
-    )
-
-    assert redact_output(source, apply_truncation=False) == (
-        f"{secret_name}=[REDACTED] tail"
-    )
+    ) == "safe\x00\x1ftail\x00green"
+    assert redact_output(source, apply_truncation=False) == replacement
     assert redact_output(
         source,
         apply_truncation=False,
         preserve_record_separators=True,
-    ) == f"{visible_name}=PUBLIC_SENTINEL tail"
+    ) == f"safe\x00{replacement}\x1ftail\x00green"
+
+
+def test_fail_closed_replacement_bypasses_later_secret_redaction(
+    monkeypatch,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_ACCESS_" + "TOKEN"
+    replacement = "token=masked-marker"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+
+    assert redact_output("public\x08private") == replacement
+
+    source = "safe\x00public\x08private\x1ftail"
+    assert redact_output(
+        source,
+        apply_truncation=False,
+        preserve_record_separators=True,
+    ) == f"safe\x00{replacement}\x1ftail"
+
+
+def test_preserve_mode_still_redacts_safe_frames(monkeypatch) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_ACCESS_" + "TOKEN"
+    replacement = "<masked>"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    source = (
+        f"{secret_name}=private-value"
+        "\x00public\x08private"
+        "\x1fBearer abcdefghijkl"
+    )
+
+    assert redact_output(
+        source,
+        apply_truncation=False,
+        preserve_record_separators=True,
+    ) == (
+        f"{secret_name}={replacement}"
+        f"\x00{replacement}"
+        f"\x1fBearer {replacement}"
+    )
+
+
+@pytest.mark.parametrize("boundary", ["\x00", "\x1f"])
+def test_preserve_mode_does_not_bridge_terminal_sequences_across_frames(
+    monkeypatch,
+    boundary: str,
+) -> None:
+    replacement = "[CONTROL_REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [],
+            }
+        },
+    )
+    cases = [
+        (f"A\x1b[31{boundary}mB", "mB", False),
+        (f"A\x1b]hidden{boundary}tail\x07B", "tailB", False),
+        (f"A\x1bPqhidden{boundary}tail\x1b\\B", "", True),
+    ]
+
+    for source, visible_suffix, suffix_is_unsafe in cases:
+        public_suffix = "" if suffix_is_unsafe else visible_suffix
+        redacted_suffix = replacement if suffix_is_unsafe else visible_suffix
+        assert strip_unsafe_output_controls(
+            source,
+            preserve_record_separators=True,
+        ) == f"{boundary}{public_suffix}"
+        assert redact_output(
+            source,
+            apply_truncation=False,
+            preserve_record_separators=True,
+        ) == f"{replacement}{boundary}{redacted_suffix}"
 
 
 @pytest.mark.parametrize(
