@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-18T04:50:48.939Z",
+  "generatedAt": "2026-08-18T18:12:10.899Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2390,6 +2390,9 @@
           "relativePath": "src/shared/backstage/backstageEvent.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageReviewContract.ts"
         },
         {
@@ -2616,6 +2619,9 @@
         },
         {
           "relativePath": "src/shared/security/purposeBoundCredential.ts"
+        },
+        {
+          "relativePath": "src/shared/security/sensitiveProviderStorage.ts"
         },
         {
           "relativePath": "src/shared/security/workerHelperCredential.ts"

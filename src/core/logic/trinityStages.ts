@@ -67,9 +67,11 @@ import {
   type TrinityReasoningHonesty
 } from './trinityHonesty.js';
 import {
-  buildTrinityDirectAnswerSystemInstruction,
+  buildTrinityDirectAnswerMessages,
   resolveTrinityDirectAnswerTokenLimit
 } from './trinityDirectAnswerMode.js';
+
+export { buildTrinityDirectAnswerMessages } from './trinityDirectAnswerMode.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -373,44 +375,6 @@ export function buildInternalArchitecturalMessages(
     messages.push({ role: 'assistant', content: gpt5Output });
     messages.push({ role: 'user', content: 'Complete the structured analysis based on the reasoning above.' });
   }
-
-  return messages;
-}
-
-/**
- * Build the single-pass direct-answer messages used by Trinity core when simulation must be suppressed.
- * Inputs/outputs: memory context, primary prompt, trusted system policy, and untrusted supplemental data -> strict chat message array.
- * Edge cases: untrusted data fails closed without a nonblank system policy and otherwise precedes the final primary user message.
- */
-export function buildTrinityDirectAnswerMessages(
-  memoryContextSummary: string,
-  auditSafePrompt: string,
-  trustedPolicyPrompt: string = auditSafePrompt,
-  directAnswerSystemPolicyPrompt?: string,
-  directAnswerUntrustedContextPrompt?: string
-): ChatCompletionMessageParam[] {
-  const baseSystemContent = ensureStringContent(
-    buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, trustedPolicyPrompt)
-  ) || 'Answer the request directly.';
-  const systemPolicyContent = ensureStringContent(directAnswerSystemPolicyPrompt).trim();
-  const untrustedContextContent = ensureStringContent(directAnswerUntrustedContextPrompt).trim();
-  if (untrustedContextContent && !systemPolicyContent) {
-    throw new TypeError('Direct-answer untrusted context requires a trusted system policy.');
-  }
-  const systemContent = systemPolicyContent
-    ? `${baseSystemContent}\n\n${systemPolicyContent}`
-    : baseSystemContent;
-  const userRequestContent = ensureStringContent(auditSafePrompt) || 'No request provided.';
-
-  const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemContent }
-  ];
-
-  if (untrustedContextContent) {
-    messages.push({ role: 'user', content: untrustedContextContent });
-  }
-
-  messages.push({ role: 'user', content: userRequestContent });
 
   return messages;
 }

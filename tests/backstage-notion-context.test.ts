@@ -13,6 +13,9 @@ import {
 import {
   runWithBackstageNotionEnrichmentAuthorization,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
+import {
+  loadBackstageNotionPromptContextCore,
+} from '../src/shared/backstage/backstageNotionContextCore.js';
 
 const notionToken = `ntn_${'a'.repeat(48)}`;
 const firstPageId = '11111111-1111-4111-8111-111111111111';
@@ -104,6 +107,30 @@ describe('Backstage Notion prompt context', () => {
     })).resolves.toBeNull();
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when sensitive-enrichment provenance cannot be recorded', async () => {
+    const privateText = 'PRIVATE-NOTION-CONTINUITY';
+    const fetchMock = jest.fn(async () => markdownResponse(firstPageId, privateText));
+    const logWarning = jest.fn();
+
+    await expect(loadBackstageNotionPromptContextCore(universeId, {
+      authorized: true,
+      fetchImpl: asFetch(fetchMock),
+      readEnvironment: mappedEnvironment(),
+      logWarning,
+      markEnrichmentUsed: () => {
+        throw new Error('private provenance failure');
+      },
+    })).resolves.toBeNull();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logWarning).toHaveBeenCalledWith(
+      'backstage.notion_context.unavailable',
+      expect.objectContaining({ category: 'request_failed' })
+    );
+    expect(JSON.stringify(logWarning.mock.calls)).not.toContain(privateText);
+    expect(JSON.stringify(logWarning.mock.calls)).not.toContain('private provenance failure');
   });
 
   it('does no provider work when configuration is absent, partial, or unmapped', async () => {

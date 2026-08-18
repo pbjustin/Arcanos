@@ -1045,7 +1045,7 @@ describe('native PR contained application', () => {
     }
   });
 
-  it('executes sealed Backstage generation, HRC cache, and review completion fixtures', async () => {
+  it('executes sealed Backstage generation, HRC cache, and review completion with the Notion prompt boundary', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
     const routeBudget = await request(app)
