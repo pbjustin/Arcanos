@@ -27,6 +27,7 @@ interface ParsedHRCPayload {
 export interface HRCEvaluationOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  store?: false;
 }
 
 function isHRCResult(value: unknown): value is ParsedHRCPayload {
@@ -94,7 +95,8 @@ export class HRCCore {
           }
         ],
         text: { format: { type: 'json_object' } },
-        temperature: 0
+        temperature: 0,
+        ...(options.store === false ? { store: false } : {})
       }, evaluationSignal ? { signal: evaluationSignal } : undefined, {
         validate: isHRCResult,
         source: 'HRC evaluation'

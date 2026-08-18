@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T19:34:02.253Z",
+  "generatedAt": "2026-08-18T04:50:48.939Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1554,6 +1554,12 @@
         },
         {
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionContext.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionEnrichmentAuthorization.ts"
         },
         {
           "relativePath": "src/services/backstageUniverseRead.ts"
@@ -3244,6 +3250,12 @@
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-context.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-storyline-schema.test.ts"
         },
         {
@@ -4028,6 +4040,9 @@
         },
         {
           "relativePath": "tests/openai-prompt.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-resilience-redaction.test.ts"
         },
         {
           "relativePath": "tests/openai-response-conversion-parity.test.ts"

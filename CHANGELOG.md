@@ -8,6 +8,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Added
 
+- Added optional authenticated Backstage Booker generation context from
+  explicitly mapped, read-only Notion pages while keeping PostgreSQL canon
+  authoritative. The backend uses the existing dedicated Backstage bearer as
+  request-local provenance, fixed provider URLs, bounded/quoted excerpts,
+  aggregate cancellation, sanitized fail-open behavior, and no Notion or canon
+  writes; anonymous generation remains database-only and the Builder operation
+  contract is unchanged.
 - Added one manifest-driven, read-only protected-configuration digest command
   for canonical semantic generation and fail-closed comparison of every
   explicit integrity pin before cutover, including bounded schema-validated

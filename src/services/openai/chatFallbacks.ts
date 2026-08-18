@@ -41,6 +41,7 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   signal?: AbortSignal;
   timeoutMs?: number;
   preserveAggregateAbortContext?: boolean;
+  redactErrorDetails?: boolean;
 };
 
 function resolvePreservedAggregateSignal(
@@ -298,7 +299,8 @@ const executeChatCompletionRequest = async (
     responseFormat: payload.response_format as any,
     user: payload.user,
     messages: payload.messages,
-    includeRoutingMessage: true
+    includeRoutingMessage: true,
+    ...(payload.redactErrorDetails ? { store: false } : {})
   });
   const reasoningEffort = typeof payload.reasoning_effort === 'string'
     ? payload.reasoning_effort.trim()
@@ -373,7 +375,8 @@ async function attemptModelCall(
       model,
     }),
     {
-      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal),
+      redactErrorDetails: params.redactErrorDetails,
     }
   );
   const logContext = buildCompletionLogContext(model, startedAt, response);
@@ -406,7 +409,8 @@ async function attemptGPT5Call(
   const response = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, gpt5Payload),
     {
-      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal),
+      redactErrorDetails: gpt5Payload.redactErrorDetails,
     }
   );
   const logContext = buildCompletionLogContext(gpt5Model, startedAt, response);

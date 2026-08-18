@@ -13,6 +13,20 @@ import {
 
 const HRC_FALLBACK: HRCResult = { fidelity: 0, resilience: 0, verdict: 'HRC unavailable' };
 
+export interface HRCWrapperEvaluationOptions extends HRCEvaluationOptions {
+  sensitiveContext?: boolean;
+}
+
+function sanitizeSensitiveHrcFailure(result: HRCResult): HRCResult {
+  return result.verdict.startsWith('Evaluation failed:')
+    ? {
+        fidelity: result.fidelity,
+        resilience: result.resilience,
+        verdict: 'Evaluation failed: sensitive-context evaluation unavailable',
+      }
+    : result;
+}
+
 function cacheKey(text: string): string {
   return `hrc:${createSHA256Hash(text)}`;
 }
@@ -22,15 +36,26 @@ function cacheKey(text: string): string {
  */
 export async function evaluateWithHRC(
   text: string,
-  options: HRCEvaluationOptions = {}
+  options: HRCWrapperEvaluationOptions = {}
 ): Promise<HRCResult> {
   if (!text.trim()) return HRC_FALLBACK;
+
+  const { sensitiveContext = false, ...evaluationOptions } = options;
+  if (sensitiveContext) {
+    try {
+      return sanitizeSensitiveHrcFailure(
+        await hrcCore.evaluate(text, { ...evaluationOptions, store: false })
+      );
+    } catch {
+      return HRC_FALLBACK;
+    }
+  }
 
   const key = cacheKey(text);
   return runCachedHrcEvaluation({
     cache: queryCache,
     cacheKey: key,
-    evaluate: () => hrcCore.evaluate(text, options),
+    evaluate: () => hrcCore.evaluate(text, evaluationOptions),
     fallback: HRC_FALLBACK,
   });
 }

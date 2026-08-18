@@ -128,6 +128,11 @@ function readBodyPrompt(body: unknown): string | null {
 }
 
 function resolveClassificationPrompt(params: TrinityGenerationFacadeRequest): string {
+  const trustedPolicyPrompt = params.context.runOptions?.trustedPolicyPrompt;
+  if (typeof trustedPolicyPrompt === 'string' && trustedPolicyPrompt.trim().length > 0) {
+    return trustedPolicyPrompt.trim();
+  }
+
   if (params.input.sourceEndpoint.startsWith('arcanos-gaming.')) {
     return readBodyPrompt(params.input.body) ?? resolveTrinityGenerationPrompt(params.input);
   }
@@ -301,7 +306,8 @@ export async function runTrinityGenerationFacade(
 
   const runtimeBudget = params.context.runtimeBudget ?? createRuntimeBudget();
   const startedAt = Date.now();
-  const intentMode = resolveIntentMode(prompt, params.context.runOptions ?? {});
+  const policyPrompt = resolveClassificationPrompt(params);
+  const intentMode = resolveIntentMode(policyPrompt, params.context.runOptions ?? {});
 
   logger.info('trinity.entry', {
     module: 'trinity',
@@ -362,7 +368,9 @@ export async function runTrinityGenerationFacade(
       requestId,
       sourceEndpoint,
       durationMs: Date.now() - startedAt,
-      error: resolveErrorMessage(error),
+      error: params.context.runOptions?.redactAuditContent
+        ? 'Sensitive-context generation failed.'
+        : resolveErrorMessage(error),
     });
     throw error;
   }

@@ -91,6 +91,39 @@ describe('HRC core', () => {
 });
 
 describe('HRC wrapper cache', () => {
+  it('does not cache sensitive-context results and fixes sensitive failure verdicts', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce({
+        model: 'gpt-4.1-mini',
+        status: 'completed',
+        output_text: '{"fidelity":0.9,"resilience":0.8,"verdict":"private evaluation"}',
+        output: [],
+      })
+      .mockRejectedValueOnce(new Error('PRIVATE-NOTION-REQUEST-ECHO'));
+    getOpenAIClientOrAdapter.mockReturnValue({
+      adapter: { responses: { create } },
+    });
+
+    await expect(evaluateWithHRC('private-enriched-storyline', {
+      sensitiveContext: true,
+    })).resolves.toEqual({
+      fidelity: 0.9,
+      resilience: 0.8,
+      verdict: 'private evaluation',
+    });
+    await expect(evaluateWithHRC('private-enriched-storyline', {
+      sensitiveContext: true,
+    })).resolves.toEqual({
+      fidelity: 0,
+      resilience: 0,
+      verdict: 'Evaluation failed: sensitive-context evaluation unavailable',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    for (const [request] of create.mock.calls as unknown as Array<[Record<string, unknown>]>) {
+      expect(request.store).toBe(false);
+    }
+  });
+
   it('does not cache a caller-scoped timeout fallback and caches the successful retry', async () => {
     jest.useFakeTimers();
     const successResponse = {

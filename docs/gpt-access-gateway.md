@@ -44,7 +44,7 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-This credential is accepted only for the exact-ID
+This credential is required for the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
@@ -56,8 +56,19 @@ page; neither falls back to process memory. An ID with no stored rows returns
 closed unless `action` is `upsertStoryline` or
 `appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
 `403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token
-cannot authenticate another GPT Access, direct Backstage, dispatch, module,
-queryroute, control-plane, or legacy path.
+cannot authenticate another GPT Access, dispatch, module, queryroute,
+control-plane, or legacy path. On canonical direct Backstage generation only,
+a verified copy establishes request-local authorization for an optional
+server-configured Notion supplement; it does not gate the public route or
+authorize any mutation.
+
+That supplement requires separate outbound
+`ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values
+on the web service. It reads at most three fixed Notion page UUIDs, fails open
+to the already-loaded PostgreSQL context, and never writes or becomes canon.
+The Notion token is a provider credential, not Builder authentication; never
+send it inbound or configure it on a worker. The four-operation Builder schema
+is unchanged.
 
 The lane may bypass the generic `ARCANOS_GPT_ACCESS_SCOPES`
 `capabilities.run` grant and the backend confirmation challenge, but stable

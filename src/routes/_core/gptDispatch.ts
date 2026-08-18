@@ -11,6 +11,7 @@ import {
 } from "@services/moduleRegistry.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
+import { wasBackstageNotionEnrichmentUsed } from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
@@ -1843,10 +1844,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     const result = isResearchRun
       ? await runResearchWithAbortDrain(abortOptions, executeModuleAction)
       : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
+    const notionEnrichmentUsed = wasBackstageNotionEnrichmentUsed();
 
     // Research owns and fences its persistence inside its aggregate workflow.
     // Starting generic transcript writes here would escape that deadline/signal.
-    if (!isResearchRun) {
+    if (!isResearchRun && !notionEnrichmentUsed) {
       const resolvedSessionId = resolveSessionId(body, payload);
       await persistModuleConversation({
         moduleName: activeEntry.module,
@@ -1895,7 +1897,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       selectedRoute: activeEntry.route,
       selectedModule: activeEntry.module,
       responseReturned: result,
-    }, suppressPromptDebugTrace);
+    }, suppressPromptDebugTrace || notionEnrichmentUsed);
     return {
       ok: true,
       result,

@@ -305,6 +305,11 @@ stores the distinct `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` as API Key/Bearer
 authentication; it is not OAuth or a user password. Only the write operation
 is marked consequential, and that narrow lane relies on ChatGPT's Allow/Deny
 banner as its one approval step rather than issuing a second backend challenge.
+The same saved Action bearer may optionally establish request-local
+authorization for a backend-only, read-only Notion supplement on
+`runBackstageBooker` generation. That supplement adds no operation or Builder
+schema change, remains subordinate to PostgreSQL, and is unavailable to
+anonymous generation.
 Phase One mutations, generic GPT Access credentials, and
 direct/control-plane/legacy aliases retain their existing challenge flow. The
 dedicated bearer never grants generic or control-plane access. The write lane
@@ -313,7 +318,9 @@ authorization, but the exact `MCP_ALLOW_MODULE_ACTIONS` allowlist remains
 mandatory. Phase One mutations are unavailable on the dedicated lane, and
 `universeId` remains data scope, not authorization: any holder of the shared
 dedicated bearer can read any valid exact universe ID and any exact storyline
-key within that scope.
+key within that scope. If Notion enrichment is configured, it can also invoke
+generation for any universe present in the server-owned page mapping; keep this
+GPT private within one trust domain.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
 Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never

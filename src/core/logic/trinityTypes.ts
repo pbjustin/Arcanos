@@ -241,6 +241,10 @@ export interface TrinityRunOptions {
   directAnswerTokenCapOverride?: number;
   /** Original user directive for honesty checks when the execution prompt contains trusted context. */
   directAnswerUserIntentPrompt?: string;
+  /** Internal caller-owned directive used for policy parsing when the execution prompt contains untrusted context. */
+  trustedPolicyPrompt?: string;
+  /** Redact sensitive audit/provider diagnostics and force stateless provider execution. */
+  redactAuditContent?: boolean;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }
 

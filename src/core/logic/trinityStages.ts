@@ -384,10 +384,11 @@ export function buildInternalArchitecturalMessages(
  */
 export function buildTrinityDirectAnswerMessages(
   memoryContextSummary: string,
-  auditSafePrompt: string
+  auditSafePrompt: string,
+  trustedPolicyPrompt: string = auditSafePrompt
 ): ChatCompletionMessageParam[] {
   const systemContent = ensureStringContent(
-    buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, auditSafePrompt)
+    buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, trustedPolicyPrompt)
   ) || 'Answer the request directly.';
   const userRequestContent = ensureStringContent(auditSafePrompt) || 'No request provided.';
 
@@ -637,7 +638,9 @@ export async function runDirectAnswerStage(
   directAnswerTokenLimitOverride?: number,
   explicitTimeoutMs?: number,
   preserveAggregateAbortContext = false,
-  directAnswerTokenCapOverride?: number
+  directAnswerTokenCapOverride?: number,
+  redactSensitiveDiagnostics = false,
+  trustedPolicyPrompt?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -651,7 +654,7 @@ export async function runDirectAnswerStage(
     directAnswerTokenLimitOverride > 0
       ? Math.max(1, Math.trunc(directAnswerTokenLimitOverride))
       : resolveTrinityDirectAnswerTokenLimit(
-          auditSafePrompt,
+          trustedPolicyPrompt ?? auditSafePrompt,
           APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
         );
   const effectiveTokenCap = resolveDirectAnswerTokenCap(directAnswerTokenCapOverride);
@@ -686,12 +689,17 @@ export async function runDirectAnswerStage(
   try {
     const executeDirectAnswer = () =>
       createSingleChatCompletion(client, {
-        messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+        messages: buildTrinityDirectAnswerMessages(
+          memoryContextSummary,
+          auditSafePrompt,
+          trustedPolicyPrompt ?? auditSafePrompt
+        ),
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
         ...(useAggregateAbortContext ? {} : { timeoutMs: stageTimeoutMs }),
         preserveAggregateAbortContext: useAggregateAbortContext,
+        redactErrorDetails: redactSensitiveDiagnostics,
         ...(directAnswerReasoningEffort
           ? { reasoning_effort: directAnswerReasoningEffort }
           : {}),
@@ -711,6 +719,9 @@ export async function runDirectAnswerStage(
         );
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
+    const diagnosticError = redactSensitiveDiagnostics
+      ? 'Sensitive-context provider request failed.'
+      : errorMessage;
     logger.warn(
       errorMessage.includes(`timed out after ${stageTimeoutMs}ms`)
         ? 'trinity.direct_answer.stage_timeout'
@@ -723,7 +734,7 @@ export async function runDirectAnswerStage(
         timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
         aggregateAbortContext: useAggregateAbortContext,
         promptLength: auditSafePrompt.length,
-        error: errorMessage
+        error: diagnosticError
       }
     );
     throw error;

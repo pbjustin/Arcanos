@@ -85,6 +85,17 @@ If failing, inspect Railway build/deploy logs first.
   deployed `backstage_booker.openapi.v1.json`, verify `writeBackstageCanon` is
   marked consequential, save the existing GPT, and reopen it before testing.
   Do not send the mutation until the banner is present.
+- Backstage Booker generation does not use the configured Notion pages: verify
+  both Notion variables are present only on the web service, the exact universe
+  ID is mapped to raw page UUIDs, and the integration has read-content access
+  to each shared page. Then confirm the request carries the existing dedicated
+  Backstage Action bearer by looking only for the sanitized
+  `backstage.notion_context.loaded` event—never log the header, Notion token,
+  mapping, or page body. Missing/invalid bearer or Notion configuration,
+  unmapped universes, provider failures, and PostgreSQL-context fallback all
+  intentionally keep generation database-only. If Builder omits the bearer on
+  `runBackstageBooker`, do not weaken the backend gate; handle any Builder
+  authentication-contract change as a separate reviewed rollout.
 - Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.
 - Worker-heal 429: direct `/workers/heal` and `/worker-helper/heal` share one
   10-request/15-minute budget per server-derived authenticated

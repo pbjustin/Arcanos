@@ -106,6 +106,8 @@ export const DEFAULT_CLI_POLICY: CliPolicyConfig = {
     envNames: [
       "ARCANOS_GPT_ACCESS_TOKEN",
       "ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN",
+      "ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN",
+      "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON",
       "ARCANOS_GAMING_SOURCE_ACCESS_TOKEN",
       "DATABASE_URL",
       "OPENAI_API_KEY",
@@ -294,10 +296,27 @@ function resolveExistingRealPath(value: string): string {
 }
 
 function redactNamedAssignment(value: string, envName: string, replacement: string): string {
-  const pattern = new RegExp("\\b(" + escapeRegExp(envName) + "\\s*=\\s*)([\"']?)([^\\s\"'`]+)([\"']?)", "gi");
-  return value.replace(pattern, (_match, prefix: string, openQuote: string, _secret: string, closeQuote: string) => (
-    `${prefix}${openQuote}${replacement}${closeQuote}`
-  ));
+  const pattern = new RegExp(
+    "\\b(" + escapeRegExp(envName) + "\\s*=\\s*)(?:\"((?:\\\\.|[^\"\\\\])*)\"|'((?:\\\\.|[^'\\\\])*)'|([^\\s`]+))",
+    "gi"
+  );
+  return value.replace(
+    pattern,
+    (
+      _match,
+      prefix: string,
+      doubleQuotedSecret: string | undefined,
+      singleQuotedSecret: string | undefined
+    ) => {
+      if (doubleQuotedSecret !== undefined) {
+        return `${prefix}\"${replacement}\"`;
+      }
+      if (singleQuotedSecret !== undefined) {
+        return `${prefix}'${replacement}'`;
+      }
+      return `${prefix}${replacement}`;
+    }
+  );
 }
 
 function escapeRegExp(value: string): string {

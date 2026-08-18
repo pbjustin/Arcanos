@@ -7,6 +7,18 @@ function ownKey(record: object, key: string): boolean {
 }
 
 describe('shared runtime redaction', () => {
+  it('redacts the complete Backstage Notion universe-page mapping', () => {
+    const mapping = '{"my-universe-2k26":["11111111-1111-4111-8111-111111111111"]}';
+
+    expect(redactSensitive({
+      ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: mapping,
+      ordinary: 'visible',
+    })).toEqual({
+      ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: '[REDACTED]',
+      ordinary: 'visible',
+    });
+  });
+
   it('replaces credential-shaped property names without dropping their values', () => {
     const secretBearingKey = [
       'sk',

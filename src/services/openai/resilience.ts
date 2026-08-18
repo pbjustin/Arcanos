@@ -29,6 +29,7 @@ const backoffStrategy = new ExponentialBackoff(
 
 export interface ResilienceExecutionOptions {
   shouldCountFailure?: (error: unknown) => boolean;
+  redactErrorDetails?: boolean;
 }
 
 export async function executeWithResilience<T>(
@@ -51,7 +52,9 @@ export async function executeWithResilience<T>(
       markOperation('openai.failure');
       recordTraceEvent('openai.resilience.failure', {
         state: circuitBreaker.getState(),
-        error: resolveErrorMessage(error, 'unknown')
+        error: executionOptions.redactErrorDetails
+          ? 'Sensitive-context provider request failed.'
+          : resolveErrorMessage(error, 'unknown')
       });
       throw error;
     }
