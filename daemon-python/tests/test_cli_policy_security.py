@@ -6,6 +6,7 @@ from arcanos.cli.cli_policy import (
     evaluate_command_policy,
     parse_patch_paths,
     redact_output,
+    strip_unsafe_output_controls,
     validate_patch_text,
 )
 
@@ -234,7 +235,11 @@ def test_redaction_uses_shared_fail_closed_unicode_assignment_boundaries(
         apply_truncation=False,
     )
 
-    visible_separator = "" if separator in ("\u000b", "\u000c", "\u0085", "\u001c") else separator
+    visible_separator = (
+        ""
+        if separator in ("\u000b", "\u000c", "\u0085", "\u001c", "\ufeff")
+        else separator
+    )
     assert padded == (
         f"{secret_name}{visible_separator}={visible_separator}{replacement} tail"
     )
@@ -344,6 +349,362 @@ def test_redaction_normalizes_ansi_and_unsafe_controls_before_named_redaction(
     assert apc_redacted == f"{secret_name}={replacement} tail"
     assert decsc_redacted == f"{secret_name}={replacement} tail"
     assert unterminated_osc == f"{secret_name}="
+
+
+@pytest.mark.parametrize(
+    ("name", "terminal_sequence"),
+    [
+        ("CSI with a default ignorable", "\x1b[3\u200b1m"),
+        ("CSI with NUL", "\x1b[3\x001m"),
+        ("CSI with BEL", "\x1b[3\x071m"),
+        ("CSI with C1 ST", "\x1b[3\x9c1m"),
+        ("CSI with nested C1 CSI", "\x1b[3\x9b1m"),
+        ("C1 CSI with NUL", "\x9b3\x001m"),
+        ("C1 CSI with BEL", "\x9b3\x071m"),
+        ("C1 CSI with C1 ST", "\x9b3\x9c1m"),
+        ("generic ESC with NUL", "\x1b\x007"),
+        ("generic ESC with BEL", "\x1b\x077"),
+        ("generic ESC with C1 ST", "\x1b\x9c7"),
+        ("generic ESC with nested ESC", "\x1b\x1b7"),
+        ("C1 CSI before an ESC CSI", "\x9b\x1b[31m"),
+        ("ESC before a C1 CSI", "\x1b\x9b31m"),
+        ("C1 CSI before a generic ESC", "\x9b\x1b7"),
+        ("ESC before a C1 OSC", "\x1b\x9d0;hidden\x07"),
+        ("CSI introducer split by NUL", "\x1b\x00[31m"),
+        ("CSI introducer split by BEL", "\x1b\x07[31m"),
+        ("CSI introducer split by C1 ST", "\x1b\x9c[31m"),
+        ("DCS with a default ignorable", "\x1bPqhid\u200bden\x1b\\"),
+        ("DCS with NUL", "\x1bPqhid\x00den\x1b\\"),
+        ("OSC with a default ignorable", "\x1b]0;hid\u200bden\x07"),
+        ("OSC with NUL", "\x1b]0;hid\x00den\x07"),
+        ("OSC with earlier equals noise", "\x1b]0;foo=bar\x07"),
+    ],
+)
+def test_redaction_fail_closed_for_controls_embedded_in_terminal_grammar(
+    monkeypatch,
+    name: str,
+    terminal_sequence: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    replacement = "[REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    obfuscated_name = secret_name.replace(
+        "NOTION",
+        f"NOT{terminal_sequence}ION",
+    )
+
+    redacted = redact_output(
+        f'{obfuscated_name}={{"page":"private-page-id"}} tail',
+        apply_truncation=False,
+    )
+
+    assert redacted == f"{secret_name}={replacement} tail", name
+    assert "private-page-id" not in redacted
+
+
+@pytest.mark.parametrize(
+    ("name", "terminal_sequence", "visible_infix"),
+    [
+        ("CSI ending at a nested ESC", "\x1b[3\x1b1m", "m"),
+        ("C1 CSI consuming the next letter", "\x1b\x9b7", ""),
+        ("DCS ending at an early C1 ST", "\x1bPqhid\x9cden\x1b\\", "den"),
+        ("C1 DCS ending at an early ST", "\x90qhid\x9cden\x9c", "den"),
+        ("OSC ending at an early BEL", "\x1b]0;hid\x07den\x07", "den"),
+        ("OSC ending at an early C1 ST", "\x1b]0;hid\x9cden\x07", "den"),
+        ("C1 OSC ending at an early BEL", "\x9d0;hid\x07den\x9c", "den"),
+    ],
+)
+def test_redaction_preserves_genuine_visible_terminal_mutations(
+    monkeypatch,
+    name: str,
+    terminal_sequence: str,
+    visible_infix: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": "[REDACTED]",
+                "envNames": [secret_name],
+            }
+        },
+    )
+    source_name = secret_name.replace(
+        "NOTION",
+        f"NOT{terminal_sequence}ION",
+    )
+    visible_name = secret_name.replace("NOTION", f"NOT{visible_infix}ION")
+    if name == "C1 CSI consuming the next letter":
+        visible_name = secret_name.replace("NOTION", "NOTON")
+
+    assert redact_output(
+        f"{source_name}=PUBLIC_SENTINEL tail",
+        apply_truncation=False,
+    ) == f"{visible_name}=PUBLIC_SENTINEL tail"
+
+
+def test_redaction_does_not_collapse_visible_env_name_supersequences(
+    monkeypatch,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    dotted_name = ".".join(secret_name)
+    sources_and_expected = [
+        (
+            f"{secret_name}_SUFFIX=PUBLIC_SENTINEL",
+            f"{secret_name}_SUFFIX=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{secret_name}-other=PUBLIC_SENTINEL",
+            f"{secret_name}-other=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{secret_name} text=PUBLIC_SENTINEL",
+            f"{secret_name} text=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{secret_name}\u200b_SUFFIX=PUBLIC_SENTINEL",
+            f"{secret_name}_SUFFIX=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{secret_name}\x1b[31m_SUFFIX=PUBLIC_SENTINEL",
+            f"{secret_name}_SUFFIX=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{secret_name}\u200b ordinary label=PUBLIC_SENTINEL",
+            f"{secret_name} ordinary label=PUBLIC_SENTINEL",
+        ),
+        (
+            f"{dotted_name}\u200b=PUBLIC_SENTINEL",
+            f"{dotted_name}=PUBLIC_SENTINEL",
+        ),
+        (
+            f"A\u200b=PUBLIC_{secret_name[1:]}=SECOND",
+            f"A=PUBLIC_{secret_name[1:]}=SECOND",
+        ),
+    ]
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": "[REDACTED]",
+                "envNames": [secret_name],
+            }
+        },
+    )
+
+    for source, expected in sources_and_expected:
+        redacted = redact_output(source, apply_truncation=False)
+
+        assert redacted == expected
+        assert "[REDACTED]" not in redacted
+
+
+def test_terminal_scanner_preserves_record_separators_only_outside_sequences(
+) -> None:
+    source = "A\x00B\x1fC\x1b[3\x001mD\x1b\x1f7E"
+
+    assert strip_unsafe_output_controls(source) == "ABCDE"
+    assert strip_unsafe_output_controls(
+        source,
+        preserve_record_separators=True,
+    ) == "A\x00B\x1fC\x001mD\x1f7E"
+
+
+@pytest.mark.parametrize(
+    ("boundary", "visible_boundary"),
+    [
+        ("\t", "\t"),
+        ("\n", "\n"),
+        ("\r", "\r"),
+        ("\x85", ""),
+        ("\u2028", "\u2028"),
+        ("\u2029", "\u2029"),
+    ],
+)
+def test_terminal_scanner_stops_at_output_record_boundaries(
+    boundary: str,
+    visible_boundary: str,
+) -> None:
+    source = f"A\x1b[31{boundary}mB"
+
+    assert strip_unsafe_output_controls(source) == f"A{visible_boundary}mB"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("A\x1b\n7B", "A\n7B"),
+        ("A\x9b31\nmB", "A\nmB"),
+        ("A\x1bPpayload\ntail\x1b\\B", "A\ntailB"),
+        ("A\x1b]payload\ntail\x07B", "A\ntailB"),
+    ],
+)
+def test_every_terminal_scanner_state_stops_at_record_boundaries(
+    source: str,
+    expected: str,
+) -> None:
+    assert strip_unsafe_output_controls(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("boundary", "visible_boundary"),
+    [
+        ("\t", "\t"),
+        ("\n", "\n"),
+        ("\r", "\r"),
+        ("\x85", ""),
+        ("\u2028", "\u2028"),
+        ("\u2029", "\u2029"),
+    ],
+)
+def test_record_boundaries_prevent_sensitive_name_reconstruction(
+    monkeypatch,
+    boundary: str,
+    visible_boundary: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": "[REDACTED]",
+                "envNames": [secret_name],
+            }
+        },
+    )
+    source_name = secret_name.replace(
+        "NOTION",
+        f"NOT\x1b[31{boundary}mION",
+    )
+    visible_name = secret_name.replace(
+        "NOTION",
+        f"NOT{visible_boundary}mION",
+    )
+
+    redacted = redact_output(
+        f"{source_name}=PUBLIC_SENTINEL tail",
+        apply_truncation=False,
+    )
+
+    assert redacted == f"{visible_name}=PUBLIC_SENTINEL tail"
+    assert "[REDACTED]" not in redacted
+
+
+@pytest.mark.parametrize("boundary", ["\x00", "\x1f"])
+def test_preserved_record_separators_prevent_sensitive_name_reconstruction(
+    monkeypatch,
+    boundary: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": "[REDACTED]",
+                "envNames": [secret_name],
+            }
+        },
+    )
+    source_name = secret_name.replace(
+        "NOTION",
+        f"NOT\x1b[31{boundary}mION",
+    )
+    source = f"{source_name}=PUBLIC_SENTINEL tail"
+    visible_name = secret_name.replace(
+        "NOTION",
+        f"NOT{boundary}mION",
+    )
+
+    assert redact_output(source, apply_truncation=False) == (
+        f"{secret_name}=[REDACTED] tail"
+    )
+    assert redact_output(
+        source,
+        apply_truncation=False,
+        preserve_record_separators=True,
+    ) == f"{visible_name}=PUBLIC_SENTINEL tail"
+
+
+@pytest.mark.parametrize(
+    ("name", "invisible", "placement"),
+    [
+        ("zero-width space", "\u200b", "inside_name"),
+        ("word joiner", "\u2060", "before_equals"),
+        ("byte-order mark", "\ufeff", "inside_name"),
+        ("soft hyphen", "\u00ad", "inside_name"),
+        ("combining grapheme joiner", "\u034f", "inside_name"),
+        ("Hangul choseong filler", "\u115f", "inside_name"),
+        ("Khmer inherent vowel", "\u17b4", "inside_name"),
+        ("Mongolian variation selector", "\u180b", "inside_name"),
+        ("variation selector-16", "\ufe0f", "inside_name"),
+        ("Hangul filler", "\u3164", "inside_name"),
+        ("halfwidth Hangul filler", "\uffa0", "inside_name"),
+        ("reserved default ignorable", "\ufff8", "inside_name"),
+        ("shorthand format letter overlap", "\U0001bca0", "inside_name"),
+        ("musical symbol begin beam", "\U0001d173", "inside_name"),
+        ("language tag", "\U000e0001", "inside_name"),
+        ("variation selector supplement", "\U000e0100", "inside_name"),
+    ],
+)
+def test_redaction_normalizes_default_ignorables_before_named_redaction(
+    monkeypatch,
+    name: str,
+    invisible: str,
+    placement: str,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    replacement = "[REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    obfuscated_name = (
+        f"{secret_name}{invisible}"
+        if placement == "before_equals"
+        else secret_name.replace("NOTION", f"NOT{invisible}ION")
+    )
+
+    redacted = redact_output(
+        f'{obfuscated_name}={{"page":"private-page-id"}} tail',
+        apply_truncation=False,
+    )
+
+    assert redacted == f"{secret_name}={replacement} tail", name
+    assert "private-page-id" not in redacted
+
+
+def test_redaction_preserves_non_ignorable_unicode_inside_other_names(
+    monkeypatch,
+) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    replacement = "[REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    ordinary_name = secret_name.replace("NOTION", "NOT\u00e9ION")
+    source = f'{ordinary_name}={{"page":"visible-page-id"}} tail'
+
+    assert redact_output(source, apply_truncation=False) == source
 
 
 def test_redaction_validates_large_json_numbers_without_weakening_redaction(
@@ -544,6 +905,30 @@ def test_patch_policy_preserves_git_quoted_unicode_and_spaces(
 
     assert decision.allowed is True
     assert parse_patch_paths(patch) == ["café notes.txt"]
+
+
+def test_git_paths_preserve_legitimate_default_ignorables_while_output_strips_them(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    unicode_path = "emoji\u200d\ufe0f.txt"
+    patch = "\n".join(
+        [
+            f'diff --git "a/{unicode_path}" "b/{unicode_path}"',
+            f'--- "a/{unicode_path}"',
+            f'+++ "b/{unicode_path}"',
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+        ]
+    )
+
+    decision = validate_patch_text(patch, str(tmp_path))
+
+    assert decision.allowed is True
+    assert parse_patch_paths(patch) == [unicode_path]
+    assert strip_unsafe_output_controls(f"A\u200d\ufe0fB") == "AB"
 
 
 def test_patch_policy_rejects_binary_traversal_and_symlink(monkeypatch, tmp_path) -> None:

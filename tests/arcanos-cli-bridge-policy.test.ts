@@ -22,6 +22,7 @@ describe('ARCANOS CLI bridge action policy', () => {
         + 'ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON={ "private-universe": ['
         + ' { "page": "private-universe-page-id", "note": "escaped \\\" } ]" }'
         + ' ] }adjacent-private-page-tail SAFE_FLAG=true suffix'
+        + ' ARCANOS_BACKSTAGE_NOT\u200BION_UNIVERSE_PAGES_JSON=invisible-private-page-id'
     });
 
     expect(proposal.commandPreview).toContain('ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=[REDACTED]');
@@ -30,5 +31,6 @@ describe('ARCANOS CLI bridge action policy', () => {
     expect(proposal.commandPreview).not.toContain('notion-secret-value');
     expect(proposal.commandPreview).not.toContain('private-universe-page-id');
     expect(proposal.commandPreview).not.toContain('adjacent-private-page-tail');
+    expect(proposal.commandPreview).not.toContain('invisible-private-page-id');
   });
 });

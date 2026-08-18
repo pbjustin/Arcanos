@@ -250,7 +250,7 @@ describe("CLI security policy helpers", () => {
     (separator) => {
       const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
       const structured = '{"page":"private-page-id"}';
-      const visibleSeparator = ["\u000B", "\u000C", "\u0085", "\u001C"].includes(separator)
+      const visibleSeparator = ["\u000B", "\u000C", "\u0085", "\u001C", "\uFEFF"].includes(separator)
         ? ""
         : separator;
 
@@ -286,6 +286,206 @@ describe("CLI security policy helpers", () => {
     expect(redactCliOutput(
       `${envName}=\x1B]unterminated-private-page-id`
     )).toBe(`${envName}=`);
+  });
+
+  it.each([
+    ["CSI with a default ignorable", "\x1B[3\u200B1m"],
+    ["CSI with NUL", "\x1B[3\x001m"],
+    ["CSI with BEL", "\x1B[3\x071m"],
+    ["CSI with C1 ST", "\x1B[3\x9C1m"],
+    ["CSI with nested C1 CSI", "\x1B[3\x9B1m"],
+    ["C1 CSI with NUL", "\x9B3\x001m"],
+    ["C1 CSI with BEL", "\x9B3\x071m"],
+    ["C1 CSI with C1 ST", "\x9B3\x9C1m"],
+    ["generic ESC with NUL", "\x1B\x007"],
+    ["generic ESC with BEL", "\x1B\x077"],
+    ["generic ESC with C1 ST", "\x1B\x9C7"],
+    ["generic ESC with nested ESC", "\x1B\x1B7"],
+    ["CSI introducer split by NUL", "\x1B\x00[31m"],
+    ["CSI introducer split by BEL", "\x1B\x07[31m"],
+    ["CSI introducer split by C1 ST", "\x1B\x9C[31m"],
+    ["DCS with a default ignorable", "\x1BPqhid\u200Bden\x1B\\"],
+    ["DCS with NUL", "\x1BPqhid\x00den\x1B\\"],
+    ["OSC with a default ignorable", "\x1B]0;hid\u200Bden\x07"],
+    ["OSC with NUL", "\x1B]0;hid\x00den\x07"],
+    ["OSC with earlier equals noise", "\x1B]0;foo=bar\x07"],
+    ["C1 CSI redispatched to ESC CSI", "\x9B\x1B[31m"],
+    ["ESC redispatched to C1 CSI", "\x1B\x9B31m"],
+    ["C1 CSI redispatched to generic ESC", "\x9B\x1B7"],
+    ["ESC redispatched to C1 OSC", "\x1B\x9D0;hidden\x07"]
+  ])("redacts a sensitive assignment through hidden %s controls", (_name, terminalSequence) => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const obfuscatedName = envName.replace("NOTION", `NOT${terminalSequence}ION`);
+
+    expect(redactCliOutput(
+      `${obfuscatedName}={"page":"private-page-id"} tail`
+    )).toBe(`${envName}=[REDACTED] tail`);
+  });
+
+  it.each([
+    ["CSI ending at a nested ESC", "\x1B[3\x1B1m", "NOTmION"],
+    ["C1 CSI consuming the next letter", "\x1B\x9B7", "NOTON"],
+    ["OSC with an early BEL", "\x1B]0;hid\x07den\x07", "NOTdenION"],
+    ["DCS with an early C1 ST", "\x1BPqhid\x9Cden\x1B\\", "NOTdenION"],
+    ["C1 DCS with an early C1 ST", "\x90qhid\x9Cden\x9C", "NOTdenION"],
+    ["OSC with an early C1 ST", "\x1B]0;hid\x9Cden\x07", "NOTdenION"],
+    ["C1 OSC with an early BEL", "\x9D0;hid\x07den\x9C", "NOTdenION"]
+  ])("preserves a genuinely display-mutated %s assignment", (_name, terminalSequence, visibleSegment) => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const visibleName = envName.replace("NOTION", visibleSegment);
+    const obfuscatedName = envName.replace("NOTION", `NOT${terminalSequence}ION`);
+    const publicValue = '{"page":"public-page-id"}';
+
+    expect(redactCliOutput(`${obfuscatedName}=${publicValue} tail`))
+      .toBe(`${visibleName}=${publicValue} tail`);
+  });
+
+  it.each([
+    ["TAB", "\t", "\t"],
+    ["LF", "\n", "\n"],
+    ["CR", "\r", "\r"],
+    ["NEL", "\u0085", ""],
+    ["line separator", "\u2028", "\u2028"],
+    ["paragraph separator", "\u2029", "\u2029"]
+  ])("keeps %s as a hard terminal-sequence boundary", (_name, boundary, visibleBoundary) => {
+    expect(redactCliOutput(`A\x1B[31${boundary}mB`)).toBe(`A${visibleBoundary}mB`);
+    expect(redactCliOutput(`A\x1B#${boundary}8B`)).toBe(`A${visibleBoundary}8B`);
+    expect(redactCliOutput(`A\x1B]hidden${boundary}B`)).toBe(`A${visibleBoundary}B`);
+  });
+
+  it.each([
+    ["TAB", "\t", "\t"],
+    ["LF", "\n", "\n"],
+    ["CR", "\r", "\r"],
+    ["NEL", "\u0085", ""],
+    ["line separator", "\u2028", "\u2028"],
+    ["paragraph separator", "\u2029", "\u2029"]
+  ])("does not reconstruct a sensitive name across a %s boundary", (_name, boundary, visibleBoundary) => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const sourceName = envName.replace("NOTION", `NOT\x1B[31${boundary}mION`);
+    const visibleName = envName.replace("NOTION", `NOT${visibleBoundary}mION`);
+
+    expect(redactCliOutput(`${sourceName}=PUBLIC_SENTINEL tail`))
+      .toBe(`${visibleName}=PUBLIC_SENTINEL tail`);
+  });
+
+  it("does not collapse visible env-name supersequences", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const dottedName = [...envName].join(".");
+    const cases: Array<[string, string]> = [
+      [`${envName}_SUFFIX=PUBLIC_SENTINEL`, `${envName}_SUFFIX=PUBLIC_SENTINEL`],
+      [`${envName}-other=PUBLIC_SENTINEL`, `${envName}-other=PUBLIC_SENTINEL`],
+      [`${envName} text=PUBLIC_SENTINEL`, `${envName} text=PUBLIC_SENTINEL`],
+      [`${envName}\u200B_SUFFIX=PUBLIC_SENTINEL`, `${envName}_SUFFIX=PUBLIC_SENTINEL`],
+      [`${envName}\x1B[31m_SUFFIX=PUBLIC_SENTINEL`, `${envName}_SUFFIX=PUBLIC_SENTINEL`],
+      [`${envName}\u200B ordinary label=PUBLIC_SENTINEL`, `${envName} ordinary label=PUBLIC_SENTINEL`],
+      [`${dottedName}\u200B=PUBLIC_SENTINEL`, `${dottedName}=PUBLIC_SENTINEL`],
+      [`A\u200B=PUBLIC_${envName.slice(1)}=SECOND`, `A=PUBLIC_${envName.slice(1)}=SECOND`]
+    ];
+
+    for (const [source, expected] of cases) {
+      const redacted = redactCliOutput(source);
+      expect(redacted).toBe(expected);
+      expect(redacted).not.toContain("[REDACTED]");
+    }
+  });
+
+  it.each([
+    {
+      name: "zero-width space inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u200BION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "word joiner before the assignment operator",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON\u2060"
+    },
+    {
+      name: "byte-order mark inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\uFEFFION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "Arabic letter mark inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u061CION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "combining grapheme joiner inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u034FION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "soft hyphen inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u00ADION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "right-to-left mark inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u200FION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "emoji variation selector inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\uFE0FION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "deprecated invisible format control inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u206FION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "supplementary tag character inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u{E0020}ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "Hangul choseong filler inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u115FION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "Khmer inherent vowel inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u17B4ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "Mongolian variation selector inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u180BION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "Hangul filler inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u3164ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "halfwidth Hangul filler inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\uFFA0ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "reserved default ignorable inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\uFFF8ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "shorthand format control inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u{1BCA0}ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "musical symbol format control inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u{1D173}ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "language tag inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u{E0001}ION_UNIVERSE_PAGES_JSON"
+    },
+    {
+      name: "supplementary variation selector inside the env name",
+      obfuscatedName: "ARCANOS_BACKSTAGE_NOT\u{E0100}ION_UNIVERSE_PAGES_JSON"
+    }
+  ])("normalizes $name before named redaction", ({ obfuscatedName }) => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+
+    expect(redactCliOutput(
+      `${obfuscatedName}={"page":"private-page-id"} tail`
+    )).toBe(`${envName}=[REDACTED] tail`);
+  });
+
+  it("preserves ordinary Unicode while normalizing unsafe invisible controls", () => {
+    const visibleText = "visible café 界 🙂";
+    const ordinaryName = "ARCANOS_BACKSTAGE_NOTéION_UNIVERSE_PAGES_JSON";
+    const ordinaryAssignment = `${ordinaryName}={"page":"visible-page-id"} tail`;
+
+    expect(redactCliOutput(visibleText)).toBe(visibleText);
+    expect(redactCliOutput(ordinaryAssignment)).toBe(ordinaryAssignment);
   });
 
   it.each(["é", "界", "K"])(

@@ -12,16 +12,24 @@ from typing import Any
 from arcanos.debug import log_audit_event
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
-ANSI_ESCAPE_PATTERN = re.compile(
-    r"(?:\x1B(?:\][\s\S]*?(?:\x07|\x1B\\|\x9C|$)|"
-    r"[PX^_][\s\S]*?(?:\x1B\\|\x9C|$)|"
-    r"\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])|"
-    r"\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)|"
-    r"[\x90\x98\x9E\x9F][\s\S]*?(?:\x1B\\|\x9C|$)|"
-    r"\x9B[0-?]*[ -/]*[@-~])"
+_DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
+    r"\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F"
+    r"\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164"
+    r"\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8"
+    r"\U0001BCA0-\U0001BCA3\U0001D173-\U0001D17A"
+    r"\U000E0000-\U000E0FFF"
 )
-UNSAFE_OUTPUT_CONTROL_PATTERN = re.compile(
+DEFAULT_IGNORABLE_CODE_POINT_PATTERN = re.compile(
+    rf"[{_DEFAULT_IGNORABLE_CODE_POINT_RANGES}]"
+)
+UNSAFE_GIT_PATH_CONTROL_PATTERN = re.compile(
+    # Preserve the established Git-path compatibility contract; output
+    # normalization separately removes the full default-ignorable set above.
     r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]"
+)
+_C1_CONTROL_STRING_INTRODUCERS = frozenset((0x90, 0x98, 0x9D, 0x9E, 0x9F))
+_TERMINAL_SEQUENCE_BOUNDARIES = frozenset(
+    ("\t", "\n", "\r", "\x85", "\u2028", "\u2029")
 )
 _GIT_C_ESCAPE_BYTES = {
     '"': ord('"'),
@@ -318,6 +326,224 @@ def redact_output(
     return truncate_output(redacted) if apply_truncation else redacted
 
 
+def _is_c0_or_c1_control(character: str) -> bool:
+    code_point = ord(character)
+    return code_point <= 0x1F or 0x7F <= code_point <= 0x9F
+
+
+def _is_unsafe_c0_or_c1_control(character: str) -> bool:
+    code_point = ord(character)
+    return (
+        code_point <= 0x08
+        or code_point in (0x0B, 0x0C)
+        or 0x0E <= code_point <= 0x1F
+        or 0x7F <= code_point <= 0x9F
+    )
+
+
+def _is_terminal_sequence_introducer(character: str) -> bool:
+    code_point = ord(character)
+    return (
+        code_point == 0x1B
+        or code_point == 0x9B
+        or code_point in _C1_CONTROL_STRING_INTRODUCERS
+    )
+
+
+def _is_terminal_sequence_boundary(
+    character: str,
+    *,
+    preserve_record_separators: bool,
+) -> bool:
+    return character in _TERMINAL_SEQUENCE_BOUNDARIES or (
+        preserve_record_separators and character in ("\x00", "\x1f")
+    )
+
+
+def _consume_csi_sequence(
+    value: str,
+    start: int,
+    *,
+    preserve_record_separators: bool,
+) -> int:
+    index = start
+    parsing_intermediates = False
+    while index < len(value):
+        character = value[index]
+        if _is_terminal_sequence_boundary(
+            character,
+            preserve_record_separators=preserve_record_separators,
+        ):
+            return index
+        if _is_c0_or_c1_control(character):
+            if _is_terminal_sequence_introducer(character):
+                return index
+            index += 1
+            continue
+        code_point = ord(character)
+        if not parsing_intermediates and 0x30 <= code_point <= 0x3F:
+            index += 1
+            continue
+        if 0x20 <= code_point <= 0x2F:
+            parsing_intermediates = True
+            index += 1
+            continue
+        if 0x40 <= code_point <= 0x7E:
+            return index + 1
+        return len(value)
+    return len(value)
+
+
+def _consume_generic_escape_sequence(
+    value: str,
+    start: int,
+    *,
+    preserve_record_separators: bool,
+) -> int:
+    index = start
+    while index < len(value):
+        character = value[index]
+        if _is_terminal_sequence_boundary(
+            character,
+            preserve_record_separators=preserve_record_separators,
+        ):
+            return index
+        if _is_c0_or_c1_control(character):
+            if _is_terminal_sequence_introducer(character):
+                return index
+            index += 1
+            continue
+        code_point = ord(character)
+        if 0x20 <= code_point <= 0x2F:
+            index += 1
+            continue
+        if 0x30 <= code_point <= 0x7E:
+            return index + 1
+        return len(value)
+    return len(value)
+
+
+def _consume_control_string(
+    value: str,
+    start: int,
+    *,
+    osc: bool,
+    preserve_record_separators: bool,
+) -> int:
+    index = start
+    while index < len(value):
+        character = value[index]
+        if _is_terminal_sequence_boundary(
+            character,
+            preserve_record_separators=preserve_record_separators,
+        ):
+            return index
+        code_point = ord(character)
+        if osc and code_point == 0x07:
+            return index + 1
+        if code_point == 0x9C:
+            return index + 1
+        if code_point == 0x1B:
+            terminator_index = index + 1
+            while terminator_index < len(value) and _is_c0_or_c1_control(
+                value[terminator_index]
+            ):
+                if _is_terminal_sequence_boundary(
+                    value[terminator_index],
+                    preserve_record_separators=preserve_record_separators,
+                ):
+                    return terminator_index
+                embedded_code_point = ord(value[terminator_index])
+                if osc and embedded_code_point == 0x07:
+                    return terminator_index + 1
+                if embedded_code_point == 0x9C:
+                    return terminator_index + 1
+                terminator_index += 1
+            if terminator_index < len(value) and value[terminator_index] == "\\":
+                return terminator_index + 1
+            index = terminator_index
+            continue
+        index += 1
+    return len(value)
+
+
+def _consume_escape_sequence(
+    value: str,
+    start: int,
+    *,
+    preserve_record_separators: bool,
+) -> int:
+    command_index = start + 1
+    while command_index < len(value):
+        if _is_terminal_sequence_boundary(
+            value[command_index],
+            preserve_record_separators=preserve_record_separators,
+        ):
+            return command_index
+        if not _is_c0_or_c1_control(value[command_index]):
+            break
+        if _is_terminal_sequence_introducer(value[command_index]):
+            return command_index
+        command_index += 1
+    if command_index >= len(value):
+        return len(value)
+    command = value[command_index]
+    if command == "[":
+        return _consume_csi_sequence(
+            value,
+            command_index + 1,
+            preserve_record_separators=preserve_record_separators,
+        )
+    if command == "]":
+        return _consume_control_string(
+            value,
+            command_index + 1,
+            osc=True,
+            preserve_record_separators=preserve_record_separators,
+        )
+    if command in ("P", "X", "^", "_"):
+        return _consume_control_string(
+            value,
+            command_index + 1,
+            osc=False,
+            preserve_record_separators=preserve_record_separators,
+        )
+    return _consume_generic_escape_sequence(
+        value,
+        command_index,
+        preserve_record_separators=preserve_record_separators,
+    )
+
+
+def _consume_terminal_sequence_at(
+    value: str,
+    start: int,
+    *,
+    preserve_record_separators: bool,
+) -> int | None:
+    code_point = ord(value[start])
+    if code_point == 0x1B:
+        return _consume_escape_sequence(
+            value,
+            start,
+            preserve_record_separators=preserve_record_separators,
+        )
+    if code_point == 0x9B:
+        return _consume_csi_sequence(
+            value,
+            start + 1,
+            preserve_record_separators=preserve_record_separators,
+        )
+    if code_point in _C1_CONTROL_STRING_INTRODUCERS:
+        return _consume_control_string(
+            value,
+            start + 1,
+            osc=code_point == 0x9D,
+            preserve_record_separators=preserve_record_separators,
+        )
+    return None
+
+
 def strip_unsafe_output_controls(
     value: str,
     *,
@@ -325,23 +551,28 @@ def strip_unsafe_output_controls(
 ) -> str:
     """Remove terminal controls while preserving ordinary line formatting."""
 
-    without_ansi = ANSI_ESCAPE_PATTERN.sub("", value or "")
-    if not preserve_record_separators:
-        return UNSAFE_OUTPUT_CONTROL_PATTERN.sub("", without_ansi)
-    sentinel = "\uF8FF"
-    while sentinel in without_ansi:
-        sentinel += "\uF8FF"
-    nul_sentinel = sentinel
-    unit_separator_sentinel = sentinel + "\uF8FF"
-    preserved = without_ansi.replace("\x00", nul_sentinel).replace(
-        "\x1f",
-        unit_separator_sentinel,
-    )
-    return (
-        UNSAFE_OUTPUT_CONTROL_PATTERN.sub("", preserved)
-        .replace(unit_separator_sentinel, "\x1f")
-        .replace(nul_sentinel, "\x00")
-    )
+    normalized = DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", value or "")
+    sanitized: list[str] = []
+    index = 0
+    while index < len(normalized):
+        character = normalized[index]
+        code_point = ord(character)
+        terminal_sequence_end = _consume_terminal_sequence_at(
+            normalized,
+            index,
+            preserve_record_separators=preserve_record_separators,
+        )
+        if terminal_sequence_end is not None:
+            index = terminal_sequence_end
+            continue
+        if _is_unsafe_c0_or_c1_control(character):
+            if preserve_record_separators and code_point in (0x00, 0x1F):
+                sanitized.append(character)
+            index += 1
+            continue
+        sanitized.append(character)
+        index += 1
+    return "".join(sanitized)
 
 
 def truncate_output(value: str) -> str:
@@ -547,7 +778,7 @@ def _decode_git_path_field(value: str) -> str:
             raise ValueError("Git patch path is not valid UTF-8.") from error
     if (
         not decoded
-        or UNSAFE_OUTPUT_CONTROL_PATTERN.search(decoded)
+        or UNSAFE_GIT_PATH_CONTROL_PATTERN.search(decoded)
         or BIDI_CONTROL_PATTERN.search(decoded)
     ):
         raise ValueError("Git patch path contains an unsupported character.")

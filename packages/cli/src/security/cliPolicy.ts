@@ -222,13 +222,216 @@ export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT
   return truncateCliOutput(redacted, policy);
 }
 
-const ANSI_ESCAPE_PATTERN = /(?:\x1B(?:\][\s\S]*?(?:\x07|\x1B\\|\x9C|$)|[PX^_][\s\S]*?(?:\x1B\\|\x9C|$)|\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])|\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)|[\x90\x98\x9E\x9F][\s\S]*?(?:\x1B\\|\x9C|$)|\x9B[0-?]*[ -/]*[@-~])/g;
-const UNSAFE_OUTPUT_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]/g;
+// Keep this explicit Unicode Default_Ignorable_Code_Point set mirrored with
+// daemon-python/arcanos/cli/cli_policy.py.
+const DEFAULT_IGNORABLE_CODE_POINT_PATTERN = /[\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
+const C1_CONTROL_STRING_INTRODUCERS = new Set([0x90, 0x98, 0x9D, 0x9E, 0x9F]);
 
 function stripUnsafeCliOutputControls(value: string): string {
-  return value
-    .replace(ANSI_ESCAPE_PATTERN, "")
-    .replace(UNSAFE_OUTPUT_CONTROL_PATTERN, "");
+  const normalized = value.replace(DEFAULT_IGNORABLE_CODE_POINT_PATTERN, "");
+  let sanitized = "";
+  let index = 0;
+
+  while (index < normalized.length) {
+    const terminalSequenceEnd = consumeTerminalSequenceAt(normalized, index);
+    if (terminalSequenceEnd !== undefined) {
+      index = terminalSequenceEnd;
+      continue;
+    }
+
+    const codePoint = normalized.codePointAt(index);
+    if (codePoint === undefined) {
+      break;
+    }
+    if (isUnsafeC0OrC1Control(codePoint)) {
+      index += 1;
+      continue;
+    }
+
+    const character = String.fromCodePoint(codePoint);
+    sanitized += character;
+    index += character.length;
+  }
+
+  return sanitized;
+}
+
+function isC0OrC1Control(codePoint: number): boolean {
+  return codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F);
+}
+
+function isUnsafeC0OrC1Control(codePoint: number): boolean {
+  return codePoint <= 0x08
+    || codePoint === 0x0B
+    || codePoint === 0x0C
+    || (codePoint >= 0x0E && codePoint <= 0x1F)
+    || (codePoint >= 0x7F && codePoint <= 0x9F);
+}
+
+function isTerminalRecordBoundary(codePoint: number): boolean {
+  return codePoint === 0x09
+    || codePoint === 0x0A
+    || codePoint === 0x0D
+    || codePoint === 0x85
+    || codePoint === 0x2028
+    || codePoint === 0x2029;
+}
+
+function isTerminalSequenceIntroducer(codePoint: number): boolean {
+  return codePoint === 0x1B
+    || codePoint === 0x9B
+    || C1_CONTROL_STRING_INTRODUCERS.has(codePoint);
+}
+
+function consumeCsiSequence(value: string, start: number): number {
+  let index = start;
+  let parsingIntermediates = false;
+
+  while (index < value.length) {
+    const codePoint = value.charCodeAt(index);
+    if (isTerminalRecordBoundary(codePoint)) {
+      return index;
+    }
+    if (isC0OrC1Control(codePoint)) {
+      // Return the nested introducer so the outer scanner redispatches from it.
+      if (isTerminalSequenceIntroducer(codePoint)) {
+        return index;
+      }
+      index += 1;
+      continue;
+    }
+    if (!parsingIntermediates && codePoint >= 0x30 && codePoint <= 0x3F) {
+      index += 1;
+      continue;
+    }
+    if (codePoint >= 0x20 && codePoint <= 0x2F) {
+      parsingIntermediates = true;
+      index += 1;
+      continue;
+    }
+    if (codePoint >= 0x40 && codePoint <= 0x7E) {
+      return index + 1;
+    }
+    return value.length;
+  }
+
+  return value.length;
+}
+
+function consumeGenericEscapeSequence(value: string, start: number): number {
+  let index = start;
+
+  while (index < value.length) {
+    const codePoint = value.charCodeAt(index);
+    if (isTerminalRecordBoundary(codePoint)) {
+      return index;
+    }
+    if (isC0OrC1Control(codePoint)) {
+      // Return the nested introducer so the outer scanner redispatches from it.
+      if (isTerminalSequenceIntroducer(codePoint)) {
+        return index;
+      }
+      index += 1;
+      continue;
+    }
+    if (codePoint >= 0x20 && codePoint <= 0x2F) {
+      index += 1;
+      continue;
+    }
+    if (codePoint >= 0x30 && codePoint <= 0x7E) {
+      return index + 1;
+    }
+    return value.length;
+  }
+
+  return value.length;
+}
+
+function consumeControlString(value: string, start: number, osc: boolean): number {
+  let index = start;
+
+  while (index < value.length) {
+    const codePoint = value.charCodeAt(index);
+    if (isTerminalRecordBoundary(codePoint)) {
+      return index;
+    }
+    if (osc && codePoint === 0x07) {
+      return index + 1;
+    }
+    if (codePoint === 0x9C) {
+      return index + 1;
+    }
+    if (codePoint === 0x1B) {
+      let terminatorIndex = index + 1;
+      while (terminatorIndex < value.length && isC0OrC1Control(value.charCodeAt(terminatorIndex))) {
+        const embeddedCodePoint = value.charCodeAt(terminatorIndex);
+        if (isTerminalRecordBoundary(embeddedCodePoint)) {
+          break;
+        }
+        if (osc && embeddedCodePoint === 0x07) {
+          return terminatorIndex + 1;
+        }
+        if (embeddedCodePoint === 0x9C) {
+          return terminatorIndex + 1;
+        }
+        terminatorIndex += 1;
+      }
+      if (terminatorIndex < value.length && value[terminatorIndex] === "\\") {
+        return terminatorIndex + 1;
+      }
+      index = terminatorIndex;
+      continue;
+    }
+    index += 1;
+  }
+
+  return value.length;
+}
+
+function consumeEscapeSequence(value: string, start: number): number {
+  let commandIndex = start + 1;
+  while (commandIndex < value.length) {
+    const codePoint = value.charCodeAt(commandIndex);
+    if (isTerminalRecordBoundary(codePoint)) {
+      return commandIndex;
+    }
+    if (!isC0OrC1Control(codePoint)) {
+      break;
+    }
+    if (isTerminalSequenceIntroducer(codePoint)) {
+      return commandIndex;
+    }
+    commandIndex += 1;
+  }
+  if (commandIndex >= value.length) {
+    return value.length;
+  }
+
+  const command = value[commandIndex];
+  if (command === "[") {
+    return consumeCsiSequence(value, commandIndex + 1);
+  }
+  if (command === "]") {
+    return consumeControlString(value, commandIndex + 1, true);
+  }
+  if (command === "P" || command === "X" || command === "^" || command === "_") {
+    return consumeControlString(value, commandIndex + 1, false);
+  }
+  return consumeGenericEscapeSequence(value, commandIndex);
+}
+
+function consumeTerminalSequenceAt(value: string, start: number): number | undefined {
+  const codePoint = value.charCodeAt(start);
+  if (codePoint === 0x1B) {
+    return consumeEscapeSequence(value, start);
+  }
+  if (codePoint === 0x9B) {
+    return consumeCsiSequence(value, start + 1);
+  }
+  if (C1_CONTROL_STRING_INTRODUCERS.has(codePoint)) {
+    return consumeControlString(value, start + 1, codePoint === 0x9D);
+  }
+  return undefined;
 }
 
 export function redactCliEnv(
