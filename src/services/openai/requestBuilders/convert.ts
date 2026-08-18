@@ -40,7 +40,7 @@ export function convertNormalizedResponsesToRequest(
 ): ResponseCreateParamsNonStreaming {
   const payload: ResponseCreateParamsNonStreaming = {
     model: normalized.model,
-    store: shouldStoreOpenAIResponses(),
+    store: normalized.store === false ? false : shouldStoreOpenAIResponses(),
     input: normalized.input,
     temperature: normalized.temperature,
     top_p: normalized.top_p,

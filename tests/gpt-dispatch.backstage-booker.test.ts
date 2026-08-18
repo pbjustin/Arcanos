@@ -33,6 +33,7 @@ const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockDetectBackstageBookerIntent = jest.fn();
+const mockWasBackstageNotionEnrichmentUsed = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
@@ -62,6 +63,10 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
 
 jest.unstable_mockModule('../src/services/backstageBookerRouteShortcut.js', () => ({
   detectBackstageBookerIntent: mockDetectBackstageBookerIntent,
+}));
+
+jest.unstable_mockModule('../src/services/backstageNotionEnrichmentAuthorization.js', () => ({
+  wasBackstageNotionEnrichmentUsed: mockWasBackstageNotionEnrichmentUsed,
 }));
 
 jest.unstable_mockModule('../src/services/arcanosMcp.js', () => ({
@@ -132,6 +137,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       score: 6,
       reason: 'booking_verb+storyline_request+wrestling_brand'
     });
+    mockWasBackstageNotionEnrichmentUsed.mockReturnValue(false);
     mockDispatchModuleAction.mockResolvedValue('Generated rivalry matrix');
   });
 
@@ -161,6 +167,30 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         })
       })
     );
+  });
+
+  it('does not persist a session transcript when private Notion context was used', async () => {
+    mockWasBackstageNotionEnrichmentUsed.mockReturnValue(true);
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          prompt: 'Review the mapped universe.',
+          universeId: 'my-universe-2k26',
+          sessionId: 'PRIVATE-NOTION-SESSION',
+        },
+      },
+      requestId: 'req-booker-notion-no-transcript'
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: true,
+      result: 'Generated rivalry matrix',
+    }));
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
 
   it('does not forward top-level universe scope into a non-Backstage explicit payload', async () => {

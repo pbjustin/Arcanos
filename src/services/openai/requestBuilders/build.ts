@@ -14,6 +14,7 @@ export interface ResponsesRequestDraft {
   temperature: number;
   top_p: number;
   includeRoutingMessage: boolean;
+  store?: false;
   responseFormat?: ChatCompletionResponseFormat;
   user?: string;
   preparedMessages: ChatCompletionMessageParam[];
@@ -94,7 +95,8 @@ export function buildResponsesDraft(params: ChatParams): ResponsesRequestDraft {
     messages,
     includeRoutingMessage = true,
     responseFormat,
-    user
+    user,
+    store
   } = params;
 
   const preparedMessages: ChatCompletionMessageParam[] =
@@ -111,6 +113,7 @@ export function buildResponsesDraft(params: ChatParams): ResponsesRequestDraft {
     includeRoutingMessage,
     responseFormat,
     user,
+    store,
     preparedMessages
   };
 }

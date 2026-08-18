@@ -67,9 +67,11 @@ import {
   type TrinityReasoningHonesty
 } from './trinityHonesty.js';
 import {
-  buildTrinityDirectAnswerSystemInstruction,
+  buildTrinityDirectAnswerMessages,
   resolveTrinityDirectAnswerTokenLimit
 } from './trinityDirectAnswerMode.js';
+
+export { buildTrinityDirectAnswerMessages } from './trinityDirectAnswerMode.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -378,26 +380,6 @@ export function buildInternalArchitecturalMessages(
 }
 
 /**
- * Build the single-pass direct-answer messages used by Trinity core when simulation must be suppressed.
- * Inputs/outputs: memory context summary + sanitized user prompt -> strict chat message array.
- * Edge cases: blank prompt content falls back to a deterministic placeholder so OpenAI always receives string content.
- */
-export function buildTrinityDirectAnswerMessages(
-  memoryContextSummary: string,
-  auditSafePrompt: string
-): ChatCompletionMessageParam[] {
-  const systemContent = ensureStringContent(
-    buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, auditSafePrompt)
-  ) || 'Answer the request directly.';
-  const userRequestContent = ensureStringContent(auditSafePrompt) || 'No request provided.';
-
-  return [
-    { role: 'system', content: systemContent },
-    { role: 'user', content: userRequestContent }
-  ];
-}
-
-/**
  * Execute the intake stage while attaching hard capability constraints and output controls to the framed request.
  */
 export async function runIntakeStage(
@@ -637,7 +619,11 @@ export async function runDirectAnswerStage(
   directAnswerTokenLimitOverride?: number,
   explicitTimeoutMs?: number,
   preserveAggregateAbortContext = false,
-  directAnswerTokenCapOverride?: number
+  directAnswerTokenCapOverride?: number,
+  redactSensitiveDiagnostics = false,
+  trustedPolicyPrompt?: string,
+  directAnswerSystemPolicyPrompt?: string,
+  directAnswerUntrustedContextPrompt?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -651,7 +637,7 @@ export async function runDirectAnswerStage(
     directAnswerTokenLimitOverride > 0
       ? Math.max(1, Math.trunc(directAnswerTokenLimitOverride))
       : resolveTrinityDirectAnswerTokenLimit(
-          auditSafePrompt,
+          trustedPolicyPrompt ?? auditSafePrompt,
           APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
         );
   const effectiveTokenCap = resolveDirectAnswerTokenCap(directAnswerTokenCapOverride);
@@ -686,12 +672,19 @@ export async function runDirectAnswerStage(
   try {
     const executeDirectAnswer = () =>
       createSingleChatCompletion(client, {
-        messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+        messages: buildTrinityDirectAnswerMessages(
+          memoryContextSummary,
+          auditSafePrompt,
+          trustedPolicyPrompt ?? auditSafePrompt,
+          directAnswerSystemPolicyPrompt,
+          directAnswerUntrustedContextPrompt
+        ),
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
         ...(useAggregateAbortContext ? {} : { timeoutMs: stageTimeoutMs }),
         preserveAggregateAbortContext: useAggregateAbortContext,
+        redactErrorDetails: redactSensitiveDiagnostics,
         ...(directAnswerReasoningEffort
           ? { reasoning_effort: directAnswerReasoningEffort }
           : {}),
@@ -711,6 +704,9 @@ export async function runDirectAnswerStage(
         );
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
+    const diagnosticError = redactSensitiveDiagnostics
+      ? 'Sensitive-context provider request failed.'
+      : errorMessage;
     logger.warn(
       errorMessage.includes(`timed out after ${stageTimeoutMs}ms`)
         ? 'trinity.direct_answer.stage_timeout'
@@ -723,7 +719,7 @@ export async function runDirectAnswerStage(
         timeoutMs: useAggregateAbortContext ? undefined : stageTimeoutMs,
         aggregateAbortContext: useAggregateAbortContext,
         promptLength: auditSafePrompt.length,
-        error: errorMessage
+        error: diagnosticError
       }
     );
     throw error;

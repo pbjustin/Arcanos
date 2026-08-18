@@ -8,6 +8,7 @@ import {
   resolveBackstageMutationHttpOperation,
 } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
+import { optionalBackstageNotionEnrichmentAuth } from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
@@ -1391,6 +1392,7 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 router.post(
   "/:gptId",
   canonicalGptIdentifierBoundary,
+  optionalBackstageNotionEnrichmentAuth,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
   canonicalResearchGptAdmissionBoundary,

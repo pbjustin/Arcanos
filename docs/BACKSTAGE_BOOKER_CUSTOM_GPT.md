@@ -4,7 +4,9 @@ This is the Builder-facing configuration for the existing **Backstage Booker**
 Custom GPT. It adds narrow authenticated exact-universe and exact-storyline
 reads plus a
 canon-writing lane with one visible ChatGPT consequential-action approval
-instead of a second, time-limited backend confirmation challenge.
+instead of a second, time-limited backend confirmation challenge. The same
+Action credential can also establish request-local authorization for optional
+read-only Notion context during booking generation; Notion adds no operation.
 
 ## Action configuration
 
@@ -23,7 +25,9 @@ instead of a second, time-limited backend confirmation challenge.
 The contract defines exactly four operations:
 
 - `runBackstageBooker` -> `POST /gpt/backstage-booker` for the public
-  `generateBooking`, `generateBookingWithHRC`, and `simulateMatch` actions.
+  `generateBooking`, `generateBookingWithHRC`, and `simulateMatch` actions. A
+  valid saved Action bearer can authorize optional configured Notion context
+  for the two generation actions without making this public route fail closed.
 - `getBackstageUniverse` ->
   `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`
   for one authenticated, non-consequential, read-only PostgreSQL snapshot.
@@ -90,7 +94,11 @@ saw or accepted ChatGPT's banner. The design therefore trusts the ChatGPT
 Action platform to enforce the consequential flag before sending the request.
 Anyone who obtains the bearer can read any valid exact universe ID, including
 full summaries selected by an exact storyline key, and can
-exercise the narrow canon endpoint without establishing per-user identity.
+exercise the narrow canon endpoint without establishing per-user identity. If
+Notion enrichment is configured, the same holder can also request generation
+for any mapped universe and cause selected page excerpts to enter the model
+prompt. The mapping is therefore an authorization boundary as well as routing
+configuration.
 This contract therefore assumes a private GPT within one trust domain. Do not
 publish it or use it across tenant-separated universes without first adding
 server-side credential-to-universe or per-user authorization. Keep the
@@ -100,9 +108,12 @@ per-user identity or an independently verified approval is required.
 
 The credential is deliberately not interchangeable with
 `ARCANOS_GPT_ACCESS_TOKEN` or `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. It cannot
-call generic GPT Access operations, direct Backstage routes, control-plane
-routes, GPT-selected `/dispatch`, `/modules/backstage-booker`, `/queryroute`,
-or legacy aliases. Conversely, the generic GPT Access credential cannot read
+call generic GPT Access operations, admit a direct Backstage request, authorize
+a mutation on a direct Backstage route, or call control-plane, GPT-selected
+`/dispatch`, `/modules/backstage-booker`, `/queryroute`, or legacy aliases. Its
+only direct-route meaning is the optional request-local Notion-enrichment flag
+on canonical synchronous Backstage generation. Conversely, the generic GPT
+Access credential cannot read
 stored Backstage universe content through this endpoint and continues to use
 its scope, allowlist, and backend confirmation rules on a capability run.
 All Phase One mutations (`bookEvent`, `updateRoster`, `trackStoryline`, and
@@ -111,6 +122,51 @@ existing backend confirmation contract.
 
 `universeId` only selects the durable data scope. It is not authentication,
 authorization, tenant identity, or proof that the caller owns that universe.
+
+## Optional Notion generation context
+
+This feature is backend-only at the Action-contract level: it does not add a
+fifth operation or change request/response schemas, so the existing GPT does
+not need a schema re-import solely for Notion enrichment. Keep Apps disabled
+and retain the existing Action API Key/Bearer setting. The backend accepts the
+saved Backstage credential on `runBackstageBooker` only as optional provenance;
+anonymous or invalid-bearer calls continue with the existing non-Notion
+PostgreSQL/process-fallback behavior.
+
+On the web service, configure both
+`ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON`. The first is an outbound Notion
+integration token with read-content access only. Never place it in Builder.
+The second maps each exact universe ID to one to three unique raw page UUIDs;
+do not use page URLs. Share only those pages with the integration, and map
+child pages explicitly because the reader never follows unknown child IDs.
+Notion text is bounded, sanitized, and quoted in a separately delimited user
+message before the primary booking request. A server-owned system policy tells
+the model that this message has no instruction authority and that PostgreSQL
+canon, roster, events, and continuity take precedence. This role/order boundary
+reduces prompt-injection risk, but model adherence and semantic conflict or
+excerpt-disclosure detection are not deterministic. Map only pages whose
+contents are approved both for the existing OpenAI generation request and for
+possible generated-answer disclosure. The enrichment can neither write Notion
+nor persist Backstage data. When enrichment is used, the backend also redacts
+lineage content, suppresses prompt-debug response content, and skips generic
+module-session transcript writes. An enriched HRC review also bypasses the
+shared result cache
+and sanitizes provider-failure verdicts. Enriched generation and its sensitive
+HRC follow-up force OpenAI Responses `store: false` even when global
+`OPENAI_STORE` is enabled; non-content audit metadata and token counts remain.
+
+After deployment, make one `generateBooking` call for a mapped test universe
+and verify the web service emits the sanitized
+`backstage.notion_context.loaded` event without inspecting raw prompt content.
+Then make the same request without the dedicated bearer and verify no Notion
+request/event occurs while generation still succeeds from PostgreSQL. OpenAI's
+current Actions documentation says API-key authentication is configured in the
+GPT editor and stored encrypted, but does not explicitly guarantee how a saved
+key is applied to an operation whose OpenAPI `security` is omitted. If the
+credential is not present on `runBackstageBooker`, enrichment must remain off;
+do not weaken the backend gate. Treat an explicit reviewed Builder-contract
+authentication change as a separate follow-up.
 
 ## Configure the existing GPT
 

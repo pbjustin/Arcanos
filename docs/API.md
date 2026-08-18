@@ -458,6 +458,42 @@ so callers cannot combine two revisions. An absent exact universe/key pair is
 `404 BACKSTAGE_STORYLINE_NOT_FOUND`; a database outage is retryable `503`.
 This path has no list, generation, mutation, confirmation, or memory fallback.
 
+`generateBooking` and `generateBookingWithHRC` can optionally enrich their
+existing PostgreSQL-derived model request with explicitly mapped Notion pages.
+This adds no endpoint or module action. It runs only on canonical synchronous
+Backstage generation when the request carries the valid dedicated Backstage
+bearer and both `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the web service.
+Missing/invalid authentication, incomplete configuration, an unmapped universe,
+or a PostgreSQL-context failure preserves the existing database/process-memory
+behavior and makes no Notion request. Exact-literal responses and match
+simulation do not load Notion.
+
+The backend calls only Notion's fixed page-Markdown read endpoint for one to
+three configured raw page UUIDs, never a caller URL. Redirects are rejected;
+all page reads share one four-second deadline and each response is capped at
+256 KiB. Sanitized, quoted excerpts are capped at 4,000 Unicode code points per
+page and 12,000 total. Unknown child blocks are reported as partial but never
+followed. The backend places the Notion data in its own delimited user message
+before the primary booking request and adds a server-owned system policy that
+instructs the model to treat PostgreSQL state as authoritative, ignore
+instructions in Notion, and limit use to nonconflicting background. This
+role/order boundary reduces prompt-injection risk, but model adherence and
+semantic conflict detection are not deterministic; the generated answer is not
+automatically checked against PostgreSQL or the source excerpt. Notion has no
+write or database-mirroring path. Enriched runs disable optional internal
+judged feedback/self-improvement, replace lineage input/output summaries with
+fixed redaction markers, suppress response content from prompt-debug traces,
+and skip generic module-conversation transcript persistence. Non-content audit
+metadata and token counts remain observable. Enriched HRC reviews bypass the
+shared result cache and sanitize provider-failure verdicts. Both enriched
+generation and its sensitive HRC follow-up force OpenAI Responses `store: false`
+regardless of the global `OPENAI_STORE` value. The selected excerpts are still
+sent to the configured OpenAI generation provider and the generated answer is
+returned to the authenticated caller. Notion provider/configuration failures
+are sanitized and fail open to PostgreSQL-only generation; an ambient request
+abort still stops the operation.
+
 The `writeBackstageCanon` operation calls exactly
 `POST /gpt-access/capabilities/v1/backstage-booker/run`, uses the same dedicated
 credential, and accepts only `upsertStoryline` or `appendCanonBeat`. The
@@ -466,7 +502,10 @@ backend relies on ChatGPT's Allow/Deny banner and does not issue its own
 confirmation challenge. The fixed write lane may bypass generic
 `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
 `MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The dedicated bearer
-is accepted only on those exact read/write paths and is distinct from both
+is required on those exact read/write paths. On canonical public Backstage
+generation it is accepted only as optional request-local authorization for the
+configured Notion supplement; it does not gate the route or authorize another
+action. It is distinct from both
 `ARCANOS_GPT_ACCESS_TOKEN` and `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. The generic
 GPT Access credential is not accepted for either Backstage read; its existing
 confirmation path for the canon capability run remains unchanged. All four

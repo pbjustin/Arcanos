@@ -613,9 +613,17 @@ describe('Backstage mutation HTTP boundary', () => {
       dispatchBoundaryIndex
     );
     const gptRouteIndex = gptRouterSource.lastIndexOf('router.post(');
+    const gptCanonicalBoundaryIndex = gptRouterSource.indexOf(
+      'canonicalGptIdentifierBoundary',
+      gptRouteIndex
+    );
+    const gptNotionAuthIndex = gptRouterSource.indexOf(
+      'optionalBackstageNotionEnrichmentAuth',
+      gptCanonicalBoundaryIndex
+    );
     const gptBoundaryIndex = gptRouterSource.indexOf(
       'backstageMutationHttpBoundary',
-      gptRouteIndex
+      gptNotionAuthIndex
     );
     const gptProviderIndex = gptRouterSource.indexOf(
       'publicProviderGptAdmission',
@@ -636,7 +644,10 @@ describe('Backstage mutation HTTP boundary', () => {
     expect(dispatchBoundaryIndex).toBeGreaterThan(dispatchRouteIndex);
     expect(dispatchHandlerIndex).toBeGreaterThan(dispatchBoundaryIndex);
     expect(gptRouteIndex).toBeGreaterThan(-1);
+    expect(gptCanonicalBoundaryIndex).toBeGreaterThan(gptRouteIndex);
+    expect(gptNotionAuthIndex).toBeGreaterThan(gptCanonicalBoundaryIndex);
     expect(gptBoundaryIndex).toBeGreaterThan(gptRouteIndex);
+    expect(gptBoundaryIndex).toBeGreaterThan(gptNotionAuthIndex);
     expect(gptProviderIndex).toBeGreaterThan(gptBoundaryIndex);
     expect(modulesSource).toContain('backstageMutationConfirmationGate');
   });

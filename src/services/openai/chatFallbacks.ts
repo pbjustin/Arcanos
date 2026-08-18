@@ -14,6 +14,7 @@ import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders/index.js';
 import type { OpenAIResponsesProviderMetadata } from './requestBuilders/index.js';
+import { resolveSensitiveProviderStore } from '@shared/security/sensitiveProviderStorage.js';
 import {
   buildFailureContext,
   buildFinalFallbackReason,
@@ -41,6 +42,7 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   signal?: AbortSignal;
   timeoutMs?: number;
   preserveAggregateAbortContext?: boolean;
+  redactErrorDetails?: boolean;
 };
 
 function resolvePreservedAggregateSignal(
@@ -287,6 +289,9 @@ const executeChatCompletionRequest = async (
   }
   throwIfRequestAborted();
 
+  const sensitiveProviderStore = resolveSensitiveProviderStore(
+    payload.redactErrorDetails
+  );
   const requestPayload = buildResponsesRequest({
     prompt: extractPromptFromParams(payload),
     model: payload.model,
@@ -298,7 +303,10 @@ const executeChatCompletionRequest = async (
     responseFormat: payload.response_format as any,
     user: payload.user,
     messages: payload.messages,
-    includeRoutingMessage: true
+    includeRoutingMessage: true,
+    ...(sensitiveProviderStore === false
+      ? { store: sensitiveProviderStore }
+      : {})
   });
   const reasoningEffort = typeof payload.reasoning_effort === 'string'
     ? payload.reasoning_effort.trim()
@@ -373,7 +381,8 @@ async function attemptModelCall(
       model,
     }),
     {
-      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal),
+      redactErrorDetails: params.redactErrorDetails,
     }
   );
   const logContext = buildCompletionLogContext(model, startedAt, response);
@@ -406,7 +415,8 @@ async function attemptGPT5Call(
   const response = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, gpt5Payload),
     {
-      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal)
+      shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal),
+      redactErrorDetails: gpt5Payload.redactErrorDetails,
     }
   );
   const logContext = buildCompletionLogContext(gpt5Model, startedAt, response);

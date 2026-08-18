@@ -24,6 +24,7 @@ export interface NormalizedResponsesRequest {
   input: ResponseInput;
   responseFormat?: unknown;
   user?: string;
+  store?: false;
 }
 
 export interface NormalizedVisionResponsesRequest {
@@ -118,7 +119,8 @@ export function normalizeResponsesDraft(draft: ResponsesRequestDraft): Normalize
     instructionText: '',
     input,
     responseFormat: draft.responseFormat,
-    user: draft.user
+    user: draft.user,
+    store: draft.store
   };
 }
 

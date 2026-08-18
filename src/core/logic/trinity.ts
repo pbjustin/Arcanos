@@ -116,6 +116,8 @@ const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
 const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
 const OPTIONAL_SIDE_EFFECTS_DISABLED_REASON = 'disabled_by_caller';
+const SENSITIVE_AUDIT_CONTENT_REDACTED = '[SENSITIVE_CONTEXT_REDACTED]';
+const SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG = 'SENSITIVE_CONTEXT_AUDIT_CONTENT_REDACTED';
 
 function buildDisabledJudgedFeedback(): NonNullable<TrinityResult['judgedFeedback']> {
   return {
@@ -429,6 +431,7 @@ async function runLoggedStage<T>(params: {
   timeoutMs?: number;
   sourceEndpoint?: string;
   preserveAggregateAbortContext?: boolean;
+  redactErrorDetails?: boolean;
 }): Promise<T> {
   throwIfRequestAborted();
   const preserveAggregateAbortContext =
@@ -491,6 +494,9 @@ async function runLoggedStage<T>(params: {
       remainingBudgetMs,
       timeoutMs: params.timeoutMs
     });
+    const diagnosticError = params.redactErrorDetails
+      ? new Error('Sensitive-context generation failed.')
+      : error;
     logger.warn(`[core] ${params.stage} failed`, {
       module: 'ARCANOS:CORE',
       requestId: params.requestId,
@@ -498,7 +504,7 @@ async function runLoggedStage<T>(params: {
       remainingBudgetMs,
       timeoutMs: params.timeoutMs,
       timeoutPhase: resolveRuntimeTimeoutPhase(error),
-      error: resolveErrorMessage(error)
+      error: resolveErrorMessage(diagnosticError)
     });
     emitTrinityRuntimeTrace({
       requestId: params.requestId,
@@ -508,7 +514,7 @@ async function runLoggedStage<T>(params: {
       startedAt,
       runtimeBudget: params.runtimeBudget,
       timeoutMs: params.timeoutMs,
-      error,
+      error: diagnosticError,
       level: 'warn'
     });
     throw error;
@@ -713,7 +719,12 @@ export async function runThroughBrain(
   const start = Date.now();
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
-  const outputControls = deriveTrinityOutputControls(prompt, options);
+  const trustedPolicyPrompt =
+    typeof options.trustedPolicyPrompt === 'string'
+    && options.trustedPolicyPrompt.trim().length > 0
+      ? options.trustedPolicyPrompt
+      : prompt;
+  const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -722,13 +733,15 @@ export async function runThroughBrain(
   });
 
   // --- Tier detection ---
-  const tier = internalContext?.originalTier ? getNextTier(internalContext.originalTier) : detectTier(prompt);
+  const tier = internalContext?.originalTier
+    ? getNextTier(internalContext.originalTier)
+    : detectTier(trustedPolicyPrompt);
   const reasoningConfig = buildReasoningConfig(tier);
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
   const capabilityFlags = deriveTrinityCapabilityFlags(options.toolBackedCapabilities);
 
-  const internalMode = options.internalMode ?? isInternalArchitecturalMode(prompt);
+  const internalMode = options.internalMode ?? isInternalArchitecturalMode(trustedPolicyPrompt);
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
   const clarificationAllowed = !internalMode;
   const directAnswerPreferenceReason = internalMode
@@ -740,12 +753,12 @@ export async function runThroughBrain(
     typeof options.directAnswerUserIntentPrompt === 'string' &&
     options.directAnswerUserIntentPrompt.trim().length > 0
       ? options.directAnswerUserIntentPrompt.trim()
-      : prompt;
+      : trustedPolicyPrompt;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
 
-  const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
+  const auditConfig = getAuditSafeConfig(trustedPolicyPrompt, overrideFlag);
   logger.info('Trinity audit-safe mode', {
     module: 'trinity', operation: 'audit-safe',
     mode: auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED',
@@ -753,7 +766,7 @@ export async function runThroughBrain(
     escalated: !!internalContext?.escalated
   });
 
-  const memoryContext = getMemoryContext(prompt, effectiveMemorySessionId);
+  const memoryContext = getMemoryContext(trustedPolicyPrompt, effectiveMemorySessionId);
   const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 
@@ -779,13 +792,16 @@ export async function runThroughBrain(
     );
   }
 
-  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(prompt);
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(trustedPolicyPrompt);
   //audit Assumption: explicit exact-literal prompts should bypass generative model stages to preserve strict caller-visible output contracts; failure risk: queued and direct `/ask` responses add explanatory text or formatting around required literals; expected invariant: recognized exact-literal prompts return the extracted literal verbatim and skip model invocation; handling strategy: short-circuit before concurrency, OpenAI calls, and translation layers.
   if (exactLiteralShortcut) {
     const createdAt = Date.now();
     const { auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     routingStages.push(EXACT_LITERAL_DISPATCH_STAGE);
     auditFlags.push(EXACT_LITERAL_AUDIT_FLAG);
+    if (options.redactAuditContent) {
+      auditFlags.push(SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG);
+    }
 
     const finalProcessedSafely = validateAuditSafeOutput(exactLiteralShortcut.literal, auditConfig);
     if (!finalProcessedSafely) {
@@ -794,8 +810,10 @@ export async function runThroughBrain(
 
     const auditLogEntry = buildSingleModelAuditLogEntry(
       requestId,
-      prompt,
-      exactLiteralShortcut.literal,
+      options.redactAuditContent ? SENSITIVE_AUDIT_CONTENT_REDACTED : prompt,
+      options.redactAuditContent
+        ? SENSITIVE_AUDIT_CONTENT_REDACTED
+        : exactLiteralShortcut.literal,
       auditConfig,
       memoryContext,
       EXACT_LITERAL_DISPATCH_MODULE,
@@ -916,7 +934,7 @@ export async function runThroughBrain(
         ? null
         : selfHealingMitigation.forceDirectAnswer
           ? 'self_heal_enable_degraded_mode'
-          : resolveTrinityDirectAnswerPreference(prompt));
+          : resolveTrinityDirectAnswerPreference(trustedPolicyPrompt));
     const shouldPreferDirectAnswerMode = directAnswerReason !== null;
 
     const completeWithDirectAnswer = async (
@@ -972,6 +990,7 @@ export async function runThroughBrain(
           preserveAggregateAbortContext: options.preserveAggregateAbortContext,
           timeoutMs: recoveryTimeoutMs,
           sourceEndpoint: options.sourceEndpoint,
+          redactErrorDetails: options.redactAuditContent,
           operation: () =>
             runDirectAnswerStage(
               client,
@@ -984,7 +1003,11 @@ export async function runThroughBrain(
               options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
               options.preserveAggregateAbortContext,
-              options.directAnswerTokenCapOverride
+              options.directAnswerTokenCapOverride,
+              options.redactAuditContent,
+              trustedPolicyPrompt,
+              options.directAnswerSystemPolicyPrompt,
+              options.directAnswerUntrustedContextPrompt
             )
         });
       } catch (error) {
@@ -1031,7 +1054,10 @@ export async function runThroughBrain(
         outputControls,
         reasoningHonesty: directAnswerReasoningHonesty
       });
-      const finalText = applyTrinityDirectAnswerOutputContract(enforcedFinalOutput.text, prompt);
+      const finalText = applyTrinityDirectAnswerOutputContract(
+        enforcedFinalOutput.text,
+        trustedPolicyPrompt
+      );
       const integrity = validateTrinityAnswerIntegrity({
         text: finalText,
         reasoningHonesty: directAnswerReasoningHonesty
@@ -1108,7 +1134,11 @@ export async function runThroughBrain(
         auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
       }
 
-      if (finalProcessedSafely && !directAnswerOutput.fallbackUsed) {
+      if (
+        finalProcessedSafely
+        && !directAnswerOutput.fallbackUsed
+        && !options.disableOptionalSideEffects
+      ) {
         storePattern(getTrinityMessages().pattern_storage_label, [
           `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
           `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
@@ -1117,10 +1147,16 @@ export async function runThroughBrain(
 
       logRoutingSummary(directAnswerOutput.activeModel, false, TRINITY_DIRECT_ANSWER_STAGE);
 
+      if (
+        options.redactAuditContent
+        && !auditFlags.includes(SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG)
+      ) {
+        auditFlags.push(SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG);
+      }
       const auditLogEntry = buildSingleModelAuditLogEntry(
         requestId,
-        prompt,
-        finalText,
+        options.redactAuditContent ? SENSITIVE_AUDIT_CONTENT_REDACTED : prompt,
+        options.redactAuditContent ? SENSITIVE_AUDIT_CONTENT_REDACTED : finalText,
         auditConfig,
         memoryContext,
         directAnswerOutput.activeModel,
@@ -1512,7 +1548,7 @@ export async function runThroughBrain(
       finalOutput = {
         output:
           outputControls.answerMode === 'direct'
-            ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
+            ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
             : gpt5Output,
         activeModel: gpt5ModelUsed,
         fallbackUsed: true,
@@ -1562,7 +1598,7 @@ export async function runThroughBrain(
           finalOutput = {
             output:
               outputControls.answerMode === 'direct'
-                ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
+                ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
                 : gpt5Output,
             activeModel: gpt5ModelUsed,
             fallbackUsed: true,
@@ -1577,7 +1613,7 @@ export async function runThroughBrain(
     }
     checkWatchdog();
 
-    const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
+    const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
     const translatedFinalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
     const honestyFilteredFinal = enforceFinalStageHonesty(
       translatedFinalText,
@@ -1587,7 +1623,7 @@ export async function runThroughBrain(
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,
-      userPrompt: prompt,
+      userPrompt: trustedPolicyPrompt,
       capabilityFlags,
       outputControls,
       reasoningHonesty
@@ -1618,7 +1654,12 @@ export async function runThroughBrain(
       reasoningHonesty.blockedOrRewrittenClaims = enforcedFinalOutput.blockedOrRewrittenClaims;
     }
 
-    if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
+    if (
+      finalProcessedSafely
+      && !intakeOutput.fallbackUsed
+      && !finalOutput.fallbackUsed
+      && !options.disableOptionalSideEffects
+    ) {
       storePattern(getTrinityMessages().pattern_storage_label, [
         `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
@@ -1629,10 +1670,16 @@ export async function runThroughBrain(
     logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
 
     const completedModel = finalOutput.activeModel || actualModel;
+    if (
+      options.redactAuditContent
+      && !auditFlags.includes(SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG)
+    ) {
+      auditFlags.push(SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG);
+    }
     const auditLogEntry: AuditLogEntry = buildAuditLogEntry(
       requestId,
-      prompt,
-      finalText,
+      options.redactAuditContent ? SENSITIVE_AUDIT_CONTENT_REDACTED : prompt,
+      options.redactAuditContent ? SENSITIVE_AUDIT_CONTENT_REDACTED : finalText,
       auditConfig,
       memoryContext,
       completedModel,

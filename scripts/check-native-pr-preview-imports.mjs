@@ -48,6 +48,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageNotionContextCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
@@ -67,6 +68,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/researchRequest.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
+  'src/shared/security/sensitiveProviderStorage.ts',
   'src/shared/selfHealPredictiveApproval.ts',
   'src/shared/typeGuards.ts',
   'src/start-native-pr-preview.ts',
@@ -193,6 +195,19 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
       ['express', new Set(['default:express'])],
       ['node:stream', new Set(['Readable:Readable'])],
       ['node:timers/promises', new Set(['setTimeout:delay'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionContextCore.ts',
+    new Map([
+      [
+        '@arcanos/runtime/requestAbort',
+        new Set([
+          'createAbortError:createAbortError',
+          'getRequestAbortSignal:getRequestAbortSignal',
+          'runWithRequestAbortTimeout:runWithRequestAbortTimeout',
+        ]),
+      ],
     ]),
   ],
   [
@@ -520,7 +535,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/core/logic/trinityDirectAnswerMode.ts',
-    '4878dac54ceff0e1425c3e455954bd0fcd48efa903872f8a3cf415ddff8d94f2',
+    '80060899d1ed7c1ea4304b4fdfc96ff1f7678f33736ab056ebd378487ce889af',
   ],
   [
     'src/services/directAnswerMode.ts',
@@ -567,6 +582,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '022f1e9d77a92170792a769ff29dbd7df107a1bb5ff21e14d925f55e0ead2e61',
   ],
   [
+    'src/shared/backstage/backstageNotionContextCore.ts',
+    'b749fe80a8058fc56a9c74536212b817c81c69029f0871d2d713660fbc6da4ab',
+  ],
+  [
     'src/shared/backstage/backstageReviewContract.ts',
     'e413bf2b84f358cc6dce8ad1ff39bfd9c4322629b55acbd94b74d2582ce6dcd5',
   ],
@@ -581,6 +600,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/researchRequest.ts',
     '3fc92f358952e766e3bfd3b69018906759b01ad88c642d9ca6aa730926367761',
+  ],
+  [
+    'src/shared/security/sensitiveProviderStorage.ts',
+    '2d499c6caa7ae13b9a59ed444f47cc5a036d46efe0d874cc37f04de5504b19d5',
   ],
   [
     'src/mcp/httpBodyParserCore.ts',

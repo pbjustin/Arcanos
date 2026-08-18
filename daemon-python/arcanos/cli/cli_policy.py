@@ -12,13 +12,22 @@ from typing import Any
 from arcanos.debug import log_audit_event
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
-ANSI_ESCAPE_PATTERN = re.compile(
-    r"(?:\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\))|"
-    r"\x9B[0-?]*[ -/]*[@-~])"
+_DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
+    r"\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F"
+    r"\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164"
+    r"\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8"
+    r"\U0001BCA0-\U0001BCA3\U0001D173-\U0001D17A"
+    r"\U000E0000-\U000E0FFF"
 )
-UNSAFE_OUTPUT_CONTROL_PATTERN = re.compile(
+DEFAULT_IGNORABLE_CODE_POINT_PATTERN = re.compile(
+    rf"[{_DEFAULT_IGNORABLE_CODE_POINT_RANGES}]"
+)
+UNSAFE_GIT_PATH_CONTROL_PATTERN = re.compile(
+    # Preserve the established Git-path compatibility contract; output
+    # normalization separately removes the full default-ignorable set above.
     r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]"
 )
+_C1_CONTROL_STRING_INTRODUCERS = frozenset((0x90, 0x98, 0x9D, 0x9E, 0x9F))
 _GIT_C_ESCAPE_BYTES = {
     '"': ord('"'),
     "\\": ord("\\"),
@@ -33,6 +42,11 @@ _GIT_C_ESCAPE_BYTES = {
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[3] / "config" / "cli-policy.json"
 _POLICY_CACHE: dict[str, Any] | None = None
 _POLICY_CACHE_KEY: tuple[str, int, int] | None = None
+_MAX_STRUCTURED_ASSIGNMENT_DEPTH = 64
+_ASSIGNMENT_PADDING_PATTERN = (
+    r"[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A"
+    r"\u2028\u2029\u202F\u205F\u3000\uFEFF]*"
+)
 
 
 @dataclass(frozen=True)
@@ -147,18 +161,143 @@ def command_to_argv(command: str) -> list[str]:
     return shlex.split(command, posix=os.name != "nt")
 
 
-def redact_output(
+def _find_structured_assignment_end(value: str, start: int) -> int | None:
+    closing_for = {"{": "}", "[": "]"}
+    stack = [value[start]]
+    in_string = False
+    escaped = False
+
+    for index in range(start + 1, len(value)):
+        character = value[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == '"':
+            in_string = True
+        elif character in closing_for:
+            if len(stack) >= _MAX_STRUCTURED_ASSIGNMENT_DEPTH:
+                return None
+            stack.append(character)
+        elif character in ("}", "]"):
+            if not stack or closing_for[stack[-1]] != character:
+                return None
+            stack.pop()
+            if not stack:
+                return index + 1
+
+    return None
+
+
+def _reject_nonstandard_json_constant(constant: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {constant}")
+
+
+def _is_strict_json_assignment(value: str, start: int, end: int) -> bool:
+    try:
+        json.loads(
+            value[start:end],
+            parse_constant=_reject_nonstandard_json_constant,
+            parse_float=str,
+            parse_int=str,
+        )
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+def _find_assignment_token_end(value: str, start: int) -> int:
+    index = start
+    quote: str | None = None
+
+    while index < len(value):
+        character = value[index]
+        if character == "`" or (character == "$" and value[index : index + 2] == "$("):
+            return len(value)
+
+        if quote is not None:
+            if character == quote:
+                quote = None
+            elif quote == '"' and character == "\\":
+                index += 2
+                continue
+            index += 1
+            continue
+
+        if character in "\t\n\r ":
+            return index
+        if character in ('"', "'"):
+            quote = character
+        elif character in ("\\", "^"):
+            index += 2
+            continue
+        index += 1
+    return len(value)
+
+
+def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])({re.escape(env_name)}{_ASSIGNMENT_PADDING_PATTERN}="
+        rf"{_ASSIGNMENT_PADDING_PATTERN})",
+        re.IGNORECASE | re.ASCII,
+    )
+    redacted_parts: list[str] = []
+    cursor = 0
+    search_from = 0
+
+    while match := pattern.search(value, search_from):
+        assignment_start = match.end()
+        if assignment_start >= len(value):
+            search_from = match.end()
+            continue
+
+        assignment_end: int | None
+        replacement_value = replacement
+        first_character = value[assignment_start]
+        if first_character in ("{", "["):
+            assignment_end = _find_structured_assignment_end(value, assignment_start)
+            if assignment_end is None or not _is_strict_json_assignment(
+                value,
+                assignment_start,
+                assignment_end,
+            ):
+                redacted_parts.append(value[cursor : match.start()])
+                redacted_parts.append(f"{match.group(1)}{replacement}")
+                cursor = len(value)
+                break
+            assignment_end = _find_assignment_token_end(value, assignment_end)
+        elif first_character in ('"', "'"):
+            assignment_end = _find_assignment_token_end(value, assignment_start)
+            replacement_value = f"{first_character}{replacement}{first_character}"
+        else:
+            assignment_end = _find_assignment_token_end(value, assignment_start)
+
+        if assignment_end == assignment_start:
+            search_from = match.end()
+            continue
+
+        redacted_parts.append(value[cursor : match.start()])
+        redacted_parts.append(f"{match.group(1)}{replacement_value}")
+        cursor = assignment_end
+        search_from = assignment_end
+
+    redacted_parts.append(value[cursor:])
+    return "".join(redacted_parts)
+
+
+def _redact_sanitized_output(
     value: str,
-    *,
-    apply_truncation: bool = True,
-    preserve_record_separators: bool = False,
+    policy: dict[str, Any],
+    replacement: str,
 ) -> str:
-    policy = load_cli_policy()
-    replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
-    redacted = value or ""
+    redacted = value
     for env_name in policy.get("redactionPolicy", {}).get("envNames") or []:
-        pattern = re.compile(rf"\b({re.escape(str(env_name))}\s*=\s*)([\"']?)([^\s\"'`]+)([\"']?)", re.IGNORECASE)
-        redacted = pattern.sub(rf"\1\2{replacement}\4", redacted)
+        redacted = _redact_named_assignment(redacted, str(env_name), replacement)
     redacted = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", f"Bearer {replacement}", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
@@ -171,11 +310,199 @@ def redact_output(
         flags=re.IGNORECASE,
     )
     redacted = re.sub(r"BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY", replacement, redacted, flags=re.IGNORECASE)
-    redacted = strip_unsafe_output_controls(
-        redacted,
+    return redacted
+
+
+def redact_output(
+    value: str,
+    *,
+    apply_truncation: bool = True,
+    preserve_record_separators: bool = False,
+) -> str:
+    policy = load_cli_policy()
+    replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
+    frames = _sanitize_output_control_frames(
+        value or "",
         preserve_record_separators=preserve_record_separators,
     )
+    redacted = "".join(
+        (
+            replacement
+            if frame.unsafe
+            else _redact_sanitized_output(frame.value, policy, replacement)
+        )
+        + frame.separator
+        for frame in frames
+    )
     return truncate_output(redacted) if apply_truncation else redacted
+
+
+def _consume_safe_sgr_sequence(value: str, start: int) -> int | None:
+    """Return the end of a canonical SGR sequence, or reject it as ambiguous."""
+
+    index = start
+    while index < len(value):
+        character = value[index]
+        code_point = ord(character)
+        if code_point in (0x00, 0x07, 0x7F):
+            index += 1
+            continue
+        if character.isascii() and (character.isdigit() or character in ";:"):
+            index += 1
+            continue
+        if character == "m":
+            return index + 1
+        return None
+    return None
+
+
+def _consume_safe_control_string(
+    value: str,
+    start: int,
+    *,
+    osc: bool,
+) -> int | None:
+    """Return a complete control-string end; reject malformed/ambiguous input."""
+
+    index = start
+    while index < len(value):
+        character = value[index]
+        code_point = ord(character)
+        if osc and code_point == 0x07:
+            return index + 1
+        if code_point == 0x9C:
+            return index + 1
+        if code_point == 0x1B:
+            if index + 1 < len(value) and value[index + 1] == "\\":
+                return index + 2
+            return None
+        if code_point in (0x00, 0x07, 0x7F):
+            index += 1
+            continue
+        if character in ("\u2028", "\u2029"):
+            return None
+        if code_point <= 0x1F or 0x80 <= code_point <= 0x9F:
+            return None
+        index += 1
+    return None
+
+
+def _sanitize_terminal_segment(value: str) -> str | None:
+    """Strip safe terminal decoration, or reject the whole framed segment."""
+
+    sanitized: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        code_point = ord(character)
+
+        if code_point == 0x1B:
+            if index + 1 >= len(value):
+                return None
+            command = value[index + 1]
+            if command == "[":
+                sequence_end = _consume_safe_sgr_sequence(value, index + 2)
+            elif command == "]":
+                sequence_end = _consume_safe_control_string(
+                    value,
+                    index + 2,
+                    osc=True,
+                )
+            elif command in ("P", "X", "^", "_"):
+                sequence_end = _consume_safe_control_string(
+                    value,
+                    index + 2,
+                    osc=False,
+                )
+            else:
+                return None
+            if sequence_end is None:
+                return None
+            index = sequence_end
+            continue
+
+        if code_point == 0x9B:
+            sequence_end = _consume_safe_sgr_sequence(value, index + 1)
+            if sequence_end is None:
+                return None
+            index = sequence_end
+            continue
+
+        if code_point in _C1_CONTROL_STRING_INTRODUCERS:
+            sequence_end = _consume_safe_control_string(
+                value,
+                index + 1,
+                osc=code_point == 0x9D,
+            )
+            if sequence_end is None:
+                return None
+            index = sequence_end
+            continue
+
+        if code_point in (0x00, 0x07, 0x7F):
+            index += 1
+            continue
+        if character in ("\t", "\n", "\u2028", "\u2029"):
+            sanitized.append(character)
+            index += 1
+            continue
+        if character == "\r":
+            if index + 1 >= len(value) or value[index + 1] != "\n":
+                return None
+            sanitized.append("\r\n")
+            index += 2
+            continue
+        if code_point <= 0x1F or 0x80 <= code_point <= 0x9F:
+            return None
+
+        sanitized.append(character)
+        index += 1
+
+    return "".join(sanitized)
+
+
+@dataclass(frozen=True)
+class _SanitizedOutputFrame:
+    value: str
+    separator: str
+    unsafe: bool
+
+
+def _make_sanitized_output_frame(
+    value: str,
+    separator: str,
+) -> _SanitizedOutputFrame:
+    sanitized = _sanitize_terminal_segment(value)
+    return _SanitizedOutputFrame(
+        value="" if sanitized is None else sanitized,
+        separator=separator,
+        unsafe=sanitized is None,
+    )
+
+
+def _sanitize_output_control_frames(
+    value: str,
+    *,
+    preserve_record_separators: bool,
+) -> list[_SanitizedOutputFrame]:
+    normalized = DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", value or "")
+    if not preserve_record_separators:
+        return [_make_sanitized_output_frame(normalized, "")]
+
+    frames: list[_SanitizedOutputFrame] = []
+    segment_start = 0
+    for index, character in enumerate(normalized):
+        if character not in ("\x00", "\x1f"):
+            continue
+        frames.append(
+            _make_sanitized_output_frame(
+                normalized[segment_start:index],
+                character,
+            )
+        )
+        segment_start = index + 1
+    frames.append(_make_sanitized_output_frame(normalized[segment_start:], ""))
+    return frames
 
 
 def strip_unsafe_output_controls(
@@ -183,24 +510,14 @@ def strip_unsafe_output_controls(
     *,
     preserve_record_separators: bool = False,
 ) -> str:
-    """Remove terminal controls while preserving ordinary line formatting."""
+    """Strip safe decoration, omitting frames with display-mutating controls."""
 
-    without_ansi = ANSI_ESCAPE_PATTERN.sub("", value or "")
-    if not preserve_record_separators:
-        return UNSAFE_OUTPUT_CONTROL_PATTERN.sub("", without_ansi)
-    sentinel = "\uF8FF"
-    while sentinel in without_ansi:
-        sentinel += "\uF8FF"
-    nul_sentinel = sentinel
-    unit_separator_sentinel = sentinel + "\uF8FF"
-    preserved = without_ansi.replace("\x00", nul_sentinel).replace(
-        "\x1f",
-        unit_separator_sentinel,
-    )
-    return (
-        UNSAFE_OUTPUT_CONTROL_PATTERN.sub("", preserved)
-        .replace(unit_separator_sentinel, "\x1f")
-        .replace(nul_sentinel, "\x00")
+    return "".join(
+        ("" if frame.unsafe else frame.value) + frame.separator
+        for frame in _sanitize_output_control_frames(
+            value,
+            preserve_record_separators=preserve_record_separators,
+        )
     )
 
 
@@ -407,7 +724,7 @@ def _decode_git_path_field(value: str) -> str:
             raise ValueError("Git patch path is not valid UTF-8.") from error
     if (
         not decoded
-        or UNSAFE_OUTPUT_CONTROL_PATTERN.search(decoded)
+        or UNSAFE_GIT_PATH_CONTROL_PATTERN.search(decoded)
         or BIDI_CONTROL_PATTERN.search(decoded)
     ):
         raise ValueError("Git patch path contains an unsupported character.")

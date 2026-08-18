@@ -28,6 +28,8 @@ export interface ChatParams {
   messages?: ChatCompletionMessageParam[];
   /** Whether to include ARCANOS routing message (default: true) */
   includeRoutingMessage?: boolean;
+  /** Per-request opt-out from Responses retention. */
+  store?: false;
 }
 
 /**
