@@ -379,23 +379,40 @@ export function buildInternalArchitecturalMessages(
 
 /**
  * Build the single-pass direct-answer messages used by Trinity core when simulation must be suppressed.
- * Inputs/outputs: memory context summary + sanitized user prompt -> strict chat message array.
- * Edge cases: blank prompt content falls back to a deterministic placeholder so OpenAI always receives string content.
+ * Inputs/outputs: memory context, primary prompt, trusted system policy, and untrusted supplemental data -> strict chat message array.
+ * Edge cases: untrusted data fails closed without a nonblank system policy and otherwise precedes the final primary user message.
  */
 export function buildTrinityDirectAnswerMessages(
   memoryContextSummary: string,
   auditSafePrompt: string,
-  trustedPolicyPrompt: string = auditSafePrompt
+  trustedPolicyPrompt: string = auditSafePrompt,
+  directAnswerSystemPolicyPrompt?: string,
+  directAnswerUntrustedContextPrompt?: string
 ): ChatCompletionMessageParam[] {
-  const systemContent = ensureStringContent(
+  const baseSystemContent = ensureStringContent(
     buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, trustedPolicyPrompt)
   ) || 'Answer the request directly.';
+  const systemPolicyContent = ensureStringContent(directAnswerSystemPolicyPrompt).trim();
+  const untrustedContextContent = ensureStringContent(directAnswerUntrustedContextPrompt).trim();
+  if (untrustedContextContent && !systemPolicyContent) {
+    throw new TypeError('Direct-answer untrusted context requires a trusted system policy.');
+  }
+  const systemContent = systemPolicyContent
+    ? `${baseSystemContent}\n\n${systemPolicyContent}`
+    : baseSystemContent;
   const userRequestContent = ensureStringContent(auditSafePrompt) || 'No request provided.';
 
-  return [
-    { role: 'system', content: systemContent },
-    { role: 'user', content: userRequestContent }
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemContent }
   ];
+
+  if (untrustedContextContent) {
+    messages.push({ role: 'user', content: untrustedContextContent });
+  }
+
+  messages.push({ role: 'user', content: userRequestContent });
+
+  return messages;
 }
 
 /**
@@ -640,7 +657,9 @@ export async function runDirectAnswerStage(
   preserveAggregateAbortContext = false,
   directAnswerTokenCapOverride?: number,
   redactSensitiveDiagnostics = false,
-  trustedPolicyPrompt?: string
+  trustedPolicyPrompt?: string,
+  directAnswerSystemPolicyPrompt?: string,
+  directAnswerUntrustedContextPrompt?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -692,7 +711,9 @@ export async function runDirectAnswerStage(
         messages: buildTrinityDirectAnswerMessages(
           memoryContextSummary,
           auditSafePrompt,
-          trustedPolicyPrompt ?? auditSafePrompt
+          trustedPolicyPrompt ?? auditSafePrompt,
+          directAnswerSystemPolicyPrompt,
+          directAnswerUntrustedContextPrompt
         ),
         temperature,
         model: directAnswerModel,

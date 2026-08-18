@@ -459,8 +459,8 @@ so callers cannot combine two revisions. An absent exact universe/key pair is
 This path has no list, generation, mutation, confirmation, or memory fallback.
 
 `generateBooking` and `generateBookingWithHRC` can optionally enrich their
-existing PostgreSQL-derived prompt with explicitly mapped Notion pages. This
-adds no endpoint or module action. It runs only on canonical synchronous
+existing PostgreSQL-derived model request with explicitly mapped Notion pages.
+This adds no endpoint or module action. It runs only on canonical synchronous
 Backstage generation when the request carries the valid dedicated Backstage
 bearer and both `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the web service.
@@ -474,7 +474,13 @@ three configured raw page UUIDs, never a caller URL. Redirects are rejected;
 all page reads share one four-second deadline and each response is capped at
 256 KiB. Sanitized, quoted excerpts are capped at 4,000 Unicode code points per
 page and 12,000 total. Unknown child blocks are reported as partial but never
-followed. PostgreSQL remains authoritative in every conflict, and Notion has no
+followed. The backend places the Notion data in its own delimited user message
+before the primary booking request and adds a server-owned system policy that
+instructs the model to treat PostgreSQL state as authoritative, ignore
+instructions in Notion, and limit use to nonconflicting background. This
+role/order boundary reduces prompt-injection risk, but model adherence and
+semantic conflict detection are not deterministic; the generated answer is not
+automatically checked against PostgreSQL or the source excerpt. Notion has no
 write or database-mirroring path. Enriched runs disable optional internal
 judged feedback/self-improvement, replace lineage input/output summaries with
 fixed redaction markers, suppress response content from prompt-debug traces,

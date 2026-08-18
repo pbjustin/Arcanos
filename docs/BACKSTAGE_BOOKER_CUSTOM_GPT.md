@@ -140,13 +140,18 @@ integration token with read-content access only. Never place it in Builder.
 The second maps each exact universe ID to one to three unique raw page UUIDs;
 do not use page URLs. Share only those pages with the integration, and map
 child pages explicitly because the reader never follows unknown child IDs.
-Notion text is bounded, sanitized, quoted as untrusted material, and always
-loses conflicts to PostgreSQL canon/roster/events/continuity. It can neither
-write Notion nor persist Backstage data. Selected excerpts are sent through the
-existing OpenAI generation request, so use only pages approved for that data
-path. When enrichment is used, the backend also redacts lineage content,
-suppresses prompt-debug response content, and skips the generic module-session
-transcript write. An enriched HRC review also bypasses the shared result cache
+Notion text is bounded, sanitized, and quoted in a separately delimited user
+message before the primary booking request. A server-owned system policy tells
+the model that this message has no instruction authority and that PostgreSQL
+canon, roster, events, and continuity take precedence. This role/order boundary
+reduces prompt-injection risk, but model adherence and semantic conflict or
+excerpt-disclosure detection are not deterministic. Map only pages whose
+contents are approved both for the existing OpenAI generation request and for
+possible generated-answer disclosure. The enrichment can neither write Notion
+nor persist Backstage data. When enrichment is used, the backend also redacts
+lineage content, suppresses prompt-debug response content, and skips generic
+module-session transcript writes. An enriched HRC review also bypasses the
+shared result cache
 and sanitizes provider-failure verdicts. Enriched generation and its sensitive
 HRC follow-up force OpenAI Responses `store: false` even when global
 `OPENAI_STORE` is enabled; non-content audit metadata and token counts remain.

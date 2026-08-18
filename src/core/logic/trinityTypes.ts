@@ -243,6 +243,10 @@ export interface TrinityRunOptions {
   directAnswerUserIntentPrompt?: string;
   /** Internal caller-owned directive used for policy parsing when the execution prompt contains untrusted context. */
   trustedPolicyPrompt?: string;
+  /** Internal caller-owned policy appended to the direct-answer system instruction. */
+  directAnswerSystemPolicyPrompt?: string;
+  /** Untrusted supplemental data delivered before the primary user message; requires a nonblank system policy. */
+  directAnswerUntrustedContextPrompt?: string;
   /** Redact sensitive audit/provider diagnostics and force stateless provider execution. */
   redactAuditContent?: boolean;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;

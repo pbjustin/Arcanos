@@ -1005,7 +1005,9 @@ export async function runThroughBrain(
               options.preserveAggregateAbortContext,
               options.directAnswerTokenCapOverride,
               options.redactAuditContent,
-              trustedPolicyPrompt
+              trustedPolicyPrompt,
+              options.directAnswerSystemPolicyPrompt,
+              options.directAnswerUntrustedContextPrompt
             )
         });
       } catch (error) {

@@ -460,18 +460,25 @@ disabled, a four-second aggregate deadline, a 256 KiB response ceiling per
 page, and a 4,000-Unicode-code-point prompt ceiling per page/12,000 total.
 Child/unknown blocks are never followed. Provider/configuration errors fail
 open to the already-loaded PostgreSQL context; an ambient request abort still
-stops generation. PostgreSQL canon, roster, events, and saved continuity win
-every conflict. Notion text is quoted as untrusted supplemental material,
-cannot control Trinity audit/output policy, and cannot write either system.
+stops generation. The backend sends quoted Notion text in a separately
+delimited user message before the primary booking request and adds a
+server-owned system policy directing the model to prefer PostgreSQL canon,
+roster, events, and saved continuity and to ignore instructions in Notion.
+Trinity derives audit/output policy only from the caller directive, not the
+Notion text, and the enrichment has no write path to either system. The
+role/order boundary reduces prompt-injection risk, but there is no deterministic
+semantic conflict or excerpt-disclosure validator on generated model output.
 Enriched runs use fixed lineage content markers and skip generic prompt-debug
 response and module-session transcript content persistence; metadata and token
 counts remain observable. Enriched HRC reviews bypass the shared result cache
-and sanitize provider-failure verdicts. Enriched generation also disables Trinity's optional
-judged-feedback/self-improvement side effects so the composite prompt is not
-stored by those application paths. The selected excerpts still enter the
-existing OpenAI model request, so configure only content approved for that
-provider data path and its applicable retention controls. Enriched generation
-and its sensitive HRC follow-up always send OpenAI Responses with `store: false`,
+and sanitize provider-failure verdicts. Enriched generation also disables
+Trinity's optional judged-feedback/self-improvement side effects so the
+composite prompt is not stored by those application paths. The selected
+excerpts still enter the existing OpenAI model request, so configure only
+content approved for that provider data path, possible generated-answer
+disclosure, and its applicable
+retention controls. Enriched generation and its sensitive HRC follow-up always
+send OpenAI Responses with `store: false`,
 overriding `OPENAI_STORE` for that request only.
 
 Reinforcement HTTP limits are also fixed rather than environment settings.

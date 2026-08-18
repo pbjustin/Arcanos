@@ -48,6 +48,72 @@ def test_redaction_and_truncation_use_shared_policy() -> None:
     assert "[REDACTED]" in redacted
 
 
+def test_redaction_consumes_complete_quoted_named_assignments(monkeypatch) -> None:
+    secret_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    replacement = "[REDACTED]"
+    monkeypatch.setattr(
+        "arcanos.cli.cli_policy.load_cli_policy",
+        lambda: {
+            "redactionPolicy": {
+                "replacement": replacement,
+                "envNames": [secret_name],
+            }
+        },
+    )
+    quoted_json = '{"backstage-wwe":["page-a"],"private-universe":["private-page-id"]}'
+    cases = [
+        (
+            f"before {secret_name}='{quoted_json}' after",
+            f"before {secret_name}='{replacement}' after",
+        ),
+        (
+            f'{secret_name}="{{\\"backstage-wwe\\":[\\"private-page-id\\"]}}"',
+            f'{secret_name}="{replacement}"',
+        ),
+        (
+            f"{secret_name}=private-page-id",
+            f"{secret_name}={replacement}",
+        ),
+        (
+            rf"{secret_name}='private\'page-id'",
+            f"{secret_name}='{replacement}'",
+        ),
+        (
+            rf'{secret_name}="private\"page-id"',
+            f'{secret_name}="{replacement}"',
+        ),
+    ]
+
+    for source, expected in cases:
+        redacted = redact_output(source, apply_truncation=False)
+        assert redacted == expected
+        assert "private-page-id" not in redacted
+
+
+def test_shared_policy_redacts_backstage_notion_credentials() -> None:
+    access_token_name = "ARCANOS_BACKSTAGE_NOTION_ACCESS_" + "TOKEN"
+    universe_pages_name = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_" + "JSON"
+    fake_token = "placeholder-notion-access-token"
+    fake_page_id = "placeholder-private-page-id"
+    output = "\n".join(
+        [
+            f"{access_token_name}={fake_token}",
+            f'{universe_pages_name}=\'{{"private-universe":["{fake_page_id}"]}}\'',
+        ]
+    )
+
+    redacted = redact_output(output, apply_truncation=False)
+
+    assert redacted == "\n".join(
+        [
+            f"{access_token_name}=[REDACTED]",
+            f"{universe_pages_name}='[REDACTED]'",
+        ]
+    )
+    assert fake_token not in redacted
+    assert fake_page_id not in redacted
+
+
 def test_patch_policy_rejects_secret_paths_and_sensitive_content(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
 

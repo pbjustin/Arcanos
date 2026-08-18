@@ -147,6 +147,26 @@ def command_to_argv(command: str) -> list[str]:
     return shlex.split(command, posix=os.name != "nt")
 
 
+def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
+    pattern = re.compile(
+        rf"\b({re.escape(env_name)}\s*=\s*)(?:"
+        r'"((?:\\.|[^"\\])*)"|'
+        r"'((?:\\.|[^'\\])*)'|"
+        r"([^\s`]+))",
+        re.IGNORECASE,
+    )
+
+    def replace_assignment(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        if match.group(2) is not None:
+            return f'{prefix}"{replacement}"'
+        if match.group(3) is not None:
+            return f"{prefix}'{replacement}'"
+        return f"{prefix}{replacement}"
+
+    return pattern.sub(replace_assignment, value)
+
+
 def redact_output(
     value: str,
     *,
@@ -157,8 +177,7 @@ def redact_output(
     replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
     redacted = value or ""
     for env_name in policy.get("redactionPolicy", {}).get("envNames") or []:
-        pattern = re.compile(rf"\b({re.escape(str(env_name))}\s*=\s*)([\"']?)([^\s\"'`]+)([\"']?)", re.IGNORECASE)
-        redacted = pattern.sub(rf"\1\2{replacement}\4", redacted)
+        redacted = _redact_named_assignment(redacted, str(env_name), replacement)
     redacted = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", f"Bearer {replacement}", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
