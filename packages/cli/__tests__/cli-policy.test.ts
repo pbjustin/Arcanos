@@ -141,6 +141,215 @@ describe("CLI security policy helpers", () => {
     )).toBe('ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=[REDACTED]');
   });
 
+  it("fully redacts balanced unquoted structured assignments and preserves suffixes", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const nestedJson = JSON.stringify({
+      outer: [{
+        text: "escaped quote: \" and fake delimiters: } ]",
+        pages: ["private-page-id"]
+      }]
+    });
+
+    expect(redactCliOutput(
+      `prefix ${envName}={ "private-universe": [ "private-page-id" ] } SAFE_FLAG=true suffix`
+    )).toBe(`prefix ${envName}=[REDACTED] SAFE_FLAG=true suffix`);
+
+    expect(redactCliOutput(
+      `${envName}=${nestedJson} OPENAI_API_KEY=sk-test-secret-value tail`
+    )).toBe(`${envName}=[REDACTED] OPENAI_API_KEY=[REDACTED] tail`);
+
+    expect(redactCliOutput(
+      `${envName}=[ { "page": "private-page-id" }, [ "second-private-page-id" ] ] NEXT=value`
+    )).toBe(`${envName}=[REDACTED] NEXT=value`);
+
+    expect(redactCliOutput(
+      `${envName}={"page":"private-page-id"}adjacent-private-tail NEXT=value`
+    )).toBe(`${envName}=[REDACTED] NEXT=value`);
+  });
+
+  it("fully redacts multiline unquoted structured assignments", () => {
+    const input = [
+      "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON={",
+      '  "private-universe": [',
+      '    "private-page-id"',
+      "  ]",
+      "} SAFE_FLAG=true suffix"
+    ].join("\n");
+
+    expect(redactCliOutput(input)).toBe(
+      "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=[REDACTED] SAFE_FLAG=true suffix"
+    );
+  });
+
+  it.each([
+    {
+      name: "unclosed",
+      structuredValue: '{ "private-universe": ["private-page-id"]'
+    },
+    {
+      name: "mismatched",
+      structuredValue: '{ "private-universe": ["private-page-id"} ]'
+    },
+    {
+      name: "unterminated string",
+      structuredValue: '{ "private-universe": ["private-page-id] }'
+    }
+  ])("fails closed for $name unquoted structured assignments", ({ structuredValue }) => {
+    const input = "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON="
+      + `${structuredValue}\nSAFE_FLAG=true trailing-private-value`;
+
+    expect(redactCliOutput(input)).toBe(
+      "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=[REDACTED]"
+    );
+  });
+
+  it.each([
+    {
+      name: "single-quoted pseudo JSON with a premature close",
+      structuredValue: "{'note':'premature } private-page-id'} SAFE_FLAG=true"
+    },
+    {
+      name: "non-standard JSON constant",
+      structuredValue: '{"page":NaN} private-page-id SAFE_FLAG=true'
+    },
+    {
+      name: "excessive nesting",
+      structuredValue: `${"[".repeat(65)}"private-page-id"${"]".repeat(65)} SAFE_FLAG=true`
+    }
+  ])("fails closed for $name", ({ structuredValue }) => {
+    const input = "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON="
+      + structuredValue;
+
+    expect(redactCliOutput(input)).toBe(
+      "prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=[REDACTED]"
+    );
+  });
+
+  it("redacts quoted, structured, and escaped shell-word tails as one assignment token", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+
+    expect(redactCliOutput(
+      `${envName}='private-page-id''adjacent private tail' SAFE_FLAG=true`
+    )).toBe(`${envName}='[REDACTED]' SAFE_FLAG=true`);
+
+    expect(redactCliOutput(
+      `${envName}={"page":"private-page-id"}"adjacent private tail" SAFE_FLAG=true`
+    )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
+
+    expect(redactCliOutput(
+      `${envName}=private-page-id\\ adjacent-private-tail SAFE_FLAG=true`
+    )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
+
+    expect(redactCliOutput(
+      `${envName}=private-page-id^ adjacent-private-tail SAFE_FLAG=true`
+    )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
+  });
+
+  it.each(["\u000B", "\u000C", "\uFEFF", "\u0085", "\u001C", "\u00A0"])(
+    "uses shared fail-closed Unicode assignment boundaries for %p",
+    (separator) => {
+      const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+      const structured = '{"page":"private-page-id"}';
+      const visibleSeparator = ["\u000B", "\u000C", "\u0085", "\u001C"].includes(separator)
+        ? ""
+        : separator;
+
+      expect(redactCliOutput(
+        `${envName}${separator}=${separator}${structured} tail`
+      )).toBe(`${envName}${visibleSeparator}=${visibleSeparator}[REDACTED] tail`);
+
+      expect(redactCliOutput(
+        `${envName}=${structured}${separator}adjacent-private-tail SAFE_FLAG=true`
+      )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
+    }
+  );
+
+  it("normalizes ANSI and unsafe display controls before named redaction", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const coloredName = envName.replace("NOTION", "NOT\x1B[31mION\x1B[0m");
+    const input = `\x1B[36m${coloredName}\x1B[0m\u202E=\x1B[32m`
+      + '{ "page": [ "private-page-id" ] }\x1B[0m tail';
+    const dcsName = envName.replace("NOTION", "NOT\x1BPqhidden\x1B\\ION");
+    const apcName = envName.replace("NOTION", "NOT\x9Fhidden\x9CION");
+    const decscName = envName.replace("NOTION", "NOT\x1B7ION");
+
+    expect(redactCliOutput(input)).toBe(`${envName}=[REDACTED] tail`);
+    expect(redactCliOutput(
+      `${dcsName}={"page":"private-page-id"} tail`
+    )).toBe(`${envName}=[REDACTED] tail`);
+    expect(redactCliOutput(
+      `${apcName}={"page":"private-page-id"} tail`
+    )).toBe(`${envName}=[REDACTED] tail`);
+    expect(redactCliOutput(
+      `\x1B7${decscName}={"page":"private-page-id"} tail`
+    )).toBe(`${envName}=[REDACTED] tail`);
+    expect(redactCliOutput(
+      `${envName}=\x1B]unterminated-private-page-id`
+    )).toBe(`${envName}=`);
+  });
+
+  it.each(["é", "界", "K"])(
+    "uses an ASCII env-name boundary after Unicode prefix %p",
+    (prefix) => {
+      const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+
+      expect(redactCliOutput(
+        `${prefix}${envName}={"page":"private-page-id"} tail`
+      )).toBe(`${prefix}${envName}=[REDACTED] tail`);
+    }
+  );
+
+  it("does not match ASCII identifier prefixes or Unicode case-fold spoofs", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const value = '{"page":"private-page-id"}';
+    const spoofedName = envName.replace("I", "ı");
+
+    expect(redactCliOutput(`X${envName}=${value}`)).toBe(`X${envName}=${value}`);
+    expect(redactCliOutput(`${spoofedName}=${value}`)).toBe(`${spoofedName}=${value}`);
+  });
+
+  it("validates large JSON numbers without weakening redaction", () => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+    const largeNumber = "9".repeat(5000);
+
+    expect(redactCliOutput(
+      `${envName}={"number":${largeNumber}} SAFE_FLAG=true`
+    )).toBe(`${envName}=[REDACTED] SAFE_FLAG=true`);
+  });
+
+  it.each([
+    {
+      name: "backtick-prefixed value",
+      value: "`private-page-id` SAFE_FLAG=true"
+    },
+    {
+      name: "backtick tail",
+      value: "private-page-id`adjacent-private-tail SAFE_FLAG=true"
+    }
+  ])("fails closed for a $name", ({ value }) => {
+    const envName = "ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON";
+
+    expect(redactCliOutput(`${envName}=${value}`)).toBe(`${envName}=[REDACTED]`);
+  });
+
+  it.each([
+    {
+      name: "double-quoted",
+      quote: '"'
+    },
+    {
+      name: "single-quoted",
+      quote: "'"
+    }
+  ])("fails closed for unmatched $name assignments", ({ quote }) => {
+    const input = `prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=${quote}`
+      + "private page id with spaces\nSAFE_FLAG=true trailing-private-value";
+
+    expect(redactCliOutput(input)).toBe(
+      `prefix ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=${quote}[REDACTED]${quote}`
+    );
+  });
+
   it("builds deterministic audit event records from policy decisions", () => {
     const decision = evaluateCliCommandPolicy({
       command: "rm -rf /",

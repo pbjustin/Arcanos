@@ -13,7 +13,11 @@ from arcanos.debug import log_audit_event
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
 ANSI_ESCAPE_PATTERN = re.compile(
-    r"(?:\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\))|"
+    r"(?:\x1B(?:\][\s\S]*?(?:\x07|\x1B\\|\x9C|$)|"
+    r"[PX^_][\s\S]*?(?:\x1B\\|\x9C|$)|"
+    r"\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])|"
+    r"\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)|"
+    r"[\x90\x98\x9E\x9F][\s\S]*?(?:\x1B\\|\x9C|$)|"
     r"\x9B[0-?]*[ -/]*[@-~])"
 )
 UNSAFE_OUTPUT_CONTROL_PATTERN = re.compile(
@@ -33,6 +37,11 @@ _GIT_C_ESCAPE_BYTES = {
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[3] / "config" / "cli-policy.json"
 _POLICY_CACHE: dict[str, Any] | None = None
 _POLICY_CACHE_KEY: tuple[str, int, int] | None = None
+_MAX_STRUCTURED_ASSIGNMENT_DEPTH = 64
+_ASSIGNMENT_PADDING_PATTERN = (
+    r"[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A"
+    r"\u2028\u2029\u202F\u205F\u3000\uFEFF]*"
+)
 
 
 @dataclass(frozen=True)
@@ -147,24 +156,133 @@ def command_to_argv(command: str) -> list[str]:
     return shlex.split(command, posix=os.name != "nt")
 
 
+def _find_structured_assignment_end(value: str, start: int) -> int | None:
+    closing_for = {"{": "}", "[": "]"}
+    stack = [value[start]]
+    in_string = False
+    escaped = False
+
+    for index in range(start + 1, len(value)):
+        character = value[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == '"':
+            in_string = True
+        elif character in closing_for:
+            if len(stack) >= _MAX_STRUCTURED_ASSIGNMENT_DEPTH:
+                return None
+            stack.append(character)
+        elif character in ("}", "]"):
+            if not stack or closing_for[stack[-1]] != character:
+                return None
+            stack.pop()
+            if not stack:
+                return index + 1
+
+    return None
+
+
+def _reject_nonstandard_json_constant(constant: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {constant}")
+
+
+def _is_strict_json_assignment(value: str, start: int, end: int) -> bool:
+    try:
+        json.loads(
+            value[start:end],
+            parse_constant=_reject_nonstandard_json_constant,
+            parse_float=str,
+            parse_int=str,
+        )
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+def _find_assignment_token_end(value: str, start: int) -> int:
+    index = start
+    quote: str | None = None
+
+    while index < len(value):
+        character = value[index]
+        if character == "`" or (character == "$" and value[index : index + 2] == "$("):
+            return len(value)
+
+        if quote is not None:
+            if character == quote:
+                quote = None
+            elif quote == '"' and character == "\\":
+                index += 2
+                continue
+            index += 1
+            continue
+
+        if character in "\t\n\r ":
+            return index
+        if character in ('"', "'"):
+            quote = character
+        elif character in ("\\", "^"):
+            index += 2
+            continue
+        index += 1
+    return len(value)
+
+
 def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
     pattern = re.compile(
-        rf"\b({re.escape(env_name)}\s*=\s*)(?:"
-        r'"((?:\\.|[^"\\])*)"|'
-        r"'((?:\\.|[^'\\])*)'|"
-        r"([^\s`]+))",
-        re.IGNORECASE,
+        rf"(?<![A-Za-z0-9_])({re.escape(env_name)}{_ASSIGNMENT_PADDING_PATTERN}="
+        rf"{_ASSIGNMENT_PADDING_PATTERN})",
+        re.IGNORECASE | re.ASCII,
     )
+    redacted_parts: list[str] = []
+    cursor = 0
+    search_from = 0
 
-    def replace_assignment(match: re.Match[str]) -> str:
-        prefix = match.group(1)
-        if match.group(2) is not None:
-            return f'{prefix}"{replacement}"'
-        if match.group(3) is not None:
-            return f"{prefix}'{replacement}'"
-        return f"{prefix}{replacement}"
+    while match := pattern.search(value, search_from):
+        assignment_start = match.end()
+        if assignment_start >= len(value):
+            search_from = match.end()
+            continue
 
-    return pattern.sub(replace_assignment, value)
+        assignment_end: int | None
+        replacement_value = replacement
+        first_character = value[assignment_start]
+        if first_character in ("{", "["):
+            assignment_end = _find_structured_assignment_end(value, assignment_start)
+            if assignment_end is None or not _is_strict_json_assignment(
+                value,
+                assignment_start,
+                assignment_end,
+            ):
+                redacted_parts.append(value[cursor : match.start()])
+                redacted_parts.append(f"{match.group(1)}{replacement}")
+                cursor = len(value)
+                break
+            assignment_end = _find_assignment_token_end(value, assignment_end)
+        elif first_character in ('"', "'"):
+            assignment_end = _find_assignment_token_end(value, assignment_start)
+            replacement_value = f"{first_character}{replacement}{first_character}"
+        else:
+            assignment_end = _find_assignment_token_end(value, assignment_start)
+
+        if assignment_end == assignment_start:
+            search_from = match.end()
+            continue
+
+        redacted_parts.append(value[cursor : match.start()])
+        redacted_parts.append(f"{match.group(1)}{replacement_value}")
+        cursor = assignment_end
+        search_from = assignment_end
+
+    redacted_parts.append(value[cursor:])
+    return "".join(redacted_parts)
 
 
 def redact_output(
@@ -175,7 +293,10 @@ def redact_output(
 ) -> str:
     policy = load_cli_policy()
     replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
-    redacted = value or ""
+    redacted = strip_unsafe_output_controls(
+        value or "",
+        preserve_record_separators=preserve_record_separators,
+    )
     for env_name in policy.get("redactionPolicy", {}).get("envNames") or []:
         redacted = _redact_named_assignment(redacted, str(env_name), replacement)
     redacted = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", f"Bearer {replacement}", redacted, flags=re.IGNORECASE)

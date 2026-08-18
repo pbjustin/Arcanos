@@ -19,12 +19,16 @@ describe('ARCANOS CLI bridge action policy', () => {
   it('redacts Backstage Notion credentials with the tracked bridge policy', () => {
     const proposal = proposeArcanosCliCommand({
       command: 'git status ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=notion-secret-value '
-        + 'ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=private-universe-page-id'
+        + 'ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON={ "private-universe": ['
+        + ' { "page": "private-universe-page-id", "note": "escaped \\\" } ]" }'
+        + ' ] }adjacent-private-page-tail SAFE_FLAG=true suffix'
     });
 
     expect(proposal.commandPreview).toContain('ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=[REDACTED]');
     expect(proposal.commandPreview).toContain('ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON=[REDACTED]');
+    expect(proposal.commandPreview).toContain('SAFE_FLAG=true suffix');
     expect(proposal.commandPreview).not.toContain('notion-secret-value');
     expect(proposal.commandPreview).not.toContain('private-universe-page-id');
+    expect(proposal.commandPreview).not.toContain('adjacent-private-page-tail');
   });
 });

@@ -203,7 +203,7 @@ export function resolveCliTimeoutMs(timeoutMs: number | undefined, policy: CliPo
 }
 
 export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT_CLI_POLICY): string {
-  let redacted = value;
+  let redacted = stripUnsafeCliOutputControls(value);
   for (const envName of policy.redactionPolicy.envNames) {
     redacted = redactNamedAssignment(redacted, envName, policy.redactionPolicy.replacement);
   }
@@ -220,6 +220,15 @@ export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT
     .replace(/BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY/gi, policy.redactionPolicy.replacement);
 
   return truncateCliOutput(redacted, policy);
+}
+
+const ANSI_ESCAPE_PATTERN = /(?:\x1B(?:\][\s\S]*?(?:\x07|\x1B\\|\x9C|$)|[PX^_][\s\S]*?(?:\x1B\\|\x9C|$)|\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])|\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)|[\x90\x98\x9E\x9F][\s\S]*?(?:\x1B\\|\x9C|$)|\x9B[0-?]*[ -/]*[@-~])/g;
+const UNSAFE_OUTPUT_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]/g;
+
+function stripUnsafeCliOutputControls(value: string): string {
+  return value
+    .replace(ANSI_ESCAPE_PATTERN, "")
+    .replace(UNSAFE_OUTPUT_CONTROL_PATTERN, "");
 }
 
 export function redactCliEnv(
@@ -295,28 +304,154 @@ function resolveExistingRealPath(value: string): string {
   return existsSync(value) ? realpathSync(value) : path.resolve(value);
 }
 
+const ASSIGNMENT_PADDING_PATTERN = "[\\u0009-\\u000D\\u001C-\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]*";
+
 function redactNamedAssignment(value: string, envName: string, replacement: string): string {
   const pattern = new RegExp(
-    "\\b(" + escapeRegExp(envName) + "\\s*=\\s*)(?:\"((?:\\\\.|[^\"\\\\])*)\"|'((?:\\\\.|[^'\\\\])*)'|([^\\s`]+))",
+    "(?<![A-Za-z0-9_])(" + escapeRegExp(envName) + ASSIGNMENT_PADDING_PATTERN + "=" + ASSIGNMENT_PADDING_PATTERN + ")",
     "gi"
   );
-  return value.replace(
-    pattern,
-    (
-      _match,
-      prefix: string,
-      doubleQuotedSecret: string | undefined,
-      singleQuotedSecret: string | undefined
-    ) => {
-      if (doubleQuotedSecret !== undefined) {
-        return `${prefix}\"${replacement}\"`;
-      }
-      if (singleQuotedSecret !== undefined) {
-        return `${prefix}'${replacement}'`;
-      }
-      return `${prefix}${replacement}`;
+  let cursor = 0;
+  let redacted = "";
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(value)) !== null) {
+    const assignmentStart = match.index;
+    const valueStart = pattern.lastIndex;
+    const firstCharacter = value[valueStart];
+
+    if (firstCharacter === undefined) {
+      continue;
     }
-  );
+
+    let valueEnd: number;
+    let redactedValue = replacement;
+
+    if (firstCharacter === "\"" || firstCharacter === "'") {
+      valueEnd = findAssignmentTokenEnd(value, valueStart);
+      redactedValue = `${firstCharacter}${replacement}${firstCharacter}`;
+    } else if (firstCharacter === "{" || firstCharacter === "[") {
+      // Invalid, unclosed, or mismatched structured values consume the rest of the string.
+      // This is intentionally fail-closed because a later whitespace boundary may
+      // still be part of a multiline sensitive JSON value.
+      const structuredEnd = findStructuredAssignmentValueEnd(value, valueStart);
+      valueEnd = structuredEnd !== undefined
+        && isStrictJsonAssignmentValue(value, valueStart, structuredEnd)
+        ? findAssignmentTokenEnd(value, structuredEnd)
+        : value.length;
+    } else {
+      valueEnd = findAssignmentTokenEnd(value, valueStart);
+    }
+
+    if (valueEnd === valueStart) {
+      continue;
+    }
+
+    redacted += value.slice(cursor, assignmentStart);
+    redacted += `${match[1]}${redactedValue}`;
+    cursor = valueEnd;
+    pattern.lastIndex = valueEnd;
+  }
+
+  return `${redacted}${value.slice(cursor)}`;
+}
+
+function findAssignmentTokenEnd(value: string, start: number): number {
+  let quote: "\"" | "'" | undefined;
+
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "`" || (character === "$" && value[index + 1] === "(")) {
+      return value.length;
+    }
+
+    if (quote !== undefined) {
+      if (character === quote) {
+        quote = undefined;
+      } else if (quote === "\"" && character === "\\") {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (isAsciiAssignmentBoundary(character)) {
+      return index;
+    }
+    if (character === "\"" || character === "'") {
+      quote = character;
+    } else if (character === "\\" || character === "^") {
+      index += 1;
+    }
+  }
+
+  return value.length;
+}
+
+function isAsciiAssignmentBoundary(character: string | undefined): boolean {
+  return character !== undefined && /[\u0009\u000A\u000D\u0020]/.test(character);
+}
+
+const MAX_STRUCTURED_ASSIGNMENT_DEPTH = 64;
+
+function findStructuredAssignmentValueEnd(value: string, start: number): number | undefined {
+  const openingCharacter = value[start];
+  if (openingCharacter !== "{" && openingCharacter !== "[") {
+    return undefined;
+  }
+
+  const delimiters = [openingCharacter];
+  let insideString = false;
+
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value[index];
+
+    if (insideString) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === "\"") {
+        insideString = false;
+      }
+      continue;
+    }
+
+    if (character === "\"") {
+      insideString = true;
+      continue;
+    }
+
+    if (character === "{" || character === "[") {
+      if (delimiters.length >= MAX_STRUCTURED_ASSIGNMENT_DEPTH) {
+        return undefined;
+      }
+      delimiters.push(character);
+      continue;
+    }
+
+    if (character !== "}" && character !== "]") {
+      continue;
+    }
+
+    const expectedOpeningCharacter = character === "}" ? "{" : "[";
+    if (delimiters.at(-1) !== expectedOpeningCharacter) {
+      return undefined;
+    }
+
+    delimiters.pop();
+    if (delimiters.length === 0) {
+      return index + 1;
+    }
+  }
+
+  return undefined;
+}
+
+function isStrictJsonAssignmentValue(value: string, start: number, end: number): boolean {
+  try {
+    JSON.parse(value.slice(start, end));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function escapeRegExp(value: string): string {
