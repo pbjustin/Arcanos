@@ -88,7 +88,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.2.0');
+    expect(contract.info.version).toBe('1.2.1');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -105,7 +105,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
 
     const publicOperation = contract.paths['/gpt/backstage-booker'].post;
     expect(publicOperation.operationId).toBe('runBackstageBooker');
-    expect(publicOperation.security).toBeUndefined();
+    expect(publicOperation.security).toEqual([{ bearerAuth: [] }]);
     expect(publicOperation['x-openai-isConsequential']).toBe(false);
     expect(publicOperation.requestBody.content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstagePublicRequest',
@@ -125,7 +125,36 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       executionMode: {
         $ref: '#/components/schemas/BackstagePublicExecutionMode',
       },
-      payload: { type: 'object' },
+      payload: {
+        type: 'object',
+        description:
+          'Action-specific input. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.',
+        additionalProperties: false,
+        properties: {
+          universeId: { $ref: '#/components/schemas/UniverseId' },
+          prompt: {
+            type: 'string',
+            description:
+              'Required for generation actions. Put the complete booking, factual lookup, or review request here.',
+            minLength: 1,
+            maxLength: 10000,
+            pattern: '\\S',
+          },
+          match: { $ref: '#/components/schemas/MatchInput' },
+          rosters: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 100,
+            items: { $ref: '#/components/schemas/Wrestler' },
+          },
+          winProbModifier: {
+            type: 'number',
+            minimum: -1,
+            maximum: 1,
+            default: 0,
+          },
+        },
+      },
     });
     expect(contract.components.schemas.BackstagePublicExecutionMode).toEqual(
       expect.objectContaining({
@@ -203,10 +232,12 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         schema: { $ref: '#/components/schemas/UniverseReadId' },
       }),
     ]);
+    expect(readOperation.parameters[0].example).toBe('legacy-demo-universe');
     expect(Object.keys(readOperation.responses)).toEqual([
       '200',
       '400',
       '401',
+      '409',
       '429',
       '500',
       '503',
@@ -245,6 +276,9 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         schema: expect.objectContaining({ minimum: 1 }),
       }),
     ]);
+    expect(storylineReadOperation.parameters[0].example)
+      .toBe('legacy-demo-universe');
+    expect(storylineReadOperation.parameters[1].example).toBe('demo-storyline');
     expect(Object.keys(storylineReadOperation.responses)).toEqual([
       '200',
       '400',
@@ -261,7 +295,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         scheme: 'bearer',
         bearerFormat: 'Opaque Backstage Booker access token',
         description:
-          'Required only for the fixed Backstage Booker exact-universe reads and canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes.',
+          'Required by this configured Action for Backstage generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
       },
     });
 
@@ -365,6 +399,14 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         errors: null,
       });
     }
+    const simulationExample = examples.find(
+      example => example.value.action === 'simulateMatch'
+    )?.value as { payload?: { rosters?: unknown[] } } | undefined;
+    expect(simulationExample?.payload?.rosters).toHaveLength(2);
+    expect(
+      (simulationExample as { payload?: { universeId?: string } } | undefined)
+        ?.payload?.universeId
+    ).toBe('backstage-demo');
 
     const asynchronousExample = {
       ...requests[0],
@@ -375,6 +417,39 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       Object.entries(requests[0]).filter(([key]) => key !== 'executionMode')
     );
     expect(validate(missingExecutionMode)).toBe(false);
+    expect(validate({
+      action: 'generateBooking',
+      executionMode: 'sync',
+      payload: { universeId: 'my-universe-2k26' },
+    })).toBe(false);
+    expect(validate({
+      action: 'generateBooking',
+      executionMode: 'sync',
+      payload: {
+        prompt: 'Review Raw.',
+        match: {
+          wrestler1: 'Rhea Ripley',
+          wrestler2: 'Bianca Belair',
+          matchType: 'Singles',
+        },
+      },
+    })).toBe(false);
+    expect(validate({
+      action: 'simulateMatch',
+      executionMode: 'sync',
+      payload: { prompt: 'Simulate this match.' },
+    })).toBe(false);
+    expect(validate({
+      action: 'simulateMatch',
+      executionMode: 'sync',
+      payload: {
+        match: {
+          wrestler1: 'Rhea Ripley',
+          wrestler2: 'Bianca Belair',
+          matchType: 'Singles',
+        },
+      },
+    })).toBe(false);
   });
 
   it('keeps the exact-ID universe read closed, bounded, and non-consequential', () => {
@@ -557,6 +632,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       'my-universe-2k26',
       storylineKey,
       {
+        authorityResolver: async () => false,
         reader: { loadCanonStorylineSummary: async () => storyline },
       }
     );
@@ -642,6 +718,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
 
     for (const context of [baseContext(), populated, truncated]) {
       const result = await readBackstageUniverse(universeId, {
+        authorityResolver: async () => false,
         reader: { loadContext: async () => context },
       });
       const envelope = {
@@ -673,7 +750,25 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         type: 'string',
         enum: ['upsertStoryline', 'appendCanonBeat'],
       },
-      payload: { type: 'object' },
+      payload: {
+        type: 'object',
+        description:
+          'Action-specific canon mutation input. The selected action schema below enforces its required fields.',
+        additionalProperties: false,
+        properties: {
+          universeId: { $ref: '#/components/schemas/UniverseId' },
+          mutationId: { $ref: '#/components/schemas/Uuid' },
+          expectedVersion: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 2147483647,
+          },
+          storyline: { $ref: '#/components/schemas/StorylineInput' },
+          storylineKey: { $ref: '#/components/schemas/StorylineKey' },
+          beat: { $ref: '#/components/schemas/CanonBeatInput' },
+          nextStatus: { $ref: '#/components/schemas/StorylineStatus' },
+        },
+      },
     });
     expect(canonRequest.oneOf).toEqual([
       { $ref: '#/components/schemas/UpsertStorylineActionRequest' },
@@ -683,6 +778,21 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       'upsertStoryline',
       'appendCanonBeat',
     ]);
+    const validateCanonRequest = compileComponent(
+      contract,
+      'BackstageCanonWriteRequest'
+    );
+    const canonExamples = Object.values(
+      contract.paths['/gpt-access/capabilities/v1/backstage-booker/run']
+        .post.requestBody.content['application/json'].examples
+    ) as Array<{ value: Record<string, unknown> }>;
+    for (const example of canonExamples) {
+      expect({
+        valid: validateCanonRequest(example.value),
+        errors: validateCanonRequest.errors,
+      }).toEqual({ valid: true, errors: null });
+      expect(JSON.stringify(example.value)).not.toContain('my-universe-2k26');
+    }
 
     for (const schemaName of [
       'UpsertStorylineActionRequest',
@@ -851,6 +961,10 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       contract,
       'BackstagePublicSuccessResponse'
     );
+    const validatePublicError = compileComponent(
+      contract,
+      'BackstagePublicErrorResponse'
+    );
     const runtimeEnvelope = {
       ok: true,
       result: {
@@ -874,6 +988,22 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       valid: true,
       errors: null,
     });
+    const notionUnavailableEnvelope = {
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+        message:
+          'The authoritative Backstage Notion index is temporarily unavailable.',
+        details: { retryable: true },
+      },
+      requestId: 'request-notion-index-unavailable',
+      traceId: 'trace-notion-index-unavailable',
+      _route: runtimeEnvelope._route,
+    };
+    expect({
+      valid: validatePublicError(notionUnavailableEnvelope),
+      errors: validatePublicError.errors,
+    }).toEqual({ valid: true, errors: null });
     expect(schemas.BackstageRouteMeta.properties.action.enum).toEqual([
       'generateBooking',
       'generateBookingWithHRC',

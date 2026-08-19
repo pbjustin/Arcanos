@@ -424,8 +424,11 @@ own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
 The Builder-specific contract at
-`GET /contracts/backstage_booker.openapi.v1.json` defines four operations. In
-addition to the public generation/simulation operation, `getBackstageUniverse`
+`GET /contracts/backstage_booker.openapi.v1.json` defines four operations. Its
+saved dedicated bearer is declared on all four so Notion-authoritative
+generation has verified provenance; the underlying generation/simulation
+route remains publicly compatible for non-authoritative direct clients.
+`getBackstageUniverse`
 calls exactly
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
 requires the purpose-bound `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`, is marked
@@ -444,7 +447,9 @@ omissions after those source queries. It does not count older rows beyond
 `sourceQueryLimits`; a collection equal to its source limit may therefore be a
 recent window rather than complete history. Because there is no
 universe registry, an ID with no stored rows returns an empty `200` snapshot
-with `hasPersistedData: false`.
+with `hasPersistedData: false`. A Notion-authoritative universe instead returns
+nonretryable `409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED` without reading
+the legacy snapshot.
 
 When that snapshot truncates a canon storyline summary, the non-consequential
 `getBackstageStoryline` operation calls
@@ -457,6 +462,8 @@ page zero. A changed version returns `409 BACKSTAGE_STORYLINE_VERSION_CONFLICT`
 so callers cannot combine two revisions. An absent exact universe/key pair is
 `404 BACKSTAGE_STORYLINE_NOT_FOUND`; a database outage is retryable `503`.
 This path has no list, generation, mutation, confirmation, or memory fallback.
+A Notion-authoritative universe returns the same nonretryable authority
+quarantine `409` without reading legacy canon.
 
 `generateBooking` and `generateBookingWithHRC` can optionally enrich their
 existing PostgreSQL-derived model request with explicitly mapped Notion pages.
@@ -494,6 +501,45 @@ returned to the authenticated caller. Notion provider/configuration failures
 are sanitized and fail open to PostgreSQL-only generation; an ambient request
 abort still stops the operation.
 
+When an exact universe is instead present in
+`ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON`, that legacy supplement and its
+fail-open semantics are bypassed. A worker recursively captures the complete
+configured root hierarchy, rejects incomplete/truncated/unknown or unsupported
+media candidates, builds an immutable chunk-and-embedding snapshot, and
+atomically advances one universe-scoped active head. Generation embeds the
+caller query, ranks only chunks from that active snapshot, diversifies the
+bounded results across pages, and supplies provenance-framed excerpts as facts
+with zero instruction authority. It requires the valid dedicated Backstage
+bearer and a recently verified snapshot. No request-time Notion call occurs on
+web, and missing auth, stale/missing index, model mismatch, or retrieval failure
+returns `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy
+PostgreSQL or process memory.
+
+Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
+only the derived retrieval snapshots for AI use. The six legacy mutation
+actions fail with nonretryable `409 BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` before
+any counter, repository, fallback, audit, or generation-and-save side effect.
+Database triggers independently reject legacy table writes after the first
+snapshot activation. Existing `getBackstageUniverse` and
+`getBackstageStoryline` PostgreSQL reads fail with nonretryable
+`409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`; they never relabel old canon
+as Notion data. Match simulation accepts an explicitly supplied numeric roster
+but does not infer ratings from retrieved prose or fall back to the old roster.
+The current text/table-only 18-page WWE hierarchy is supported. A later file,
+image, audio, video, PDF, database, unknown block, or inaccessible descendant
+prevents replacement activation until an explicit extractor exists.
+
+The first successful activation also stores a durable PostgreSQL authority
+head. Removing the environment mapping cannot downgrade that head or reopen
+legacy reads, writes, process-memory fallback, or old canon. A configured root
+and persisted root must match exactly; later snapshots may rotate only within
+that same root hierarchy. Cutover drains in-flight legacy reads and writes
+before the head flip, and database fencing makes stale transactions fail
+closed. If the backend cannot determine the effective authority state, it
+returns retryable
+`503 BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE` with a fixed message instead of
+assuming PostgreSQL authority.
+
 The `writeBackstageCanon` operation calls exactly
 `POST /gpt-access/capabilities/v1/backstage-booker/run`, uses the same dedicated
 credential, and accepts only `upsertStoryline` or `appendCanonBeat`. The
@@ -501,11 +547,11 @@ operation is marked `x-openai-isConsequential: true`; on this dedicated lane the
 backend relies on ChatGPT's Allow/Deny banner and does not issue its own
 confirmation challenge. The fixed write lane may bypass generic
 `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
-`MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The dedicated bearer
-is required on those exact read/write paths. On canonical public Backstage
-generation it is accepted only as optional request-local authorization for the
-configured Notion supplement; it does not gate the route or authorize another
-action. It is distinct from both
+`MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The Builder projection
+requires the dedicated bearer for generation, simulation, exact reads, and
+writes. At the backend boundary it gates private Notion retrieval but cannot
+authorize another action; non-authoritative direct generation retains public
+compatibility. It is distinct from both
 `ARCANOS_GPT_ACCESS_TOKEN` and `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. The generic
 GPT Access credential is not accepted for either Backstage read; its existing
 confirmation path for the canon capability run remains unchanged. All four

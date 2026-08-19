@@ -66,13 +66,20 @@ interface BackstageNotionConfiguration {
   pagesByUniverse: Map<string, readonly string[]>;
 }
 
-interface NotionMarkdownResponse {
+export interface BackstageNotionMarkdownResponse {
   markdown: string;
   truncated: boolean;
   unknownBlockCount: number;
 }
 
-class BackstageNotionReadError extends Error {
+export interface BackstageNotionPageMetadata {
+  pageId: string;
+  parentPageId: string | null;
+  lastEditedAt: Date;
+  inTrash: boolean;
+}
+
+export class BackstageNotionReadError extends Error {
   readonly category: string;
 
   constructor(category: string) {
@@ -80,6 +87,40 @@ class BackstageNotionReadError extends Error {
     this.name = 'BackstageNotionReadError';
     this.category = category;
   }
+}
+
+function normalizeBackstageNotionAccessToken(
+  rawToken: string,
+  readEnvironment: BackstageNotionEnvironmentReader
+): string | null {
+  if (
+    rawToken !== rawToken.trim()
+    || rawToken.length < 16
+    || rawToken.length > BACKSTAGE_NOTION_MAX_TOKEN_LENGTH
+    || !NOTION_VISIBLE_TOKEN_PATTERN.test(rawToken)
+    || /^(?:replace|example|placeholder|changeme)(?:[-_]|$)/iu.test(rawToken)
+    || PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.some((environmentName) => {
+      const applicationCredential = readEnvironment(environmentName)?.trim();
+      return Boolean(
+        applicationCredential
+        && timingSafeEqualOpaqueSecret(rawToken, applicationCredential)
+      );
+    })
+  ) {
+    return null;
+  }
+
+  return rawToken;
+}
+
+/** Read and validate the outbound-only Notion token without exposing it. */
+export function readBackstageNotionAccessToken(
+  readEnvironment: BackstageNotionEnvironmentReader
+): string | null {
+  const rawToken = readEnvironment(BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME);
+  return rawToken === undefined
+    ? null
+    : normalizeBackstageNotionAccessToken(rawToken, readEnvironment);
 }
 
 export const BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT = [
@@ -215,20 +256,11 @@ function readBackstageNotionConfiguration(
     return null;
   }
 
-  if (
-    rawToken !== rawToken.trim()
-    || rawToken.length < 16
-    || rawToken.length > BACKSTAGE_NOTION_MAX_TOKEN_LENGTH
-    || !NOTION_VISIBLE_TOKEN_PATTERN.test(rawToken)
-    || /^(?:replace|example|placeholder|changeme)(?:[-_]|$)/iu.test(rawToken)
-    || PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.some((environmentName) => {
-      const applicationCredential = readEnvironment(environmentName)?.trim();
-      return Boolean(
-        applicationCredential
-        && timingSafeEqualOpaqueSecret(rawToken, applicationCredential)
-      );
-    })
-  ) {
+  const accessToken = normalizeBackstageNotionAccessToken(
+    rawToken,
+    readEnvironment
+  );
+  if (!accessToken) {
     writeDiagnostic(logWarning, 'backstage.notion_context.configuration_invalid', {
       reason: 'invalid_access_token',
     });
@@ -244,7 +276,7 @@ function readBackstageNotionConfiguration(
   }
 
   return {
-    accessToken: rawToken,
+    accessToken,
     pagesByUniverse,
   };
 }
@@ -306,7 +338,7 @@ async function readBoundedResponseBody(response: Response): Promise<string> {
 function parseNotionMarkdownResponse(
   rawBody: string,
   expectedPageId: string
-): NotionMarkdownResponse {
+): BackstageNotionMarkdownResponse {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody) as unknown;
@@ -348,7 +380,7 @@ async function fetchNotionMarkdownPage(
   accessToken: string,
   pageId: string,
   signal: AbortSignal
-): Promise<NotionMarkdownResponse> {
+): Promise<BackstageNotionMarkdownResponse> {
   const endpoint = new URL(
     `/v1/pages/${pageId}/markdown`,
     NOTION_API_ORIGIN
@@ -383,6 +415,116 @@ async function fetchNotionMarkdownPage(
   return parseNotionMarkdownResponse(
     await readBoundedResponseBody(response),
     pageId
+  );
+}
+
+function parseNotionPageMetadataResponse(
+  rawBody: string,
+  expectedPageId: string
+): BackstageNotionPageMetadata {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new BackstageNotionReadError('invalid_json');
+  }
+
+  if (!isPlainConfigurationObject(parsed)) {
+    throw new BackstageNotionReadError('invalid_response');
+  }
+
+  const responsePageId = typeof parsed.id === 'string'
+    ? normalizeNotionPageId(parsed.id)
+    : null;
+  const parent = isPlainConfigurationObject(parsed.parent)
+    ? parsed.parent
+    : null;
+  const parentPageId = parent?.type === 'page_id'
+    && typeof parent.page_id === 'string'
+    ? normalizeNotionPageId(parent.page_id)
+    : null;
+  const lastEditedAt = typeof parsed.last_edited_time === 'string'
+    ? new Date(parsed.last_edited_time)
+    : null;
+  if (
+    parsed.object !== 'page'
+    || responsePageId !== expectedPageId
+    || typeof parsed.in_trash !== 'boolean'
+    || !lastEditedAt
+    || !Number.isFinite(lastEditedAt.getTime())
+    || (parent?.type === 'page_id' && parentPageId === null)
+  ) {
+    throw new BackstageNotionReadError('invalid_response');
+  }
+
+  return {
+    pageId: responsePageId,
+    parentPageId,
+    lastEditedAt,
+    inTrash: parsed.in_trash,
+  };
+}
+
+/** Fetch one exact Notion page as bounded Markdown from the fixed API origin. */
+export async function fetchBackstageNotionMarkdownPage(
+  fetchImpl: BackstageNotionFetchImplementation,
+  accessToken: string,
+  pageId: string,
+  signal: AbortSignal
+): Promise<BackstageNotionMarkdownResponse> {
+  const normalizedPageId = normalizeNotionPageId(pageId);
+  if (!normalizedPageId || normalizedPageId !== pageId) {
+    throw new BackstageNotionReadError('invalid_page_id');
+  }
+  return fetchNotionMarkdownPage(
+    fetchImpl,
+    accessToken,
+    normalizedPageId,
+    signal
+  );
+}
+
+/** Fetch one exact Notion page's bounded identity/version metadata. */
+export async function fetchBackstageNotionPageMetadata(
+  fetchImpl: BackstageNotionFetchImplementation,
+  accessToken: string,
+  pageId: string,
+  signal: AbortSignal
+): Promise<BackstageNotionPageMetadata> {
+  const normalizedPageId = normalizeNotionPageId(pageId);
+  if (!normalizedPageId || normalizedPageId !== pageId) {
+    throw new BackstageNotionReadError('invalid_page_id');
+  }
+  const endpoint = new URL(`/v1/pages/${normalizedPageId}`, NOTION_API_ORIGIN);
+  const response = await fetchImpl(endpoint, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+    },
+    redirect: 'manual',
+    signal,
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new BackstageNotionReadError(
+      response.status >= 300 && response.status < 400
+        ? 'redirect_rejected'
+        : `http_${response.status}`
+    );
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (!contentType.startsWith('application/json')) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new BackstageNotionReadError('invalid_content_type');
+  }
+
+  return parseNotionPageMetadataResponse(
+    await readBoundedResponseBody(response),
+    normalizedPageId
   );
 }
 
@@ -425,6 +567,16 @@ function sanitizeNotionMarkdown(value: string): string {
     )
     .replace(/<unknown\b[^>\r\n]*\/?\s*>/giu, '[Unavailable Notion block omitted]')
     .replace(/(?:https?|notion):\/\/[^\s)<>'"]+/giu, '[link omitted]');
+}
+
+/** Sanitize Notion Markdown for storage and later untrusted prompt framing. */
+export function sanitizeBackstageNotionMarkdown(value: string): string {
+  return sanitizeNotionMarkdown(value);
+}
+
+/** Normalize an exact raw Notion page UUID for configured hierarchy roots. */
+export function normalizeBackstageNotionPageId(value: string): string | null {
+  return normalizeNotionPageId(value);
 }
 
 function quoteNotionMarkdown(value: string): string {

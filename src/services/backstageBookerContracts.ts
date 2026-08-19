@@ -251,6 +251,18 @@ function hasSchemaDrivenCanonicalIntent(
 export const BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE = 'BACKSTAGE_CANON_UNAVAILABLE';
 export const BACKSTAGE_CANON_UNAVAILABLE_ERROR_MESSAGE =
   'Backstage canon persistence is temporarily unavailable.';
+export const BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE =
+  'BACKSTAGE_NOTION_AUTHORITY_READ_ONLY';
+export const BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE =
+  'Notion is authoritative for this Backstage universe; backend mutations are disabled.';
+export const BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_CODE =
+  'BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED';
+export const BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_MESSAGE =
+  'Notion is authoritative for this Backstage universe; legacy PostgreSQL reads are quarantined.';
+export const BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE =
+  'BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE';
+export const BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_MESSAGE =
+  'The Backstage Notion authority state is temporarily unavailable.';
 export const BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON =
   'backstage_canon_commit_outcome_unknown';
 
@@ -305,6 +317,69 @@ export function isBackstageCanonUnavailableError(
   value: unknown
 ): value is BackstageCanonUnavailableError {
   return value instanceof BackstageCanonUnavailableError;
+}
+
+/** Deny backend writes when the configured universe is synchronized from authoritative Notion. */
+export class BackstageNotionAuthorityReadOnlyError extends Error {
+  readonly code = BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE;
+  readonly httpStatus = 409;
+  readonly retryable = false;
+  readonly universeId: string;
+
+  constructor(universeId: string) {
+    super(BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE);
+    this.name = 'BackstageNotionAuthorityReadOnlyError';
+    this.universeId = universeId;
+  }
+}
+
+export function isBackstageNotionAuthorityReadOnlyError(
+  value: unknown
+): value is BackstageNotionAuthorityReadOnlyError {
+  return value instanceof BackstageNotionAuthorityReadOnlyError;
+}
+
+/** Prevent stale legacy PostgreSQL projections from representing Notion-authoritative canon. */
+export class BackstageNotionAuthorityReadQuarantinedError extends Error {
+  readonly code = BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_CODE;
+  readonly httpStatus = 409;
+  readonly retryable = false;
+  readonly universeId: string;
+
+  constructor(universeId: string) {
+    super(BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_MESSAGE);
+    this.name = 'BackstageNotionAuthorityReadQuarantinedError';
+    this.universeId = universeId;
+  }
+}
+
+export function isBackstageNotionAuthorityReadQuarantinedError(
+  value: unknown
+): value is BackstageNotionAuthorityReadQuarantinedError {
+  return value instanceof BackstageNotionAuthorityReadQuarantinedError;
+}
+
+/** Prevent an unknown authority state from opening any legacy read or write path. */
+export class BackstageNotionAuthorityUnavailableError extends Error {
+  readonly code = BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE;
+  readonly httpStatus = 503;
+  readonly retryable = true;
+  readonly universeId: string;
+
+  constructor(universeId: string, cause?: unknown) {
+    super(
+      BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_MESSAGE,
+      cause === undefined ? undefined : { cause }
+    );
+    this.name = 'BackstageNotionAuthorityUnavailableError';
+    this.universeId = universeId;
+  }
+}
+
+export function isBackstageNotionAuthorityUnavailableError(
+  value: unknown
+): value is BackstageNotionAuthorityUnavailableError {
+  return value instanceof BackstageNotionAuthorityUnavailableError;
 }
 
 function sanitizeOpenPayloadRecord(record: Record<string, unknown>): Record<string, unknown> {

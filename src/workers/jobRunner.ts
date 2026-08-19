@@ -33,8 +33,10 @@ import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backs
 import {
   BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   isBackstageCanonCommitOutcomeUnknown
 } from '@services/backstageBookerContracts.js';
+import { BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE } from '@services/backstageNotionRag.js';
 import {
   buildBridgeSmokeCompletedOutput,
   isQueuedBridgeSmokeJobInput
@@ -113,6 +115,10 @@ import {
   GAMING_SOURCE_REFRESH_REQUEST_PATH,
   parseQueuedGamingSourceIngestionBody
 } from '@services/gamingSourceIngestion.js';
+import {
+  startBackstageNotionSyncLoop,
+  type BackstageNotionSyncLoopHandle,
+} from './backstageNotionSyncLoop.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -890,6 +896,8 @@ export async function executeQueuedGptRequest(params: {
           (
             envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
             || envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+            || envelope.error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+            || envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
           )
           && typeof envelope.error.details === 'object'
           && envelope.error.details !== null
@@ -2127,6 +2135,7 @@ async function run(): Promise<void> {
 
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
+  let backstageNotionSyncHandle: BackstageNotionSyncLoopHandle | null = null;
 
   try {
     const slotReadinessPromises: Promise<void>[] = [];
@@ -2193,8 +2202,13 @@ async function run(): Promise<void> {
       return;
     }
 
+    backstageNotionSyncHandle = startBackstageNotionSyncLoop({
+      signal: workerProcessShutdownController.signal,
+    });
+
     await Promise.all(slotRuntimePromises);
   } finally {
+    backstageNotionSyncHandle?.stop();
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
     await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');

@@ -253,8 +253,9 @@ memory, a confirmation challenge/token store, persistence effects, or any other
 protected effect.
 
 The exact `POST /backstage/generation-contract` surface accepts only the
-server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`, and
-`review-completion-contract` selectors. The route-budget case uses the
+server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
+`review-completion-contract`, and `notion-authority-rag-contract` selectors.
+The route-budget case uses the
 production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
 reviewed request-abort runtime around a 13,250 ms synthetic provider seam. The
@@ -274,8 +275,18 @@ balanced and unmatched quotes, astral-letter apostrophes, quoted contractions,
 Markdown markers, inline/collapsed honesty caveats, and spaced/single initials.
 It proves that the canonical six-bullet response style overrides an earlier
 three-bullet user request and asserts a deterministic bound on
-quoted-contraction delimiter-disambiguation work. None of the selectors calls a
-provider, uses credentials, performs network I/O, or reaches a protected effect.
+quoted-contraction delimiter-disambiguation work. The Notion-authority case
+makes one fixed-origin, fixed-path, no-redirect request from the deployed web
+process to `api.notion.com` with a hard-coded invalid non-secret bearer and an
+absolute four-second DNS/TLS/header deadline. It
+accepts only Notion's JSON `401` response, cancels without reading, parsing, or
+returning the body, retries zero times, and caches the reachability result for
+the process lifetime. The same fixture then executes production-shared Notion
+request construction, metadata/Markdown parsing, sanitization, chunking, RAG
+prompt/citation framing, direct-answer message isolation, and mutation-action
+recognition over sealed content. It does not use a live credential, read a live
+page, connect to PostgreSQL, run the authority worker, call a model provider, or
+reach a protected effect.
 
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
 `effective-limits` selector. It imports the config-free core used by the
@@ -339,14 +350,15 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 118-request plan is the
+evidence, not Railway control-plane provenance. The fixed 119-request plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, three sealed Backstage generation
-timeout/cache/review-completion cases, and one sealed saved-storyline excerpt
-projection case. The excerpt case executes the production-shared pure projector
+worker-role approval-contract denial, four sealed Backstage generation
+timeout/cache/review-completion/Notion-authority cases, one sealed
+saved-storyline excerpt projection case, and one canon-summary pagination case.
+The excerpt case executes the production-shared pure projector
 over the full ECMAScript leading-whitespace set and explicitly reports that no
 database or SQL projection ran; PostgreSQL 18 CI remains the SQL-engine proof. It
 checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
@@ -400,7 +412,7 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 118-request E2E runs in a separate job that has no Railway secret. It
+The sealed 119-request E2E runs in a separate job that has no Railway secret. It
 executes the trusted default-branch verifier and uses the exact opted-in head
 checkout only as clean Git provenance evidence; PR code cannot weaken its own
 verdict. A final trusted, no-Railway-authority job revalidates that head and

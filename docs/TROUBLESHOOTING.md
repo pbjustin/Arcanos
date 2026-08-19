@@ -94,8 +94,34 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, do not weaken the backend gate; handle any Builder
-  authentication-contract change as a separate reviewed rollout.
+  `runBackstageBooker`, re-import schema `1.2.1`, verify the operation declares
+  `bearerAuth`, and resave the Action. Do not weaken the backend gate.
+- Backstage Booker `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`: for an authoritative
+  universe this is deliberately fail-closed. Verify the identical authority
+  root mapping is present on web and worker, the Notion token is present only
+  on worker, the fixed root is shared with read-content access, the worker
+  completed a full crawl, and `last_verified_at` is within the configured
+  staleness limit. Inspect only sanitized counts/status. Do not print page
+  bodies, page IDs, embeddings, tokens, or provider errors, and do not remove
+  the authority mapping to make legacy fallback work.
+- Backstage Booker `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`: the backend could
+  not safely reconcile the configured root with the durable PostgreSQL
+  authority head. Treat it as retryable infrastructure/configuration failure;
+  verify the exact web mapping and database availability without printing the
+  mapping or connection details. Removing the mapping is not a rollback after
+  activation and must never be used to reopen legacy state.
+- Backstage Notion sync reports incomplete/source drift: an inaccessible,
+  moved, trashed, malformed, truncated, unknown, database, or media/file page
+  was observed, or a page changed during the two-pass capture. The prior active
+  snapshot remains intact. Correct/share the Notion hierarchy or add a reviewed
+  extractor, then let a later full cycle retry. Never classify a transient 404
+  as deletion or activate a partial manifest.
+- Backstage `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` or
+  `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`: this is the expected authority
+  boundary, not data loss. Make the requested fact/content change in Notion and
+  wait for sync; use authenticated `runBackstageBooker` for retrieval. Do not
+  bypass through a direct, generic GPT Access, worker, legacy, or raw database
+  write/read path.
 - Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.
 - Worker-heal 429: direct `/workers/heal` and `/worker-helper/heal` share one
   10-request/15-minute budget per server-derived authenticated

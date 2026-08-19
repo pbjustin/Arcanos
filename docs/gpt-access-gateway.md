@@ -44,7 +44,8 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-This credential is required for the exact-ID
+Builder schema `1.2.1` declares this credential on `runBackstageBooker` as well
+as the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
@@ -57,18 +58,32 @@ closed unless `action` is `upsertStoryline` or
 `appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
 `403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token
 cannot authenticate another GPT Access, dispatch, module, queryroute,
-control-plane, or legacy path. On canonical direct Backstage generation only,
-a verified copy establishes request-local authorization for an optional
-server-configured Notion supplement; it does not gate the public route or
-authorize any mutation.
+control-plane, or legacy path. On canonical direct Backstage generation, a
+verified copy establishes request-local authorization for private Notion
+context; it never authorizes a mutation. Non-authoritative direct callers keep
+the existing public non-Notion behavior, while authority-mode generation fails
+closed without verified provenance.
 
-That supplement requires separate outbound
+The legacy supplement requires separate outbound
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values
 on the web service. It reads at most three fixed Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
-send it inbound or configure it on a worker. The four-operation Builder schema
-is unchanged.
+send it inbound. In this legacy supplement mode it stays on web and never goes
+to a worker. The operation count is unchanged, but schema `1.2.1` must be
+re-imported because it declares the bearer, materializes nested public payload
+fields, and advertises authority-specific errors.
+
+Notion-authority mode is separate. Configure the exact closed
+`ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` value on web and worker and put
+the read-content Notion token on the worker only. The worker recursively
+captures the fixed hierarchy, rejects incomplete or unsupported candidates,
+embeds immutable chunks, and atomically advances one active snapshot. Web
+generation retrieves only bounded chunks from that fresh snapshot and makes no
+request-time Notion call. All legacy writes return
+`BACKSTAGE_NOTION_AUTHORITY_READ_ONLY`; both legacy PostgreSQL reads return
+`BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`; an unavailable authority index
+returns retryable `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without legacy fallback.
 
 The lane may bypass the generic `ARCANOS_GPT_ACCESS_SCOPES`
 `capabilities.run` grant and the backend confirmation challenge, but stable

@@ -43,6 +43,18 @@ const canonRollbackMigration = readFileSync(
   ),
   'utf8'
 );
+const notionRagForwardMigration = readFileSync(
+  join(process.cwd(), 'migrations', '20260819_backstage_notion_rag_v1.sql'),
+  'utf8'
+);
+const notionRagRollbackMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260819_backstage_notion_rag_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const canonTransactionalPhaseStart = canonForwardMigration.indexOf('\nBEGIN;');
 if (canonTransactionalPhaseStart < 0) {
   throw new Error('Backstage canon migration is missing its transactional phase.');
@@ -68,6 +80,12 @@ async function applyCanonForwardMigration(client: Client): Promise<void> {
 }
 
 const ownedTableNames = [
+  'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunks',
+  'backstage_notion_snapshot_pages',
+  'backstage_notion_snapshots',
+  'backstage_notion_sync_leases',
+  'backstage_notion_universe_heads',
   'backstage_canon_heads',
   'backstage_canon_revisions',
   'backstage_events',
@@ -84,6 +102,14 @@ const phaseTwoTables = [
   'backstage_storyline_canon_beats',
   'backstage_storyline_participants',
   'backstage_storyline_threads'
+] as const;
+const notionRagTables = [
+  'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunks',
+  'backstage_notion_snapshot_pages',
+  'backstage_notion_snapshots',
+  'backstage_notion_sync_leases',
+  'backstage_notion_universe_heads'
 ] as const;
 const baseTables = [
   'backstage_events',
@@ -241,6 +267,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
          ADD COLUMN IF NOT EXISTS storage_sequence BIGINT;`
     );
     await applyCanonForwardMigration(observer);
+    await observer.query(notionRagForwardMigration);
 
     pool = new Pool({
       connectionString: configuredConnectionString,
@@ -288,6 +315,12 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await pool?.end();
 
     if (observer && ownsInstallation) {
+      const notionRagTable = await observer.query<{ installed: boolean }>(
+        `SELECT to_regclass('public.backstage_notion_universe_heads') IS NOT NULL AS installed`
+      );
+      if (notionRagTable.rows[0]?.installed) {
+        await observer.query(notionRagRollbackMigration);
+      }
       const canonTable = await observer.query<{ installed: boolean }>(
         `SELECT to_regclass('public.backstage_canon_heads') IS NOT NULL AS installed`
       );
@@ -314,9 +347,10 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer?.end();
   }, 60_000);
 
-  test('applies the Phase 1 and Phase 2 forward migrations idempotently', async () => {
+  test('applies the Phase 1, Phase 2, and Notion RAG migrations idempotently', async () => {
     await observer.query(universeScopeForwardMigration);
     await applyCanonForwardMigration(observer);
+    await observer.query(notionRagForwardMigration);
 
     const tables = await observer.query<{ table_name: string }>(
       `SELECT table_name
@@ -324,9 +358,12 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
        WHERE table_schema = 'public'
          AND table_name = ANY($1::TEXT[])
        ORDER BY table_name`,
-      [phaseTwoTables]
+      [[...phaseTwoTables, ...notionRagTables]]
     );
-    expect(tables.rows.map(row => row.table_name)).toEqual([...phaseTwoTables].sort());
+    expect(tables.rows.map(row => row.table_name)).toEqual([
+      ...phaseTwoTables,
+      ...notionRagTables
+    ].sort());
 
     const constraints = await observer.query<{ conname: string }>(
       `SELECT conname
@@ -441,13 +478,17 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     const first = await readBackstageStorylineSummary(
       universeA,
       storyKey,
-      { reader: repository }
+      {
+        reader: repository,
+        authorityResolver: async () => false,
+      }
     );
     const second = await readBackstageStorylineSummary(
       universeA,
       storyKey,
       {
         reader: repository,
+        authorityResolver: async () => false,
         offset: first.summaryPage.nextOffset!,
         expectedVersion: first.storyline.version,
       }
@@ -457,6 +498,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       storyKey,
       {
         reader: repository,
+        authorityResolver: async () => false,
         offset: second.summaryPage.nextOffset!,
         expectedVersion: first.storyline.version,
       }
@@ -689,6 +731,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
          backstage_canon_heads
        CASCADE`
     );
+    await observer.query(notionRagRollbackMigration);
     await observer.query(canonRollbackMigration);
 
     const removed = await observer.query<{ table_name: string }>(

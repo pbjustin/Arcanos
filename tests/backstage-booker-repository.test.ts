@@ -4,10 +4,12 @@ import type { Pool } from 'pg';
 import {
   BackstageCanonDomainError,
   BackstageBookerCommitUnknownError,
+  BackstageBookerLegacyReadQuarantinedError,
   BackstageBookerRepositoryUnavailableError,
   BackstageBookerUniverseScopeNotActivatedError,
   BackstageBookerWriteError,
   isBackstageCanonDomainError,
+  isBackstageBookerLegacyReadQuarantinedError,
   isBackstageBookerUniverseScopeNotActivatedError,
   PostgresBackstageBookerRepository,
   resolveBackstageCanonDomainErrorHttpStatus
@@ -75,6 +77,7 @@ class BackstageRepositoryHarness {
   failRosterAfterFirstMutation = false;
   legacyGlobalConstraintsPresent = false;
   invalidActivationResult = false;
+  authorities = new Map<string, 'postgres' | 'notion'>();
   private snapshot: HarnessSnapshot | null = null;
   private sequence = 0;
 
@@ -151,8 +154,15 @@ class BackstageRepositoryHarness {
     if (sql === 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED') {
       return this.result();
     }
-    if (sql === "SELECT set_config('statement_timeout', $1, TRUE)") {
-      return this.result([{ set_config: values[0] }]);
+    if (/^SET LOCAL statement_timeout = '\d+ms'$/u.test(sql)) {
+      return this.result();
+    }
+    if (sql === 'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE') {
+      return this.result();
+    }
+    if (sql.startsWith('SELECT authority FROM backstage_notion_universe_heads')) {
+      const authority = this.authorities.get(String(values[0]));
+      return this.result(authority ? [{ authority }] : []);
     }
     if (sql.startsWith('SELECT pg_advisory_xact_lock(')) {
       return this.result([{}]);
@@ -336,6 +346,79 @@ class BackstageRepositoryHarness {
 }
 
 describe('PostgresBackstageBookerRepository', () => {
+  it.each([
+    {
+      label: 'context',
+      read: (repository: PostgresBackstageBookerRepository) =>
+        repository.loadContext('notion-universe')
+    },
+    {
+      label: 'canon storyline summary',
+      read: (repository: PostgresBackstageBookerRepository) =>
+        repository.loadCanonStorylineSummary('notion-universe', 'world-title')
+    },
+    {
+      label: 'canon context',
+      read: (repository: PostgresBackstageBookerRepository) =>
+        repository.loadCanonContext('notion-universe')
+    },
+    {
+      label: 'roster',
+      read: (repository: PostgresBackstageBookerRepository) =>
+        repository.loadRoster('notion-universe')
+    }
+  ])('quarantines legacy $label reads from the durable authority head', async ({ read }) => {
+    const harness = new BackstageRepositoryHarness();
+    harness.authorities.set('notion-universe', 'notion');
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    const error = await read(repository).catch((value: unknown) => value);
+
+    expect(error).toBeInstanceOf(BackstageBookerLegacyReadQuarantinedError);
+    expect(isBackstageBookerLegacyReadQuarantinedError(error)).toBe(true);
+    expect(error).toMatchObject({
+      code: 'BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED',
+      universeId: 'notion-universe'
+    });
+    expect(harness.commands).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE',
+      'SELECT authority FROM backstage_notion_universe_heads WHERE universe_id = $1',
+      'ROLLBACK'
+    ]);
+    expect(harness.commandValues[2]).toEqual(['notion-universe']);
+  });
+
+  it('checks durable authority before querying a non-authoritative legacy roster', async () => {
+    const harness = new BackstageRepositoryHarness();
+    harness.authorities.set('legacy', 'postgres');
+    harness.wrestlers.push({
+      universe_id: 'legacy',
+      name: 'Alex Star',
+      overall: 82,
+      updated_at: '2026-08-14T12:00:00.000Z'
+    });
+    const repository = new PostgresBackstageBookerRepository(harness.pool);
+
+    await expect(repository.loadRoster('legacy')).resolves.toMatchObject([
+      { name: 'Alex Star', overall: 82 }
+    ]);
+
+    const authorityLockIndex = harness.commands.indexOf(
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    );
+    const authorityIndex = harness.commands.indexOf(
+      'SELECT authority FROM backstage_notion_universe_heads WHERE universe_id = $1'
+    );
+    const rosterIndex = harness.commands.findIndex(command =>
+      command.startsWith('SELECT name, overall, updated_at FROM backstage_wrestlers')
+    );
+    expect(authorityLockIndex).toBe(1);
+    expect(authorityIndex).toBeGreaterThan(authorityLockIndex);
+    expect(rosterIndex).toBeGreaterThan(authorityIndex);
+    expect(harness.commands.at(-1)).toBe('COMMIT');
+  });
+
   it('isolates identical wrestler and storyline keys across universes', async () => {
     const harness = new BackstageRepositoryHarness();
     const repository = new PostgresBackstageBookerRepository(harness.pool);
@@ -407,10 +490,18 @@ describe('PostgresBackstageBookerRepository', () => {
       'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
     );
     const timeoutIndex = harness.commands.indexOf(
-      "SELECT set_config('statement_timeout', $1, TRUE)"
+      "SET LOCAL statement_timeout = '3500ms'"
     );
     expect(timeoutIndex).toBeGreaterThan(beginIndex);
-    expect(harness.commandValues[timeoutIndex]).toEqual(['3500ms']);
+    const authorityLockIndex = harness.commands.indexOf(
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    );
+    const authorityIndex = harness.commands.indexOf(
+      'SELECT authority FROM backstage_notion_universe_heads WHERE universe_id = $1'
+    );
+    expect(harness.commandValues[timeoutIndex]).toEqual([]);
+    expect(authorityLockIndex).toBeGreaterThan(timeoutIndex);
+    expect(authorityIndex).toBeGreaterThan(authorityLockIndex);
     expect(harness.commands.at(-1)).toBe('COMMIT');
   });
 
@@ -467,11 +558,19 @@ describe('PostgresBackstageBookerRepository', () => {
     expect(commands[0]).toBe(
       'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
     );
-    expect(commands[1]).toBe("SELECT set_config('statement_timeout', $1, TRUE)");
+    expect(commands[1]).toBe("SET LOCAL statement_timeout = '3500ms'");
+    const authorityLockIndex = commands.indexOf(
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    );
+    const authorityIndex = commands.indexOf(
+      'SELECT authority FROM backstage_notion_universe_heads WHERE universe_id = $1'
+    );
     const storylineQueryIndex = commands.findIndex(command =>
       command.includes('FROM backstage_storyline_threads')
     );
-    expect(storylineQueryIndex).toBeGreaterThan(1);
+    expect(authorityLockIndex).toBeGreaterThan(1);
+    expect(authorityIndex).toBeGreaterThan(authorityLockIndex);
+    expect(storylineQueryIndex).toBeGreaterThan(authorityIndex);
     expect(commands[storylineQueryIndex]).toContain(
       'WHERE universe_id = $1 AND story_key = $2'
     );
@@ -481,7 +580,10 @@ describe('PostgresBackstageBookerRepository', () => {
       'raw/day one?100% + 🎤',
     ]);
     expect(commands.at(-1)).toBe('COMMIT');
-    expect(commands.join(' ')).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|LOCK)\b/u);
+    expect(commands.filter(command => command.startsWith('LOCK TABLE'))).toEqual([
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    ]);
+    expect(commands.join(' ')).not.toMatch(/\b(?:INSERT|UPDATE|DELETE)\b/u);
   });
 
   it('uses source-bounded legacy SQL only for the universe-read projection', async () => {
@@ -537,7 +639,17 @@ describe('PostgresBackstageBookerRepository', () => {
     expect(storylineQueryValues?.[2]).toBe(
       BACKSTAGE_SAVED_STORYLINE_TRANSFER_CODE_POINTS
     );
-    expect(values).toContainEqual(['3500ms']);
+    const timeoutIndex = commands.indexOf("SET LOCAL statement_timeout = '3500ms'");
+    const authorityLockIndex = commands.indexOf(
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    );
+    const authorityIndex = commands.indexOf(
+      'SELECT authority FROM backstage_notion_universe_heads WHERE universe_id = $1'
+    );
+    expect(timeoutIndex).toBeGreaterThan(0);
+    expect(values[timeoutIndex]).toEqual([]);
+    expect(authorityLockIndex).toBeGreaterThan(timeoutIndex);
+    expect(authorityIndex).toBeGreaterThan(authorityLockIndex);
     expect(commands.at(-1)).toBe('COMMIT');
   });
 
@@ -1031,6 +1143,7 @@ class CanonRepositoryHarness {
   headRevision = 0;
   failCommit = false;
   failDeferredConstraintCheck = false;
+  authorities = new Map<string, 'postgres' | 'notion'>();
   private clockSequence = 0;
   private snapshot: {
     headRevision: number;
@@ -1108,6 +1221,13 @@ class CanonRepositoryHarness {
       }
       this.snapshot = null;
       return this.result();
+    }
+    if (sql === 'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE') {
+      return this.result();
+    }
+    if (sql.startsWith('SELECT authority FROM backstage_notion_universe_heads')) {
+      const authority = this.authorities.get(String(values[0]));
+      return this.result(authority ? [{ authority }] : []);
     }
     if (sql.startsWith('INSERT INTO backstage_canon_heads')) {
       return this.result();

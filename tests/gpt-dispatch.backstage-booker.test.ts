@@ -16,8 +16,12 @@ import {
 } from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE,
   BackstageBookerContractError,
   BackstageCanonUnavailableError,
+  BackstageNotionAuthorityReadOnlyError,
+  BackstageNotionAuthorityUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
 
 const mockGetGptModuleMap = jest.fn();
@@ -66,6 +70,8 @@ jest.unstable_mockModule('../src/services/backstageBookerRouteShortcut.js', () =
 }));
 
 jest.unstable_mockModule('../src/services/backstageNotionEnrichmentAuthorization.js', () => ({
+  isBackstageNotionEnrichmentAuthorized: jest.fn(() => true),
+  markBackstageNotionEnrichmentUsed: jest.fn(),
   wasBackstageNotionEnrichmentUsed: mockWasBackstageNotionEnrichmentUsed,
 }));
 
@@ -83,6 +89,11 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 }));
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const {
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE,
+  BackstageNotionIndexUnavailableError,
+} = await import('../src/services/backstageNotionRag.js');
 const { normalizeBackstageBookerActionPayload } = await import(
   '../src/services/backstageBookerContracts.js'
 );
@@ -771,6 +782,180 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       },
     });
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'generateBooking',
+      {
+        universeId: 'my-universe-2k26',
+        prompt: 'Review the current show state.',
+      },
+    ],
+    [
+      'generateBookingWithHRC',
+      {
+        universeId: 'my-universe-2k26',
+        prompt: 'Review the current show state with HRC.',
+      },
+    ],
+    [
+      'simulateMatch',
+      {
+        universeId: 'my-universe-2k26',
+        match: {
+          wrestler1: 'Becky Lynch',
+          wrestler2: 'Lyra Valkyria',
+          matchType: 'singles',
+        },
+        rosters: [],
+      },
+    ],
+  ] as const)(
+    'preserves the bounded Notion index outage for %s dispatch',
+    async (action, payload) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageNotionIndexUnavailableError()
+      );
+
+      const envelope = await routeGptRequest({
+        gptId: 'backstage-booker',
+        body: { action, payload },
+        requestId: `req-backstage-notion-index-unavailable-${action}`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+          message: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE,
+          details: { retryable: true },
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action,
+        },
+      });
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('preserves a bounded retryable authority-state outage without logging its cause', async () => {
+    const sensitiveCause = 'postgres://private-user:private-password@internal/authority';
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageNotionAuthorityUnavailableError(
+        'my-universe-2k26',
+        new Error(sensitiveCause)
+      )
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Review the current show state.',
+        },
+      },
+      requestId: 'req-backstage-notion-authority-unavailable',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE',
+        message: 'The Backstage Notion authority state is temporarily unavailable.',
+        details: { retryable: true },
+      },
+    });
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(sensitiveCause);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it.each(['backstage', 'backstage-booker'])(
+    'preserves a nonretryable Notion-authority write denial for canonical alias %s',
+    async (gptId) => {
+      const universeId = 'my-universe-2k26';
+      const mutationActions = [
+        'appendCanonBeat',
+        'bookEvent',
+        'saveStoryline',
+        'trackStoryline',
+        'upsertStoryline',
+        'updateRoster',
+      ] as const;
+
+      for (const action of mutationActions) {
+        mockDispatchModuleAction.mockRejectedValueOnce(
+          new BackstageNotionAuthorityReadOnlyError(universeId)
+        );
+
+        const envelope = await routeGptRequest({
+          gptId,
+          body: {
+            action,
+            payload: { universeId },
+          },
+          requestId: `req-backstage-notion-authority-read-only-${gptId}-${action}`,
+        });
+
+        expect(envelope).toMatchObject({
+          ok: false,
+          error: {
+            code: BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+            message: BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE,
+            details: { retryable: false },
+          },
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action,
+          },
+        });
+      }
+
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('maps the authoritative simulation roster requirement as caller validation', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageRosterValidationError(
+        'An explicit numeric roster is required for Notion-authoritative match simulation.'
+      )
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'simulateMatch',
+        payload: {
+          universeId: 'my-universe-2k26',
+          match: {
+            wrestler1: 'Rhea Ripley',
+            wrestler2: 'Bianca Belair',
+            matchType: 'Singles',
+          },
+          rosters: [],
+        },
+      },
+      requestId: 'req-backstage-authority-roster-required',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
+        message:
+          'An explicit numeric roster is required for Notion-authoritative match simulation.',
+      },
+    });
   });
 
   it('does not expose unclassified canon repository details through the dispatch envelope', async () => {

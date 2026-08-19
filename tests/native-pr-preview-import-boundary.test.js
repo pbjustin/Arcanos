@@ -54,6 +54,14 @@ const BACKSTAGE_REVIEW_CONTRACT_URL = new URL(
   '../src/shared/backstage/backstageReviewContract.ts',
   import.meta.url
 );
+const BACKSTAGE_NOTION_PREVIEW_CANARY_URL = new URL(
+  '../src/shared/backstage/backstageNotionPreviewCanary.ts',
+  import.meta.url
+);
+const BACKSTAGE_NOTION_RAG_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionRagCore.ts',
+  import.meta.url
+);
 const TRINITY_DIRECT_ANSWER_MODE_URL = new URL(
   '../src/core/logic/trinityDirectAnswerMode.ts',
   import.meta.url
@@ -126,6 +134,16 @@ async function readUniverseReadProjectionSource() {
 
 async function readBackstageReviewContractSource() {
   return (await readFile(BACKSTAGE_REVIEW_CONTRACT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageNotionPreviewCanarySource() {
+  return (await readFile(BACKSTAGE_NOTION_PREVIEW_CANARY_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageNotionRagCoreSource() {
+  return (await readFile(BACKSTAGE_NOTION_RAG_CORE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -366,6 +384,47 @@ describe('native PR preview import boundary', () => {
       expect.stringContaining('forbidden runtime capability reference'),
       expect.stringContaining('critical entry file semantic digest'),
     ]));
+  });
+
+  it('pins the fixed Notion edge canary and production-shared RAG core', async () => {
+    const canaryFile =
+      'src/shared/backstage/backstageNotionPreviewCanary.ts';
+    const ragCoreFile = 'src/shared/backstage/backstageNotionRagCore.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining([canaryFile, ragCoreFile])
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/services/backstageNotionRag.ts',
+        'src/services/backstageNotionSync.ts',
+      ])
+    );
+
+    const canarySource = await readBackstageNotionPreviewCanarySource();
+    const ragCoreSource = await readBackstageNotionRagCoreSource();
+    expect(findUnsafeRuntimeSyntax(canaryFile, canarySource)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(ragCoreFile, ragCoreSource)).toEqual([]);
+
+    const broadenedCanary = replaceRequired(
+      canarySource,
+      "const NOTION_CANARY_HOST = 'api.notion.com';",
+      "const NOTION_CANARY_HOST = 'example.com';"
+    );
+    const weakenedPromptLimit = replaceRequired(
+      ragCoreSource,
+      'export const BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS = 12_000;',
+      'export const BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS = 24_000;'
+    );
+    for (const [filePath, sourceText] of [
+      [canaryFile, broadenedCanary],
+      [ragCoreFile, weakenedPromptLimit],
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
   });
 
   it('pins only the effect-free predictive/reactive approval policy', async () => {

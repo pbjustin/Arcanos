@@ -49,6 +49,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
+  'src/shared/backstage/backstageNotionPreviewCanary.ts',
+  'src/shared/backstage/backstageNotionRagCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
@@ -126,6 +128,14 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   [
     'src/nativePrPreviewApplication.ts',
     new Set(['node:stream', 'node:timers/promises']),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPreviewCanary.ts',
+    new Set(['node:https']),
+  ],
+  [
+    'src/shared/backstage/backstageNotionRagCore.ts',
+    new Set(['crypto']),
   ],
   [
     'scripts/start-railway-service.mjs',
@@ -208,6 +218,18 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
           'runWithRequestAbortTimeout:runWithRequestAbortTimeout',
         ]),
       ],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPreviewCanary.ts',
+    new Map([
+      ['node:https', new Set(['request:requestHttps'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionRagCore.ts',
+    new Map([
+      ['crypto', new Set(['createHash:createHash'])],
     ]),
   ],
   [
@@ -583,7 +605,15 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
-    'b749fe80a8058fc56a9c74536212b817c81c69029f0871d2d713660fbc6da4ab',
+    'bf3e1a0e812961519147c061d4b63fc54c76ae2b652fa45b3f9b5af9a6d8e6d1',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPreviewCanary.ts',
+    'd6aa19cfb3ea5ee0e3b84faebc463d3a8ef549c456a04199de84497571bd4bc8',
+  ],
+  [
+    'src/shared/backstage/backstageNotionRagCore.ts',
+    'c4fbf33f1bbc3a6ab9a574444d4bd3428515d7713215d1715982d6f306590522',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

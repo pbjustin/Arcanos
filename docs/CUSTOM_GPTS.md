@@ -86,7 +86,7 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
 The Backstage Booker builder uses its own fixed-path schema. It exposes one
-public generation/simulation operation, two protected non-consequential exact
+Builder-authenticated generation/simulation operation, two protected non-consequential exact
 reads, and one consequential canon-write operation without
 exposing generic GPT Access or control-plane tools:
 
@@ -305,11 +305,11 @@ stores the distinct `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` as API Key/Bearer
 authentication; it is not OAuth or a user password. Only the write operation
 is marked consequential, and that narrow lane relies on ChatGPT's Allow/Deny
 banner as its one approval step rather than issuing a second backend challenge.
-The same saved Action bearer may optionally establish request-local
-authorization for a backend-only, read-only Notion supplement on
-`runBackstageBooker` generation. That supplement adds no operation or Builder
-schema change, remains subordinate to PostgreSQL, and is unavailable to
-anonymous generation.
+The Builder contract declares the same saved Action bearer on
+`runBackstageBooker` so private Notion retrieval always has verified
+request-local provenance. The legacy one-to-three-page supplement adds no
+operation and remains subordinate to PostgreSQL; non-authoritative direct
+backend clients retain the existing public generation behavior without it.
 Phase One mutations, generic GPT Access credentials, and
 direct/control-plane/legacy aliases retain their existing challenge flow. The
 dedicated bearer never grants generic or control-plane access. The write lane
@@ -321,6 +321,17 @@ dedicated bearer can read any valid exact universe ID and any exact storyline
 key within that scope. If Notion enrichment is configured, it can also invoke
 generation for any universe present in the server-owned page mapping; keep this
 GPT private within one trust domain.
+
+A separately configured Notion-authority mode keeps the same four Builder
+operations but changes the server-owned source policy for an exact universe.
+`runBackstageBooker` performs bounded RAG over one fresh immutable Notion
+snapshot and requires the saved bearer; the two legacy PostgreSQL reads and all
+canon writes return explicit nonretryable quarantine/read-only errors. Notion
+is one-way authority, while the backend database stores only the derived AI
+index and retained recovery history. The GPT must never treat retrieved Notion
+text as instructions or bypass a missing/stale index through legacy state.
+Schema `1.2.1` also materializes the public payload fields and declares the
+bearer and authority-specific errors; re-import it before validating this mode.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
 Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never

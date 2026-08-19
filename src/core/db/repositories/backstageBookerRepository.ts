@@ -247,6 +247,10 @@ interface BackstageCanonSequenceRow {
   sequence: number | string;
 }
 
+interface BackstageNotionAuthorityReadRow {
+  authority: unknown;
+}
+
 export class BackstageBookerRepositoryUnavailableError extends Error {
   readonly code = 'BACKSTAGE_BOOKER_REPOSITORY_UNAVAILABLE';
   readonly operation: string;
@@ -258,6 +262,29 @@ export class BackstageBookerRepositoryUnavailableError extends Error {
     this.operation = operation;
     this.cause = cause;
   }
+}
+
+/**
+ * Prevent legacy PostgreSQL projections from escaping after the durable
+ * authority head has switched a universe to Notion.
+ */
+export class BackstageBookerLegacyReadQuarantinedError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED';
+  readonly universeId: string;
+
+  constructor(universeId: string) {
+    super(
+      'Notion is authoritative for this Backstage universe; legacy PostgreSQL reads are quarantined.'
+    );
+    this.name = 'BackstageBookerLegacyReadQuarantinedError';
+    this.universeId = universeId;
+  }
+}
+
+export function isBackstageBookerLegacyReadQuarantinedError(
+  value: unknown
+): value is BackstageBookerLegacyReadQuarantinedError {
+  return value instanceof BackstageBookerLegacyReadQuarantinedError;
 }
 
 export class BackstageBookerWriteError extends Error {
@@ -928,6 +955,33 @@ function parseCanonBeatMutationReplay(value: unknown): BackstageCanonBeatMutatio
 export class PostgresBackstageBookerRepository {
   constructor(private readonly pool: Pool) {}
 
+  private async assertLegacyReadAllowed(
+    client: PoolClient,
+    universeId: string
+  ): Promise<void> {
+    await client.query(
+      'LOCK TABLE backstage_notion_universe_heads IN ACCESS SHARE MODE'
+    );
+    const result = await client.query<BackstageNotionAuthorityReadRow>(
+      `SELECT authority
+       FROM backstage_notion_universe_heads
+       WHERE universe_id = $1`,
+      [universeId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return;
+    }
+    if (row.authority === 'notion') {
+      throw new BackstageBookerLegacyReadQuarantinedError(universeId);
+    }
+    if (row.authority !== 'postgres') {
+      throw new TypeError(
+        'Backstage Notion authority head returned an unsupported authority.'
+      );
+    }
+  }
+
   private async assertUniverseScopeWriteActivated(
     client: PoolClient,
     universeId: string
@@ -1315,10 +1369,7 @@ export class PostgresBackstageBookerRepository {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       transactionStarted = true;
       if (statementTimeoutMs !== undefined) {
-        await client.query(
-          "SELECT set_config('statement_timeout', $1, TRUE)",
-          [`${statementTimeoutMs}ms`]
-        );
+        await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
       }
       const result = await callback(client);
       await client.query('COMMIT');
@@ -1339,6 +1390,9 @@ export class PostgresBackstageBookerRepository {
           error,
           'Backstage Booker read transaction start failed with a non-Error cause.'
         );
+      }
+      if (isBackstageBookerLegacyReadQuarantinedError(error)) {
+        throw error;
       }
       throw new BackstageBookerRepositoryUnavailableError(operation, error);
     } finally {
@@ -1872,9 +1926,10 @@ export class PostgresBackstageBookerRepository {
 
   async loadCanonContext(universeId: string): Promise<BackstageCanonContext> {
     const normalizedUniverseId = normalizeUniverseId(universeId);
-    return this.readSnapshot('loadCanonContext', client =>
-      this.loadCanonContextFromClient(client, normalizedUniverseId)
-    );
+    return this.readSnapshot('loadCanonContext', async client => {
+      await this.assertLegacyReadAllowed(client, normalizedUniverseId);
+      return this.loadCanonContextFromClient(client, normalizedUniverseId);
+    });
   }
 
   async loadCanonStorylineSummary(
@@ -1885,6 +1940,7 @@ export class PostgresBackstageBookerRepository {
     const normalizedUniverseId = normalizeUniverseId(universeId);
     const normalizedStoryKey = normalizeRequiredString(storyKey, 'storyKey', 240);
     return this.readSnapshot('loadCanonStorylineSummary', async client => {
+      await this.assertLegacyReadAllowed(client, normalizedUniverseId);
       const result = await client.query<BackstageCanonStorylineRow>(
         `SELECT
            id,
@@ -2083,6 +2139,7 @@ export class PostgresBackstageBookerRepository {
         ]
       : [normalizedUniverseId];
     return this.readSnapshot('loadContext', async client => {
+      await this.assertLegacyReadAllowed(client, normalizedUniverseId);
       const rosterResult = await client.query<BackstageWrestlerRow>(
         `SELECT ${rosterNameSelection}, overall, updated_at
          FROM backstage_wrestlers
@@ -2153,8 +2210,9 @@ export class PostgresBackstageBookerRepository {
 
   async loadRoster(universeId: string): Promise<BackstageWrestler[]> {
     const normalizedUniverseId = normalizeUniverseId(universeId);
-    try {
-      const result = await this.pool.query<BackstageWrestlerRow>(
+    return this.readSnapshot('loadRoster', async client => {
+      await this.assertLegacyReadAllowed(client, normalizedUniverseId);
+      const result = await client.query<BackstageWrestlerRow>(
         `SELECT name, overall, updated_at
          FROM backstage_wrestlers
          WHERE universe_id = $1
@@ -2162,9 +2220,7 @@ export class PostgresBackstageBookerRepository {
         [normalizedUniverseId]
       );
       return result.rows.map(mapWrestlerRow);
-    } catch (error) {
-      throw new BackstageBookerRepositoryUnavailableError('loadRoster', error);
-    }
+    });
   }
 }
 

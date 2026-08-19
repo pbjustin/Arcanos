@@ -50,6 +50,16 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
 
+jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
+  isBackstageNotionAuthorityDatabaseError: (value: unknown) => (
+    typeof value === 'object'
+    && value !== null
+    && (value as { code?: unknown }).code === 'BN001'
+  ),
+  isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null)
+}));
+
 jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES,
   applyBackstageRosterMutation: jest.fn(),

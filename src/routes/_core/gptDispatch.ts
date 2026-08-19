@@ -13,6 +13,11 @@ import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
 import { wasBackstageNotionEnrichmentUsed } from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE,
+  isBackstageNotionIndexUnavailableError,
+} from '@services/backstageNotionRag.js';
+import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel,
@@ -20,9 +25,15 @@ import {
 import { classifyGptMemoryInterception } from "@services/memoryDispatchInterception.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE,
+  BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_MESSAGE,
   BackstageBookerContractError,
   copyBackstageBookerPayloadProvenance,
   isBackstageCanonUnavailableError,
+  isBackstageNotionAuthorityReadOnlyError,
+  isBackstageNotionAuthorityUnavailableError,
   markBackstageBookerExplicitPayload,
   markBackstageBookerFlattenedPayload,
 } from '@services/backstageBookerContracts.js';
@@ -498,6 +509,27 @@ function buildDispatchErrorDetails(
   error: unknown,
   errorMessage: string
 ): Record<string, unknown> | undefined {
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageNotionIndexUnavailableError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageNotionAuthorityUnavailableError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageNotionAuthorityReadOnlyError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
   if (
     error instanceof BackstageBookerContractError
     && error.action === action
@@ -1917,7 +1949,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
       const isRosterValidationFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
-        && action === 'updateRoster'
+        && (action === 'updateRoster' || action === 'simulateMatch')
         && isBackstageRosterValidationError(err);
       const isRosterPersistenceFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
@@ -1942,12 +1974,24 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isCanonUnavailableFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageCanonUnavailableError(err);
+      const isNotionIndexUnavailableFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageNotionIndexUnavailableError(err);
+      const isNotionAuthorityUnavailableFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageNotionAuthorityUnavailableError(err);
+      const isNotionAuthorityReadOnlyFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageNotionAuthorityReadOnlyError(err);
       const isUnclassifiedCanonFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'upsertStoryline' || action === 'appendCanonBeat')
         && !isBackstageCanonContractFailure
         && !isCanonDomainFailure
-        && !isCanonUnavailableFailure;
+        && !isCanonUnavailableFailure
+        && !isNotionIndexUnavailableFailure
+        && !isNotionAuthorityUnavailableFailure
+        && !isNotionAuthorityReadOnlyFailure;
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -1959,6 +2003,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? 'GPT job cancellation requested.'
         : isUnclassifiedCanonFailure
         ? BACKSTAGE_CANON_INTERNAL_ERROR_MESSAGE
+        : isNotionIndexUnavailableFailure
+        ? BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE
+        : isNotionAuthorityUnavailableFailure
+        ? BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_MESSAGE
+        : isNotionAuthorityReadOnlyFailure
+        ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -2156,8 +2206,19 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
               || isResearchValidationFailure
               || isCanonDomainFailure
               || isCanonUnavailableFailure
+              || isNotionIndexUnavailableFailure
+              || isNotionAuthorityUnavailableFailure
+              || isNotionAuthorityReadOnlyFailure
             )
-            ? err.code
+            ? (
+                isNotionIndexUnavailableFailure
+                  ? BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+                  : isNotionAuthorityUnavailableFailure
+                  ? BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
+                  : isNotionAuthorityReadOnlyFailure
+                  ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE
+                  : err.code
+              )
             : isBackstageCanonContractFailure
             ? 'BACKSTAGE_BOOKER_INVALID'
             : "MODULE_ERROR",

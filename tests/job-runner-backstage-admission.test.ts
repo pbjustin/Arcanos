@@ -7,8 +7,16 @@ import {
 } from '../src/shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   BackstageCanonUnavailableError,
+  BackstageNotionAuthorityReadOnlyError,
+  BackstageNotionAuthorityUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
+import {
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BackstageNotionIndexUnavailableError,
+} from '../src/services/backstageNotionRag.js';
 
 const mockGetJobById = jest.fn(async (_jobId: string) => null);
 const mockGetGptModuleMap = jest.fn();
@@ -164,7 +172,7 @@ describe('normal worker queued Backstage mutation admission', () => {
     });
     mockGetModuleMetadata.mockReturnValue({
       name: 'BACKSTAGE:BOOKER',
-      actions: ['updateRoster', 'trackStoryline', 'upsertStoryline', 'appendCanonBeat'],
+      actions: ['updateRoster', 'trackStoryline', 'upsertStoryline', 'appendCanonBeat', 'generateBooking'],
       route: 'backstage',
       defaultAction: 'updateRoster',
       defaultTimeoutMs: 60_000,
@@ -482,4 +490,92 @@ describe('normal worker queued Backstage mutation admission', () => {
       expect.objectContaining(payload)
     );
   });
+
+  it('does not retry a Notion-authoritative write denial', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageNotionAuthorityReadOnlyError('phase-two')
+    );
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'job-backstage-notion-authority-read-only',
+      rawInput: {
+        gptId: 'backstage',
+        body: {
+          action: 'upsertStoryline',
+          payload: {
+            universeId: 'phase-two',
+            mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+            expectedVersion: 0,
+            storyline: {
+              key: 'summer-feud',
+              title: 'Summer Feud',
+              summary: null,
+              status: 'draft',
+              participantNames: [],
+            },
+          },
+        },
+        requestId: 'req-backstage-notion-authority-read-only',
+        backstageMutationAdmission: buildQueuedGptBackstageMutationAdmission({
+          action: 'upsertStoryline',
+          principalId: 'operator:normal-worker-test',
+        }),
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      output: {
+        ok: false,
+        error: {
+          code: BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+          details: { retryable: false },
+        },
+      },
+    });
+  });
+
+  it.each([
+    [
+      BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      () => new BackstageNotionIndexUnavailableError(),
+    ],
+    [
+      BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
+      () => new BackstageNotionAuthorityUnavailableError('phase-two'),
+    ],
+  ] as const)(
+    'retries a details-qualified transient %s outage',
+    async (errorCode, buildError) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(buildError());
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: `job-${errorCode.toLowerCase()}`,
+        rawInput: {
+          gptId: 'backstage',
+          body: {
+            action: 'generateBooking',
+            payload: {
+              universeId: 'phase-two',
+              prompt: 'Review the current show state.',
+            },
+          },
+          requestId: `req-${errorCode.toLowerCase()}`,
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'failed',
+        retryable: true,
+        output: {
+          ok: false,
+          error: {
+            code: errorCode,
+            details: { retryable: true },
+          },
+        },
+      });
+    }
+  );
 });

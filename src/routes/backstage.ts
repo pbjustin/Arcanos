@@ -4,9 +4,13 @@ import type { BackstageBookerActionInputMap } from '@arcanos/protocol';
 import { BackstageBooker } from '@services/backstage-booker.js';
 import {
   BackstageBookerContractError,
+  BackstageNotionAuthorityReadOnlyError,
+  isBackstageNotionAuthorityUnavailableError,
+  isBackstageNotionAuthorityReadOnlyError,
   normalizeBackstageBookerActionPayload,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
+import { isBackstageNotionAuthorityEnforced } from '@services/backstageNotionAuthority.js';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -24,6 +28,30 @@ import {
 const router = express.Router();
 
 function sendBackstageRouteError(res: Response, error: unknown): void {
+  if (isBackstageNotionAuthorityUnavailableError(error)) {
+    res.status(error.httpStatus).json({
+      success: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable
+      }
+    });
+    return;
+  }
+
+  if (isBackstageNotionAuthorityReadOnlyError(error)) {
+    res.status(error.httpStatus).json({
+      success: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable
+      }
+    });
+    return;
+  }
+
   if (error instanceof BackstageBookerContractError) {
     res.status(400).json({
       success: false,
@@ -119,6 +147,9 @@ router.post('/book-gpt', backstageMutationHttpBoundary, backstageMutationConfirm
       key: requestedKey,
       storyline: 'pending-generation-validation'
     });
+    if (await isBackstageNotionAuthorityEnforced(universeId)) {
+      throw new BackstageNotionAuthorityReadOnlyError(universeId);
+    }
     const storyline = await BackstageBooker.generateBooking(input.prompt, universeId);
     const savedStoryline = await BackstageBooker.saveStoryline(
       prevalidatedSaveInput.key,

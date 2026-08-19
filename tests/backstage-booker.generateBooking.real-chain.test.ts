@@ -65,6 +65,12 @@ jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
   runSelfImproveCycle: jest.fn()
 }));
 
+jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
+  isBackstageNotionAuthorityDatabaseError: jest.fn(() => false),
+  isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null),
+}));
+
 const originalGpt5Model = process.env.GPT5_MODEL;
 const originalBookerTokenLimit = process.env.BOOKER_TOKEN_LIMIT;
 const originalBookerGenerationStageTimeoutMs = process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS;

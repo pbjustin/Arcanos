@@ -143,6 +143,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.body.openapi).toBe('3.1.0');
+    expect(response.body.info?.version).toBe('1.2.1');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',
@@ -151,6 +152,8 @@ describe('custom GPT OpenAPI contract route', () => {
     ]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.operationId)
       .toBe('runBackstageBooker');
+    expect(response.body.paths?.['/gpt/backstage-booker']?.post?.security)
+      .toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.['x-openai-isConsequential'])
       .toBe(false);
     expect(response.body.paths?.[

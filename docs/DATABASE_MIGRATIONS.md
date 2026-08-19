@@ -293,6 +293,45 @@ the participant table references Phase One's scoped roster identity. The Phase
 One rollback now rejects the reverse order with SQLSTATE `55000` while any Phase
 2 table remains, instead of falling through to a lower-level dependency error.
 
+### Backstage Notion RAG authority migration
+
+`migrations/20260819_backstage_notion_rag_v1.sql` adds a dedicated derived
+index; it does not use the global `rag_docs` corpus or rewrite any legacy
+Backstage row. Runtime startup mirrors the additive DDL in
+`src/core/db/schema.ts`. The migration creates one universe authority/head
+table, immutable snapshot/page/chunk tables, and a token-fenced sync lease.
+Chunks store deterministic SHA-256 identities and JSONB embeddings scoped by
+universe, snapshot, and model. A no-change sync updates only the head's
+`last_verified_at`.
+
+First activation occurs in one transaction: it locks and revalidates the
+unexpired lease, drains all nine legacy tables in a fixed
+`SHARE ROW EXCLUSIVE` order, advances a singleton authority epoch, takes
+`ACCESS EXCLUSIVE` on the authority-head table, inserts the complete immutable
+snapshot, rechecks the lease, and flips `authority='notion'` plus
+`active_snapshot_id`. Legacy read transactions take `ACCESS SHARE` on the head
+table before establishing their repeatable-read snapshot, so cutover drains
+them before the flip. The epoch's locking read makes a stale repeatable-read
+writer fail rather than observe a pre-cutover or absent universe head.
+
+Triggers reject `INSERT`, `UPDATE`, and `DELETE` affecting that universe in
+legacy events, roster, prose storyline, story-beat, canon head/revision, typed
+storyline/participant, and canon-beat tables. They also prevent deletion or
+downgrade of a Notion-authoritative head and permit active-snapshot rotation
+only when the old and new snapshots use the same root page. The application
+guard is earlier and cheaper, but these triggers are the database invariant.
+All authority-boundary rejection uses SQLSTATE `BN001`; same-root snapshot
+rotation and `last_verified_at` refresh remain permitted.
+
+The rollback file is intentionally guarded. It locks every affected table and
+refuses with SQLSTATE `55000` when any authority head, snapshot, page, chunk, or
+lease row exists. It never uses `CASCADE`. Once activated, preserve/export the
+derived history and roll back application behavior through a separate approved
+authority-restoration procedure; do not drop the schema as routine rollback.
+V1 retains prior successful immutable snapshots and has no automatic purge.
+Ordinary validation must not apply either file to a configured/shared database;
+use only a dedicated disposable PostgreSQL 18 target.
+
 ### Local-agent hardening migration
 
 The additive

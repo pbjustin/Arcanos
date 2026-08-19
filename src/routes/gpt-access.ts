@@ -55,6 +55,9 @@ import { BACKSTAGE_MODULE_NAME } from '@shared/backstage/backstageActionPolicy.j
 import {
   BackstageBookerContractError,
   isBackstageCanonUnavailableError,
+  isBackstageNotionAuthorityReadQuarantinedError,
+  isBackstageNotionAuthorityReadOnlyError,
+  isBackstageNotionAuthorityUnavailableError,
   normalizeBackstageBookerSchemaDrivenActionPayload,
 } from '@services/backstageBookerContracts.js';
 import {
@@ -974,7 +977,8 @@ function sendBackstageReadError(
   res: express.Response,
   statusCode: 400 | 404 | 409 | 500 | 503,
   code: string,
-  message: string
+  message: string,
+  retryable: boolean | undefined = statusCode === 503 ? true : undefined
 ): void {
   sendGptAccessResult(res, {
     statusCode,
@@ -986,7 +990,7 @@ function sendBackstageReadError(
       error: {
         code,
         message,
-        ...(statusCode === 503 ? { retryable: true } : {}),
+        ...(retryable === undefined ? {} : { retryable }),
       },
       ...(req.requestId ? { requestId: req.requestId } : {}),
       ...(req.traceId ? { traceId: req.traceId } : {}),
@@ -1103,15 +1107,22 @@ const getBackstageUniverse = asyncHandler(async (req, res) => {
       },
     });
   } catch (error: unknown) {
-    const unavailable = error instanceof BackstageBookerRepositoryUnavailableError;
+    const quarantined = isBackstageNotionAuthorityReadQuarantinedError(error);
+    const authorityUnavailable = isBackstageNotionAuthorityUnavailableError(error);
+    const unavailable = authorityUnavailable
+      || error instanceof BackstageBookerRepositoryUnavailableError;
     try {
       req.logger?.[unavailable ? 'warn' : 'error']?.(
         'backstage_universe_read.failed',
         {
           universeId,
-          code: unavailable
-            ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
-            : 'BACKSTAGE_UNIVERSE_READ_FAILED',
+          code: quarantined
+            ? error.code
+            : authorityUnavailable
+              ? error.code
+            : unavailable
+              ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
+              : 'BACKSTAGE_UNIVERSE_READ_FAILED',
         }
       );
     } catch {
@@ -1120,13 +1131,22 @@ const getBackstageUniverse = asyncHandler(async (req, res) => {
     sendBackstageReadError(
       req,
       res,
-      unavailable ? 503 : 500,
-      unavailable
-        ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
-        : 'BACKSTAGE_UNIVERSE_READ_FAILED',
-      unavailable
-        ? 'Backstage universe data is temporarily unavailable.'
-        : 'Backstage universe data could not be read safely.'
+      quarantined ? error.httpStatus : unavailable ? 503 : 500,
+      quarantined
+        ? error.code
+        : authorityUnavailable
+          ? error.code
+        : unavailable
+          ? 'BACKSTAGE_UNIVERSE_READ_UNAVAILABLE'
+          : 'BACKSTAGE_UNIVERSE_READ_FAILED',
+      quarantined
+        ? error.message
+        : authorityUnavailable
+          ? error.message
+        : unavailable
+          ? 'Backstage universe data is temporarily unavailable.'
+          : 'Backstage universe data could not be read safely.',
+      quarantined || authorityUnavailable ? error.retryable : undefined
     );
   }
 });
@@ -1186,12 +1206,19 @@ const getBackstageStoryline = asyncHandler(async (req, res) => {
       },
     });
   } catch (error: unknown) {
-    const unavailable = error instanceof BackstageBookerRepositoryUnavailableError;
+    const quarantined = isBackstageNotionAuthorityReadQuarantinedError(error);
+    const authorityUnavailable = isBackstageNotionAuthorityUnavailableError(error);
+    const unavailable = authorityUnavailable
+      || error instanceof BackstageBookerRepositoryUnavailableError;
     const validation = error instanceof BackstageStorylineSummaryReadRequestError;
     const domainCode = isBackstageCanonDomainError(error) ? error.code : null;
     const notFound = domainCode === 'BACKSTAGE_STORYLINE_NOT_FOUND';
     const versionConflict = domainCode === 'BACKSTAGE_STORYLINE_VERSION_CONFLICT';
-    const statusCode = validation
+    const statusCode = quarantined
+      ? error.httpStatus
+      : authorityUnavailable
+      ? error.httpStatus
+      : validation
       ? 400
       : notFound
         ? 404
@@ -1200,7 +1227,11 @@ const getBackstageStoryline = asyncHandler(async (req, res) => {
           : unavailable
             ? 503
             : 500;
-    const code = validation
+    const code = quarantined
+      ? error.code
+      : authorityUnavailable
+      ? error.code
+      : validation
       ? 'GPT_ACCESS_VALIDATION_ERROR'
       : notFound
         ? 'BACKSTAGE_STORYLINE_NOT_FOUND'
@@ -1209,7 +1240,11 @@ const getBackstageStoryline = asyncHandler(async (req, res) => {
           : unavailable
             ? 'BACKSTAGE_STORYLINE_READ_UNAVAILABLE'
             : 'BACKSTAGE_STORYLINE_READ_FAILED';
-    const message = validation
+    const message = quarantined
+      ? error.message
+      : authorityUnavailable
+      ? error.message
+      : validation
       ? 'The Backstage storyline summary read request is invalid.'
       : notFound
         ? 'No stored Backstage canon storyline was found for this exact universe and key.'
@@ -1230,7 +1265,14 @@ const getBackstageStoryline = asyncHandler(async (req, res) => {
     } catch {
       // Diagnostics must not alter the fixed public response.
     }
-    sendBackstageReadError(req, res, statusCode, code, message);
+    sendBackstageReadError(
+      req,
+      res,
+      statusCode,
+      code,
+      message,
+      quarantined || authorityUnavailable ? error.retryable : undefined
+    );
   }
 });
 
@@ -1525,6 +1567,40 @@ async function runGptAccessCapabilityAction(input: {
           error: {
             code: 'GPT_ACCESS_VALIDATION_ERROR',
             message: error.message
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && isBackstageNotionAuthorityReadOnlyError(error)
+    ) {
+      return {
+        statusCode: error.httpStatus,
+        payload: {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable
+          }
+        }
+      };
+    }
+
+    if (
+      metadata.name === BACKSTAGE_MODULE_NAME
+      && isBackstageNotionAuthorityUnavailableError(error)
+    ) {
+      return {
+        statusCode: error.httpStatus,
+        payload: {
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable
           }
         }
       };
