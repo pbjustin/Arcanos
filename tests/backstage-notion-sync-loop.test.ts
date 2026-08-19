@@ -104,6 +104,43 @@ describe('Backstage Notion synchronization loop', () => {
     handle.stop();
   });
 
+  it('reports isolated root failures without losing the configured universe count', async () => {
+    const sync = jest.fn(async () => [{
+      universeId: 'failed-universe',
+      status: 'failed' as const,
+      pageCount: 0,
+      chunkCount: 0,
+      manifestHash: null,
+      snapshotId: null,
+      verifiedAt: null,
+      errorCode: 'BACKSTAGE_NOTION_SYNC_INCOMPLETE',
+    }]);
+    const handle = startBackstageNotionSyncLoop({
+      intervalMs: BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
+      sync,
+      logger: testLogger,
+    });
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_cycle_completed_with_failures',
+      expect.objectContaining({
+        configuredUniverses: 1,
+        activated: 0,
+        unchanged: 0,
+        leaseBusy: 0,
+        failed: 1,
+      })
+    );
+    expect(loggerInfo).not.toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_cycle_completed',
+      expect.anything()
+    );
+
+    handle.stop();
+  });
+
   it('aborts an active cycle and prevents recurrence when the parent signal aborts', async () => {
     const parentController = new AbortController();
     let cycleSignal: AbortSignal | undefined;

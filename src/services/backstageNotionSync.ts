@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES,
   BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS,
+  BackstageNotionSyncLeaseError,
   getBackstageNotionRagRepository,
   type BackstageNotionActiveInventory,
   type BackstageNotionRagRepository,
   type BackstageNotionSnapshotChunkInput,
   type BackstageNotionSnapshotPageInput,
+  type BackstageNotionSyncLease,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
@@ -25,6 +28,8 @@ import {
   type BackstageNotionPageMetadata,
 } from '@shared/backstage/backstageNotionContextCore.js';
 import {
+  BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
+  BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
   prepareBackstageNotionRagPage,
   type BackstageNotionPreparedRagPage,
 } from '@shared/backstage/backstageNotionRagCore.js';
@@ -37,11 +42,18 @@ import { sleep } from '@shared/sleep.js';
 export const BACKSTAGE_NOTION_SYNC_MAX_PAGES = 512;
 export const BACKSTAGE_NOTION_SYNC_MAX_DEPTH = 16;
 export const BACKSTAGE_NOTION_SYNC_MAX_TOTAL_CODE_POINTS = 4_000_000;
-export const BACKSTAGE_NOTION_SYNC_MAX_CHUNKS = 5_000;
+export const BACKSTAGE_NOTION_SYNC_MAX_CHUNKS =
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT;
 export const BACKSTAGE_NOTION_SYNC_FETCH_TIMEOUT_MS = 15_000;
 export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
 export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
+export const BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS = 60_000;
+export const BACKSTAGE_NOTION_RAG_INDEX_FORMAT =
+  'backstage-notion-rag-index-v1';
+
+const BACKSTAGE_NOTION_RAG_MANIFEST_FORMAT =
+  'backstage-notion-rag-manifest-v2';
 
 const SYNC_HOLDER_ID = `backstage-notion-rag:${process.pid}:${randomUUID()}`;
 const UNSUPPORTED_ENHANCED_MARKDOWN_PATTERN =
@@ -53,6 +65,8 @@ export const BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE =
   'BACKSTAGE_NOTION_SYNC_INCOMPLETE';
 export const BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE =
   'BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT';
+export const BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE =
+  'BACKSTAGE_NOTION_SYNC_ROOT_FAILED';
 
 export class BackstageNotionSyncError extends Error {
   constructor(
@@ -64,6 +78,8 @@ export class BackstageNotionSyncError extends Error {
   }
 }
 
+class BackstageNotionGlobalConfigurationError extends BackstageNotionSyncError {}
+
 export interface BackstageNotionSyncDependencies {
   repository?: BackstageNotionRagRepository;
   fetchImpl?: BackstageNotionFetchImplementation;
@@ -74,16 +90,18 @@ export interface BackstageNotionSyncDependencies {
   requestSpacingMs?: number;
   fetchTimeoutMs?: number;
   retryBaseDelayMs?: number;
+  leaseRenewalIntervalMs?: number;
 }
 
 export interface BackstageNotionSyncResult {
   universeId: string;
-  status: 'activated' | 'unchanged' | 'lease-busy';
+  status: 'activated' | 'unchanged' | 'lease-busy' | 'failed';
   pageCount: number;
   chunkCount: number;
   manifestHash: string | null;
   snapshotId: string | null;
   verifiedAt: Date | null;
+  errorCode?: string;
 }
 
 interface PendingPage {
@@ -136,6 +154,149 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw reason instanceof Error || reason instanceof DOMException
     ? reason
     : new DOMException('The operation was aborted.', 'AbortError');
+}
+
+async function raceWithSignal<T>(
+  operation: () => Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      callback();
+    };
+    const onAbort = (): void => {
+      finish(() => {
+        try {
+          throwIfAborted(signal);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    let pending: Promise<T>;
+    try {
+      pending = operation();
+    } catch (error) {
+      finish(() => reject(error));
+      return;
+    }
+    void pending.then(
+      value => finish(() => resolve(value)),
+      error => finish(() => reject(error))
+    );
+  });
+}
+
+class BackstageNotionLeaseHeartbeat {
+  private readonly controller = new AbortController();
+  private readonly forwardParentAbort: (() => void) | null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private renewalInFlight: Promise<void> | null = null;
+  private stopped = false;
+
+  constructor(
+    private readonly repository: BackstageNotionRagRepository,
+    private readonly lease: BackstageNotionSyncLease,
+    private readonly renewalIntervalMs: number,
+    private readonly parentSignal: AbortSignal | undefined
+  ) {
+    this.forwardParentAbort = parentSignal
+      ? () => this.controller.abort(parentSignal.reason)
+      : null;
+    if (this.forwardParentAbort) {
+      parentSignal?.addEventListener('abort', this.forwardParentAbort, { once: true });
+    }
+    if (parentSignal?.aborted) {
+      this.controller.abort(parentSignal.reason);
+    } else {
+      this.scheduleRenewal();
+    }
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+    this.stopped = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.forwardParentAbort) {
+      this.parentSignal?.removeEventListener('abort', this.forwardParentAbort);
+    }
+    await this.renewalInFlight?.catch(() => undefined);
+  }
+
+  private scheduleRenewal(): void {
+    if (
+      this.stopped
+      || this.controller.signal.aborted
+      || this.timer
+      || this.renewalInFlight
+    ) {
+      return;
+    }
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      if (this.stopped || this.controller.signal.aborted) {
+        return;
+      }
+      const renewal = this.renewLease();
+      this.renewalInFlight = renewal;
+      void renewal.then(() => {
+        if (this.renewalInFlight === renewal) {
+          this.renewalInFlight = null;
+        }
+        this.scheduleRenewal();
+      });
+    }, this.renewalIntervalMs);
+    this.timer.unref?.();
+  }
+
+  private async renewLease(): Promise<void> {
+    try {
+      const renewed = await this.repository.renewSyncLease(
+        this.lease.universeId,
+        this.lease.holderId,
+        this.lease.leaseToken,
+        BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+      );
+      if (
+        !renewed
+        || renewed.universeId !== this.lease.universeId
+        || renewed.holderId !== this.lease.holderId
+        || renewed.leaseToken !== this.lease.leaseToken
+      ) {
+        throw new BackstageNotionSyncLeaseError();
+      }
+    } catch (error) {
+      if (this.stopped || this.controller.signal.aborted) {
+        return;
+      }
+      this.controller.abort(
+        error instanceof BackstageNotionSyncLeaseError
+          ? error
+          : new BackstageNotionSyncLeaseError()
+      );
+    }
+  }
 }
 
 async function waitWithSignal(
@@ -246,7 +407,11 @@ function buildManifestHash(pages: readonly CapturedPage[]): string {
       lastEditedAt: page.metadata.lastEditedAt.toISOString(),
     }));
   return sha256(JSON.stringify({
-    format: 'backstage-notion-rag-manifest-v1',
+    format: BACKSTAGE_NOTION_RAG_MANIFEST_FORMAT,
+    indexFormat: BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+    pageFormat: BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
+    chunkFormat: BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
+    embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
     pages: manifest,
   }));
 }
@@ -258,7 +423,8 @@ function canonicalPageUrl(pageId: string): string {
 async function loadReusableEmbeddings(
   repository: BackstageNotionRagRepository,
   universeId: string,
-  hashes: readonly string[]
+  hashes: readonly string[],
+  signal: AbortSignal
 ): Promise<Map<string, number[]>> {
   const reusable = new Map<string, number[]>();
   for (
@@ -270,10 +436,13 @@ async function loadReusableEmbeddings(
       index,
       index + BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES
     );
-    const loaded = await repository.loadReusableEmbeddings(
-      universeId,
-      DEFAULT_OPENAI_EMBEDDING_MODEL,
-      batch
+    const loaded = await raceWithSignal(
+      () => repository.loadReusableEmbeddings(
+        universeId,
+        DEFAULT_OPENAI_EMBEDDING_MODEL,
+        batch
+      ),
+      signal
     );
     for (const [hash, embedding] of loaded) {
       reusable.set(hash, embedding);
@@ -287,6 +456,7 @@ async function buildSnapshotChunks(input: {
   pages: readonly CapturedPage[];
   repository: BackstageNotionRagRepository;
   embedBatch: (inputs: readonly string[]) => Promise<number[][]>;
+  signal: AbortSignal;
 }): Promise<BackstageNotionSnapshotChunkInput[]> {
   const chunks = input.pages.flatMap(page => [...page.prepared.chunks]);
   if (chunks.length < 1 || chunks.length > BACKSTAGE_NOTION_SYNC_MAX_CHUNKS) {
@@ -304,7 +474,8 @@ async function buildSnapshotChunks(input: {
   const embeddings = await loadReusableEmbeddings(
     input.repository,
     input.universeId,
-    hashes
+    hashes,
+    input.signal
   );
   const missingHashes = hashes.filter(hash => !embeddings.has(hash));
   for (
@@ -316,8 +487,11 @@ async function buildSnapshotChunks(input: {
       index,
       index + BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
     );
-    const batchEmbeddings = await input.embedBatch(
-      batchHashes.map(hash => byHash.get(hash) ?? '')
+    const batchEmbeddings = await raceWithSignal(
+      () => input.embedBatch(
+        batchHashes.map(hash => byHash.get(hash) ?? '')
+      ),
+      input.signal
     );
     if (batchEmbeddings.length !== batchHashes.length) {
       throw new Error('Embedding provider returned an incomplete Notion batch.');
@@ -529,6 +703,34 @@ function initialActivationMeetsCoverage(input: {
     || input.pageCount >= input.root.initialMinimumPageCount;
 }
 
+function requireBackstageNotionAccessToken(
+  readEnvironment: BackstageNotionAuthorityEnvironmentReader
+): string {
+  let accessToken: string | null;
+  try {
+    accessToken = readBackstageNotionAccessToken(readEnvironment);
+  } catch {
+    accessToken = null;
+  }
+  if (!accessToken) {
+    throw new BackstageNotionGlobalConfigurationError(
+      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
+      'Backstage Notion synchronization is not configured safely.'
+    );
+  }
+  return accessToken;
+}
+
+function rootFailureCode(error: unknown): string {
+  if (
+    error instanceof BackstageNotionSyncError
+    || error instanceof BackstageNotionSyncLeaseError
+  ) {
+    return error.code;
+  }
+  return BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE;
+}
+
 /** Build and atomically activate one complete rooted Notion hierarchy. */
 export async function syncBackstageNotionAuthorityRoot(
   root: BackstageNotionAuthorityRoot,
@@ -537,18 +739,7 @@ export async function syncBackstageNotionAuthorityRoot(
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
   const readEnvironment = dependencies.readEnvironment
     ?? ((name: string) => getEnv(name));
-  let accessToken: string | null;
-  try {
-    accessToken = readBackstageNotionAccessToken(readEnvironment);
-  } catch {
-    accessToken = null;
-  }
-  if (!accessToken) {
-    throw new BackstageNotionSyncError(
-      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
-      'Backstage Notion synchronization is not configured safely.'
-    );
-  }
+  const accessToken = requireBackstageNotionAccessToken(readEnvironment);
   throwIfAborted(dependencies.signal);
   const holderId = dependencies.holderId ?? SYNC_HOLDER_ID;
   const lease = await repository.acquireSyncLease(
@@ -567,9 +758,24 @@ export async function syncBackstageNotionAuthorityRoot(
       verifiedAt: null,
     };
   }
+  const heartbeat = new BackstageNotionLeaseHeartbeat(
+    repository,
+    lease,
+    Math.max(1, Math.min(
+      Math.floor(BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS / 3),
+      boundedNonnegativeMilliseconds(
+        dependencies.leaseRenewalIntervalMs,
+        BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS
+      )
+    )),
+    dependencies.signal
+  );
 
   try {
-    const authorityHead = await repository.loadAuthorityHead(root.universeId);
+    const authorityHead = await raceWithSignal(
+      () => repository.loadAuthorityHead(root.universeId),
+      heartbeat.signal
+    );
     if (
       authorityHead?.authority === 'notion'
       && authorityHead.rootPageId !== root.rootPageId
@@ -579,7 +785,10 @@ export async function syncBackstageNotionAuthorityRoot(
         'The configured Notion authority root conflicts with the persisted authority root.'
       );
     }
-    const activeInventory = await repository.loadActiveInventory(root.universeId);
+    const activeInventory = await raceWithSignal(
+      () => repository.loadActiveInventory(root.universeId),
+      heartbeat.signal
+    );
     if (
       activeInventory !== null
       && activeInventory.snapshot.rootPageId !== root.rootPageId
@@ -604,7 +813,7 @@ export async function syncBackstageNotionAuthorityRoot(
         dependencies.retryBaseDelayMs,
         500
       ),
-      ...(dependencies.signal ? { signal: dependencies.signal } : {}),
+      signal: heartbeat.signal,
     });
     const startedAt = Date.now();
     const pages = await captureHierarchy({
@@ -623,15 +832,20 @@ export async function syncBackstageNotionAuthorityRoot(
         'The first Notion snapshot did not meet its configured minimum page coverage.'
       );
     }
-    await verifyHierarchyDidNotDrift({
-      pages,
-      request,
-      fetchImpl,
-      accessToken,
-    });
     const manifestHash = buildManifestHash(pages);
 
-    if (activeInventory?.snapshot.manifestHash === manifestHash) {
+    if (
+      activeInventory?.snapshot.manifestHash === manifestHash
+      && activeInventory.snapshot.embeddingModel === DEFAULT_OPENAI_EMBEDDING_MODEL
+      && activeInventory.snapshot.chunkCount <= BACKSTAGE_NOTION_SYNC_MAX_CHUNKS
+    ) {
+      await verifyHierarchyDidNotDrift({
+        pages,
+        request,
+        fetchImpl,
+        accessToken,
+      });
+      throwIfAborted(heartbeat.signal);
       const verifiedAt = await repository.markActiveSnapshotVerified(
         root.universeId,
         manifestHash,
@@ -665,7 +879,15 @@ export async function syncBackstageNotionAuthorityRoot(
       pages,
       repository,
       embedBatch: dependencies.embedBatch ?? (inputs => createEmbeddings(inputs)),
+      signal: heartbeat.signal,
     });
+    await verifyHierarchyDidNotDrift({
+      pages,
+      request,
+      fetchImpl,
+      accessToken,
+    });
+    throwIfAborted(heartbeat.signal);
     const snapshot = await repository.activateSnapshot({
       universeId: root.universeId,
       rootPageId: root.rootPageId,
@@ -692,6 +914,7 @@ export async function syncBackstageNotionAuthorityRoot(
       verifiedAt: snapshot.createdAt,
     };
   } finally {
+    await heartbeat.stop();
     try {
       await repository.releaseSyncLease(
         root.universeId,
@@ -724,11 +947,36 @@ export async function syncConfiguredBackstageNotionAuthorities(
       'Backstage Notion authority configuration is invalid.'
     );
   }
+  requireBackstageNotionAccessToken(
+    dependencies.readEnvironment ?? ((name: string) => getEnv(name))
+  );
 
   const results: BackstageNotionSyncResult[] = [];
   for (const root of configuration.roots) {
     throwIfAborted(dependencies.signal);
-    results.push(await syncBackstageNotionAuthorityRoot(root, dependencies));
+    try {
+      results.push(await syncBackstageNotionAuthorityRoot(root, dependencies));
+    } catch (error) {
+      throwIfAborted(dependencies.signal);
+      if (error instanceof BackstageNotionGlobalConfigurationError) {
+        throw error;
+      }
+      const errorCode = rootFailureCode(error);
+      safeLog('warn', 'backstage.notion_rag.sync_root_failed', {
+        universeId: root.universeId,
+        errorCode,
+      });
+      results.push({
+        universeId: root.universeId,
+        status: 'failed',
+        pageCount: 0,
+        chunkCount: 0,
+        manifestHash: null,
+        snapshotId: null,
+        verifiedAt: null,
+        errorCode,
+      });
+    }
   }
   return results;
 }

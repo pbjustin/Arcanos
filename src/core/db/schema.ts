@@ -345,7 +345,7 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
     CONSTRAINT ck_backstage_notion_snapshots_embedding_model
       CHECK (char_length(btrim(embedding_model)) BETWEEN 1 AND 200),
     CONSTRAINT ck_backstage_notion_snapshots_counts
-      CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 50000),
+      CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 2048),
     CONSTRAINT ck_backstage_notion_snapshots_source_edited
       CHECK (source_max_edited_at IS NULL OR isfinite(source_max_edited_at)),
     CONSTRAINT ck_backstage_notion_snapshots_holder

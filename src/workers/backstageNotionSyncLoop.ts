@@ -74,14 +74,24 @@ export function startBackstageNotionSyncLoop(
       const results = await sync({
         signal: loopAbortController.signal,
       });
-      loopLogger.info('backstage.notion_rag.sync_cycle_completed', {
+      const failed = results.filter(result => result.status === 'failed').length;
+      const metadata = {
         module: 'backstage-notion-sync',
         configuredUniverses: results.length,
         activated: results.filter(result => result.status === 'activated').length,
         unchanged: results.filter(result => result.status === 'unchanged').length,
         leaseBusy: results.filter(result => result.status === 'lease-busy').length,
+        failed,
         durationMs: Date.now() - startedAt,
-      });
+      };
+      if (failed > 0) {
+        loopLogger.warn(
+          'backstage.notion_rag.sync_cycle_completed_with_failures',
+          metadata
+        );
+      } else {
+        loopLogger.info('backstage.notion_rag.sync_cycle_completed', metadata);
+      }
     } catch (error) {
       if (!loopAbortController.signal.aborted) {
         loopLogger.warn(

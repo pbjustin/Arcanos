@@ -70,6 +70,10 @@ describe('Backstage Notion RAG database contract', () => {
     expect(sql).toContain('INSERT INTO backstage_notion_authority_epoch');
     expect(sql).toContain('ON CONFLICT (singleton) DO NOTHING');
     expect(sql).toContain('CHECK (singleton)');
+    expect(sql).toContain(
+      'CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 2048)'
+    );
+    expect(sql).not.toContain('chunk_count BETWEEN 1 AND 50000');
   });
 
   it.each([

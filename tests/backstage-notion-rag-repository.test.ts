@@ -4,6 +4,7 @@ import { describe, expect, it } from '@jest/globals';
 import type { Pool } from 'pg';
 
 import {
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   BackstageNotionSyncLeaseError,
   PostgresBackstageNotionRagRepository,
   type ActivateBackstageNotionSnapshotInput
@@ -223,6 +224,18 @@ describe('PostgresBackstageNotionRagRepository', () => {
           rowCount: 1
         };
       }
+      if (sql.startsWith('UPDATE backstage_notion_sync_leases')) {
+        return {
+          rows: [{
+            universe_id: values[0],
+            holder_id: values[1],
+            lease_token: values[2],
+            acquired_at: NOW,
+            expires_at: new Date(NOW.getTime() + Number(values[3]))
+          }],
+          rowCount: 1
+        };
+      }
       return { rows: [], rowCount: sql.startsWith('DELETE FROM') ? 1 : 0 };
     });
     const repository = new PostgresBackstageNotionRagRepository(pool);
@@ -236,12 +249,50 @@ describe('PostgresBackstageNotionRagRepository', () => {
       'backstage_notion_sync_leases.expires_at <= clock_timestamp()'
     );
 
+    const renewed = await repository.renewSyncLease(
+      UNIVERSE_ID,
+      'sync-worker-1',
+      lease!.leaseToken,
+      60_000
+    );
+    expect(renewed?.leaseToken).toBe(lease?.leaseToken);
+    expect(commands[2].sql).toContain('WHERE universe_id = $1');
+    expect(commands[2].sql).toContain('AND holder_id = $2');
+    expect(commands[2].sql).toContain('AND lease_token = $3::UUID');
+    expect(commands[2].sql).toContain('AND expires_at > clock_timestamp()');
+    expect(commands[2].values).toEqual([
+      UNIVERSE_ID,
+      'sync-worker-1',
+      lease?.leaseToken,
+      60_000
+    ]);
+
     await expect(repository.releaseSyncLease(
       UNIVERSE_ID,
       'sync-worker-1',
       lease!.leaseToken
     )).resolves.toBe(true);
-    expect(commands[2].sql).toContain('AND lease_token = $3::UUID');
+    expect(commands[3].sql).toContain('AND lease_token = $3::UUID');
+
+    await expect(repository.renewSyncLease(
+      UNIVERSE_ID,
+      'sync-worker-1',
+      lease!.leaseToken,
+      999
+    )).rejects.toThrow('ttlMs');
+  });
+
+  it('returns null when a synchronization lease renewal loses its token fence', async () => {
+    const repository = new PostgresBackstageNotionRagRepository(
+      createPool(async () => ({ rows: [], rowCount: 0 }))
+    );
+
+    await expect(repository.renewSyncLease(
+      UNIVERSE_ID,
+      'sync-worker-1',
+      LEASE_TOKEN,
+      60_000
+    )).resolves.toBeNull();
   });
 
   it('activates a complete snapshot and authority head in one transaction', async () => {
@@ -449,6 +500,27 @@ describe('PostgresBackstageNotionRagRepository', () => {
 
     await expect(repository.activateSnapshot(input)).rejects.toThrow(
       'contentHash does not match its content'
+    );
+    expect(connected).toBe(false);
+  });
+
+  it('rejects snapshots larger than the shared retrievable chunk cap before connecting', async () => {
+    let connected = false;
+    const pool = {
+      connect: async () => {
+        connected = true;
+        throw new Error('SENTINEL_CONNECT');
+      }
+    } as unknown as Pool;
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+    const input = validSnapshotInput();
+    input.chunks = Array.from(
+      { length: BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1 },
+      () => input.chunks[0]!
+    );
+
+    await expect(repository.activateSnapshot(input)).rejects.toThrow(
+      `chunks must contain 1-${BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT} records.`
     );
     expect(connected).toBe(false);
   });

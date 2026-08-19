@@ -16,8 +16,11 @@ import {
 } from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE,
   BackstageBookerContractError,
   BackstageCanonUnavailableError,
+  BackstageNotionAuthorityReadOnlyError,
   BackstageNotionAuthorityUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
 
@@ -875,6 +878,51 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(sensitiveCause);
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
+
+  it.each(['backstage', 'backstage-booker'])(
+    'preserves a nonretryable Notion-authority write denial for canonical alias %s',
+    async (gptId) => {
+      const universeId = 'my-universe-2k26';
+      const mutationActions = [
+        'appendCanonBeat',
+        'bookEvent',
+        'saveStoryline',
+        'trackStoryline',
+        'upsertStoryline',
+        'updateRoster',
+      ] as const;
+
+      for (const action of mutationActions) {
+        mockDispatchModuleAction.mockRejectedValueOnce(
+          new BackstageNotionAuthorityReadOnlyError(universeId)
+        );
+
+        const envelope = await routeGptRequest({
+          gptId,
+          body: {
+            action,
+            payload: { universeId },
+          },
+          requestId: `req-backstage-notion-authority-read-only-${gptId}-${action}`,
+        });
+
+        expect(envelope).toMatchObject({
+          ok: false,
+          error: {
+            code: BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
+            message: BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE,
+            details: { retryable: false },
+          },
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action,
+          },
+        });
+      }
+
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
 
   it('maps the authoritative simulation roster requirement as caller validation', async () => {
     mockDispatchModuleAction.mockRejectedValueOnce(

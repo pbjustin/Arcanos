@@ -2,6 +2,8 @@ import { createHash } from 'crypto';
 
 export const BACKSTAGE_NOTION_RAG_CHUNK_CODE_POINTS = 1_800;
 export const BACKSTAGE_NOTION_RAG_MAX_CHUNK_CODE_POINTS = 4_000;
+export const BACKSTAGE_NOTION_RAG_PAGE_FORMAT = 'backstage-notion-rag-page-v1';
+export const BACKSTAGE_NOTION_RAG_CHUNK_FORMAT = 'backstage-notion-rag-chunk-v1';
 export const BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS = 12_000;
 export const BACKSTAGE_NOTION_RAG_MAX_PROMPT_CODE_POINTS = 24_000;
 export const BACKSTAGE_NOTION_RAG_MAX_PROMPT_CHUNKS = 16;
@@ -475,7 +477,7 @@ export function prepareBackstageNotionRagPage(
     content: parsed.sanitizedMarkdown,
   });
   const sourceHash = hashDeterministically(JSON.stringify({
-    format: 'backstage-notion-rag-page-v1',
+    format: BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
     universeId: source.universeId,
     pageId: source.pageId,
     parentPageId: source.parentPageId,
@@ -488,7 +490,7 @@ export function prepareBackstageNotionRagPage(
     .map((content, ordinal): BackstageNotionRagChunk => {
       const contentHash = hashDeterministically(content);
       const chunkId = hashDeterministically(JSON.stringify({
-        format: 'backstage-notion-rag-chunk-v1',
+        format: BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
         pageId: source.pageId,
         ordinal,
         contentHash,

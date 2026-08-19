@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { isAbortError } from '@arcanos/runtime';
 import {
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   getBackstageNotionRagRepository,
   type BackstageNotionActiveChunk,
   type BackstageNotionRagRepository,
@@ -31,7 +32,8 @@ export {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
 } from '@shared/backstage/backstageNotionRagCore.js';
 
-export const BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS = 2_048;
+export const BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS =
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT;
 export const BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS = 12;
 export const BACKSTAGE_NOTION_RAG_MAX_CHUNKS_PER_PAGE = 3;
 export const BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS = 32_000;

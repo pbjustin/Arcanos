@@ -7,7 +7,7 @@ import { getPool } from '../client.js';
 export const BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT = 5_000;
-export const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 50_000;
+export const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 2_048;
 export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -130,6 +130,12 @@ export interface BackstageNotionRagRepository {
   acquireSyncLease(
     universeId: string,
     holderId: string,
+    ttlMs: number
+  ): Promise<BackstageNotionSyncLease | null>;
+  renewSyncLease(
+    universeId: string,
+    holderId: string,
+    leaseToken: string,
     ttlMs: number
   ): Promise<BackstageNotionSyncLease | null>;
   releaseSyncLease(
@@ -794,6 +800,37 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       ]
     );
     return result.rowCount === 1;
+  }
+
+  async renewSyncLease(
+    universeId: string,
+    holderId: string,
+    leaseToken: string,
+    ttlMs: number
+  ): Promise<BackstageNotionSyncLease | null> {
+    const normalizedTtlMs = normalizeInteger(
+      ttlMs,
+      'ttlMs',
+      BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS,
+      BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+    );
+    const result = await this.pool.query<LeaseRow>(
+      `UPDATE backstage_notion_sync_leases
+       SET expires_at = clock_timestamp() + ($4::BIGINT * INTERVAL '1 millisecond')
+       WHERE universe_id = $1
+         AND holder_id = $2
+         AND lease_token = $3::UUID
+         AND expires_at > clock_timestamp()
+       RETURNING universe_id, holder_id, lease_token, acquired_at, expires_at`,
+      [
+        normalizeUniverseId(universeId),
+        normalizeRequiredText(holderId, 'holderId', 200),
+        normalizeUuid(leaseToken, 'leaseToken'),
+        normalizedTtlMs
+      ]
+    );
+    const row = result.rows[0];
+    return row ? mapLease(row) : null;
   }
 
   async loadReusableEmbeddings(

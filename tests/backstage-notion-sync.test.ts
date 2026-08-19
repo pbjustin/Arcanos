@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto';
+
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import {
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BackstageNotionSyncLeaseError,
   type ActivateBackstageNotionSnapshotInput,
   type BackstageNotionActiveInventory,
   type BackstageNotionAuthorityHead,
@@ -13,12 +17,17 @@ import {
   BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 import {
+  BACKSTAGE_NOTION_RAG_CHUNK_CODE_POINTS,
+  BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
+} from '../src/shared/backstage/backstageNotionRagCore.js';
+import {
   BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME,
   type BackstageNotionAuthorityRoot,
 } from '../src/services/backstageNotionAuthority.js';
 import {
   BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
   syncBackstageNotionAuthorityRoot,
   syncConfiguredBackstageNotionAuthorities,
@@ -58,6 +67,18 @@ function pageId(index: number): string {
   return `${index.toString(16).padStart(8, '0')}-1111-4111-8111-${index
     .toString(16)
     .padStart(12, '0')}`;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function pageTag(page: TestNotionPage): string {
@@ -195,13 +216,17 @@ function repositoryHarness(options: {
     hashes: string[]
   ) => Map<string, number[]>;
   releaseFails?: boolean;
+  renewLease?: () => BackstageNotionSyncLease | null | Promise<BackstageNotionSyncLease | null>;
 } = {}) {
   const acquireSyncLease = jest.fn(async (
-    _universeId: string,
+    requestedUniverseId: string,
     _holderId: string,
     _ttlMs: number
   ): Promise<BackstageNotionSyncLease | null> => (
-    options.leaseBusy ? null : lease
+    options.leaseBusy ? null : { ...lease, universeId: requestedUniverseId }
+  ));
+  const renewSyncLease = jest.fn(async (): Promise<BackstageNotionSyncLease | null> => (
+    options.renewLease ? options.renewLease() : lease
   ));
   const releaseSyncLease = jest.fn(async (): Promise<boolean> => {
     if (options.releaseFails) {
@@ -209,11 +234,11 @@ function repositoryHarness(options: {
     }
     return true;
   });
-  const loadAuthorityHead = jest.fn(async (): Promise<
+  const loadAuthorityHead = jest.fn(async (requestedUniverseId: string): Promise<
     BackstageNotionAuthorityHead | null
   > => options.authorityHead === undefined
     ? {
-        universeId,
+        universeId: requestedUniverseId,
         authority: 'postgres',
         activeSnapshotId: null,
         rootPageId: null,
@@ -237,6 +262,7 @@ function repositoryHarness(options: {
   const repository: BackstageNotionRagRepository = {
     loadAuthorityHead,
     acquireSyncLease,
+    renewSyncLease,
     releaseSyncLease,
     loadReusableEmbeddings,
     markActiveSnapshotVerified,
@@ -249,6 +275,7 @@ function repositoryHarness(options: {
     repository,
     loadAuthorityHead,
     acquireSyncLease,
+    renewSyncLease,
     releaseSyncLease,
     loadReusableEmbeddings,
     markActiveSnapshotVerified,
@@ -276,6 +303,8 @@ function dependencies(input: {
   embedBatch?: (inputs: readonly string[]) => Promise<number[][]>;
   readEnvironment?: (name: string) => string | undefined;
   signal?: AbortSignal;
+  leaseRenewalIntervalMs?: number;
+  fetchTimeoutMs?: number;
 }): BackstageNotionSyncDependencies {
   return {
     repository: input.repository,
@@ -285,8 +314,11 @@ function dependencies(input: {
       ?? environmentReader({ token: notionToken }),
     requestSpacingMs: 0,
     retryBaseDelayMs: 0,
-    fetchTimeoutMs: 1_000,
+    fetchTimeoutMs: input.fetchTimeoutMs ?? 1_000,
     holderId,
+    ...(input.leaseRenewalIntervalMs === undefined
+      ? {}
+      : { leaseRenewalIntervalMs: input.leaseRenewalIntervalMs }),
     ...(input.signal ? { signal: input.signal } : {}),
   };
 }
@@ -340,6 +372,7 @@ describe('Backstage Notion authority synchronization', () => {
         repository: repository.repository,
         fetchImpl: fetchMock as unknown as typeof fetch,
         embedBatch,
+        fetchTimeoutMs: 30_000,
       })
     );
 
@@ -362,6 +395,65 @@ describe('Backstage Notion authority synchronization', () => {
     expect(logged).not.toContain(notionToken);
     expect(logged).not.toContain('PRIVATE-CONTINUITY');
     expect(logged).not.toContain(pageId(15));
+  });
+
+  it.each([
+    {
+      chunkCount: BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+      accepted: true,
+    },
+    {
+      chunkCount: BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1,
+      accepted: false,
+    },
+  ])('enforces the retrievable snapshot boundary at $chunkCount chunks', async ({
+    chunkCount,
+    accepted,
+  }) => {
+    const pageCount = 32;
+    const contentChunkCount = chunkCount - 1;
+    const baseChunksPerPage = Math.floor(contentChunkCount / pageCount);
+    const extraChunkPages = contentChunkCount % pageCount;
+    const pages = Array.from({ length: pageCount }, (_, index): TestNotionPage => {
+      const chunksForPage = baseChunksPerPage + (index < extraChunkPages ? 1 : 0);
+      return {
+        pageId: pageId(index),
+        parentPageId: index === 0 ? null : pageId(0),
+        title: index === 0 ? 'WWE Universe Mode' : `Child Universe ${index}`,
+        markdown: String.fromCharCode(97 + (index % 26)).repeat(
+          (chunksForPage - 1) * BACKSTAGE_NOTION_RAG_CHUNK_CODE_POINTS + 1
+        ),
+      };
+    });
+    pages[0].markdown += `\n\n${pages.slice(1).map(pageTag).join('\n')}`;
+    const { fetchMock } = notionFetch(pages);
+    const repository = repositoryHarness();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+      inputs.map(() => [1, 0])
+    ));
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        embedBatch,
+        fetchTimeoutMs: 30_000,
+      })
+    );
+
+    if (accepted) {
+      await expect(sync).resolves.toMatchObject({
+        status: 'activated',
+        chunkCount,
+      });
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(sync).rejects.toMatchObject({
+        code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      });
+      expect(embedBatch).not.toHaveBeenCalled();
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    }
   });
 
   it.each([
@@ -473,6 +565,45 @@ describe('Backstage Notion authority synchronization', () => {
     expect(driftRepository.activateSnapshot).not.toHaveBeenCalled();
   });
 
+  it('reverifies source metadata after embeddings and rejects an edit during embedding', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Root',
+    };
+    const { fetchMock, metadataCalls } = notionFetch([page], {
+      driftPageId: page.pageId,
+    });
+    const repository = repositoryHarness();
+    const embeddingStarted = deferred<void>();
+    const finishEmbedding = deferred<void>();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => {
+      embeddingStarted.resolve(undefined);
+      await finishEmbedding.promise;
+      return inputs.map(() => [1, 0]);
+    });
+
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        embedBatch,
+      })
+    );
+    await embeddingStarted.promise;
+    expect(metadataCalls.get(page.pageId)).toBe(1);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    finishEmbedding.resolve(undefined);
+
+    await expect(sync).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+    });
+    expect(metadataCalls.get(page.pageId)).toBe(2);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
   it('enforces initial minimum coverage only before the first activation', async () => {
     const page: TestNotionPage = {
       pageId: pageId(0),
@@ -544,6 +675,87 @@ describe('Backstage Notion authority synchronization', () => {
     expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 
+  it('rebuilds an unchanged manifest when the active embedding model is obsolete', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Kayfabe\n\nContinuity.',
+    };
+    const { fetchMock } = notionFetch([page]);
+    let currentInventory: BackstageNotionActiveInventory | null = null;
+    const repository = repositoryHarness({ loadActive: () => currentInventory });
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+      inputs.map(() => [1, 0])
+    ));
+    const syncDependencies = dependencies({
+      repository: repository.repository,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      embedBatch,
+    });
+    const first = await syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      syncDependencies
+    );
+    currentInventory = activeInventory(first.manifestHash ?? '', first.chunkCount);
+    currentInventory.snapshot.embeddingModel = 'obsolete-embedding-model';
+    embedBatch.mockClear();
+    repository.activateSnapshot.mockClear();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      syncDependencies
+    )).resolves.toMatchObject({ status: 'activated' });
+    expect(embedBatch).toHaveBeenCalledTimes(1);
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebuilds a legacy manifest that does not bind the current index formats', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Kayfabe\n\nContinuity.',
+    };
+    const sourceHash = sha256(JSON.stringify({
+      format: BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
+      universeId,
+      pageId: page.pageId,
+      parentPageId: null,
+      title: page.title,
+      path: [page.title],
+      markdown: page.markdown,
+    }));
+    const legacyManifestHash = sha256(JSON.stringify({
+      format: 'backstage-notion-rag-manifest-v1',
+      pages: [{
+        pageId: page.pageId,
+        parentPageId: null,
+        title: page.title,
+        path: [page.title],
+        sourceHash,
+        lastEditedAt: fixedTime.toISOString(),
+      }],
+    }));
+    const { fetchMock } = notionFetch([page]);
+    const repository = repositoryHarness({
+      active: activeInventory(legacyManifestHash),
+    });
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(repository.activateSnapshot.mock.calls[0]?.[0].manifestHash)
+      .not.toBe(legacyManifestHash);
+  });
+
   it('reuses content hashes and batches only missing embeddings for a changed snapshot', async () => {
     const markdown = Array.from({ length: 66 }, (_, index) => (
       `Section ${index.toString().padStart(2, '0')} ${'x'.repeat(980)}`
@@ -600,6 +812,134 @@ describe('Backstage Notion authority synchronization', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(embedBatch).not.toHaveBeenCalled();
     expect(repository.releaseSyncLease).not.toHaveBeenCalled();
+  });
+
+  it('renews a valid fenced lease while work is pending and then activates', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Root',
+    };
+    const { fetchMock } = notionFetch([page]);
+    const renewalAttempted = deferred<void>();
+    const repository = repositoryHarness({
+      renewLease: () => {
+        renewalAttempted.resolve(undefined);
+        return lease;
+      },
+    });
+    const embeddingStarted = deferred<void>();
+    const finishEmbedding = deferred<void>();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => {
+      embeddingStarted.resolve(undefined);
+      await finishEmbedding.promise;
+      return inputs.map(() => [1, 0]);
+    });
+
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        embedBatch,
+        leaseRenewalIntervalMs: 1,
+      })
+    );
+    await embeddingStarted.promise;
+    await renewalAttempted.promise;
+    finishEmbedding.resolve(undefined);
+
+    await expect(sync).resolves.toMatchObject({ status: 'activated' });
+    expect(repository.renewSyncLease).toHaveBeenCalled();
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
+    expect(repository.renewSyncLease.mock.invocationCallOrder[0])
+      .toBeLessThan(repository.releaseSyncLease.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('aborts a pending Notion crawl when the fenced lease cannot be renewed', async () => {
+    const fetchStarted = deferred<void>();
+    const renewalAttempted = deferred<void>();
+    const repository = repositoryHarness({
+      renewLease: () => {
+        renewalAttempted.resolve(undefined);
+        return null;
+      },
+    });
+    const fetchMock = jest.fn((
+      _input: string | URL | Request,
+      init?: RequestInit
+    ): Promise<Response> => {
+      fetchStarted.resolve(undefined);
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    });
+
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        leaseRenewalIntervalMs: 1,
+      })
+    );
+    await fetchStarted.promise;
+    await renewalAttempted.promise;
+
+    await expect(sync).rejects.toBeInstanceOf(BackstageNotionSyncLeaseError);
+    expect(repository.renewSyncLease).toHaveBeenCalledWith(
+      universeId,
+      lease.holderId,
+      lease.leaseToken,
+      expect.any(Number)
+    );
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
+    expect(repository.renewSyncLease.mock.invocationCallOrder[0])
+      .toBeLessThan(repository.releaseSyncLease.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('aborts a pending embedding batch when the fenced lease cannot be renewed', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Root',
+    };
+    const { fetchMock } = notionFetch([page]);
+    const renewalAttempted = deferred<void>();
+    const repository = repositoryHarness({
+      renewLease: () => {
+        renewalAttempted.resolve(undefined);
+        return null;
+      },
+    });
+    const embeddingStarted = deferred<void>();
+    const embedBatch = jest.fn((): Promise<number[][]> => {
+      embeddingStarted.resolve(undefined);
+      return new Promise(() => undefined);
+    });
+
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        embedBatch,
+        leaseRenewalIntervalMs: 1,
+      })
+    );
+    await embeddingStarted.promise;
+    await renewalAttempted.promise;
+
+    await expect(sync).rejects.toBeInstanceOf(BackstageNotionSyncLeaseError);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a persisted root conflict before any Notion or embedding work', async () => {
@@ -687,7 +1027,104 @@ describe('Backstage Notion authority synchronization', () => {
         authority: '{bad json',
       }),
     })).rejects.toMatchObject({ code: BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE });
+    await expect(syncConfiguredBackstageNotionAuthorities({
+      repository: repository.repository,
+      readEnvironment: environmentReader({
+        authority: JSON.stringify({
+          [universeId]: {
+            rootPageId: pageId(0),
+            displayName: 'WWE Universe Mode',
+          },
+        }),
+      }),
+    })).rejects.toMatchObject({ code: BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE });
     expect(repository.acquireSyncLease).not.toHaveBeenCalled();
+  });
+
+  it('isolates a bad first root and still activates a healthy later root', async () => {
+    const firstUniverseId = 'first-universe';
+    const secondUniverseId = 'second-universe';
+    const badRoot: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'Bad Universe',
+      markdown: '# Partial',
+      truncated: true,
+    };
+    const healthyRoot: TestNotionPage = {
+      pageId: pageId(1),
+      parentPageId: null,
+      title: 'Healthy Universe',
+      markdown: '# Healthy',
+    };
+    const { fetchMock } = notionFetch([badRoot, healthyRoot]);
+    const repository = repositoryHarness();
+    const authority = JSON.stringify({
+      [firstUniverseId]: {
+        rootPageId: badRoot.pageId,
+        displayName: badRoot.title,
+      },
+      [secondUniverseId]: {
+        rootPageId: healthyRoot.pageId,
+        displayName: healthyRoot.title,
+      },
+    });
+
+    const results = await syncConfiguredBackstageNotionAuthorities(
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        readEnvironment: environmentReader({ token: notionToken, authority }),
+      })
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({
+      universeId: firstUniverseId,
+      status: 'failed',
+      errorCode: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+    });
+    expect(results[1]).toMatchObject({
+      universeId: secondUniverseId,
+      status: 'activated',
+    });
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(repository.activateSnapshot.mock.calls[0]?.[0].universeId)
+      .toBe(secondUniverseId);
+    expect(repository.releaseSyncLease).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_root_failed',
+      {
+        universeId: firstUniverseId,
+        errorCode: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      }
+    );
+  });
+
+  it('uses a stable aggregate error code for an unexpected root failure', async () => {
+    const authority = JSON.stringify({
+      [universeId]: {
+        rootPageId: pageId(0),
+        displayName: 'WWE Universe Mode',
+      },
+    });
+    const repository = repositoryHarness();
+    repository.loadAuthorityHead.mockRejectedValueOnce(
+      new Error('PRIVATE-DATABASE-DETAIL')
+    );
+
+    await expect(syncConfiguredBackstageNotionAuthorities(
+      dependencies({
+        repository: repository.repository,
+        readEnvironment: environmentReader({ token: notionToken, authority }),
+      })
+    )).resolves.toEqual([expect.objectContaining({
+      universeId,
+      status: 'failed',
+      errorCode: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+    })]);
+    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls))
+      .not.toContain('PRIVATE-DATABASE-DETAIL');
   });
 
   it('retries a transient Notion response without activating a partial capture', async () => {

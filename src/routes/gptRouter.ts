@@ -79,6 +79,7 @@ import {
   isBackstageGptRoute,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
@@ -3577,6 +3578,8 @@ router.post(
               ? 503
               : envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
               ? 503
+              : envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE
+              ? 409
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
               : unexpectedGamingRouteFailure

@@ -184,7 +184,7 @@ function buildDirectActionEnvelope() {
 }
 
 function buildBackstageRouting(
-  action: 'generateBooking' | 'generateBookingWithHRC' | 'simulateMatch'
+  action: 'generateBooking' | 'generateBookingWithHRC' | 'simulateMatch' | 'upsertStoryline'
 ) {
   return {
     ok: true,
@@ -197,6 +197,7 @@ function buildBackstageRouting(
         'generateBooking',
         'generateBookingWithHRC',
         'simulateMatch',
+        'upsertStoryline',
       ],
       moduleVersion: null,
       moduleDescription: null,
@@ -214,6 +215,9 @@ function buildBackstageRouting(
 
 const GPT_ROUTE_TEST_ENV_KEYS = [
   'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
+  'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+  'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  'ARCANOS_CONTROL_PLANE_SCOPES',
   'ARCANOS_JOB_READ_CAPABILITY_SECRET',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
@@ -1061,6 +1065,73 @@ describe('GPT fast-path route branching', () => {
         gptId: 'backstage-booker',
         module: 'BACKSTAGE:BOOKER',
         action: 'generateBooking',
+      },
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a bounded 409 for a Notion-authoritative Backstage write denial', async () => {
+    const controlPlaneToken = 'test-notion-read-only-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:notion-read-only-route';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('upsertStoryline')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_AUTHORITY_READ_ONLY',
+        message: 'Notion is authoritative for this Backstage universe; backend mutations are disabled.',
+        details: { retryable: false },
+      },
+      _route: {
+        requestId: 'request-notion-authority-read-only',
+        traceId: 'trace-notion-authority-read-only',
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'upsertStoryline',
+        route: 'backstage-booker',
+        timestamp: '2026-08-19T20:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-GPT-Action', 'upsertStoryline')
+      .set('X-Confirmed', 'yes')
+      .send({
+        action: 'upsertStoryline',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          mutationId: '8d64dad3-f080-4bac-88ec-994005dc7152',
+          expectedVersion: 0,
+          storyline: {
+            key: 'summer-feud',
+            title: 'Summer Feud',
+            summary: null,
+            status: 'draft',
+            participantNames: [],
+          },
+        },
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_AUTHORITY_READ_ONLY',
+        message: 'Notion is authoritative for this Backstage universe; backend mutations are disabled.',
+        details: { retryable: false },
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'upsertStoryline',
       },
     });
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
