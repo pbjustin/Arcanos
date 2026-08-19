@@ -4,6 +4,7 @@ import {
   BackstageCanonDomainError,
   BackstageBookerRepositoryUnavailableError,
   createBackstageBookerRepository,
+  isBackstageBookerLegacyReadQuarantinedError,
   type BackstageCanonBeatRecord,
   type BackstageCanonStorylineSummaryRecord,
   type BackstageCanonStorylineRecord,
@@ -17,6 +18,8 @@ import {
   projectBackstageSavedStorylineExcerpt,
   projectBackstageStorylineSummaryPage,
 } from '@shared/backstage/backstageUniverseReadProjection.js';
+import { BackstageNotionAuthorityReadQuarantinedError } from './backstageBookerContracts.js';
+import { isBackstageNotionAuthorityEnforced } from './backstageNotionAuthority.js';
 
 export {
   BACKSTAGE_STORYLINE_SUMMARY_MAX_CODE_POINTS,
@@ -144,8 +147,13 @@ export interface BackstageUniverseContextReader {
   ): Promise<BackstageContext>;
 }
 
+export type BackstageNotionAuthorityResolver = (
+  universeId: string
+) => boolean | Promise<boolean>;
+
 export interface ReadBackstageUniverseOptions {
   reader?: BackstageUniverseContextReader;
+  authorityResolver?: BackstageNotionAuthorityResolver;
 }
 
 export interface BackstageStorylineSummaryReader {
@@ -158,6 +166,7 @@ export interface BackstageStorylineSummaryReader {
 
 export interface ReadBackstageStorylineSummaryOptions {
   reader?: BackstageStorylineSummaryReader;
+  authorityResolver?: BackstageNotionAuthorityResolver;
   offset?: number;
   expectedVersion?: number;
 }
@@ -708,12 +717,25 @@ export async function readBackstageUniverse(
   ) {
     throw new TypeError('universeId must be a valid Backstage universe identifier.');
   }
+  const authorityResolver = options.authorityResolver
+    ?? isBackstageNotionAuthorityEnforced;
+  if (await authorityResolver(universeId)) {
+    throw new BackstageNotionAuthorityReadQuarantinedError(universeId);
+  }
 
   const reader = options.reader ?? getBackstageReadRepository('loadContext');
-  const context = await reader.loadContext(universeId, {
-    statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS,
-    universeReadProjection: true,
-  });
+  let context: BackstageContext;
+  try {
+    context = await reader.loadContext(universeId, {
+      statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS,
+      universeReadProjection: true,
+    });
+  } catch (error) {
+    if (isBackstageBookerLegacyReadQuarantinedError(error)) {
+      throw new BackstageNotionAuthorityReadQuarantinedError(universeId);
+    }
+    throw error;
+  }
   return buildBackstageUniverseReadResult(universeId, context);
 }
 
@@ -737,14 +759,27 @@ export async function readBackstageStorylineSummary(
   assertExactStorylineKey(storyKey);
   const offset = options.offset ?? 0;
   assertStorylineSummaryReadPagination(offset, options.expectedVersion);
+  const authorityResolver = options.authorityResolver
+    ?? isBackstageNotionAuthorityEnforced;
+  if (await authorityResolver(universeId)) {
+    throw new BackstageNotionAuthorityReadQuarantinedError(universeId);
+  }
 
   const reader = options.reader
     ?? getBackstageReadRepository('loadCanonStorylineSummary');
-  const storyline = await reader.loadCanonStorylineSummary(
-    universeId,
-    storyKey,
-    { statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS }
-  );
+  let storyline: BackstageCanonStorylineSummaryRecord | null;
+  try {
+    storyline = await reader.loadCanonStorylineSummary(
+      universeId,
+      storyKey,
+      { statementTimeoutMs: BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS }
+    );
+  } catch (error) {
+    if (isBackstageBookerLegacyReadQuarantinedError(error)) {
+      throw new BackstageNotionAuthorityReadQuarantinedError(universeId);
+    }
+    throw error;
+  }
   const projection = projectBackstageStorylineSummaryPage(
     universeId,
     storyKey,

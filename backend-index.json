@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-18T18:12:10.899Z",
+  "generatedAt": "2026-08-19T05:42:21.030Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -444,6 +444,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/backstageBookerRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageNotionRagRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageRosterRepository.ts"
@@ -1556,10 +1559,19 @@
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionAuthority.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionContext.ts"
         },
         {
           "relativePath": "src/services/backstageNotionEnrichmentAuthorization.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionRag.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionSync.ts"
         },
         {
           "relativePath": "src/services/backstageUniverseRead.ts"
@@ -2390,7 +2402,13 @@
           "relativePath": "src/shared/backstage/backstageEvent.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionAuthorityCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionRagCore.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageReviewContract.ts"
@@ -2885,6 +2903,9 @@
           "relativePath": "src/workers/autoscalingTypes.ts"
         },
         {
+          "relativePath": "src/workers/backstageNotionSyncLoop.ts"
+        },
+        {
           "relativePath": "src/workers/dagNodePromptBridge.ts"
         },
         {
@@ -3256,10 +3277,31 @@
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-authority-core.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-context.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-rag-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-rag-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-rag-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-rag.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-sync-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-sync.test.ts"
         },
         {
           "relativePath": "tests/backstage-storyline-schema.test.ts"

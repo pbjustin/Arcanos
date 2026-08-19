@@ -69,7 +69,7 @@ describe('optional Backstage Notion enrichment authorization', () => {
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
   });
 
-  it('keeps missing and invalid credentials on DB-only public behavior', async () => {
+  it('keeps missing and invalid credentials unauthorized for non-authority fallback policy', async () => {
     await expect(readAuthorizationInsideNext(buildRequest())).resolves.toBe(false);
     await expect(readAuthorizationInsideNext(buildRequest({
       authorization: `Bearer ${'wrong'.repeat(12)}`,

@@ -33,12 +33,25 @@ export {
   JobDataSchema,
   ReasoningLogSchema,
   RagDocSchema,
+  BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS,
+  BackstageNotionAuthoritySchema,
+  BackstageNotionUniverseHeadSchema,
+  BackstageNotionSnapshotSchema,
+  BackstageNotionSnapshotPageSchema,
+  BackstageNotionSnapshotChunkSchema,
+  BackstageNotionSyncLeaseSchema,
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
   type DatabaseCollationInspectionStatus,
   type ReasoningLog,
-  type RagDoc
+  type RagDoc,
+  type BackstageNotionAuthorityValue,
+  type BackstageNotionUniverseHead,
+  type BackstageNotionSnapshot,
+  type BackstageNotionSnapshotPage,
+  type BackstageNotionSnapshotChunk,
+  type BackstageNotionSyncLeaseRow
 } from './schema.js';
 
 // Query exports
@@ -79,6 +92,30 @@ export {
 } from './repositories/ragRepository.js';
 
 export {
+  BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS,
+  BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS,
+  BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES,
+  BackstageNotionRagRepositoryUnavailableError,
+  BackstageNotionSyncLeaseError,
+  PostgresBackstageNotionRagRepository,
+  getBackstageNotionRagRepository,
+  type ActivateBackstageNotionSnapshotInput,
+  type BackstageNotionActiveChunk,
+  type BackstageNotionActiveInventory,
+  type BackstageNotionActiveSnapshot,
+  type BackstageNotionAuthority,
+  type BackstageNotionAuthorityHead,
+  type BackstageNotionPageInventoryRecord,
+  type BackstageNotionRagRepository,
+  type BackstageNotionSnapshotChunkInput,
+  type BackstageNotionSnapshotPageInput,
+  type BackstageNotionSnapshotRecord,
+  type BackstageNotionSyncLease
+} from './repositories/backstageNotionRagRepository.js';
+
+export {
   applyBackstageRosterMutation,
   type BackstageRosterMutationResult
 } from './repositories/backstageRosterRepository.js';
@@ -93,12 +130,14 @@ export {
   LEGACY_BACKSTAGE_UNIVERSE_ID,
   BackstageCanonDomainError,
   BackstageBookerCommitUnknownError,
+  BackstageBookerLegacyReadQuarantinedError,
   BackstageBookerRepositoryUnavailableError,
   BackstageBookerUniverseScopeNotActivatedError,
   BackstageBookerWriteError,
   PostgresBackstageBookerRepository,
   createBackstageBookerRepository,
   isBackstageCanonDomainError,
+  isBackstageBookerLegacyReadQuarantinedError,
   isBackstageBookerUniverseScopeNotActivatedError,
   resolveBackstageCanonDomainErrorHttpStatus,
   type BackstageCanonBeatAppendInput,

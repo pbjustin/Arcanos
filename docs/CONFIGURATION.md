@@ -35,9 +35,12 @@ cp .env.example .env
 | `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | No; rotation overlap only | none | Optional prior signing key accepted only for capability verification. It must satisfy the current-key credential rules and differ from the current key and every other purpose-bound credential. New tokens are never issued from it. |
 | `ARCANOS_JOB_READ_TOKEN` | Client-only for standalone generic job lookups | none | Optional transient CLI/daemon fallback containing the `jobReadToken` returned by one job-creation response. The backend does not use this as a signing secret; do not put it in shared server configuration. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Bearer token for the generic GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or authorized generic GPT Access client configuration; never use it for the separate Backstage Booker protected read/canon or Gaming source lifecycle Actions. It remains compatible with the existing Backstage canon capability run under generic scope and confirmation policy, but it cannot read stored Backstage universe content. |
-| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; only for the protected Backstage Booker Custom GPT operations and optional Notion-enrichment provenance on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`, its fixed `/storyline-summary` exact-key leaf, and `POST /gpt-access/capabilities/v1/backstage-booker/run`, where the write action must be `upsertStoryline` or `appendCanonBeat`. A valid copy on canonical `POST /gpt/backstage-booker` or its `backstage` alias does not gate the public route; it only establishes request-local authorization for an optional configured Notion supplement. Missing or invalid authentication preserves database-only public behavior. The value must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and as API Key/Bearer authentication in the Backstage Booker Custom GPT Action only; do not set it on workers. It is not OAuth or a user password and is never accepted as a generic or control-plane credential. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with the Notion universe-page mapping on the web service | none | Provider credential for a dedicated Notion integration with read-content access to only the explicitly shared pages. It must be 16–4096 visible ASCII characters, have no surrounding whitespace or placeholder form, and differ from every configured ARCANOS application credential. It is outbound-only: never place it in ChatGPT Builder, an inbound bearer header, source, prompts, chat, or logs, and never set it on workers. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; only for the protected Backstage Booker Custom GPT operations and authenticated Notion-backed generation on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for the protected read/write lane and request-local authorization of private Notion-derived context on canonical generation. For a Notion-authoritative universe, missing/invalid authentication fails generation closed instead of exposing either the private index or quarantined legacy state. Configure it on the web service and as API Key/Bearer authentication in the Backstage Booker Custom GPT Action only; do not set it on workers. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on web; authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on the web service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
+| `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical value on web and worker for authority mode | none | Closed mapping from each exact universe ID to `{rootPageId,displayName,initialMinimumPageCount?}`. It makes the entire recursively discovered hierarchy authoritative, blocks all six backend mutations, quarantines legacy PostgreSQL reads, and selects one immutable active RAG snapshot. A present malformed value fails mutation checks closed. `initialMinimumPageCount` is 1–512 and applies only before the first activation. |
+| `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Full-manifest synchronization cadence, clamped to 60,000–86,400,000 ms. The worker fetches the fixed configured root and descendants, never a caller URL; unchanged manifests only refresh verification time. |
+| `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Maximum age of the last complete snapshot verification, clamped to 300,000–604,800,000 ms. Missing, stale, truncated, wrong-root, or wrong-model snapshots fail authoritative generation closed; they never reopen legacy fallback. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; only for Gaming source lifecycle Actions on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for only `POST /gpt-access/gaming/sources/ingestions`, `POST /gpt-access/gaming/sources/refreshes`, and `GET /gpt-access/gaming/sources/ingestions/{ingestionId}`. It must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and in the Arcanos Gaming Custom GPT Action only; do not set it on workers. It never authenticates generic GPT Access routes, and the generic GPT Access token is rejected on these source routes. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | configured public base URL variables, local request origin, then `http://localhost:3000` | Public HTTPS origin advertised by `/gpt-access/openapi.json`; set this in Railway so public metadata is deterministic and never derived from spoofable request headers. Railway PR previews prefer Railway preview URL variables before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated generic gateway scope allowlist. The Backstage Booker exact universe and storyline-summary reads and dedicated canon write, plus Gaming source lifecycle Actions, use their own purpose-bound credentials rather than these scopes. `capabilities.read` covers generic capability metadata, not stored Backstage universe content. Include `jobs.create,jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
@@ -405,8 +408,9 @@ payload. Worker-side routing must still resolve to the same Backstage action or
 the job fails closed; web and worker GPT routing configuration should therefore
 remain synchronized.
 
-The separate Backstage Booker protected Action lane accepts only the dedicated
-`ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` for the exact
+The separate Backstage Booker Action lane declares the dedicated
+`ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` on its generation/simulation operation
+and accepts it exclusively for private Notion provenance and the exact
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read,
 its fixed `/storyline-summary` exact-key read, and the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` canon write. Both reads
@@ -445,7 +449,8 @@ control-plane behavior remain available under their own credentials and
 confirmation rules.
 
 Authenticated Backstage generation can optionally add a read-only Notion
-supplement without changing the four-operation Builder schema. Configure
+supplement without adding a fifth Builder operation. Schema `1.2.1` also
+materializes the nested public payload and must be re-imported. Configure
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on the web service;
 either value alone, invalid configuration, an unmapped universe, or a missing
@@ -480,6 +485,55 @@ disclosure, and its applicable
 retention controls. Enriched generation and its sensitive HRC follow-up always
 send OpenAI Responses with `store: false`,
 overriding `OPENAI_STORE` for that request only.
+
+#### Notion-authoritative hierarchy and RAG
+
+Authority mode is separate from the optional one-to-three-page supplement.
+Configure `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` with the same exact
+closed mapping on web and worker. The web value establishes the read/write and
+generation authority boundary; the worker value selects the fixed recursive
+sync root. Configure `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` on the worker only
+for an authority-only deployment. Do not also map that universe through
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON`.
+
+The worker recursively discovers direct child `<page>` links, fetches every
+page separately from fixed `api.notion.com` endpoints, verifies parent IDs and
+last-edited timestamps twice, sanitizes only after child discovery, chunks
+Unicode text and Markdown tables, and embeds bounded chunks. A candidate with
+an inaccessible child, malformed child link, provider truncation, unknown
+block, database, or unsupported media/file block is incomplete and is never
+activated. The currently confirmed `WWE universe mode` tree is 18 pages with
+text and Markdown tables and no binary attachments, so it is covered by this
+extractor. Future attachments require an explicit bounded extractor before a
+complete replacement snapshot can activate.
+
+Complete pages and chunks are written to immutable, universe-scoped snapshot
+tables. One transaction rechecks the sync lease, drains legacy writes, inserts
+the full snapshot, and flips the active head; readers therefore never combine
+two Notion revisions. A no-change crawl refreshes `last_verified_at` without
+creating duplicate snapshots. V1 retains prior successful snapshots and has no
+automatic purge. Embedding calls send chunk text to the configured embedding
+provider; retrieved generation sends only selected excerpts and forces
+provider `store: false` plus existing transcript/debug/cache suppression.
+
+The first activation is also a durable one-way authority latch. Removing the
+environment mapping later stops that configured worker root but does not make
+legacy PostgreSQL authoritative again; the stored head continues to quarantine
+legacy reads and writes. A configured root that disagrees with the stored root
+is rejected before any Notion fetch, and the database permits later snapshot
+rotation only inside the original root hierarchy. An authority-state lookup
+that cannot be resolved safely returns retryable
+`BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`. Restoring PostgreSQL authority is a
+separate reviewed recovery operation, never an environment-variable rollback.
+
+Once configured, all six legacy Backstage mutations return nonretryable
+`409 BACKSTAGE_NOTION_AUTHORITY_READ_ONLY`, and the two PostgreSQL read Actions
+return `409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`. Normal generation
+requires the saved Backstage bearer and one fresh, complete active snapshot;
+any missing/stale/index/provider condition returns
+`BACKSTAGE_NOTION_INDEX_UNAVAILABLE` and never falls back to PostgreSQL or
+process memory. Match simulation may use an explicitly supplied numeric roster
+but will not infer ratings from prose or read the quarantined roster.
 
 Reinforcement HTTP limits are also fixed rather than environment settings.
 `POST /reinforce` accepts a strict object JSON body up to 32 KiB;
@@ -815,9 +869,12 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Generic gateway bearer token. The gateway returns an auth/config error when this is missing. `GET /gpt-access/openapi.json` remains public. It remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but must not be configured in the dedicated Backstage Booker Custom GPT. It cannot authorize the exact Backstage universe or storyline-summary reads and is not accepted by Gaming source lifecycle routes. |
-| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; protected Backstage Booker Custom GPT operations and optional Notion-enrichment provenance on the web service only | none | Dedicated purpose-bound Bearer credential for the two exact Backstage reads and exact canon write. When the same valid bearer accompanies canonical public Backstage generation, it authorizes only the optional configured Notion supplement; it does not make anonymous generation fail closed or grant another direct-route capability. Configure the same value only on the web service and in the Backstage Booker Custom GPT Action's API Key/Bearer field. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; optional authenticated Backstage generation on the web service only | none | Outbound provider credential for a least-privilege, read-content-only Notion integration. Configure only with the page mapping, never in Builder or a worker, and never reuse an ARCANOS application credential. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; protected Backstage Booker Custom GPT operations and authenticated private context on web | none | Dedicated purpose-bound Bearer credential for the protected lane and Notion-derived generation. Legacy supplement remains optional; mapped authority generation requires it and fails closed when absent. Configure only on web and in the existing GPT Action. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; one Notion mode | none | Outbound read-content token: web for legacy supplement, worker for authority sync. Never place it in Builder or reuse an application credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; optional authenticated Backstage generation on the web service only | none | Sensitive exact-universe-to-page-UUID mapping. One to three unique raw page UUIDs per universe; URLs and partial/invalid configuration are rejected before provider work. |
+| `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical on web and worker | none | Exact universe-to-root authority mapping. Blocks/quarantines legacy state and selects recursive immutable RAG snapshots. |
+| `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Bounded full-hierarchy sync cadence. |
+| `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Bounded maximum age of a successful complete-snapshot verification. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; web service source lifecycle only | none | Dedicated purpose-bound Bearer credential for exactly the three `/gpt-access/gaming/sources/*` lifecycle routes. It must be 32–4096 visible ASCII characters with no whitespace or placeholder form, and distinct from every other application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action. Generic GPT Access routes reject it. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | first valid configured public URL/domain, local request origin, then `http://localhost:3000` | Public origin for GPT Action OpenAPI metadata. Supported configured fallbacks include `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL`, `RAILWAY_PUBLIC_URL`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_STATIC_URL`. Non-local request hosts are ignored. Railway PR previews advertise `RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_PUBLIC_URL`, or `RAILWAY_STATIC_URL` before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, capability runs, and worker recovery | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Generic gateway scope allowlist. The dedicated Backstage protected and Gaming source lifecycle credentials do not use these scopes. `capabilities.read` authorizes capability metadata, not stored Backstage universe content. A generic token can still reach the Backstage canon route only with `capabilities.run`, `MCP_ALLOW_MODULE_ACTIONS`, and backend confirmation. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the protected async Trinity flow; add `workers.recover` only for confirmed worker recovery dispatch; add `capabilities.read` for discovery. |
@@ -1128,8 +1185,11 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_JOB_READ_TOKEN` | commented empty | Client-only transient token for one standalone generic job lookup; never a shared backend signing key. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated API Key/Bearer credential for the exact Backstage reads/canon write and request-local authorization of an optional configured Notion supplement on canonical generation. It is distinct from generic GPT Access and control-plane credentials and must never appear in the schema, instructions, chat, source, or logs. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | commented placeholder | Web-service-only outbound token for a read-content-only Notion integration. It is never a Builder credential and must differ from every ARCANOS application credential. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | commented placeholder | Outbound read-content-only token: web for optional legacy supplement or worker for authority sync. It is never a Builder credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | commented example | Sensitive exact-universe-to-one-to-three-raw-page-UUID mapping for optional Notion generation context. |
+| `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | commented example | Identical web/worker exact-universe root map for one-way Notion authority and recursive RAG. |
+| `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | `900000` (commented) | Worker full-manifest refresh cadence. |
+| `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | `86400000` (commented) | Web-side freshness fence for authoritative retrieval. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated Bearer credential for only the Gaming source ingestion, refresh, and status routes. Configure the same value in the Arcanos Gaming Custom GPT Action; do not use the generic GPT Access or bridge credential and do not configure it on workers. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented scope list | Generic gateway scope allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be explicit before they enqueue, discover, execute capability work, or recover workers. Gaming source lifecycle Actions use the dedicated Gaming credential instead. |

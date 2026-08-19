@@ -10,6 +10,7 @@ import {
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
   BackstageStorylinePersistenceError,
 } from '../src/shared/backstage/backstageStoryline.js';
+import { BackstageNotionAuthorityReadOnlyError } from '../src/services/backstageBookerContracts.js';
 
 const originalAllowAllGpts = process.env.ALLOW_ALL_GPTS;
 process.env.ALLOW_ALL_GPTS = 'false';
@@ -20,6 +21,7 @@ const mockSaveStoryline = jest.fn();
 const mockSimulateMatch = jest.fn();
 const mockTrackStoryline = jest.fn();
 const mockUpdateRoster = jest.fn();
+const mockIsBackstageNotionAuthoritativeUniverse = jest.fn();
 const durablePersistence = {
   status: 'durable',
   durable: true,
@@ -36,6 +38,10 @@ jest.unstable_mockModule('@services/backstage-booker.js', () => ({
     trackStoryline: mockTrackStoryline,
     updateRoster: mockUpdateRoster,
   },
+}));
+
+jest.unstable_mockModule('@services/backstageNotionAuthority.js', () => ({
+  isBackstageNotionAuthorityEnforced: mockIsBackstageNotionAuthoritativeUniverse
 }));
 
 const express = (await import('express')).default;
@@ -126,6 +132,7 @@ describe('direct Backstage routes', () => {
       roster: [{ name: 'A', overall: 90 }],
       persistence: durablePersistence
     });
+    mockIsBackstageNotionAuthoritativeUniverse.mockReturnValue(false);
   });
 
   it.each([
@@ -160,6 +167,31 @@ describe('direct Backstage routes', () => {
     });
     expect(mockGenerateBooking).toHaveBeenCalledWith('Book a rivalry', 'legacy');
     expect(mockSaveStoryline).toHaveBeenCalledWith('story-1', 'storyline', 'legacy');
+  });
+
+  it('denies a Notion-authoritative book-gpt request before generation', async () => {
+    const universeId = 'notion-authoritative-universe';
+    mockIsBackstageNotionAuthoritativeUniverse.mockImplementation(
+      (candidateUniverseId: string) => candidateUniverseId === universeId
+    );
+
+    const response = await authorizedConfirmedPost('/backstage/book-gpt').send({
+      universeId,
+      prompt: 'Book a protected rivalry.',
+      key: 'protected-story',
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_AUTHORITY_READ_ONLY',
+        message: new BackstageNotionAuthorityReadOnlyError(universeId).message,
+        retryable: false,
+      },
+    });
+    expect(mockGenerateBooking).not.toHaveBeenCalled();
+    expect(mockSaveStoryline).not.toHaveBeenCalled();
   });
 
   it('forwards an explicit universe and preserves the eventID alias', async () => {

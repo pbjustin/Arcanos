@@ -1,6 +1,7 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import {
+  BackstageBookerLegacyReadQuarantinedError,
   BackstageBookerRepositoryUnavailableError,
   type BackstageCanonStorylineSummaryRecord,
   type BackstageContext,
@@ -10,13 +11,42 @@ import {
   BackstageStorylineSummaryReadRequestError,
   BACKSTAGE_UNIVERSE_READ_DB_STATEMENT_TIMEOUT_MS,
   BACKSTAGE_UNIVERSE_READ_RESULT_LIMIT_BYTES,
-  readBackstageStorylineSummary,
-  readBackstageUniverse,
+  readBackstageStorylineSummary as readBackstageStorylineSummaryService,
+  readBackstageUniverse as readBackstageUniverseService,
 } from '../src/services/backstageUniverseRead.js';
+import {
+  BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_CODE,
+} from '../src/services/backstageBookerContracts.js';
+import {
+  BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME,
+} from '../src/services/backstageNotionAuthority.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const STORYLINE_ID = '11111111-1111-4111-8111-111111111111';
 const BEAT_ID = '22222222-2222-4222-8222-222222222222';
+const originalNotionAuthorityRoots =
+  process.env[BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME];
+
+function readBackstageUniverse(
+  universeId: string,
+  options: NonNullable<Parameters<typeof readBackstageUniverseService>[1]> = {}
+) {
+  return readBackstageUniverseService(universeId, {
+    authorityResolver: async () => false,
+    ...options,
+  });
+}
+
+function readBackstageStorylineSummary(
+  universeId: string,
+  storyKey: string,
+  options: NonNullable<Parameters<typeof readBackstageStorylineSummaryService>[2]> = {}
+) {
+  return readBackstageStorylineSummaryService(universeId, storyKey, {
+    authorityResolver: async () => false,
+    ...options,
+  });
+}
 
 function canonStorylineSummaryRecord(
   summary: string | null,
@@ -127,6 +157,80 @@ function populatedContext(): BackstageContext {
 }
 
 describe('Backstage universe read projection', () => {
+  beforeEach(() => {
+    delete process.env[BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME];
+  });
+
+  afterAll(() => {
+    if (originalNotionAuthorityRoots === undefined) {
+      delete process.env[BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME];
+    } else {
+      process.env[BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME] = originalNotionAuthorityRoots;
+    }
+  });
+
+  it('quarantines both legacy readers before access for a Notion-authoritative universe', async () => {
+    process.env[BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME] = JSON.stringify({
+      [UNIVERSE_ID]: {
+        rootPageId: STORYLINE_ID,
+        displayName: 'WWE Universe Mode',
+      },
+    });
+    const loadContext = jest.fn(async () => emptyContext());
+    const loadCanonStorylineSummary = jest.fn(
+      async () => canonStorylineSummaryRecord('Protected summary.')
+    );
+    const expectedError = {
+      name: 'BackstageNotionAuthorityReadQuarantinedError',
+      code: BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_CODE,
+      httpStatus: 409,
+      retryable: false,
+      universeId: UNIVERSE_ID,
+    };
+
+    await expect(readBackstageUniverse(UNIVERSE_ID, {
+      authorityResolver: async () => true,
+      reader: { loadContext },
+    })).rejects.toMatchObject(expectedError);
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'raw-day-one-baseline',
+      {
+        authorityResolver: async () => true,
+        reader: { loadCanonStorylineSummary },
+      }
+    )).rejects.toMatchObject(expectedError);
+
+    expect(loadContext).not.toHaveBeenCalled();
+    expect(loadCanonStorylineSummary).not.toHaveBeenCalled();
+  });
+
+  it('maps an in-snapshot authority activation to the same public quarantine', async () => {
+    const expectedError = {
+      name: 'BackstageNotionAuthorityReadQuarantinedError',
+      code: BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED_ERROR_CODE,
+      httpStatus: 409,
+      retryable: false,
+      universeId: UNIVERSE_ID,
+    };
+    const repositoryError = new BackstageBookerLegacyReadQuarantinedError(
+      UNIVERSE_ID
+    );
+
+    await expect(readBackstageUniverse(UNIVERSE_ID, {
+      reader: { loadContext: async () => Promise.reject(repositoryError) },
+    })).rejects.toMatchObject(expectedError);
+    await expect(readBackstageStorylineSummary(
+      UNIVERSE_ID,
+      'raw-day-one-baseline',
+      {
+        reader: {
+          loadCanonStorylineSummary: async () => Promise.reject(repositoryError),
+        },
+      }
+    )).rejects.toMatchObject(expectedError);
+  });
+
   it('returns a typed exact-ID PostgreSQL snapshot without raw legacy JSON', async () => {
     const context = populatedContext();
     const loadContext = jest.fn(async () => context);

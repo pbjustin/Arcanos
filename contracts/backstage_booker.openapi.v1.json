@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.2.0",
-    "description": "Builder-specific contract for Backstage Booker. Public booking generation and simulation remain unauthenticated. Exact universe and storyline reads plus durable canon writes use a dedicated Backstage Booker bearer; only canon writes require ChatGPT's consequential-action approval banner."
+    "version": "1.2.1",
+    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for generation, simulation, exact reads, and canon writes; only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
     {
@@ -16,8 +16,13 @@
       "post": {
         "operationId": "runBackstageBooker",
         "summary": "Generate or simulate with Backstage Booker",
-        "description": "Run one non-persistent Backstage Booker action synchronously. Accepts only booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon. executionMode is fixed to sync to avoid automatic heavy-prompt queueing.",
+        "description": "Run one non-persistent Backstage Booker action synchronously with the configured bearer. Accepts booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon. executionMode is fixed to sync.",
         "x-openai-isConsequential": false,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -43,13 +48,23 @@
                     "action": "simulateMatch",
                     "executionMode": "sync",
                     "payload": {
-                      "universeId": "my-universe-2k26",
+                      "universeId": "backstage-demo",
                       "match": {
                         "wrestler1": "Rhea Ripley",
                         "wrestler2": "Bianca Belair",
                         "matchType": "Singles",
                         "kayfabeMode": true
-                      }
+                      },
+                      "rosters": [
+                        {
+                          "name": "Rhea Ripley",
+                          "overall": 96
+                        },
+                        {
+                          "name": "Bianca Belair",
+                          "overall": 95
+                        }
+                      ]
                     }
                   }
                 }
@@ -104,7 +119,7 @@
             }
           },
           "503": {
-            "description": "Backstage Booker is temporarily unavailable.",
+            "description": "Backstage Booker is temporarily unavailable. BACKSTAGE_NOTION_INDEX_UNAVAILABLE means the authoritative index cannot be used; BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE means the authority latch cannot be resolved. Neither falls back to legacy state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -150,13 +165,13 @@
                   "value": {
                     "action": "upsertStoryline",
                     "payload": {
-                      "universeId": "my-universe-2k26",
+                      "universeId": "legacy-demo-universe",
                       "mutationId": "5d87478f-57a3-45e0-9d5a-6b9d56e94ec8",
                       "expectedVersion": 0,
                       "storyline": {
-                        "key": "raw-day-one-baseline",
-                        "title": "Monday Night Raw Day One",
-                        "summary": "The starting canon for this Universe.",
+                        "key": "demo-storyline",
+                        "title": "Demo Storyline",
+                        "summary": "Illustrative legacy canon for a non-authoritative universe.",
                         "status": "active",
                         "participantNames": []
                       }
@@ -168,9 +183,9 @@
                   "value": {
                     "action": "appendCanonBeat",
                     "payload": {
-                      "universeId": "my-universe-2k26",
+                      "universeId": "legacy-demo-universe",
                       "mutationId": "9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c",
-                      "storylineKey": "raw-day-one-baseline",
+                      "storylineKey": "demo-storyline",
                       "expectedVersion": 1,
                       "beat": {
                         "kind": "development",
@@ -262,7 +277,7 @@
             }
           },
           "409": {
-            "description": "The expected storyline version or mutation id conflicts with durable canon.",
+            "description": "The mutation conflicts with durable canon, or BACKSTAGE_NOTION_AUTHORITY_READ_ONLY denies a legacy write because Notion is authoritative.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -340,7 +355,7 @@
             }
           },
           "503": {
-            "description": "Dedicated bearer authentication, the capability registry, execution identity, or durable canon persistence is temporarily unavailable.",
+            "description": "Dedicated bearer authentication, the capability registry, execution identity, durable canon persistence, or the Backstage Notion authority latch is temporarily unavailable.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -361,7 +376,7 @@
       "get": {
         "operationId": "getBackstageUniverse",
         "summary": "Read one stored Backstage universe",
-        "description": "Read one bounded PostgreSQL snapshot by exact universe ID with the dedicated Backstage bearer. This non-consequential operation never generates or writes, exposes no list or display-name lookup, and returns hasPersistedData false for an empty stored scope.",
+        "description": "Read one bounded legacy PostgreSQL snapshot by exact universe ID. This never generates or writes. A Notion-authoritative universe returns 409 because legacy continuity is quarantined; use runBackstageBooker for its facts.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -377,7 +392,7 @@
             "schema": {
               "$ref": "#/components/schemas/UniverseReadId"
             },
-            "example": "my-universe-2k26"
+            "example": "legacy-demo-universe"
           }
         ],
         "responses": {
@@ -426,6 +441,21 @@
               }
             }
           },
+          "409": {
+            "description": "BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED means Notion is authoritative and the legacy PostgreSQL snapshot was not read.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstageUniverseReadErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "The authenticated Backstage Booker request budget was exceeded.",
             "headers": {
@@ -460,7 +490,7 @@
             }
           },
           "503": {
-            "description": "Dedicated authentication or the PostgreSQL read snapshot is temporarily unavailable.",
+            "description": "Dedicated authentication, the authority latch, or the legacy PostgreSQL read snapshot is temporarily unavailable.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -481,7 +511,7 @@
       "get": {
         "operationId": "getBackstageStoryline",
         "summary": "Read one full Backstage storyline summary",
-        "description": "Read an exact canon storyline summary from PostgreSQL in fixed 4,000-code-point pages. Use the exact key; every continuation page must resend the version returned by page zero as expectedVersion.",
+        "description": "Read an exact legacy canon storyline from PostgreSQL in fixed pages. Continuations pin page-zero version. A Notion-authoritative universe returns 409 because legacy canon is quarantined.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -497,7 +527,7 @@
             "schema": {
               "$ref": "#/components/schemas/UniverseReadId"
             },
-            "example": "my-universe-2k26"
+            "example": "legacy-demo-universe"
           },
           {
             "name": "storylineKey",
@@ -507,7 +537,7 @@
             "schema": {
               "$ref": "#/components/schemas/StorylineReadKey"
             },
-            "example": "raw-day-one-baseline"
+            "example": "demo-storyline"
           },
           {
             "name": "offset",
@@ -595,7 +625,7 @@
             }
           },
           "409": {
-            "description": "The storyline version changed; discard collected pages and restart at offset zero.",
+            "description": "BACKSTAGE_STORYLINE_VERSION_CONFLICT means the version changed; BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED means legacy canon was not read.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -643,7 +673,7 @@
             }
           },
           "503": {
-            "description": "Dedicated authentication or the PostgreSQL storyline read is temporarily unavailable.",
+            "description": "Dedicated authentication, the authority latch, or the PostgreSQL storyline read is temporarily unavailable.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -667,7 +697,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Opaque Backstage Booker access token",
-        "description": "Required only for the fixed Backstage Booker exact-universe reads and canon-write operation. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; this purpose-bound credential cannot authorize other GPT Access routes."
+        "description": "Required by this configured Action for Backstage generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
       }
     },
     "headers": {
@@ -1461,7 +1491,38 @@
             "$ref": "#/components/schemas/BackstagePublicExecutionMode"
           },
           "payload": {
-            "type": "object"
+            "type": "object",
+            "description": "Action-specific input. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.",
+            "additionalProperties": false,
+            "properties": {
+              "universeId": {
+                "$ref": "#/components/schemas/UniverseId"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Required for generation actions. Put the complete booking, factual lookup, or review request here.",
+                "minLength": 1,
+                "maxLength": 10000,
+                "pattern": "\\S"
+              },
+              "match": {
+                "$ref": "#/components/schemas/MatchInput"
+              },
+              "rosters": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/Wrestler"
+                }
+              },
+              "winProbModifier": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 1,
+                "default": 0
+              }
+            }
           }
         },
         "oneOf": [
@@ -1567,7 +1628,8 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "match"
+          "match",
+          "rosters"
         ],
         "properties": {
           "universeId": {
@@ -1578,6 +1640,7 @@
           },
           "rosters": {
             "type": "array",
+            "minItems": 2,
             "maxItems": 100,
             "items": {
               "$ref": "#/components/schemas/Wrestler"
@@ -1607,7 +1670,34 @@
             ]
           },
           "payload": {
-            "type": "object"
+            "type": "object",
+            "description": "Action-specific canon mutation input. The selected action schema below enforces its required fields.",
+            "additionalProperties": false,
+            "properties": {
+              "universeId": {
+                "$ref": "#/components/schemas/UniverseId"
+              },
+              "mutationId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "expectedVersion": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              },
+              "storyline": {
+                "$ref": "#/components/schemas/StorylineInput"
+              },
+              "storylineKey": {
+                "$ref": "#/components/schemas/StorylineKey"
+              },
+              "beat": {
+                "$ref": "#/components/schemas/CanonBeatInput"
+              },
+              "nextStatus": {
+                "$ref": "#/components/schemas/StorylineStatus"
+              }
+            }
           }
         },
         "oneOf": [
@@ -2442,6 +2532,15 @@
           },
           "retryable": {
             "type": "boolean"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "retryable": {
+                "type": "boolean"
+              }
+            }
           }
         }
       },

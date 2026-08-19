@@ -14,6 +14,8 @@ import {
 import {
   BackstageBookerContractError,
   BackstageCanonUnavailableError,
+  BackstageNotionAuthorityReadQuarantinedError,
+  BackstageNotionAuthorityReadOnlyError,
 } from '../src/services/backstageBookerContracts.js';
 import {
   BackstageBookerRepositoryUnavailableError,
@@ -3500,6 +3502,30 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('maps an authoritative universe read quarantine to a nonretryable bounded 409', async () => {
+    readBackstageUniverseMock.mockRejectedValueOnce(
+      new BackstageNotionAuthorityReadQuarantinedError('my-universe-2k26')
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp()).get(
+        '/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26'
+      )
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED',
+        message:
+          'Notion is authoritative for this Backstage universe; legacy PostgreSQL reads are quarantined.',
+        retryable: false,
+      },
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
+  });
+
   it('keeps the read namespace dedicated and exposes no collection listing', async () => {
     const listResponse = await backstageBookerAuthorized(
       request(buildApp()).get(
@@ -3606,6 +3632,27 @@ describe('/gpt-access gateway', () => {
       'raw-day-one-baseline',
       { offset: 4_000, expectedVersion: 5 }
     );
+  });
+
+  it('maps an authoritative storyline read quarantine to a nonretryable bounded 409', async () => {
+    readBackstageStorylineSummaryMock.mockRejectedValueOnce(
+      new BackstageNotionAuthorityReadQuarantinedError('my-universe-2k26')
+    );
+
+    const response = await backstageBookerAuthorized(
+      request(buildApp())
+        .get('/gpt-access/capabilities/v1/backstage-booker/universes/my-universe-2k26/storyline-summary')
+        .query({ storylineKey: 'raw-day-one-baseline' })
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toEqual({
+      code: 'BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED',
+      message:
+        'Notion is authoritative for this Backstage universe; legacy PostgreSQL reads are quarantined.',
+      retryable: false,
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
   });
 
   it.each([
@@ -4285,6 +4332,27 @@ describe('/gpt-access gateway', () => {
       code: 'BACKSTAGE_CANON_UNAVAILABLE',
       message: 'Backstage canon persistence is temporarily unavailable.',
       retryable: true,
+    });
+  });
+
+  it('maps a Notion-authoritative universe denial to a nonretryable GPT Access 409', async () => {
+    configureBackstageCapability('upsertStoryline');
+    dispatchModuleActionMock.mockRejectedValueOnce(
+      new BackstageNotionAuthorityReadOnlyError('phase-two')
+    );
+
+    const response = await confirmed(authorized(
+      request(buildApp()).post('/gpt-access/capabilities/v1/backstage-booker/run')
+    )).send({
+      action: 'upsertStoryline',
+      payload: buildBackstageCanonPayload('upsertStoryline'),
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toEqual({
+      code: 'BACKSTAGE_NOTION_AUTHORITY_READ_ONLY',
+      message: 'Notion is authoritative for this Backstage universe; backend mutations are disabled.',
+      retryable: false,
     });
   });
 

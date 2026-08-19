@@ -113,6 +113,10 @@ import {
   GAMING_SOURCE_REFRESH_REQUEST_PATH,
   parseQueuedGamingSourceIngestionBody
 } from '@services/gamingSourceIngestion.js';
+import {
+  startBackstageNotionSyncLoop,
+  type BackstageNotionSyncLoopHandle,
+} from './backstageNotionSyncLoop.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -2127,6 +2131,7 @@ async function run(): Promise<void> {
 
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
+  let backstageNotionSyncHandle: BackstageNotionSyncLoopHandle | null = null;
 
   try {
     const slotReadinessPromises: Promise<void>[] = [];
@@ -2193,8 +2198,13 @@ async function run(): Promise<void> {
       return;
     }
 
+    backstageNotionSyncHandle = startBackstageNotionSyncLoop({
+      signal: workerProcessShutdownController.signal,
+    });
+
     await Promise.all(slotRuntimePromises);
   } finally {
+    backstageNotionSyncHandle?.stop();
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
     await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');

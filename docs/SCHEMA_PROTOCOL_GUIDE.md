@@ -57,7 +57,7 @@ The original seven action schema files remain unchanged.
 The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
 projection of this module-action family, not another protocol family. Keep its
 closed payloads aligned with the catalog schemas. It intentionally exposes
-only the three public generation/simulation actions through
+only the three generation/simulation actions through the Builder-authenticated
 `runBackstageBooker`; two dedicated-Bearer, non-consequential exact database
 reads through `getBackstageUniverse` and `getBackstageStoryline`; and
 only `upsertStoryline` or
@@ -67,6 +67,13 @@ than tenth or eleventh module actions, because the module policy partitions ever
 non-public Backstage action as mutation-capable. Do not add generic GPT Access,
 control-plane, Phase One mutation, list-universe, or confirmation-token shapes
 to that contract.
+
+Notion-authority/RAG remains a backend source-selection and persistence
+invariant, not a new protocol command or module action. It does not add a fifth
+Builder operation. For configured universes, generation uses the derived
+snapshot while the existing PostgreSQL read and canon-write operations return
+typed quarantine/read-only errors; keep those error semantics synchronized
+across service, HTTP, Builder instructions, and maintained docs.
 
 Implemented protocol commands:
 - `task.create`

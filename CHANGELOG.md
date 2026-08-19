@@ -13,8 +13,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
   authoritative. The backend uses the existing dedicated Backstage bearer as
   request-local provenance, fixed provider URLs, bounded/quoted excerpts,
   aggregate cancellation, sanitized fail-open behavior, and no Notion or canon
-  writes; anonymous generation remains database-only and the Builder operation
-  contract is unchanged.
+  writes; anonymous generation remains database-only and the legacy supplement
+  adds no new Builder operation.
+- Added recursive, worker-owned Notion authority and immutable RAG snapshots for
+  exact Backstage universes. Complete hierarchy captures activate atomically;
+  legacy PostgreSQL reads and all six mutations are then durably quarantined,
+  retrieval fails closed without a fresh authenticated snapshot, and schema
+  `1.2.1` makes the existing Builder bearer and nested Action payloads explicit.
 - Added one manifest-driven, read-only protected-configuration digest command
   for canonical semantic generation and fail-closed comparison of every
   explicit integrity pin before cutover, including bounded schema-validated

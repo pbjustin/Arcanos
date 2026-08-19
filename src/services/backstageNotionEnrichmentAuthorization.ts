@@ -49,8 +49,9 @@ export function runWithBackstageNotionEnrichmentAuthorization<T>(
 }
 
 /**
- * Establish optional Notion-enrichment provenance without changing the public
- * generation contract. Missing or invalid credentials retain DB-only behavior.
+ * Establish Notion request provenance without changing backend route admission.
+ * Missing or invalid credentials retain non-Notion behavior only for a
+ * non-authoritative universe; authority retrieval independently fails closed.
  */
 export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
   req: Request,

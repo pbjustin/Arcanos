@@ -96,6 +96,9 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { isBackstageNotionEnrichmentAuthorized } = await import(
+  '../src/services/backstageNotionEnrichmentAuthorization.js'
+);
 const { metricsRegistry, resetAppMetricsForTests } = await import(
   '../src/platform/observability/appMetrics.js'
 );
@@ -210,6 +213,7 @@ function buildBackstageRouting(
 }
 
 const GPT_ROUTE_TEST_ENV_KEYS = [
+  'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
   'ARCANOS_JOB_READ_CAPABILITY_SECRET',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
@@ -1010,6 +1014,102 @@ describe('GPT fast-path route branching', () => {
       }));
     }
   );
+
+  it('returns a bounded 503 when the authoritative Backstage Notion index is unavailable', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+        message: 'The authoritative Backstage Notion index is temporarily unavailable.',
+        details: { retryable: true },
+      },
+      _route: {
+        requestId: 'request-notion-index-unavailable',
+        traceId: 'trace-notion-index-unavailable',
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+        timestamp: '2026-08-19T20:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Review the current show state.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+        message: 'The authoritative Backstage Notion index is temporarily unavailable.',
+        details: { retryable: true },
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+      },
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves verified Builder bearer provenance through the assembled route', async () => {
+    const accessToken = `backstage-${'a'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    let authorizedInsideDispatch = false;
+    mockRouteGptRequest.mockImplementationOnce(async () => {
+      authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+      return {
+        ok: true,
+        result: {
+          universeId: 'my-universe-2k26',
+          storyline: 'Authoritative Notion context was retrieved.',
+        },
+        _route: {
+          requestId: 'request-notion-authorized',
+          traceId: 'trace-notion-authorized',
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage-booker',
+          timestamp: '2026-08-19T20:00:00.000Z',
+        },
+      };
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Review the current show state.',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(authorizedInsideDispatch).toBe(true);
+    expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+  });
 
   it('auto-queues a heavy Backstage public action when the sync sentinel is absent', async () => {
     process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';

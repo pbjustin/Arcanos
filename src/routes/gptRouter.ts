@@ -79,10 +79,14 @@ import {
   isBackstageGptRoute,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
+import {
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+} from '@services/backstageNotionRag.js';
 import {
   resolveBackstageCanonDomainErrorHttpStatus,
 } from '@core/db/repositories/backstageBookerRepository.js';
@@ -3568,6 +3572,10 @@ router.post(
               : envelope.error.code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE
               ? 500
               : envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+              ? 503
+              : envelope.error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+              ? 503
+              : envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
               ? 503
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
