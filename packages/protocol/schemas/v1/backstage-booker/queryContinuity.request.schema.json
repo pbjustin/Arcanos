@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/queryContinuity.request.schema.json",
+  "title": "Backstage Booker queryContinuity request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "query"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10000,
+      "pattern": "\\S"
+    },
+    "retrievalScope": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityRetrievalScope"
+    },
+    "retrievalMode": {
+      "type": "string",
+      "enum": [
+        "relevant",
+        "complete_scope"
+      ],
+      "default": "relevant"
+    },
+    "cursor": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityCursor"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "cursor"
+        ]
+      },
+      "then": {
+        "required": [
+          "retrievalMode"
+        ],
+        "properties": {
+          "retrievalMode": {
+            "const": "complete_scope"
+          }
+        }
+      }
+    }
+  ]
+}

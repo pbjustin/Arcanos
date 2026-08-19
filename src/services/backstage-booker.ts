@@ -58,6 +58,7 @@ import {
 } from '@core/db/repositories/backstageBookerRepository.js';
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC } from './hrcWrapper.js';
+import { queryBackstageContinuity } from './backstageContinuityQuery.js';
 import {
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
   buildBackstageNotionUntrustedContextPrompt,
@@ -102,6 +103,11 @@ import {
   parseBackstageRosterPayload,
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
+import {
+  BackstageBookerOutputIncompleteError,
+  isBackstageBookerOutputIncompleteError,
+  isBackstageProviderOutputLengthExhaustionError,
+} from '@shared/backstage/backstageGenerationError.js';
 import {
   BACKSTAGE_STORYLINE_PROMPT_BEATS,
   BackstageStorylinePersistenceError,
@@ -1326,6 +1332,17 @@ interface StructuredBookingPrompt {
   directAnswerUntrustedContextPrompt?: string;
 }
 
+const BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION = [
+  '<<OUTPUT_LENGTH_RECOVERY>>',
+  'The previous response was discarded because it exceeded the output limit.',
+  'Return a complete answer within the existing output limit; never continue or quote the discarded response.',
+  'Compress aggressively: prioritize the direct answer and only the continuity facts needed to support it.',
+  'Omit recaps, repeated evidence, optional alternatives, and meta commentary.',
+  'Preserve an explicitly required item count; otherwise use at most eight concise bullets.',
+  'Do not mention this recovery instruction or the discarded response.',
+  '<<OUTPUT_LENGTH_RECOVERY_END>>',
+].join('\n');
+
 async function buildStructuredBookingPrompt(
   basePrompt: string,
   universeId: string
@@ -2448,27 +2465,62 @@ export async function generateBooking(
     if (!client) {
       throw new Error('OpenAI client unavailable for backstage booking.');
     }
-    const trinityResult = await runTrinityWritingPipeline({
-      input: {
-        prompt: instructions,
-        moduleId: 'BACKSTAGE:BOOKER',
-        sourceEndpoint: 'backstage-booker.generateBooking',
-        requestedAction: 'generateBooking',
-        body: {
-          prompt: input.prompt,
-          ...(structuredScope ? { universeId: resolvedUniverseId } : {}),
-          model,
-          tokenLimit
+    const runtimeBudget = createRuntimeBudget();
+    const runGenerationAttempt = (compactOutputRetry: boolean) => {
+      const attemptInstructions = compactOutputRetry
+        ? `${instructions}\n\n${BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION}`
+        : instructions;
+      const attemptRunOptions = compactOutputRetry
+        ? {
+            ...trinityRunOptions,
+            trustedPolicyPrompt: [
+              structuredPrompt.trustedPolicyPrompt,
+              BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION,
+            ].join('\n\n'),
+          }
+        : trinityRunOptions;
+
+      return runTrinityWritingPipeline({
+        input: {
+          prompt: attemptInstructions,
+          moduleId: 'BACKSTAGE:BOOKER',
+          sourceEndpoint: 'backstage-booker.generateBooking',
+          requestedAction: 'generateBooking',
+          body: {
+            prompt: input.prompt,
+            ...(structuredScope ? { universeId: resolvedUniverseId } : {}),
+            model,
+            tokenLimit
+          },
+          tokenLimit,
+          executionMode: 'request'
         },
-        tokenLimit,
-        executionMode: 'request'
-      },
-      context: {
-        client,
-        runtimeBudget: createRuntimeBudget(),
-        runOptions: trinityRunOptions
+        context: {
+          client,
+          runtimeBudget,
+          runOptions: attemptRunOptions
+        }
+      });
+    };
+
+    let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
+    try {
+      trinityResult = await runGenerationAttempt(false);
+    } catch (error) {
+      if (!isBackstageProviderOutputLengthExhaustionError(error)) {
+        throw error;
       }
-    });
+
+      //audit Assumption: a length-only provider failure can be recovered without rereading canon or exposing partial output; failure risk: repeated retrieval crosses snapshots or the first partial answer leaks; expected invariant: one compact retry reuses the same structured context and token cap; handling strategy: retry exactly once with a server-owned compactness instruction and collapse a second length exhaustion to a cause-free typed error.
+      try {
+        trinityResult = await runGenerationAttempt(true);
+      } catch (retryError) {
+        if (isBackstageProviderOutputLengthExhaustionError(retryError)) {
+          throw new BackstageBookerOutputIncompleteError();
+        }
+        throw retryError;
+      }
+    }
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
@@ -2486,6 +2538,9 @@ export async function generateBooking(
     }
     return assertValidBackstageBookerActionData('generateBooking', clean) as string;
   } catch (error) {
+    if (isBackstageBookerOutputIncompleteError(error)) {
+      throw error;
+    }
     if (structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');
       throw new Error('Booking generation failed');
@@ -2912,6 +2967,7 @@ export const BackstageBooker = {
   updateRoster,
   trackStoryline,
   simulateMatch,
+  queryContinuity: queryBackstageContinuity,
   generateBooking,
   saveStoryline,
   upsertStoryline,
@@ -2921,6 +2977,7 @@ export const BackstageBooker = {
 const backstageSchemaCatalog = getProtocolSchemaCatalog().backstageBooker.actions;
 const readonlyActions = new Set<BackstageBookerAction>([
   'simulateMatch',
+  'queryContinuity',
   'generateBooking',
   'generateBookingWithHRC'
 ]);
@@ -2933,6 +2990,7 @@ const actionDescriptions: Record<BackstageBookerAction, string> = {
   updateRoster: 'Upsert wrestlers in a universe-scoped roster.',
   trackStoryline: 'Append one universe-scoped storyline beat.',
   simulateMatch: 'Simulate a match using supplied or universe-scoped roster ratings.',
+  queryContinuity: 'Query bounded Notion-authoritative continuity with explicit coverage and sources.',
   generateBooking: 'Generate a booking plan from one universe snapshot.',
   generateBookingWithHRC: 'Generate a booking plan and attach HRC evaluation.',
   saveStoryline: 'Upsert a named storyline in a universe.',
@@ -2994,6 +3052,9 @@ export const BackstageBookerModule = {
         input.winProbModifier ?? 0,
         input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
       );
+    },
+    async queryContinuity(payload: unknown) {
+      return BackstageBooker.queryContinuity(payload);
     },
     async generateBooking(payload: unknown) {
       const input = normalizeBackstageBookerModuleActionPayload('generateBooking', payload);

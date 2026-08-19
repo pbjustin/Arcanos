@@ -36,7 +36,7 @@ ActionPlan execution is a separate contract family. Keep its schemas, shared Typ
 
 Backstage Booker is also a distinct contract family, but it is registered in
 the shared schema catalog under `backstageBooker`, alongside (not inside) the
-`commands` catalog. Its nine action names are module action identifiers, not
+`commands` catalog. Its ten action names are module action identifiers, not
 protocol command IDs. Adding or changing a Backstage action therefore does not
 change `ARCANOS_PROTOCOL_COMMAND_IDS` or
 `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` unless an independently reviewed
@@ -57,23 +57,37 @@ The original seven action schema files remain unchanged.
 The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
 projection of this module-action family, not another protocol family. Keep its
 closed payloads aligned with the catalog schemas. It intentionally exposes
-only the three generation/simulation actions through the Builder-authenticated
+only the four read-only continuity-query/generation/simulation actions through
+the Builder-authenticated
 `runBackstageBooker`; two dedicated-Bearer, non-consequential exact database
 reads through `getBackstageUniverse` and `getBackstageStoryline`; and
 only `upsertStoryline` or
 `appendCanonBeat` through the Bearer-authenticated, consequential
 `writeBackstageCanon` operation. The reads are HTTP/Builder projections rather
-than tenth or eleventh module actions, because the module policy partitions every
+than eleventh or twelfth module actions, because the module policy partitions every
 non-public Backstage action as mutation-capable. Do not add generic GPT Access,
 control-plane, Phase One mutation, list-universe, or confirmation-token shapes
 to that contract.
 
 Notion-authority/RAG remains a backend source-selection and persistence
-invariant, not a new protocol command or module action. It does not add a fifth
-Builder operation. For configured universes, generation uses the derived
-snapshot while the existing PostgreSQL read and canon-write operations return
-typed quarantine/read-only errors; keep those error semantics synchronized
-across service, HTTP, Builder instructions, and maintained docs.
+invariant, not a new protocol command. The additive `queryContinuity` module
+action is carried by the existing `runBackstageBooker` operation, so it does
+not add a fifth Builder operation. Its request requires `universeId` and
+`query`; an optional scope requires exact `pageTitle` and may add `pagePath`
+for title disambiguation plus `sectionPath` for an exact nested heading subtree.
+Repeated normalized full heading paths remain distinct occurrences and make
+that exact section scope ambiguous rather than being silently combined.
+`relevant` returns a bounded relevance sample. `complete_scope` supports an
+opaque continuation cursor and must preserve the exact query and scope across
+pages. The cursor is integrity-protected and bound to the request and active
+snapshot; the public nonretryable conflict tells callers to restart without it
+when that binding is no longer valid. `queryContinuity` is synchronous-only and
+has no worker-queue representation. Responses expose truthful coverage and
+sanitized opaque source hashes, never raw excerpts or Notion page IDs. For configured universes, continuity
+queries and generation use the derived snapshot while the existing PostgreSQL
+read and canon-write operations return typed quarantine/read-only errors; keep
+those semantics synchronized across service, HTTP, Builder instructions, and
+maintained docs.
 
 Implemented protocol commands:
 - `task.create`

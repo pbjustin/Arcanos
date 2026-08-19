@@ -18,6 +18,7 @@ import {
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_CHUNK_CODE_POINTS,
+  BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
 import {
@@ -384,6 +385,14 @@ describe('Backstage Notion authority synchronization', () => {
       .toBe('');
     expect(activation?.chunks.some(chunk => chunk.content === pages[15].markdown))
       .toBe(true);
+    expect(activation?.chunks.some(chunk => (
+      chunk.headingPath?.[0] === 'Universe page 0'
+    ))).toBe(true);
+    expect(activation?.chunks.every(chunk => (
+      chunk.metadata?.headingIndexVersion
+        === BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
+      && Array.isArray(chunk.metadata?.headingOccurrencePath)
+    ))).toBe(true);
     expect([...metadataCalls.values()].every(count => count === 2)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(54);
     expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);

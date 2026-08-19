@@ -12,6 +12,14 @@ import {
   BackstageStorylinePersistenceError,
 } from '../src/shared/backstage/backstageStoryline.js';
 import {
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+  BackstageBookerOutputIncompleteError,
+  BackstageContinuityQueryFailedError,
+} from '../src/shared/backstage/backstageGenerationError.js';
+import {
   BackstageCanonDomainError,
 } from '../src/core/db/repositories/backstageBookerRepository.js';
 import {
@@ -90,9 +98,14 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 const {
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE,
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE,
+  BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
+  BackstageNotionCursorInvalidError,
   BackstageNotionIndexUnavailableError,
+  BackstageNotionScopeResolutionError,
 } = await import('../src/services/backstageNotionRag.js');
 const { normalizeBackstageBookerActionPayload } = await import(
   '../src/services/backstageBookerContracts.js'
@@ -124,7 +137,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       if (moduleName === 'BACKSTAGE:BOOKER') {
         return {
           name: 'BACKSTAGE:BOOKER',
-          actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline', 'upsertStoryline', 'appendCanonBeat'],
+          actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'queryContinuity', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline', 'upsertStoryline', 'appendCanonBeat'],
           route: 'backstage',
           defaultAction: 'generateBooking',
           defaultTimeoutMs: 60000,
@@ -779,6 +792,169 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         code: BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
         message: 'Backstage canon persistence is temporarily unavailable.',
         details: { retryable: true },
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves the safe nonretryable Booker output-incomplete envelope', async () => {
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerOutputIncompleteError()
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return the current continuity.',
+        },
+      },
+      requestId: 'req-backstage-output-incomplete',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+        message: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+        details: { retryable: false },
+      },
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+      },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-backstage-output-incomplete',
+        error: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+      })
+    );
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves the safe nonretryable continuity-query internal-failure envelope', async () => {
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageContinuityQueryFailedError()
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Return the current continuity.',
+        },
+      },
+      requestId: 'req-backstage-continuity-failed',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+        message: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+        details: { retryable: false },
+      },
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'queryContinuity',
+      },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-backstage-continuity-failed',
+        error: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+      })
+    );
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not_found', 'The requested Backstage Notion scope was not found.'],
+    ['ambiguous', 'The requested Backstage Notion scope is ambiguous.'],
+  ] as const)(
+    'preserves the safe nonretryable Notion scope %s envelope',
+    async (reason, message) => {
+      mockDispatchModuleAction.mockRejectedValueOnce(
+        new BackstageNotionScopeResolutionError(reason)
+      );
+
+      const envelope = await routeGptRequest({
+        gptId: 'backstage-booker',
+        body: {
+          action: 'queryContinuity',
+          payload: {
+            universeId: 'my-universe-2k26',
+            query: 'Who is the current champion?',
+            retrievalScope: { pageTitle: 'Monday Night Raw' },
+          },
+        },
+        requestId: `req-backstage-scope-${reason}`,
+      });
+
+      expect(envelope).toMatchObject({
+        ok: false,
+        error: {
+          code: BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
+          message,
+          details: { retryable: false, reason },
+        },
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'queryContinuity',
+        },
+      });
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('preserves the safe nonretryable invalid continuity-cursor envelope', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageNotionCursorInvalidError()
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Continue the scoped continuity read.',
+          retrievalMode: 'complete_scope',
+          cursor: 'stale-or-invalid-cursor',
+        },
+      },
+      requestId: 'req-backstage-cursor-invalid',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
+        message: BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE,
+        details: { retryable: false },
+      },
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'queryContinuity',
       },
     });
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();

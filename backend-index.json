@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T08:49:39.292Z",
+  "generatedAt": "2026-08-19T20:16:17.005Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1559,6 +1559,9 @@
           "relativePath": "src/services/backstageBookerRouteShortcut.ts"
         },
         {
+          "relativePath": "src/services/backstageContinuityQuery.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionAuthority.ts"
         },
         {
@@ -2400,6 +2403,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageEvent.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageGenerationError.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionAuthorityCore.ts"
@@ -3269,6 +3275,9 @@
         },
         {
           "relativePath": "tests/backstage-booker.persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker.queryContinuity.test.ts"
         },
         {
           "relativePath": "tests/backstage-booker.roster.test.ts"

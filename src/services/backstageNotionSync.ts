@@ -29,6 +29,7 @@ import {
 } from '@shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
+  BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
   prepareBackstageNotionRagPage,
   type BackstageNotionPreparedRagPage,
@@ -50,10 +51,10 @@ export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
 export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
 export const BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS = 60_000;
 export const BACKSTAGE_NOTION_RAG_INDEX_FORMAT =
-  'backstage-notion-rag-index-v1';
+  'backstage-notion-rag-index-v3';
 
 const BACKSTAGE_NOTION_RAG_MANIFEST_FORMAT =
-  'backstage-notion-rag-manifest-v2';
+  'backstage-notion-rag-manifest-v3';
 
 const SYNC_HOLDER_ID = `backstage-notion-rag:${process.pid}:${randomUUID()}`;
 const UNSUPPORTED_ENHANCED_MARKDOWN_PATTERN =
@@ -513,9 +514,11 @@ async function buildSnapshotChunks(input: {
     content: chunk.content,
     codePoints: chunk.codePoints,
     embedding: embeddings.get(chunk.contentHash) ?? [],
-    headingPath: [],
+    headingPath: [...chunk.headingPath],
     metadata: {
       category: chunk.category,
+      headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+      headingOccurrencePath: [...chunk.headingOccurrencePath],
       sourceHash: chunk.sourceHash,
       sourceLastEditedAt: chunk.sourceLastEditedAt,
     },

@@ -13,6 +13,15 @@ import { isRecord } from '@shared/typeGuards.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageStoryline.js';
 import { BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE } from '@services/backstageBookerContracts.js';
+import {
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
+} from '@services/backstageNotionRag.js';
+import {
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+} from '@shared/backstage/backstageGenerationError.js';
 import { resolveBackstageCanonDomainErrorHttpStatus } from '@core/db/repositories/backstageBookerRepository.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import {
@@ -92,6 +101,23 @@ function gptStatusCode(envelope: AskEnvelope): number {
     return 503;
   }
   if (code === BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE) {
+    return 500;
+  }
+  if (code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE) {
+    return 503;
+  }
+  if (code === BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE) {
+    return (envelope.error.details as { reason?: unknown } | undefined)?.reason === 'not_found'
+      ? 404
+      : 409;
+  }
+  if (code === BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE) {
+    return 409;
+  }
+  if (
+    code === BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+    || code === BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
+  ) {
     return 500;
   }
   if (code === 'SYSTEM_STATE_CONFLICT') {

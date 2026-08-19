@@ -10,6 +10,89 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
       "default": "legacy"
     },
+    "continuityPathSegment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S"
+    },
+    "continuityPagePath": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 101,
+      "items": {
+        "$ref": "#/$defs/continuityPathSegment"
+      }
+    },
+    "continuitySectionPath": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/continuityPathSegment"
+      }
+    },
+    "continuityRetrievalScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageTitle"
+      ],
+      "properties": {
+        "pageTitle": {
+          "$ref": "#/$defs/continuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "#/$defs/continuityPagePath"
+        },
+        "sectionPath": {
+          "$ref": "#/$defs/continuitySectionPath"
+        }
+      }
+    },
+    "continuityResolvedScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageTitle",
+        "pagePath"
+      ],
+      "properties": {
+        "pageTitle": {
+          "$ref": "#/$defs/continuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "#/$defs/continuityPagePath"
+        },
+        "sectionPath": {
+          "$ref": "#/$defs/continuitySectionPath"
+        }
+      }
+    },
+    "continuityCursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9_-]{1,1024}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "continuityCategory": {
+      "type": "string",
+      "enum": [
+        "championships",
+        "events",
+        "general",
+        "kayfabe",
+        "nxt",
+        "raw",
+        "roster",
+        "smackdown",
+        "storylines"
+      ]
+    },
     "postgresText": {
       "type": "string",
       "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"

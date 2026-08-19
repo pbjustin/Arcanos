@@ -184,7 +184,12 @@ function buildDirectActionEnvelope() {
 }
 
 function buildBackstageRouting(
-  action: 'generateBooking' | 'generateBookingWithHRC' | 'simulateMatch' | 'upsertStoryline'
+  action:
+    | 'generateBooking'
+    | 'generateBookingWithHRC'
+    | 'queryContinuity'
+    | 'simulateMatch'
+    | 'upsertStoryline'
 ) {
   return {
     ok: true,
@@ -196,6 +201,7 @@ function buildBackstageRouting(
       availableActions: [
         'generateBooking',
         'generateBookingWithHRC',
+        'queryContinuity',
         'simulateMatch',
         'upsertStoryline',
       ],
@@ -209,6 +215,33 @@ function buildBackstageRouting(
       module: 'BACKSTAGE:BOOKER',
       action,
       timestamp: '2026-08-15T20:00:00.000Z',
+    },
+  };
+}
+
+function buildBackstageContinuityQueryEnvelope() {
+  return {
+    ok: true,
+    result: {
+      universeId: 'my-universe-2k26',
+      answer: '- Current champion: Rhea Ripley.',
+      coverage: {
+        mode: 'relevant',
+        pagesScanned: 1,
+        chunksConsidered: 1,
+        chunksReturned: 1,
+        complete: true,
+      },
+      sources: [],
+    },
+    _route: {
+      requestId: 'request-query-continuity',
+      traceId: 'trace-query-continuity',
+      gptId: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      action: 'queryContinuity',
+      route: 'backstage-booker',
+      timestamp: '2026-08-19T20:00:00.000Z',
     },
   };
 }
@@ -1069,6 +1102,206 @@ describe('GPT fast-path route branching', () => {
     });
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'internal query failure',
+      'BACKSTAGE_CONTINUITY_QUERY_FAILED',
+      'Backstage Booker could not complete the continuity query.',
+      { retryable: false },
+      500,
+    ],
+    [
+      'missing scope',
+      'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+      'The requested Backstage Notion scope was not found.',
+      { retryable: false, reason: 'not_found' },
+      404,
+    ],
+    [
+      'ambiguous scope',
+      'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+      'The requested Backstage Notion scope is ambiguous.',
+      { retryable: false, reason: 'ambiguous' },
+      409,
+    ],
+    [
+      'invalid cursor',
+      'BACKSTAGE_NOTION_CURSOR_INVALID',
+      'The Backstage continuity cursor is invalid or no longer applies. Restart the scoped read without a cursor.',
+      { retryable: false },
+      409,
+    ],
+  ] as const)(
+    'maps a continuity-query %s to its bounded HTTP status',
+    async (_caseName, code, message, details, statusCode) => {
+      mockResolveGptRouting.mockResolvedValueOnce(
+        buildBackstageRouting('queryContinuity')
+      );
+      mockRouteGptRequest.mockResolvedValueOnce({
+        ok: false,
+        error: { code, message, details },
+        _route: {
+          requestId: `request-${code.toLowerCase()}`,
+          traceId: `trace-${code.toLowerCase()}`,
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'queryContinuity',
+          route: 'backstage-booker',
+          timestamp: '2026-08-19T20:00:00.000Z',
+        },
+      });
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .send({
+          action: 'queryContinuity',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'my-universe-2k26',
+            query: 'Who is the current champion?',
+          },
+        });
+
+      expect(response.status).toBe(statusCode);
+      expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: { code, message, details },
+        _route: {
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'queryContinuity',
+        },
+      });
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps a heavy continuity query synchronous so request-local Notion auth reaches dispatch', async () => {
+    const accessToken = `backstage-${'q'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('queryContinuity')
+    );
+    let authorizedInsideDispatch = false;
+    mockRouteGptRequest.mockImplementationOnce(async () => {
+      authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+      return buildBackstageContinuityQueryEnvelope();
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'x'.repeat(2_000),
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(authorizedInsideDispatch).toBe(true);
+    expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['body executionMode=async', { executionMode: 'async' }, undefined],
+    ['Prefer: respond-async', {}, 'respond-async'],
+  ] as const)(
+    'overrides %s for continuity queries and dispatches inline',
+    async (_caseName, executionFields, preferHeader) => {
+      mockResolveGptRouting.mockResolvedValueOnce(
+        buildBackstageRouting('queryContinuity')
+      );
+      mockRouteGptRequest.mockResolvedValueOnce(
+        buildBackstageContinuityQueryEnvelope()
+      );
+
+      let continuityRequest = request(buildApp())
+        .post('/gpt/backstage-booker');
+      if (preferHeader) {
+        continuityRequest = continuityRequest.set('Prefer', preferHeader);
+      }
+      const response = await continuityRequest.send({
+        action: 'queryContinuity',
+        ...executionFields,
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Who is the current champion?',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+      expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+      expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps a header-selected continuity query synchronous despite an explicit async request', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce(
+      buildBackstageContinuityQueryEnvelope()
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('X-GPT-Action', 'queryContinuity')
+      .send({
+        executionMode: 'async',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Who is the current champion?',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores job-backed idempotency routing for a continuity query and dispatches inline', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('queryContinuity')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce(
+      buildBackstageContinuityQueryEnvelope()
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Idempotency-Key', 'continuity-query-request-local-auth')
+      .send({
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Who is the current champion?',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it('returns a bounded 409 for a Notion-authoritative Backstage write denial', async () => {

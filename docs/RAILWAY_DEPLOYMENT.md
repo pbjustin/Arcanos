@@ -348,7 +348,8 @@ revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
 Custom GPT. The web service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
-`1.2.1` declares that credential for generation/simulation as well as the exact
+`1.3.0` declares that credential for continuity queries, generation, and
+simulation as well as the exact
 universe and storyline-summary reads, which are
 non-consequential, and return a bounded repeatable-read PostgreSQL projection
 or one fixed 4,000-code-point, version-fenced summary page without a
@@ -377,7 +378,7 @@ workaround. See
 Builder and security contract.
 
 Optional Notion enrichment is a web-only configuration rollout and does not
-add a Builder operation. Schema `1.2.1` must still be re-imported because it
+add a Builder operation. Schema `1.3.0` must still be re-imported because it
 declares bearer provenance and materializes the nested public payload. Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
@@ -387,7 +388,7 @@ Deploy the backend first. Then call `generateBooking` for a mapped disposable
 scope through the existing private GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
 bearer and verify generation stays available but no Notion event/request occurs.
-After importing `1.2.1`, verify Builder attaches its saved API-key
+After importing `1.3.0`, verify Builder attaches its saved API-key
 authentication to `runBackstageBooker`. If it does not, enrichment must remain
 disabled; do not remove the server-side gate.
 
@@ -418,24 +419,39 @@ Notion token on the already compatible worker and enable its sync loop. Keep
 the authoritative universe out of the legacy page supplement. For the initial
 `WWE universe mode` cutover, set `initialMinimumPageCount` to `18` and verify one
 worker cycle activates a complete 18-page snapshot with no unsupported/error
-count and a fresh verification timestamp. Do not use the ordinary paired
+count, the current heading-index format, and a fresh verification timestamp.
+Existing heading-empty snapshots from before this format intentionally fail
+closed until the worker rebuilds and activates a compatible snapshot; do not
+patch them or relax the reader. Do not use the ordinary paired
 deployment as the phase-two activation mechanism, and do not proceed if any
 old web replica or alias remains reachable.
 
 The first activation drains all nine legacy tables, atomically flips the active
 RAG head, and installs trigger-enforced write denial. The compatible web
-generation path then requires its saved Backstage bearer and a fresh active
-snapshot; missing/stale RAG fails closed. The legacy GET operations and all six
-mutations return nonretryable 409 errors for that universe.
+continuity-query/generation path then requires its saved Backstage bearer and a
+fresh active snapshot; missing/stale RAG fails closed. The legacy GET operations
+and all six mutations return nonretryable 409 errors for that universe.
 The activated root is immutable: changing the mapping to another page is a
 configuration error, not a migration mechanism. Removing the mapping also does
 not downgrade the durable authority head.
 
 After worker proof, smoke-test the already deployed compatible web revision
-with a factual retrieval spanning a roster page, show history, and kayfabe
-page. Confirm the response used one
-snapshot, no Notion request originated from web, no legacy repository/fallback
-was called, and OpenAI storage/transcript/cache suppression remained active.
+with `queryContinuity`. Use an exact `pageTitle`, then optional `pagePath` and
+`sectionPath`; verify `relevant` reports sampled coverage. Exercise
+`complete_scope` from a cursor-free first request and, when `hasMore` is true,
+continue with the opaque `nextCursor` and the exact unchanged query/scope.
+Verify the action stays request-local and synchronous and creates no worker
+job. Confirm a tampered cursor, a changed query/scope/mode, and a cursor from a
+superseded snapshot each return nonretryable
+`409 BACKSTAGE_NOTION_CURSOR_INVALID`; the safe recovery is to discard the
+paged result and restart without a cursor.
+Confirm omission/truncation fields are truthful and public sources contain only
+sanitized paths/categories and opaque hashes—no excerpts or raw page IDs. Also
+exercise the sealed max-output seam: only max-output exhaustion gets one compact
+retry over the same retrieval and budget, and a second exhaustion returns the
+sanitized incomplete-output error. Confirm each response used one snapshot, no
+Notion request originated from web, no legacy repository/fallback was called,
+and OpenAI storage/transcript/cache suppression remained active.
 Then remove any authority-only Notion token left on web. A failed new crawl
 must leave the prior active snapshot unchanged; once its verification age
 exceeds the configured limit, generation must stop rather than use old canon.

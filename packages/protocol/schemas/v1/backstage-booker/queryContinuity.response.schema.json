@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/queryContinuity.response.schema.json",
+  "title": "Backstage Booker queryContinuity response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "universeId",
+    "authority",
+    "answer",
+    "coverage",
+    "sources"
+  ],
+  "properties": {
+    "universeId": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/universeId"
+    },
+    "authority": {
+      "const": "notion"
+    },
+    "answer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100000,
+      "pattern": "\\S"
+    },
+    "resolvedScope": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityResolvedScope"
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    }
+  },
+  "$defs": {
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "scopeChunks",
+        "selectedChunks",
+        "omittedChunks",
+        "promptTruncated",
+        "exhaustive",
+        "hasMore"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled"
+          ]
+        },
+        "scopeChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "selectedChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "omittedChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "promptTruncated": {
+          "type": "boolean"
+        },
+        "exhaustive": {
+          "type": "boolean"
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityCursor"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "hasMore"
+            ],
+            "properties": {
+              "hasMore": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "nextCursor"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "hasMore"
+            ],
+            "properties": {
+              "hasMore": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "nextCursor"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "pageTitle",
+        "pagePath",
+        "headingPath",
+        "category",
+        "contentHash"
+      ],
+      "properties": {
+        "sourceId": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/sha256"
+        },
+        "pageTitle": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityPagePath"
+        },
+        "headingPath": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityPathSegment"
+          }
+        },
+        "category": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/continuityCategory"
+        },
+        "contentHash": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

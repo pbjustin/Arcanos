@@ -402,9 +402,13 @@ automation bypasses are not accepted. The server accepts caller-selected
 deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
 
-Backstage generation and simulation actions remain public through the canonical
-GPT and compatibility writing routes: `generateBooking`,
-`generateBookingWithHRC`, and `simulateMatch`. The state-changing module actions
+Backstage generation and simulation actions remain public through the
+canonical GPT and compatibility writing routes: `generateBooking`,
+`generateBookingWithHRC`, and `simulateMatch`. `queryContinuity` is registered
+on the module surfaces, but Notion-authoritative execution requires the
+dedicated bearer provenance established only by canonical
+`POST /gpt/backstage-booker`; compatibility aliases fail closed instead of
+falling back to legacy state. The state-changing module actions
 `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`,
 `upsertStoryline`, and `appendCanonBeat` require
 `Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>`, the configured
@@ -415,7 +419,8 @@ has one shared 10-attempts-per-15-minute Backstage mutation budget across these
 aliases; invalid credentials use a separate 120-per-15-minute ingress-address
 budget. Protected responses are `no-store`. Direct mutation paths establish
 identity before broad body parsing; action-selecting aliases parse first so the
-server can preserve public generation and simulation. Confirmation is approval,
+server can preserve public continuity queries, generation, and simulation.
+Confirmation is approval,
 not authentication. Issued confirmation challenges are bound to the authenticated
 principal, request path, canonical mutation action, and normalized mutation
 payload, so a token cannot be replayed across Backstage actions or equivalent
@@ -426,8 +431,10 @@ bearer credentials on one request.
 The Builder-specific contract at
 `GET /contracts/backstage_booker.openapi.v1.json` defines four operations. Its
 saved dedicated bearer is declared on all four so Notion-authoritative
-generation has verified provenance; the underlying generation/simulation
-route remains publicly compatible for non-authoritative direct clients.
+continuity queries and generation have verified provenance. The underlying
+generation and simulation route remains publicly compatible for
+non-authoritative direct clients; `queryContinuity` has no non-authoritative or
+legacy fallback.
 `getBackstageUniverse`
 calls exactly
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
@@ -467,8 +474,8 @@ quarantine `409` without reading legacy canon.
 
 `generateBooking` and `generateBookingWithHRC` can optionally enrich their
 existing PostgreSQL-derived model request with explicitly mapped Notion pages.
-This adds no endpoint or module action. It runs only on canonical synchronous
-Backstage generation when the request carries the valid dedicated Backstage
+This legacy supplement adds no endpoint or module action. It runs only on
+canonical synchronous Backstage generation when the request carries the valid dedicated Backstage
 bearer and both `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the web service.
 Missing/invalid authentication, incomplete configuration, an unmapped universe,
@@ -506,14 +513,51 @@ When an exact universe is instead present in
 fail-open semantics are bypassed. A worker recursively captures the complete
 configured root hierarchy, rejects incomplete/truncated/unknown or unsupported
 media candidates, builds an immutable chunk-and-embedding snapshot, and
-atomically advances one universe-scoped active head. Generation embeds the
-caller query, ranks only chunks from that active snapshot, diversifies the
-bounded results across pages, and supplies provenance-framed excerpts as facts
-with zero instruction authority. It requires the valid dedicated Backstage
-bearer and a recently verified snapshot. No request-time Notion call occurs on
-web, and missing auth, stale/missing index, model mismatch, or retrieval failure
-returns `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy
-PostgreSQL or process memory.
+atomically advances one universe-scoped active head. `relevant` continuity
+queries and generation embed the caller query and rank only chunks from that
+active snapshot; `complete_scope` continuity reads instead page through the
+resolved scope in deterministic source order without a query embedding. Both
+paths supply provenance-framed excerpts as facts with zero instruction
+authority and require the valid dedicated Backstage bearer and a recently
+verified snapshot. No request-time Notion call occurs on web, and missing auth,
+stale/missing index, model mismatch, or retrieval failure returns
+`BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy PostgreSQL or
+process memory.
+
+`queryContinuity` is read-only and requires `payload.universeId` plus
+`payload.query`; it never substitutes the compatibility `legacy` universe. An
+optional `payload.retrievalScope` requires an exact `pageTitle`, may add
+`pagePath` to disambiguate duplicate titles, and may add `sectionPath` for an
+exact nested heading and its descendant headings. It accepts no caller page ID
+or URL. Repeated normalized full heading paths are distinct internal
+occurrences; an exact `sectionPath` that matches more than one returns a
+nonretryable ambiguous-scope `409` instead of conflating them. The default
+`retrievalMode: "relevant"` returns a bounded relevance sample.
+`"complete_scope"` orders the resolved scope deterministically and returns an
+opaque `coverage.nextCursor` while `coverage.hasMore` is true. A continuation
+must preserve the exact universe, query, scope, and mode; cursors are snapshot-
+and request-bound, integrity-protected, and invalid after the active snapshot
+changes. A malformed, tampered, stale, or differently bound cursor returns
+nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID`; restart the complete scoped
+read without a cursor rather than retrying that cursor. The action is
+request-local and synchronous-only and never creates or resumes a worker job.
+
+The structured result contains `authority: "notion"`, the synthesized answer,
+an optional normalized `resolvedScope`, explicit `coverage`, and sanitized
+`sources`. `coverage.status`, `scopeChunks`, `selectedChunks`,
+`omittedChunks`, `promptTruncated`, `exhaustive`, and `hasMore` prevent a
+bounded page from being represented as complete. Sources expose only opaque
+chunk/content hashes plus bounded page titles, page paths, heading paths, and
+categories; raw excerpts and Notion page IDs remain server-side. Answer
+generation performs one compact retry only when the provider reports
+max-output exhaustion, reusing the same retrieval and runtime budget. Other
+provider failures are not retried; a second length exhaustion becomes the
+sanitized `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` error without partial output.
+Other internal continuity-answer failures become the cause-free,
+nonretryable `BACKSTAGE_CONTINUITY_QUERY_FAILED` error.
+Readers also reject snapshots from before the current heading-aware index
+format with `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`; the worker must rebuild and
+activate a compatible snapshot before continuity reads resume.
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation
@@ -548,8 +592,9 @@ backend relies on ChatGPT's Allow/Deny banner and does not issue its own
 confirmation challenge. The fixed write lane may bypass generic
 `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
 `MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The Builder projection
-requires the dedicated bearer for generation, simulation, exact reads, and
-writes. At the backend boundary it gates private Notion retrieval but cannot
+requires the dedicated bearer for continuity queries, generation, simulation,
+exact reads, and writes. At the backend boundary it gates private Notion
+retrieval but cannot
 authorize another action; non-authoritative direct generation retains public
 compatibility. It is distinct from both
 `ARCANOS_GPT_ACCESS_TOKEN` and `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`. The generic

@@ -65,6 +65,8 @@ import backstageGenerateBookingRequestSchema from "../schemas/v1/backstage-booke
 import backstageGenerateBookingResponseSchema from "../schemas/v1/backstage-booker/generateBooking.response.schema.json" with { type: "json" };
 import backstageGenerateBookingWithHrcRequestSchema from "../schemas/v1/backstage-booker/generateBookingWithHRC.request.schema.json" with { type: "json" };
 import backstageGenerateBookingWithHrcResponseSchema from "../schemas/v1/backstage-booker/generateBookingWithHRC.response.schema.json" with { type: "json" };
+import backstageQueryContinuityRequestSchema from "../schemas/v1/backstage-booker/queryContinuity.request.schema.json" with { type: "json" };
+import backstageQueryContinuityResponseSchema from "../schemas/v1/backstage-booker/queryContinuity.response.schema.json" with { type: "json" };
 import backstageSaveStorylineRequestSchema from "../schemas/v1/backstage-booker/saveStoryline.request.schema.json" with { type: "json" };
 import backstageSaveStorylineResponseSchema from "../schemas/v1/backstage-booker/saveStoryline.response.schema.json" with { type: "json" };
 import backstageSimulateMatchRequestSchema from "../schemas/v1/backstage-booker/simulateMatch.request.schema.json" with { type: "json" };
@@ -172,6 +174,10 @@ export function getProtocolSchemaCatalog() {
         simulateMatch: {
           request: backstageSimulateMatchRequestSchema,
           response: backstageSimulateMatchResponseSchema
+        },
+        queryContinuity: {
+          request: backstageQueryContinuityRequestSchema,
+          response: backstageQueryContinuityResponseSchema
         },
         generateBooking: {
           request: backstageGenerateBookingRequestSchema,

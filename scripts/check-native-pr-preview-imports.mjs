@@ -601,7 +601,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',
-    '022f1e9d77a92170792a769ff29dbd7df107a1bb5ff21e14d925f55e0ead2e61',
+    '5609ace9e84dacfbca8b0e29be0d8b8f9269cd0d1cc2ed0b4987449a13de548c',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
@@ -613,7 +613,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    'c4fbf33f1bbc3a6ab9a574444d4bd3428515d7713215d1715982d6f306590522',
+    'e26136c07d5ef469c917cb1ed1f246eba4fcef74d1396603193cac14739e5b75',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

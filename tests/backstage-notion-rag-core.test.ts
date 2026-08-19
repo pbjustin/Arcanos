@@ -85,6 +85,72 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(prepared.chunks.map(chunk => chunk.content)).not.toContain('\uFFFD');
   });
 
+  it('preserves nested Markdown heading paths without mixing sections', () => {
+    const prepared = prepare([
+      '# Championships',
+      'World Heavyweight Champion: CM Punk.',
+      '## Women’s World Championship',
+      'Champion: Stephanie Vaquer.',
+      '# Recent Results',
+      'Green Bay results.',
+    ].join('\n\n'), 400);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['Championships'],
+      ['Championships', 'Women’s World Championship'],
+      ['Recent Results'],
+    ]);
+    expect(prepared.chunks[0]?.content).not.toContain('Green Bay results.');
+    expect(prepared.chunks[1]?.category).toBe('championships');
+  });
+
+  it('keeps duplicate full heading paths in distinct internal occurrences', () => {
+    const prepared = prepare([
+      '# Storylines',
+      'Bayley challenged Stephanie Vaquer.',
+      '# Storylines',
+      'Bayley challenged Stephanie Vaquer.',
+    ].join('\n\n'), 400);
+
+    expect(prepared.chunks).toHaveLength(2);
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['Storylines'],
+      ['Storylines'],
+    ]);
+    expect(prepared.chunks.map(chunk => chunk.headingOccurrencePath)).toEqual([
+      [1],
+      [2],
+    ]);
+    expect(prepared.chunks[0]?.contentHash).toBe(
+      prepared.chunks[1]?.contentHash
+    );
+    expect(prepared.chunks[0]?.chunkId).not.toBe(prepared.chunks[1]?.chunkId);
+  });
+
+  it('tracks skipped heading levels and ignores heading syntax inside code fences', () => {
+    const prepared = prepare([
+      '# A',
+      '### C',
+      '#### D',
+      '```markdown',
+      '# Not a structural heading',
+      '```',
+      '### E',
+      'Final continuity.',
+    ].join('\n\n'), 400);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['A'],
+      ['A', 'C'],
+      ['A', 'C', 'D'],
+      ['A', 'E'],
+    ]);
+    expect(prepared.chunks[2]?.content).toContain('# Not a structural heading');
+    expect(prepared.chunks[2]?.headingPath).not.toContain(
+      'Not a structural heading'
+    );
+  });
+
   it('hashes normalized pages and chunks deterministically', () => {
     const first = prepare('# RAW History\n\nBecky defeated Lyra.');
     const same = prepare('# RAW History\r\n\r\nBecky defeated Lyra.');
@@ -113,9 +179,13 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(context.codePoints).toBeLessThanOrEqual(700);
     expect(context.prompt).toContain('source: notion_authority_index');
     expect(context.prompt).toContain('page_title: WWE Universe Mode');
+    expect(context.prompt).toContain('heading_path: Kayfabe');
     expect(context.prompt).toContain(`source_sha256: ${prepared.sourceHash}`);
     expect(context.prompt).toContain('‹‹UNTRUSTED_NOTION_RAG_END››');
     expect(context.prompt.endsWith('<<UNTRUSTED_NOTION_RAG_END>>')).toBe(true);
     expect(context.truncated).toBe(true);
+    expect(context.omittedChunks).toBeGreaterThan(0);
+    expect(context.contentTruncated).toBe(true);
+    expect(context.partialChunk).toBe(false);
   });
 });

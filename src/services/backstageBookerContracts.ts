@@ -65,6 +65,7 @@ const TRANSPORT_ONLY_FIELDS = new Set([
   'text',
   'query'
 ]);
+const QUERY_CONTINUITY_PAYLOAD_FIELDS = new Set(['query']);
 
 export function buildBackstageUniverseMemoryKey(
   universeId: string,
@@ -101,10 +102,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function stripTransportFields(record: Record<string, unknown>): Record<string, unknown> {
+function stripTransportFields(
+  record: Record<string, unknown>,
+  preservedFields: ReadonlySet<string> = new Set()
+): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).filter(
-      ([key]) => !key.startsWith('__arcanos') && !TRANSPORT_ONLY_FIELDS.has(key)
+      ([key]) => !key.startsWith('__arcanos')
+        && (!TRANSPORT_ONLY_FIELDS.has(key) || preservedFields.has(key))
     )
   );
 }
@@ -239,6 +244,7 @@ function hasSchemaDrivenCanonicalIntent(
     case 'updateRoster':
       return Object.prototype.hasOwnProperty.call(record, 'wrestlers');
     case 'simulateMatch':
+    case 'queryContinuity':
     case 'generateBooking':
     case 'generateBookingWithHRC':
     case 'saveStoryline':
@@ -550,7 +556,10 @@ function normalizeCandidate(action: BackstageBookerAction, payload: unknown): un
   const sanitizedRecord = rawRecord
     ? action === 'bookEvent' || action === 'trackStoryline'
       ? sanitizeOpenPayloadRecord(rawRecord)
-      : stripTransportFields(rawRecord)
+      : stripTransportFields(
+          rawRecord,
+          action === 'queryContinuity' ? QUERY_CONTINUITY_PAYLOAD_FIELDS : undefined
+        )
     : null;
 
   switch (action) {
@@ -626,6 +635,10 @@ function normalizeCandidate(action: BackstageBookerAction, payload: unknown): un
       }
       return { ...sanitizedRecord, universeId: resolveUniverseId(sanitizedRecord) };
     }
+    case 'queryContinuity':
+      // The continuity lookup contract deliberately requires an explicit universe.
+      // Do not apply the legacy default-universe compatibility behavior here.
+      return sanitizedRecord ?? payload;
     case 'generateBooking':
     case 'generateBookingWithHRC': {
       if (!sanitizedRecord) {
