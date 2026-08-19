@@ -104,6 +104,131 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(prepared.chunks[1]?.category).toBe('championships');
   });
 
+  it('preserves literal ATX punctuation while rendering paired inline markup', () => {
+    const prepared = prepare([
+      '# C#',
+      'Compiler lineage.',
+      '# WWE_2K',
+      'Game lineage.',
+      '# Escaped \\*stars\\* \\_underscores\\_ \\~tilde\\~ and \\`ticks\\`',
+      'Escaped punctuation.',
+      '# Literal *asterisk ~tilde `tick and C###',
+      'Unpaired punctuation.',
+      '# [RAW](https://example.test/raw) and **Bold** _Title_ ~~Retired~~ `Code_Name`',
+      'Rendered markup.',
+      '# Closing marker ###',
+      'Closing marker syntax.',
+      '# C# ###',
+      'Literal hash before a closing marker.',
+    ].join('\n\n'), 600);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['C#'],
+      ['WWE_2K'],
+      ['Escaped *stars* _underscores_ ~tilde~ and `ticks`'],
+      ['Literal *asterisk ~tilde `tick and C###'],
+      ['RAW and Bold Title Retired Code_Name'],
+      ['Closing marker'],
+      ['C#'],
+    ]);
+  });
+
+  it('preserves backslashes inside code spans while rendering escapes outside them', () => {
+    const prepared = prepare([
+      '# `C\\# and a\\*b`',
+      'Single-delimiter code span.',
+      '# Escaped \\`ticks\\` and ``C\\# `literal` a\\*b``',
+      'Mixed escaped punctuation and multi-delimiter code span.',
+    ].join('\n\n'), 600);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['C\\# and a\\*b'],
+      ['Escaped `ticks` and C\\# `literal` a\\*b'],
+    ]);
+  });
+
+  it('renders bounded balanced, reference, and entity heading markup', () => {
+    const prepared = prepare([
+      '# [RAW](https://en.wikipedia.org/wiki/Raw_(professional_wrestling))',
+      'Balanced destination.',
+      '# [Nested](https://example.test/a_(b(c))) and [Angle](<https://example.test/a)b>)',
+      'Nested destinations.',
+      '# [Escaped inline](foo\\(bar\\)) and [Escaped reference][escaped-destination]',
+      'Escaped destination punctuation.',
+      '# [SmackDown][brand] and [NXT][] and [WWE]',
+      'Reference links.',
+      '# [Escaped][la\\]bel] C#/WWE_2K',
+      'Escaped reference label.',
+      '# AT&amp;T &#35;1 &#x1F3C6; &CounterClockwiseContourIntegral;',
+      'Character entities.',
+      '# `AT&amp;T` and \\&amp; &DefinitelyUnknown; C#/WWE_2K [Literal][missing]',
+      'Protected and literal punctuation.',
+      '',
+      '[brand]: https://example.test/smackdown',
+      '[nxt]: https://example.test/nxt',
+      '[wwe]: https://example.test/wwe',
+      '[la\\]bel]: https://example.test/escaped',
+      '[escaped-destination]: foo\\(bar\\)',
+    ].join('\n\n'), 600);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['RAW'],
+      ['Nested and Angle'],
+      ['Escaped inline and Escaped reference'],
+      ['SmackDown and NXT and WWE'],
+      ['Escaped C#/WWE_2K'],
+      ['AT&T #1 🏆 ∳'],
+      ['AT&amp;T and &amp; &DefinitelyUnknown; C#/WWE_2K [Literal][missing]'],
+    ]);
+  });
+
+  it('bounds malformed and deeply nested heading link parsing', () => {
+    const nestedDestination = `${'('.repeat(40)}target${')'.repeat(40)}`;
+    const veryLongDestination = `destination-${'a'.repeat(5_000)}`;
+    const prepared = prepare([
+      `# [Bounded](${nestedDestination}) C#/WWE_2K`,
+      'Deep nesting.',
+      `# [Truncated](${veryLongDestination}) WWE_2K`,
+      'Long destination.',
+      '# [Unclosed](https://example.test/a_(b) C#',
+      'Malformed destination.',
+    ].join('\n\n'), 600);
+
+    const headingTitles = [...new Set(
+      prepared.chunks.map(chunk => chunk.headingPath[0] ?? '')
+    )];
+    expect(headingTitles).toHaveLength(3);
+    expect(headingTitles[0]).toContain('C#/WWE_2K');
+    expect(headingTitles[1]).toContain('[Truncated](');
+    expect(headingTitles[2]).toBe('[Unclosed]([link omitted] C#');
+  });
+
+  it('preserves invalid inline and reference link syntax literally', () => {
+    const prepared = prepare([
+      '# [Inline](destination extra) C#/WWE_2K',
+      'Invalid inline destination.',
+      '# [Unclosed title](destination "title) C#',
+      'Invalid inline title.',
+      '# [Empty reference][empty] WWE_2K',
+      'Missing reference destination.',
+      '# [Invalid reference][invalid] C#',
+      'Invalid reference destination.',
+      '# [Valid title](destination "Title") WWE_2K',
+      'Valid destination and title.',
+      '',
+      '[empty]:',
+      '[invalid]: destination extra',
+    ].join('\n\n'), 600);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['[Inline](destination extra) C#/WWE_2K'],
+      ['[Unclosed title](destination "title) C#'],
+      ['[Empty reference][empty] WWE_2K'],
+      ['[Invalid reference][invalid] C#'],
+      ['Valid title WWE_2K'],
+    ]);
+  });
+
   it('keeps duplicate full heading paths in distinct internal occurrences', () => {
     const prepared = prepare([
       '# Storylines',

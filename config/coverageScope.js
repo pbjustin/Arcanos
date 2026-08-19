@@ -1,3 +1,7 @@
+import {
+  backstageNotionCoverageScopeFiles,
+} from './backstageNotionCoverageScope.js';
+
 /**
  * Files counted toward the reported Jest/Codecov project coverage.
  *
@@ -7,13 +11,13 @@
  *
  * Inputs/outputs:
  * - Input: none.
- * - Output: ordered list of source files passed to Jest `collectCoverageFrom`.
+ * - Output: the legacy Codecov default scope and the complete Jest-owned scope.
  *
  * Edge case behavior:
  * - Paths are repository-relative and intentionally explicit so accidental
  *   imports do not silently expand the reported coverage surface.
  */
-export const codecovCoverageScopeFiles = [
+export const curatedCoverageScopeFiles = [
   'src/brain/brainRegistry.ts',
   'src/config/env.ts',
   'src/config/index.ts',
@@ -109,3 +113,12 @@ export const codecovCoverageScopeFiles = [
   'src/utils/telemetry.ts',
   'src/workers/workerExecutionLimits.ts'
 ];
+
+export const codecovCoverageScopeFiles = Object.freeze([
+  ...curatedCoverageScopeFiles,
+]);
+
+export const jestCoverageScopeFiles = Object.freeze([
+  ...curatedCoverageScopeFiles,
+  ...backstageNotionCoverageScopeFiles,
+]);

@@ -1,4 +1,10 @@
-import { codecovCoverageScopeFiles } from './config/coverageScope.js';
+import {
+  curatedCoverageScopeFiles,
+  jestCoverageScopeFiles,
+} from './config/coverageScope.js';
+import {
+  backstageNotionCoverageThresholds,
+} from './config/backstageNotionCoverageScope.js';
 
 //audit assumption: the root Jest project owns only repository and worker suites while the AI runtime package runs its own node:test entrypoints.
 //audit failure risk: discovering mirrored workspaces or the nested runtime package causes duplicate execution or unsupported runner failures in CI.
@@ -12,13 +18,17 @@ const ignoredRootJestPatterns = [
 ];
 
 const curatedCoverageThreshold = Object.fromEntries(
-  codecovCoverageScopeFiles.map((filePath) => [filePath, {
+  curatedCoverageScopeFiles.map((filePath) => [filePath, {
     branches: 100,
     functions: 100,
     lines: 100,
     statements: 100
   }])
 );
+const coverageThreshold = {
+  ...curatedCoverageThreshold,
+  ...backstageNotionCoverageThresholds,
+};
 
 export default {
   preset: 'ts-jest/presets/default-esm',
@@ -92,8 +102,8 @@ export default {
   coverageProvider: 'v8',
   coverageDirectory: 'coverage',
   coverageReporters: ['lcov', 'text-summary'],
-  //audit assumption: reported project coverage should track only the explicitly coverage-owned repository slice; failure risk: incidental imports drag in partially tested files and dilute the Codecov project signal; expected invariant: coverage is collected only for the curated opt-in file list; handling strategy: bind collectCoverageFrom to a static scope module reviewed in-repo.
-  collectCoverageFrom: codecovCoverageScopeFiles,
-  //audit assumption: Jest's global threshold also counts incidentally imported files outside the curated scope; failure risk: CI fails even when the coverage-owned surface is fully covered; expected invariant: only the explicit coverageScope.js file set is held to 100%; handling strategy: materialize per-file thresholds for that curated list instead of a single global gate.
-  coverageThreshold: curatedCoverageThreshold
+  //audit assumption: reported project coverage should track only explicitly coverage-owned repository slices; failure risk: incidental imports drag in partially tested files and dilute the Codecov signals; expected invariant: Jest collects the legacy curated scope plus reviewed feature groups while Codecov statuses partition them explicitly; handling strategy: bind collectCoverageFrom to the complete static Jest scope reviewed in-repo.
+  collectCoverageFrom: jestCoverageScopeFiles,
+  //audit assumption: Jest's global threshold also counts incidentally imported files outside the owned scope; failure risk: CI either fails on incidental imports or hides regression-prone feature files behind an aggregate; expected invariant: legacy curated files retain 100% while explicitly owned feature files meet their reviewed per-file floors; handling strategy: materialize per-file thresholds for both coverage sets.
+  coverageThreshold
 };

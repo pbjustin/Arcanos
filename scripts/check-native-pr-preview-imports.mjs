@@ -135,7 +135,7 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    new Set(['crypto']),
+    new Set(['crypto', 'entities']),
   ],
   [
     'scripts/start-railway-service.mjs',
@@ -230,6 +230,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     'src/shared/backstage/backstageNotionRagCore.ts',
     new Map([
       ['crypto', new Set(['createHash:createHash'])],
+      ['entities', new Set(['decodeHTMLStrict:decodeHTMLStrict'])],
     ]),
   ],
   [
@@ -613,7 +614,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    'e26136c07d5ef469c917cb1ed1f246eba4fcef74d1396603193cac14739e5b75',
+    '017269e1f50041b159a9f9124f51cbd8b4d9931de84a78ca6d3e5abc9f4c114e',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

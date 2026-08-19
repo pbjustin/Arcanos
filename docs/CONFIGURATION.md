@@ -519,6 +519,14 @@ provider `store: false` plus existing transcript/debug/cache suppression.
 Readers require the current heading-aware index format. A legacy snapshot with
 no compatible heading index fails closed until the worker completes and
 activates a full rebuild; it is never served with fabricated empty headings.
+Each snapshot page records both the index format and heading-index version so
+worker startup can prove the entire active inventory is current without calling
+Notion on later deployments. If any configured inventory is absent or old, the
+worker runs one synchronous sync before readiness, accepts only
+`activated`/`unchanged`, reloads PostgreSQL, and requires every marker. Invalid
+configuration, a busy lease, a failed/omitted result, or an old reload keeps the
+worker unready. With no authority mapping, startup retains the ordinary no-op
+path.
 
 The first activation is also a durable one-way authority latch. Removing the
 environment mapping later stops that configured worker root but does not make
@@ -863,14 +871,22 @@ configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
 `503` without changing `/healthz` liveness or `/health` diagnostics. Worker
-readiness remains `503` until database/autonomy/module-registry bootstrap and
-every configured consumer slot's dispatcher-start write have completed, and a
-supported OpenAI key setting is present. Provider readiness here means
-configured, not a paid upstream request; provider outages are handled by the
-worker's bounded probe/backoff and job-deferral path after activation. The
-worker child reports this transition through an exact, newline-delimited
-launcher protocol that is independent of `LOG_LEVEL`; arbitrary log text and
-filtered info logs cannot satisfy or suppress the readiness transition.
+readiness remains `503` until database bootstrap, the Backstage Notion
+format-readiness gate, autonomy/module-registry bootstrap, and every configured
+consumer slot's dispatcher-start write have completed, and a supported OpenAI
+key setting is present. No configured authority passes the format gate without
+repository or provider work. Configured authorities must all have active
+snapshots with the current page-level index/heading marker; already-current
+inventories use PostgreSQL only, while an old/missing inventory gets one
+synchronous sync and a mandatory reload. Invalid configuration,
+`lease-busy`/`failed`/omitted sync results, or a still-old reload prevents the
+readiness signal. Provider readiness itself remains configuration-only rather
+than a paid probe, although a required Notion format rebuild performs the real
+Notion and embedding work. Later provider outages are handled by the worker's
+bounded probe/backoff and job-deferral path. The worker child reports the final
+transition through an exact, newline-delimited launcher protocol independent of
+`LOG_LEVEL`; arbitrary log text and filtered info logs cannot satisfy or
+suppress it.
 
 `railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
 repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its

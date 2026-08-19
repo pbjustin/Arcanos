@@ -35,6 +35,11 @@ import {
   type BackstageNotionPreparedRagPage,
 } from '@shared/backstage/backstageNotionRagCore.js';
 import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+  normalizeBackstageNotionScopeKey,
+  normalizeBackstageNotionScopePath,
+} from '@shared/backstage/backstageNotionScopeIndex.js';
+import {
   createEmbeddings,
   DEFAULT_OPENAI_EMBEDDING_MODEL,
 } from './openai/embeddings.js';
@@ -50,11 +55,10 @@ export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
 export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
 export const BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS = 60_000;
-export const BACKSTAGE_NOTION_RAG_INDEX_FORMAT =
-  'backstage-notion-rag-index-v3';
+export { BACKSTAGE_NOTION_RAG_INDEX_FORMAT };
 
 const BACKSTAGE_NOTION_RAG_MANIFEST_FORMAT =
-  'backstage-notion-rag-manifest-v3';
+  'backstage-notion-rag-manifest-v5';
 
 const SYNC_HOLDER_ID = `backstage-notion-rag:${process.pid}:${randomUUID()}`;
 const UNSUPPORTED_ENHANCED_MARKDOWN_PATTERN =
@@ -519,6 +523,7 @@ async function buildSnapshotChunks(input: {
       category: chunk.category,
       headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
       headingOccurrencePath: [...chunk.headingOccurrencePath],
+      scopeHeadingPathKey: normalizeBackstageNotionScopePath(chunk.headingPath),
       sourceHash: chunk.sourceHash,
       sourceLastEditedAt: chunk.sourceLastEditedAt,
     },
@@ -542,6 +547,10 @@ function buildSnapshotPages(
       category: prepared.category,
       chunkCount: prepared.chunks.length,
       contentCodePoints: codePointLength(prepared.sanitizedMarkdown),
+      headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+      indexFormat: BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+      scopePathKey: normalizeBackstageNotionScopePath(prepared.path),
+      scopeTitleKey: normalizeBackstageNotionScopeKey(prepared.title),
     },
   }));
 }

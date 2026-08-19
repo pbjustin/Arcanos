@@ -102,8 +102,13 @@ If failing, inspect Railway build/deploy logs first.
   on worker, the fixed root is shared with read-content access, the worker
   completed a full crawl, and `last_verified_at` is within the configured
   staleness limit. After a heading-index format rollout, this error can also
-  mean the active snapshot predates heading indexing; wait for the worker to
-  complete and activate a current full rebuild. Do not patch legacy rows or
+  mean the active snapshot predates heading indexing. The new worker remains
+  unready until all configured inventories expose the current page-level
+  index/heading marker; it performs one synchronous rebuild when needed, and a
+  `lease-busy`, failed/omitted result, or still-old database reload fails that
+  deployment before web promotion. Resolve the competing lease or sanitized
+  sync failure and let a fresh worker attempt complete the rebuild. Do not patch
+  legacy rows or
   treat missing heading metadata as an empty path. Inspect only sanitized
   counts/status. Do not print page
   bodies, page IDs, embeddings, tokens, or provider errors, and do not remove

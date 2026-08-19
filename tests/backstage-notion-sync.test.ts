@@ -26,6 +26,7 @@ import {
   type BackstageNotionAuthorityRoot,
 } from '../src/services/backstageNotionAuthority.js';
 import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
   BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
@@ -392,6 +393,21 @@ describe('Backstage Notion authority synchronization', () => {
       chunk.metadata?.headingIndexVersion
         === BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
       && Array.isArray(chunk.metadata?.headingOccurrencePath)
+      && Array.isArray(chunk.metadata?.scopeHeadingPathKey)
+      && chunk.metadata.scopeHeadingPathKey.every(key => (
+        typeof key === 'string' && /^[0-9a-f]{64}$/u.test(key)
+      ))
+    ))).toBe(true);
+    expect(activation?.pages.every(page => (
+      page.metadata?.headingIndexVersion
+        === BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
+      && page.metadata?.indexFormat === BACKSTAGE_NOTION_RAG_INDEX_FORMAT
+      && typeof page.metadata?.scopeTitleKey === 'string'
+      && /^[0-9a-f]{64}$/u.test(page.metadata.scopeTitleKey)
+      && Array.isArray(page.metadata?.scopePathKey)
+      && page.metadata.scopePathKey.every(key => (
+        typeof key === 'string' && /^[0-9a-f]{64}$/u.test(key)
+      ))
     ))).toBe(true);
     expect([...metadataCalls.values()].every(count => count === 2)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(54);
@@ -763,6 +779,46 @@ describe('Backstage Notion authority synchronization', () => {
     expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
     expect(repository.activateSnapshot.mock.calls[0]?.[0].manifestHash)
       .not.toBe(legacyManifestHash);
+  });
+
+  it('stores fixed-size scope digests for maximum bounded normalization expansion', async () => {
+    const expandingTitle = '\uFDFA'.repeat(240);
+    expect(Array.from(expandingTitle.normalize('NFKC')).length).toBeGreaterThan(4_000);
+    const child: TestNotionPage = {
+      pageId: pageId(1),
+      parentPageId: pageId(0),
+      title: expandingTitle,
+      markdown: '# Continuity\n\nExpanded-title canon.',
+    };
+    const rootPage: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: pageTag(child),
+    };
+    const { fetchMock } = notionFetch([rootPage, child]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    const indexedPage = activation?.pages.find(page => page.pageId === child.pageId);
+    expect(indexedPage?.title).toBe(expandingTitle);
+    expect(indexedPage?.metadata?.scopeTitleKey).toMatch(/^[0-9a-f]{64}$/u);
+    expect(indexedPage?.metadata?.scopePathKey).toHaveLength(2);
+    expect(indexedPage?.metadata?.scopePathKey?.at(-1))
+      .toBe(indexedPage?.metadata?.scopeTitleKey);
+    expect(indexedPage?.metadata?.scopePathKey).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^[0-9a-f]{64}$/u)])
+    );
+    expect(Buffer.byteLength(JSON.stringify(indexedPage?.metadata), 'utf8'))
+      .toBeLessThan(1_024);
   });
 
   it('reuses content hashes and batches only missing embeddings for a changed snapshot', async () => {

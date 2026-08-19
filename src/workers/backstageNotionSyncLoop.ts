@@ -1,13 +1,64 @@
+import {
+  getBackstageNotionRagRepository,
+  type BackstageNotionActiveInventory,
+  type BackstageNotionRagRepository,
+} from '@core/db/repositories/backstageNotionRagRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
-import { syncConfiguredBackstageNotionAuthorities } from '@services/backstageNotionSync.js';
+import {
+  readBackstageNotionAuthorityConfiguration,
+  type BackstageNotionAuthorityConfiguration,
+  type BackstageNotionAuthorityRoot,
+} from '@services/backstageNotionAuthority.js';
+import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+  syncConfiguredBackstageNotionAuthorities,
+  type BackstageNotionSyncResult,
+} from '@services/backstageNotionSync.js';
+import {
+  BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+} from '@shared/backstage/backstageNotionRagCore.js';
 
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_ENV_NAME =
   'ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS';
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS = 60 * 1_000;
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_MAX_MS = 24 * 60 * 60 * 1_000;
+export const BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE =
+  'BACKSTAGE_NOTION_WORKER_READINESS_FAILED';
+
+export type BackstageNotionWorkerReadinessFailureReason =
+  | 'configuration-invalid'
+  | 'index-not-current'
+  | 'sync-result-incomplete';
+
+export class BackstageNotionWorkerReadinessError extends Error {
+  readonly code = BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE;
+
+  constructor(
+    readonly reason: BackstageNotionWorkerReadinessFailureReason,
+    message: string
+  ) {
+    super(message);
+    this.name = 'BackstageNotionWorkerReadinessError';
+  }
+}
+
+export interface BackstageNotionWorkerReadinessEvidence {
+  configuredUniverses: number;
+  currentBeforeSync: number;
+  syncAttempted: boolean;
+  activated: number;
+  unchanged: number;
+}
+
+export interface BackstageNotionWorkerReadinessDependencies {
+  signal?: AbortSignal;
+  readConfiguration?: () => BackstageNotionAuthorityConfiguration;
+  repository?: Pick<BackstageNotionRagRepository, 'loadActiveInventory'>;
+  sync?: typeof syncConfiguredBackstageNotionAuthorities;
+}
 
 export interface BackstageNotionSyncLoopHandle {
   stop(): void;
@@ -18,6 +69,148 @@ export interface BackstageNotionSyncLoopDependencies {
   intervalMs?: number;
   sync?: typeof syncConfiguredBackstageNotionAuthorities;
   logger?: Pick<typeof logger, 'info' | 'warn'>;
+}
+
+function throwIfReadinessAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error('Backstage Notion worker readiness aborted.');
+  }
+}
+
+function isCurrentBackstageNotionInventory(
+  root: BackstageNotionAuthorityRoot,
+  inventory: BackstageNotionActiveInventory | null
+): boolean {
+  if (
+    !inventory
+    || inventory.snapshot.universeId !== root.universeId
+    || inventory.snapshot.rootPageId !== root.rootPageId
+    || inventory.snapshot.pageCount < 1
+    || inventory.snapshot.chunkCount < 1
+    || inventory.snapshot.pageCount !== inventory.pages.length
+    || !inventory.pages.some(page => page.pageId === root.rootPageId)
+    || new Set(inventory.pages.map(page => page.pageId)).size
+      !== inventory.pages.length
+  ) {
+    return false;
+  }
+  return inventory.pages.every(page => (
+    page.metadata.indexFormat === BACKSTAGE_NOTION_RAG_INDEX_FORMAT
+    && page.metadata.headingIndexVersion
+      === BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
+  ));
+}
+
+async function countCurrentBackstageNotionInventories(
+  roots: readonly BackstageNotionAuthorityRoot[],
+  repository: Pick<BackstageNotionRagRepository, 'loadActiveInventory'>,
+  signal: AbortSignal | undefined
+): Promise<number> {
+  const inventories = await Promise.all(roots.map(async root => {
+    throwIfReadinessAborted(signal);
+    const inventory = await repository.loadActiveInventory(root.universeId);
+    throwIfReadinessAborted(signal);
+    return isCurrentBackstageNotionInventory(root, inventory);
+  }));
+  return inventories.filter(Boolean).length;
+}
+
+function validateReadinessSyncResults(
+  roots: readonly BackstageNotionAuthorityRoot[],
+  results: readonly BackstageNotionSyncResult[]
+): void {
+  const configuredUniverseIds = new Set(roots.map(root => root.universeId));
+  const seenUniverseIds = new Set<string>();
+  for (const result of results) {
+    if (
+      !configuredUniverseIds.has(result.universeId)
+      || seenUniverseIds.has(result.universeId)
+      || (result.status !== 'activated' && result.status !== 'unchanged')
+    ) {
+      throw new BackstageNotionWorkerReadinessError(
+        'sync-result-incomplete',
+        'Backstage Notion readiness synchronization did not complete every configured authority.'
+      );
+    }
+    seenUniverseIds.add(result.universeId);
+  }
+  if (seenUniverseIds.size !== roots.length) {
+    throw new BackstageNotionWorkerReadinessError(
+      'sync-result-incomplete',
+      'Backstage Notion readiness synchronization omitted a configured authority.'
+    );
+  }
+}
+
+/**
+ * Prove every configured authority has an active snapshot built by the current
+ * heading/index format before the worker can advertise ordinary readiness.
+ */
+export async function ensureBackstageNotionWorkerReadiness(
+  dependencies: BackstageNotionWorkerReadinessDependencies = {}
+): Promise<BackstageNotionWorkerReadinessEvidence> {
+  throwIfReadinessAborted(dependencies.signal);
+  const configuration = (dependencies.readConfiguration
+    ?? readBackstageNotionAuthorityConfiguration)();
+  if (configuration.status === 'absent') {
+    return {
+      configuredUniverses: 0,
+      currentBeforeSync: 0,
+      syncAttempted: false,
+      activated: 0,
+      unchanged: 0,
+    };
+  }
+  if (configuration.status === 'invalid') {
+    throw new BackstageNotionWorkerReadinessError(
+      'configuration-invalid',
+      'Backstage Notion authority configuration is invalid during worker readiness.'
+    );
+  }
+
+  const repository = dependencies.repository ?? getBackstageNotionRagRepository();
+  const currentBeforeSync = await countCurrentBackstageNotionInventories(
+    configuration.roots,
+    repository,
+    dependencies.signal
+  );
+  if (currentBeforeSync === configuration.roots.length) {
+    return {
+      configuredUniverses: configuration.roots.length,
+      currentBeforeSync,
+      syncAttempted: false,
+      activated: 0,
+      unchanged: 0,
+    };
+  }
+
+  throwIfReadinessAborted(dependencies.signal);
+  const sync = dependencies.sync ?? syncConfiguredBackstageNotionAuthorities;
+  const results = await sync({
+    ...(dependencies.signal ? { signal: dependencies.signal } : {}),
+  });
+  throwIfReadinessAborted(dependencies.signal);
+  validateReadinessSyncResults(configuration.roots, results);
+
+  const currentAfterSync = await countCurrentBackstageNotionInventories(
+    configuration.roots,
+    repository,
+    dependencies.signal
+  );
+  if (currentAfterSync !== configuration.roots.length) {
+    throw new BackstageNotionWorkerReadinessError(
+      'index-not-current',
+      'Backstage Notion active snapshots are not current after readiness synchronization.'
+    );
+  }
+
+  return {
+    configuredUniverses: configuration.roots.length,
+    currentBeforeSync,
+    syncAttempted: true,
+    activated: results.filter(result => result.status === 'activated').length,
+    unchanged: results.filter(result => result.status === 'unchanged').length,
+  };
 }
 
 export function resolveBackstageNotionSyncIntervalMs(value: number | undefined): number {

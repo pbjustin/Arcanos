@@ -1402,8 +1402,8 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 
 router.post(
   "/:gptId",
-  canonicalGptIdentifierBoundary,
   optionalBackstageNotionEnrichmentAuth,
+  canonicalGptIdentifierBoundary,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
   canonicalResearchGptAdmissionBoundary,

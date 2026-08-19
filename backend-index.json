@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T20:16:17.005Z",
+  "generatedAt": "2026-08-19T22:58:09.766Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2420,6 +2420,9 @@
           "relativePath": "src/shared/backstage/backstageNotionRagCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionScopeIndex.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageReviewContract.ts"
         },
         {
@@ -3259,6 +3262,9 @@
           "relativePath": "tests/autoscaling-architecture.test.ts"
         },
         {
+          "relativePath": "tests/backstage-action-policy.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker-protocol-contract.test.ts"
         },
         {
@@ -3277,6 +3283,9 @@
           "relativePath": "tests/backstage-booker.persistence.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker.queryContinuity.route-real-chain.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker.queryContinuity.test.ts"
         },
         {
@@ -3284,6 +3293,9 @@
         },
         {
           "relativePath": "tests/backstage-booker.storyline-lifecycle.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-generation-error.test.ts"
         },
         {
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
@@ -3308,6 +3320,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-rag.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-scope-index.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-sync-loop.test.ts"
@@ -3434,6 +3449,9 @@
         },
         {
           "relativePath": "tests/cors-config.test.ts"
+        },
+        {
+          "relativePath": "tests/coverage-scope-contract.test.ts"
         },
         {
           "relativePath": "tests/custom-gpt-bridge-smoke.route.test.ts"

@@ -10,6 +10,7 @@ import {
   assertValidBackstageBookerActionPayload,
   createProtocolAjv,
   getProtocolSchemaCatalog,
+  isBackstageBookerAction,
   isValidBackstageCanonUtcTimestamp,
   validateBackstageBookerActionData,
   validateBackstageBookerActionPayload,
@@ -287,9 +288,11 @@ describe('Backstage Booker protocol contract', () => {
     );
 
     for (const action of BACKSTAGE_BOOKER_ACTIONS) {
+      expect(isBackstageBookerAction(action)).toBe(true);
       expect(ARCANOS_PROTOCOL_COMMAND_IDS).not.toContain(action);
       expect(ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS).not.toContain(action);
     }
+    expect(isBackstageBookerAction('queryContinuityTypo')).toBe(false);
   });
 
   it('accepts one canonical request and response for every action', () => {

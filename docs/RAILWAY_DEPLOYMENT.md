@@ -194,7 +194,23 @@ Launcher behavior:
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation, `/healthz` remains liveness, and `/health` remains dependency diagnostics. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
-- Worker `/readyz` remains `503` until database/autonomy/module-registry bootstrap and every configured consumer slot's dispatcher-start write complete, and a supported OpenAI key setting is present. The child communicates that transition through an exact newline-delimited protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text cannot activate readiness. It does not perform a paid provider request; transient provider failure after activation is handled through the worker's probe/backoff and job-deferral path.
+- Worker `/readyz` remains `503` until database bootstrap, the Backstage Notion
+  format-readiness gate, autonomy/module-registry bootstrap, and every configured
+  consumer slot's dispatcher-start write complete, and a supported OpenAI key
+  setting is present. With no configured Notion authorities the format gate is
+  a no-op. With authorities configured, it first verifies every active snapshot
+  from PostgreSQL has the current page-level heading/index marker. An
+  already-current set makes no Notion request; otherwise one synchronous full
+  sync must return only `activated`/`unchanged`, after which PostgreSQL is
+  reloaded and rechecked. Invalid configuration, `lease-busy`, `failed`, an
+  omitted root, or still-old metadata prevents the child readiness signal and
+  fails the revision closed. The child communicates the final transition through
+  an exact newline-delimited protocol independent of `LOG_LEVEL`; stderr and
+  embedded marker-like text cannot activate readiness. The normal OpenAI
+  readiness check does not perform a paid probe, though a required format rebuild
+  necessarily performs the configured Notion and embedding work. Transient
+  provider failure after activation remains handled through the worker's
+  probe/backoff and job-deferral path.
 - Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
@@ -329,7 +345,10 @@ for this check. Promotion deploys and verifies the worker first, then uploads
 the same exact SHA to the web service. Worker-first ordering avoids a new web
 producer activating against an old queue consumer; ordinary releases must still
 preserve old/new interoperability, while incompatible migrations use the
-separate rollout hold and stopped/drained procedure.
+separate rollout hold and stopped/drained procedure. Because Railway activation
+uses worker `/readyz`, a configured Backstage Notion heading/index upgrade must
+also pass the repository-owned format gate before this workflow can observe
+worker `SUCCESS` and begin the web upload.
 
 Backstage Booker Phase 2A is an additive-schema rollout, not a second
 universe-scope cutover. The release adds canon head/revision, typed storyline,

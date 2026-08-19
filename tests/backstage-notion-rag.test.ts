@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import type {
   BackstageNotionActiveChunk,
   BackstageNotionActiveSnapshot,
+  BackstageNotionActiveSnapshotHeader,
+  BackstageNotionSnapshotChunkPage,
+  BackstageNotionSnapshotChunkPageSelector,
+  BackstageNotionSnapshotScopeLookup,
+  BackstageNotionSnapshotScopeResolution,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
 import { logger } from '../src/platform/logging/structuredLogging.js';
 import {
@@ -28,6 +33,10 @@ import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
+import {
+  normalizeBackstageNotionScopeKey,
+  normalizeBackstageNotionScopePath,
+} from '../src/shared/backstage/backstageNotionScopeIndex.js';
 import { DEFAULT_OPENAI_EMBEDDING_MODEL } from '../src/services/openai/embeddings.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
@@ -72,7 +81,6 @@ function chunk(input: {
     })),
     pageId: resolvedPageId,
     pageTitle: input.pageTitle ?? `Universe page ${input.pageIndex ?? 1}`,
-    pageUrl: null,
     pagePath: input.pagePath ?? [
       'WWE Universe Mode',
       `Universe page ${input.pageIndex ?? 1}`,
@@ -119,6 +127,164 @@ function activeSnapshot(
   };
 }
 
+function activeSnapshotHeader(
+  active: BackstageNotionActiveSnapshot | null
+): BackstageNotionActiveSnapshotHeader | null {
+  if (!active) {
+    return null;
+  }
+  return {
+    authority: active.authority,
+    verifiedAt: active.verifiedAt,
+    snapshot: active.snapshot,
+  };
+}
+
+function snapshotScopeResolution(
+  active: BackstageNotionActiveSnapshot | null,
+  snapshotId: string,
+  lookup: BackstageNotionSnapshotScopeLookup
+): BackstageNotionSnapshotScopeResolution {
+  if (!active || snapshotId !== active.snapshot.id) {
+    return { status: 'invalid' };
+  }
+  const pages = new Map<string, BackstageNotionActiveChunk[]>();
+  for (const candidate of active.chunks) {
+    if (
+      normalizeBackstageNotionScopeKey(candidate.pageTitle) !== lookup.pageTitleKey
+      || (
+        lookup.pagePathKey !== null
+        && JSON.stringify(normalizeBackstageNotionScopePath(candidate.pagePath))
+          !== JSON.stringify(lookup.pagePathKey)
+      )
+    ) {
+      continue;
+    }
+    const pageChunks = pages.get(candidate.pageId) ?? [];
+    pageChunks.push(candidate);
+    pages.set(candidate.pageId, pageChunks);
+  }
+  if (pages.size === 0) {
+    return { status: 'not_found' };
+  }
+  if (pages.size > 1) {
+    return { status: 'ambiguous' };
+  }
+  const pageChunks = [...pages.values()][0]?.sort((left, right) => (
+    left.ordinal - right.ordinal || compareText(left.id, right.id)
+  )) ?? [];
+  const representative = pageChunks[0];
+  if (!representative) {
+    return { status: 'invalid' };
+  }
+  if (lookup.sectionPathKey === null) {
+    return {
+      status: 'resolved',
+      pageTitle: representative.pageTitle,
+      pagePath: [...representative.pagePath],
+      sectionPath: null,
+      selector: {
+        pageAnchorChunkId: representative.id,
+        sectionOccurrencePath: null,
+      },
+      scopeChunkCount: pageChunks.length,
+    };
+  }
+  const sectionChunks = pageChunks.filter(candidate => (
+    lookup.sectionPathKey?.every((key, index) => (
+      normalizeBackstageNotionScopeKey(candidate.headingPath[index] ?? '') === key
+    ))
+  ));
+  if (sectionChunks.length === 0) {
+    return { status: 'not_found' };
+  }
+  const occurrencePrefixes = new Map<string, number[]>();
+  for (const candidate of sectionChunks) {
+    const occurrences = candidate.metadata.headingOccurrencePath as number[];
+    const prefix = occurrences.slice(0, lookup.sectionPathKey.length);
+    occurrencePrefixes.set(JSON.stringify(prefix), prefix);
+  }
+  if (occurrencePrefixes.size > 1) {
+    return { status: 'ambiguous' };
+  }
+  return {
+    status: 'resolved',
+    pageTitle: representative.pageTitle,
+    pagePath: [...representative.pagePath],
+    sectionPath: sectionChunks[0]?.headingPath.slice(0, lookup.sectionPathKey.length) ?? [],
+    selector: {
+      pageAnchorChunkId: representative.id,
+      sectionOccurrencePath: [...occurrencePrefixes.values()][0] ?? [],
+    },
+    scopeChunkCount: sectionChunks.length,
+  };
+}
+
+function compareText(left: string, right: string): number {
+  const leftPoints = Array.from(left, value => value.codePointAt(0) ?? 0);
+  const rightPoints = Array.from(right, value => value.codePointAt(0) ?? 0);
+  const sharedLength = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const difference = (leftPoints[index] ?? 0) - (rightPoints[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
+function comparePath(left: readonly string[], right: readonly string[]): number {
+  const sharedLength = Math.min(left.length, right.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const difference = compareText(left[index] ?? '', right[index] ?? '');
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return left.length - right.length;
+}
+
+function snapshotChunkPage(
+  active: BackstageNotionActiveSnapshot | null,
+  snapshotId: string,
+  selector: BackstageNotionSnapshotChunkPageSelector,
+  offset: number,
+  limit: number
+): BackstageNotionSnapshotChunkPage {
+  if (!active || snapshotId !== active.snapshot.id) {
+    return { scopeChunkCount: 0, chunks: [] };
+  }
+  let scoped = [...active.chunks];
+  if (selector.pageAnchorChunkId !== null) {
+    const anchor = active.chunks.find(item => item.id === selector.pageAnchorChunkId);
+    scoped = anchor
+      ? scoped.filter(item => item.pageId === anchor.pageId)
+      : [];
+  }
+  if (selector.sectionOccurrencePath !== null) {
+    scoped = scoped.filter(item => {
+      const occurrences = item.metadata.headingOccurrencePath;
+      return Array.isArray(occurrences)
+        && selector.sectionOccurrencePath?.every((occurrence, index) => (
+          occurrences[index] === occurrence
+        ));
+    });
+  }
+  scoped.sort((left, right) => (
+    comparePath(left.pagePath, right.pagePath)
+    || compareText(left.pageTitle, right.pageTitle)
+    || left.ordinal - right.ordinal
+    || compareText(left.id, right.id)
+  ));
+  return {
+    scopeChunkCount: scoped.length,
+    chunks: scoped.slice(offset, offset + limit).map(({
+      embedding: _embedding,
+      ...selected
+    }) => selected),
+  };
+}
+
 function harness(
   active: BackstageNotionActiveSnapshot | null = activeSnapshot(),
   options: {
@@ -127,24 +293,73 @@ function harness(
       universeId: string,
       maxChunks: number
     ) => Promise<BackstageNotionActiveSnapshot | null>;
+    loadActiveSnapshotHeader?: (
+      universeId: string
+    ) => Promise<BackstageNotionActiveSnapshotHeader | null>;
+    resolveSnapshotScope?: (
+      universeId: string,
+      snapshotId: string,
+      lookup: BackstageNotionSnapshotScopeLookup
+    ) => Promise<BackstageNotionSnapshotScopeResolution>;
+    loadSnapshotChunkPage?: (
+      universeId: string,
+      snapshotId: string,
+      selector: BackstageNotionSnapshotChunkPageSelector,
+      knownScopeChunkCount: number | null,
+      offset: number,
+      limit: number
+    ) => Promise<BackstageNotionSnapshotChunkPage>;
     root?: BackstageNotionAuthorityRoot | null;
   } = {}
 ) {
   const loadActiveSnapshot = jest.fn(
     options.loadActiveSnapshot ?? (async () => active)
   );
+  const loadActiveSnapshotHeader = jest.fn(
+    options.loadActiveSnapshotHeader ?? (async () => activeSnapshotHeader(active))
+  );
+  const resolveSnapshotScope = jest.fn(
+    options.resolveSnapshotScope ?? (async (
+      _universeId: string,
+      snapshotId: string,
+      lookup: BackstageNotionSnapshotScopeLookup
+    ) => snapshotScopeResolution(active, snapshotId, lookup))
+  );
+  const loadSnapshotChunkPage = jest.fn(
+    options.loadSnapshotChunkPage ?? (async (
+      _universeId: string,
+      snapshotId: string,
+      selector: BackstageNotionSnapshotChunkPageSelector,
+      _knownScopeChunkCount: number | null,
+      offset: number,
+      limit: number
+    ) => snapshotChunkPage(active, snapshotId, selector, offset, limit))
+  );
   const embedQuery = jest.fn(options.embedQuery ?? (async () => [1, 0]));
   const resolveAuthorityRoot = jest.fn(() => (
     options.root === undefined ? ROOT : options.root
   ));
   const dependencies: BackstageNotionRagRetrievalDependencies = {
-    repository: { loadActiveSnapshot },
+    repository: {
+      loadActiveSnapshot,
+      loadActiveSnapshotHeader,
+      resolveSnapshotScope,
+      loadSnapshotChunkPage,
+    },
     embedQuery,
     resolveAuthorityRoot,
     now: () => new Date(NOW),
     maximumStalenessMs: 60 * 60 * 1_000,
   };
-  return { dependencies, embedQuery, loadActiveSnapshot, resolveAuthorityRoot };
+  return {
+    dependencies,
+    embedQuery,
+    loadActiveSnapshot,
+    loadActiveSnapshotHeader,
+    resolveSnapshotScope,
+    loadSnapshotChunkPage,
+    resolveAuthorityRoot,
+  };
 }
 
 function retrieveAuthorized(
@@ -203,11 +418,13 @@ describe('Backstage Notion authority RAG retrieval', () => {
     for (const query of [
       '   ',
       'x'.repeat(BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS + 1),
+      `${' '.repeat(BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS)}x`,
     ]) {
       const state = harness();
       await expect(retrieveAuthorized(state.dependencies, query)).rejects.toBeInstanceOf(
         BackstageNotionIndexUnavailableError
       );
+      expect(state.resolveAuthorityRoot).not.toHaveBeenCalled();
       expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
       expect(state.embedQuery).not.toHaveBeenCalled();
     }
@@ -253,6 +470,11 @@ describe('Backstage Notion authority RAG retrieval', () => {
     ['legacy heading occurrence format', () => {
       const legacy = activeSnapshot();
       delete legacy.chunks[0]?.metadata.headingOccurrencePath;
+      return legacy;
+    }],
+    ['missing source edit metadata', () => {
+      const legacy = activeSnapshot();
+      delete legacy.chunks[0]?.metadata.sourceLastEditedAt;
       return legacy;
     }],
   ])('fails closed for a %s active snapshot', async (_label, build) => {
@@ -539,7 +761,8 @@ describe('Backstage Notion authority RAG retrieval', () => {
       ordinal,
       pageTitle: 'Monday Night Raw',
       pagePath: rawPath,
-      headingPath: ['Roster'],
+      headingPath: ordinal < 12 ? ['Roster'] : ['Roster', 'Active roster'],
+      headingOccurrencePath: ordinal < 12 ? [1] : [1, 2],
       content: `Roster entry ${ordinal.toString().padStart(2, '0')}.`,
     }));
     const state = harness(activeSnapshot(rawChunks));
@@ -573,11 +796,38 @@ describe('Backstage Notion authority RAG retrieval', () => {
       Buffer.from(first.nextCursor ?? '', 'base64url').toString('utf8')
     ) as Record<string, unknown>;
     expect(decodedCursor).toMatchObject({
-      v: 1,
+      v: 2,
       snapshotId: SNAPSHOT_ID,
+      scopeChunkCount: 15,
       offset: 12,
+      scopeSelector: {
+        pageAnchorChunkId: rawChunks[0]?.id,
+        sectionOccurrencePath: [1],
+      },
     });
     expect(JSON.stringify(decodedCursor)).not.toContain(rawChunks[0]?.pageId);
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageTitleKey: normalizeBackstageNotionScopeKey('Monday Night Raw'),
+        pagePathKey: normalizeBackstageNotionScopePath(rawPath),
+        sectionPathKey: normalizeBackstageNotionScopePath(['Roster']),
+      }
+    );
+    expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: rawChunks[0]?.id,
+        sectionOccurrencePath: [1],
+      },
+      15,
+      0,
+      12
+    );
 
     const tamperedCursor = Buffer.from(JSON.stringify({
       ...decodedCursor,
@@ -587,6 +837,59 @@ describe('Backstage Notion authority RAG retrieval', () => {
       ...request,
       cursor: tamperedCursor,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(2);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
+
+    const selectorTamperedCursor = Buffer.from(JSON.stringify({
+      ...decodedCursor,
+      scopeSelector: {
+        ...(decodedCursor.scopeSelector as Record<string, unknown>),
+        pageAnchorChunkId: 'f'.repeat(64),
+      },
+    }), 'utf8').toString('base64url');
+    await expect(retrieveAuthorized(state.dependencies, {
+      ...request,
+      cursor: selectorTamperedCursor,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
+
+    const missingScopeState = harness(activeSnapshot([chunk({
+      pageIndex: 2,
+      pageTitle: 'SmackDown',
+      pagePath: ['WWE Universe Mode', 'Brands', 'SmackDown'],
+      content: 'SmackDown continuity.',
+    })]));
+    await expect(retrieveAuthorized(missingScopeState.dependencies, {
+      ...request,
+      cursor: tamperedCursor,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(missingScopeState.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(missingScopeState.resolveSnapshotScope).not.toHaveBeenCalled();
+    expect(missingScopeState.loadSnapshotChunkPage).not.toHaveBeenCalled();
+    const ambiguousScopeState = harness(activeSnapshot([
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        headingPath: ['Roster'],
+        content: 'First matching page.',
+      }),
+      chunk({
+        pageIndex: 2,
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        headingPath: ['Roster'],
+        content: 'Second matching page.',
+      }),
+    ]));
+    await expect(retrieveAuthorized(ambiguousScopeState.dependencies, {
+      ...request,
+      cursor: tamperedCursor,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(ambiguousScopeState.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(ambiguousScopeState.resolveSnapshotScope).not.toHaveBeenCalled();
+    expect(ambiguousScopeState.loadSnapshotChunkPage).not.toHaveBeenCalled();
 
     const second = await retrieveAuthorized(state.dependencies, {
       ...request,
@@ -595,6 +898,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(second.citations.map(citation => citation.chunkId)).toEqual(
       rawChunks.slice(12).map(item => item.id)
     );
+    expect(second.citations.every(citation => citation.headingPath.length > 1)).toBe(true);
     expect(second.coverage).toMatchObject({
       status: 'sampled',
       scopeChunks: 15,
@@ -606,6 +910,19 @@ describe('Backstage Notion authority RAG retrieval', () => {
     });
     expect(second.nextCursor).toBeNull();
     expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalled();
+    expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: rawChunks[0]?.id,
+        sectionOccurrencePath: [1],
+      },
+      15,
+      12,
+      12
+    );
 
     const boundedState = harness(activeSnapshot(rawChunks.slice(0, 3)));
     const bounded = await retrieveAuthorized(boundedState.dependencies, request);
@@ -624,13 +941,267 @@ describe('Backstage Notion authority RAG retrieval', () => {
       query: 'a different request',
       cursor: first.nextCursor ?? undefined,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
-    const changedSnapshot = activeSnapshot(rawChunks);
+    const changedSnapshot = activeSnapshot([chunk({
+      pageIndex: 2,
+      pageTitle: 'SmackDown',
+      pagePath: ['WWE Universe Mode', 'Brands', 'SmackDown'],
+      content: 'Replacement continuity.',
+    })]);
     changedSnapshot.snapshot.id = '99999999-9999-4999-8999-999999999999';
     const changedState = harness(changedSnapshot);
     await expect(retrieveAuthorized(changedState.dependencies, {
       ...request,
       cursor: first.nextCursor ?? undefined,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(changedState.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(changedState.resolveSnapshotScope).not.toHaveBeenCalled();
+    expect(changedState.loadSnapshotChunkPage).not.toHaveBeenCalled();
+  });
+
+  it('binds complete-scope cursors to exact query and scope spelling', async () => {
+    const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const rawChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
+      pageIndex: 1,
+      ordinal,
+      pageTitle: 'Monday Night Raw',
+      pagePath: rawPath,
+      headingPath: ['Roster K'],
+      content: `Roster entry ${ordinal}.`,
+    }));
+    const state = harness(activeSnapshot(rawChunks));
+    const request = {
+      query: 'read K the complete roster',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        sectionPath: ['Roster K'],
+      },
+      retrievalMode: 'complete_scope' as const,
+    };
+    const first = await retrieveAuthorized(state.dependencies, request);
+    expect(first.nextCursor).toBeTruthy();
+
+    const changedRequests: BackstageNotionRagQuery[] = [
+      { ...request, query: 'Read K the complete roster' },
+      { ...request, query: 'read  K the complete roster' },
+      { ...request, query: 'read K the complete roster' },
+      { ...request, query: ' read K the complete roster' },
+      { ...request, query: 'read K the complete roster ' },
+      {
+        ...request,
+        retrievalScope: { ...request.retrievalScope, pageTitle: 'monday night raw' },
+      },
+      {
+        ...request,
+        retrievalScope: { ...request.retrievalScope, pageTitle: ' Monday Night Raw' },
+      },
+      {
+        ...request,
+        retrievalScope: {
+          ...request.retrievalScope,
+          pagePath: ['WWE Universe Mode', 'Brands', 'Monday  Night Raw'],
+        },
+      },
+      {
+        ...request,
+        retrievalScope: {
+          ...request.retrievalScope,
+          pagePath: ['WWE Universe Mode', 'Brands ', 'Monday Night Raw'],
+        },
+      },
+      {
+        ...request,
+        retrievalScope: { ...request.retrievalScope, sectionPath: ['Roster K'] },
+      },
+      {
+        ...request,
+        retrievalScope: { ...request.retrievalScope, sectionPath: ['Roster K '] },
+      },
+    ];
+    for (const changedRequest of changedRequests) {
+      await expect(retrieveAuthorized(state.dependencies, {
+        ...(changedRequest as Exclude<BackstageNotionRagQuery, string>),
+        cursor: first.nextCursor ?? undefined,
+      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    }
+  });
+
+  it('uses fixed-size lookup digests for compatibility-normalization expansion', async () => {
+    const expandingSegment = '\uFDFA'.repeat(240);
+    expect(Array.from(expandingSegment)).toHaveLength(240);
+    expect(Array.from(expandingSegment.normalize('NFKC')).length).toBeGreaterThan(4_000);
+    const expandingChunk = chunk({
+      pageTitle: expandingSegment,
+      pagePath: [expandingSegment],
+      headingPath: [expandingSegment],
+      headingOccurrencePath: [1],
+      content: 'Compatibility-normalized continuity.',
+    });
+    const state = harness(activeSnapshot([expandingChunk]));
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read the expanded scope',
+      retrievalScope: {
+        pageTitle: expandingSegment,
+        pagePath: [expandingSegment],
+        sectionPath: [expandingSegment],
+      },
+      retrievalMode: 'complete_scope',
+    });
+
+    expect(result.citations).toHaveLength(1);
+    expect(result.resolvedScope).toEqual({
+      pageTitle: expandingSegment,
+      pagePath: [expandingSegment],
+      sectionPath: [expandingSegment],
+    });
+    const lookup = state.resolveSnapshotScope.mock.calls[0]?.[2];
+    expect(lookup?.pageTitleKey).toMatch(/^[0-9a-f]{64}$/u);
+    expect(lookup?.pagePathKey).toEqual([lookup?.pageTitleKey]);
+    expect(lookup?.sectionPathKey).toEqual([lookup?.pageTitleKey]);
+  });
+
+  it('pages a maximum unscoped snapshot from its header without corpus projection', async () => {
+    const visibleChunks = Array.from({ length: 12 }, (_unused, ordinal) => chunk({
+      ordinal,
+      content: `Visible maximum-snapshot entry ${ordinal}.`,
+    }));
+    const active = activeSnapshot(visibleChunks);
+    active.snapshot.chunkCount = BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS;
+    const state = harness(active, {
+      loadSnapshotChunkPage: async () => ({
+        scopeChunkCount: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+        chunks: visibleChunks.map(({ embedding: _embedding, ...selected }) => selected),
+      }),
+    });
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read all continuity',
+      retrievalMode: 'complete_scope',
+    });
+
+    expect(result.citations).toHaveLength(12);
+    expect(result.nextCursor).toBeTruthy();
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(state.resolveSnapshotScope).not.toHaveBeenCalled();
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      { pageAnchorChunkId: null, sectionOccurrencePath: null },
+      BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+      0,
+      12
+    );
+  });
+
+  it('keeps the maximum signed duplicate-heading selector within the cursor contract', async () => {
+    const headingPath = Array.from(
+      { length: 32 },
+      (_unused, index) => `Heading ${index.toString().padStart(2, '0')}`
+    );
+    const headingOccurrencePath = Array.from({ length: 32 }, () => (
+      BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
+    ));
+    const rawPath = ['WWE Universe Mode', 'Maximum scope'];
+    const rawChunks = Array.from(
+      { length: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS },
+      (_unused, ordinal) => chunk({
+        pageIndex: 1,
+        ordinal,
+        pageTitle: 'Maximum scope',
+        pagePath: rawPath,
+        headingPath,
+        headingOccurrencePath,
+        content: `Deep continuity entry ${ordinal}.`,
+      })
+    );
+    const state = harness(activeSnapshot(rawChunks));
+    const request = {
+      query: 'read the maximum duplicate heading occurrence',
+      retrievalScope: {
+        pageTitle: 'Maximum scope',
+        pagePath: rawPath,
+        sectionPath: headingPath,
+      },
+      retrievalMode: 'complete_scope' as const,
+    };
+
+    const first = await retrieveAuthorized(state.dependencies, request);
+
+    expect(first.nextCursor).toMatch(/^[A-Za-z0-9_-]{1,1024}$/u);
+    expect(first.nextCursor?.length).toBeLessThanOrEqual(1024);
+    const decoded = JSON.parse(Buffer.from(
+      first.nextCursor ?? '',
+      'base64url'
+    ).toString('utf8')) as {
+      scopeChunkCount: number;
+      scopeSelector: { sectionOccurrencePath: number[] };
+    };
+    expect(decoded.scopeChunkCount).toBe(BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS);
+    expect(decoded.scopeSelector.sectionOccurrencePath).toEqual(
+      headingOccurrencePath
+    );
+
+    const second = await retrieveAuthorized(state.dependencies, {
+      ...request,
+      cursor: first.nextCursor ?? undefined,
+    });
+    expect(second.citations).toHaveLength(12);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(2);
+    expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: rawChunks[0]?.id,
+        sectionOccurrencePath: headingOccurrencePath,
+      },
+      BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+      12,
+      12
+    );
+  });
+
+  it('validates only selected complete-scope content and never requires embeddings', async () => {
+    const rawChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
+      ordinal,
+      content: `Continuity entry ${ordinal}.`,
+      embedding: [Number.NaN],
+    }));
+    const corruptUnselected = rawChunks[12];
+    if (!corruptUnselected) {
+      throw new Error('Expected the unselected test chunk.');
+    }
+    corruptUnselected.content = 'Content that does not match the persisted hash.';
+    const state = harness(activeSnapshot(rawChunks));
+    const request = {
+      query: 'read all continuity',
+      retrievalMode: 'complete_scope' as const,
+    };
+
+    const first = await retrieveAuthorized(state.dependencies, request);
+    expect(first.citations).toHaveLength(12);
+    expect(first.nextCursor).toBeTruthy();
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: null,
+        sectionOccurrencePath: null,
+      },
+      13,
+      0,
+      12
+    );
+    expect(state.resolveSnapshotScope).not.toHaveBeenCalled();
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      ...request,
+      cursor: first.nextCursor ?? undefined,
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
   });
 
   it('supports deterministic complete-scope pagination across the whole universe', async () => {
@@ -685,6 +1256,32 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(result.citations.map(citation => citation.pageTitle)).toEqual([
       'Zulu',
       'Ärena',
+    ]);
+  });
+
+  it('orders a parent page path before its longer child prefix', async () => {
+    const parent = chunk({
+      pageIndex: 1,
+      pageTitle: 'Zulu parent',
+      pagePath: ['WWE Universe Mode', 'Shared'],
+      content: 'Parent continuity.',
+    });
+    const child = chunk({
+      pageIndex: 2,
+      pageTitle: 'Alpha child',
+      pagePath: ['WWE Universe Mode', 'Shared', 'Alpha child'],
+      content: 'Child continuity.',
+    });
+    const state = harness(activeSnapshot([child, parent]));
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read all continuity',
+      retrievalMode: 'complete_scope',
+    });
+
+    expect(result.citations.map(citation => citation.pageTitle)).toEqual([
+      'Zulu parent',
+      'Alpha child',
     ]);
   });
 

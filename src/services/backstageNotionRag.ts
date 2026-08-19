@@ -5,7 +5,13 @@ import {
   BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   getBackstageNotionRagRepository,
   type BackstageNotionActiveChunk,
+  type BackstageNotionActiveChunkMetadata,
+  type BackstageNotionActiveSnapshot,
+  type BackstageNotionActiveSnapshotHeader,
   type BackstageNotionRagRepository,
+  type BackstageNotionSnapshotChunkPageSelector,
+  type BackstageNotionSnapshotScopeLookup,
+  type BackstageNotionSnapshotScopeResolution,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -15,6 +21,10 @@ import {
   type BackstageNotionRagCategory,
   type BackstageNotionRagChunk,
 } from '@shared/backstage/backstageNotionRagCore.js';
+import {
+  normalizeBackstageNotionScopeKey,
+  normalizeBackstageNotionScopePath,
+} from '@shared/backstage/backstageNotionScopeIndex.js';
 import { cosineSimilarity } from '@shared/vectorUtils.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import {
@@ -54,7 +64,7 @@ export const BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE =
   'BACKSTAGE_NOTION_CURSOR_INVALID';
 export const BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE =
   'The Backstage continuity cursor is invalid or no longer applies. Restart the scoped read without a cursor.';
-export const BACKSTAGE_NOTION_RAG_CURSOR_VERSION = 1;
+export const BACKSTAGE_NOTION_RAG_CURSOR_VERSION = 2;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -148,7 +158,13 @@ export interface BackstageNotionRagQueryRequest {
 export type BackstageNotionRagQuery = string | BackstageNotionRagQueryRequest;
 
 export interface BackstageNotionRagRetrievalDependencies {
-  repository?: Pick<BackstageNotionRagRepository, 'loadActiveSnapshot'>;
+  repository?: Pick<
+    BackstageNotionRagRepository,
+    | 'loadActiveSnapshot'
+    | 'loadActiveSnapshotHeader'
+    | 'resolveSnapshotScope'
+    | 'loadSnapshotChunkPage'
+  >;
   resolveAuthorityRoot?: (
     universeId: string
   ) => BackstageNotionAuthorityRoot | null | Promise<BackstageNotionAuthorityRoot | null>;
@@ -208,19 +224,31 @@ interface NormalizedQueryRequest {
   query: string;
   bindingQuery: string;
   retrievalScope?: NormalizedRetrievalScope;
+  bindingRetrievalScope?: NormalizedRetrievalScope;
   retrievalMode: BackstageNotionRagRetrievalMode;
   cursor?: string;
 }
 
-interface ResolvedScopedChunks {
-  chunks: RankedChunk[];
+interface ScopeCandidate {
+  active: BackstageNotionActiveChunkMetadata;
+  headingOccurrencePath: number[];
+  category: BackstageNotionRagCategory;
+  sourceHash: string;
+  sourceLastEditedAt: string | null;
+}
+
+interface ResolvedScopedChunks<T extends ScopeCandidate> {
+  chunks: T[];
   scope: BackstageNotionRagResolvedScope;
+  selector: BackstageNotionSnapshotChunkPageSelector;
 }
 
 interface CursorPayloadBody {
   v: number;
   snapshotId: string;
   requestBinding: string;
+  scopeSelector: BackstageNotionSnapshotChunkPageSelector;
+  scopeChunkCount: number;
   offset: number;
 }
 
@@ -228,10 +256,19 @@ interface CursorPayload extends CursorPayloadBody {
   mac: string;
 }
 
-interface RankedChunk {
+interface DecodedCursor {
+  offset: number;
+  scopeChunkCount: number;
+  scopeSelector: BackstageNotionSnapshotChunkPageSelector;
+}
+
+interface SelectedChunk extends ScopeCandidate {
   chunk: BackstageNotionRagChunk;
-  active: BackstageNotionActiveChunk;
   score: number;
+}
+
+interface RankedChunk extends SelectedChunk {
+  active: BackstageNotionActiveChunk;
 }
 
 function resolveMaximumStalenessMs(value: number | undefined): number {
@@ -298,23 +335,22 @@ function isSafeIndexedMetadataSegment(value: unknown): value is string {
       .test(value);
 }
 
-function normalizedMatchText(value: string): string {
-  return value
-    .normalize('NFKC')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .toLocaleLowerCase('en-US');
-}
-
 function normalizedScopeSegment(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
   const normalized = value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
-  return normalized && codePointLength(normalized) <= 500 ? normalized : null;
+  return normalized || null;
 }
 
-function normalizeScopePath(
+function exactScopeSegment(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return value.trim() && codePointLength(value) <= 500 ? value : null;
+}
+
+function exactScopePath(
   value: unknown,
   maximumSegments: number
 ): readonly string[] | null | undefined {
@@ -324,10 +360,10 @@ function normalizeScopePath(
   if (!Array.isArray(value) || value.length < 1 || value.length > maximumSegments) {
     return null;
   }
-  const normalized = value.map(normalizedScopeSegment);
-  return normalized.some(segment => segment === null)
+  const exact = value.map(exactScopeSegment);
+  return exact.some(segment => segment === null)
     ? null
-    : Object.freeze(normalized as string[]);
+    : Object.freeze(exact as string[]);
 }
 
 function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryRequest {
@@ -335,14 +371,15 @@ function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryR
     const query = input.trim();
     return {
       query,
-      bindingQuery: normalizedMatchText(query),
+      bindingQuery: input,
       retrievalMode: 'relevant',
     };
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new BackstageNotionIndexUnavailableError();
   }
-  const query = typeof input.query === 'string' ? input.query.trim() : '';
+  const bindingQuery = typeof input.query === 'string' ? input.query : '';
+  const query = bindingQuery.trim();
   const requestedMode = input.retrievalMode ?? input.mode ?? 'relevant';
   if (
     (input.retrievalMode !== undefined && input.mode !== undefined
@@ -352,6 +389,7 @@ function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryR
     throw new BackstageNotionIndexUnavailableError();
   }
   let retrievalScope: NormalizedRetrievalScope | undefined;
+  let bindingRetrievalScope: NormalizedRetrievalScope | undefined;
   if (input.retrievalScope !== undefined) {
     if (
       !input.retrievalScope
@@ -360,16 +398,33 @@ function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryR
     ) {
       throw new BackstageNotionIndexUnavailableError();
     }
-    const pageTitle = normalizedScopeSegment(input.retrievalScope.pageTitle);
-    const pagePath = normalizeScopePath(input.retrievalScope.pagePath, 101);
-    const sectionPath = normalizeScopePath(input.retrievalScope.sectionPath, 32);
-    if (!pageTitle || pagePath === null || sectionPath === null) {
+    const bindingPageTitle = exactScopeSegment(input.retrievalScope.pageTitle);
+    const bindingPagePath = exactScopePath(input.retrievalScope.pagePath, 101);
+    const bindingSectionPath = exactScopePath(input.retrievalScope.sectionPath, 32);
+    const pageTitle = bindingPageTitle
+      ? normalizedScopeSegment(bindingPageTitle)
+      : null;
+    const pagePath = bindingPagePath?.map(normalizedScopeSegment);
+    const sectionPath = bindingSectionPath?.map(normalizedScopeSegment);
+    if (
+      !bindingPageTitle
+      || bindingPagePath === null
+      || bindingSectionPath === null
+      || !pageTitle
+      || pagePath?.some(segment => segment === null)
+      || sectionPath?.some(segment => segment === null)
+    ) {
       throw new BackstageNotionIndexUnavailableError();
     }
     retrievalScope = {
       pageTitle,
-      ...(pagePath ? { pagePath } : {}),
-      ...(sectionPath ? { sectionPath } : {}),
+      ...(pagePath ? { pagePath: pagePath as string[] } : {}),
+      ...(sectionPath ? { sectionPath: sectionPath as string[] } : {}),
+    };
+    bindingRetrievalScope = {
+      pageTitle: bindingPageTitle,
+      ...(bindingPagePath ? { pagePath: bindingPagePath } : {}),
+      ...(bindingSectionPath ? { sectionPath: bindingSectionPath } : {}),
     };
   }
   if (input.cursor !== undefined && (
@@ -381,8 +436,9 @@ function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryR
   }
   return {
     query,
-    bindingQuery: normalizedMatchText(query),
+    bindingQuery,
     ...(retrievalScope ? { retrievalScope } : {}),
+    ...(bindingRetrievalScope ? { bindingRetrievalScope } : {}),
     retrievalMode: requestedMode,
     ...(input.cursor ? { cursor: input.cursor } : {}),
   };
@@ -394,7 +450,8 @@ function pathsMatch(
 ): boolean {
   return requested.length === candidate.length
     && requested.every((segment, index) => (
-      normalizedMatchText(segment) === normalizedMatchText(candidate[index] ?? '')
+      normalizeBackstageNotionScopeKey(segment)
+        === normalizeBackstageNotionScopeKey(candidate[index] ?? '')
     ));
 }
 
@@ -404,8 +461,93 @@ function pathStartsWith(
 ): boolean {
   return requestedPrefix.length <= candidate.length
     && requestedPrefix.every((segment, index) => (
-      normalizedMatchText(segment) === normalizedMatchText(candidate[index] ?? '')
+      normalizeBackstageNotionScopeKey(segment)
+        === normalizeBackstageNotionScopeKey(candidate[index] ?? '')
     ));
+}
+
+function buildSnapshotScopeLookup(
+  requested: NormalizedRetrievalScope
+): BackstageNotionSnapshotScopeLookup {
+  return {
+    pageTitleKey: normalizeBackstageNotionScopeKey(requested.pageTitle),
+    pagePathKey: requested.pagePath
+      ? normalizeBackstageNotionScopePath(requested.pagePath)
+      : null,
+    sectionPathKey: requested.sectionPath
+      ? normalizeBackstageNotionScopePath(requested.sectionPath)
+      : null,
+  };
+}
+
+function validateResolvedSnapshotScope(
+  resolution: Extract<BackstageNotionSnapshotScopeResolution, { status: 'resolved' }>,
+  requested: NormalizedRetrievalScope,
+  snapshotChunkCount: number
+): {
+  scope: BackstageNotionRagResolvedScope;
+  selector: BackstageNotionSnapshotChunkPageSelector;
+  scopeChunkCount: number;
+} {
+  const sectionOccurrencePath = resolution.selector.sectionOccurrencePath;
+  if (
+    !isSafeIndexedMetadataSegment(resolution.pageTitle)
+    || resolution.pagePath.length < 1
+    || resolution.pagePath.length > 101
+    || resolution.pagePath.some(segment => !isSafeIndexedMetadataSegment(segment))
+    || normalizeBackstageNotionScopeKey(resolution.pageTitle)
+      !== normalizeBackstageNotionScopeKey(requested.pageTitle)
+    || (
+      requested.pagePath
+      && !pathsMatch(requested.pagePath, resolution.pagePath)
+    )
+    || !SHA256_PATTERN.test(resolution.selector.pageAnchorChunkId ?? '')
+    || !Number.isSafeInteger(resolution.scopeChunkCount)
+    || resolution.scopeChunkCount < 1
+    || resolution.scopeChunkCount > snapshotChunkCount
+    || (
+      requested.sectionPath === undefined
+      && (
+        resolution.sectionPath !== null
+        || sectionOccurrencePath !== null
+      )
+    )
+    || (
+      requested.sectionPath !== undefined
+      && (
+        !Array.isArray(resolution.sectionPath)
+        || resolution.sectionPath.length !== requested.sectionPath.length
+        || resolution.sectionPath.some(segment => !isSafeIndexedMetadataSegment(segment))
+        || !pathStartsWith(resolution.sectionPath, requested.sectionPath)
+        || sectionOccurrencePath === null
+        || sectionOccurrencePath.length !== requested.sectionPath.length
+        || sectionOccurrencePath.some(occurrence => (
+          !Number.isSafeInteger(occurrence)
+          || occurrence < 1
+          || occurrence > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
+        ))
+      )
+    )
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+
+  return {
+    scope: {
+      pageTitle: resolution.pageTitle,
+      pagePath: [...resolution.pagePath],
+      ...(resolution.sectionPath
+        ? { sectionPath: [...resolution.sectionPath] }
+        : {}),
+    },
+    selector: {
+      pageAnchorChunkId: resolution.selector.pageAnchorChunkId,
+      sectionOccurrencePath: sectionOccurrencePath === null
+        ? null
+        : [...sectionOccurrencePath],
+    },
+    scopeChunkCount: resolution.scopeChunkCount,
+  };
 }
 
 function requestBinding(request: NormalizedQueryRequest): string {
@@ -413,11 +555,11 @@ function requestBinding(request: NormalizedQueryRequest): string {
     v: BACKSTAGE_NOTION_RAG_CURSOR_VERSION,
     query: request.bindingQuery,
     retrievalMode: request.retrievalMode,
-    retrievalScope: request.retrievalScope
+    retrievalScope: request.bindingRetrievalScope
       ? {
-          pageTitle: normalizedMatchText(request.retrievalScope.pageTitle),
-          pagePath: request.retrievalScope.pagePath?.map(normalizedMatchText),
-          sectionPath: request.retrievalScope.sectionPath?.map(normalizedMatchText),
+          pageTitle: request.bindingRetrievalScope.pageTitle,
+          pagePath: request.bindingRetrievalScope.pagePath,
+          sectionPath: request.bindingRetrievalScope.sectionPath,
         }
       : null,
   }));
@@ -430,7 +572,7 @@ function buildCursorSigningKey(input: {
   rootPageId: string;
 }): string {
   return sha256(JSON.stringify({
-    format: 'backstage-notion-rag-cursor-key-v1',
+    format: 'backstage-notion-rag-cursor-key-v2',
     ...input,
   }));
 }
@@ -449,15 +591,11 @@ function encodeCursor(payload: CursorPayloadBody, signingKey: string): string {
 }
 
 function decodeCursor(
-  cursor: string | undefined,
+  cursor: string,
   snapshotId: string,
   binding: string,
-  maximumOffset: number,
   signingKey: string
-): number {
-  if (!cursor) {
-    return 0;
-  }
+): DecodedCursor {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
@@ -469,20 +607,68 @@ function decodeCursor(
     || typeof parsed !== 'object'
     || Array.isArray(parsed)
     || Object.keys(parsed).sort().join(',')
-      !== 'mac,offset,requestBinding,snapshotId,v'
+      !== 'mac,offset,requestBinding,scopeChunkCount,scopeSelector,snapshotId,v'
     || (parsed as Partial<CursorPayload>).v !== BACKSTAGE_NOTION_RAG_CURSOR_VERSION
     || (parsed as Partial<CursorPayload>).snapshotId !== snapshotId
     || (parsed as Partial<CursorPayload>).requestBinding !== binding
+    || !Number.isSafeInteger((parsed as Partial<CursorPayload>).scopeChunkCount)
+    || ((parsed as Partial<CursorPayload>).scopeChunkCount ?? 0) < 1
+    || ((parsed as Partial<CursorPayload>).scopeChunkCount ?? 0)
+      > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
     || !Number.isSafeInteger((parsed as Partial<CursorPayload>).offset)
+    || ((parsed as Partial<CursorPayload>).offset ?? -1) < 0
+    || ((parsed as Partial<CursorPayload>).offset ?? 0)
+      >= BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
     || typeof (parsed as Partial<CursorPayload>).mac !== 'string'
   ) {
     throw new BackstageNotionCursorInvalidError();
   }
   const candidate = parsed as CursorPayload;
+  const scopeSelector = candidate.scopeSelector;
+  if (
+    !scopeSelector
+    || typeof scopeSelector !== 'object'
+    || Array.isArray(scopeSelector)
+    || Object.keys(scopeSelector).sort().join(',')
+      !== 'pageAnchorChunkId,sectionOccurrencePath'
+    || (
+      scopeSelector.pageAnchorChunkId !== null
+      && (
+        typeof scopeSelector.pageAnchorChunkId !== 'string'
+        || !SHA256_PATTERN.test(scopeSelector.pageAnchorChunkId)
+      )
+    )
+    || (
+      scopeSelector.sectionOccurrencePath !== null
+      && (
+        !Array.isArray(scopeSelector.sectionOccurrencePath)
+        || scopeSelector.sectionOccurrencePath.length < 1
+        || scopeSelector.sectionOccurrencePath.length > 32
+        || scopeSelector.sectionOccurrencePath.some(occurrence => (
+          !Number.isSafeInteger(occurrence)
+          || occurrence < 1
+          || occurrence > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
+        ))
+      )
+    )
+    || (
+      scopeSelector.sectionOccurrencePath !== null
+      && scopeSelector.pageAnchorChunkId === null
+    )
+  ) {
+    throw new BackstageNotionCursorInvalidError();
+  }
   const payload: CursorPayloadBody = {
     v: candidate.v,
     snapshotId: candidate.snapshotId,
     requestBinding: candidate.requestBinding,
+    scopeSelector: {
+      pageAnchorChunkId: scopeSelector.pageAnchorChunkId,
+      sectionOccurrencePath: scopeSelector.sectionOccurrencePath === null
+        ? null
+        : [...scopeSelector.sectionOccurrencePath],
+    },
+    scopeChunkCount: candidate.scopeChunkCount,
     offset: candidate.offset,
   };
   if (!timingSafeEqualOpaqueSecret(
@@ -491,11 +677,44 @@ function decodeCursor(
   )) {
     throw new BackstageNotionCursorInvalidError();
   }
-  const offset = candidate.offset;
-  if (offset < 0 || offset >= maximumOffset) {
+  return {
+    offset: candidate.offset,
+    scopeChunkCount: candidate.scopeChunkCount,
+    scopeSelector: payload.scopeSelector,
+  };
+}
+
+function validateCursorScopeSelector(
+  selector: BackstageNotionSnapshotChunkPageSelector,
+  retrievalScope: NormalizedRetrievalScope | undefined
+): void {
+  const sectionOccurrencePath = selector.sectionOccurrencePath;
+  if (
+    (!retrievalScope && (
+      selector.pageAnchorChunkId !== null
+      || sectionOccurrencePath !== null
+    ))
+    || (retrievalScope && selector.pageAnchorChunkId === null)
+    || (
+      retrievalScope?.sectionPath === undefined
+      && sectionOccurrencePath !== null
+    )
+    || (
+      retrievalScope?.sectionPath !== undefined
+      && (
+        sectionOccurrencePath === null
+        || sectionOccurrencePath.length !== retrievalScope.sectionPath.length
+      )
+    )
+  ) {
     throw new BackstageNotionCursorInvalidError();
   }
-  return offset;
+}
+
+function validateCursorOffset(offset: number, maximumOffset: number): void {
+  if (offset >= maximumOffset) {
+    throw new BackstageNotionCursorInvalidError();
+  }
 }
 
 function isFiniteNonzeroVector(value: unknown): value is number[] {
@@ -543,7 +762,9 @@ function mapCategory(value: unknown): BackstageNotionRagCategory {
   return value as BackstageNotionRagCategory;
 }
 
-function mapActiveChunk(active: BackstageNotionActiveChunk): BackstageNotionRagChunk {
+function validateActiveChunkMetadata(
+  active: BackstageNotionActiveChunkMetadata
+): ScopeCandidate {
   const sourceHash = active.metadata.sourceHash;
   const sourceLastEditedAt = active.metadata.sourceLastEditedAt;
   const headingOccurrencePath = active.metadata.headingOccurrencePath;
@@ -557,15 +778,14 @@ function mapActiveChunk(active: BackstageNotionActiveChunk): BackstageNotionRagC
     !SHA256_PATTERN.test(active.id)
     || active.id !== expectedChunkId
     || !SHA256_PATTERN.test(active.contentHash)
-    || active.contentHash !== sha256(active.content)
     || typeof sourceHash !== 'string'
     || !SHA256_PATTERN.test(sourceHash)
     || active.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL
     || !UUID_PATTERN.test(active.pageId)
     || !Number.isSafeInteger(active.ordinal)
     || active.ordinal < 0
-    || !active.content.trim()
-    || active.codePoints !== codePointLength(active.content)
+    || !Number.isSafeInteger(active.codePoints)
+    || active.codePoints < 1
     || !isSafeIndexedMetadataSegment(active.pageTitle)
     || active.pagePath.length < 1
     || active.pagePath.length > 101
@@ -579,7 +799,9 @@ function mapActiveChunk(active: BackstageNotionActiveChunk): BackstageNotionRagC
     || !Array.isArray(headingOccurrencePath)
     || headingOccurrencePath.length !== active.headingPath.length
     || headingOccurrencePath.some(occurrence => (
-      !Number.isSafeInteger(occurrence) || occurrence < 1
+      !Number.isSafeInteger(occurrence)
+      || occurrence < 1
+      || occurrence > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
     ))
     || (
       sourceLastEditedAt !== null
@@ -592,25 +814,48 @@ function mapActiveChunk(active: BackstageNotionActiveChunk): BackstageNotionRagC
     throw new BackstageNotionIndexUnavailableError();
   }
   return {
-    chunkId: active.id,
-    universeId: '',
-    pageId: active.pageId,
-    parentPageId: null,
-    title: active.pageTitle,
-    path: active.pagePath,
-    headingPath: active.headingPath,
+    active,
     headingOccurrencePath: headingOccurrencePath as number[],
     category: mapCategory(active.metadata.category),
-    ordinal: active.ordinal,
-    content: active.content,
-    codePoints: active.codePoints,
-    contentHash: active.contentHash,
     sourceHash,
     sourceLastEditedAt,
   };
 }
 
-function validatePageMetadataConsistency(chunks: readonly RankedChunk[]): void {
+function mapActiveChunkContent(
+  candidate: ScopeCandidate,
+  content: unknown,
+  universeId: string
+): BackstageNotionRagChunk {
+  const { active } = candidate;
+  if (
+    typeof content !== 'string'
+    || !content.trim()
+    || active.contentHash !== sha256(content)
+    || active.codePoints !== codePointLength(content)
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+  return {
+    chunkId: active.id,
+    universeId,
+    pageId: active.pageId,
+    parentPageId: null,
+    title: active.pageTitle,
+    path: active.pagePath,
+    headingPath: active.headingPath,
+    headingOccurrencePath: candidate.headingOccurrencePath,
+    category: candidate.category,
+    ordinal: active.ordinal,
+    content,
+    codePoints: active.codePoints,
+    contentHash: active.contentHash,
+    sourceHash: candidate.sourceHash,
+    sourceLastEditedAt: candidate.sourceLastEditedAt,
+  };
+}
+
+function validatePageMetadataConsistency(chunks: readonly ScopeCandidate[]): void {
   const metadataByPage = new Map<string, string>();
   for (const candidate of chunks) {
     const signature = JSON.stringify({
@@ -625,15 +870,15 @@ function validatePageMetadataConsistency(chunks: readonly RankedChunk[]): void {
   }
 }
 
-function resolveScopedChunks(
-  chunks: readonly RankedChunk[],
+function resolveScopedChunks<T extends ScopeCandidate>(
+  chunks: readonly T[],
   requested: NormalizedRetrievalScope
-): ResolvedScopedChunks {
-  const pages = new Map<string, RankedChunk[]>();
+): ResolvedScopedChunks<T> {
+  const pages = new Map<string, T[]>();
   for (const candidate of chunks) {
     if (
-      normalizedMatchText(candidate.active.pageTitle)
-        !== normalizedMatchText(requested.pageTitle)
+      normalizeBackstageNotionScopeKey(candidate.active.pageTitle)
+        !== normalizeBackstageNotionScopeKey(requested.pageTitle)
       || (
         requested.pagePath
         && !pathsMatch(requested.pagePath, candidate.active.pagePath)
@@ -667,7 +912,7 @@ function resolveScopedChunks(
       throw new BackstageNotionScopeResolutionError('not_found');
     }
     const occurrences = new Set(scopedChunks.map(candidate => (
-      JSON.stringify(candidate.chunk.headingOccurrencePath.slice(
+      JSON.stringify(candidate.headingOccurrencePath.slice(
         0,
         requested.sectionPath?.length ?? 0
       ))
@@ -686,6 +931,69 @@ function resolveScopedChunks(
       pagePath: [...representative.active.pagePath],
       ...(resolvedSectionPath ? { sectionPath: resolvedSectionPath } : {}),
     },
+    selector: {
+      pageAnchorChunkId: representative.active.id,
+      sectionOccurrencePath: requested.sectionPath
+        ? [...(scopedChunks[0]?.headingOccurrencePath.slice(
+            0,
+            requested.sectionPath.length
+          ) ?? [])]
+        : null,
+    },
+  };
+}
+
+function validateSelectedScopePage(
+  chunks: readonly ScopeCandidate[],
+  requested: NormalizedRetrievalScope,
+  selector: BackstageNotionSnapshotChunkPageSelector
+): BackstageNotionRagResolvedScope {
+  const representative = chunks[0];
+  const sectionOccurrencePath = selector.sectionOccurrencePath;
+  if (
+    !representative
+    || selector.pageAnchorChunkId === null
+    || chunks.some(candidate => (
+      candidate.active.pageId !== representative.active.pageId
+      || normalizeBackstageNotionScopeKey(candidate.active.pageTitle)
+        !== normalizeBackstageNotionScopeKey(requested.pageTitle)
+      || (
+        requested.pagePath !== undefined
+        && !pathsMatch(requested.pagePath, candidate.active.pagePath)
+      )
+    ))
+    || (
+      requested.sectionPath === undefined
+      && sectionOccurrencePath !== null
+    )
+    || (
+      requested.sectionPath !== undefined
+      && (
+        sectionOccurrencePath === null
+        || sectionOccurrencePath.length !== requested.sectionPath.length
+        || chunks.some(candidate => (
+          !pathStartsWith(candidate.active.headingPath, requested.sectionPath ?? [])
+          || sectionOccurrencePath.some((occurrence, index) => (
+            candidate.headingOccurrencePath[index] !== occurrence
+          ))
+        ))
+      )
+    )
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+
+  return {
+    pageTitle: representative.active.pageTitle,
+    pagePath: [...representative.active.pagePath],
+    ...(requested.sectionPath
+      ? {
+          sectionPath: representative.active.headingPath.slice(
+            0,
+            requested.sectionPath.length
+          ),
+        }
+      : {}),
   };
 }
 
@@ -706,13 +1014,69 @@ function selectDiversifiedChunks(ranked: readonly RankedChunk[]): RankedChunk[] 
   return selected;
 }
 
-function sortByPageOrdinal(chunks: readonly RankedChunk[]): RankedChunk[] {
+function sortByPageOrdinal<T extends ScopeCandidate>(chunks: readonly T[]): T[] {
   return [...chunks].sort((left, right) => (
     compareDeterministicPath(left.active.pagePath, right.active.pagePath)
     || compareDeterministicText(left.active.pageTitle, right.active.pageTitle)
     || left.active.ordinal - right.active.ordinal
     || compareDeterministicText(left.active.id, right.active.id)
   ));
+}
+
+function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHeader>(
+  active: T | null,
+  universeId: string,
+  rootPageId: string,
+  now: Date,
+  maximumStalenessMs: number
+): T {
+  if (
+    !active
+    || active.authority !== 'notion'
+    || active.snapshot.universeId !== universeId
+    || active.snapshot.rootPageId !== rootPageId
+    || active.snapshot.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL
+    || !UUID_PATTERN.test(active.snapshot.id)
+    || !SHA256_PATTERN.test(active.snapshot.manifestHash)
+    || !Number.isSafeInteger(active.snapshot.pageCount)
+    || active.snapshot.pageCount < 1
+    || !Number.isSafeInteger(active.snapshot.chunkCount)
+    || active.snapshot.chunkCount < 1
+    || active.snapshot.chunkCount > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
+    || !Number.isFinite(now.getTime())
+    || !Number.isFinite(active.verifiedAt.getTime())
+    || !Number.isFinite(active.snapshot.createdAt.getTime())
+    || active.verifiedAt.getTime() < active.snapshot.createdAt.getTime()
+    || now.getTime() - active.verifiedAt.getTime() > maximumStalenessMs
+    || active.verifiedAt.getTime() - now.getTime() > 5 * 60 * 1_000
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+  return active;
+}
+
+function validateActiveSnapshotProjection<T extends BackstageNotionActiveSnapshot>(
+  active: T | null,
+  universeId: string,
+  rootPageId: string,
+  now: Date,
+  maximumStalenessMs: number
+): T {
+  const validated = validateActiveSnapshotHeader(
+    active,
+    universeId,
+    rootPageId,
+    now,
+    maximumStalenessMs
+  );
+  if (
+    validated.truncated
+    || validated.snapshot.chunkCount !== validated.chunks.length
+    || validated.chunks.length < 1
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+  return validated;
 }
 
 async function retrieveBackstageNotionRagContextUnsafe(
@@ -724,7 +1088,8 @@ async function retrieveBackstageNotionRagContextUnsafe(
   if (
     !isBackstageNotionEnrichmentAuthorized()
     || !request.query
-    || codePointLength(request.query) > BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS
+    || codePointLength(request.bindingQuery)
+      > BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS
   ) {
     throw new BackstageNotionIndexUnavailableError();
   }
@@ -736,65 +1101,39 @@ async function retrieveBackstageNotionRagContextUnsafe(
   }
 
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
-  const active = await repository.loadActiveSnapshot(
-    universeId,
-    BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
-  );
   const now = dependencies.now?.() ?? new Date();
   const maximumStalenessMs = resolveMaximumStalenessMs(
     dependencies.maximumStalenessMs
   );
-  if (
-    !active
-    || active.authority !== 'notion'
-    || active.truncated
-    || active.snapshot.universeId !== universeId
-    || active.snapshot.rootPageId !== authorityRoot.rootPageId
-    || active.snapshot.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL
-    || !UUID_PATTERN.test(active.snapshot.id)
-    || !SHA256_PATTERN.test(active.snapshot.manifestHash)
-    || !Number.isSafeInteger(active.snapshot.pageCount)
-    || active.snapshot.pageCount < 1
-    || !Number.isSafeInteger(active.snapshot.chunkCount)
-    || active.snapshot.chunkCount !== active.chunks.length
-    || !Number.isFinite(now.getTime())
-    || !Number.isFinite(active.verifiedAt.getTime())
-    || !Number.isFinite(active.snapshot.createdAt.getTime())
-    || active.verifiedAt.getTime() < active.snapshot.createdAt.getTime()
-    || now.getTime() - active.verifiedAt.getTime() > maximumStalenessMs
-    || active.verifiedAt.getTime() - now.getTime() > 5 * 60 * 1_000
-    || active.chunks.length < 1
-  ) {
-    throw new BackstageNotionIndexUnavailableError();
+  let active: BackstageNotionActiveSnapshotHeader;
+  let relevantSnapshot: BackstageNotionActiveSnapshot | null = null;
+  if (request.retrievalMode === 'complete_scope') {
+    active = validateActiveSnapshotHeader(
+      await repository.loadActiveSnapshotHeader(universeId),
+      universeId,
+      authorityRoot.rootPageId,
+      now,
+      maximumStalenessMs
+    );
+  } else {
+    relevantSnapshot = validateActiveSnapshotProjection(
+      await repository.loadActiveSnapshot(
+        universeId,
+        BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
+      ),
+      universeId,
+      authorityRoot.rootPageId,
+      now,
+      maximumStalenessMs
+    );
+    active = relevantSnapshot;
   }
 
-  const validatedChunks = active.chunks.map((chunk): RankedChunk => {
-    if (!isFiniteNonzeroVector(chunk.embedding)) {
-      throw new BackstageNotionIndexUnavailableError();
-    }
-    return {
-      active: chunk,
-      chunk: { ...mapActiveChunk(chunk), universeId },
-      score: 0,
-    };
-  });
-  const embeddingDimensions = validatedChunks[0]?.active.embedding.length;
-  if (
-    embeddingDimensions === undefined
-    || validatedChunks.some(candidate => (
-      candidate.active.embedding.length !== embeddingDimensions
-    ))
-  ) {
-    throw new BackstageNotionIndexUnavailableError();
-  }
-  validatePageMetadataConsistency(validatedChunks);
-
-  const resolved = request.retrievalScope
-    ? resolveScopedChunks(validatedChunks, request.retrievalScope)
-    : null;
-  const scopeCandidates = resolved?.chunks ?? validatedChunks;
-  let selected: RankedChunk[];
+  let selected: SelectedChunk[];
   let offset = 0;
+  let scopeChunks = 0;
+  let resolvedScope: BackstageNotionRagResolvedScope | null = null;
+  let completeScopeSelector: BackstageNotionSnapshotChunkPageSelector | null = null;
   const binding = requestBinding(request);
   const cursorSigningKey = buildCursorSigningKey({
     universeId,
@@ -803,19 +1142,153 @@ async function retrieveBackstageNotionRagContextUnsafe(
     rootPageId: authorityRoot.rootPageId,
   });
   if (request.retrievalMode === 'complete_scope') {
-    const ordered = sortByPageOrdinal(scopeCandidates);
-    offset = decodeCursor(
-      request.cursor,
+    if (request.cursor) {
+      const decodedCursor = decodeCursor(
+        request.cursor,
+        active.snapshot.id,
+        binding,
+        cursorSigningKey
+      );
+      validateCursorScopeSelector(
+        decodedCursor.scopeSelector,
+        request.retrievalScope
+      );
+      offset = decodedCursor.offset;
+      scopeChunks = decodedCursor.scopeChunkCount;
+      completeScopeSelector = decodedCursor.scopeSelector;
+      if (
+        scopeChunks > active.snapshot.chunkCount
+        || (
+          completeScopeSelector.pageAnchorChunkId === null
+          && scopeChunks !== active.snapshot.chunkCount
+        )
+      ) {
+        throw new BackstageNotionCursorInvalidError();
+      }
+      validateCursorOffset(offset, scopeChunks);
+    } else {
+      if (request.retrievalScope) {
+        const resolution = await repository.resolveSnapshotScope(
+          universeId,
+          active.snapshot.id,
+          buildSnapshotScopeLookup(request.retrievalScope)
+        );
+        if (resolution.status === 'not_found' || resolution.status === 'ambiguous') {
+          throw new BackstageNotionScopeResolutionError(resolution.status);
+        }
+        if (resolution.status !== 'resolved') {
+          throw new BackstageNotionIndexUnavailableError();
+        }
+        const validatedResolution = validateResolvedSnapshotScope(
+          resolution,
+          request.retrievalScope,
+          active.snapshot.chunkCount
+        );
+        resolvedScope = validatedResolution.scope;
+        completeScopeSelector = validatedResolution.selector;
+        scopeChunks = validatedResolution.scopeChunkCount;
+      } else {
+        completeScopeSelector = {
+          pageAnchorChunkId: null,
+          sectionOccurrencePath: null,
+        };
+        scopeChunks = active.snapshot.chunkCount;
+      }
+    }
+    const paged = await repository.loadSnapshotChunkPage(
+      universeId,
       active.snapshot.id,
-      binding,
-      ordered.length,
-      cursorSigningKey
-    );
-    selected = ordered.slice(
+      completeScopeSelector,
+      scopeChunks,
       offset,
-      offset + BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS
+      BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS
     );
+    if (
+      !Number.isSafeInteger(paged.scopeChunkCount)
+      || paged.scopeChunkCount < 1
+      || paged.scopeChunkCount > active.snapshot.chunkCount
+      || paged.scopeChunkCount !== scopeChunks
+      || (
+        completeScopeSelector.pageAnchorChunkId === null
+        && paged.scopeChunkCount !== active.snapshot.chunkCount
+      )
+    ) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    scopeChunks = paged.scopeChunkCount;
+    const expectedPageLength = Math.min(
+      BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS,
+      scopeChunks - offset
+    );
+    if (paged.chunks.length !== expectedPageLength) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    const pageCandidates = paged.chunks.map(validateActiveChunkMetadata);
+    validatePageMetadataConsistency(pageCandidates);
+    const pageIds = pageCandidates.map(candidate => candidate.active.id);
+    if (
+      new Set(pageIds).size !== pageIds.length
+      || sortByPageOrdinal(pageCandidates).some((candidate, index) => (
+        candidate.active.id !== pageIds[index]
+      ))
+    ) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    if (request.retrievalScope) {
+      const selectedScope = validateSelectedScopePage(
+        pageCandidates,
+        request.retrievalScope,
+        completeScopeSelector
+      );
+      if (
+        resolvedScope !== null
+        && JSON.stringify(selectedScope) !== JSON.stringify(resolvedScope)
+      ) {
+        throw new BackstageNotionIndexUnavailableError();
+      }
+      resolvedScope = selectedScope;
+    }
+    selected = pageCandidates.map((candidate, index): SelectedChunk => {
+      const pageChunk = paged.chunks[index];
+      return {
+        ...candidate,
+        chunk: mapActiveChunkContent(candidate, pageChunk?.content, universeId),
+        score: 0,
+      };
+    });
   } else {
+    const relevantActive = relevantSnapshot;
+    if (!relevantActive) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    const validatedChunks = relevantActive.chunks.map((chunk): RankedChunk => {
+      if (!isFiniteNonzeroVector(chunk.embedding)) {
+        throw new BackstageNotionIndexUnavailableError();
+      }
+      const candidate = validateActiveChunkMetadata(chunk);
+      return {
+        ...candidate,
+        active: chunk,
+        chunk: mapActiveChunkContent(candidate, chunk.content, universeId),
+        score: 0,
+      };
+    });
+    const embeddingDimensions = validatedChunks[0]?.active.embedding.length;
+    if (
+      embeddingDimensions === undefined
+      || validatedChunks.some(candidate => (
+        candidate.active.embedding.length !== embeddingDimensions
+      ))
+    ) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    validatePageMetadataConsistency(validatedChunks);
+    const resolved = request.retrievalScope
+      ? resolveScopedChunks(validatedChunks, request.retrievalScope)
+      : null;
+    resolvedScope = resolved?.scope ?? null;
+    const scopeCandidates = resolved?.chunks ?? validatedChunks;
+    scopeChunks = scopeCandidates.length;
     const queryEmbedding = await (dependencies.embedQuery ?? createEmbedding)(request.query);
     if (
       !isFiniteNonzeroVector(queryEmbedding)
@@ -861,26 +1334,35 @@ async function retrieveBackstageNotionRagContextUnsafe(
   }
   const nextOffset = offset + completedPromptChunks;
   const hasMore = request.retrievalMode === 'complete_scope'
-    && nextOffset < scopeCandidates.length;
-  const nextCursor = hasMore
-    ? encodeCursor({
+    && nextOffset < scopeChunks;
+  let nextCursor: string | null = null;
+  if (hasMore) {
+    if (!completeScopeSelector) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    nextCursor = encodeCursor({
         v: BACKSTAGE_NOTION_RAG_CURSOR_VERSION,
         snapshotId: active.snapshot.id,
         requestBinding: binding,
+        scopeSelector: completeScopeSelector,
+        scopeChunkCount: scopeChunks,
         offset: nextOffset,
-      }, cursorSigningKey)
-    : null;
+      }, cursorSigningKey);
+    if (!CURSOR_PATTERN.test(nextCursor)) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+  }
   const exhaustive = request.retrievalMode === 'complete_scope'
     && offset === 0
     && !hasMore
     && !promptContext.truncated;
   const omittedChunks = Math.max(
     0,
-    scopeCandidates.length - promptContext.chunkCount
+    scopeChunks - promptContext.chunkCount
   );
   const coverage: BackstageNotionRagCoverage = {
     status: exhaustive ? 'complete' : 'sampled',
-    scopeChunks: scopeCandidates.length,
+    scopeChunks,
     selectedChunks: promptContext.chunkCount,
     omittedChunks,
     promptTruncated: promptContext.truncated,
@@ -898,11 +1380,11 @@ async function retrieveBackstageNotionRagContextUnsafe(
     logger.info('backstage.notion_rag.retrieved', {
       universeId,
       snapshotId: active.snapshot.id,
-      candidateChunks: active.chunks.length,
-      scopeChunks: scopeCandidates.length,
+      candidateChunks: active.snapshot.chunkCount,
+      scopeChunks,
       retrievedChunks: promptContext.chunkCount,
       retrievalMode: request.retrievalMode,
-      scoped: resolved !== null,
+      scoped: resolvedScope !== null,
       corpusOmitted: omittedChunks > 0,
       promptTruncated: promptContext.truncated,
       hasMore,
@@ -918,15 +1400,15 @@ async function retrieveBackstageNotionRagContextUnsafe(
     chunkCount: promptContext.chunkCount,
     truncated: omittedChunks > 0 || promptContext.truncated,
     retrievalMode: request.retrievalMode,
-    resolvedScope: resolved?.scope ?? null,
+    resolvedScope,
     coverage,
     nextCursor,
-    citations: selectedForPrompt.map(({ active: chunk }) => ({
+    citations: selectedForPrompt.map(({ active: chunk, category }) => ({
       pageId: chunk.pageId,
       pageTitle: chunk.pageTitle,
       pagePath: [...chunk.pagePath],
       headingPath: [...chunk.headingPath],
-      category: mapCategory(chunk.metadata.category),
+      category,
       chunkId: chunk.id,
       contentHash: chunk.contentHash,
     })),

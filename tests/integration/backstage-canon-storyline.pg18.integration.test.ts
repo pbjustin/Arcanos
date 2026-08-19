@@ -12,6 +12,7 @@ import {
 } from '../../src/core/db/repositories/backstageBookerRepository.js';
 import { TABLE_DEFINITIONS } from '../../src/core/db/schema.js';
 import { readBackstageStorylineSummary } from '../../src/services/backstageUniverseRead.js';
+import { BACKSTAGE_NOTION_RAG_INDEX_FORMAT } from '../../src/shared/backstage/backstageNotionScopeIndex.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
   POSTGRES_TEST_DATABASE_NAME,
@@ -52,6 +53,22 @@ const notionRagRollbackMigration = readFileSync(
     process.cwd(),
     'migrations',
     '20260819_backstage_notion_rag_v1.rollback.sql'
+  ),
+  'utf8'
+);
+const notionRagIndexVersionFenceMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260819_backstage_notion_rag_v2_index_version_fence.sql'
+  ),
+  'utf8'
+);
+const notionRagIndexVersionFenceRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260819_backstage_notion_rag_v2_index_version_fence.rollback.sql'
   ),
   'utf8'
 );
@@ -134,6 +151,72 @@ function errorCode(error: unknown): string | undefined {
   }
   const code = (error as { code?: unknown }).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+async function insertNotionIndexFenceSnapshot(input: {
+  client: Client;
+  universeId: string;
+  rootPageId: string;
+  indexFormats: readonly (string | null)[];
+  expectedPageCount?: number;
+}): Promise<string> {
+  const snapshotId = randomUUID();
+  await input.client.query(
+    `INSERT INTO backstage_notion_snapshots (
+       id,
+       universe_id,
+       root_page_id,
+       manifest_hash,
+       embedding_model,
+       page_count,
+       chunk_count,
+       sync_holder_id
+     ) VALUES ($1::UUID, $2, $3, $4, 'pg18-fence-model', $5, 1, 'pg18-fence')`,
+    [
+      snapshotId,
+      input.universeId,
+      input.rootPageId,
+      fingerprint(`snapshot:${snapshotId}`),
+      input.expectedPageCount ?? input.indexFormats.length,
+    ]
+  );
+  for (const [index, indexFormat] of input.indexFormats.entries()) {
+    const pageId = randomUUID();
+    await input.client.query(
+      `INSERT INTO backstage_notion_snapshot_pages (
+         snapshot_id,
+         universe_id,
+         page_id,
+         title,
+         content_hash,
+         markdown,
+         depth,
+         path,
+         metadata
+       ) VALUES (
+         $1::UUID,
+         $2,
+         $3,
+         $4,
+         $5,
+         $6,
+         0,
+         $7::JSONB,
+         $8::JSONB
+       )`,
+      [
+        snapshotId,
+        input.universeId,
+        pageId,
+        `Fence page ${index + 1}`,
+        fingerprint(`page:${pageId}`),
+        `# Fence page ${index + 1}`,
+        JSON.stringify([`Fence page ${index + 1}`]),
+        JSON.stringify(indexFormat === null ? {} : { indexFormat }),
+      ]
+    );
+  }
+  return snapshotId;
 }
 
 function storylineInput(
@@ -268,6 +351,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     );
     await applyCanonForwardMigration(observer);
     await observer.query(notionRagForwardMigration);
+    await observer.query(notionRagIndexVersionFenceMigration);
 
     pool = new Pool({
       connectionString: configuredConnectionString,
@@ -319,6 +403,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         `SELECT to_regclass('public.backstage_notion_universe_heads') IS NOT NULL AS installed`
       );
       if (notionRagTable.rows[0]?.installed) {
+        await observer.query(notionRagIndexVersionFenceRollback);
         await observer.query(notionRagRollbackMigration);
       }
       const canonTable = await observer.query<{ installed: boolean }>(
@@ -351,6 +436,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(universeScopeForwardMigration);
     await applyCanonForwardMigration(observer);
     await observer.query(notionRagForwardMigration);
+    await observer.query(notionRagIndexVersionFenceMigration);
 
     const tables = await observer.query<{ table_name: string }>(
       `SELECT table_name
@@ -382,7 +468,135 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       'fk_backstage_storyline_participants_wrestler',
       'uq_backstage_events_universe_id'
     ]);
+
+    const indexFenceTrigger = await observer.query<{ installed: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM pg_trigger
+         WHERE tgrelid = 'public.backstage_notion_universe_heads'::REGCLASS
+           AND tgname = 'trg_backstage_notion_index_version_fence'
+           AND tgenabled = 'O'
+           AND NOT tgisinternal
+       ) AS installed`
+    );
+    expect(indexFenceTrigger.rows).toEqual([{ installed: true }]);
   }, 60_000);
+
+  test('database-fences mixed, partial, and lower Notion index activations', async () => {
+    const universeId = 'notion-index-fence-pg18';
+    const rootPageId = randomUUID();
+    const activate = async (snapshotId: string): Promise<void> => {
+      await observer.query(
+        `UPDATE backstage_notion_universe_heads
+         SET authority = 'notion',
+             active_snapshot_id = $2::UUID,
+             activated_at = clock_timestamp(),
+             last_verified_at = clock_timestamp(),
+             updated_at = clock_timestamp()
+         WHERE universe_id = $1`,
+        [universeId, snapshotId]
+      );
+    };
+    const expectActivationError = async (
+      snapshotId: string,
+      expectedCode: string
+    ): Promise<void> => {
+      await observer.query('SAVEPOINT index_fence_attempt');
+      try {
+        await activate(snapshotId);
+        throw new Error('Expected snapshot activation to be rejected.');
+      } catch (error: unknown) {
+        await observer.query('ROLLBACK TO SAVEPOINT index_fence_attempt');
+        expect(errorCode(error)).toBe(expectedCode);
+      } finally {
+        await observer.query('RELEASE SAVEPOINT index_fence_attempt');
+      }
+    };
+
+    await observer.query('BEGIN');
+    try {
+      await observer.query(
+        `INSERT INTO backstage_notion_universe_heads (universe_id)
+         VALUES ($1)`,
+        [universeId]
+      );
+
+      const legacySnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [null],
+      });
+      await activate(legacySnapshot);
+
+      const currentSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
+      });
+      await activate(currentSnapshot);
+
+      const sameVersionSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
+      });
+      await activate(sameVersionSnapshot);
+
+      const lowerSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: ['backstage-notion-rag-index-v4'],
+      });
+      await expectActivationError(lowerSnapshot, 'BN002');
+
+      const unmarkedSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [null],
+      });
+      await expectActivationError(unmarkedSnapshot, 'BN002');
+
+      const mixedSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT, null],
+      });
+      await expectActivationError(mixedSnapshot, 'BN002');
+
+      const partialSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId,
+        indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
+        expectedPageCount: 2,
+      });
+      await expectActivationError(partialSnapshot, 'BN002');
+
+      const replacementRootSnapshot = await insertNotionIndexFenceSnapshot({
+        client: observer,
+        universeId,
+        rootPageId: randomUUID(),
+        indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
+      });
+      await expectActivationError(replacementRootSnapshot, 'BN001');
+
+      const active = await observer.query<{ active_snapshot_id: string }>(
+        `SELECT active_snapshot_id::TEXT
+         FROM backstage_notion_universe_heads
+         WHERE universe_id = $1`,
+        [universeId]
+      );
+      expect(active.rows).toEqual([{ active_snapshot_id: sameVersionSnapshot }]);
+    } finally {
+      await observer.query('ROLLBACK');
+    }
+  }, 30_000);
 
   test('normalizes UUID defaults independently of the runtime search path', async () => {
     await observer.query(
@@ -731,6 +945,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
          backstage_canon_heads
        CASCADE`
     );
+    await observer.query(notionRagIndexVersionFenceRollback);
     await observer.query(notionRagRollbackMigration);
     await observer.query(canonRollbackMigration);
 

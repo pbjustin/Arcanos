@@ -25,10 +25,13 @@ import { getGPT5Model } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
+  BackstageNotionCursorInvalidError,
   retrieveBackstageNotionRagContext,
   type BackstageNotionRagRetrieval,
 } from './backstageNotionRag.js';
 import { normalizeBackstageBookerActionPayload } from './backstageBookerContracts.js';
+
+const BACKSTAGE_CONTINUITY_CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
 
 const BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT = [
   'Answer only from the retrieved Notion excerpts.',
@@ -44,6 +47,29 @@ const BACKSTAGE_CONTINUITY_COMPACT_RETRY_CONTRACT = [
   'Do not mention this recovery instruction or the discarded response.',
   '<<OUTPUT_LENGTH_RECOVERY_END>>',
 ].join('\n');
+
+function assertValidContinuityCursorRequest(payload: unknown): void {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return;
+  }
+
+  const cursorDescriptor = Object.getOwnPropertyDescriptor(payload, 'cursor');
+  if (!cursorDescriptor) {
+    return;
+  }
+
+  const retrievalMode = Object.getOwnPropertyDescriptor(
+    payload,
+    'retrievalMode'
+  )?.value;
+  if (
+    typeof cursorDescriptor.value !== 'string'
+    || !BACKSTAGE_CONTINUITY_CURSOR_PATTERN.test(cursorDescriptor.value)
+    || retrievalMode !== 'complete_scope'
+  ) {
+    throw new BackstageNotionCursorInvalidError();
+  }
+}
 
 function resolveContinuityQueryModel(): string {
   const configured = getGPT5Model().trim();
@@ -118,6 +144,7 @@ function buildContinuityResponse(
 export async function queryBackstageContinuity(
   payload: unknown
 ): Promise<BackstageQueryContinuityResponse> {
+  assertValidContinuityCursorRequest(payload);
   const input = normalizeBackstageBookerActionPayload('queryContinuity', payload);
   const retrieval = await retrieveBackstageNotionRagContext(input.universeId, {
     query: input.query,

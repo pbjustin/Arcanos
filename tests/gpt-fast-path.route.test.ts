@@ -96,6 +96,9 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { canonicalGptIdentifierBoundary } = await import(
+  '../src/transport/http/middleware/canonicalGptIdentifierBoundary.js'
+);
 const { isBackstageNotionEnrichmentAuthorized } = await import(
   '../src/services/backstageNotionEnrichmentAuthorization.js'
 );
@@ -107,6 +110,7 @@ function buildApp() {
   const app = express();
   app.use(express.json());
   app.use(requestContext);
+  app.post('/gpt/:gptId', canonicalGptIdentifierBoundary);
   app.use('/gpt', gptRouter);
   return app;
 }
@@ -1180,6 +1184,67 @@ describe('GPT fast-path route branching', () => {
     }
   );
 
+  it.each([
+    [
+      'malformed cursor',
+      { retrievalMode: 'complete_scope', cursor: '!' },
+    ],
+    [
+      'mode-invalid cursor',
+      { retrievalMode: 'relevant', cursor: 'eyJ2IjoxfQ' },
+    ],
+  ] as const)(
+    'returns typed HTTP 409 for a canonical continuity request with a %s',
+    async (_caseName, cursorFields) => {
+      mockResolveGptRouting.mockResolvedValueOnce(
+        buildBackstageRouting('queryContinuity')
+      );
+      mockRouteGptRequest.mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_NOTION_CURSOR_INVALID',
+          message: 'The Backstage continuity cursor is invalid or no longer applies. Restart the scoped read without a cursor.',
+          details: { retryable: false },
+        },
+        _route: {
+          requestId: 'request-cursor-contract-invalid',
+          traceId: 'trace-cursor-contract-invalid',
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'queryContinuity',
+          route: 'backstage-booker',
+          timestamp: '2026-08-19T20:00:00.000Z',
+        },
+      });
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .send({
+          action: 'queryContinuity',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'my-universe-2k26',
+            query: 'Continue the scoped read.',
+            ...cursorFields,
+          },
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_NOTION_CURSOR_INVALID',
+          details: { retryable: false },
+        },
+      });
+      expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+        body: expect.objectContaining({
+          payload: expect.objectContaining(cursorFields),
+        }),
+      }));
+    }
+  );
+
   it('keeps a heavy continuity query synchronous so request-local Notion auth reaches dispatch', async () => {
     const accessToken = `backstage-${'q'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
@@ -1414,6 +1479,43 @@ describe('GPT fast-path route branching', () => {
     expect(authorizedInsideDispatch).toBe(true);
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
   });
+
+  it.each([
+    ['legacy alias', 'backstage'],
+    ['case-normalized canonical ID', 'BACKSTAGE-BOOKER'],
+    ['whitespace-normalized canonical ID', '%20backstage-booker%20'],
+  ] as const)(
+    'keeps the dedicated bearer unauthorized through the assembled %s route',
+    async (_caseName, gptId) => {
+      const accessToken = `backstage-${'n'.repeat(48)}`;
+      process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+      mockResolveGptRouting.mockResolvedValueOnce(
+        buildBackstageRouting('queryContinuity')
+      );
+      let authorizedInsideDispatch = true;
+      mockRouteGptRequest.mockImplementationOnce(async () => {
+        authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+        return buildBackstageContinuityQueryEnvelope();
+      });
+
+      const response = await request(buildApp())
+        .post(`/gpt/${gptId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          action: 'queryContinuity',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'my-universe-2k26',
+            query: 'Who is the current champion?',
+          },
+        });
+
+      expect(response.status).toBe(200);
+      expect(authorizedInsideDispatch).toBe(false);
+      expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+      expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('auto-queues a heavy Backstage public action when the sync sentinel is absent', async () => {
     process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';

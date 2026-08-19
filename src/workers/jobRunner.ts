@@ -116,6 +116,7 @@ import {
   parseQueuedGamingSourceIngestionBody
 } from '@services/gamingSourceIngestion.js';
 import {
+  ensureBackstageNotionWorkerReadiness,
   startBackstageNotionSyncLoop,
   type BackstageNotionSyncLoopHandle,
 } from './backstageNotionSyncLoop.js';
@@ -2094,6 +2095,25 @@ async function run(): Promise<void> {
       signal: workerProcessShutdownSignal ?? 'unknown'
     });
     return;
+  }
+
+  try {
+    const backstageNotionReadiness = await ensureBackstageNotionWorkerReadiness({
+      signal: workerProcessShutdownController.signal,
+    });
+    logger.info('worker.backstage_notion_readiness.completed', {
+      module: 'job-runner',
+      ...backstageNotionReadiness,
+    });
+  } catch (error) {
+    if (isWorkerProcessShutdownRequested()) {
+      logger.info('worker.shutdown.during_backstage_notion_readiness', {
+        module: 'job-runner',
+        signal: workerProcessShutdownSignal ?? 'unknown'
+      });
+      return;
+    }
+    throw error;
   }
 
   const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);

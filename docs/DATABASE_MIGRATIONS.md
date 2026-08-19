@@ -323,6 +323,27 @@ guard is earlier and cheaper, but these triggers are the database invariant.
 All authority-boundary rejection uses SQLSTATE `BN001`; same-root snapshot
 rotation and `last_verified_at` refresh remain permitted.
 
+`migrations/20260819_backstage_notion_rag_v2_index_version_fence.sql` is the
+additive rolling-upgrade fence for immutable snapshot activation. Runtime
+startup installs the same trigger before a worker can become ready. Apply V2
+only after `20260819_backstage_notion_rag_v1.sql`; its filename sorts after V1
+for forward-only migration enumeration. Every page in both the candidate and
+current snapshot contributes an `indexFormat`
+marker; the canonical `backstage-notion-rag-index-vN` suffix is parsed as a
+bounded integer, while a missing or malformed marker is legacy version `0`.
+The trigger rejects incomplete page inventories, mixed versions, active-head
+clears, and candidate versions below the current version with SQLSTATE
+`BN002`. It permits initial legacy activation, legacy-to-current upgrade, and
+same-version rotation. Root identity remains governed independently by the
+authority-persistence trigger: a Notion-authoritative root cannot be replaced
+through snapshot rotation, so a deliberate root reset still requires the
+separately reviewed authority-restoration procedure.
+
+The fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
+SQLSTATE `55000` while any snapshot is active. Apply that rollback before the
+V1 storage rollback only on an unused installation; removing the fence from a
+live authority would allow an older worker to reactivate legacy metadata.
+
 The rollback file is intentionally guarded. It locks every affected table and
 refuses with SQLSTATE `55000` when any authority head, snapshot, page, chunk, or
 lease row exists. It never uses `CASCADE`. Once activated, preserve/export the

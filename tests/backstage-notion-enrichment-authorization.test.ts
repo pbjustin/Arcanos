@@ -92,6 +92,24 @@ describe('optional Backstage Notion enrichment authorization', () => {
     }))).resolves.toBe(false);
   });
 
+  it('does not establish the context when the route parameter is absent', async () => {
+    const request = buildRequest({ authorization: `Bearer ${accessToken}` });
+    request.params = {};
+
+    await expect(readAuthorizationInsideNext(request)).resolves.toBe(false);
+  });
+
+  it.each([
+    'backstage',
+    'BACKSTAGE-BOOKER',
+    ' backstage-booker ',
+  ])('does not establish provenance for noncanonical Backstage GPT ID %s', async (gptId) => {
+    await expect(readAuthorizationInsideNext(buildRequest({
+      gptId,
+      authorization: `Bearer ${accessToken}`,
+    }))).resolves.toBe(false);
+  });
+
   it('preserves verified provenance through the nested route timeout context', async () => {
     const authorized = await new Promise<boolean>((resolve, reject) => {
       const request = buildRequest({ authorization: `Bearer ${accessToken}` });
