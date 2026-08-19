@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 118;
+const MAX_REQUESTS = 119;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -802,6 +802,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-review-completion',
       'reviewCompletion'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-notion-authority-rag',
+      'notionAuthorityRag'
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -1914,6 +1918,32 @@ function expectedBackstageGenerationContractPayload(requestCase) {
           'Treat matches identified as still to come as unresolved; never invent their results.',
         ].join('\n'),
         tokenLimit: 1_600,
+      },
+    };
+  }
+  if (requestCase.fixtureName === 'notionAuthorityRag') {
+    return {
+      ...base,
+      externalNetworkAttempted: true,
+      notionAuthority: {
+        citationProvenanceVerified: true,
+        deterministicContentFixture: true,
+        instructionBoundaryPreserved: true,
+        liveCredentialUsed: false,
+        liveNotionApiReached: true,
+        liveNotionAuthenticationRejected: true,
+        markdownRequests: 1,
+        metadataRequests: 1,
+        mutationActionsRecognized: 6,
+        productionSharedPageCore: true,
+        productionSharedPromptCore: true,
+        sanitizationApplied: true,
+      },
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
       },
     };
   }

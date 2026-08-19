@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 118-request plan without network access.
+untracked worktree, limits, and the fixed 119-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -107,8 +107,9 @@ empty results while returning metadata only. It does not import or invoke the
 normal protected GET route, bearer authentication, or a database reader.
 
 The sealed `POST /backstage/generation-contract` selectors are
-`route-budget-provider-delay`, `hrc-timeout-retry-cache`, and
-`review-completion-contract`. The first uses the
+`route-budget-provider-delay`, `hrc-timeout-retry-cache`,
+`review-completion-contract`, and `notion-authority-rag-contract`. The first
+uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
 await a 13,250 ms synthetic provider seam; the live runner separately requires at
@@ -125,8 +126,17 @@ unmatched quote, astral-letter apostrophe, quoted-contraction, Markdown-marker,
 inline/collapsed honesty-caveat, and spaced/single-initial fixtures. It also
 proves that the canonical six-bullet response style overrides an earlier
 three-bullet user request. The contraction case asserts a deterministic bound
-on quote-delimiter disambiguation work. All three are credential-free component proofs:
-provider/network boundaries and protected effects stay disabled.
+on quote-delimiter disambiguation work. The Notion-authority case performs one
+fixed `api.notion.com/v1/users/me` request with a hard-coded invalid non-secret
+bearer and an absolute four-second DNS/TLS/header deadline. It accepts only the
+expected JSON `401` and cancels without reading,
+parsing, or returning the provider body and does not retry or follow redirects.
+It then executes the
+production-shared Notion page/RAG core over sealed content to prove request
+shape, parsing, sanitization, chunking, citation framing, message isolation,
+and mutation recognition. This proves deployed Notion API reachability, not a
+valid credential, live page read, PostgreSQL activation, worker run, or model
+provider call. Protected effects stay disabled.
 
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
 executes the config-free core used by the production MCP pre-parser against six

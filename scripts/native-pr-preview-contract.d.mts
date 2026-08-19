@@ -40,6 +40,7 @@ export interface NativePrPreviewE2eContract {
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
       reviewCompletion: 'review-completion-contract';
+      notionAuthorityRag: 'notion-authority-rag-contract';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{

@@ -103,6 +103,10 @@ function buildApplication() {
   const app = createNativePrPreviewApplication({
     identity,
     readinessState,
+    notionConnectivityProbe: async () => ({
+      apiReached: true,
+      authenticationRejected: true,
+    }),
   });
   readinessState.applicationImported = true;
   readinessState.fixturesSealed = true;
@@ -1045,7 +1049,7 @@ describe('native PR contained application', () => {
     }
   });
 
-  it('executes sealed Backstage generation, HRC cache, and review completion with the Notion prompt boundary', async () => {
+  it('executes sealed Backstage generation, HRC cache, review, and Notion authority contracts', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
     const routeBudget = await request(app)
@@ -1057,6 +1061,9 @@ describe('native PR contained application', () => {
     const reviewCompletion = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.reviewCompletion });
+    const notionAuthorityRag = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.notionAuthorityRag });
 
     expect(routeBudget.status).toBe(200);
     expect(routeBudget.body).toEqual({
@@ -1199,7 +1206,45 @@ describe('native PR contained application', () => {
       schemaVersion: 1,
     });
 
-    for (const response of [routeBudget, hrcRetryCache, reviewCompletion]) {
+    expect(notionAuthorityRag.status).toBe(200);
+    expect(notionAuthorityRag.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: true,
+      fixture: contract.fixtures.notionAuthorityRag,
+      notionAuthority: {
+        citationProvenanceVerified: true,
+        deterministicContentFixture: true,
+        instructionBoundaryPreserved: true,
+        liveCredentialUsed: false,
+        liveNotionApiReached: true,
+        liveNotionAuthenticationRejected: true,
+        markdownRequests: 1,
+        metadataRequests: 1,
+        mutationActionsRecognized: 6,
+        productionSharedPageCore: true,
+        productionSharedPromptCore: true,
+        sanitizationApplied: true,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
+      },
+      schemaVersion: 1,
+    });
+
+    for (const response of [
+      routeBudget,
+      hrcRetryCache,
+      reviewCompletion,
+      notionAuthorityRag,
+    ]) {
       expectContainedResponseHeaders(
         response,
         'native-pr-preview',

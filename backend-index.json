@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T05:42:21.030Z",
+  "generatedAt": "2026-08-19T08:49:39.292Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2406,6 +2406,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionPreviewCanary.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionRagCore.ts"

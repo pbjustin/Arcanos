@@ -377,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 118);
+  assert.equal(requestPlan.length, 119);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -410,7 +410,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    3
+    4
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -691,9 +691,13 @@ test('executes the bounded credential-free matrix and detects identity stability
   const reviewCompletionCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-review-completion'
   );
+  const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-notion-authority-rag'
+  );
   assert.ok(routeBudgetCase);
   assert.ok(hrcRetryCacheCase);
   assert.ok(reviewCompletionCase);
+  assert.ok(notionAuthorityRagCase);
   assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(routeBudgetCase, {
@@ -815,6 +819,43 @@ test('executes the bounded credential-free matrix and detects identity stability
     reviewCompletionPayload.policy.responseStyleInstruction,
     /^Return exactly 6 top-level numbered bullets:/u
   );
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      cacheBoundaryReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: true,
+      fixture: 'notion-authority-rag-contract',
+      notionAuthority: {
+        citationProvenanceVerified: true,
+        deterministicContentFixture: true,
+        instructionBoundaryPreserved: true,
+        liveCredentialUsed: false,
+        liveNotionApiReached: true,
+        liveNotionAuthenticationRejected: true,
+        markdownRequests: 1,
+        metadataRequests: 1,
+        mutationActionsRecognized: 6,
+        productionSharedPageCore: true,
+        productionSharedPromptCore: true,
+        sanitizationApplied: true,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
+      },
+      schemaVersion: 1,
+    }
+  );
   const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
     caseId === 'mcp-body-cap-effective-limits'
   );
@@ -933,14 +974,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 118);
+  assert.equal(result.summary.requestsMade, 119);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 118);
+  assert.equal(result.checks.length, 119);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 118);
+  assert.equal(mock.requestCount, 119);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1012,7 +1053,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 3);
+  assert.equal(backstageGenerationCalls.length, 4);
   for (const { init } of backstageGenerationCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
