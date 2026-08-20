@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 121;
+const MAX_REQUESTS = 122;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -824,6 +824,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-continuity-query',
       'continuityQuery'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-continuity-subtree',
+      'continuitySubtree'
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -2026,6 +2030,119 @@ function expectedBackstageGenerationContractPayload(requestCase) {
         promptTruncated: false,
         sanitizationApplied: true,
         sourcePageChunkCount: 2,
+      },
+    };
+  }
+  if (requestCase.fixtureName === 'continuitySubtree') {
+    const pagePath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const answer =
+      '1. The Raw subtree contains root and descendant continuity.';
+    const resolvedScope = {
+      pageTitle: 'Monday Night Raw',
+      pagePath,
+      scopeKind: 'subtree',
+    };
+    const rootSource = {
+      sourceId:
+        '1111111111111111111111111111111111111111111111111111111111111111',
+      pageTitle: 'Monday Night Raw',
+      pagePath,
+      headingPath: ['Overview'],
+      category: 'kayfabe',
+      contentHash:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    };
+    const rosterSource = {
+      sourceId:
+        '2222222222222222222222222222222222222222222222222222222222222222',
+      pageTitle: 'Raw Roster',
+      pagePath: [...pagePath, 'Raw Roster'],
+      headingPath: ['Champions'],
+      category: 'kayfabe',
+      contentHash:
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    };
+    const response = (coverage, sources) => ({
+      universeId: 'native-preview-continuity-subtree',
+      authority: 'notion',
+      answer,
+      resolvedScope,
+      coverage,
+      sources,
+    });
+    return {
+      ...base,
+      continuity: {
+        contracts: {
+          completeScopeAllFixtureSourcesObserved: true,
+          incompleteSubtreeCoverageRejected: true,
+          pageCoverageTotalsTruthful: true,
+          scopeSourcePathsBound: true,
+          subtreeFieldsCoupled: true,
+          subtreePageCoveragePromptBound: true,
+        },
+        cursorCodecBoundaryReached: false,
+        cursorPreflight: {
+          completeScopeShapeAccepted: true,
+          malformedRejected: true,
+          wrongModeRejected: true,
+        },
+        completeScopeProjections: {
+          first: {
+            coverage: {
+              status: 'sampled',
+              scopeChunks: 3,
+              selectedChunks: 2,
+              omittedChunks: 1,
+              promptTruncated: false,
+              exhaustive: false,
+              hasMore: true,
+              nextCursor:
+                'eyJ2IjozLCJmaXh0dXJlIjoic2VhbGVkLXN1YnRyZWUtcHJldmlldyJ9',
+              scopePages: 3,
+              selectedPages: 2,
+              omittedPages: 1,
+            },
+            sourceIds: [
+              '1111111111111111111111111111111111111111111111111111111111111111',
+              '2222222222222222222222222222222222222222222222222222222222222222',
+            ],
+          },
+          final: {
+            coverage: {
+              status: 'sampled',
+              scopeChunks: 3,
+              selectedChunks: 1,
+              omittedChunks: 2,
+              promptTruncated: false,
+              exhaustive: false,
+              hasMore: false,
+              scopePages: 3,
+              selectedPages: 1,
+              omittedPages: 2,
+            },
+            sourceIds: [
+              '3333333333333333333333333333333333333333333333333333333333333333',
+            ],
+          },
+        },
+        productionSharedPolicyCore: true,
+        productionSharedResponseCore: true,
+        publicResponse: response(
+          {
+            status: 'sampled',
+            scopeChunks: 3,
+            selectedChunks: 2,
+            omittedChunks: 1,
+            promptTruncated: false,
+            exhaustive: false,
+            hasMore: false,
+            scopePages: 3,
+            selectedPages: 2,
+            omittedPages: 1,
+          },
+          [rootSource, rosterSource]
+        ),
       },
     };
   }

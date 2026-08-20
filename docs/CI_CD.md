@@ -254,7 +254,8 @@ protected effect.
 
 The exact `POST /backstage/generation-contract` surface accepts only the
 server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
-`review-completion-contract`, and `notion-authority-rag-contract` selectors.
+`review-completion-contract`, `notion-authority-rag-contract`,
+`continuity-query-contract`, and `continuity-subtree-contract` selectors.
 The route-budget case uses the
 production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
@@ -351,16 +352,23 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 121-request
+evidence, not Railway control-plane provenance. The current fixed 122-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, five sealed Backstage generation
-timeout/cache/review-completion/Notion-authority/continuity-query cases, one
+worker-role approval-contract denial, six sealed Backstage generation
+timeout/cache/review-completion/Notion-authority/continuity cases, one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, and one canon-summary pagination case.
+The additive subtree selector runs the production-shared continuity prompt and
+public-response core over sealed relevant and two-page continuation projections.
+It proves subtree-only scope/page fields stay coupled, coverage totals and source
+paths remain bounded, incomplete subtree coverage fails closed, and the opaque
+continuation request passes only the shape/mode preflight. It explicitly does not
+execute recursive SQL, select or diversify live chunks, sign or verify cursor v3,
+or reach PostgreSQL, Notion credentials, or a model provider.
 The excerpt case executes the production-shared pure projector
 over the full ECMAScript leading-whitespace set and explicitly reports that no
 database or SQL projection ran; PostgreSQL 18 CI remains the SQL-engine proof. It

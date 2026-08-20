@@ -377,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 121);
+  assert.equal(requestPlan.length, 122);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -411,7 +411,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    5
+    6
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -698,11 +698,15 @@ test('executes the bounded credential-free matrix and detects identity stability
   const continuityQueryCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-continuity-query'
   );
+  const continuitySubtreeCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-continuity-subtree'
+  );
   assert.ok(routeBudgetCase);
   assert.ok(hrcRetryCacheCase);
   assert.ok(reviewCompletionCase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(continuityQueryCase);
+  assert.ok(continuitySubtreeCase);
   assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(routeBudgetCase, {
@@ -937,6 +941,80 @@ test('executes the bounded credential-free matrix and detects identity stability
       schemaVersion: 1,
     }
   );
+  const continuitySubtreePayload = expectedNativePrPreviewResponseBody(
+    continuitySubtreeCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(continuitySubtreePayload.continuity.contracts, {
+    completeScopeAllFixtureSourcesObserved: true,
+    incompleteSubtreeCoverageRejected: true,
+    pageCoverageTotalsTruthful: true,
+    scopeSourcePathsBound: true,
+    subtreeFieldsCoupled: true,
+    subtreePageCoveragePromptBound: true,
+  });
+  assert.equal(
+    continuitySubtreePayload.continuity.cursorCodecBoundaryReached,
+    false
+  );
+  assert.deepEqual(
+    continuitySubtreePayload.continuity.cursorPreflight,
+    {
+      completeScopeShapeAccepted: true,
+      malformedRejected: true,
+      wrongModeRejected: true,
+    }
+  );
+  assert.deepEqual(
+    continuitySubtreePayload.continuity.publicResponse.resolvedScope,
+    {
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['WWE Universe Mode', 'Brands', 'Monday Night Raw'],
+      scopeKind: 'subtree',
+    }
+  );
+  assert.deepEqual(
+    continuitySubtreePayload.continuity.completeScopeProjections.first.coverage,
+    {
+      status: 'sampled',
+      scopeChunks: 3,
+      selectedChunks: 2,
+      omittedChunks: 1,
+      promptTruncated: false,
+      exhaustive: false,
+      hasMore: true,
+      nextCursor:
+        'eyJ2IjozLCJmaXh0dXJlIjoic2VhbGVkLXN1YnRyZWUtcHJldmlldyJ9',
+      scopePages: 3,
+      selectedPages: 2,
+      omittedPages: 1,
+    }
+  );
+  assert.deepEqual(
+    continuitySubtreePayload.continuity.completeScopeProjections.final.coverage,
+    {
+      status: 'sampled',
+      scopeChunks: 3,
+      selectedChunks: 1,
+      omittedChunks: 2,
+      promptTruncated: false,
+      exhaustive: false,
+      hasMore: false,
+      scopePages: 3,
+      selectedPages: 1,
+      omittedPages: 2,
+    }
+  );
+  assert.equal(
+    continuitySubtreePayload.continuity.completeScopeProjections.first.sourceIds
+      .length,
+    2
+  );
+  assert.equal(
+    continuitySubtreePayload.continuity.completeScopeProjections.final.sourceIds
+      .length,
+    1
+  );
   const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
     caseId === 'mcp-body-cap-effective-limits'
   );
@@ -1055,14 +1133,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 121);
+  assert.equal(result.summary.requestsMade, 122);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 121);
+  assert.equal(result.checks.length, 122);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 121);
+  assert.equal(mock.requestCount, 122);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1134,12 +1212,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 6);
+  assert.equal(backstageGenerationCalls.length, 7);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    5
+    6
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
