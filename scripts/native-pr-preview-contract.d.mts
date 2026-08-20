@@ -41,6 +41,7 @@ export interface NativePrPreviewE2eContract {
       hrcRetryCache: 'hrc-timeout-retry-cache';
       reviewCompletion: 'review-completion-contract';
       notionAuthorityRag: 'notion-authority-rag-contract';
+      continuityQuery: 'continuity-query-contract';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{

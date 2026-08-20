@@ -377,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 119);
+  assert.equal(requestPlan.length, 121);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -389,6 +389,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       && !caseId.startsWith('worker-gaming-')
       && caseId !== 'worker-research-denied'
       && caseId !== 'worker-backstage-storyline-denied'
+      && caseId !== 'worker-backstage-generation-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
       && caseId !== 'worker-self-heal-approval-denied'
     ).length,
@@ -410,7 +411,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    4
+    5
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -694,10 +695,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
+  const continuityQueryCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-continuity-query'
+  );
   assert.ok(routeBudgetCase);
   assert.ok(hrcRetryCacheCase);
   assert.ok(reviewCompletionCase);
   assert.ok(notionAuthorityRagCase);
+  assert.ok(continuityQueryCase);
   assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(routeBudgetCase, {
@@ -856,6 +861,82 @@ test('executes the bounded credential-free matrix and detects identity stability
       schemaVersion: 1,
     }
   );
+  assert.deepEqual(
+    expectedNativePrPreviewResponseBody(continuityQueryCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    }),
+    {
+      accepted: true,
+      actionPolicy: {
+        canonicalRouteRecognized: true,
+        publicReadOnlyAction: true,
+        queryContinuityRecognized: true,
+        tokenLimit: 900,
+        trinityRunOptionsBound: true,
+      },
+      cacheBoundaryReached: false,
+      continuity: {
+        compactRetryBound: true,
+        cursorPreflight: {
+          completeScopeAccepted: true,
+          malformedRejected: true,
+          wrongModeRejected: true,
+        },
+        exhaustiveCoverageInstruction: true,
+        instructionBoundaryPreserved: true,
+        publicResponse: {
+          answer: "1. Rhea Ripley holds the Women's World Championship on Raw.",
+          authority: 'notion',
+          coverage: {
+            exhaustive: false,
+            hasMore: false,
+            omittedChunks: 0,
+            promptTruncated: false,
+            scopeChunks: 1,
+            selectedChunks: 1,
+            status: 'sampled',
+          },
+          resolvedScope: {
+            pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+            pageTitle: 'Monday Night Raw',
+            sectionPath: ['Championships', "Women's World Championship"],
+          },
+          sources: [
+            {
+              category: 'kayfabe',
+              contentHash:
+                '9ac466a759d89a5d1db68cb463399d363a17195ab54efe7e04b14aed39df1b91',
+              headingPath: ['Championships', "Women's World Championship"],
+              pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+              pageTitle: 'Monday Night Raw',
+              sourceId:
+                '0907207c11757e22e61b23a2d600ecb5813564e6de792700c8629f0cf51a9456',
+            },
+          ],
+          universeId: 'native-preview-continuity-query',
+        },
+        sampledCoverageInstruction: true,
+        sourceProjectionVerified: true,
+        syntheticAnswerNormalized: true,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: 'continuity-query-contract',
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
+        sanitizationApplied: true,
+        sourcePageChunkCount: 2,
+      },
+      schemaVersion: 1,
+    }
+  );
   const mcpBodyCapCase = requestPlan.find(({ caseId }) =>
     caseId === 'mcp-body-cap-effective-limits'
   );
@@ -974,14 +1055,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 119);
+  assert.equal(result.summary.requestsMade, 121);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 119);
+  assert.equal(result.checks.length, 121);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 119);
+  assert.equal(mock.requestCount, 121);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1053,7 +1134,19 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 4);
+  assert.equal(backstageGenerationCalls.length, 6);
+  assert.equal(
+    backstageGenerationCalls.filter(({ url }) =>
+      url.startsWith(WEB_BASE_URL)
+    ).length,
+    5
+  );
+  assert.equal(
+    backstageGenerationCalls.filter(({ url }) =>
+      url.startsWith(WORKER_BASE_URL)
+    ).length,
+    1
+  );
   for (const { init } of backstageGenerationCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);

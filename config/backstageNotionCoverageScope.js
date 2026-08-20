@@ -105,6 +105,12 @@ export const backstageNotionCoverageThresholds = Object.freeze({
     lines: 100,
     statements: 100,
   }),
+  'src/shared/backstage/backstageContinuityQueryCore.ts': Object.freeze({
+    branches: 100,
+    functions: 100,
+    lines: 100,
+    statements: 100,
+  }),
   'src/shared/backstage/backstageGenerationError.ts': Object.freeze({
     branches: 100,
     functions: 100,

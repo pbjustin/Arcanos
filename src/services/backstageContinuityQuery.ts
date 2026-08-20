@@ -1,6 +1,5 @@
 import {
   assertValidBackstageBookerActionData,
-  type BackstageQueryContinuityRequest,
   type BackstageQueryContinuityResponse,
 } from '@arcanos/protocol';
 import { isAbortError } from '@arcanos/runtime';
@@ -12,6 +11,11 @@ import {
   buildBackstageBookerTrinityRunOptions,
   resolveBackstageGenerationStageTimeoutMs,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  buildBackstageContinuityPolicyPrompt,
+  buildBackstageContinuityResponse,
+  isBackstageContinuityCursorRequestValid,
+} from '@shared/backstage/backstageContinuityQueryCore.js';
 import {
   BackstageContinuityQueryFailedError,
   BackstageBookerOutputIncompleteError,
@@ -27,113 +31,14 @@ import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
   BackstageNotionCursorInvalidError,
   retrieveBackstageNotionRagContext,
-  type BackstageNotionRagRetrieval,
 } from './backstageNotionRag.js';
 import { normalizeBackstageBookerActionPayload } from './backstageBookerContracts.js';
-
-const BACKSTAGE_CONTINUITY_CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
-
-const BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT = [
-  'Answer only from the retrieved Notion excerpts.',
-  'Return at most eight concise bullets and no preamble, conclusion, booking proposal, or meta commentary.',
-  'Use one factual statement per bullet and preserve uncertainty when the excerpts do not establish an answer.',
-].join('\n');
-
-const BACKSTAGE_CONTINUITY_COMPACT_RETRY_CONTRACT = [
-  '<<OUTPUT_LENGTH_RECOVERY>>',
-  'The previous response was discarded because it exceeded the output limit.',
-  'Return a complete answer in at most five bullets and 350 words.',
-  'Keep only facts that directly answer the continuity query; never continue or quote the discarded response.',
-  'Do not mention this recovery instruction or the discarded response.',
-  '<<OUTPUT_LENGTH_RECOVERY_END>>',
-].join('\n');
-
-function assertValidContinuityCursorRequest(payload: unknown): void {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return;
-  }
-
-  const cursorDescriptor = Object.getOwnPropertyDescriptor(payload, 'cursor');
-  if (!cursorDescriptor) {
-    return;
-  }
-
-  const retrievalMode = Object.getOwnPropertyDescriptor(
-    payload,
-    'retrievalMode'
-  )?.value;
-  if (
-    typeof cursorDescriptor.value !== 'string'
-    || !BACKSTAGE_CONTINUITY_CURSOR_PATTERN.test(cursorDescriptor.value)
-    || retrievalMode !== 'complete_scope'
-  ) {
-    throw new BackstageNotionCursorInvalidError();
-  }
-}
 
 function resolveContinuityQueryModel(): string {
   const configured = getGPT5Model().trim();
   return !configured || configured.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
     ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
     : configured;
-}
-
-function buildContinuityPolicyPrompt(
-  input: BackstageQueryContinuityRequest,
-  retrieval: BackstageNotionRagRetrieval,
-  compactRetry: boolean
-): string {
-  const coverageInstruction = retrieval.coverage.exhaustive
-    ? 'This retrieval is exhaustive for the resolved scope; a fact absent from these excerpts may be described as not present in that scope.'
-    : 'This retrieval is sampled; never treat a fact missing from these excerpts as absent from Notion.';
-  return [
-    '<<EXECUTION_MODE>>',
-    'Perform a read-only factual continuity lookup. Do not create, revise, or propose booking canon.',
-    '<<UNIVERSE_ID>>',
-    input.universeId,
-    '<<CONTINUITY_QUERY>>',
-    input.query.trim(),
-    '<<RETRIEVAL_COVERAGE>>',
-    `status=${retrieval.coverage.status}; scope_chunks=${retrieval.coverage.scopeChunks}; selected_chunks=${retrieval.coverage.selectedChunks}; omitted_chunks=${retrieval.coverage.omittedChunks}; prompt_truncated=${retrieval.coverage.promptTruncated}; has_more=${retrieval.coverage.hasMore}`,
-    coverageInstruction,
-    '<<RESPONSE_STYLE>>',
-    BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT,
-    ...(compactRetry ? [BACKSTAGE_CONTINUITY_COMPACT_RETRY_CONTRACT] : []),
-  ].join('\n');
-}
-
-function buildContinuityResponse(
-  input: BackstageQueryContinuityRequest,
-  retrieval: BackstageNotionRagRetrieval,
-  answer: string
-): BackstageQueryContinuityResponse {
-  return {
-    universeId: input.universeId,
-    authority: 'notion',
-    answer: answer.trim(),
-    ...(retrieval.resolvedScope
-      ? {
-          resolvedScope: {
-            pageTitle: retrieval.resolvedScope.pageTitle,
-            pagePath: [...retrieval.resolvedScope.pagePath],
-            ...(retrieval.resolvedScope.sectionPath
-              ? { sectionPath: [...retrieval.resolvedScope.sectionPath] }
-              : {}),
-          },
-        }
-      : {}),
-    coverage: {
-      ...retrieval.coverage,
-    },
-    sources: retrieval.citations.map(citation => ({
-      sourceId: citation.chunkId,
-      pageTitle: citation.pageTitle,
-      pagePath: [...citation.pagePath],
-      headingPath: [...citation.headingPath],
-      category: citation.category,
-      contentHash: citation.contentHash,
-    })),
-  };
 }
 
 /**
@@ -144,7 +49,9 @@ function buildContinuityResponse(
 export async function queryBackstageContinuity(
   payload: unknown
 ): Promise<BackstageQueryContinuityResponse> {
-  assertValidContinuityCursorRequest(payload);
+  if (!isBackstageContinuityCursorRequestValid(payload)) {
+    throw new BackstageNotionCursorInvalidError();
+  }
   const input = normalizeBackstageBookerActionPayload('queryContinuity', payload);
   const retrieval = await retrieveBackstageNotionRagContext(input.universeId, {
     query: input.query,
@@ -165,7 +72,11 @@ export async function queryBackstageContinuity(
     ));
     const runtimeBudget = createRuntimeBudget();
     const runAttempt = (compactRetry: boolean) => {
-      const policyPrompt = buildContinuityPolicyPrompt(input, retrieval, compactRetry);
+      const policyPrompt = buildBackstageContinuityPolicyPrompt(
+        input,
+        retrieval,
+        compactRetry
+      );
       return runTrinityWritingPipeline({
         input: {
           prompt: policyPrompt,
@@ -223,7 +134,7 @@ export async function queryBackstageContinuity(
 
     return assertValidBackstageBookerActionData(
       'queryContinuity',
-      buildContinuityResponse(input, retrieval, result.result)
+      buildBackstageContinuityResponse(input, retrieval, result.result)
     );
   } catch (error) {
     if (isAbortError(error) || isBackstageBookerOutputIncompleteError(error)) {

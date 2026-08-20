@@ -4,6 +4,11 @@ import {
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
   BackstageContinuityQueryFailedError,
 } from '../src/shared/backstage/backstageGenerationError.js';
+import {
+  buildBackstageContinuityPolicyPrompt,
+  buildBackstageContinuityResponse,
+  isBackstageContinuityCursorRequestValid,
+} from '../src/shared/backstage/backstageContinuityQueryCore.js';
 
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
@@ -110,6 +115,99 @@ const request = {
   },
   retrievalMode: 'complete_scope',
 } as const;
+
+describe('Backstage continuity query core', () => {
+  it('preflights only an own complete-scope cursor without invoking accessors', () => {
+    let cursorAccessorInvoked = false;
+    const accessorPayload = {
+      retrievalMode: 'complete_scope',
+      get cursor() {
+        cursorAccessorInvoked = true;
+        return 'eyJ2IjoxfQ';
+      },
+    };
+
+    expect(isBackstageContinuityCursorRequestValid(null)).toBe(true);
+    expect(isBackstageContinuityCursorRequestValid(request)).toBe(true);
+    expect(isBackstageContinuityCursorRequestValid({
+      ...request,
+      cursor: retrieval.coverage.nextCursor,
+    })).toBe(true);
+    expect(isBackstageContinuityCursorRequestValid({
+      ...request,
+      cursor: '!',
+    })).toBe(false);
+    expect(isBackstageContinuityCursorRequestValid({
+      ...request,
+      retrievalMode: 'relevant',
+      cursor: retrieval.coverage.nextCursor,
+    })).toBe(false);
+    expect(isBackstageContinuityCursorRequestValid(accessorPayload)).toBe(false);
+    expect(cursorAccessorInvoked).toBe(false);
+  });
+
+  it('builds the trusted sampled policy and adds compact recovery only on retry', () => {
+    const primary = buildBackstageContinuityPolicyPrompt(
+      request,
+      retrieval,
+      false
+    );
+    const compactRetry = buildBackstageContinuityPolicyPrompt(
+      request,
+      retrieval,
+      true
+    );
+
+    expect(primary).toContain('Perform a read-only factual continuity lookup.');
+    expect(primary).toContain(request.universeId);
+    expect(primary).toContain(request.query);
+    expect(primary).toContain(
+      'status=sampled; scope_chunks=7; selected_chunks=2; omitted_chunks=5; prompt_truncated=false; has_more=true'
+    );
+    expect(primary).toContain(
+      'This retrieval is sampled; never treat a fact missing from these excerpts as absent from Notion.'
+    );
+    expect(primary).not.toContain('<<OUTPUT_LENGTH_RECOVERY>>');
+    expect(compactRetry).toContain('<<OUTPUT_LENGTH_RECOVERY>>');
+    expect(compactRetry).toContain('at most five bullets and 350 words');
+  });
+
+  it('projects only public citation metadata and copies caller-visible arrays', () => {
+    const response = buildBackstageContinuityResponse(
+      request,
+      retrieval,
+      '  - CM Punk is champion.  '
+    );
+
+    expect(response).toEqual({
+      universeId: request.universeId,
+      authority: 'notion',
+      answer: '- CM Punk is champion.',
+      resolvedScope: retrieval.resolvedScope,
+      coverage: retrieval.coverage,
+      sources: retrieval.citations.map(citation => ({
+        sourceId: citation.chunkId,
+        pageTitle: citation.pageTitle,
+        pagePath: citation.pagePath,
+        headingPath: citation.headingPath,
+        category: citation.category,
+        contentHash: citation.contentHash,
+      })),
+    });
+    expect(response.resolvedScope?.pagePath).not.toBe(
+      retrieval.resolvedScope.pagePath
+    );
+    expect(response.coverage).not.toBe(retrieval.coverage);
+    expect(response.sources[0]?.pagePath).not.toBe(
+      retrieval.citations[0].pagePath
+    );
+    expect(response.sources[0]?.headingPath).not.toBe(
+      retrieval.citations[0].headingPath
+    );
+    expect(JSON.stringify(response)).not.toContain(retrieval.citations[0].pageId);
+    expect(JSON.stringify(response)).not.toContain(retrieval.prompt);
+  });
+});
 
 describe('Backstage Booker queryContinuity', () => {
   beforeEach(() => {

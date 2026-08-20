@@ -48,6 +48,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
@@ -603,6 +604,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageActionPolicy.ts',
     '5609ace9e84dacfbca8b0e29be0d8b8f9269cd0d1cc2ed0b4987449a13de548c',
+  ],
+  [
+    'src/shared/backstage/backstageContinuityQueryCore.ts',
+    'f7b95bb664829d09be4d81374a993029cd25de2fac4d16028f7bc87750d4d2bb',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',

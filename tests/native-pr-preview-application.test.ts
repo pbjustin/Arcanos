@@ -1049,7 +1049,7 @@ describe('native PR contained application', () => {
     }
   });
 
-  it('executes sealed Backstage generation, HRC cache, review, and Notion authority contracts', async () => {
+  it('executes sealed Backstage generation, HRC cache, review, Notion authority, and continuity contracts', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
     const routeBudget = await request(app)
@@ -1064,6 +1064,9 @@ describe('native PR contained application', () => {
     const notionAuthorityRag = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.notionAuthorityRag });
+    const continuityQuery = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.continuityQuery });
 
     expect(routeBudget.status).toBe(200);
     expect(routeBudget.body).toEqual({
@@ -1239,11 +1242,83 @@ describe('native PR contained application', () => {
       schemaVersion: 1,
     });
 
+    expect(continuityQuery.status).toBe(200);
+    expect(continuityQuery.body).toEqual({
+      accepted: true,
+      actionPolicy: {
+        canonicalRouteRecognized: true,
+        publicReadOnlyAction: true,
+        queryContinuityRecognized: true,
+        tokenLimit: 900,
+        trinityRunOptionsBound: true,
+      },
+      cacheBoundaryReached: false,
+      continuity: {
+        compactRetryBound: true,
+        cursorPreflight: {
+          completeScopeAccepted: true,
+          malformedRejected: true,
+          wrongModeRejected: true,
+        },
+        exhaustiveCoverageInstruction: true,
+        instructionBoundaryPreserved: true,
+        publicResponse: {
+          universeId: 'native-preview-continuity-query',
+          authority: 'notion',
+          answer:
+            "1. Rhea Ripley holds the Women's World Championship on Raw.",
+          resolvedScope: {
+            pageTitle: 'Monday Night Raw',
+            pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+            sectionPath: ['Championships', "Women's World Championship"],
+          },
+          coverage: {
+            status: 'sampled',
+            scopeChunks: 1,
+            selectedChunks: 1,
+            omittedChunks: 0,
+            promptTruncated: false,
+            exhaustive: false,
+            hasMore: false,
+          },
+          sources: [{
+            sourceId:
+              '0907207c11757e22e61b23a2d600ecb5813564e6de792700c8629f0cf51a9456',
+            pageTitle: 'Monday Night Raw',
+            pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+            headingPath: ['Championships', "Women's World Championship"],
+            category: 'kayfabe',
+            contentHash:
+              '9ac466a759d89a5d1db68cb463399d363a17195ab54efe7e04b14aed39df1b91',
+          }],
+        },
+        sampledCoverageInstruction: true,
+        sourceProjectionVerified: true,
+        syntheticAnswerNormalized: true,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.continuityQuery,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
+        sanitizationApplied: true,
+        sourcePageChunkCount: 2,
+      },
+      schemaVersion: 1,
+    });
+
     for (const response of [
       routeBudget,
       hrcRetryCache,
       reviewCompletion,
       notionAuthorityRag,
+      continuityQuery,
     ]) {
       expectContainedResponseHeaders(
         response,
