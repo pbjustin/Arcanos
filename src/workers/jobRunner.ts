@@ -220,6 +220,18 @@ function initOpenAIClient() {
   return adapter.getClient();
 }
 
+function initializeWorkerOpenAIAdapterIfConfigured(): void {
+  const unified = getConfig();
+  if (!unified.openaiApiKey?.trim()) {
+    return;
+  }
+
+  syncOpenAIProviderRuntime({
+    reason: 'job_runner:backstage_notion_readiness'
+  });
+  initOpenAIClient();
+}
+
 function hasDatabaseConfiguration(): boolean {
   const directUrlConfigured = [
     'DATABASE_URL',
@@ -2096,6 +2108,8 @@ async function run(): Promise<void> {
     });
     return;
   }
+
+  initializeWorkerOpenAIAdapterIfConfigured();
 
   try {
     const backstageNotionReadiness = await ensureBackstageNotionWorkerReadiness({
