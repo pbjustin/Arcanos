@@ -448,8 +448,16 @@ describe('Backstage Notion synchronization loop', () => {
     const source = fs
       .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
       .replace(/\r\n/gu, '\n');
+    const databaseBootstrapIndex = source.indexOf(
+      "await initializeJobRunnerDatabaseWithRetry('job-runner'"
+    );
+    const adapterInitializationIndex = source.indexOf(
+      'initializeWorkerOpenAIAdapterIfConfigured();',
+      databaseBootstrapIndex
+    );
     const notionReadinessIndex = source.indexOf(
-      'await ensureBackstageNotionWorkerReadiness({'
+      'await ensureBackstageNotionWorkerReadiness({',
+      adapterInitializationIndex
     );
     const readinessBarrierIndex = source.indexOf(
       'await commitAllWorkerSlotsReadyOrThrow(',
@@ -473,6 +481,8 @@ describe('Backstage Notion synchronization loop', () => {
     );
 
     expect([
+      databaseBootstrapIndex,
+      adapterInitializationIndex,
       notionReadinessIndex,
       readinessBarrierIndex,
       readinessSignalIndex,
@@ -480,12 +490,47 @@ describe('Backstage Notion synchronization loop', () => {
       runtimeBarrierIndex,
       syncStopIndex,
     ]).not.toContain(-1);
+    expect(databaseBootstrapIndex).toBeLessThan(adapterInitializationIndex);
+    expect(adapterInitializationIndex).toBeLessThan(notionReadinessIndex);
     expect(notionReadinessIndex).toBeLessThan(readinessBarrierIndex);
     expect(readinessBarrierIndex).toBeLessThan(readinessSignalIndex);
     expect(readinessSignalIndex).toBeLessThan(syncStartIndex);
     expect(syncStartIndex).toBeLessThan(runtimeBarrierIndex);
     expect(runtimeBarrierIndex).toBeLessThan(syncStopIndex);
     expect(source).not.toContain('await startBackstageNotionSyncLoop(');
+  });
+
+  it('does not require an OpenAI adapter for a keyless worker startup', () => {
+    const source = fs
+      .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
+      .replace(/\r\n/gu, '\n');
+    const helperStartIndex = source.indexOf(
+      'function initializeWorkerOpenAIAdapterIfConfigured(): void {'
+    );
+    const helperEndIndex = source.indexOf(
+      '\nfunction hasDatabaseConfiguration()',
+      helperStartIndex
+    );
+    const helperSource = source.slice(helperStartIndex, helperEndIndex);
+    const missingKeyGuardIndex = helperSource.indexOf(
+      'if (!unified.openaiApiKey?.trim()) {'
+    );
+    const earlyReturnIndex = helperSource.indexOf('return;', missingKeyGuardIndex);
+    const providerRuntimeSyncIndex = helperSource.indexOf(
+      'syncOpenAIProviderRuntime({',
+      earlyReturnIndex
+    );
+    const adapterInitializationIndex = helperSource.indexOf(
+      'initOpenAIClient();',
+      providerRuntimeSyncIndex
+    );
+
+    expect(helperStartIndex).toBeGreaterThanOrEqual(0);
+    expect(helperEndIndex).toBeGreaterThan(helperStartIndex);
+    expect(missingKeyGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(earlyReturnIndex).toBeGreaterThan(missingKeyGuardIndex);
+    expect(providerRuntimeSyncIndex).toBeGreaterThan(earlyReturnIndex);
+    expect(adapterInitializationIndex).toBeGreaterThan(providerRuntimeSyncIndex);
   });
 
   it('uses the production readiness dependency defaults with a bounded signal', async () => {
