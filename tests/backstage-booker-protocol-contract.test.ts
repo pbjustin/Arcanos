@@ -1,4 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { describe, expect, it } from '@jest/globals';
+import ts from 'typescript';
 
 import {
   ARCANOS_PROTOCOL_COMMAND_IDS,
@@ -306,6 +310,179 @@ describe('Backstage Booker protocol contract', () => {
         issues: [],
       });
     }
+  });
+
+  it('keeps the TypeScript continuity response discriminated like the schema', () => {
+    const virtualPath = path.resolve(
+      process.cwd(),
+      'packages/protocol/src/backstageBooker.type-contract.ts'
+    );
+    const sourceText = `${fs.readFileSync(
+      path.resolve(process.cwd(), 'packages/protocol/src/backstageBooker.ts'),
+      'utf8'
+    )}
+
+type QueryContinuityTypeTestAssert<T extends true> = T;
+type QueryContinuityTypeTestAssignable<T, U> = [T] extends [U] ? true : false;
+type QueryContinuityTypeTestNotAssignable<T, U> = [T] extends [U] ? false : true;
+
+interface QueryContinuityTypeTestResponseBase {
+  universeId: 'promotion:raw';
+  authority: 'notion';
+  answer: 'Continuity answer.';
+  sources: [];
+}
+
+interface QueryContinuityTypeTestCoverageBase {
+  status: 'complete';
+  scopeChunks: 2;
+  selectedChunks: 2;
+  omittedChunks: 0;
+  promptTruncated: false;
+  exhaustive: true;
+  hasMore: false;
+}
+
+type QueryContinuityTypeTestValidPage = QueryContinuityTypeTestResponseBase & {
+  resolvedScope: {
+    pageTitle: 'Monday Night Raw';
+    pagePath: ['WWE Universe Mode', 'Monday Night Raw'];
+  };
+  coverage: QueryContinuityTypeTestCoverageBase;
+};
+
+type QueryContinuityTypeTestValidUnscoped = QueryContinuityTypeTestResponseBase & {
+  coverage: QueryContinuityTypeTestCoverageBase;
+};
+
+type QueryContinuityTypeTestValidSubtree = QueryContinuityTypeTestResponseBase & {
+  resolvedScope: {
+    pageTitle: 'Monday Night Raw';
+    pagePath: ['WWE Universe Mode', 'Monday Night Raw'];
+    scopeKind: 'subtree';
+  };
+  coverage: QueryContinuityTypeTestCoverageBase & {
+    scopePages: 2;
+    selectedPages: 2;
+    omittedPages: 0;
+  };
+};
+
+type QueryContinuityTypeTestInvalidPage = QueryContinuityTypeTestResponseBase & {
+  resolvedScope: {
+    pageTitle: 'Monday Night Raw';
+    pagePath: ['WWE Universe Mode', 'Monday Night Raw'];
+  };
+  coverage: QueryContinuityTypeTestCoverageBase & {
+    scopePages: 2;
+    selectedPages: 2;
+    omittedPages: 0;
+  };
+};
+
+type QueryContinuityTypeTestInvalidUnscoped = QueryContinuityTypeTestResponseBase & {
+  coverage: QueryContinuityTypeTestCoverageBase & {
+    scopePages: 2;
+    selectedPages: 2;
+    omittedPages: 0;
+  };
+};
+
+type QueryContinuityTypeTestInvalidSubtree = QueryContinuityTypeTestResponseBase & {
+  resolvedScope: {
+    pageTitle: 'Monday Night Raw';
+    pagePath: ['WWE Universe Mode', 'Monday Night Raw'];
+    scopeKind: 'subtree';
+  };
+  coverage: QueryContinuityTypeTestCoverageBase;
+};
+
+type QueryContinuityTypeTestValidPageAccepted = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestAssignable<
+    QueryContinuityTypeTestValidPage,
+    BackstageQueryContinuityResponse
+  >
+>;
+type QueryContinuityTypeTestValidUnscopedAccepted = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestAssignable<
+    QueryContinuityTypeTestValidUnscoped,
+    BackstageQueryContinuityResponse
+  >
+>;
+type QueryContinuityTypeTestValidSubtreeAccepted = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestAssignable<
+    QueryContinuityTypeTestValidSubtree,
+    BackstageQueryContinuityResponse
+  >
+>;
+type QueryContinuityTypeTestPageCountsRejected = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestNotAssignable<
+    QueryContinuityTypeTestInvalidPage,
+    BackstageQueryContinuityResponse
+  >
+>;
+type QueryContinuityTypeTestUnscopedCountsRejected = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestNotAssignable<
+    QueryContinuityTypeTestInvalidUnscoped,
+    BackstageQueryContinuityResponse
+  >
+>;
+type QueryContinuityTypeTestMissingSubtreeCountsRejected = QueryContinuityTypeTestAssert<
+  QueryContinuityTypeTestNotAssignable<
+    QueryContinuityTypeTestInvalidSubtree,
+    BackstageQueryContinuityResponse
+  >
+>;
+`;
+    const compilerOptions: ts.CompilerOptions = {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      strict: true,
+      skipLibCheck: true,
+      noEmit: true,
+      types: [],
+    };
+    const host = ts.createCompilerHost(compilerOptions, true);
+    const isVirtualPath = (candidate: string) => (
+      path.resolve(candidate).toLowerCase() === virtualPath.toLowerCase()
+    );
+    const defaultFileExists = host.fileExists.bind(host);
+    const defaultReadFile = host.readFile.bind(host);
+    const defaultGetSourceFile = host.getSourceFile.bind(host);
+    host.fileExists = (candidate) => isVirtualPath(candidate) || defaultFileExists(candidate);
+    host.readFile = (candidate) => (
+      isVirtualPath(candidate) ? sourceText : defaultReadFile(candidate)
+    );
+    host.getSourceFile = (
+      candidate,
+      languageVersion,
+      onError,
+      shouldCreateNewSourceFile
+    ) => (
+      isVirtualPath(candidate)
+        ? ts.createSourceFile(candidate, sourceText, languageVersion, true)
+        : defaultGetSourceFile(
+            candidate,
+            languageVersion,
+            onError,
+            shouldCreateNewSourceFile
+          )
+    );
+
+    const program = ts.createProgram([virtualPath], compilerOptions, host);
+    const diagnostics = ts.getPreEmitDiagnostics(program).map((diagnostic) => {
+      const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+      if (!diagnostic.file || diagnostic.start === undefined) {
+        return message;
+      }
+      const location = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+      return `${path.basename(diagnostic.file.fileName)}:${location.line + 1}:${
+        location.character + 1
+      } ${message}`;
+    });
+
+    expect(diagnostics).toEqual([]);
   });
 
   it('keeps universeId optional for legacy callers without mutating the payload', () => {

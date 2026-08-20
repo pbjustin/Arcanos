@@ -1078,6 +1078,65 @@ describe('Backstage Notion authority RAG retrieval', () => {
     });
   });
 
+  it.each([
+    ['chunk count', 2, 2],
+    ['page count', 3, 1],
+  ] as const)(
+    'fails closed when relevant subtree %s disagrees with the active projection',
+    async (_case, scopeChunkCount, scopePageCount) => {
+      const anchorPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+      const rawChunks = [
+        chunk({
+          pageIndex: 1,
+          ordinal: 0,
+          pageTitle: 'Monday Night Raw',
+          pagePath: anchorPath,
+          content: 'Raw overview.',
+        }),
+        chunk({
+          pageIndex: 1,
+          ordinal: 1,
+          pageTitle: 'Monday Night Raw',
+          pagePath: anchorPath,
+          content: 'Raw overview two.',
+        }),
+        chunk({
+          pageIndex: 2,
+          pageTitle: 'Raw Roster',
+          pagePath: [...anchorPath, 'Raw Roster'],
+          content: 'Raw roster continuity.',
+        }),
+      ];
+      const active = activeSnapshot(rawChunks);
+      const state = harness(active, {
+        resolveSnapshotScope: async () => ({
+          status: 'resolved',
+          pageTitle: 'Monday Night Raw',
+          pagePath: anchorPath,
+          sectionPath: null,
+          selector: {
+            pageId: rawChunks[0]!.pageId,
+            scopeKind: 'subtree',
+            sectionOccurrencePath: null,
+          },
+          scopeChunkCount,
+          scopePageCount,
+        }),
+      });
+
+      await expect(retrieveAuthorized(state.dependencies, {
+        query: 'read Raw continuity',
+        retrievalScope: {
+          pageTitle: 'Monday Night Raw',
+          pagePath: anchorPath,
+          scopeKind: 'subtree',
+        },
+      })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+      expect(state.embedQuery).not.toHaveBeenCalled();
+    }
+  );
+
   it('paginates complete subtrees with a re-resolved v3 cursor and no internal selector', async () => {
     const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
     const rawChunks = [
@@ -1334,6 +1393,56 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
   });
 
+  it('fails closed when a complete subtree page contains a sibling path', async () => {
+    const anchorPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const anchor = chunk({
+      pageIndex: 1,
+      pageTitle: 'Monday Night Raw',
+      pagePath: anchorPath,
+      content: 'Raw overview.',
+    });
+    const sibling = chunk({
+      pageIndex: 2,
+      pageTitle: 'SmackDown',
+      pagePath: ['WWE Universe Mode', 'Brands', 'SmackDown'],
+      content: 'SmackDown continuity.',
+    });
+    const { embedding: _embedding, ...storedSibling } = sibling;
+    const active = activeSnapshot([anchor]);
+    const state = harness(active, {
+      resolveSnapshotScope: async () => ({
+        status: 'resolved',
+        pageTitle: anchor.pageTitle,
+        pagePath: anchorPath,
+        sectionPath: null,
+        selector: {
+          pageId: anchor.pageId,
+          scopeKind: 'subtree',
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 1,
+        scopePageCount: 1,
+      }),
+      loadSnapshotChunkPage: async () => ({
+        scopeChunkCount: 1,
+        chunks: [storedSibling],
+      }),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'read the Raw subtree',
+      retrievalScope: {
+        pageTitle: anchor.pageTitle,
+        pagePath: anchorPath,
+        scopeKind: 'subtree',
+      },
+      retrievalMode: 'complete_scope',
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
+    expect(state.embedQuery).not.toHaveBeenCalled();
+  });
+
   it('paginates complete exact scopes with a snapshot-and-request-bound cursor', async () => {
     const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
     const rawChunks = Array.from({ length: 15 }, (_unused, ordinal) => chunk({
@@ -1563,6 +1672,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
 
     for (const malformedPayload of [
       { ...unscopedDecoded, scopeKind: 'unsupported' },
+      { ...unscopedDecoded, scopeKind: null },
       { ...unscopedDecoded, scopePageCount: 0 },
       { ...unscopedDecoded, scopePageCount: Number.MAX_SAFE_INTEGER },
       { ...unscopedDecoded, scopeSelector: null },

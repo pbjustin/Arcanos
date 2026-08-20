@@ -175,15 +175,19 @@ interface BackstageContinuityResolvedScopeBase {
   pagePath: string[];
 }
 
+type BackstageContinuityPageResolvedScope = BackstageContinuityResolvedScopeBase & {
+  scopeKind?: never;
+  sectionPath?: string[];
+};
+
+type BackstageContinuitySubtreeResolvedScope = BackstageContinuityResolvedScopeBase & {
+  scopeKind: "subtree";
+  sectionPath?: never;
+};
+
 export type BackstageContinuityResolvedScope =
-  | (BackstageContinuityResolvedScopeBase & {
-      scopeKind?: never;
-      sectionPath?: string[];
-    })
-  | (BackstageContinuityResolvedScopeBase & {
-      scopeKind: "subtree";
-      sectionPath?: never;
-    });
+  | BackstageContinuityPageResolvedScope
+  | BackstageContinuitySubtreeResolvedScope;
 
 export type BackstageContinuityRetrievalMode = "relevant" | "complete_scope";
 
@@ -214,18 +218,21 @@ interface BackstageContinuityCoverageBase {
   nextCursor?: string;
 }
 
-export type BackstageContinuityCoverage = BackstageContinuityCoverageBase & (
-  | {
-      scopePages?: never;
-      selectedPages?: never;
-      omittedPages?: never;
-    }
-  | {
-      scopePages: number;
-      selectedPages: number;
-      omittedPages: number;
-    }
-);
+type BackstageContinuityPageCoverage = BackstageContinuityCoverageBase & {
+  scopePages?: never;
+  selectedPages?: never;
+  omittedPages?: never;
+};
+
+type BackstageContinuitySubtreeCoverage = BackstageContinuityCoverageBase & {
+  scopePages: number;
+  selectedPages: number;
+  omittedPages: number;
+};
+
+export type BackstageContinuityCoverage =
+  | BackstageContinuityPageCoverage
+  | BackstageContinuitySubtreeCoverage;
 
 export type BackstageContinuitySourceCategory =
   | "championships"
@@ -247,14 +254,22 @@ export interface BackstageContinuitySource {
   contentHash: string;
 }
 
-export interface BackstageQueryContinuityResponse {
+interface BackstageQueryContinuityResponseBase {
   universeId: BackstageUniverseId;
   authority: "notion";
   answer: string;
-  resolvedScope?: BackstageContinuityResolvedScope;
-  coverage: BackstageContinuityCoverage;
   sources: BackstageContinuitySource[];
 }
+
+export type BackstageQueryContinuityResponse =
+  | (BackstageQueryContinuityResponseBase & {
+      resolvedScope?: BackstageContinuityPageResolvedScope;
+      coverage: BackstageContinuityPageCoverage;
+    })
+  | (BackstageQueryContinuityResponseBase & {
+      resolvedScope: BackstageContinuitySubtreeResolvedScope;
+      coverage: BackstageContinuitySubtreeCoverage;
+    });
 
 export interface BackstageGenerateBookingRequest {
   universeId?: BackstageUniverseId;

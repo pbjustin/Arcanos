@@ -231,12 +231,24 @@ export interface BackstageNotionRagRetrieval {
   citations: BackstageNotionRagCitation[];
 }
 
-interface NormalizedRetrievalScope {
+interface NormalizedRetrievalScopeBase {
   pageTitle: string;
   pagePath?: readonly string[];
-  sectionPath?: readonly string[];
-  scopeKind: BackstageNotionRagScopeKind;
 }
+
+interface NormalizedPageRetrievalScope extends NormalizedRetrievalScopeBase {
+  sectionPath?: readonly string[];
+  scopeKind: 'page';
+}
+
+interface NormalizedSubtreeRetrievalScope extends NormalizedRetrievalScopeBase {
+  sectionPath?: never;
+  scopeKind: 'subtree';
+}
+
+type NormalizedRetrievalScope =
+  | NormalizedPageRetrievalScope
+  | NormalizedSubtreeRetrievalScope;
 
 interface BindingRetrievalScope {
   pageTitle: string;
@@ -443,12 +455,18 @@ function normalizeQueryRequest(input: BackstageNotionRagQuery): NormalizedQueryR
     ) {
       throw new BackstageNotionIndexUnavailableError();
     }
-    retrievalScope = {
-      pageTitle,
-      ...(pagePath ? { pagePath: pagePath as string[] } : {}),
-      ...(sectionPath ? { sectionPath: sectionPath as string[] } : {}),
-      scopeKind,
-    };
+    retrievalScope = scopeKind === 'subtree'
+      ? {
+          pageTitle,
+          ...(pagePath ? { pagePath: pagePath as string[] } : {}),
+          scopeKind,
+        }
+      : {
+          pageTitle,
+          ...(pagePath ? { pagePath: pagePath as string[] } : {}),
+          ...(sectionPath ? { sectionPath: sectionPath as string[] } : {}),
+          scopeKind,
+        };
     bindingRetrievalScope = {
       pageTitle: bindingPageTitle,
       ...(bindingPagePath ? { pagePath: bindingPagePath } : {}),
@@ -860,11 +878,8 @@ function validatePageMetadataConsistency(chunks: readonly ScopeCandidate[]): voi
 
 function resolveScopedChunks<T extends ScopeCandidate>(
   chunks: readonly T[],
-  requested: NormalizedRetrievalScope
+  requested: NormalizedPageRetrievalScope
 ): ResolvedScopedChunks<T> {
-  if (requested.scopeKind !== 'page') {
-    throw new BackstageNotionIndexUnavailableError();
-  }
   const pages = new Map<string, T[]>();
   for (const candidate of chunks) {
     if (
@@ -1155,11 +1170,9 @@ async function retrieveBackstageNotionRagContextUnsafe(
     manifestHash: active.snapshot.manifestHash,
     rootPageId: authorityRoot.rootPageId,
   });
-  const resolveRequestedScope = async () => {
-    const requestedScope = request.retrievalScope;
-    if (!requestedScope) {
-      throw new BackstageNotionIndexUnavailableError();
-    }
+  const resolveRequestedScope = async (
+    requestedScope: NormalizedRetrievalScope
+  ) => {
     const resolution = await repository.resolveSnapshotScope(
       universeId,
       active.snapshot.id,
@@ -1188,7 +1201,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
         )
       : null;
     if (request.retrievalScope) {
-      const validatedResolution = await resolveRequestedScope();
+      const validatedResolution = await resolveRequestedScope(request.retrievalScope);
       resolvedScope = validatedResolution.scope;
       completeScopeSelector = validatedResolution.selector;
       completeScopeKind = request.retrievalScope.scopeKind;
@@ -1310,7 +1323,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
     let resolved: ResolvedScopedChunks<RankedChunk> | null = null;
     let scopeCandidates: RankedChunk[] = validatedChunks;
     if (request.retrievalScope?.scopeKind === 'subtree') {
-      const validatedResolution = await resolveRequestedScope();
+      const validatedResolution = await resolveRequestedScope(request.retrievalScope);
       resolvedScope = validatedResolution.scope;
       scopeChunks = validatedResolution.scopeChunkCount;
       scopePages = validatedResolution.scopePageCount;
@@ -1324,7 +1337,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
       ) {
         throw new BackstageNotionIndexUnavailableError();
       }
-    } else if (request.retrievalScope) {
+    } else if (request.retrievalScope?.scopeKind === 'page') {
       resolved = resolveScopedChunks(validatedChunks, request.retrievalScope);
       resolvedScope = resolved.scope;
       scopeCandidates = resolved.chunks;

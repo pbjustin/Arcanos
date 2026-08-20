@@ -991,6 +991,34 @@ describe('PostgresBackstageNotionRagRepository', () => {
     ]);
   });
 
+  it('reports an empty blank subtree as not found', async () => {
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async rawSql => {
+        const sql = normalizeSql(rawSql);
+        return sql.includes('scope_integrity_valid')
+          ? { rows: [{ scope_integrity_valid: true }], rowCount: 1 }
+          : {
+              rows: [validPageScopeCandidate({
+                scope_chunk_count: '0',
+                scope_page_count: '0'
+              })],
+              rowCount: 1
+            };
+      }
+    ));
+
+    await expect(repository.resolveSnapshotScope(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+        pagePathKey: normalizeBackstageNotionScopePath(CHILD_PATH),
+        sectionPathKey: null,
+        scopeKind: 'subtree'
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+  });
+
   it('fails closed or reports bounded ambiguity without loading section rows', async () => {
     const pageCandidate = {
       page_id: CHILD_PAGE_ID,

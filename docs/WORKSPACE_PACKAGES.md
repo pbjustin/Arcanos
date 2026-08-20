@@ -90,6 +90,10 @@ Railway builds from the root package and uses `scripts/start-railway-service-wit
   catalog, and dedicated validation/assertion helpers rather than reproducing
   request or persistence shapes in backend code. These action names do not
   extend either public protocol command-ID list.
+  For `queryContinuity`, the exported `BackstageContinuityScopeKind` and related
+  request/response types preserve exact-page scope when `scopeKind` is omitted
+  or `"page"`; explicit `"subtree"` excludes `sectionPath` and couples
+  `resolvedScope.scopeKind` to subtree-only page coverage.
   The Phase 2A exports include typed storyline/beat models, storyline status,
   mutation UUID and decimal revision aliases, and the durable-or-unknown
   `upsertStoryline` / `appendCanonBeat` request and response unions. Unlike the
