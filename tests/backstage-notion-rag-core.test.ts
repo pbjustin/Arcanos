@@ -4,6 +4,7 @@ import {
   categorizeBackstageNotionRagContent,
   parseBackstageNotionPageMarkdown,
   prepareBackstageNotionRagPage,
+  sanitizeBackstageNotionRagMarkdown,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
 
 const universeId = 'my-universe-2k26';
@@ -229,6 +230,125 @@ describe('Backstage Notion hierarchy RAG core', () => {
     ]);
   });
 
+  it('redacts nested, balanced, and angle-delimited Markdown URLs once', () => {
+    const sanitized = sanitizeBackstageNotionRagMarkdown([
+      '[nested](https://example.test/https://nested.test/private)',
+      '[balanced](https://example.test/wiki/Raw_(wrestling))',
+      '<https://example.test/private>',
+      "https://example.test/quoted' suffix",
+    ].join('\n'));
+
+    expect(sanitized).toBe([
+      '[nested]([link omitted])',
+      '[balanced]([link omitted])',
+      '‹[link omitted]›',
+      "[link omitted]' suffix",
+    ].join('\n'));
+    expect(sanitized).not.toContain('nested.test');
+  });
+
+  it('renders uncommon valid Markdown links, titles, images, and code spans', () => {
+    const prepared = prepare([
+      '# ` padded code ` and ![Image alt](asset.png)',
+      'Code span and image destination.',
+      '# [Empty]() [Double]( "escaped \\"title\\"" ) [Single]( \'title\' ) [Paren]( (title) )',
+      'Empty destination and three title delimiters.',
+      '# [Nested [label]](asset) and [Escaped destination](asset\\(part\\))',
+      'Balanced labels and escaped punctuation.',
+      '# [Angle](<asset\\)name>) and [Sanitized](<https://example.test/private>)',
+      'Angle destinations.',
+    ].join('\n\n'), 1_000);
+
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['padded code and Image alt'],
+      ['Empty Double Single Paren'],
+      ['Nested [label] and Escaped destination'],
+      ['Angle and Sanitized'],
+    ]);
+  });
+
+  it('bounds malformed labels, destinations, titles, and reference definitions', () => {
+    const overNestedLabel = `${'['.repeat(33)}deep${']'.repeat(33)}`;
+    const overNestedDestination = `${'('.repeat(33)}deep${')'.repeat(33)}`;
+    const overlongReferenceLabel = 'r'.repeat(1_000);
+    const terminalBackslash = '\\';
+    const prepared = prepare([
+      `# ${overNestedLabel}(asset) WWE_2K`,
+      'Over-nested label.',
+      '# [Unterminated label WWE_2K',
+      'Unterminated label.',
+      '# [Trailing label\\',
+      'Trailing label escape.',
+      '# [Angle whitespace](‹asset destination›) C#',
+      'Whitespace in an angle destination.',
+      '# [Unterminated angle](‹asset) C#',
+      'Unterminated angle destination.',
+      '# [Unterminated redacted](<https://example.test/private)',
+      'Unterminated redacted angle destination.',
+      `# [Over-nested destination](${overNestedDestination}) WWE_2K`,
+      'Over-nested destination.',
+      '# [Whitespace while nested](asset(part value)) C#',
+      'Whitespace while a destination parenthesis is open.',
+      '# [Unbalanced destination](asset((part) C#',
+      'Unbalanced destination.',
+      '# [End unbalanced](asset((part)',
+      'Unbalanced destination at end of heading.',
+      '# [Unexpected close](asset)) C#',
+      'Unexpected closing parenthesis.',
+      '# [Nested title](asset (bad(title))) WWE_2K',
+      'Nested title delimiter.',
+      '# [Unterminated title only]( "title) WWE_2K',
+      'Unterminated title-only destination.',
+      '# [Trailing title text]( "title" extra) WWE_2K',
+      'Title-only destination with trailing text.',
+      '# [Escaped title](asset "escaped \\" quote") WWE_2K',
+      'Escaped title punctuation.',
+      '# [Blank reference][ ] and [Overlong reference][long] WWE_2K',
+      'Invalid normalized labels.',
+      '#',
+      'Untitled heading.',
+      '',
+      '   [indented]: <asset>',
+      '[angle-escaped]: <asset\\)name>',
+      '[angle-space]: <asset destination>',
+      '[angle-open]: <asset',
+      `[angle-terminal]: <asset${terminalBackslash}`,
+      '[unexpected-close]: asset)',
+      '[terminal-backslash]: asset\\',
+      `[deep-destination]: ${overNestedDestination}`,
+      '[balanced-parenthesis]: asset(part)',
+      '[unbalanced-parenthesis]: asset((part)',
+      `[long]: asset "${overlongReferenceLabel}"`,
+      `[${overlongReferenceLabel}]: asset`,
+      '[nested-title]: asset (bad(title))',
+      '[escaped-title]: asset "escaped \\" quote"',
+      `[terminal-title]: asset "${terminalBackslash}`,
+      '[no-space]: asset"title"',
+      '[no-space-angle]: <asset>"title"',
+      '~~~markdown',
+      '[fenced]: asset',
+      '~~~~ trailing text',
+      '[still-fenced]: asset',
+      '~~~',
+    ].join('\n'), 8_000);
+
+    const headings = prepared.chunks.map(chunk => chunk.headingPath[0] ?? '');
+    expect(headings).toContain('[Unterminated label WWE_2K');
+    expect(headings).toContain('[Trailing label\\');
+    expect(headings).toContain('[Angle whitespace](‹asset destination›) C#');
+    expect(headings).toContain('[Unterminated angle](‹asset) C#');
+    expect(headings).toContain('[Unterminated redacted](‹[link omitted]');
+    expect(headings).toContain('[Whitespace while nested](asset(part value)) C#');
+    expect(headings).toContain('[Unbalanced destination](asset((part) C#');
+    expect(headings).toContain('[End unbalanced](asset((part)');
+    expect(headings).toContain('[Nested title](asset (bad(title))) WWE_2K');
+    expect(headings).toContain('[Unterminated title only]( "title) WWE_2K');
+    expect(headings).toContain('[Trailing title text]( "title" extra) WWE_2K');
+    expect(headings).toContain('Escaped title WWE_2K');
+    expect(headings).toContain('Untitled section');
+    expect(headings.some(title => title.includes('Over-nested destination'))).toBe(true);
+  });
+
   it('keeps duplicate full heading paths in distinct internal occurrences', () => {
     const prepared = prepare([
       '# Storylines',
@@ -250,6 +370,22 @@ describe('Backstage Notion hierarchy RAG core', () => {
       prepared.chunks[1]?.contentHash
     );
     expect(prepared.chunks[0]?.chunkId).not.toBe(prepared.chunks[1]?.chunkId);
+  });
+
+  it('starts a fresh chunk when same-heading blocks do not fit together', () => {
+    const prepared = prepare([
+      '# Same heading',
+      'a'.repeat(80),
+      '',
+      'b'.repeat(80),
+    ].join('\n'), 128);
+
+    expect(prepared.chunks).toHaveLength(2);
+    expect(prepared.chunks.map(chunk => chunk.headingPath)).toEqual([
+      ['Same heading'],
+      ['Same heading'],
+    ]);
+    expect(prepared.chunks[1]?.content).toBe('b'.repeat(80));
   });
 
   it('tracks skipped heading levels and ignores heading syntax inside code fences', () => {
@@ -312,5 +448,31 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(context.omittedChunks).toBeGreaterThan(0);
     expect(context.contentTruncated).toBe(true);
     expect(context.partialChunk).toBe(false);
+  });
+
+  it('distinguishes a partial excerpt from complete page-root context', () => {
+    const longPage = prepare(`# Long\n\n${'continuity fact '.repeat(120)}`, 4_000);
+    const partial = buildBackstageNotionRagUntrustedContextPrompt(
+      longPage.chunks,
+      { maximumCodePoints: 900, maximumChunks: 2 }
+    );
+
+    expect(partial.chunkCount).toBe(1);
+    expect(partial.truncated).toBe(true);
+    expect(partial.omittedChunks).toBe(0);
+    expect(partial.contentTruncated).toBe(true);
+    expect(partial.partialChunk).toBe(true);
+
+    const rootPage = prepare('A short page-root continuity fact.', 4_000);
+    const complete = buildBackstageNotionRagUntrustedContextPrompt(
+      rootPage.chunks,
+      { maximumCodePoints: 5_000, maximumChunks: 2 }
+    );
+
+    expect(complete.prompt).toContain('heading_path: (page root)');
+    expect(complete.truncated).toBe(false);
+    expect(complete.omittedChunks).toBe(0);
+    expect(complete.contentTruncated).toBe(false);
+    expect(complete.partialChunk).toBe(false);
   });
 });

@@ -241,7 +241,7 @@ function markdownUrlEnd(
   let parenthesisDepth = 0;
   let index = startIndex;
   for (; index < value.length; index += 1) {
-    const character = value[index] ?? '';
+    const character = value[index]!;
     if (
       /\s/u.test(character)
       || character === '<'
@@ -268,7 +268,7 @@ function redactMarkdownUrls(value: string): string {
   let output = '';
   let cursor = 0;
   for (const match of value.matchAll(urlStartPattern)) {
-    const startIndex = match.index ?? cursor;
+    const startIndex = match.index;
     if (startIndex < cursor) {
       continue;
     }
@@ -425,7 +425,7 @@ function protectMarkdownCodeSpans(
       value[index] !== '`'
       || isMarkdownBackslashEscaped(value, index)
     ) {
-      output += value[index] ?? '';
+      output += value[index]!;
       index += 1;
       continue;
     }
@@ -546,11 +546,7 @@ function markdownTitleEnd(value: string, openingIndex: number): number {
 }
 
 function markdownAngleDestinationEnd(value: string, openingIndex: number): number {
-  const opener = value[openingIndex];
-  const closer = opener === '<' ? '>' : opener === '‹' ? '›' : null;
-  if (!closer) {
-    return -1;
-  }
+  const closer = '›';
   if (value.startsWith(MARKDOWN_REDACTED_URL, openingIndex + 1)) {
     const closingIndex = openingIndex + 1 + MARKDOWN_REDACTED_URL.length;
     return value[closingIndex] === closer ? closingIndex + 1 : -1;
@@ -566,7 +562,7 @@ function markdownAngleDestinationEnd(value: string, openingIndex: number): numbe
     if (value[index] === closer) {
       return index + 1;
     }
-    if (/\s/u.test(value[index] ?? '')) {
+    if (/\s/u.test(value[index]!)) {
       return -1;
     }
   }
@@ -604,25 +600,15 @@ function findBalancedInlineLinkEnd(value: string, openingIndex: number): number 
     const destinationStart = index;
     let parenthesisDepth = 0;
     for (; index < value.length; index += 1) {
-      const character = value[index] ?? '';
-      if (
-        character === '\\'
-        && MARKDOWN_ESCAPABLE_PUNCTUATION.test(value[index + 1] ?? '')
-      ) {
-        index += 1;
-        continue;
-      }
+      const character = value[index]!;
       if (character === ')' && parenthesisDepth === 0) {
-        return index > destinationStart ? index : -1;
+        return index;
       }
       if (character === ' ' || character === '\t') {
         if (parenthesisDepth > 0) {
           return -1;
         }
         break;
-      }
-      if (character === '<' || character === '>' || character === '\n') {
-        return -1;
       }
       if (character === '(') {
         parenthesisDepth += 1;
@@ -667,7 +653,7 @@ function restoreProtectedMarkdownLiterals(
   for (let index = protectedLiterals.length - 1; index >= 0; index -= 1) {
     restored = restored.replaceAll(
       `\u0000${index}\u0000`,
-      protectedLiterals[index] ?? ''
+      protectedLiterals[index]!
     );
   }
   return restored;
@@ -709,7 +695,7 @@ function hasValidMarkdownReferenceDestination(
     const destinationStart = index;
     let parenthesisDepth = 0;
     for (; index < value.length; index += 1) {
-      const character = value[index] ?? '';
+      const character = value[index]!;
       if (
         character === '\\'
         && MARKDOWN_ESCAPABLE_PUNCTUATION.test(value[index + 1] ?? '')
@@ -719,9 +705,6 @@ function hasValidMarkdownReferenceDestination(
       }
       if (character === ' ' || character === '\t') {
         break;
-      }
-      if (character === '<' || character === '>' || character === '\n') {
-        return false;
       }
       if (character === '(') {
         parenthesisDepth += 1;
@@ -825,7 +808,7 @@ function renderMarkdownLinks(
         ? index
         : -1;
     if (labelOpeningIndex < 0) {
-      rendered += value[index] ?? '';
+      rendered += value[index]!;
       index += 1;
       continue;
     }
@@ -835,7 +818,7 @@ function renderMarkdownLinks(
       labelOpeningIndex
     );
     if (labelClosingIndex < 0) {
-      rendered += value[index] ?? '';
+      rendered += value[index]!;
       index += 1;
       continue;
     }
@@ -880,7 +863,7 @@ function renderMarkdownLinks(
       }
     }
 
-    rendered += value[index] ?? '';
+    rendered += value[index]!;
     index += 1;
   }
   return rendered;
@@ -908,9 +891,7 @@ function renderMarkdownHeadingTitle(
   rendered = rendered.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/gu, (
     _match,
     punctuation: string
-  ) => MARKDOWN_ESCAPABLE_PUNCTUATION.test(punctuation)
-    ? protect(punctuation)
-    : punctuation);
+  ) => protect(punctuation));
   rendered = renderMarkdownLinks(rendered, referenceLabels, protectedLiterals);
   rendered = stripPairedMarkdownDelimiters(rendered);
   rendered = decodeMarkdownCharacterEntities(rendered);
@@ -937,7 +918,7 @@ function markdownHeading(
     renderMarkdownHeadingTitle(content, referenceLabels),
     'Untitled section'
   );
-  return { level: (match[1] ?? '#').length, title };
+  return { level: match[1]!.length, title };
 }
 
 interface MarkdownFence {
@@ -948,15 +929,15 @@ interface MarkdownFence {
 
 function markdownFence(line: string): MarkdownFence | null {
   const match = /^\s{0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
-  const fence = match?.[1] ?? '';
-  const marker = fence[0];
-  if (marker !== '`' && marker !== '~') {
+  if (!match) {
     return null;
   }
+  const fence = match[1]!;
+  const marker = fence[0] as '`' | '~';
   return {
     marker,
     length: fence.length,
-    trailing: match?.[2] ?? '',
+    trailing: match[2]!,
   };
 }
 
@@ -995,10 +976,6 @@ function splitMarkdownBlocks(markdown: string): MarkdownBlock[] {
     const nextLine = lines[index + 1] ?? '';
     const fence = markdownFence(line);
     if (activeFence) {
-      if (ordinaryLines.length === 0) {
-        ordinaryHeadingPath = currentHeadingPath;
-        ordinaryHeadingOccurrencePath = currentHeadingOccurrencePath;
-      }
       ordinaryLines.push(line);
       if (
         fence
@@ -1046,7 +1023,7 @@ function splitMarkdownBlocks(markdown: string): MarkdownBlock[] {
         flushOrdinary();
         while (
           headingStack.length > 0
-          && (headingStack.at(-1)?.level ?? 0) >= heading.level
+          && headingStack[headingStack.length - 1]!.level >= heading.level
         ) {
           headingStack.pop();
         }

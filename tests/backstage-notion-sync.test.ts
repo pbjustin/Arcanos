@@ -12,7 +12,17 @@ import {
   type BackstageNotionSnapshotRecord,
   type BackstageNotionSyncLease,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import {
+  getOpenAIAdapter,
+  resetOpenAIAdapter,
+  type OpenAIAdapter,
+} from '../src/core/adapters/openai.adapter.js';
 import { logger } from '../src/platform/logging/structuredLogging.js';
+import {
+  readRuntimeEnv,
+  unsetRuntimeEnv,
+  writeRuntimeEnv,
+} from '../src/platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
@@ -1104,6 +1114,78 @@ describe('Backstage Notion authority synchronization', () => {
       }),
     })).rejects.toMatchObject({ code: BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE });
     expect(repository.acquireSyncLease).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured runtime environment and default embedding adapter offline', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Root',
+    };
+    const { fetchMock } = notionFetch([page]);
+    const repository = repositoryHarness();
+    const originalToken = readRuntimeEnv(BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME);
+    const originalAuthority = readRuntimeEnv(BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME);
+    const authority = JSON.stringify({
+      [universeId]: {
+        rootPageId: page.pageId,
+        displayName: page.title,
+      },
+    });
+
+    resetOpenAIAdapter();
+    writeRuntimeEnv(BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME, notionToken);
+    writeRuntimeEnv(BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME, authority);
+    try {
+      const adapter = getOpenAIAdapter({ apiKey: 'test-openai-api-key' });
+      const embeddingCreate = jest.fn<OpenAIAdapter['embeddings']['create']>(
+        async params => {
+          const inputCount = Array.isArray(params.input) ? params.input.length : 1;
+          return {
+            object: 'list',
+            model: 'text-embedding-3-small',
+            data: Array.from({ length: inputCount }, (_, index) => ({
+              object: 'embedding',
+              embedding: [1, 0],
+              index,
+            })),
+            usage: { prompt_tokens: inputCount, total_tokens: inputCount },
+          };
+        }
+      );
+      adapter.embeddings.create = embeddingCreate;
+
+      await expect(syncConfiguredBackstageNotionAuthorities({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        requestSpacingMs: 0,
+        retryBaseDelayMs: 0,
+        fetchTimeoutMs: 1_000,
+        holderId,
+      })).resolves.toEqual([
+        expect.objectContaining({
+          universeId,
+          status: 'activated',
+          pageCount: 1,
+          chunkCount: 1,
+        }),
+      ]);
+      expect(embeddingCreate).toHaveBeenCalledTimes(1);
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    } finally {
+      resetOpenAIAdapter();
+      if (originalToken === undefined) {
+        unsetRuntimeEnv(BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME);
+      } else {
+        writeRuntimeEnv(BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME, originalToken);
+      }
+      if (originalAuthority === undefined) {
+        unsetRuntimeEnv(BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME);
+      } else {
+        writeRuntimeEnv(BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME, originalAuthority);
+      }
+    }
   });
 
   it('isolates a bad first root and still activates a healthy later root', async () => {

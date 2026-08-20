@@ -107,7 +107,10 @@ const {
   BackstageNotionIndexUnavailableError,
   BackstageNotionScopeResolutionError,
 } = await import('../src/services/backstageNotionRag.js');
-const { normalizeBackstageBookerActionPayload } = await import(
+const {
+  normalizeBackstageBookerActionPayload,
+  normalizeBackstageBookerSchemaDrivenActionPayload,
+} = await import(
   '../src/services/backstageBookerContracts.js'
 );
 const {
@@ -719,6 +722,13 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       },
     });
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('rejects a schema-driven continuity request without its explicit universe scope', () => {
+    expect(() => normalizeBackstageBookerSchemaDrivenActionPayload(
+      'queryContinuity',
+      { query: 'Who is the current champion?' }
+    )).toThrow(BackstageBookerContractError);
   });
 
   it('preserves the Phase One module-error envelope for generic contract failures', async () => {

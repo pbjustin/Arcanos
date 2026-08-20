@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -11,6 +11,10 @@ import type {
   BackstageNotionSnapshotScopeLookup,
   BackstageNotionSnapshotScopeResolution,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import {
+  getOpenAIAdapter,
+  resetOpenAIAdapter,
+} from '../src/core/adapters/openai.adapter.js';
 import { logger } from '../src/platform/logging/structuredLogging.js';
 import {
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
@@ -372,6 +376,45 @@ function retrieveAuthorized(
   );
 }
 
+function decodeTestCursor(cursor: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<
+    string,
+    unknown
+  >;
+}
+
+function resignTestCursor(
+  decoded: Record<string, unknown>,
+  active: BackstageNotionActiveSnapshot
+): string {
+  const selector = decoded.scopeSelector as {
+    pageAnchorChunkId: string | null;
+    sectionOccurrencePath: number[] | null;
+  };
+  const payload = {
+    v: decoded.v,
+    snapshotId: decoded.snapshotId,
+    requestBinding: decoded.requestBinding,
+    scopeSelector: {
+      pageAnchorChunkId: selector.pageAnchorChunkId,
+      sectionOccurrencePath: selector.sectionOccurrencePath,
+    },
+    scopeChunkCount: decoded.scopeChunkCount,
+    offset: decoded.offset,
+  };
+  const signingKey = sha256(JSON.stringify({
+    format: 'backstage-notion-rag-cursor-key-v2',
+    universeId: UNIVERSE_ID,
+    snapshotId: active.snapshot.id,
+    manifestHash: active.snapshot.manifestHash,
+    rootPageId: ROOT_PAGE_ID,
+  }));
+  const mac = createHmac('sha256', signingKey)
+    .update(JSON.stringify(payload), 'utf8')
+    .digest('base64url');
+  return Buffer.from(JSON.stringify({ ...payload, mac }), 'utf8').toString('base64url');
+}
+
 describe('Backstage Notion authority RAG retrieval', () => {
   beforeEach(() => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
@@ -379,6 +422,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    resetOpenAIAdapter();
   });
 
   it('requires trusted request provenance before authority or database work', async () => {
@@ -511,6 +555,62 @@ describe('Backstage Notion authority RAG retrieval', () => {
     }
   });
 
+  it('rejects inconsistent metadata for chunks that claim the same page identity', async () => {
+    const first = chunk({
+      pageIndex: 1,
+      ordinal: 0,
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+    });
+    const conflicting = chunk({
+      pageIndex: 1,
+      ordinal: 1,
+      pageTitle: 'Raw Archive',
+      pagePath: ['WWE Universe Mode', 'Archive', 'Raw Archive'],
+    });
+    const state = harness(activeSnapshot([first, conflicting]));
+
+    await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(state.embedQuery).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when sparse indexed paths cannot satisfy an exact scope', async () => {
+    const sparsePagePath = new Array<string>(3);
+    sparsePagePath[0] = 'WWE Universe Mode';
+    sparsePagePath[2] = 'Monday Night Raw';
+    const pageCandidate = chunk({
+      pageTitle: 'Monday Night Raw',
+      pagePath: sparsePagePath,
+    });
+    const pageState = harness(activeSnapshot([pageCandidate]));
+
+    await expect(retrieveAuthorized(pageState.dependencies, {
+      query: 'read the page',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['WWE Universe Mode', 'Brands', 'Monday Night Raw'],
+      },
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+    const sparseHeadingPath = new Array<string>(1);
+    const sectionCandidate = chunk({
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+      headingPath: sparseHeadingPath,
+      headingOccurrencePath: [1],
+    });
+    const sectionState = harness(activeSnapshot([sectionCandidate]));
+    await expect(retrieveAuthorized(sectionState.dependencies, {
+      query: 'read the section',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        sectionPath: ['Roster'],
+      },
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+  });
+
   it.each([
     ['dimension mismatch', [1]],
     ['non-finite query vector', [Number.POSITIVE_INFINITY, 0]],
@@ -524,6 +624,47 @@ describe('Backstage Notion authority RAG retrieval', () => {
       BackstageNotionIndexUnavailableError
     );
     expect(state.embedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects mismatched corpus dimensions and non-finite similarity scores', async () => {
+    const mismatchedState = harness(activeSnapshot([
+      chunk({ pageIndex: 1, embedding: [1, 0] }),
+      chunk({ pageIndex: 2, embedding: [1, 0, 0] }),
+    ]));
+    await expect(retrieveAuthorized(mismatchedState.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(mismatchedState.embedQuery).not.toHaveBeenCalled();
+
+    const overflowState = harness(activeSnapshot([
+      chunk({ embedding: [Number.MAX_VALUE, Number.MAX_VALUE] }),
+    ]), {
+      embedQuery: async () => [Number.MAX_VALUE, Number.MAX_VALUE],
+    });
+    await expect(retrieveAuthorized(overflowState.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(overflowState.embedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the default embedding adapter when no dependency override is supplied', async () => {
+    const adapter = getOpenAIAdapter({ apiKey: 'test-api-key' });
+    const createEmbedding = jest.spyOn(adapter.embeddings, 'create').mockResolvedValue({
+      data: [{ embedding: [1, 0], index: 0, object: 'embedding' }],
+      model: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      object: 'list',
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+    const state = harness();
+    delete state.dependencies.embedQuery;
+
+    const result = await retrieveAuthorized(state.dependencies, 'default embedding query');
+
+    expect(result.chunkCount).toBe(1);
+    expect(createEmbedding).toHaveBeenCalledWith({
+      input: 'default embedding query',
+      model: DEFAULT_OPENAI_EMBEDDING_MODEL,
+    });
   });
 
   it.each([
@@ -623,6 +764,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
       query: 'current champions',
       retrievalScope: { pageTitle: 'NXT' },
     })).rejects.toBeInstanceOf(BackstageNotionScopeResolutionError);
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'current champions',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawA.pagePath,
+        sectionPath: ['Missing section'],
+      },
+    })).rejects.toMatchObject({ reason: 'not_found' });
     expect(state.embedQuery).not.toHaveBeenCalled();
 
     const resolved = await retrieveAuthorized(state.dependencies, {
@@ -752,6 +901,101 @@ describe('Backstage Notion authority RAG retrieval', () => {
       retryable: false,
     });
     expect(state.embedQuery).not.toHaveBeenCalled();
+  });
+
+  it('reads a complete page scope without requiring page-path or section selectors', async () => {
+    const raw = chunk({
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['WWE Universe Mode', 'Brands', 'Monday Night Raw'],
+      content: 'Raw continuity.',
+    });
+    const state = harness(activeSnapshot([raw]));
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read all Raw continuity',
+      retrievalScope: { pageTitle: 'Monday Night Raw' },
+      retrievalMode: 'complete_scope',
+    });
+
+    expect(result.resolvedScope).toEqual({
+      pageTitle: raw.pageTitle,
+      pagePath: raw.pagePath,
+    });
+    expect(result.coverage).toMatchObject({
+      status: 'complete',
+      exhaustive: true,
+      scopeChunks: 1,
+      selectedChunks: 1,
+    });
+    expect(state.resolveSnapshotScope).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageTitleKey: normalizeBackstageNotionScopeKey(raw.pageTitle),
+        pagePathKey: null,
+        sectionPathKey: null,
+      }
+    );
+  });
+
+  it.each([
+    ['not_found', BackstageNotionScopeResolutionError],
+    ['ambiguous', BackstageNotionScopeResolutionError],
+    ['invalid', BackstageNotionIndexUnavailableError],
+  ] as const)('fails closed for a %s complete-scope resolution', async (
+    status,
+    expectedError
+  ) => {
+    const state = harness(activeSnapshot(), {
+      resolveSnapshotScope: async () => ({ status }),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'read the page',
+      retrievalScope: { pageTitle: 'Universe page 1' },
+      retrievalMode: 'complete_scope',
+    })).rejects.toBeInstanceOf(expectedError);
+    expect(state.loadSnapshotChunkPage).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed resolved scope selectors and page-only section metadata', async () => {
+    const active = activeSnapshot();
+    const malformedResolutions: BackstageNotionSnapshotScopeResolution[] = [
+      {
+        status: 'resolved',
+        pageTitle: 'Universe page 1',
+        pagePath: ['WWE Universe Mode', 'Universe page 1'],
+        sectionPath: null,
+        selector: {
+          pageAnchorChunkId: undefined as unknown as string,
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 1,
+      },
+      {
+        status: 'resolved',
+        pageTitle: 'Universe page 1',
+        pagePath: ['WWE Universe Mode', 'Universe page 1'],
+        sectionPath: ['Roster'],
+        selector: {
+          pageAnchorChunkId: active.chunks[0]?.id ?? '',
+          sectionOccurrencePath: [1],
+        },
+        scopeChunkCount: 1,
+      },
+    ];
+
+    for (const resolution of malformedResolutions) {
+      const state = harness(active, {
+        resolveSnapshotScope: async () => resolution,
+      });
+      await expect(retrieveAuthorized(state.dependencies, {
+        query: 'read the page',
+        retrievalScope: { pageTitle: 'Universe page 1' },
+        retrievalMode: 'complete_scope',
+      })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+      expect(state.loadSnapshotChunkPage).not.toHaveBeenCalled();
+    }
   });
 
   it('paginates complete exact scopes with a snapshot-and-request-bound cursor', async () => {
@@ -958,6 +1202,138 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(changedState.loadSnapshotChunkPage).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed, scope-incompatible, and out-of-range signed cursors', async () => {
+    const unscopedChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
+      pageIndex: ordinal + 1,
+      ordinal: 0,
+      content: `Universe entry ${ordinal}.`,
+    }));
+    const unscopedActive = activeSnapshot(unscopedChunks);
+    const unscopedState = harness(unscopedActive);
+    const unscopedRequest = {
+      query: 'read all universe continuity',
+      retrievalMode: 'complete_scope' as const,
+    };
+    const unscopedFirst = await retrieveAuthorized(
+      unscopedState.dependencies,
+      unscopedRequest
+    );
+    const unscopedDecoded = decodeTestCursor(unscopedFirst.nextCursor ?? '');
+
+    await expect(retrieveAuthorized(unscopedState.dependencies, {
+      ...unscopedRequest,
+      cursor: 'e',
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+
+    const malformedSelectors: unknown[] = [
+      null,
+      [],
+      {},
+      { pageAnchorChunkId: 'bad', sectionOccurrencePath: null },
+      {
+        pageAnchorChunkId: unscopedChunks[0]?.id,
+        sectionOccurrencePath: 'not-an-array',
+      },
+      { pageAnchorChunkId: unscopedChunks[0]?.id, sectionOccurrencePath: [] },
+      {
+        pageAnchorChunkId: unscopedChunks[0]?.id,
+        sectionOccurrencePath: Array.from({ length: 33 }, () => 1),
+      },
+      { pageAnchorChunkId: unscopedChunks[0]?.id, sectionOccurrencePath: [0] },
+      { pageAnchorChunkId: null, sectionOccurrencePath: [1] },
+    ];
+    for (const scopeSelector of malformedSelectors) {
+      const cursor = Buffer.from(JSON.stringify({
+        ...unscopedDecoded,
+        scopeSelector,
+      }), 'utf8').toString('base64url');
+      await expect(retrieveAuthorized(unscopedState.dependencies, {
+        ...unscopedRequest,
+        cursor,
+      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    }
+
+    const unscopedSelectorMismatch = resignTestCursor({
+      ...unscopedDecoded,
+      scopeSelector: {
+        pageAnchorChunkId: unscopedChunks[0]?.id,
+        sectionOccurrencePath: null,
+      },
+    }, unscopedActive);
+    await expect(retrieveAuthorized(unscopedState.dependencies, {
+      ...unscopedRequest,
+      cursor: unscopedSelectorMismatch,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+
+    const offsetAtEnd = resignTestCursor({
+      ...unscopedDecoded,
+      offset: unscopedDecoded.scopeChunkCount,
+    }, unscopedActive);
+    await expect(retrieveAuthorized(unscopedState.dependencies, {
+      ...unscopedRequest,
+      cursor: offsetAtEnd,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+
+    const mismatchedScopeCount = resignTestCursor({
+      ...unscopedDecoded,
+      scopeChunkCount: 14,
+    }, unscopedActive);
+    await expect(retrieveAuthorized(unscopedState.dependencies, {
+      ...unscopedRequest,
+      cursor: mismatchedScopeCount,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+
+    const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const scopedChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
+      ordinal,
+      pageTitle: 'Monday Night Raw',
+      pagePath: rawPath,
+      headingPath: ['Roster'],
+      headingOccurrencePath: [1],
+      content: `Raw roster entry ${ordinal}.`,
+    }));
+    const scopedActive = activeSnapshot(scopedChunks);
+    const scopedState = harness(scopedActive);
+    const pageRequest = {
+      query: 'read the full Raw page',
+      retrievalScope: { pageTitle: 'Monday Night Raw', pagePath: rawPath },
+      retrievalMode: 'complete_scope' as const,
+    };
+    const pageFirst = await retrieveAuthorized(scopedState.dependencies, pageRequest);
+    const pageDecoded = decodeTestCursor(pageFirst.nextCursor ?? '');
+    for (const scopeSelector of [
+      { pageAnchorChunkId: null, sectionOccurrencePath: null },
+      { pageAnchorChunkId: scopedChunks[0]?.id, sectionOccurrencePath: [1] },
+    ]) {
+      const cursor = resignTestCursor({ ...pageDecoded, scopeSelector }, scopedActive);
+      await expect(retrieveAuthorized(scopedState.dependencies, {
+        ...pageRequest,
+        cursor,
+      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    }
+
+    const sectionRequest = {
+      ...pageRequest,
+      query: 'read the full Raw roster',
+      retrievalScope: { ...pageRequest.retrievalScope, sectionPath: ['Roster'] },
+    };
+    const sectionFirst = await retrieveAuthorized(scopedState.dependencies, sectionRequest);
+    const sectionDecoded = decodeTestCursor(sectionFirst.nextCursor ?? '');
+    for (const sectionOccurrencePath of [null, [1, 2]]) {
+      const cursor = resignTestCursor({
+        ...sectionDecoded,
+        scopeSelector: {
+          pageAnchorChunkId: scopedChunks[0]?.id,
+          sectionOccurrencePath,
+        },
+      }, scopedActive);
+      await expect(retrieveAuthorized(scopedState.dependencies, {
+        ...sectionRequest,
+        cursor,
+      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    }
+  });
+
   it('binds complete-scope cursors to exact query and scope spelling', async () => {
     const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
     const rawChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
@@ -1023,6 +1399,47 @@ describe('Backstage Notion authority RAG retrieval', () => {
         ...(changedRequest as Exclude<BackstageNotionRagQuery, string>),
         cursor: first.nextCursor ?? undefined,
       })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    }
+  });
+
+  it('rejects malformed query envelopes, modes, scopes, and cursors before repository work', async () => {
+    const invalidQueries: unknown[] = [
+      null,
+      [],
+      { query: 42 },
+      { query: 'continuity', retrievalMode: 'relevant', mode: 'complete_scope' },
+      { query: 'continuity', retrievalMode: 'unsupported' },
+      { query: 'continuity', retrievalScope: null },
+      { query: 'continuity', retrievalScope: [] },
+      { query: 'continuity', retrievalScope: { pageTitle: 42 } },
+      {
+        query: 'continuity',
+        retrievalScope: { pageTitle: 'Raw', pagePath: 'not-an-array' },
+      },
+      {
+        query: 'continuity',
+        retrievalScope: { pageTitle: 'Raw', pagePath: [] },
+      },
+      {
+        query: 'continuity',
+        retrievalScope: { pageTitle: 'Raw', pagePath: [42] },
+      },
+      {
+        query: 'continuity',
+        retrievalScope: { pageTitle: 'Raw', sectionPath: ['x'.repeat(501)] },
+      },
+      { query: 'continuity', cursor: 'valid-looking-cursor' },
+      { query: 'continuity', retrievalMode: 'complete_scope', cursor: '%' },
+    ];
+
+    for (const invalidQuery of invalidQueries) {
+      const state = harness();
+      await expect(retrieveAuthorized(
+        state.dependencies,
+        invalidQuery as BackstageNotionRagQuery
+      )).rejects.toBeInstanceOf(Error);
+      expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+      expect(state.loadActiveSnapshotHeader).not.toHaveBeenCalled();
     }
   });
 
@@ -1202,6 +1619,122 @@ describe('Backstage Notion authority RAG retrieval', () => {
       ...request,
       cursor: first.nextCursor ?? undefined,
     })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+  });
+
+  it('rejects invalid counts, page lengths, duplicates, and ordering in paged projections', async () => {
+    const first = chunk({
+      pageIndex: 1,
+      content: 'Alpha continuity.',
+      pageTitle: 'Alpha',
+      pagePath: ['WWE Universe Mode', 'Alpha'],
+    });
+    const second = chunk({
+      pageIndex: 2,
+      content: 'Bravo continuity.',
+      pageTitle: 'Bravo',
+      pagePath: ['WWE Universe Mode', 'Bravo'],
+    });
+    const active = activeSnapshot([first, second]);
+    const { embedding: _firstEmbedding, ...storedFirst } = first;
+    const { embedding: _secondEmbedding, ...storedSecond } = second;
+    const invalidPages: BackstageNotionSnapshotChunkPage[] = [
+      { scopeChunkCount: 0, chunks: [] },
+      { scopeChunkCount: 2, chunks: [storedFirst] },
+      { scopeChunkCount: 2, chunks: [storedFirst, storedFirst] },
+      { scopeChunkCount: 2, chunks: [storedSecond, storedFirst] },
+    ];
+
+    for (const page of invalidPages) {
+      const state = harness(active, {
+        loadSnapshotChunkPage: async () => page,
+      });
+      await expect(retrieveAuthorized(state.dependencies, {
+        query: 'read all continuity',
+        retrievalMode: 'complete_scope',
+      })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    }
+  });
+
+  it('rejects selected pages that disagree with their requested or resolved scope', async () => {
+    const canonical = chunk({
+      pageIndex: 1,
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+      content: 'Raw continuity.',
+    });
+    const unrelated = chunk({
+      pageIndex: 2,
+      pageTitle: 'SmackDown',
+      pagePath: ['WWE Universe Mode', 'SmackDown'],
+      content: 'SmackDown continuity.',
+    });
+    const active = activeSnapshot([canonical]);
+    const { embedding: _unrelatedEmbedding, ...storedUnrelated } = unrelated;
+    const wrongPageState = harness(active, {
+      loadSnapshotChunkPage: async () => ({
+        scopeChunkCount: 1,
+        chunks: [storedUnrelated],
+      }),
+    });
+    const request = {
+      query: 'read the Raw page',
+      retrievalScope: { pageTitle: 'Monday Night Raw' },
+      retrievalMode: 'complete_scope' as const,
+    };
+    await expect(retrieveAuthorized(
+      wrongPageState.dependencies,
+      request
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+    const variant = chunk({
+      pageIndex: 1,
+      pageTitle: 'monday night raw',
+      pagePath: ['WWE Universe Mode', 'monday night raw'],
+      content: 'Variant-cased Raw continuity.',
+    });
+    const variantActive = activeSnapshot([variant]);
+    const mismatchState = harness(variantActive, {
+      resolveSnapshotScope: async () => ({
+        status: 'resolved',
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+        sectionPath: null,
+        selector: {
+          pageAnchorChunkId: variant.id,
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 1,
+      }),
+    });
+    await expect(retrieveAuthorized(
+      mismatchState.dependencies,
+      request
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+  });
+
+  it('uses chunk identity as the final deterministic ordering tie-breaker', async () => {
+    const first = chunk({
+      pageIndex: 1,
+      ordinal: 0,
+      content: 'Alpha fact.',
+    });
+    const second = chunk({
+      pageIndex: 1,
+      ordinal: 0,
+      content: 'Bravo fact.',
+    });
+    const expected = [first.id, second.id].sort(compareText);
+
+    const completeState = harness(activeSnapshot([second, first]));
+    const complete = await retrieveAuthorized(completeState.dependencies, {
+      query: 'read everything',
+      retrievalMode: 'complete_scope',
+    });
+    expect(complete.citations.map(citation => citation.chunkId)).toEqual(expected);
+
+    const relevantState = harness(activeSnapshot([second, first]));
+    const relevant = await retrieveAuthorized(relevantState.dependencies, 'unmatched query');
+    expect(relevant.citations.map(citation => citation.chunkId)).toEqual(expected);
   });
 
   it('supports deterministic complete-scope pagination across the whole universe', async () => {
@@ -1406,5 +1939,35 @@ describe('Backstage Notion authority RAG retrieval', () => {
         candidateChunks: chunks.length,
       })
     );
+  });
+
+  it('fails closed when bounded indexed metadata leaves no room for prompt content', async () => {
+    const maximumPath = Array.from(
+      { length: 101 },
+      (_unused, index) => `${index.toString().padStart(3, '0')}${'x'.repeat(497)}`
+    );
+    const state = harness(activeSnapshot([
+      chunk({
+        pagePath: maximumPath,
+        content: 'Valid continuity that cannot fit after the maximum path metadata.',
+      }),
+    ]));
+
+    await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a complete-scope page when its first chunk can only be partially packed', async () => {
+    const state = harness(activeSnapshot([
+      chunk({ content: `Oversized continuity ${'x'.repeat(20_000)}` }),
+    ]));
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'read all oversized continuity',
+      retrievalMode: 'complete_scope',
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(state.embedQuery).not.toHaveBeenCalled();
   });
 });

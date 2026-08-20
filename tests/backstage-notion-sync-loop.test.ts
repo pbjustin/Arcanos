@@ -257,6 +257,22 @@ describe('Backstage Notion synchronization loop', () => {
     expect(sync).not.toHaveBeenCalled();
   });
 
+  it('fails readiness immediately for caller and reasonless abort signals', async () => {
+    const callerReason = new Error('test-only readiness shutdown');
+    const callerController = new AbortController();
+    callerController.abort(callerReason);
+
+    await expect(ensureBackstageNotionWorkerReadiness({
+      signal: callerController.signal,
+    })).rejects.toBe(callerReason);
+    await expect(ensureBackstageNotionWorkerReadiness({
+      signal: {
+        aborted: true,
+        reason: undefined,
+      } as AbortSignal,
+    })).rejects.toThrow('Backstage Notion worker readiness aborted.');
+  });
+
   it('runs immediately and schedules each recurring cycle after completion', async () => {
     const sync = jest.fn(async () => []);
     const handle = startBackstageNotionSyncLoop({
@@ -470,5 +486,59 @@ describe('Backstage Notion synchronization loop', () => {
     expect(syncStartIndex).toBeLessThan(runtimeBarrierIndex);
     expect(runtimeBarrierIndex).toBeLessThan(syncStopIndex);
     expect(source).not.toContain('await startBackstageNotionSyncLoop(');
+  });
+
+  it('uses the production readiness dependency defaults with a bounded signal', async () => {
+    const loadActiveInventory = jest.fn()
+      .mockResolvedValueOnce(inventory(false))
+      .mockResolvedValueOnce(inventory(true));
+    const getRepository = jest.fn(() => ({ loadActiveInventory }));
+    const readConfiguration = jest.fn(() => validConfiguration);
+    const sync = jest.fn(async () => [syncResult('activated')]);
+
+    jest.resetModules();
+    jest.unstable_mockModule(
+      '@core/db/repositories/backstageNotionRagRepository.js',
+      () => ({ getBackstageNotionRagRepository: getRepository })
+    );
+    jest.unstable_mockModule(
+      '@services/backstageNotionAuthority.js',
+      () => ({ readBackstageNotionAuthorityConfiguration: readConfiguration })
+    );
+    jest.unstable_mockModule(
+      '@services/backstageNotionSync.js',
+      () => ({
+        BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+        syncConfiguredBackstageNotionAuthorities: sync,
+      })
+    );
+
+    try {
+      const defaultsModule = await import(
+        '../src/workers/backstageNotionSyncLoop.js'
+      );
+      const controller = new AbortController();
+
+      await expect(defaultsModule.ensureBackstageNotionWorkerReadiness({
+        signal: controller.signal,
+      })).resolves.toEqual({
+        configuredUniverses: 1,
+        currentBeforeSync: 0,
+        syncAttempted: true,
+        activated: 1,
+        unchanged: 0,
+      });
+      expect(readConfiguration).toHaveBeenCalledTimes(1);
+      expect(getRepository).toHaveBeenCalledTimes(1);
+      expect(sync).toHaveBeenCalledWith({ signal: controller.signal });
+      expect(loadActiveInventory).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.unstable_unmockModule(
+        '@core/db/repositories/backstageNotionRagRepository.js'
+      );
+      jest.unstable_unmockModule('@services/backstageNotionAuthority.js');
+      jest.unstable_unmockModule('@services/backstageNotionSync.js');
+      jest.resetModules();
+    }
   });
 });

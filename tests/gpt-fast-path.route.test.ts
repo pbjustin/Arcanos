@@ -1110,6 +1110,13 @@ describe('GPT fast-path route branching', () => {
 
   it.each([
     [
+      'incomplete generated output',
+      'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      'Backstage Booker could not produce a complete response within the output limit. Narrow the request and try again.',
+      { retryable: false },
+      500,
+    ],
+    [
       'internal query failure',
       'BACKSTAGE_CONTINUITY_QUERY_FAILED',
       'Backstage Booker could not complete the continuity query.',
@@ -1273,6 +1280,32 @@ describe('GPT fast-path route branching', () => {
     expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(authorizedInsideDispatch).toBe(true);
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a classifier-selected continuity query synchronous without an explicit action', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('queryContinuity')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce(
+      buildBackstageContinuityQueryEnvelope()
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        executionMode: 'async',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Who is the current champion?',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();

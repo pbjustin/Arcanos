@@ -674,6 +674,30 @@ describe('backstage-booker generateBooking', () => {
     expect(compactRetry.context.runtimeBudget).toBe(firstAttempt.context.runtimeBudget);
   });
 
+  it('propagates a non-length compact-retry failure through the bounded booking error', async () => {
+    const firstLengthError = Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    );
+    const retryError = new Error('test-only compact retry failure');
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(firstLengthError)
+      .mockRejectedValueOnce(retryError);
+
+    try {
+      await expect(
+        generateBooking('Generate three rivalries for RAW after WrestleMania.')
+      ).rejects.toMatchObject({
+        message: 'Booking generation failed',
+        cause: retryError,
+      });
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('throws one cause-free typed error when the compact retry also exhausts output length', async () => {
     const firstLengthError = Object.assign(
       new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
