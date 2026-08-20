@@ -42,6 +42,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       reviewCompletion: 'review-completion-contract',
       notionAuthorityRag: 'notion-authority-rag-contract',
       continuityQuery: 'continuity-query-contract',
+      continuitySubtree: 'continuity-subtree-contract',
     }),
   }),
   mcpBodyCap: Object.freeze({

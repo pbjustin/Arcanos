@@ -428,7 +428,7 @@ envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
-The Builder-specific contract at
+The Builder-specific schema `1.4.0` at
 `GET /contracts/backstage_booker.openapi.v1.json` defines four operations. Its
 saved dedicated bearer is declared on all four so Notion-authoritative
 continuity queries and generation have verified provenance. The underlying
@@ -526,29 +526,43 @@ process memory.
 
 `queryContinuity` is read-only and requires `payload.universeId` plus
 `payload.query`; it never substitutes the compatibility `legacy` universe. An
-optional `payload.retrievalScope` requires an exact `pageTitle`, may add
-`pagePath` to disambiguate duplicate titles, and may add `sectionPath` for an
-exact nested heading and its descendant headings. It accepts no caller page ID
-or URL. Repeated normalized full heading paths are distinct internal
-occurrences; an exact `sectionPath` that matches more than one returns a
-nonretryable ambiguous-scope `409` instead of conflating them. The default
-`retrievalMode: "relevant"` returns a bounded relevance sample.
-`"complete_scope"` orders the resolved scope deterministically and returns an
-opaque `coverage.nextCursor` while `coverage.hasMore` is true. A continuation
-must preserve the exact universe, query, scope, and mode; cursors are snapshot-
-and request-bound, integrity-protected, and invalid after the active snapshot
-changes. A malformed, tampered, stale, or differently bound cursor returns
-nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID`; restart the complete scoped
-read without a cursor rather than retrying that cursor. The action is
+optional `payload.retrievalScope` requires an exact `pageTitle` and may add
+`pagePath` to disambiguate duplicate titles. `scopeKind` defaults to `"page"`:
+that scope selects only the exact page and may add `sectionPath` for one exact
+heading and its descendant headings. Explicit `scopeKind: "subtree"` selects
+the exact parent plus all descendant pages, never a sibling. A blank navigation
+parent can anchor a subtree when its descendants contain indexed content.
+`sectionPath` and `scopeKind: "subtree"` are mutually exclusive. The request
+accepts no caller page ID or URL. Repeated normalized full heading paths remain
+distinct internal occurrences; an exact `sectionPath` that matches more than
+one returns a nonretryable ambiguous-scope `409` instead of conflating them.
+
+The default `retrievalMode: "relevant"` returns a bounded relevance sample and
+diversifies a subtree sample across its pages. `"complete_scope"` orders the
+resolved page or subtree deterministically and returns an opaque
+`coverage.nextCursor` while `coverage.hasMore` is true. A continuation must
+preserve the exact universe, query, scope (including `scopeKind`), and mode;
+cursors are request- and snapshot-bound and integrity-protected. A malformed,
+tampered, stale, or differently bound cursor returns nonretryable
+`409 BACKSTAGE_NOTION_CURSOR_INVALID`; restart the complete scoped read without
+that cursor. Cursor version 2 is intentionally invalid after the 1.4.0 rollout,
+so an in-progress older read must also restart cursor-free. The action is
 request-local and synchronous-only and never creates or resumes a worker job.
 
 The structured result contains `authority: "notion"`, the synthesized answer,
 an optional normalized `resolvedScope`, explicit `coverage`, and sanitized
-`sources`. `coverage.status`, `scopeChunks`, `selectedChunks`,
-`omittedChunks`, `promptTruncated`, `exhaustive`, and `hasMore` prevent a
-bounded page from being represented as complete. Sources expose only opaque
-chunk/content hashes plus bounded page titles, page paths, heading paths, and
-categories; raw excerpts and Notion page IDs remain server-side. Answer
+`sources`. Every result reports `coverage.status`, `scopeChunks`,
+`selectedChunks`, `omittedChunks`, `promptTruncated`, `exhaustive`, and
+`hasMore`. Only a subtree result additionally reports
+`resolvedScope.scopeKind: "subtree"` plus `coverage.scopePages`,
+`selectedPages`, and `omittedPages`; page, section, and unscoped responses omit
+those four subtree-only fields. Page counts include only pages with indexed
+chunks, so a blank anchor can resolve without increasing them. These fields
+prevent a bounded sample or page from being represented as complete. Sources
+expose only opaque chunk/content
+hashes plus bounded page titles, page paths, heading paths, and categories; raw
+excerpts and Notion page IDs remain server-side. Deploy schema 1.4.0 before
+re-importing it into the existing Builder Action. Answer
 generation performs one compact retry only when the provider reports
 max-output exhaustion, reusing the same retrieval and runtime budget. Other
 provider failures are not retried; a second length exhaustion becomes the

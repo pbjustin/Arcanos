@@ -38,6 +38,49 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "resolvedScope"
+        ],
+        "properties": {
+          "resolvedScope": {
+            "required": [
+              "scopeKind"
+            ],
+            "properties": {
+              "scopeKind": {
+                "const": "subtree"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "required": [
+              "scopePages",
+              "selectedPages",
+              "omittedPages"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "coverage": {
+            "not": {
+              "required": [
+                "scopePages"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "coverage": {
       "type": "object",
@@ -70,6 +113,21 @@
           "maximum": 2147483647
         },
         "omittedChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "scopePages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "selectedPages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "omittedPages": {
           "type": "integer",
           "minimum": 0,
           "maximum": 2147483647
@@ -124,7 +182,21 @@
             }
           }
         }
-      ]
+      ],
+      "dependentRequired": {
+        "scopePages": [
+          "selectedPages",
+          "omittedPages"
+        ],
+        "selectedPages": [
+          "scopePages",
+          "omittedPages"
+        ],
+        "omittedPages": [
+          "scopePages",
+          "selectedPages"
+        ]
+      }
     },
     "source": {
       "type": "object",

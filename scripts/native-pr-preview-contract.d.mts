@@ -42,6 +42,7 @@ export interface NativePrPreviewE2eContract {
       reviewCompletion: 'review-completion-contract';
       notionAuthorityRag: 'notion-authority-rag-contract';
       continuityQuery: 'continuity-query-contract';
+      continuitySubtree: 'continuity-subtree-contract';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{

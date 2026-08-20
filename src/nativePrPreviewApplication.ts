@@ -2720,6 +2720,241 @@ function runBackstageContinuityQueryFixture(
   };
 }
 
+function runBackstageContinuitySubtreeFixture(
+  fixture: string
+): Record<string, unknown> {
+  const universeId = 'native-preview-continuity-subtree';
+  const pageTitle = 'Monday Night Raw';
+  const pagePath = ['WWE Universe Mode', 'Brands', pageTitle] as const;
+  const query = 'Read all continuity in the Raw brand subtree.';
+  const answer = '1. The Raw subtree contains root and descendant continuity.';
+  const subtreeScope = {
+    pageTitle,
+    pagePath,
+    scopeKind: 'subtree' as const,
+  };
+  const rootCitation = {
+    pageTitle,
+    pagePath,
+    headingPath: ['Overview'],
+    category: 'kayfabe',
+    chunkId: '1111111111111111111111111111111111111111111111111111111111111111',
+    contentHash:
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  } as const;
+  const rosterCitation = {
+    pageTitle: 'Raw Roster',
+    pagePath: [...pagePath, 'Raw Roster'],
+    headingPath: ['Champions'],
+    category: 'kayfabe',
+    chunkId: '2222222222222222222222222222222222222222222222222222222222222222',
+    contentHash:
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  } as const;
+  const storiesCitation = {
+    pageTitle: 'Raw Stories',
+    pagePath: [...pagePath, 'Raw Stories'],
+    headingPath: ['Active Feuds'],
+    category: 'kayfabe',
+    chunkId: '3333333333333333333333333333333333333333333333333333333333333333',
+    contentHash:
+      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  } as const;
+  const continuationCursor =
+    'eyJ2IjozLCJmaXh0dXJlIjoic2VhbGVkLXN1YnRyZWUtcHJldmlldyJ9';
+  const relevantRetrieval = {
+    resolvedScope: subtreeScope,
+    coverage: {
+      status: 'sampled',
+      scopeChunks: 3,
+      selectedChunks: 2,
+      omittedChunks: 1,
+      scopePages: 3,
+      selectedPages: 2,
+      omittedPages: 1,
+      promptTruncated: false,
+      exhaustive: false,
+      hasMore: false,
+    },
+    citations: [rootCitation, rosterCitation],
+  } as const;
+  const completeFirstRetrieval = {
+    ...relevantRetrieval,
+    coverage: {
+      ...relevantRetrieval.coverage,
+      hasMore: true,
+      nextCursor: continuationCursor,
+    },
+  } as const;
+  const completeFinalRetrieval = {
+    resolvedScope: subtreeScope,
+    coverage: {
+      status: 'sampled',
+      scopeChunks: 3,
+      selectedChunks: 1,
+      omittedChunks: 2,
+      scopePages: 3,
+      selectedPages: 1,
+      omittedPages: 2,
+      promptTruncated: false,
+      exhaustive: false,
+      hasMore: false,
+    },
+    citations: [storiesCitation],
+  } as const;
+  const input = { universeId, query };
+  const relevantPublicResponse = buildBackstageContinuityResponse(
+    input,
+    relevantRetrieval,
+    answer
+  );
+  const completeFirstPublicResponse = buildBackstageContinuityResponse(
+    input,
+    completeFirstRetrieval,
+    answer
+  );
+  const completeFinalPublicResponse = buildBackstageContinuityResponse(
+    input,
+    completeFinalRetrieval,
+    answer
+  );
+  const relevantPolicyPrompt = buildBackstageContinuityPolicyPrompt(
+    input,
+    relevantRetrieval,
+    false
+  );
+  const completeFirstPolicyPrompt = buildBackstageContinuityPolicyPrompt(
+    input,
+    completeFirstRetrieval,
+    false
+  );
+  const completeFinalPolicyPrompt = buildBackstageContinuityPolicyPrompt(
+    input,
+    completeFinalRetrieval,
+    false
+  );
+  const cursorPreflight = {
+    completeScopeShapeAccepted: isBackstageContinuityCursorRequestValid({
+      cursor: continuationCursor,
+      retrievalMode: 'complete_scope',
+    }),
+    malformedRejected: !isBackstageContinuityCursorRequestValid({
+      cursor: '!',
+      retrievalMode: 'complete_scope',
+    }),
+    wrongModeRejected: !isBackstageContinuityCursorRequestValid({
+      cursor: continuationCursor,
+      retrievalMode: 'relevant',
+    }),
+  };
+  let incompleteSubtreeCoverageRejected = false;
+  try {
+    buildBackstageContinuityResponse(
+      input,
+      {
+        resolvedScope: subtreeScope,
+        coverage: {
+          status: 'sampled',
+          scopeChunks: 3,
+          selectedChunks: 1,
+          omittedChunks: 2,
+          promptTruncated: false,
+          exhaustive: false,
+          hasMore: false,
+        },
+        citations: [rootCitation],
+      },
+      answer
+    );
+  } catch (error) {
+    incompleteSubtreeCoverageRejected = error instanceof Error
+      && error.message === 'Subtree continuity coverage is incomplete.';
+  }
+  const responseValues = [
+    relevantPublicResponse,
+    completeFirstPublicResponse,
+    completeFinalPublicResponse,
+  ];
+  const contracts = {
+    completeScopeAllFixtureSourcesObserved: new Set([
+      ...completeFirstPublicResponse.sources,
+      ...completeFinalPublicResponse.sources,
+    ].map(source => source.sourceId)).size === 3,
+    incompleteSubtreeCoverageRejected,
+    pageCoverageTotalsTruthful: responseValues.every(response => (
+      response.coverage.selectedChunks + response.coverage.omittedChunks
+        === response.coverage.scopeChunks
+      && response.coverage.selectedPages! + response.coverage.omittedPages!
+        === response.coverage.scopePages
+    )),
+    scopeSourcePathsBound: responseValues.every(response => (
+      response.sources.every(source => (
+        pagePath.every((part, index) => source.pagePath[index] === part)
+      ))
+    )),
+    subtreeFieldsCoupled: responseValues.every(response => (
+      response.resolvedScope?.scopeKind === 'subtree'
+      && !Object.hasOwn(response.resolvedScope, 'sectionPath')
+      && response.coverage.scopePages === 3
+      && Number.isSafeInteger(response.coverage.selectedPages)
+      && Number.isSafeInteger(response.coverage.omittedPages)
+    )),
+    subtreePageCoveragePromptBound: [
+      relevantPolicyPrompt.includes(
+        'scope_pages=3; selected_pages=2; omitted_pages=1; prompt_truncated=false; has_more=false'
+      ),
+      completeFirstPolicyPrompt.includes(
+        'scope_pages=3; selected_pages=2; omitted_pages=1; prompt_truncated=false; has_more=true'
+      ),
+      completeFinalPolicyPrompt.includes(
+        'scope_pages=3; selected_pages=1; omitted_pages=2; prompt_truncated=false; has_more=false'
+      ),
+    ].every(Boolean),
+  };
+  const accepted = [
+    ...Object.values(cursorPreflight),
+    ...Object.values(contracts),
+    completeFirstPublicResponse.coverage.hasMore,
+    completeFirstPublicResponse.coverage.nextCursor === continuationCursor,
+    !completeFinalPublicResponse.coverage.hasMore,
+    !Object.hasOwn(completeFinalPublicResponse.coverage, 'nextCursor'),
+  ].every(Boolean);
+
+  return {
+    accepted,
+    cacheBoundaryReached: false,
+    continuity: {
+      contracts,
+      cursorCodecBoundaryReached: false,
+      cursorPreflight,
+      completeScopeProjections: {
+        first: {
+          coverage: completeFirstPublicResponse.coverage,
+          sourceIds: completeFirstPublicResponse.sources.map(
+            source => source.sourceId
+          ),
+        },
+        final: {
+          coverage: completeFinalPublicResponse.coverage,
+          sourceIds: completeFinalPublicResponse.sources.map(
+            source => source.sourceId
+          ),
+        },
+      },
+      productionSharedPolicyCore: true,
+      productionSharedResponseCore: true,
+      publicResponse: relevantPublicResponse,
+    },
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+  };
+}
+
 async function runBackstageReviewCompletionFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -3012,6 +3247,8 @@ async function runBackstageGenerationFixture(
       );
     case fixtures.continuityQuery:
       return runBackstageContinuityQueryFixture(fixture);
+    case fixtures.continuitySubtree:
+      return runBackstageContinuitySubtreeFixture(fixture);
     default:
       throw new Error('PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID');
   }

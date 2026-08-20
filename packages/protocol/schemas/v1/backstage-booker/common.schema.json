@@ -16,6 +16,14 @@
       "maxLength": 500,
       "pattern": "\\S"
     },
+    "continuityScopeKind": {
+      "type": "string",
+      "enum": [
+        "page",
+        "subtree"
+      ],
+      "default": "page"
+    },
     "continuityPagePath": {
       "type": "array",
       "minItems": 1,
@@ -45,10 +53,34 @@
         "pagePath": {
           "$ref": "#/$defs/continuityPagePath"
         },
+        "scopeKind": {
+          "$ref": "#/$defs/continuityScopeKind"
+        },
         "sectionPath": {
           "$ref": "#/$defs/continuitySectionPath"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scopeKind"
+            ],
+            "properties": {
+              "scopeKind": {
+                "const": "subtree"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "sectionPath"
+              ]
+            }
+          }
+        }
+      ]
     },
     "continuityResolvedScope": {
       "type": "object",
@@ -64,10 +96,34 @@
         "pagePath": {
           "$ref": "#/$defs/continuityPagePath"
         },
+        "scopeKind": {
+          "const": "subtree"
+        },
         "sectionPath": {
           "$ref": "#/$defs/continuitySectionPath"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scopeKind"
+            ],
+            "properties": {
+              "scopeKind": {
+                "const": "subtree"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "sectionPath"
+              ]
+            }
+          }
+        }
+      ]
     },
     "continuityCursor": {
       "type": "string",

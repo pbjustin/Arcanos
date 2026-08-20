@@ -94,7 +94,7 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, re-import schema `1.3.0`, verify the operation declares
+  `runBackstageBooker`, deploy and re-import schema `1.4.0`, verify the operation declares
   `bearerAuth`, and resave the Action. Do not weaken the backend gate.
 - Backstage Booker `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`: for an authoritative
   universe this is deliberately fail-closed. Verify the identical authority
@@ -118,6 +118,11 @@ If failing, inspect Railway build/deploy logs first.
   page title matched more than one page or the exact section path matched
   repeated heading occurrences. Preserve the exact `universeId` and query.
   Correct the title/section or add the full `pagePath` to disambiguate a page.
+  Remember that omitted `scopeKind` means one exact page. Use explicit
+  `scopeKind: "subtree"` only for that parent plus its descendants; it excludes
+  siblings, can resolve a blank navigation parent, and cannot be combined with
+  `sectionPath`. A subtree-plus-section request is invalid input, not a missing
+  Notion page.
   For repeated headings, query the parent/page scope or distinguish the
   headings in Notion; never silently combine them, substitute a raw Notion page
   ID, broaden to legacy state, or invent an answer.
@@ -125,17 +130,24 @@ If failing, inspect Railway build/deploy logs first.
   structured `coverage`. `status: "sampled"`, positive `omittedChunks`,
   `promptTruncated: true`, or `hasMore: true` is an explicit limit. Use
   `complete_scope` from the first request and pass only the opaque
-  `nextCursor` with the exact unchanged universe, query, scope, and mode until
-  `hasMore` is false. A `relevant` request is intentionally a sample; do not
-  attach a cursor to it or claim that it exhausts the scope. Sources are
-  sanitized opaque metadata, not retrievable excerpts or Notion page IDs.
+  `nextCursor` with the exact unchanged universe, query, scope, kind, and mode
+  until `hasMore` is false. A `relevant` request is intentionally a sample;
+  subtree samples are diversified across pages, but still are not exhaustive.
+  Only subtree results set `resolvedScope.scopeKind: "subtree"` and add
+  `scopePages`, `selectedPages`, and `omittedPages`; positive omitted page counts
+  are also an explicit limit. Page, section, and unscoped responses omit those
+  subtree-only fields. Sources are sanitized opaque metadata, not retrievable
+  excerpts or Notion page IDs.
 - Backstage Booker `BACKSTAGE_NOTION_CURSOR_INVALID` 409: the opaque
   `complete_scope` cursor was malformed or tampered with, the query/scope/mode
   changed, or the worker activated another snapshot between pages. It is
   nonretryable as supplied. Discard the collected pages and restart the same
   scoped request without a cursor; never decode, edit, or transfer a cursor to
-  another request. `queryContinuity` is request-local and synchronous-only, so
-  do not enqueue it or look for a worker job to resume.
+  another request. Cursor version 2 is deliberately invalid after the 1.4.0
+  rollout and requires the same cursor-free restart. `queryContinuity` is
+  request-local and synchronous-only, so do not enqueue it or look for a worker
+  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.4.0
+  first, re-import it into the existing Action, and preserve the saved bearer.
 - Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the provider exhausted
   its output limit on both the original attempt and the backend's one compact
   retry. The retry reused the same retrieval and token budget and occurs only

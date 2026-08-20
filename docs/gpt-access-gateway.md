@@ -44,7 +44,7 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-Builder schema `1.3.0` declares this credential on `runBackstageBooker` as well
+Builder schema `1.4.0` declares this credential on `runBackstageBooker` as well
 as the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
@@ -70,7 +70,7 @@ on the web service. It reads at most three fixed Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
 send it inbound. In this legacy supplement mode it stays on web and never goes
-to a worker. The operation count is unchanged, but schema `1.3.0` must be
+to a worker. The operation count is unchanged, but schema `1.4.0` must be
 re-imported because it declares the bearer, materializes nested public payload
 fields, and advertises authority-specific errors.
 
@@ -81,19 +81,27 @@ captures the fixed hierarchy, rejects incomplete or unsupported candidates,
 embeds immutable chunks, and atomically advances one active snapshot. Web
 `queryContinuity` and generation retrieve only bounded chunks from that fresh
 snapshot and make no request-time Notion call. A scoped query names exact
-`pageTitle`, optionally adds `pagePath` and `sectionPath`, and uses either a
-bounded `relevant` sample or `complete_scope` cursor pagination. Coverage must
-disclose omissions/truncation and public sources contain sanitized opaque
-hashes and paths, never excerpts or raw page IDs. Answer generation makes one
+`pageTitle` and optionally adds `pagePath`. Omitted/default `scopeKind: "page"`
+selects only the exact page and may add `sectionPath`; explicit
+`scopeKind: "subtree"` includes that parent and all descendants but no sibling,
+supports blank navigation parents, and rejects `sectionPath`. `relevant`
+subtree reads are diversified bounded samples; `complete_scope` uses cursor
+pagination. All results report chunk coverage. Only subtree results also set
+`resolvedScope.scopeKind: "subtree"` and report `scopePages`, `selectedPages`,
+and `omittedPages`. Public sources contain sanitized opaque hashes and paths,
+never excerpts or raw page IDs. Answer generation makes one
 compact retry only for max-output exhaustion. All legacy writes return
 `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY`; both legacy PostgreSQL reads return
 `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`; an unavailable authority index
 returns retryable `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without legacy fallback.
 `queryContinuity` is request-local and synchronous-only; it never enters the
 GPT Access or worker queue. Its continuation cursor is integrity-protected and
-bound to the exact request and active snapshot. Invalid, stale, or differently
-bound cursors return nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID` and
-must be replaced by restarting the scoped read without a cursor. Snapshots that
+bound to the exact request, scope kind, and active snapshot. Invalid, stale, or
+differently bound cursors return nonretryable
+`409 BACKSTAGE_NOTION_CURSOR_INVALID` and must be replaced by restarting the
+scoped read without a cursor. Version-2 cursors are invalid after the 1.4.0
+rollout. Deploy the backend before re-importing schema 1.4.0 into the existing
+Builder Action. Snapshots that
 predate the current heading index also fail closed until the worker rebuilds
 and activates a compatible snapshot.
 

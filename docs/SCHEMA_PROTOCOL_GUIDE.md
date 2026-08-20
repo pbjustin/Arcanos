@@ -74,16 +74,25 @@ invariant, not a new protocol command. The additive `queryContinuity` module
 action is carried by the existing `runBackstageBooker` operation, so it does
 not add a fifth Builder operation. Its request requires `universeId` and
 `query`; an optional scope requires exact `pageTitle` and may add `pagePath`
-for title disambiguation plus `sectionPath` for an exact nested heading subtree.
+for title disambiguation. The discriminated `scopeKind` defaults to `"page"`;
+page scope may add `sectionPath` for one exact nested heading subtree. Explicit
+`scopeKind: "subtree"` means the exact parent and every descendant page but no
+sibling, supports a blank navigation parent, and rejects `sectionPath`.
 Repeated normalized full heading paths remain distinct occurrences and make
 that exact section scope ambiguous rather than being silently combined.
-`relevant` returns a bounded relevance sample. `complete_scope` supports an
-opaque continuation cursor and must preserve the exact query and scope across
-pages. The cursor is integrity-protected and bound to the request and active
-snapshot; the public nonretryable conflict tells callers to restart without it
-when that binding is no longer valid. `queryContinuity` is synchronous-only and
-has no worker-queue representation. Responses expose truthful coverage and
-sanitized opaque source hashes, never raw excerpts or Notion page IDs. For configured universes, continuity
+`relevant` returns a bounded sample and diversifies subtree selection across
+pages. `complete_scope` supports an opaque continuation cursor and must preserve
+the exact query, scope kind, and mode across pages. The cursor is
+integrity-protected and bound to the request and active snapshot; the public
+nonretryable conflict tells callers to restart without it when that binding is
+no longer valid. Cursor version 2 is rejected after the schema `1.4.0` rollout.
+`queryContinuity` is synchronous-only and has no worker-queue representation.
+Every response exposes chunk coverage; only subtree responses additionally set
+`resolvedScope.scopeKind: "subtree"` and expose `scopePages`, `selectedPages`,
+and `omittedPages`; these count only pages with indexed chunks, not an empty
+anchor. Sanitized opaque source hashes never expose raw excerpts or
+Notion page IDs. Deploy the backend before re-importing schema `1.4.0` into
+Builder. For configured universes, continuity
 queries and generation use the derived snapshot while the existing PostgreSQL
 read and canon-write operations return typed quarantine/read-only errors; keep
 those semantics synchronized across service, HTTP, Builder instructions, and

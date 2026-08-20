@@ -20,7 +20,7 @@ export interface BackstageContinuityQueryCoreInput {
   readonly query: string;
 }
 
-export interface BackstageContinuityQueryCoreCoverage {
+interface BackstageContinuityQueryCoreCoverageBase {
   readonly status: 'complete' | 'sampled';
   readonly scopeChunks: number;
   readonly selectedChunks: number;
@@ -31,9 +31,24 @@ export interface BackstageContinuityQueryCoreCoverage {
   readonly nextCursor?: string;
 }
 
+export type BackstageContinuityQueryCoreCoverage =
+  BackstageContinuityQueryCoreCoverageBase & (
+    | {
+        readonly scopePages?: never;
+        readonly selectedPages?: never;
+        readonly omittedPages?: never;
+      }
+    | {
+        readonly scopePages: number;
+        readonly selectedPages: number;
+        readonly omittedPages: number;
+      }
+  );
+
 export interface BackstageContinuityQueryCoreResolvedScope {
   readonly pageTitle: string;
   readonly pagePath: readonly string[];
+  readonly scopeKind?: 'subtree';
   readonly sectionPath?: readonly string[];
 }
 
@@ -59,6 +74,7 @@ export interface BackstageContinuityQueryCoreResponse {
   readonly resolvedScope?: {
     readonly pageTitle: string;
     readonly pagePath: string[];
+    readonly scopeKind?: 'subtree';
     readonly sectionPath?: string[];
   };
   readonly coverage: BackstageContinuityQueryCoreCoverage;
@@ -100,6 +116,9 @@ export function buildBackstageContinuityPolicyPrompt(
   retrieval: Pick<BackstageContinuityQueryCoreRetrieval, 'coverage'>,
   compactRetry: boolean
 ): string {
+  const pageCoverage = retrieval.coverage.scopePages === undefined
+    ? ''
+    : `; scope_pages=${retrieval.coverage.scopePages}; selected_pages=${retrieval.coverage.selectedPages}; omitted_pages=${retrieval.coverage.omittedPages}`;
   const coverageInstruction = retrieval.coverage.exhaustive
     ? 'This retrieval is exhaustive for the resolved scope; a fact absent from these excerpts may be described as not present in that scope.'
     : 'This retrieval is sampled; never treat a fact missing from these excerpts as absent from Notion.';
@@ -111,7 +130,7 @@ export function buildBackstageContinuityPolicyPrompt(
     '<<CONTINUITY_QUERY>>',
     input.query.trim(),
     '<<RETRIEVAL_COVERAGE>>',
-    `status=${retrieval.coverage.status}; scope_chunks=${retrieval.coverage.scopeChunks}; selected_chunks=${retrieval.coverage.selectedChunks}; omitted_chunks=${retrieval.coverage.omittedChunks}; prompt_truncated=${retrieval.coverage.promptTruncated}; has_more=${retrieval.coverage.hasMore}`,
+    `status=${retrieval.coverage.status}; scope_chunks=${retrieval.coverage.scopeChunks}; selected_chunks=${retrieval.coverage.selectedChunks}; omitted_chunks=${retrieval.coverage.omittedChunks}${pageCoverage}; prompt_truncated=${retrieval.coverage.promptTruncated}; has_more=${retrieval.coverage.hasMore}`,
     coverageInstruction,
     '<<RESPONSE_STYLE>>',
     BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT,
@@ -124,6 +143,37 @@ export function buildBackstageContinuityResponse(
   retrieval: BackstageContinuityQueryCoreRetrieval,
   answer: string
 ): BackstageContinuityQueryCoreResponse {
+  const subtreeScope = retrieval.resolvedScope?.scopeKind === 'subtree';
+  if (
+    subtreeScope
+    && (
+      retrieval.coverage.scopePages === undefined
+      || retrieval.coverage.selectedPages === undefined
+      || retrieval.coverage.omittedPages === undefined
+    )
+  ) {
+    throw new Error('Subtree continuity coverage is incomplete.');
+  }
+  const baseCoverage = {
+    status: retrieval.coverage.status,
+    scopeChunks: retrieval.coverage.scopeChunks,
+    selectedChunks: retrieval.coverage.selectedChunks,
+    omittedChunks: retrieval.coverage.omittedChunks,
+    promptTruncated: retrieval.coverage.promptTruncated,
+    exhaustive: retrieval.coverage.exhaustive,
+    hasMore: retrieval.coverage.hasMore,
+    ...(retrieval.coverage.nextCursor
+      ? { nextCursor: retrieval.coverage.nextCursor }
+      : {}),
+  };
+  const coverage: BackstageContinuityQueryCoreCoverage = subtreeScope
+    ? {
+        ...baseCoverage,
+        scopePages: retrieval.coverage.scopePages!,
+        selectedPages: retrieval.coverage.selectedPages!,
+        omittedPages: retrieval.coverage.omittedPages!,
+      }
+    : baseCoverage;
   return {
     universeId: input.universeId,
     authority: 'notion',
@@ -133,15 +183,14 @@ export function buildBackstageContinuityResponse(
           resolvedScope: {
             pageTitle: retrieval.resolvedScope.pageTitle,
             pagePath: [...retrieval.resolvedScope.pagePath],
-            ...(retrieval.resolvedScope.sectionPath
+            ...(subtreeScope ? { scopeKind: 'subtree' as const } : {}),
+            ...(!subtreeScope && retrieval.resolvedScope.sectionPath
               ? { sectionPath: [...retrieval.resolvedScope.sectionPath] }
               : {}),
           },
         }
       : {}),
-    coverage: {
-      ...retrieval.coverage,
-    },
+    coverage,
     sources: retrieval.citations.map(citation => ({
       sourceId: citation.chunkId,
       pageTitle: citation.pageTitle,

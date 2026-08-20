@@ -450,7 +450,7 @@ control-plane behavior remain available under their own credentials and
 confirmation rules.
 
 Authenticated Backstage generation can optionally add a read-only Notion
-supplement without adding a fifth Builder operation. Schema `1.3.0` also
+supplement without adding a fifth Builder operation. Schema `1.4.0` also
 materializes the nested public payload and must be re-imported. Configure
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on the web service;
@@ -549,18 +549,27 @@ but will not infer ratings from prose or read the quarantined roster.
 
 `queryContinuity` always requires the exact `universeId` and a nonblank query.
 Its optional scope requires `pageTitle`; use optional `pagePath` to disambiguate
-duplicate titles and optional `sectionPath` to select an exact heading subtree. The
-default `relevant` mode returns a bounded sample. `complete_scope` pages through
-the deterministic resolved scope with an opaque cursor bound to the exact
-snapshot, query, and scope and protected against tampering. Invalid, stale, or
-differently bound cursors return nonretryable
-`409 BACKSTAGE_NOTION_CURSOR_INVALID`; callers restart without a cursor. The
-action runs synchronously in its request and never uses the worker queue.
-Coverage explicitly reports sampled versus
-complete status, selected and omitted chunk counts, prompt truncation,
-exhaustiveness, and whether another cursor exists. Public sources contain only
-sanitized path/category metadata and opaque hashes, never source excerpts or
-raw Notion page IDs. Continuity and booking answer generation make exactly one
+duplicate titles. `scopeKind` defaults to `"page"`, which may use
+`sectionPath` for one exact heading subtree. Explicit `scopeKind: "subtree"`
+includes the exact parent plus every descendant page and no siblings, supports
+a blank navigation parent, and rejects `sectionPath`. The default `relevant`
+mode returns a bounded sample and diversifies subtree results across pages.
+`complete_scope` pages through the deterministic resolved scope with an opaque
+cursor bound to the exact snapshot, query, scope kind, and mode and protected
+against tampering. Invalid, stale, or differently bound cursors return
+nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID`; callers restart without a
+cursor. Version-2 cursors are invalid after the 1.4.0 rollout and also require a
+cursor-free restart. The action runs synchronously in its request and never
+uses the worker queue.
+
+Coverage always reports sampled versus complete status, selected and omitted
+chunk counts, prompt truncation, exhaustiveness, and whether another cursor
+exists. Only a subtree response additionally sets
+`resolvedScope.scopeKind: "subtree"` and reports `scopePages`, `selectedPages`,
+and `omittedPages`; other scope kinds omit those fields. Public sources contain
+only sanitized path/category metadata and opaque hashes, never source excerpts
+or raw Notion page IDs. Deploy schema 1.4.0 before re-importing it into the
+existing Builder Action. Continuity and booking answer generation make exactly one
 compact retry only for provider max-output exhaustion, reuse the same retrieval
 and budget, do not retry other provider failures, and return a sanitized
 incomplete-output error after a second length exhaustion.

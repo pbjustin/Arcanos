@@ -1067,6 +1067,9 @@ describe('native PR contained application', () => {
     const continuityQuery = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.continuityQuery });
+    const continuitySubtree = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.continuitySubtree });
 
     expect(routeBudget.status).toBe(200);
     expect(routeBudget.body).toEqual({
@@ -1313,12 +1316,139 @@ describe('native PR contained application', () => {
       schemaVersion: 1,
     });
 
+    const subtreePagePath = [
+      'WWE Universe Mode',
+      'Brands',
+      'Monday Night Raw',
+    ];
+    const subtreeResolvedScope = {
+      pageTitle: 'Monday Night Raw',
+      pagePath: subtreePagePath,
+      scopeKind: 'subtree',
+    };
+    const rootSource = {
+      sourceId:
+        '1111111111111111111111111111111111111111111111111111111111111111',
+      pageTitle: 'Monday Night Raw',
+      pagePath: subtreePagePath,
+      headingPath: ['Overview'],
+      category: 'kayfabe',
+      contentHash:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    };
+    const rosterSource = {
+      sourceId:
+        '2222222222222222222222222222222222222222222222222222222222222222',
+      pageTitle: 'Raw Roster',
+      pagePath: [...subtreePagePath, 'Raw Roster'],
+      headingPath: ['Champions'],
+      category: 'kayfabe',
+      contentHash:
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    };
+    const subtreeResponse = (
+      coverage: Record<string, unknown>,
+      sources: Array<Record<string, unknown>>
+    ) => ({
+      universeId: 'native-preview-continuity-subtree',
+      authority: 'notion',
+      answer: '1. The Raw subtree contains root and descendant continuity.',
+      resolvedScope: subtreeResolvedScope,
+      coverage,
+      sources,
+    });
+    expect(continuitySubtree.status).toBe(200);
+    expect(continuitySubtree.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      continuity: {
+        contracts: {
+          completeScopeAllFixtureSourcesObserved: true,
+          incompleteSubtreeCoverageRejected: true,
+          pageCoverageTotalsTruthful: true,
+          scopeSourcePathsBound: true,
+          subtreeFieldsCoupled: true,
+          subtreePageCoveragePromptBound: true,
+        },
+        cursorCodecBoundaryReached: false,
+        cursorPreflight: {
+          completeScopeShapeAccepted: true,
+          malformedRejected: true,
+          wrongModeRejected: true,
+        },
+        completeScopeProjections: {
+          first: {
+            coverage: {
+              status: 'sampled',
+              scopeChunks: 3,
+              selectedChunks: 2,
+              omittedChunks: 1,
+              promptTruncated: false,
+              exhaustive: false,
+              hasMore: true,
+              nextCursor:
+                'eyJ2IjozLCJmaXh0dXJlIjoic2VhbGVkLXN1YnRyZWUtcHJldmlldyJ9',
+              scopePages: 3,
+              selectedPages: 2,
+              omittedPages: 1,
+            },
+            sourceIds: [
+              '1111111111111111111111111111111111111111111111111111111111111111',
+              '2222222222222222222222222222222222222222222222222222222222222222',
+            ],
+          },
+          final: {
+            coverage: {
+              status: 'sampled',
+              scopeChunks: 3,
+              selectedChunks: 1,
+              omittedChunks: 2,
+              promptTruncated: false,
+              exhaustive: false,
+              hasMore: false,
+              scopePages: 3,
+              selectedPages: 1,
+              omittedPages: 2,
+            },
+            sourceIds: [
+              '3333333333333333333333333333333333333333333333333333333333333333',
+            ],
+          },
+        },
+        productionSharedPolicyCore: true,
+        productionSharedResponseCore: true,
+        publicResponse: subtreeResponse(
+          {
+            status: 'sampled',
+            scopeChunks: 3,
+            selectedChunks: 2,
+            omittedChunks: 1,
+            promptTruncated: false,
+            exhaustive: false,
+            hasMore: false,
+            scopePages: 3,
+            selectedPages: 2,
+            omittedPages: 1,
+          },
+          [rootSource, rosterSource]
+        ),
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.continuitySubtree,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+    });
+
     for (const response of [
       routeBudget,
       hrcRetryCache,
       reviewCompletion,
       notionAuthorityRag,
       continuityQuery,
+      continuitySubtree,
     ]) {
       expectContainedResponseHeaders(
         response,
