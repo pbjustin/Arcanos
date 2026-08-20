@@ -57,4 +57,25 @@ describe('control-plane protocol schema', () => {
 
     expect(validation).toEqual({ ok: true, issues: [] });
   });
+
+  it('fails closed for reserved commands and nullish implemented payloads', () => {
+    expect(validateProtocolCommandPayload('patch.create', {})).toEqual({
+      ok: false,
+      issues: [{
+        instancePath: '/command',
+        message: 'No payload schema is registered for command "patch.create".',
+      }],
+    });
+    expect(validateProtocolCommandData('patch.create', {})).toEqual({
+      ok: false,
+      issues: [{
+        instancePath: '/command',
+        message: 'No response schema is registered for command "patch.create".',
+      }],
+    });
+    expect(validateProtocolCommandPayload('control-plane.invoke', undefined).ok)
+      .toBe(false);
+    expect(validateProtocolCommandData('control-plane.invoke', undefined).ok)
+      .toBe(false);
+  });
 });

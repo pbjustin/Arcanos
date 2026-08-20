@@ -749,8 +749,7 @@ export async function syncBackstageNotionAuthorityRoot(
   dependencies: BackstageNotionSyncDependencies = {}
 ): Promise<BackstageNotionSyncResult> {
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
-  const readEnvironment = dependencies.readEnvironment
-    ?? ((name: string) => getEnv(name));
+  const readEnvironment = dependencies.readEnvironment ?? getEnv;
   const accessToken = requireBackstageNotionAccessToken(readEnvironment);
   throwIfAborted(dependencies.signal);
   const holderId = dependencies.holderId ?? SYNC_HOLDER_ID;
@@ -890,7 +889,7 @@ export async function syncBackstageNotionAuthorityRoot(
       universeId: root.universeId,
       pages,
       repository,
-      embedBatch: dependencies.embedBatch ?? (inputs => createEmbeddings(inputs)),
+      embedBatch: dependencies.embedBatch ?? createEmbeddings,
       signal: heartbeat.signal,
     });
     await verifyHierarchyDidNotDrift({
@@ -960,7 +959,7 @@ export async function syncConfiguredBackstageNotionAuthorities(
     );
   }
   requireBackstageNotionAccessToken(
-    dependencies.readEnvironment ?? ((name: string) => getEnv(name))
+    dependencies.readEnvironment ?? getEnv
   );
 
   const results: BackstageNotionSyncResult[] = [];
