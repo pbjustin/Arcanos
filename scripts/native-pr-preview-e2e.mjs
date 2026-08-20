@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 119;
+const MAX_REQUESTS = 121;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -676,6 +676,20 @@ export function buildNativePrPreviewRequestPlan() {
       path: '/readyz?verbose=true',
       pathTemplate: '/readyz?query',
       role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.fixtures
+            .continuityQuery,
+      },
+      caseId: 'worker-backstage-generation-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.path,
+      role: 'worker',
     }
   );
 
@@ -806,6 +820,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
       'notionAuthorityRag'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-continuity-query',
+      'continuityQuery'
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -1944,6 +1962,70 @@ function expectedBackstageGenerationContractPayload(requestCase) {
         chunkCount: 1,
         citationCount: 1,
         promptTruncated: false,
+      },
+    };
+  }
+  if (requestCase.fixtureName === 'continuityQuery') {
+    return {
+      ...base,
+      actionPolicy: {
+        canonicalRouteRecognized: true,
+        publicReadOnlyAction: true,
+        queryContinuityRecognized: true,
+        tokenLimit: 900,
+        trinityRunOptionsBound: true,
+      },
+      continuity: {
+        compactRetryBound: true,
+        cursorPreflight: {
+          completeScopeAccepted: true,
+          malformedRejected: true,
+          wrongModeRejected: true,
+        },
+        exhaustiveCoverageInstruction: true,
+        instructionBoundaryPreserved: true,
+        publicResponse: {
+          answer: "1. Rhea Ripley holds the Women's World Championship on Raw.",
+          authority: 'notion',
+          coverage: {
+            exhaustive: false,
+            hasMore: false,
+            omittedChunks: 0,
+            promptTruncated: false,
+            scopeChunks: 1,
+            selectedChunks: 1,
+            status: 'sampled',
+          },
+          resolvedScope: {
+            pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+            pageTitle: 'Monday Night Raw',
+            sectionPath: ['Championships', "Women's World Championship"],
+          },
+          sources: [
+            {
+              category: 'kayfabe',
+              contentHash:
+                '9ac466a759d89a5d1db68cb463399d363a17195ab54efe7e04b14aed39df1b91',
+              headingPath: ['Championships', "Women's World Championship"],
+              pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
+              pageTitle: 'Monday Night Raw',
+              sourceId:
+                '0907207c11757e22e61b23a2d600ecb5813564e6de792700c8629f0cf51a9456',
+            },
+          ],
+          universeId: 'native-preview-continuity-query',
+        },
+        sampledCoverageInstruction: true,
+        sourceProjectionVerified: true,
+        syntheticAnswerNormalized: true,
+      },
+      rag: {
+        category: 'kayfabe',
+        chunkCount: 1,
+        citationCount: 1,
+        promptTruncated: false,
+        sanitizationApplied: true,
+        sourcePageChunkCount: 2,
       },
     };
   }

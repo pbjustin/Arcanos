@@ -143,7 +143,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(response.body.info?.version).toBe('1.2.1');
+    expect(response.body.info?.version).toBe('1.3.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
       '/gpt-access/capabilities/v1/backstage-booker/run',

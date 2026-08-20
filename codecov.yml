@@ -4,6 +4,142 @@ coverage:
       default:
         target: 100%
         threshold: 0%
+        flags:
+          - node
+        paths:
+          - "src/brain/brainRegistry.ts"
+          - "src/config/env.ts"
+          - "src/config/index.ts"
+          - "src/config/prompts.ts"
+          - "src/config/workerConfig.ts"
+          - "src/core/logic/trinityConstants.ts"
+          - "src/core/logic/trinitySchema.ts"
+          - "src/dag/dagNode.ts"
+          - "src/db.ts"
+          - "src/db/client.ts"
+          - "src/db/index.ts"
+          - "src/db/schema.ts"
+          - "src/lib/errors/index.ts"
+          - "src/lib/requestId.ts"
+          - "src/memory/store.ts"
+          - "src/middleware/capabilityGate.ts"
+          - "src/middleware/confirmGate.ts"
+          - "src/middleware/memoryConsistencyGate.ts"
+          - "src/middleware/unsafeExecutionGate.ts"
+          - "src/modules/arcanos-gaming.ts"
+          - "src/platform/logging/structuredLogging.ts"
+          - "src/platform/resilience/runtimeErrors.ts"
+          - "src/platform/runtime/auditSafe.ts"
+          - "src/platform/runtime/daemonRegistry.ts"
+          - "src/platform/runtime/dispatchMessages.ts"
+          - "src/platform/runtime/envParsers.ts"
+          - "src/platform/runtime/environmentFingerprints.ts"
+          - "src/platform/runtime/errorMessages.ts"
+          - "src/platform/runtime/gptSyncConfig.ts"
+          - "src/platform/runtime/gptSyncMessages.ts"
+          - "src/platform/runtime/hrcPrompts.ts"
+          - "src/platform/runtime/integrityManifest.ts"
+          - "src/platform/runtime/memoryValidationPrompts.ts"
+          - "src/platform/runtime/mockResponseConfig.ts"
+          - "src/platform/runtime/openaiPrompts.ts"
+          - "src/platform/runtime/orchestrationPrompts.ts"
+          - "src/platform/runtime/prAssistantMessages.ts"
+          - "src/platform/runtime/prAssistantTemplates.ts"
+          - "src/platform/runtime/researchPrompts.ts"
+          - "src/platform/runtime/runtimeProbeScripts.ts"
+          - "src/platform/runtime/secureReasoningMessages.ts"
+          - "src/platform/runtime/selfTestConfig.ts"
+          - "src/platform/runtime/systemDiagnosticsConfig.ts"
+          - "src/routes/_core/promptShortcutResponse.ts"
+          - "src/routes/ai-endpoints.ts"
+          - "src/routes/api-daemon/context.ts"
+          - "src/routes/api/index.ts"
+          - "src/routes/ask.ts"
+          - "src/routes/health.ts"
+          - "src/routes/healthGroup.ts"
+          - "src/routes/openai.ts"
+          - "src/routes/research.ts"
+          - "src/routes/sdk/index.ts"
+          - "src/services/agentExecutionTraceService.ts"
+          - "src/services/agentExecutionTypes.ts"
+          - "src/services/cef/schemaDefinitions.ts"
+          - "src/services/governance/loopContract.ts"
+          - "src/services/memory/paths.ts"
+          - "src/services/memory/state.ts"
+          - "src/services/memoryAware.ts"
+          - "src/services/memoryListing.ts"
+          - "src/services/openai.ts"
+          - "src/services/openai/functionTools.ts"
+          - "src/services/prAssistant/analysisRules.ts"
+          - "src/services/prAssistant/checks.ts"
+          - "src/services/prAssistant/constants.ts"
+          - "src/services/prAssistant/utils.ts"
+          - "src/services/safety/monotonicClock.ts"
+          - "src/services/safety/runtimeState.ts"
+          - "src/services/safety/runtimeState/defaults.ts"
+          - "src/services/sessionApiSchemas.ts"
+          - "src/shared/constants.ts"
+          - "src/shared/http/asyncHandler.ts"
+          - "src/shared/http/index.ts"
+          - "src/shared/http/middleware.ts"
+          - "src/shared/idGenerator.ts"
+          - "src/shared/redaction.ts"
+          - "src/shared/typeGuards.ts"
+          - "src/shared/types/actionPlan.ts"
+          - "src/transport/http/asyncHandler.ts"
+          - "src/transport/http/middleware/memoryConsistencyGate.ts"
+          - "src/transport/http/middleware/memoryConsistencyGate/constants.ts"
+          - "src/transport/http/middleware/memoryConsistencyGate/headers.ts"
+          - "src/transport/http/middleware/memoryConsistencyGate/payloads.ts"
+          - "src/transport/http/middleware/memoryConsistencyGate/requestState.ts"
+          - "src/transport/http/middleware/unsafeExecutionGate.ts"
+          - "src/utils/environmentSecurity.ts"
+          - "src/utils/environmentValidation.ts"
+          - "src/utils/http.ts"
+          - "src/utils/idleManager.ts"
+          - "src/utils/portUtils.ts"
+          - "src/utils/structuredLogging.ts"
+          - "src/utils/telemetry.ts"
+          - "src/workers/workerExecutionLimits.ts"
+      backstage-notion-core:
+        target: 90%
+        threshold: 0%
+        flags:
+          - node
+        paths:
+          - "src/core/db/repositories/backstageNotionRagRepository.ts"
+          - "src/services/backstageContinuityQuery.ts"
+          - "src/services/backstageNotionEnrichmentAuthorization.ts"
+          - "src/services/backstageNotionRag.ts"
+          - "src/services/backstageNotionSync.ts"
+          - "src/shared/backstage/backstageActionPolicy.ts"
+          - "src/shared/backstage/backstageContinuityQueryCore.ts"
+          - "src/shared/backstage/backstageGenerationError.ts"
+          - "src/shared/backstage/backstageNotionRagCore.ts"
+          - "src/shared/backstage/backstageNotionScopeIndex.ts"
+          - "src/workers/backstageNotionSyncLoop.ts"
+      backstage-routing:
+        target: 70%
+        threshold: 0%
+        flags:
+          - node
+        paths:
+          - "src/routes/_core/gptDispatch.ts"
+          - "src/routes/_core/legacyGptCompat.ts"
+          - "src/routes/dispatch.ts"
+          - "src/routes/gptRouter.ts"
+          - "src/services/backstage-booker.ts"
+          - "src/services/backstageBookerContracts.ts"
+      backstage-protocol:
+        target: 85%
+        threshold: 0%
+        flags:
+          - node
+        paths:
+          - "packages/protocol/src/backstageBooker.ts"
+          - "packages/protocol/src/index.ts"
+          - "packages/protocol/src/schemaCatalog.ts"
+          - "packages/protocol/src/validation.ts"
     patch:
       default:
         target: 80%
@@ -19,3 +155,4 @@ flags:
   node:
     paths:
       - src/
+      - packages/protocol/src/

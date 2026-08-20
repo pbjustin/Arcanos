@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
-import { isBackstageGptRoute } from '@shared/backstage/backstageActionPolicy.js';
+import { BACKSTAGE_MODULE_ROUTE } from '@shared/backstage/backstageActionPolicy.js';
 import { authenticateBackstageBookerAccessRequest } from './backstageBookerAccessAuth.js';
 
 interface BackstageNotionEnrichmentAuthorizationContext {
@@ -59,7 +59,7 @@ export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
   next: NextFunction
 ): void => {
   const gptId = typeof req.params.gptId === 'string' ? req.params.gptId : '';
-  if (!isBackstageGptRoute(gptId)) {
+  if (gptId !== BACKSTAGE_MODULE_ROUTE) {
     next();
     return;
   }

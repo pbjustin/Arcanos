@@ -44,7 +44,7 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-Builder schema `1.2.1` declares this credential on `runBackstageBooker` as well
+Builder schema `1.3.0` declares this credential on `runBackstageBooker` as well
 as the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
@@ -58,11 +58,11 @@ closed unless `action` is `upsertStoryline` or
 `appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
 `403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token
 cannot authenticate another GPT Access, dispatch, module, queryroute,
-control-plane, or legacy path. On canonical direct Backstage generation, a
-verified copy establishes request-local authorization for private Notion
-context; it never authorizes a mutation. Non-authoritative direct callers keep
-the existing public non-Notion behavior, while authority-mode generation fails
-closed without verified provenance.
+control-plane, or legacy path. On canonical direct Backstage continuity queries
+and generation, a verified copy establishes request-local authorization for
+private Notion context; it never authorizes a mutation. Non-authoritative direct
+callers keep the existing public non-Notion generation behavior, while
+authority-mode queries and generation fail closed without verified provenance.
 
 The legacy supplement requires separate outbound
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values
@@ -70,7 +70,7 @@ on the web service. It reads at most three fixed Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
 send it inbound. In this legacy supplement mode it stays on web and never goes
-to a worker. The operation count is unchanged, but schema `1.2.1` must be
+to a worker. The operation count is unchanged, but schema `1.3.0` must be
 re-imported because it declares the bearer, materializes nested public payload
 fields, and advertises authority-specific errors.
 
@@ -79,11 +79,23 @@ Notion-authority mode is separate. Configure the exact closed
 the read-content Notion token on the worker only. The worker recursively
 captures the fixed hierarchy, rejects incomplete or unsupported candidates,
 embeds immutable chunks, and atomically advances one active snapshot. Web
-generation retrieves only bounded chunks from that fresh snapshot and makes no
-request-time Notion call. All legacy writes return
+`queryContinuity` and generation retrieve only bounded chunks from that fresh
+snapshot and make no request-time Notion call. A scoped query names exact
+`pageTitle`, optionally adds `pagePath` and `sectionPath`, and uses either a
+bounded `relevant` sample or `complete_scope` cursor pagination. Coverage must
+disclose omissions/truncation and public sources contain sanitized opaque
+hashes and paths, never excerpts or raw page IDs. Answer generation makes one
+compact retry only for max-output exhaustion. All legacy writes return
 `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY`; both legacy PostgreSQL reads return
 `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`; an unavailable authority index
 returns retryable `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without legacy fallback.
+`queryContinuity` is request-local and synchronous-only; it never enters the
+GPT Access or worker queue. Its continuation cursor is integrity-protected and
+bound to the exact request and active snapshot. Invalid, stale, or differently
+bound cursors return nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID` and
+must be replaced by restarting the scoped read without a cursor. Snapshots that
+predate the current heading index also fail closed until the worker rebuilds
+and activates a compatible snapshot.
 
 The lane may bypass the generic `ARCANOS_GPT_ACCESS_SCOPES`
 `capabilities.run` grant and the backend confirmation challenge, but stable

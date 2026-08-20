@@ -690,8 +690,13 @@ describe('jobRunnerRuntime', () => {
     const databaseBootstrapIndex = source.indexOf(
       "await initializeJobRunnerDatabaseWithRetry('job-runner'"
     );
+    const backstageNotionReadinessIndex = source.indexOf(
+      'await ensureBackstageNotionWorkerReadiness({',
+      databaseBootstrapIndex
+    );
     const autonomyBootstrapIndex = source.indexOf(
-      'await bootstrapWorkerAutonomyWithRetry('
+      'await bootstrapWorkerAutonomyWithRetry(',
+      backstageNotionReadinessIndex
     );
     const moduleRegistryPreloadIndex = source.indexOf(
       'await initializeModuleRegistry()',
@@ -734,6 +739,7 @@ describe('jobRunnerRuntime', () => {
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
+      backstageNotionReadinessIndex,
       autonomyBootstrapIndex,
       moduleRegistryPreloadIndex,
       dispatcherStartIndex,
@@ -749,7 +755,8 @@ describe('jobRunnerRuntime', () => {
     expect(runtimeSettingsIndex).toBeLessThan(databaseBootstrapIndex);
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
-    expect(databaseBootstrapIndex).toBeLessThan(autonomyBootstrapIndex);
+    expect(databaseBootstrapIndex).toBeLessThan(backstageNotionReadinessIndex);
+    expect(backstageNotionReadinessIndex).toBeLessThan(autonomyBootstrapIndex);
     expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
     expect(dispatcherStartIndex).toBeLessThan(heartbeatSetupIndex);
     expect(heartbeatSetupIndex).toBeLessThan(dispatcherReadySignalIndex);

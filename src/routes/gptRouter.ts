@@ -86,8 +86,14 @@ import {
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
 import {
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
 } from '@services/backstageNotionRag.js';
+import {
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+} from '@shared/backstage/backstageGenerationError.js';
 import {
   resolveBackstageCanonDomainErrorHttpStatus,
 } from '@core/db/repositories/backstageBookerRepository.js';
@@ -1396,8 +1402,8 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 
 router.post(
   "/:gptId",
-  canonicalGptIdentifierBoundary,
   optionalBackstageNotionEnrichmentAuth,
+  canonicalGptIdentifierBoundary,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
   canonicalResearchGptAdmissionBoundary,
@@ -1846,7 +1852,16 @@ router.post(
               routingValidation.plan.availableActions,
             )
           : undefined;
+        const requestedModuleAction = effectiveRequestedAction
+          ? resolveGptModuleRequestedActionAlias(
+              effectiveRequestedAction,
+              routingValidation.plan.availableActions,
+            )
+          : undefined;
         const researchAction = requestedResearchAction ?? routingValidation.plan.action;
+        const backstageContinuityQuerySyncOnly =
+          routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+          && (requestedModuleAction ?? researchAction) === 'queryContinuity';
         const researchDiagnosticRequest = isDiagnosticRequest(
           effectiveBodyRecord ?? undefined,
           promptText,
@@ -2654,7 +2669,14 @@ router.post(
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
-        const executionPlan: GptExecutionPlan = memoryPlaneAuthorized === true
+        const executionPlan: GptExecutionPlan = backstageContinuityQuerySyncOnly
+          ? {
+              ...classifiedExecutionPlan,
+              mode: 'sync',
+              reason: 'backstage_continuity_request_local_auth',
+              heavyPrompt: false,
+            }
+          : memoryPlaneAuthorized === true
           ? {
               ...classifiedExecutionPlan,
               mode: 'sync',
@@ -2663,7 +2685,8 @@ router.post(
             }
           : classifiedExecutionPlan;
         const priorityJobBackedExecutionRequested =
-          memoryPlaneAuthorized !== true
+          !backstageContinuityQuerySyncOnly
+          && memoryPlaneAuthorized !== true
           && (
             queryAndWaitRequested
             || executionPlan.mode === 'async'
@@ -2750,7 +2773,8 @@ router.post(
         }
 
         const shouldUseJobBackedExecution =
-          memoryPlaneAuthorized !== true
+          !backstageContinuityQuerySyncOnly
+          && memoryPlaneAuthorized !== true
           && (
             (queryAndWaitRequested && executionPlan.mode === 'async')
             || executionPlan.mode === 'async'
@@ -3576,6 +3600,16 @@ router.post(
               ? 503
               : envelope.error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
               ? 503
+               : envelope.error.code === BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE
+               ? (envelope.error.details as { reason?: unknown } | undefined)?.reason === 'not_found'
+                 ? 404
+                 : 409
+               : envelope.error.code === BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE
+               ? 409
+              : envelope.error.code === BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+              ? 500
+              : envelope.error.code === BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
+              ? 500
               : envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
               ? 503
               : envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE

@@ -370,19 +370,33 @@ describe('backstage-booker generateBooking real provider chain', () => {
   });
 
   it('continues to reject partial output that exhausts the extended Booker budget', async () => {
-    responsesCreate.mockResolvedValueOnce({
-      id: 'resp_backstage_incomplete_booking',
-      model: 'gpt-5.1',
-      status: 'incomplete',
-      incomplete_details: { reason: 'max_output_tokens' },
-      output_text: 'Partial booking review that must not be returned.',
-      output: [],
-      usage: {
-        input_tokens: 1_100,
-        output_tokens: 1_600,
-        total_tokens: 2_700
-      }
-    });
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_incomplete_booking',
+        model: 'gpt-5.1',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output_text: 'Partial booking review that must not be returned.',
+        output: [],
+        usage: {
+          input_tokens: 1_100,
+          output_tokens: 1_600,
+          total_tokens: 2_700
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_incomplete_booking_retry',
+        model: 'gpt-5.1',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output_text: 'Private compact retry output that must not be returned.',
+        output: [],
+        usage: {
+          input_tokens: 1_150,
+          output_tokens: 2_400,
+          total_tokens: 3_550
+        }
+      });
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
@@ -390,14 +404,19 @@ describe('backstage-booker generateBooking real provider chain', () => {
       throw new Error('Expected generateBooking to reject partial provider output.');
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe('Booking generation failed');
-      expect((error as Error & { cause?: unknown }).cause).toEqual(expect.objectContaining({
-        code: 'OPENAI_COMPLETION_INCOMPLETE',
-        incompleteReason: 'max_output_tokens'
-      }));
+      expect(error).toMatchObject({
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        message:
+          'Backstage Booker could not produce a complete response within the output limit. Narrow the request and try again.',
+        retryable: false
+      });
+      expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
+      expect(JSON.stringify(error)).not.toContain('Partial booking review');
+      expect(JSON.stringify(error)).not.toContain('Private compact retry output');
     } finally {
       consoleErrorSpy.mockRestore();
     }
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
 
   it('retains the honesty caveat when the user directive requests current external events', async () => {

@@ -21,6 +21,15 @@ import { BackstageCanonDomainError } from '../src/core/db/repositories/backstage
 import {
   BackstageCanonUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
+import {
+  BackstageNotionCursorInvalidError,
+  BackstageNotionIndexUnavailableError,
+  BackstageNotionScopeResolutionError,
+} from '../src/services/backstageNotionRag.js';
+import {
+  BackstageBookerOutputIncompleteError,
+  BackstageContinuityQueryFailedError,
+} from '../src/shared/backstage/backstageGenerationError.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
@@ -130,6 +139,9 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 const { dispatchLegacyRouteToGpt } = await import('../src/routes/_core/legacyGptCompat.js');
+const { queryBackstageContinuity } = await import(
+  '../src/services/backstageContinuityQuery.js'
+);
 const {
   createAbortError,
   getRequestAbortSignal,
@@ -650,6 +662,176 @@ describe('gpt dispatch compatibility', () => {
       expect(mockPersistModuleConversation).not.toHaveBeenCalled();
       expect(mockRebuildGptModuleMap).not.toHaveBeenCalled();
       expect(mockRecordUnknownGpt).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [
+      'unavailable index',
+      () => new BackstageNotionIndexUnavailableError(),
+      'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      503,
+    ],
+    [
+      'missing scope',
+      () => new BackstageNotionScopeResolutionError('not_found'),
+      'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+      404,
+    ],
+    [
+      'ambiguous scope',
+      () => new BackstageNotionScopeResolutionError('ambiguous'),
+      'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+      409,
+    ],
+    [
+      'invalid cursor',
+      () => new BackstageNotionCursorInvalidError(),
+      'BACKSTAGE_NOTION_CURSOR_INVALID',
+      409,
+    ],
+    [
+      'incomplete output',
+      () => new BackstageBookerOutputIncompleteError(),
+      'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      500,
+    ],
+    [
+      'internal continuity query failure',
+      () => new BackstageContinuityQueryFailedError(),
+      'BACKSTAGE_CONTINUITY_QUERY_FAILED',
+      500,
+    ],
+  ] as const)(
+    'maps a continuity %s through /dispatch and both legacy adapters',
+    async (_caseName, createFailure, expectedCode, expectedStatus) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        backstage: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['queryContinuity'],
+        defaultAction: 'queryContinuity',
+      });
+      mockDispatchModuleAction.mockImplementation(async () => {
+        throw createFailure();
+      });
+
+      const app = express();
+      app.use(express.json());
+      app.post('/dispatch', universalDispatch);
+      for (const path of ['/modules/backstage-booker', '/queryroute'] as const) {
+        app.post(path, async (req, res, next) => {
+          await dispatchLegacyRouteToGpt(req, res, next, {
+            legacyRoute: path,
+            gptId: 'backstage',
+            applyDeprecationHeaders: false,
+          });
+        });
+      }
+
+      const requestPayload = {
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Who is the current champion?',
+        },
+      };
+      const responses = [
+        await request(app).post('/dispatch').send({
+          target: 'gpt',
+          gptId: 'backstage',
+          ...requestPayload,
+        }),
+        await request(app).post('/modules/backstage-booker').send(requestPayload),
+        await request(app).post('/queryroute').send(requestPayload),
+      ];
+
+      for (const response of responses) {
+        expect(response.status).toBe(expectedStatus);
+        expect(response.body).toMatchObject({
+          ok: false,
+          error: {
+            code: expectedCode,
+          },
+        });
+      }
+      expect(mockDispatchModuleAction).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([
+    [
+      'malformed cursor',
+      { retrievalMode: 'complete_scope', cursor: '!' },
+    ],
+    [
+      'mode-invalid cursor',
+      { retrievalMode: 'relevant', cursor: 'eyJ2IjoxfQ' },
+    ],
+  ] as const)(
+    'maps a service-validated %s to typed 409 through compatibility routes',
+    async (_caseName, cursorFields) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        backstage: { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
+      mockGetModuleMetadata.mockReturnValue({
+        name: 'BACKSTAGE:BOOKER',
+        description: null,
+        route: 'backstage-booker',
+        actions: ['queryContinuity'],
+        defaultAction: 'queryContinuity',
+      });
+      mockDispatchModuleAction.mockImplementation(async (
+        _moduleName,
+        _action,
+        payload
+      ) => queryBackstageContinuity(payload));
+
+      const app = express();
+      app.use(express.json());
+      app.post('/dispatch', universalDispatch);
+      for (const path of ['/modules/backstage-booker', '/queryroute'] as const) {
+        app.post(path, async (req, res, next) => {
+          await dispatchLegacyRouteToGpt(req, res, next, {
+            legacyRoute: path,
+            gptId: 'backstage',
+            applyDeprecationHeaders: false,
+          });
+        });
+      }
+
+      const requestPayload = {
+        action: 'queryContinuity',
+        payload: {
+          universeId: 'my-universe-2k26',
+          query: 'Continue the scoped read.',
+          ...cursorFields,
+        },
+      };
+      const responses = [
+        await request(app).post('/dispatch').send({
+          target: 'gpt',
+          gptId: 'backstage',
+          ...requestPayload,
+        }),
+        await request(app).post('/modules/backstage-booker').send(requestPayload),
+        await request(app).post('/queryroute').send(requestPayload),
+      ];
+
+      for (const response of responses) {
+        expect(response.status).toBe(409);
+        expect(response.body).toMatchObject({
+          ok: false,
+          error: {
+            code: 'BACKSTAGE_NOTION_CURSOR_INVALID',
+            details: { retryable: false },
+          },
+        });
+      }
+      expect(mockDispatchModuleAction).toHaveBeenCalledTimes(3);
     }
   );
 

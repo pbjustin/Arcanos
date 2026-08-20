@@ -84,7 +84,7 @@ Railway builds from the root package and uses `scripts/start-railway-service-wit
 ### Protocol and CLI
 
 - Public protocol commands, envelopes, and schema-catalog entries belong in `packages/protocol/` first.
-- Backstage Booker's nine request/response pairs are exported by
+- Backstage Booker's ten request/response pairs are exported by
   `@arcanos/protocol` as a registered module-action family. Consumers should
   use the exported action types, `DEFAULT_BACKSTAGE_UNIVERSE_ID`, schema
   catalog, and dedicated validation/assertion helpers rather than reproducing

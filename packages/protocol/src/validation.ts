@@ -126,6 +126,7 @@ const backstageBookerActionRequestSchemas: Record<BackstageBookerAction, AnySche
   updateRoster: schemaCatalog.backstageBooker.actions.updateRoster.request,
   trackStoryline: schemaCatalog.backstageBooker.actions.trackStoryline.request,
   simulateMatch: schemaCatalog.backstageBooker.actions.simulateMatch.request,
+  queryContinuity: schemaCatalog.backstageBooker.actions.queryContinuity.request,
   generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.request,
   generateBookingWithHRC:
     schemaCatalog.backstageBooker.actions.generateBookingWithHRC.request,
@@ -139,6 +140,7 @@ const backstageBookerActionResponseSchemas: Record<BackstageBookerAction, AnySch
   updateRoster: schemaCatalog.backstageBooker.actions.updateRoster.response,
   trackStoryline: schemaCatalog.backstageBooker.actions.trackStoryline.response,
   simulateMatch: schemaCatalog.backstageBooker.actions.simulateMatch.response,
+  queryContinuity: schemaCatalog.backstageBooker.actions.queryContinuity.response,
   generateBooking: schemaCatalog.backstageBooker.actions.generateBooking.response,
   generateBookingWithHRC:
     schemaCatalog.backstageBooker.actions.generateBookingWithHRC.response,

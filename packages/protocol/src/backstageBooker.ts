@@ -18,6 +18,7 @@ export const BACKSTAGE_BOOKER_ACTIONS = [
   "updateRoster",
   "trackStoryline",
   "simulateMatch",
+  "queryContinuity",
   "generateBooking",
   "generateBookingWithHRC",
   "saveStoryline",
@@ -150,6 +151,76 @@ export interface BackstageSimulateMatchResponse {
   universeId: BackstageUniverseId;
   result: BackstageMatchResult;
   hrc: BackstageHrcResult;
+}
+
+export interface BackstageContinuityRetrievalScope {
+  pageTitle: string;
+  pagePath?: string[];
+  sectionPath?: string[];
+}
+
+export interface BackstageContinuityResolvedScope {
+  pageTitle: string;
+  pagePath: string[];
+  sectionPath?: string[];
+}
+
+export type BackstageContinuityRetrievalMode = "relevant" | "complete_scope";
+
+interface BackstageQueryContinuityRequestBase {
+  universeId: BackstageUniverseId;
+  query: string;
+  retrievalScope?: BackstageContinuityRetrievalScope;
+}
+
+export type BackstageQueryContinuityRequest =
+  | (BackstageQueryContinuityRequestBase & {
+      retrievalMode?: "relevant";
+      cursor?: never;
+    })
+  | (BackstageQueryContinuityRequestBase & {
+      retrievalMode: "complete_scope";
+      cursor?: string;
+    });
+
+export interface BackstageContinuityCoverage {
+  status: "complete" | "sampled";
+  scopeChunks: number;
+  selectedChunks: number;
+  omittedChunks: number;
+  promptTruncated: boolean;
+  exhaustive: boolean;
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export type BackstageContinuitySourceCategory =
+  | "championships"
+  | "events"
+  | "general"
+  | "kayfabe"
+  | "nxt"
+  | "raw"
+  | "roster"
+  | "smackdown"
+  | "storylines";
+
+export interface BackstageContinuitySource {
+  sourceId: string;
+  pageTitle: string;
+  pagePath: string[];
+  headingPath: string[];
+  category: BackstageContinuitySourceCategory;
+  contentHash: string;
+}
+
+export interface BackstageQueryContinuityResponse {
+  universeId: BackstageUniverseId;
+  authority: "notion";
+  answer: string;
+  resolvedScope?: BackstageContinuityResolvedScope;
+  coverage: BackstageContinuityCoverage;
+  sources: BackstageContinuitySource[];
 }
 
 export interface BackstageGenerateBookingRequest {
@@ -306,6 +377,7 @@ export interface BackstageBookerActionInputMap {
   updateRoster: BackstageUpdateRosterRequest;
   trackStoryline: BackstageTrackStorylineRequest;
   simulateMatch: BackstageSimulateMatchRequest;
+  queryContinuity: BackstageQueryContinuityRequest;
   generateBooking: BackstageGenerateBookingRequest;
   generateBookingWithHRC: BackstageGenerateBookingWithHrcRequest;
   saveStoryline: BackstageSaveStorylineRequest;
@@ -318,6 +390,7 @@ export interface BackstageBookerActionOutputMap {
   updateRoster: BackstageUpdateRosterResponse;
   trackStoryline: BackstageTrackStorylineResponse;
   simulateMatch: BackstageSimulateMatchResponse;
+  queryContinuity: BackstageQueryContinuityResponse;
   generateBooking: BackstageGenerateBookingResponse;
   generateBookingWithHRC: BackstageGenerateBookingWithHrcResponse;
   saveStoryline: BackstageSaveStorylineResponse;

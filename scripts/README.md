@@ -39,13 +39,24 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 119-request plan without network access.
+untracked worktree, limits, and the fixed 121-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
 cookie, or session credential. Its attestation scope is the identity served by
 the two pre-confirmed public hosts. It does not independently prove Railway
 project/service/deployment ownership.
+
+The trusted Railway lifecycle intentionally executes the probe implementation
+and contract from the default-branch checkout even though the controller deploys
+the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
+only as exact-SHA Git evidence. For a PR that introduces the continuity fixture,
+the trusted run can therefore remain on the pre-merge 119-request plan. After it
+reports the exact preview hosts, run the 121-request probe from a separate,
+clean, detached checkout of the exact PR head to obtain supplemental evidence
+for the new selector and its worker denial. That supplemental run is
+credential-free and does not replace the lifecycle's Railway ownership,
+exact-deployment, or cleanup checks.
 
 The 69 checks retain the original 50 health/readiness and synthetic generic-job
 cases, add eleven server-owned Research web contract fixtures and four Backstage
@@ -108,7 +119,8 @@ normal protected GET route, bearer authentication, or a database reader.
 
 The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
-`review-completion-contract`, and `notion-authority-rag-contract`. The first
+`review-completion-contract`, `notion-authority-rag-contract`, and
+`continuity-query-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
@@ -137,6 +149,14 @@ shape, parsing, sanitization, chunking, citation framing, message isolation,
 and mutation recognition. This proves deployed Notion API reachability, not a
 valid credential, live page read, PostgreSQL activation, worker run, or model
 provider call. Protected effects stay disabled.
+
+The continuity-query case executes the production-shared cursor-shape
+preflight, sampled/exhaustive and compact-retry policy prompts, prompt assembly,
+and public response projection over server-owned sealed input. It also proves
+that the passive worker returns the contained 404 for the generation-contract
+path. This is component evidence only: it does not invoke the canonical
+authenticated route, sign or verify a cursor MAC, execute SQL pagination, read
+live PostgreSQL or Notion data, or call OpenAI or any other model provider.
 
 The sealed `POST /mcp/body-cap-contract` selector is `effective-limits`. It
 executes the config-free core used by the production MCP pre-parser against six

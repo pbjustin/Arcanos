@@ -2,6 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { Pool, PoolClient } from 'pg';
 
+import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '@shared/backstage/backstageNotionRagCore.js';
+import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+  normalizeBackstageNotionScopeKey,
+  normalizeBackstageNotionScopePath,
+} from '@shared/backstage/backstageNotionScopeIndex.js';
 import { getPool } from '../client.js';
 
 export const BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS = 1_000;
@@ -13,6 +19,50 @@ export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL = `jsonb_build_object(
+  'category', CASE
+    WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
+      AND octet_length(convert_to(chunk.metadata ->> 'category', 'UTF8')) <= 32
+    THEN chunk.metadata -> 'category'
+    ELSE NULL
+  END,
+  'headingIndexVersion', CASE
+    WHEN jsonb_typeof(chunk.metadata -> 'headingIndexVersion') = 'number'
+      AND octet_length(convert_to(
+        (chunk.metadata -> 'headingIndexVersion')::TEXT,
+        'UTF8'
+      )) <= 16
+    THEN chunk.metadata -> 'headingIndexVersion'
+    ELSE NULL
+  END,
+  'headingOccurrencePath', CASE
+    WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
+      AND jsonb_array_length(chunk.metadata -> 'headingOccurrencePath') <= 32
+      AND octet_length(convert_to(
+        (chunk.metadata -> 'headingOccurrencePath')::TEXT,
+        'UTF8'
+      )) <= 1024
+    THEN chunk.metadata -> 'headingOccurrencePath'
+    ELSE NULL
+  END,
+  'sourceHash', CASE
+    WHEN jsonb_typeof(chunk.metadata -> 'sourceHash') = 'string'
+      AND octet_length(convert_to(chunk.metadata ->> 'sourceHash', 'UTF8')) <= 64
+    THEN chunk.metadata -> 'sourceHash'
+    ELSE NULL
+  END,
+  'sourceLastEditedAt', CASE
+    WHEN chunk.metadata -> 'sourceLastEditedAt' = 'null'::JSONB
+    THEN 'null'::JSONB
+    WHEN jsonb_typeof(chunk.metadata -> 'sourceLastEditedAt') = 'string'
+      AND octet_length(convert_to(
+        chunk.metadata ->> 'sourceLastEditedAt',
+        'UTF8'
+      )) <= 64
+    THEN chunk.metadata -> 'sourceLastEditedAt'
+    ELSE to_jsonb('__INVALID_SOURCE_LAST_EDITED_AT__'::TEXT)
+  END
+)`;
 
 type TimestampValue = Date | string;
 
@@ -82,28 +132,66 @@ export interface BackstageNotionSnapshotRecord {
   createdAt: Date;
 }
 
-export interface BackstageNotionActiveChunk {
+export interface BackstageNotionActiveChunkMetadata {
   id: string;
   pageId: string;
   pageTitle: string;
-  pageUrl: string | null;
   pagePath: string[];
   ordinal: number;
   contentHash: string;
-  content: string;
   codePoints: number;
   embeddingModel: string;
-  embedding: number[];
   headingPath: string[];
   metadata: Record<string, unknown>;
 }
 
-export interface BackstageNotionActiveSnapshot {
+export interface BackstageNotionActiveChunk extends BackstageNotionActiveChunkMetadata {
+  content: string;
+  embedding: number[];
+}
+
+export interface BackstageNotionActiveSnapshotHeader {
   authority: 'notion';
   verifiedAt: Date;
   snapshot: BackstageNotionSnapshotRecord;
+}
+
+export interface BackstageNotionActiveSnapshot
+  extends BackstageNotionActiveSnapshotHeader {
   chunks: BackstageNotionActiveChunk[];
   truncated: boolean;
+}
+
+export interface BackstageNotionSnapshotChunkPageSelector {
+  pageAnchorChunkId: string | null;
+  sectionOccurrencePath: readonly number[] | null;
+}
+
+export interface BackstageNotionSnapshotScopeLookup {
+  pageTitleKey: string;
+  pagePathKey: readonly string[] | null;
+  sectionPathKey: readonly string[] | null;
+}
+
+export type BackstageNotionSnapshotScopeResolution =
+  | { status: 'not_found' | 'ambiguous' | 'invalid' }
+  | {
+      status: 'resolved';
+      pageTitle: string;
+      pagePath: string[];
+      sectionPath: string[] | null;
+      selector: BackstageNotionSnapshotChunkPageSelector;
+      scopeChunkCount: number;
+    };
+
+export interface BackstageNotionSnapshotChunkPageChunk
+  extends BackstageNotionActiveChunkMetadata {
+  content: string;
+}
+
+export interface BackstageNotionSnapshotChunkPage {
+  scopeChunkCount: number;
+  chunks: BackstageNotionSnapshotChunkPageChunk[];
 }
 
 export interface BackstageNotionPageInventoryRecord {
@@ -160,6 +248,23 @@ export interface BackstageNotionRagRepository {
     universeId: string,
     maxChunks: number
   ): Promise<BackstageNotionActiveSnapshot | null>;
+  loadActiveSnapshotHeader(
+    universeId: string
+  ): Promise<BackstageNotionActiveSnapshotHeader | null>;
+  resolveSnapshotScope(
+    universeId: string,
+    snapshotId: string,
+    lookup: BackstageNotionSnapshotScopeLookup
+  ): Promise<BackstageNotionSnapshotScopeResolution>;
+  loadSnapshotChunkPage(
+    universeId: string,
+    snapshotId: string,
+    selector: BackstageNotionSnapshotChunkPageSelector,
+    /** Null for SQL counting; otherwise a MAC-authenticated immutable-snapshot count. */
+    knownScopeChunkCount: number | null,
+    offset: number,
+    limit: number
+  ): Promise<BackstageNotionSnapshotChunkPage>;
   loadActiveInventory(universeId: string): Promise<BackstageNotionActiveInventory | null>;
 }
 
@@ -191,22 +296,55 @@ interface SnapshotRow {
   snapshot_created_at: TimestampValue;
 }
 
-interface ActiveChunkRow extends SnapshotRow {
-  authority: 'notion';
-  verified_at: TimestampValue;
+interface ChunkMetadataRow {
   chunk_id: string;
   page_id: string;
   page_title: string;
-  canonical_url: string | null;
   page_path: unknown;
   ordinal: number | string;
   content_hash: string;
-  content: string;
   code_points: number | string;
   chunk_embedding_model: string;
-  embedding: unknown;
   heading_path: unknown;
   chunk_metadata: unknown;
+}
+
+interface ActiveSnapshotHeaderRow extends SnapshotRow {
+  authority: 'notion';
+  verified_at: TimestampValue;
+}
+
+interface ActiveChunkMetadataRow extends ActiveSnapshotHeaderRow, ChunkMetadataRow {}
+
+interface ActiveChunkRow extends ActiveChunkMetadataRow {
+  content: string;
+  embedding: unknown;
+}
+
+interface SnapshotChunkPageRow extends ChunkMetadataRow {
+  content: string;
+}
+
+interface SnapshotChunkScopeCountRow {
+  scope_chunk_count: number | string;
+}
+
+interface SnapshotScopeIntegrityRow {
+  scope_integrity_valid: boolean;
+}
+
+interface SnapshotPageScopeCandidateRow {
+  page_id: string;
+  page_title: string;
+  page_path: unknown;
+  page_anchor_chunk_id: string;
+  scope_chunk_count: number | string;
+}
+
+interface SnapshotSectionScopeCandidateRow {
+  section_occurrence_path: unknown;
+  section_path: unknown;
+  scope_chunk_count: number | string;
 }
 
 interface InventoryRow extends SnapshotRow {
@@ -365,11 +503,72 @@ function normalizeStringArray(
   );
 }
 
+function normalizeScopeLookupKey(value: string, label: string): string {
+  if (
+    typeof value !== 'string'
+    || !SHA256_PATTERN.test(value)
+  ) {
+    throw new Error(`${label} must be a canonical Notion scope-key digest.`);
+  }
+  return value;
+}
+
+function normalizeScopeLookupPath(
+  value: readonly string[] | null,
+  label: string,
+  maximumItems: number
+): string[] | null {
+  if (value === null) {
+    return null;
+  }
+  if (!Array.isArray(value) || value.length < 1 || value.length > maximumItems) {
+    throw new Error(`${label} must contain 1-${maximumItems} scope keys.`);
+  }
+  return value.map((item, index) => normalizeScopeLookupKey(
+    item,
+    `${label}[${index}]`
+  ));
+}
+
 function parseStringArray(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
     throw new Error(`${label} is not a string array.`);
   }
   return value.map(item => item as string);
+}
+
+function parseBoundedPersistedStringArray(
+  value: unknown,
+  label: string,
+  maximumItems: number,
+  minimumItems = 0
+): string[] {
+  const parsed = parseStringArray(value, label);
+  if (parsed.length < minimumItems || parsed.length > maximumItems) {
+    throw new Error(`${label} escaped its supported item bounds.`);
+  }
+  for (const [index, item] of parsed.entries()) {
+    if (normalizeRequiredText(item, `${label}[${index}]`, 500) !== item) {
+      throw new Error(`${label}[${index}] is not canonical persisted text.`);
+    }
+  }
+  return parsed;
+}
+
+function parseBoundedPersistedOccurrencePath(
+  value: unknown,
+  label: string,
+  expectedLength: number
+): number[] {
+  if (!Array.isArray(value) || value.length !== expectedLength) {
+    throw new Error(`${label} escaped its expected length.`);
+  }
+  return value.map((occurrence, index) => normalizeInteger(
+    typeof occurrence === 'string' ? Number(occurrence) : occurrence as number,
+    `${label}[${index}]`,
+    1,
+    BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+  ));
 }
 
 function normalizeJsonObject(
@@ -391,6 +590,67 @@ function normalizeJsonObject(
     throw new Error(`${label} exceeds the 262144-byte limit.`);
   }
   return JSON.parse(serialized) as Record<string, unknown>;
+}
+
+function requireExactStringArray(
+  value: unknown,
+  expected: readonly string[],
+  label: string
+): void {
+  if (
+    !Array.isArray(value)
+    || value.length !== expected.length
+    || value.some((item, index) => item !== expected[index])
+  ) {
+    throw new Error(`${label} does not match its normalized indexed source.`);
+  }
+}
+
+function validatePageScopeIndexMetadata(
+  metadata: Record<string, unknown>,
+  title: string,
+  path: readonly string[],
+  label: string
+): void {
+  if (
+    metadata.indexFormat !== BACKSTAGE_NOTION_RAG_INDEX_FORMAT
+    || metadata.headingIndexVersion !== BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
+    || metadata.scopeTitleKey !== normalizeBackstageNotionScopeKey(title)
+  ) {
+    throw new Error(`${label} does not describe the current Notion scope index.`);
+  }
+  requireExactStringArray(
+    metadata.scopePathKey,
+    normalizeBackstageNotionScopePath(path),
+    `${label}.scopePathKey`
+  );
+}
+
+function validateChunkScopeIndexMetadata(
+  metadata: Record<string, unknown>,
+  headingPath: readonly string[],
+  label: string
+): void {
+  if (metadata.headingIndexVersion !== BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION) {
+    throw new Error(`${label} does not describe the current heading index.`);
+  }
+  requireExactStringArray(
+    metadata.scopeHeadingPathKey,
+    normalizeBackstageNotionScopePath(headingPath),
+    `${label}.scopeHeadingPathKey`
+  );
+  const occurrences = metadata.headingOccurrencePath;
+  if (
+    !Array.isArray(occurrences)
+    || occurrences.length !== headingPath.length
+    || occurrences.some(value => (
+      !Number.isSafeInteger(value)
+      || (value as number) < 1
+      || (value as number) > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    ))
+  ) {
+    throw new Error(`${label}.headingOccurrencePath is invalid.`);
+  }
 }
 
 function parseJsonObject(value: unknown, label: string): Record<string, unknown> {
@@ -495,6 +755,13 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
     if (contentHash !== expectedSourceHash) {
       throw new Error(`pages[${index}].contentHash does not match the normalized page.`);
     }
+    const metadata = normalizeJsonObject(page.metadata, `pages[${index}].metadata`);
+    validatePageScopeIndexMetadata(
+      metadata,
+      title,
+      path,
+      `pages[${index}].metadata`
+    );
     return {
       page_id: pageId,
       parent_page_id: parentPageId,
@@ -511,7 +778,7 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
           ).toISOString(),
       depth,
       path,
-      metadata: normalizeJsonObject(page.metadata, `pages[${index}].metadata`)
+      metadata
     };
   });
 
@@ -590,6 +857,17 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
     if (embedding.length !== embeddingDimensions) {
       throw new Error('All snapshot embeddings must have the same dimensionality.');
     }
+    const headingPath = normalizeStringArray(
+      chunk.headingPath ?? [],
+      `chunks[${index}].headingPath`,
+      32
+    );
+    const metadata = normalizeJsonObject(chunk.metadata, `chunks[${index}].metadata`);
+    validateChunkScopeIndexMetadata(
+      metadata,
+      headingPath,
+      `chunks[${index}].metadata`
+    );
     return {
       chunk_id: chunkId,
       page_id: pageId,
@@ -598,12 +876,8 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
       content: chunk.content,
       code_points: codePoints,
       embedding,
-      heading_path: normalizeStringArray(
-        chunk.headingPath ?? [],
-        `chunks[${index}].headingPath`,
-        32
-      ),
-      metadata: normalizeJsonObject(chunk.metadata, `chunks[${index}].metadata`)
+      heading_path: headingPath,
+      metadata
     };
   });
 
@@ -687,6 +961,23 @@ function mapSnapshot(row: SnapshotRow): BackstageNotionSnapshotRecord {
       : parseDate(row.source_max_edited_at, 'source_max_edited_at'),
     syncHolderId: row.sync_holder_id,
     createdAt: parseDate(row.snapshot_created_at, 'snapshot_created_at')
+  };
+}
+
+function mapActiveChunkMetadata(
+  row: ChunkMetadataRow
+): BackstageNotionActiveChunkMetadata {
+  return {
+    id: normalizeSha256(row.chunk_id, 'chunk_id'),
+    pageId: normalizeUuid(row.page_id, 'page_id'),
+    pageTitle: row.page_title,
+    pagePath: parseStringArray(row.page_path, 'page_path'),
+    ordinal: parseInteger(row.ordinal, 'ordinal'),
+    contentHash: normalizeSha256(row.content_hash, 'content_hash'),
+    codePoints: parseInteger(row.code_points, 'code_points'),
+    embeddingModel: row.chunk_embedding_model,
+    headingPath: parseStringArray(row.heading_path, 'heading_path'),
+    metadata: parseJsonObject(row.chunk_metadata, 'chunk_metadata')
   };
 }
 
@@ -1182,7 +1473,6 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
          chunk.id AS chunk_id,
          chunk.page_id,
          page.title AS page_title,
-         page.canonical_url,
          page.path AS page_path,
          chunk.ordinal,
          chunk.content_hash,
@@ -1191,7 +1481,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
          chunk.embedding_model AS chunk_embedding_model,
          chunk.embedding,
          chunk.heading_path,
-         chunk.metadata AS chunk_metadata
+         ${BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL} AS chunk_metadata
        FROM backstage_notion_universe_heads AS head
        INNER JOIN backstage_notion_snapshots AS snapshot
          ON snapshot.universe_id = head.universe_id
@@ -1219,21 +1509,598 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       verifiedAt: parseDate(rows[0].verified_at, 'verified_at'),
       snapshot: mapSnapshot(rows[0]),
       chunks: rows.map(row => ({
-        id: normalizeSha256(row.chunk_id, 'chunk_id'),
-        pageId: normalizeUuid(row.page_id, 'page_id'),
-        pageTitle: row.page_title,
-        pageUrl: row.canonical_url,
-        pagePath: parseStringArray(row.page_path, 'page_path'),
-        ordinal: parseInteger(row.ordinal, 'ordinal'),
-        contentHash: normalizeSha256(row.content_hash, 'content_hash'),
+        ...mapActiveChunkMetadata(row),
         content: row.content,
-        codePoints: parseInteger(row.code_points, 'code_points'),
-        embeddingModel: row.chunk_embedding_model,
-        embedding: parseEmbedding(row.embedding, 'embedding'),
-        headingPath: parseStringArray(row.heading_path, 'heading_path'),
-        metadata: parseJsonObject(row.chunk_metadata, 'chunk_metadata')
+        embedding: parseEmbedding(row.embedding, 'embedding')
       })),
       truncated: result.rows.length > normalizedMaxChunks
+    };
+  }
+
+  async loadActiveSnapshotHeader(
+    universeId: string
+  ): Promise<BackstageNotionActiveSnapshotHeader | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const result = await this.pool.query<ActiveSnapshotHeaderRow>(
+      `SELECT
+         head.authority,
+         head.last_verified_at AS verified_at,
+         snapshot.id AS snapshot_id,
+         snapshot.universe_id,
+         snapshot.root_page_id,
+         snapshot.manifest_hash,
+         snapshot.embedding_model,
+         snapshot.page_count,
+         snapshot.chunk_count,
+         snapshot.source_max_edited_at,
+         snapshot.sync_holder_id,
+         snapshot.created_at AS snapshot_created_at
+       FROM backstage_notion_universe_heads AS head
+       INNER JOIN backstage_notion_snapshots AS snapshot
+         ON snapshot.universe_id = head.universe_id
+        AND snapshot.id = head.active_snapshot_id
+       WHERE head.universe_id = $1
+         AND head.authority = 'notion'`,
+      [normalizedUniverseId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      authority: 'notion',
+      verifiedAt: parseDate(row.verified_at, 'verified_at'),
+      snapshot: mapSnapshot(row)
+    };
+  }
+
+  async resolveSnapshotScope(
+    universeId: string,
+    snapshotId: string,
+    lookup: BackstageNotionSnapshotScopeLookup
+  ): Promise<BackstageNotionSnapshotScopeResolution> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedSnapshotId = normalizeUuid(snapshotId, 'snapshotId');
+    if (!lookup || typeof lookup !== 'object' || Array.isArray(lookup)) {
+      throw new Error('lookup must describe a bounded Notion scope.');
+    }
+    const pageTitleKey = normalizeScopeLookupKey(
+      lookup.pageTitleKey,
+      'lookup.pageTitleKey'
+    );
+    const pagePathKey = normalizeScopeLookupPath(
+      lookup.pagePathKey,
+      'lookup.pagePathKey',
+      101
+    );
+    const sectionPathKey = normalizeScopeLookupPath(
+      lookup.sectionPathKey,
+      'lookup.sectionPathKey',
+      32
+    );
+
+    const integrityResult = await this.pool.query<SnapshotScopeIntegrityRow>(
+      `SELECT (
+         snapshot.page_count = (
+           SELECT COUNT(*)
+           FROM backstage_notion_snapshot_pages AS counted_page
+           WHERE counted_page.universe_id = $1
+             AND counted_page.snapshot_id = $2::UUID
+         )
+         AND snapshot.chunk_count = (
+           SELECT COUNT(*)
+           FROM backstage_notion_snapshot_chunks AS counted_chunk
+           WHERE counted_chunk.universe_id = $1
+             AND counted_chunk.snapshot_id = $2::UUID
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM backstage_notion_snapshot_pages AS page
+           WHERE page.universe_id = $1
+             AND page.snapshot_id = $2::UUID
+             AND (
+               jsonb_typeof(page.metadata) IS DISTINCT FROM 'object'
+               OR page.metadata ->> 'indexFormat' IS DISTINCT FROM $3
+               OR page.metadata ->> 'headingIndexVersion'
+                 IS DISTINCT FROM $4::TEXT
+               OR jsonb_typeof(page.metadata -> 'scopeTitleKey')
+                 IS DISTINCT FROM 'string'
+               OR page.metadata ->> 'scopeTitleKey'
+                 !~ '^[0-9a-f]{64}$'
+               OR CASE
+                 WHEN jsonb_typeof(page.metadata -> 'scopePathKey') = 'array'
+                   AND jsonb_typeof(page.path) = 'array'
+                 THEN
+                   jsonb_array_length(page.metadata -> 'scopePathKey')
+                     IS DISTINCT FROM jsonb_array_length(page.path)
+                   OR jsonb_array_length(page.metadata -> 'scopePathKey')
+                     NOT BETWEEN 1 AND 101
+                   OR EXISTS (
+                     SELECT 1
+                     FROM jsonb_array_elements(page.metadata -> 'scopePathKey')
+                       AS scope_path_segment(value)
+                     WHERE jsonb_typeof(scope_path_segment.value)
+                       IS DISTINCT FROM 'string'
+                       OR (scope_path_segment.value #>> '{}')
+                         !~ '^[0-9a-f]{64}$'
+                   )
+                 ELSE TRUE
+               END
+             )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM backstage_notion_snapshot_chunks AS chunk
+           WHERE chunk.universe_id = $1
+             AND chunk.snapshot_id = $2::UUID
+             AND (
+               jsonb_typeof(chunk.metadata) IS DISTINCT FROM 'object'
+               OR chunk.metadata ->> 'headingIndexVersion'
+                 IS DISTINCT FROM $4::TEXT
+               OR CASE
+                 WHEN jsonb_typeof(chunk.metadata -> 'scopeHeadingPathKey') = 'array'
+                   AND jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
+                   AND jsonb_typeof(chunk.heading_path) = 'array'
+                 THEN
+                   jsonb_array_length(chunk.metadata -> 'scopeHeadingPathKey')
+                     IS DISTINCT FROM jsonb_array_length(chunk.heading_path)
+                   OR jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
+                     IS DISTINCT FROM jsonb_array_length(chunk.heading_path)
+                   OR jsonb_array_length(chunk.heading_path) > 32
+                   OR EXISTS (
+                     SELECT 1
+                     FROM jsonb_array_elements(
+                       chunk.metadata -> 'scopeHeadingPathKey'
+                     ) AS scope_heading_segment(value)
+                     WHERE jsonb_typeof(scope_heading_segment.value)
+                       IS DISTINCT FROM 'string'
+                       OR (scope_heading_segment.value #>> '{}')
+                         !~ '^[0-9a-f]{64}$'
+                   )
+                   OR EXISTS (
+                     SELECT 1
+                     FROM jsonb_array_elements(
+                       chunk.metadata -> 'headingOccurrencePath'
+                     ) AS heading_occurrence(value)
+                     WHERE CASE
+                       WHEN jsonb_typeof(heading_occurrence.value) = 'number'
+                         AND heading_occurrence.value::TEXT
+                           ~ '^[1-9][0-9]{0,3}$'
+                       THEN (heading_occurrence.value::TEXT)::INTEGER
+                         BETWEEN 1 AND 2048
+                       ELSE FALSE
+                     END IS NOT TRUE
+                   )
+                 ELSE TRUE
+               END
+             )
+         )
+       ) AS scope_integrity_valid
+       FROM backstage_notion_snapshots AS snapshot
+       WHERE snapshot.universe_id = $1
+         AND snapshot.id = $2::UUID`,
+      [
+        normalizedUniverseId,
+        normalizedSnapshotId,
+        BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+        BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION
+      ]
+    );
+    if (
+      integrityResult.rows.length !== 1
+      || integrityResult.rows[0]?.scope_integrity_valid !== true
+    ) {
+      return { status: 'invalid' };
+    }
+
+    const pageResult = await this.pool.query<SnapshotPageScopeCandidateRow>(
+      `WITH matching_pages AS (
+         SELECT page.page_id, page.title, page.path
+         FROM backstage_notion_snapshot_pages AS page
+         WHERE page.universe_id = $1
+           AND page.snapshot_id = $2::UUID
+           AND (page.metadata ->> 'scopeTitleKey') COLLATE "C"
+             = $3 COLLATE "C"
+           AND (
+             $4::TEXT[] IS NULL
+             OR page.metadata -> 'scopePathKey' = to_jsonb($4::TEXT[])
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM backstage_notion_snapshot_chunks AS retrievable_chunk
+             WHERE retrievable_chunk.universe_id = page.universe_id
+               AND retrievable_chunk.snapshot_id = page.snapshot_id
+               AND retrievable_chunk.page_id = page.page_id
+           )
+         ORDER BY page.page_id COLLATE "C"
+         LIMIT 2
+       )
+       SELECT
+         matching_page.page_id,
+         matching_page.title AS page_title,
+         matching_page.path AS page_path,
+         (
+           SELECT anchor.id
+           FROM backstage_notion_snapshot_chunks AS anchor
+           WHERE anchor.universe_id = $1
+             AND anchor.snapshot_id = $2::UUID
+             AND anchor.page_id = matching_page.page_id
+           ORDER BY anchor.ordinal, anchor.id COLLATE "C"
+           LIMIT 1
+         ) AS page_anchor_chunk_id,
+         (
+           SELECT COUNT(*)
+           FROM backstage_notion_snapshot_chunks AS scoped_chunk
+           WHERE scoped_chunk.universe_id = $1
+             AND scoped_chunk.snapshot_id = $2::UUID
+             AND scoped_chunk.page_id = matching_page.page_id
+         ) AS scope_chunk_count
+       FROM matching_pages AS matching_page
+       ORDER BY matching_page.page_id COLLATE "C"`,
+      [
+        normalizedUniverseId,
+        normalizedSnapshotId,
+        pageTitleKey,
+        pagePathKey
+      ]
+    );
+    if (pageResult.rows.length === 0) {
+      return { status: 'not_found' };
+    }
+    if (pageResult.rows.length > 1) {
+      return { status: 'ambiguous' };
+    }
+
+    const page = pageResult.rows[0];
+    if (!page) {
+      return { status: 'invalid' };
+    }
+    normalizeUuid(page.page_id, 'page_id');
+    const pageTitle = normalizeRequiredText(page.page_title, 'page_title', 500);
+    const pagePath = parseBoundedPersistedStringArray(
+      page.page_path,
+      'page_path',
+      101,
+      1
+    );
+    const pageAnchorChunkId = normalizeSha256(
+      page.page_anchor_chunk_id,
+      'page_anchor_chunk_id'
+    );
+    const pageScopeChunkCount = parseInteger(
+      page.scope_chunk_count,
+      'scope_chunk_count'
+    );
+    if (
+      pageScopeChunkCount < 1
+      || pageScopeChunkCount > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    ) {
+      return { status: 'invalid' };
+    }
+
+    if (sectionPathKey === null) {
+      return {
+        status: 'resolved',
+        pageTitle,
+        pagePath,
+        sectionPath: null,
+        selector: {
+          pageAnchorChunkId,
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: pageScopeChunkCount,
+      };
+    }
+
+    const sectionResult = await this.pool.query<SnapshotSectionScopeCandidateRow>(
+      `WITH matching_chunks AS (
+         SELECT
+           chunk.id,
+           chunk.ordinal,
+           ARRAY(
+             SELECT (
+               chunk.metadata -> 'headingOccurrencePath'
+                 ->> requested_position.position
+             )::INTEGER
+             FROM generate_series(
+               0,
+               cardinality($4::TEXT[]) - 1
+             ) AS requested_position(position)
+             ORDER BY requested_position.position
+           ) AS section_occurrence_path,
+           ARRAY(
+             SELECT chunk.heading_path ->> requested_position.position
+             FROM generate_series(
+               0,
+               cardinality($4::TEXT[]) - 1
+             ) AS requested_position(position)
+             ORDER BY requested_position.position
+           ) AS section_path
+         FROM backstage_notion_snapshot_chunks AS chunk
+         WHERE chunk.universe_id = $1
+           AND chunk.snapshot_id = $2::UUID
+           AND chunk.page_id = $3
+           AND jsonb_array_length(
+             chunk.metadata -> 'scopeHeadingPathKey'
+           ) >= cardinality($4::TEXT[])
+           AND NOT EXISTS (
+             SELECT 1
+             FROM unnest($4::TEXT[]) WITH ORDINALITY
+               AS requested_scope_key(value, position)
+             WHERE (
+               chunk.metadata -> 'scopeHeadingPathKey'
+                 ->> (requested_scope_key.position - 1)::INTEGER
+             ) COLLATE "C" IS DISTINCT FROM
+               requested_scope_key.value COLLATE "C"
+           )
+       ), ranked_matches AS (
+         SELECT
+           matching_chunk.*,
+           COUNT(*) OVER (
+             PARTITION BY matching_chunk.section_occurrence_path
+           ) AS scope_chunk_count,
+           ROW_NUMBER() OVER (
+             PARTITION BY matching_chunk.section_occurrence_path
+             ORDER BY matching_chunk.ordinal, matching_chunk.id COLLATE "C"
+           ) AS representative_rank
+         FROM matching_chunks AS matching_chunk
+       )
+       SELECT
+         ranked_match.section_occurrence_path,
+         ranked_match.section_path,
+         ranked_match.scope_chunk_count
+       FROM ranked_matches AS ranked_match
+       WHERE ranked_match.representative_rank = 1
+       ORDER BY ranked_match.section_occurrence_path
+       LIMIT 2`,
+      [
+        normalizedUniverseId,
+        normalizedSnapshotId,
+        page.page_id,
+        sectionPathKey
+      ]
+    );
+    if (sectionResult.rows.length === 0) {
+      return { status: 'not_found' };
+    }
+    if (sectionResult.rows.length > 1) {
+      return { status: 'ambiguous' };
+    }
+    const section = sectionResult.rows[0];
+    if (!section) {
+      return { status: 'invalid' };
+    }
+    const sectionPath = parseBoundedPersistedStringArray(
+      section.section_path,
+      'section_path',
+      32,
+      sectionPathKey.length
+    );
+    if (sectionPath.length !== sectionPathKey.length) {
+      return { status: 'invalid' };
+    }
+    const sectionOccurrencePath = parseBoundedPersistedOccurrencePath(
+      section.section_occurrence_path,
+      'section_occurrence_path',
+      sectionPathKey.length
+    );
+    const scopeChunkCount = parseInteger(
+      section.scope_chunk_count,
+      'scope_chunk_count'
+    );
+    if (
+      scopeChunkCount < 1
+      || scopeChunkCount > pageScopeChunkCount
+    ) {
+      return { status: 'invalid' };
+    }
+    return {
+      status: 'resolved',
+      pageTitle,
+      pagePath,
+      sectionPath,
+      selector: {
+        pageAnchorChunkId,
+        sectionOccurrencePath,
+      },
+      scopeChunkCount,
+    };
+  }
+
+  async loadSnapshotChunkPage(
+    universeId: string,
+    snapshotId: string,
+    selector: BackstageNotionSnapshotChunkPageSelector,
+    knownScopeChunkCount: number | null,
+    offset: number,
+    limit: number
+  ): Promise<BackstageNotionSnapshotChunkPage> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedSnapshotId = normalizeUuid(snapshotId, 'snapshotId');
+    if (
+      !selector
+      || typeof selector !== 'object'
+      || Array.isArray(selector)
+      || (selector.pageAnchorChunkId !== null
+        && typeof selector.pageAnchorChunkId !== 'string')
+      || (selector.sectionOccurrencePath !== null
+        && !Array.isArray(selector.sectionOccurrencePath))
+      || (selector.sectionOccurrencePath !== null
+        && selector.pageAnchorChunkId === null)
+    ) {
+      throw new Error('selector must describe a supported snapshot scope.');
+    }
+    const normalizedPageAnchorChunkId = selector.pageAnchorChunkId === null
+      ? null
+      : normalizeSha256(selector.pageAnchorChunkId, 'selector.pageAnchorChunkId');
+    const normalizedSectionOccurrencePath = selector.sectionOccurrencePath === null
+      ? null
+      : selector.sectionOccurrencePath.map((occurrence, index) => normalizeInteger(
+        occurrence,
+        `selector.sectionOccurrencePath[${index}]`,
+        1,
+        BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      ));
+    if (
+      normalizedSectionOccurrencePath !== null
+      && (
+        normalizedSectionOccurrencePath.length < 1
+        || normalizedSectionOccurrencePath.length > 32
+      )
+    ) {
+      throw new Error('selector.sectionOccurrencePath must contain 1-32 occurrences.');
+    }
+    const normalizedOffset = normalizeInteger(
+      offset,
+      'offset',
+      0,
+      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT - 1
+    );
+    const normalizedLimit = normalizeInteger(
+      limit,
+      'limit',
+      1,
+      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    );
+    const normalizedKnownScopeChunkCount = knownScopeChunkCount === null
+      ? null
+      : normalizeInteger(
+        knownScopeChunkCount,
+        'knownScopeChunkCount',
+        1,
+        BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      );
+    const queryValues = [
+      normalizedUniverseId,
+      normalizedSnapshotId,
+      normalizedPageAnchorChunkId,
+      normalizedSectionOccurrencePath
+    ];
+    let scopeChunkCount = normalizedKnownScopeChunkCount;
+    if (scopeChunkCount === null) {
+      const countResult = await this.pool.query<SnapshotChunkScopeCountRow>(
+        `WITH scope_anchor AS (
+           SELECT anchor.page_id
+           FROM backstage_notion_snapshot_chunks AS anchor
+           WHERE anchor.universe_id = $1
+             AND anchor.snapshot_id = $2::UUID
+             AND anchor.id = $3
+         )
+         SELECT COUNT(*) AS scope_chunk_count
+         FROM backstage_notion_snapshot_chunks AS chunk
+         WHERE chunk.universe_id = $1
+           AND chunk.snapshot_id = $2::UUID
+           AND (
+             $3::TEXT IS NULL
+             OR chunk.page_id = (SELECT scope_anchor.page_id FROM scope_anchor)
+           )
+           AND (
+             $4::INTEGER[] IS NULL
+             OR CASE
+               WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
+               THEN
+                 jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
+                   >= cardinality($4::INTEGER[])
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM unnest($4::INTEGER[]) WITH ORDINALITY
+                     AS requested_occurrence(value, position)
+                   WHERE chunk.metadata -> 'headingOccurrencePath'
+                     ->> (requested_occurrence.position - 1)::INTEGER
+                     IS DISTINCT FROM requested_occurrence.value::TEXT
+                 )
+               ELSE FALSE
+             END
+           )`,
+        queryValues
+      );
+      scopeChunkCount = parseInteger(
+        countResult.rows[0]?.scope_chunk_count ?? -1,
+        'scope_chunk_count'
+      );
+    }
+    if (
+      scopeChunkCount < 0
+      || scopeChunkCount > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    ) {
+      throw new Error('Snapshot scope chunk count escaped its supported bounds.');
+    }
+    if (scopeChunkCount === 0 || normalizedOffset >= scopeChunkCount) {
+      return { scopeChunkCount, chunks: [] };
+    }
+
+    const pageResult = await this.pool.query<SnapshotChunkPageRow>(
+      `WITH scope_anchor AS (
+         SELECT anchor.page_id
+         FROM backstage_notion_snapshot_chunks AS anchor
+         WHERE anchor.universe_id = $1
+           AND anchor.snapshot_id = $2::UUID
+           AND anchor.id = $3
+       )
+       SELECT
+         chunk.id AS chunk_id,
+         chunk.page_id,
+         page.title AS page_title,
+         page.path AS page_path,
+         chunk.ordinal,
+         chunk.content_hash,
+         chunk.content,
+         chunk.code_points,
+         chunk.embedding_model AS chunk_embedding_model,
+         chunk.heading_path,
+         ${BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL} AS chunk_metadata
+       FROM backstage_notion_snapshot_chunks AS chunk
+       INNER JOIN backstage_notion_snapshot_pages AS page
+         ON page.universe_id = chunk.universe_id
+        AND page.snapshot_id = chunk.snapshot_id
+        AND page.page_id = chunk.page_id
+       WHERE chunk.universe_id = $1
+         AND chunk.snapshot_id = $2::UUID
+         AND (
+           $3::TEXT IS NULL
+           OR chunk.page_id = (SELECT scope_anchor.page_id FROM scope_anchor)
+         )
+         AND (
+           $4::INTEGER[] IS NULL
+           OR CASE
+             WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
+             THEN
+               jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
+                 >= cardinality($4::INTEGER[])
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM unnest($4::INTEGER[]) WITH ORDINALITY
+                   AS requested_occurrence(value, position)
+                 WHERE chunk.metadata -> 'headingOccurrencePath'
+                   ->> (requested_occurrence.position - 1)::INTEGER
+                   IS DISTINCT FROM requested_occurrence.value::TEXT
+               )
+             ELSE FALSE
+           END
+         )
+       ORDER BY
+         (ARRAY(
+           SELECT path_segment.value COLLATE "C"
+           FROM jsonb_array_elements_text(page.path) WITH ORDINALITY
+             AS path_segment(value, position)
+           ORDER BY path_segment.position
+         )) COLLATE "C",
+         page.title COLLATE "C",
+         chunk.ordinal,
+         chunk.id COLLATE "C"
+       LIMIT $5
+       OFFSET $6`,
+      [...queryValues, normalizedLimit, normalizedOffset]
+    );
+    if (pageResult.rows.length > normalizedLimit) {
+      throw new Error('Snapshot chunk page exceeded its requested limit.');
+    }
+    return {
+      scopeChunkCount,
+      chunks: pageResult.rows.map(row => ({
+        ...mapActiveChunkMetadata(row),
+        content: row.content
+      }))
     };
   }
 

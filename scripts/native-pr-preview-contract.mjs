@@ -41,6 +41,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       hrcRetryCache: 'hrc-timeout-retry-cache',
       reviewCompletion: 'review-completion-contract',
       notionAuthorityRag: 'notion-authority-rag-contract',
+      continuityQuery: 'continuity-query-contract',
     }),
   }),
   mcpBodyCap: Object.freeze({

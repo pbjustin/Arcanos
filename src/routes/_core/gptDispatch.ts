@@ -13,10 +13,23 @@ import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
 import { wasBackstageNotionEnrichmentUsed } from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE,
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE,
+  BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
+  isBackstageNotionCursorInvalidError,
   isBackstageNotionIndexUnavailableError,
+  isBackstageNotionScopeResolutionError,
 } from '@services/backstageNotionRag.js';
+import {
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+  isBackstageBookerOutputIncompleteError,
+  isBackstageContinuityQueryFailedError,
+} from '@shared/backstage/backstageGenerationError.js';
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
@@ -512,6 +525,35 @@ function buildDispatchErrorDetails(
   if (
     moduleName === BACKSTAGE_MODULE_NAME
     && isBackstageNotionIndexUnavailableError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageNotionScopeResolutionError(error)
+  ) {
+    return { retryable: error.retryable, reason: error.reason };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageNotionCursorInvalidError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageBookerOutputIncompleteError(error)
+  ) {
+    return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && action === 'queryContinuity'
+    && isBackstageContinuityQueryFailedError(error)
   ) {
     return { retryable: error.retryable };
   }
@@ -1977,12 +2019,25 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isNotionIndexUnavailableFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageNotionIndexUnavailableError(err);
+      const isNotionScopeResolutionFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageNotionScopeResolutionError(err);
+      const isNotionCursorInvalidFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageNotionCursorInvalidError(err);
       const isNotionAuthorityUnavailableFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageNotionAuthorityUnavailableError(err);
       const isNotionAuthorityReadOnlyFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageNotionAuthorityReadOnlyError(err);
+      const isBackstageOutputIncompleteFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageBookerOutputIncompleteError(err);
+      const isBackstageContinuityQueryFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && action === 'queryContinuity'
+        && isBackstageContinuityQueryFailedError(err);
       const isUnclassifiedCanonFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'upsertStoryline' || action === 'appendCanonBeat')
@@ -1991,7 +2046,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         && !isCanonUnavailableFailure
         && !isNotionIndexUnavailableFailure
         && !isNotionAuthorityUnavailableFailure
-        && !isNotionAuthorityReadOnlyFailure;
+        && !isNotionAuthorityReadOnlyFailure
+        && !isBackstageOutputIncompleteFailure;
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -2005,10 +2061,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? BACKSTAGE_CANON_INTERNAL_ERROR_MESSAGE
         : isNotionIndexUnavailableFailure
         ? BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE
+        : isNotionScopeResolutionFailure
+        ? err.message
+        : isNotionCursorInvalidFailure
+        ? BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE
         : isNotionAuthorityUnavailableFailure
         ? BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_MESSAGE
         : isNotionAuthorityReadOnlyFailure
         ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE
+        : isBackstageOutputIncompleteFailure
+        ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
+        : isBackstageContinuityQueryFailure
+        ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -2207,16 +2271,28 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
               || isCanonDomainFailure
               || isCanonUnavailableFailure
               || isNotionIndexUnavailableFailure
+              || isNotionScopeResolutionFailure
+              || isNotionCursorInvalidFailure
               || isNotionAuthorityUnavailableFailure
               || isNotionAuthorityReadOnlyFailure
+              || isBackstageOutputIncompleteFailure
+              || isBackstageContinuityQueryFailure
             )
             ? (
                 isNotionIndexUnavailableFailure
                   ? BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+                  : isNotionScopeResolutionFailure
+                  ? BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE
+                  : isNotionCursorInvalidFailure
+                  ? BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE
                   : isNotionAuthorityUnavailableFailure
                   ? BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
                   : isNotionAuthorityReadOnlyFailure
                   ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE
+                  : isBackstageOutputIncompleteFailure
+                  ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+                  : isBackstageContinuityQueryFailure
+                  ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
                   : err.code
               )
             : isBackstageCanonContractFailure

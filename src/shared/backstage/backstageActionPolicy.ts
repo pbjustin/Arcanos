@@ -10,8 +10,10 @@ export const BACKSTAGE_GENERATION_STAGE_TIMEOUT_MAX_MS = 45_000;
 export const BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS = 10_000;
 export const BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT = 2400;
 export const BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX = 2400;
+export const BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT = 900;
 
 export const BACKSTAGE_PUBLIC_ACTIONS = Object.freeze([
+  'queryContinuity',
   'generateBooking',
   'generateBookingWithHRC',
   'simulateMatch',

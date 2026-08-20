@@ -9,6 +9,12 @@ import {
   PostgresBackstageNotionRagRepository,
   type ActivateBackstageNotionSnapshotInput
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../src/shared/backstage/backstageNotionRagCore.js';
+import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+  normalizeBackstageNotionScopeKey,
+  normalizeBackstageNotionScopePath,
+} from '../src/shared/backstage/backstageNotionScopeIndex.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const ROOT_PAGE_ID = '11111111-1111-4111-8111-111111111111';
@@ -74,6 +80,23 @@ function createPool(
   } as unknown as Pool;
 }
 
+function pageScopeMetadata(title: string, path: readonly string[]) {
+  return {
+    headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+    indexFormat: BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+    scopeTitleKey: normalizeBackstageNotionScopeKey(title),
+    scopePathKey: normalizeBackstageNotionScopePath(path),
+  };
+}
+
+function chunkScopeMetadata(headingPath: readonly string[]) {
+  return {
+    headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+    headingOccurrencePath: headingPath.map((_segment, index) => index + 1),
+    scopeHeadingPathKey: normalizeBackstageNotionScopePath(headingPath),
+  };
+}
+
 function validSnapshotInput(): ActivateBackstageNotionSnapshotInput {
   return {
     universeId: UNIVERSE_ID,
@@ -95,7 +118,8 @@ function validSnapshotInput(): ActivateBackstageNotionSnapshotInput {
         markdown: ROOT_MARKDOWN,
         sourceLastEditedAt: NOW,
         depth: 0,
-        path: ROOT_PATH
+        path: ROOT_PATH,
+        metadata: pageScopeMetadata(ROOT_TITLE, ROOT_PATH)
       },
       {
         pageId: CHILD_PAGE_ID,
@@ -105,7 +129,8 @@ function validSnapshotInput(): ActivateBackstageNotionSnapshotInput {
         markdown: CHILD_MARKDOWN,
         sourceLastEditedAt: NOW,
         depth: 1,
-        path: CHILD_PATH
+        path: CHILD_PATH,
+        metadata: pageScopeMetadata(CHILD_TITLE, CHILD_PATH)
       }
     ],
     chunks: [
@@ -117,7 +142,8 @@ function validSnapshotInput(): ActivateBackstageNotionSnapshotInput {
         content: ROOT_MARKDOWN,
         codePoints: Array.from(ROOT_MARKDOWN).length,
         embedding: [0.2, -0.4],
-        headingPath: []
+        headingPath: [],
+        metadata: chunkScopeMetadata([])
       },
       {
         chunkId: CHUNK_ID,
@@ -127,9 +153,49 @@ function validSnapshotInput(): ActivateBackstageNotionSnapshotInput {
         content: CHUNK_CONTENT,
         codePoints: Array.from(CHUNK_CONTENT).length,
         embedding: [0.25, -0.5],
-        headingPath: ['Kayfabe']
+        headingPath: ['Kayfabe'],
+        metadata: chunkScopeMetadata(['Kayfabe'])
       }
     ]
+  };
+}
+
+async function expectSnapshotValidationError(
+  mutate: (input: ActivateBackstageNotionSnapshotInput) => void,
+  message: string
+): Promise<void> {
+  let connected = false;
+  const pool = {
+    connect: async () => {
+      connected = true;
+      throw new Error('SENTINEL_CONNECT');
+    }
+  } as unknown as Pool;
+  const repository = new PostgresBackstageNotionRagRepository(pool);
+  const input = validSnapshotInput();
+  mutate(input);
+
+  await expect(repository.activateSnapshot(input)).rejects.toThrow(message);
+  expect(connected).toBe(false);
+}
+
+function validPageScopeCandidate(overrides: Record<string, unknown> = {}) {
+  return {
+    page_id: CHILD_PAGE_ID,
+    page_title: CHILD_TITLE,
+    page_path: CHILD_PATH,
+    page_anchor_chunk_id: CHUNK_ID,
+    scope_chunk_count: '15',
+    ...overrides
+  };
+}
+
+function validSectionScopeCandidate(overrides: Record<string, unknown> = {}) {
+  return {
+    section_occurrence_path: [1],
+    section_path: ['Kayfabe'],
+    scope_chunk_count: '13',
+    ...overrides
   };
 }
 
@@ -599,6 +665,671 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(observedSql).toContain('chunk.snapshot_id = head.active_snapshot_id');
     expect(observedSql).toContain("head.authority = 'notion'");
     expect(observedValues).toEqual([UNIVERSE_ID, 2]);
+  });
+
+  it('loads a continuation snapshot header without joining chunk payloads', async () => {
+    let observedSql = '';
+    let observedValues: unknown[] = [];
+    const pool = createPool(async (rawSql, values) => {
+      observedSql = normalizeSql(rawSql);
+      observedValues = values;
+      return {
+        rows: [{
+          authority: 'notion',
+          verified_at: NOW,
+          snapshot_id: SNAPSHOT_ID,
+          universe_id: UNIVERSE_ID,
+          root_page_id: ROOT_PAGE_ID,
+          manifest_hash: HASH_A,
+          embedding_model: 'text-embedding-test',
+          page_count: 2,
+          chunk_count: 15,
+          source_max_edited_at: NOW,
+          sync_holder_id: 'sync-worker-1',
+          snapshot_created_at: NOW
+        }],
+        rowCount: 1
+      };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    await expect(repository.loadActiveSnapshotHeader(UNIVERSE_ID)).resolves.toEqual({
+      authority: 'notion',
+      verifiedAt: NOW,
+      snapshot: expect.objectContaining({
+        id: SNAPSHOT_ID,
+        chunkCount: 15
+      })
+    });
+
+    expect(observedSql).toContain('snapshot.id = head.active_snapshot_id');
+    expect(observedSql).not.toContain('backstage_notion_snapshot_chunks');
+    expect(observedSql).not.toContain('backstage_notion_snapshot_pages');
+    expect(observedSql).not.toContain('content');
+    expect(observedSql).not.toContain('metadata');
+    expect(observedValues).toEqual([UNIVERSE_ID]);
+  });
+
+  it('returns null when the active continuation snapshot header is absent', async () => {
+    const repository = new PostgresBackstageNotionRagRepository(
+      createPool(async () => ({ rows: [], rowCount: 0 }))
+    );
+
+    await expect(repository.loadActiveSnapshotHeader(UNIVERSE_ID)).resolves.toBeNull();
+  });
+
+  it('rejects non-canonical persisted page and heading scope indexes before connecting', async () => {
+    for (const [field, value] of [
+      ['indexFormat', 'unsupported-index'],
+      ['headingIndexVersion', BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION + 1],
+      ['scopeTitleKey', HASH_A]
+    ] as const) {
+      await expectSnapshotValidationError((input) => {
+        input.pages[0]!.metadata = {
+          ...pageScopeMetadata(ROOT_TITLE, ROOT_PATH),
+          [field]: value
+        };
+      }, 'does not describe the current Notion scope index');
+    }
+
+    for (const scopePathKey of [
+      'not-an-array',
+      [],
+      [HASH_A]
+    ]) {
+      await expectSnapshotValidationError((input) => {
+        input.pages[0]!.metadata = {
+          ...pageScopeMetadata(ROOT_TITLE, ROOT_PATH),
+          scopePathKey
+        };
+      }, 'does not match its normalized indexed source');
+    }
+
+    await expectSnapshotValidationError((input) => {
+      input.chunks[0]!.metadata = {
+        ...chunkScopeMetadata([]),
+        headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION + 1
+      };
+    }, 'does not describe the current heading index');
+
+    for (const headingOccurrencePath of [
+      'not-an-array',
+      [1]
+    ]) {
+      await expectSnapshotValidationError((input) => {
+        input.chunks[0]!.metadata = {
+          ...chunkScopeMetadata([]),
+          headingOccurrencePath
+        };
+      }, 'headingOccurrencePath is invalid');
+    }
+
+    for (const occurrence of [
+      1.5,
+      0,
+      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1
+    ]) {
+      await expectSnapshotValidationError((input) => {
+        input.chunks[1]!.metadata = {
+          ...chunkScopeMetadata(['Kayfabe']),
+          headingOccurrencePath: [occurrence]
+        };
+      }, 'headingOccurrencePath is invalid');
+    }
+  });
+
+  it('defaults an omitted chunk heading path before entering the transaction', async () => {
+    let connected = false;
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => {
+        connected = true;
+        throw new Error('SENTINEL_CONNECT');
+      }
+    } as unknown as Pool);
+    const input = validSnapshotInput();
+    delete input.chunks[0]!.headingPath;
+
+    await expect(repository.activateSnapshot(input)).rejects.toThrow('SENTINEL_CONNECT');
+    expect(connected).toBe(true);
+  });
+
+  it('rejects malformed bounded scope lookups before querying PostgreSQL', async () => {
+    let queries = 0;
+    const repository = new PostgresBackstageNotionRagRepository(createPool(async () => {
+      queries += 1;
+      throw new Error('SENTINEL_QUERY');
+    }));
+    const validLookup = {
+      pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+      pagePathKey: null,
+      sectionPathKey: null
+    };
+    const malformedLookups: Array<{ lookup: unknown; message: string }> = [
+      { lookup: null, message: 'lookup must describe a bounded Notion scope' },
+      { lookup: 42, message: 'lookup must describe a bounded Notion scope' },
+      { lookup: [], message: 'lookup must describe a bounded Notion scope' },
+      {
+        lookup: { ...validLookup, pageTitleKey: 42 },
+        message: 'pageTitleKey must be a canonical Notion scope-key digest'
+      },
+      {
+        lookup: { ...validLookup, pageTitleKey: 'not-a-digest' },
+        message: 'pageTitleKey must be a canonical Notion scope-key digest'
+      },
+      {
+        lookup: { ...validLookup, pagePathKey: 'not-an-array' },
+        message: 'pagePathKey must contain 1-101 scope keys'
+      },
+      {
+        lookup: { ...validLookup, pagePathKey: [] },
+        message: 'pagePathKey must contain 1-101 scope keys'
+      },
+      {
+        lookup: { ...validLookup, pagePathKey: Array(102).fill(HASH_A) },
+        message: 'pagePathKey must contain 1-101 scope keys'
+      }
+    ];
+
+    for (const { lookup, message } of malformedLookups) {
+      await expect(repository.resolveSnapshotScope(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        lookup as never
+      )).rejects.toThrow(message);
+    }
+    expect(queries).toBe(0);
+  });
+
+  it('resolves a scoped snapshot with bounded aggregate and LIMIT-2 projections', async () => {
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = createPool(async (rawSql, values) => {
+      const sql = normalizeSql(rawSql);
+      commands.push({ sql, values });
+      if (sql.includes('scope_integrity_valid')) {
+        return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
+      }
+      if (sql.includes('WITH matching_pages AS')) {
+        return {
+          rows: [{
+            page_id: CHILD_PAGE_ID,
+            page_title: CHILD_TITLE,
+            page_path: CHILD_PATH,
+            page_anchor_chunk_id: CHUNK_ID,
+            scope_chunk_count: '15'
+          }],
+          rowCount: 1
+        };
+      }
+      return {
+        rows: [{
+          section_occurrence_path: [1],
+          section_path: ['Kayfabe'],
+          scope_chunk_count: '13'
+        }],
+        rowCount: 1
+      };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    await expect(repository.resolveSnapshotScope(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+        pagePathKey: normalizeBackstageNotionScopePath(CHILD_PATH),
+        sectionPathKey: normalizeBackstageNotionScopePath(['Kayfabe'])
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      pageTitle: CHILD_TITLE,
+      pagePath: CHILD_PATH,
+      sectionPath: ['Kayfabe'],
+      selector: {
+        pageAnchorChunkId: CHUNK_ID,
+        sectionOccurrencePath: [1]
+      },
+      scopeChunkCount: 13
+    });
+
+    expect(commands).toHaveLength(3);
+    const integrity = commands[0];
+    const pages = commands[1];
+    const sections = commands[2];
+    expect(integrity?.sql).toContain('snapshot.id = $2::UUID');
+    expect(integrity?.sql).toContain("!~ '^[0-9a-f]{64}$'");
+    expect(integrity?.sql).toContain('scopeHeadingPathKey');
+    expect(integrity?.sql).not.toMatch(/\bchunk\.content\b/u);
+    expect(integrity?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+    expect(integrity?.sql).not.toContain('page.markdown');
+    expect(integrity?.sql).not.toContain('page.metadata AS');
+    expect(pages?.sql).toContain('LIMIT 2');
+    expect(pages?.sql).toContain('COLLATE "C"');
+    expect(pages?.sql).toContain("page.metadata -> 'scopePathKey' = to_jsonb($4::TEXT[])");
+    expect(pages?.sql).not.toMatch(/\bchunk\.content\b/u);
+    expect(pages?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+    expect(pages?.sql).not.toContain('page.markdown');
+    expect(sections?.sql).toContain('LIMIT 2');
+    expect(sections?.sql).toContain('scopeHeadingPathKey');
+    expect(sections?.sql).toContain('cardinality($4::TEXT[])');
+    expect(sections?.sql).not.toMatch(/\bchunk\.content\b/u);
+    expect(sections?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+    expect(commands.flatMap(command => command.values).some(value => (
+      typeof value === 'string' && value.length > 128
+    ))).toBe(false);
+  });
+
+  it('fails closed or reports bounded ambiguity without loading section rows', async () => {
+    const pageCandidate = {
+      page_id: CHILD_PAGE_ID,
+      page_title: CHILD_TITLE,
+      page_path: CHILD_PATH,
+      page_anchor_chunk_id: CHUNK_ID,
+      scope_chunk_count: '1'
+    };
+    const run = async (integrityValid: boolean, pageRows: unknown[]) => {
+      const commands: string[] = [];
+      const repository = new PostgresBackstageNotionRagRepository(createPool(
+        async (rawSql) => {
+          const sql = normalizeSql(rawSql);
+          commands.push(sql);
+          return sql.includes('scope_integrity_valid')
+            ? { rows: [{ scope_integrity_valid: integrityValid }], rowCount: 1 }
+            : { rows: pageRows, rowCount: pageRows.length };
+        }
+      ));
+      const result = await repository.resolveSnapshotScope(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        {
+          pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+          pagePathKey: null,
+          sectionPathKey: normalizeBackstageNotionScopePath(['Kayfabe'])
+        }
+      );
+      return { commands, result };
+    };
+
+    await expect(run(false, [])).resolves.toMatchObject({
+      commands: [expect.stringContaining('scope_integrity_valid')],
+      result: { status: 'invalid' }
+    });
+    await expect(run(true, [
+      pageCandidate,
+      { ...pageCandidate, page_id: ROOT_PAGE_ID }
+    ])).resolves.toMatchObject({
+      commands: [
+        expect.stringContaining('scope_integrity_valid'),
+        expect.stringContaining('LIMIT 2')
+      ],
+      result: { status: 'ambiguous' }
+    });
+  });
+
+  it('handles bounded page-scope absence, corruption, and page-only resolution', async () => {
+    const resolvePageRows = async (
+      pageRows: unknown[],
+      sectionPathKey: readonly string[] | null = null
+    ) => {
+      const repository = new PostgresBackstageNotionRagRepository(createPool(
+        async (rawSql) => {
+          const sql = normalizeSql(rawSql);
+          if (sql.includes('scope_integrity_valid')) {
+            return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
+          }
+          if (sql.includes('WITH matching_pages AS')) {
+            return { rows: pageRows, rowCount: pageRows.length };
+          }
+          throw new Error('SENTINEL_UNEXPECTED_SECTION_QUERY');
+        }
+      ));
+      return repository.resolveSnapshotScope(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        {
+          pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+          pagePathKey: normalizeBackstageNotionScopePath(CHILD_PATH),
+          sectionPathKey
+        }
+      );
+    };
+
+    await expect(resolvePageRows([])).resolves.toEqual({ status: 'not_found' });
+
+    const sparsePageRows = Array<unknown>(1);
+    await expect(resolvePageRows(sparsePageRows)).resolves.toEqual({ status: 'invalid' });
+
+    await expect(resolvePageRows([
+      validPageScopeCandidate({ scope_chunk_count: '0' })
+    ])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolvePageRows([
+      validPageScopeCandidate({
+        scope_chunk_count: String(BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1)
+      })
+    ])).resolves.toEqual({ status: 'invalid' });
+
+    await expect(resolvePageRows([
+      validPageScopeCandidate({ scope_chunk_count: '2' })
+    ])).resolves.toEqual({
+      status: 'resolved',
+      pageTitle: CHILD_TITLE,
+      pagePath: CHILD_PATH,
+      sectionPath: null,
+      selector: {
+        pageAnchorChunkId: CHUNK_ID,
+        sectionOccurrencePath: null
+      },
+      scopeChunkCount: 2
+    });
+
+    for (const pagePath of [
+      [],
+      Array(102).fill('path-segment'),
+      [' padded path segment ']
+    ]) {
+      await expect(resolvePageRows([
+        validPageScopeCandidate({ page_path: pagePath })
+      ])).rejects.toThrow(/page_path/u);
+    }
+  });
+
+  it('handles bounded section-scope absence, ambiguity, corruption, and string counts', async () => {
+    const resolveSectionRows = async (sectionRows: unknown[]) => {
+      const repository = new PostgresBackstageNotionRagRepository(createPool(
+        async (rawSql) => {
+          const sql = normalizeSql(rawSql);
+          if (sql.includes('scope_integrity_valid')) {
+            return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
+          }
+          if (sql.includes('WITH matching_pages AS')) {
+            return { rows: [validPageScopeCandidate()], rowCount: 1 };
+          }
+          return { rows: sectionRows, rowCount: sectionRows.length };
+        }
+      ));
+      return repository.resolveSnapshotScope(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        {
+          pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+          pagePathKey: normalizeBackstageNotionScopePath(CHILD_PATH),
+          sectionPathKey: normalizeBackstageNotionScopePath(['Kayfabe'])
+        }
+      );
+    };
+
+    await expect(resolveSectionRows([])).resolves.toEqual({ status: 'not_found' });
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate(),
+      validSectionScopeCandidate({ section_occurrence_path: [2] })
+    ])).resolves.toEqual({ status: 'ambiguous' });
+
+    const sparseSectionRows = Array<unknown>(1);
+    await expect(resolveSectionRows(sparseSectionRows)).resolves.toEqual({ status: 'invalid' });
+
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({ section_path: ['Kayfabe', 'Roster'] })
+    ])).resolves.toEqual({ status: 'invalid' });
+
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({ section_occurrence_path: 'not-an-array' })
+    ])).rejects.toThrow('section_occurrence_path escaped its expected length');
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({ section_occurrence_path: [1, 2] })
+    ])).rejects.toThrow('section_occurrence_path escaped its expected length');
+
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({
+        section_occurrence_path: ['1'],
+        scope_chunk_count: '1'
+      })
+    ])).resolves.toEqual(expect.objectContaining({
+      status: 'resolved',
+      selector: {
+        pageAnchorChunkId: CHUNK_ID,
+        sectionOccurrencePath: [1]
+      },
+      scopeChunkCount: 1
+    }));
+
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({ scope_chunk_count: '0' })
+    ])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolveSectionRows([
+      validSectionScopeCandidate({ scope_chunk_count: '16' })
+    ])).resolves.toEqual({ status: 'invalid' });
+  });
+
+  it('counts and pages an exact snapshot scope with code-point-stable SQL ordering', async () => {
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = createPool(async (rawSql, values) => {
+      const sql = normalizeSql(rawSql);
+      commands.push({ sql, values });
+      if (sql.includes('COUNT(*) AS scope_chunk_count')) {
+        return { rows: [{ scope_chunk_count: '15' }], rowCount: 1 };
+      }
+      return {
+        rows: [{
+          chunk_id: CHUNK_ID,
+          page_id: CHILD_PAGE_ID,
+          page_title: CHILD_TITLE,
+          canonical_url: null,
+          page_path: CHILD_PATH,
+          ordinal: 0,
+          content_hash: CHUNK_CONTENT_HASH,
+          content: CHUNK_CONTENT,
+          code_points: Array.from(CHUNK_CONTENT).length,
+          chunk_embedding_model: 'text-embedding-test',
+          heading_path: ['Kayfabe'],
+          chunk_metadata: {
+            category: 'kayfabe',
+            headingOccurrencePath: [1, 2]
+          }
+        }],
+        rowCount: 1
+      };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    await expect(repository.loadSnapshotChunkPage(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: CHUNK_ID,
+        sectionOccurrencePath: [1, 2]
+      },
+      null,
+      12,
+      12
+    )).resolves.toEqual({
+      scopeChunkCount: 15,
+      chunks: [expect.objectContaining({
+        id: CHUNK_ID,
+        content: CHUNK_CONTENT,
+        headingPath: ['Kayfabe']
+      })]
+    });
+
+    expect(commands).toHaveLength(2);
+    const count = commands[0];
+    const page = commands[1];
+    expect(count?.sql).toContain('chunk.snapshot_id = $2::UUID');
+    expect(count?.sql).toContain('anchor.snapshot_id = $2::UUID');
+    expect(count?.sql).toContain('unnest($4::INTEGER[]) WITH ORDINALITY');
+    expect(count?.sql).not.toContain('chunk.content');
+    expect(count?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+    expect(page?.sql).toContain('jsonb_array_elements_text(page.path) WITH ORDINALITY');
+    expect(page?.sql).toContain('path_segment.value COLLATE "C"');
+    expect(page?.sql).toContain('page.title COLLATE "C"');
+    expect(page?.sql).not.toContain('page.path::TEXT');
+    expect(page?.sql).toContain('LIMIT $5 OFFSET $6');
+    expect(page?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+    expect(page?.sql).not.toContain('page.canonical_url');
+    expect(page?.sql).toContain('jsonb_build_object(');
+    expect(page?.sql).not.toContain('chunk.metadata AS chunk_metadata');
+    expect(page?.values).toEqual([
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      CHUNK_ID,
+      [1, 2],
+      12,
+      12
+    ]);
+  });
+
+  it('uses the signed immutable scope count to avoid rescanning continuation scope metadata', async () => {
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = createPool(async (rawSql, values) => {
+      const sql = normalizeSql(rawSql);
+      commands.push({ sql, values });
+      return {
+        rows: [{
+          chunk_id: CHUNK_ID,
+          page_id: CHILD_PAGE_ID,
+          page_title: CHILD_TITLE,
+          canonical_url: null,
+          page_path: CHILD_PATH,
+          ordinal: 0,
+          content_hash: CHUNK_CONTENT_HASH,
+          content: CHUNK_CONTENT,
+          code_points: Array.from(CHUNK_CONTENT).length,
+          chunk_embedding_model: 'text-embedding-test',
+          heading_path: ['Kayfabe'],
+          chunk_metadata: {
+            category: 'kayfabe',
+            headingOccurrencePath: [1]
+          }
+        }],
+        rowCount: 1
+      };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    const page = await repository.loadSnapshotChunkPage(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageAnchorChunkId: CHUNK_ID,
+        sectionOccurrencePath: [1]
+      },
+      15,
+      12,
+      12
+    );
+
+    expect(page.scopeChunkCount).toBe(15);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.sql).not.toContain('COUNT(*) AS scope_chunk_count');
+    expect(commands[0]?.sql).toContain('LIMIT $5 OFFSET $6');
+    expect(commands[0]?.sql).toContain('chunk.content');
+    expect(commands[0]?.sql).toContain('jsonb_build_object(');
+    expect(commands[0]?.sql).not.toContain('chunk.metadata AS chunk_metadata');
+    expect(commands[0]?.sql).not.toMatch(/\bchunk\.embedding\b/u);
+  });
+
+  it('rejects malformed snapshot chunk selectors before querying PostgreSQL', async () => {
+    let queries = 0;
+    const repository = new PostgresBackstageNotionRagRepository(createPool(async () => {
+      queries += 1;
+      throw new Error('SENTINEL_QUERY');
+    }));
+    const malformedSelectors = [
+      null,
+      42,
+      [],
+      { pageAnchorChunkId: 42, sectionOccurrencePath: null },
+      { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath: 'not-an-array' },
+      { pageAnchorChunkId: null, sectionOccurrencePath: [1] }
+    ];
+
+    for (const selector of malformedSelectors) {
+      await expect(repository.loadSnapshotChunkPage(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        selector as never,
+        1,
+        0,
+        1
+      )).rejects.toThrow('selector must describe a supported snapshot scope');
+    }
+
+    for (const sectionOccurrencePath of [
+      [],
+      Array(33).fill(1)
+    ]) {
+      await expect(repository.loadSnapshotChunkPage(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath },
+        1,
+        0,
+        1
+      )).rejects.toThrow('sectionOccurrencePath must contain 1-32 occurrences');
+    }
+    expect(queries).toBe(0);
+  });
+
+  it('fails closed on invalid snapshot scope counts and short-circuits empty pages', async () => {
+    const loadWithCountRows = (
+      rows: unknown[],
+      offset = 0
+    ) => {
+      const repository = new PostgresBackstageNotionRagRepository(createPool(async () => ({
+        rows,
+        rowCount: rows.length
+      })));
+      return repository.loadSnapshotChunkPage(
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        { pageAnchorChunkId: null, sectionOccurrencePath: null },
+        null,
+        offset,
+        1
+      );
+    };
+
+    await expect(loadWithCountRows([])).rejects.toThrow(
+      'Snapshot scope chunk count escaped its supported bounds'
+    );
+    await expect(loadWithCountRows([{}])).rejects.toThrow(
+      'Snapshot scope chunk count escaped its supported bounds'
+    );
+    await expect(loadWithCountRows([{
+      scope_chunk_count: String(BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1)
+    }])).rejects.toThrow('Snapshot scope chunk count escaped its supported bounds');
+    await expect(loadWithCountRows([{
+      scope_chunk_count: '0'
+    }])).resolves.toEqual({ scopeChunkCount: 0, chunks: [] });
+
+    let queried = false;
+    const offsetRepository = new PostgresBackstageNotionRagRepository(createPool(async () => {
+      queried = true;
+      throw new Error('SENTINEL_QUERY');
+    }));
+    await expect(offsetRepository.loadSnapshotChunkPage(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      { pageAnchorChunkId: null, sectionOccurrencePath: null },
+      3,
+      3,
+      1
+    )).resolves.toEqual({ scopeChunkCount: 3, chunks: [] });
+    expect(queried).toBe(false);
+  });
+
+  it('rejects a database page that exceeds the requested chunk limit', async () => {
+    const repository = new PostgresBackstageNotionRagRepository(createPool(async () => ({
+      rows: [{}, {}],
+      rowCount: 2
+    })));
+
+    await expect(repository.loadSnapshotChunkPage(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath: null },
+      2,
+      0,
+      1
+    )).rejects.toThrow('Snapshot chunk page exceeded its requested limit');
   });
 
   it('reads and refreshes only the active manifest under a valid lease', async () => {

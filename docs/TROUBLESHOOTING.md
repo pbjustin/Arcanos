@@ -94,16 +94,59 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, re-import schema `1.2.1`, verify the operation declares
+  `runBackstageBooker`, re-import schema `1.3.0`, verify the operation declares
   `bearerAuth`, and resave the Action. Do not weaken the backend gate.
 - Backstage Booker `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`: for an authoritative
   universe this is deliberately fail-closed. Verify the identical authority
   root mapping is present on web and worker, the Notion token is present only
   on worker, the fixed root is shared with read-content access, the worker
   completed a full crawl, and `last_verified_at` is within the configured
-  staleness limit. Inspect only sanitized counts/status. Do not print page
+  staleness limit. After a heading-index format rollout, this error can also
+  mean the active snapshot predates heading indexing. The new worker remains
+  unready until all configured inventories expose the current page-level
+  index/heading marker; it performs one synchronous rebuild when needed, and a
+  `lease-busy`, failed/omitted result, or still-old database reload fails that
+  deployment before web promotion. Resolve the competing lease or sanitized
+  sync failure and let a fresh worker attempt complete the rebuild. Do not patch
+  legacy rows or
+  treat missing heading metadata as an empty path. Inspect only sanitized
+  counts/status. Do not print page
   bodies, page IDs, embeddings, tokens, or provider errors, and do not remove
   the authority mapping to make legacy fallback work.
+- Backstage Booker `BACKSTAGE_NOTION_SCOPE_UNRESOLVED`: a `404` means the exact
+  `retrievalScope.pageTitle` or `sectionPath` was not found; a `409` means the
+  page title matched more than one page or the exact section path matched
+  repeated heading occurrences. Preserve the exact `universeId` and query.
+  Correct the title/section or add the full `pagePath` to disambiguate a page.
+  For repeated headings, query the parent/page scope or distinguish the
+  headings in Notion; never silently combine them, substitute a raw Notion page
+  ID, broaden to legacy state, or invent an answer.
+- Backstage continuity answer looks incomplete without an error: inspect the
+  structured `coverage`. `status: "sampled"`, positive `omittedChunks`,
+  `promptTruncated: true`, or `hasMore: true` is an explicit limit. Use
+  `complete_scope` from the first request and pass only the opaque
+  `nextCursor` with the exact unchanged universe, query, scope, and mode until
+  `hasMore` is false. A `relevant` request is intentionally a sample; do not
+  attach a cursor to it or claim that it exhausts the scope. Sources are
+  sanitized opaque metadata, not retrievable excerpts or Notion page IDs.
+- Backstage Booker `BACKSTAGE_NOTION_CURSOR_INVALID` 409: the opaque
+  `complete_scope` cursor was malformed or tampered with, the query/scope/mode
+  changed, or the worker activated another snapshot between pages. It is
+  nonretryable as supplied. Discard the collected pages and restart the same
+  scoped request without a cursor; never decode, edit, or transfer a cursor to
+  another request. `queryContinuity` is request-local and synchronous-only, so
+  do not enqueue it or look for a worker job to resume.
+- Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the provider exhausted
+  its output limit on both the original attempt and the backend's one compact
+  retry. The retry reused the same retrieval and token budget and occurs only
+  for max-output exhaustion; other provider failures are not retried. Report
+  the sanitized failure without exposing or presenting partial provider text,
+  and do not automatically start another generation.
+- Backstage Booker `BACKSTAGE_CONTINUITY_QUERY_FAILED`: the backend could not
+  safely complete the bounded continuity answer. The nonretryable envelope
+  deliberately omits the provider cause. Do not infer or expose that cause,
+  substitute legacy canon, or automatically start another query; a later
+  user-initiated request may be narrowed and tried again.
 - Backstage Booker `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`: the backend could
   not safely reconcile the configured root with the durable PostgreSQL
   authority head. Treat it as retryable infrastructure/configuration failure;
@@ -119,7 +162,8 @@ If failing, inspect Railway build/deploy logs first.
 - Backstage `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` or
   `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`: this is the expected authority
   boundary, not data loss. Make the requested fact/content change in Notion and
-  wait for sync; use authenticated `runBackstageBooker` for retrieval. Do not
+  wait for sync; use authenticated `queryContinuity` through
+  `runBackstageBooker` for retrieval. Do not
   bypass through a direct, generic GPT Access, worker, legacy, or raw database
   write/read path.
 - Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.

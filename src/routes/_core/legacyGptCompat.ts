@@ -8,6 +8,15 @@ import {
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import { BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE } from '@services/backstageBookerContracts.js';
+import {
+  BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
+  BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+  BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
+} from '@services/backstageNotionRag.js';
+import {
+  BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+} from '@shared/backstage/backstageGenerationError.js';
 import { resolveBackstageCanonDomainErrorHttpStatus } from '@core/db/repositories/backstageBookerRepository.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 
@@ -26,10 +35,32 @@ const LEGACY_ROUTE_ERROR_STATUS_CODES: Record<string, number> = {
   UNKNOWN_GPT: 404,
   MEMORY_AUTH_REQUIRED: 401,
   MEMORY_AUTH_UNAVAILABLE: 503,
+  [BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE]: 503,
   [BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE]: 503,
   SYSTEM_STATE_CONFLICT: 409,
   MODULE_TIMEOUT: 504,
 };
+
+function resolveBackstageContinuityErrorHttpStatus(
+  code: string,
+  details: unknown,
+): 404 | 409 | 500 | null {
+  if (code === BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE) {
+    return (details as { reason?: unknown } | undefined)?.reason === 'not_found'
+      ? 404
+      : 409;
+  }
+  if (code === BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE) {
+    return 409;
+  }
+  if (
+    code === BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+    || code === BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
+  ) {
+    return 500;
+  }
+  return null;
+}
 
 export async function dispatchLegacyRouteToGpt(
   req: Request,
@@ -82,6 +113,10 @@ export async function dispatchLegacyRouteToGpt(
     if (!envelope.ok) {
       applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
       const statusCode = resolveBackstageCanonDomainErrorHttpStatus(envelope.error.code)
+        ?? resolveBackstageContinuityErrorHttpStatus(
+          envelope.error.code,
+          envelope.error.details,
+        )
         ?? LEGACY_ROUTE_ERROR_STATUS_CODES[envelope.error.code]
         ?? (envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE ? 503 : 400);
       sendBoundedJsonResponse(req, res, envelope, {

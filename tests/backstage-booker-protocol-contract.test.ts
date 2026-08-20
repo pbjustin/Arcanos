@@ -10,6 +10,7 @@ import {
   assertValidBackstageBookerActionPayload,
   createProtocolAjv,
   getProtocolSchemaCatalog,
+  isBackstageBookerAction,
   isValidBackstageCanonUtcTimestamp,
   validateBackstageBookerActionData,
   validateBackstageBookerActionPayload,
@@ -56,6 +57,8 @@ const storylineId = '33333333-3333-4333-8333-333333333333';
 const canonBeatId = '44444444-4444-4444-8444-444444444444';
 const eventId = '55555555-5555-4555-8555-555555555555';
 const occurredAt = '2026-08-14T20:00:00.000Z';
+const continuitySourceId = 'a'.repeat(64);
+const continuityContentHash = 'b'.repeat(64);
 
 const storylineInput = {
   key: 'world-title-program',
@@ -121,6 +124,17 @@ const validRequests: Record<BackstageBookerAction, unknown> = {
     ],
     winProbModifier: 0.05,
   },
+  queryContinuity: {
+    universeId: 'promotion:raw',
+    query: 'List every current Monday Night Raw champion.',
+    retrievalScope: {
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+      sectionPath: ['Championships'],
+    },
+    retrievalMode: 'complete_scope',
+    cursor: 'continuity-page-2',
+  },
   generateBooking: {
     universeId: 'promotion:raw',
     prompt: 'Book the next four weeks of the title program.',
@@ -181,6 +195,34 @@ const validResponses: Record<BackstageBookerAction, unknown> = {
     },
     hrc,
   },
+  queryContinuity: {
+    universeId: 'promotion:raw',
+    authority: 'notion',
+    answer: 'CM Punk is the World Heavyweight Champion.',
+    resolvedScope: {
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+      sectionPath: ['Championships'],
+    },
+    coverage: {
+      status: 'sampled',
+      scopeChunks: 12,
+      selectedChunks: 8,
+      omittedChunks: 4,
+      promptTruncated: false,
+      exhaustive: false,
+      hasMore: true,
+      nextCursor: 'continuity-page-3',
+    },
+    sources: [{
+      sourceId: continuitySourceId,
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+      headingPath: ['Championships'],
+      category: 'championships',
+      contentHash: continuityContentHash,
+    }],
+  },
   generateBooking: 'The champion and challenger trade victories for four weeks.',
   generateBookingWithHRC: {
     universeId: 'promotion:raw',
@@ -239,14 +281,18 @@ describe('Backstage Booker protocol contract', () => {
       expect.arrayContaining([
         'https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json',
         'https://schemas.arcanos.dev/protocol/v1/backstage-booker/canon.schema.json',
+        'https://schemas.arcanos.dev/protocol/v1/backstage-booker/queryContinuity.request.schema.json',
+        'https://schemas.arcanos.dev/protocol/v1/backstage-booker/queryContinuity.response.schema.json',
         'https://schemas.arcanos.dev/protocol/v1/backstage-booker/generateBooking.response.schema.json',
       ])
     );
 
     for (const action of BACKSTAGE_BOOKER_ACTIONS) {
+      expect(isBackstageBookerAction(action)).toBe(true);
       expect(ARCANOS_PROTOCOL_COMMAND_IDS).not.toContain(action);
       expect(ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS).not.toContain(action);
     }
+    expect(isBackstageBookerAction('queryContinuityTypo')).toBe(false);
   });
 
   it('accepts one canonical request and response for every action', () => {
@@ -284,6 +330,74 @@ describe('Backstage Booker protocol contract', () => {
         }).ok
       ).toBe(false);
     }
+  });
+
+  it('keeps queryContinuity exact-scoped, coverage-aware, and free of raw page IDs', () => {
+    const request = validRequests.queryContinuity as Record<string, unknown>;
+    const response = validResponses.queryContinuity as Record<string, unknown>;
+
+    expect(validateBackstageBookerActionPayload('queryContinuity', request).ok)
+      .toBe(true);
+    expect(validateBackstageBookerActionData('queryContinuity', response).ok)
+      .toBe(true);
+    expect(validateBackstageBookerActionPayload('queryContinuity', {
+      universeId: 'promotion:raw',
+      query: 'Summarize the complete universe in bounded pages.',
+      retrievalMode: 'complete_scope',
+    }).ok).toBe(true);
+
+    for (const invalidRequest of [
+      { ...request, universeId: undefined },
+      { ...request, query: ' ' },
+      { ...request, retrievalMode: 'all' },
+      { ...request, cursor: '' },
+      { ...request, retrievalMode: 'relevant', cursor: 'continuity-page-2' },
+      {
+        universeId: 'promotion:raw',
+        query: 'Continue the complete scoped read.',
+        cursor: 'continuity-page-2',
+      },
+      { ...request, retrievalScope: { sectionPath: ['Championships'] } },
+      {
+        ...request,
+        retrievalScope: {
+          pageTitle: 'Monday Night Raw',
+          pageId: '00000000-0000-4000-8000-000000000000',
+        },
+      },
+    ]) {
+      expect(validateBackstageBookerActionPayload('queryContinuity', invalidRequest).ok)
+        .toBe(false);
+    }
+
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      resolvedScope: { pageTitle: 'Monday Night Raw' },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      coverage: {
+        ...(response.coverage as Record<string, unknown>),
+        nextCursor: undefined,
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      coverage: {
+        ...(response.coverage as Record<string, unknown>),
+        hasMore: false,
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      sources: [{
+        ...(response.sources as Array<Record<string, unknown>>)[0]!,
+        pageId: '00000000-0000-4000-8000-000000000000',
+      }],
+    }).ok).toBe(false);
+    expect(JSON.stringify(
+      getProtocolSchemaCatalog().backstageBooker.actions.queryContinuity
+    )).not.toContain('pageId');
   });
 
   it('requires explicit universe and mutation identities for Phase Two canon writes', () => {

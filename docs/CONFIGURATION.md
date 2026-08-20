@@ -409,8 +409,9 @@ the job fails closed; web and worker GPT routing configuration should therefore
 remain synchronized.
 
 The separate Backstage Booker Action lane declares the dedicated
-`ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` on its generation/simulation operation
-and accepts it exclusively for private Notion provenance and the exact
+`ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` on its
+continuity-query/generation/simulation operation and accepts it exclusively for
+private Notion provenance and the exact
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read,
 its fixed `/storyline-summary` exact-key read, and the exact
 `POST /gpt-access/capabilities/v1/backstage-booker/run` canon write. Both reads
@@ -449,7 +450,7 @@ control-plane behavior remain available under their own credentials and
 confirmation rules.
 
 Authenticated Backstage generation can optionally add a read-only Notion
-supplement without adding a fifth Builder operation. Schema `1.2.1` also
+supplement without adding a fifth Builder operation. Schema `1.3.0` also
 materializes the nested public payload and must be re-imported. Configure
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on the web service;
@@ -515,6 +516,17 @@ creating duplicate snapshots. V1 retains prior successful snapshots and has no
 automatic purge. Embedding calls send chunk text to the configured embedding
 provider; retrieved generation sends only selected excerpts and forces
 provider `store: false` plus existing transcript/debug/cache suppression.
+Readers require the current heading-aware index format. A legacy snapshot with
+no compatible heading index fails closed until the worker completes and
+activates a full rebuild; it is never served with fabricated empty headings.
+Each snapshot page records both the index format and heading-index version so
+worker startup can prove the entire active inventory is current without calling
+Notion on later deployments. If any configured inventory is absent or old, the
+worker runs one synchronous sync before readiness, accepts only
+`activated`/`unchanged`, reloads PostgreSQL, and requires every marker. Invalid
+configuration, a busy lease, a failed/omitted result, or an old reload keeps the
+worker unready. With no authority mapping, startup retains the ordinary no-op
+path.
 
 The first activation is also a durable one-way authority latch. Removing the
 environment mapping later stops that configured worker root but does not make
@@ -528,12 +540,30 @@ separate reviewed recovery operation, never an environment-variable rollback.
 
 Once configured, all six legacy Backstage mutations return nonretryable
 `409 BACKSTAGE_NOTION_AUTHORITY_READ_ONLY`, and the two PostgreSQL read Actions
-return `409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`. Normal generation
-requires the saved Backstage bearer and one fresh, complete active snapshot;
-any missing/stale/index/provider condition returns
+return `409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`. `queryContinuity` and
+normal generation require the saved Backstage bearer and one fresh, complete
+active snapshot; any missing/stale/index/provider condition returns
 `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` and never falls back to PostgreSQL or
 process memory. Match simulation may use an explicitly supplied numeric roster
 but will not infer ratings from prose or read the quarantined roster.
+
+`queryContinuity` always requires the exact `universeId` and a nonblank query.
+Its optional scope requires `pageTitle`; use optional `pagePath` to disambiguate
+duplicate titles and optional `sectionPath` to select an exact heading subtree. The
+default `relevant` mode returns a bounded sample. `complete_scope` pages through
+the deterministic resolved scope with an opaque cursor bound to the exact
+snapshot, query, and scope and protected against tampering. Invalid, stale, or
+differently bound cursors return nonretryable
+`409 BACKSTAGE_NOTION_CURSOR_INVALID`; callers restart without a cursor. The
+action runs synchronously in its request and never uses the worker queue.
+Coverage explicitly reports sampled versus
+complete status, selected and omitted chunk counts, prompt truncation,
+exhaustiveness, and whether another cursor exists. Public sources contain only
+sanitized path/category metadata and opaque hashes, never source excerpts or
+raw Notion page IDs. Continuity and booking answer generation make exactly one
+compact retry only for provider max-output exhaustion, reuse the same retrieval
+and budget, do not retry other provider failures, and return a sanitized
+incomplete-output error after a second length exhaustion.
 
 Reinforcement HTTP limits are also fixed rather than environment settings.
 `POST /reinforce` accepts a strict object JSON body up to 32 KiB;
@@ -841,14 +871,22 @@ configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
 `503` without changing `/healthz` liveness or `/health` diagnostics. Worker
-readiness remains `503` until database/autonomy/module-registry bootstrap and
-every configured consumer slot's dispatcher-start write have completed, and a
-supported OpenAI key setting is present. Provider readiness here means
-configured, not a paid upstream request; provider outages are handled by the
-worker's bounded probe/backoff and job-deferral path after activation. The
-worker child reports this transition through an exact, newline-delimited
-launcher protocol that is independent of `LOG_LEVEL`; arbitrary log text and
-filtered info logs cannot satisfy or suppress the readiness transition.
+readiness remains `503` until database bootstrap, the Backstage Notion
+format-readiness gate, autonomy/module-registry bootstrap, and every configured
+consumer slot's dispatcher-start write have completed, and a supported OpenAI
+key setting is present. No configured authority passes the format gate without
+repository or provider work. Configured authorities must all have active
+snapshots with the current page-level index/heading marker; already-current
+inventories use PostgreSQL only, while an old/missing inventory gets one
+synchronous sync and a mandatory reload. Invalid configuration,
+`lease-busy`/`failed`/omitted sync results, or a still-old reload prevents the
+readiness signal. Provider readiness itself remains configuration-only rather
+than a paid probe, although a required Notion format rebuild performs the real
+Notion and embedding work. Later provider outages are handled by the worker's
+bounded probe/backoff and job-deferral path. The worker child reports the final
+transition through an exact, newline-delimited launcher protocol independent of
+`LOG_LEVEL`; arbitrary log text and filtered info logs cannot satisfy or
+suppress it.
 
 `railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
 repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its
@@ -869,7 +907,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for generic protected `/gpt-access/*` operations | none | Generic gateway bearer token. The gateway returns an auth/config error when this is missing. `GET /gpt-access/openapi.json` remains public. It remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but must not be configured in the dedicated Backstage Booker Custom GPT. It cannot authorize the exact Backstage universe or storyline-summary reads and is not accepted by Gaming source lifecycle routes. |
-| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; protected Backstage Booker Custom GPT operations and authenticated private context on web | none | Dedicated purpose-bound Bearer credential for the protected lane and Notion-derived generation. Legacy supplement remains optional; mapped authority generation requires it and fails closed when absent. Configure only on web and in the existing GPT Action. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | No; protected Backstage Booker Custom GPT operations and authenticated private context on web | none | Dedicated purpose-bound Bearer credential for the protected lane and Notion-derived continuity queries/generation. Legacy supplement remains optional; mapped authority queries and generation require it and fail closed when absent. Configure only on web and in the existing GPT Action. |
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; one Notion mode | none | Outbound read-content token: web for legacy supplement, worker for authority sync. Never place it in Builder or reuse an application credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; optional authenticated Backstage generation on the web service only | none | Sensitive exact-universe-to-page-UUID mapping. One to three unique raw page UUIDs per universe; URLs and partial/invalid configuration are rejected before provider work. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical on web and worker | none | Exact universe-to-root authority mapping. Blocks/quarantines legacy state and selects recursive immutable RAG snapshots. |
@@ -1184,7 +1222,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | commented empty | Optional verification-only old key for a bounded retained-job rotation overlap. |
 | `ARCANOS_JOB_READ_TOKEN` | commented empty | Client-only transient token for one standalone generic job lookup; never a shared backend signing key. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
-| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated API Key/Bearer credential for the exact Backstage reads/canon write and request-local authorization of an optional configured Notion supplement on canonical generation. It is distinct from generic GPT Access and control-plane credentials and must never appear in the schema, instructions, chat, source, or logs. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated API Key/Bearer credential for the exact Backstage reads/canon write and request-local authorization of scoped Notion continuity queries plus optional Notion context on canonical generation. It is distinct from generic GPT Access and control-plane credentials and must never appear in the schema, instructions, chat, source, or logs. |
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | commented placeholder | Outbound read-content-only token: web for optional legacy supplement or worker for authority sync. It is never a Builder credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | commented example | Sensitive exact-universe-to-one-to-three-raw-page-UUID mapping for optional Notion generation context. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | commented example | Identical web/worker exact-universe root map for one-way Notion authority and recursive RAG. |

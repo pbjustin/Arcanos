@@ -88,7 +88,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.2.1');
+    expect(contract.info.version).toBe('1.3.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -120,7 +120,12 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(contract.components.schemas.BackstagePublicRequest.properties).toEqual({
       action: {
         type: 'string',
-        enum: ['generateBooking', 'generateBookingWithHRC', 'simulateMatch'],
+        enum: [
+          'generateBooking',
+          'generateBookingWithHRC',
+          'queryContinuity',
+          'simulateMatch',
+        ],
       },
       executionMode: {
         $ref: '#/components/schemas/BackstagePublicExecutionMode',
@@ -128,7 +133,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       payload: {
         type: 'object',
         description:
-          'Action-specific input. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.',
+          'Action-specific input. For queryContinuity, provide the exact universeId and a query, with optional exact page/section scope, retrieval mode, and cursor. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.',
         additionalProperties: false,
         properties: {
           universeId: { $ref: '#/components/schemas/UniverseId' },
@@ -139,6 +144,23 @@ describe('Backstage Booker Custom GPT builder contract', () => {
             minLength: 1,
             maxLength: 10000,
             pattern: '\\S',
+          },
+          query: {
+            type: 'string',
+            description:
+              'Required for queryContinuity. Ask one bounded continuity question against the Notion-authoritative snapshot.',
+            minLength: 1,
+            maxLength: 10000,
+            pattern: '\\S',
+          },
+          retrievalScope: {
+            $ref: '#/components/schemas/ContinuityRetrievalScope',
+          },
+          retrievalMode: {
+            $ref: '#/components/schemas/ContinuityRetrievalMode',
+          },
+          cursor: {
+            $ref: '#/components/schemas/ContinuityCursor',
           },
           match: { $ref: '#/components/schemas/MatchInput' },
           rosters: {
@@ -166,6 +188,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     for (const schemaName of [
       'GenerateBookingActionRequest',
       'GenerateBookingWithHrcActionRequest',
+      'QueryContinuityActionRequest',
       'SimulateMatchActionRequest',
     ]) {
       expect(contract.components.schemas[schemaName]).toEqual(
@@ -183,11 +206,14 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(actionEnumsForOneOf(contract, 'BackstagePublicRequest')).toEqual([
       'generateBooking',
       'generateBookingWithHRC',
+      'queryContinuity',
       'simulateMatch',
     ]);
     expect(Object.keys(publicOperation.responses)).toEqual([
       '200',
       '400',
+      '404',
+      '409',
       '429',
       '500',
       '503',
@@ -295,7 +321,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         scheme: 'bearer',
         bearerFormat: 'Opaque Backstage Booker access token',
         description:
-          'Required by this configured Action for Backstage generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
+          'Required by this configured Action for Backstage continuity queries, generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
       },
     });
 
@@ -450,6 +476,219 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         },
       },
     })).toBe(false);
+  });
+
+  it('publishes a closed, scoped, paginated queryContinuity contract', () => {
+    const contract = loadContract();
+    const schemas = contract.components.schemas;
+    const validateRequest = compileComponent(contract, 'BackstagePublicRequest');
+    const validateSuccess = compileComponent(
+      contract,
+      'BackstagePublicSuccessResponse'
+    );
+    const request = {
+      action: 'queryContinuity',
+      executionMode: 'sync',
+      payload: {
+        universeId: 'my-universe-2k26',
+        query: 'List every current Monday Night Raw champion.',
+        retrievalScope: {
+          pageTitle: 'Monday Night Raw',
+          pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+          sectionPath: ['Championships'],
+        },
+        retrievalMode: 'complete_scope',
+        cursor: 'continuity-page-2',
+      },
+    };
+    const result = {
+      universeId: 'my-universe-2k26',
+      authority: 'notion',
+      answer: 'CM Punk is the World Heavyweight Champion.',
+      resolvedScope: request.payload.retrievalScope,
+      coverage: {
+        status: 'sampled',
+        scopeChunks: 12,
+        selectedChunks: 8,
+        omittedChunks: 4,
+        promptTruncated: false,
+        exhaustive: false,
+        hasMore: true,
+        nextCursor: 'continuity-page-3',
+      },
+      sources: [{
+        sourceId: 'a'.repeat(64),
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        headingPath: ['Championships'],
+        category: 'championships',
+        contentHash: 'b'.repeat(64),
+      }],
+    };
+
+    expect({ valid: validateRequest(request), errors: validateRequest.errors })
+      .toEqual({ valid: true, errors: null });
+    expect(validateRequest({
+      action: 'queryContinuity',
+      executionMode: 'sync',
+      payload: {
+        universeId: 'my-universe-2k26',
+        query: 'Summarize the complete universe in bounded pages.',
+        retrievalMode: 'complete_scope',
+      },
+    })).toBe(true);
+    const envelope = {
+      ok: true,
+      result,
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'queryContinuity',
+        timestamp: '2026-08-19T16:00:00.000Z',
+      },
+    };
+    expect({ valid: validateSuccess(envelope), errors: validateSuccess.errors })
+      .toEqual({ valid: true, errors: null });
+
+    for (const payload of [
+      { query: request.payload.query },
+      { universeId: request.payload.universeId },
+      { ...request.payload, retrievalMode: 'everything' },
+      { ...request.payload, retrievalMode: 'relevant' },
+      {
+        universeId: request.payload.universeId,
+        query: request.payload.query,
+        cursor: request.payload.cursor,
+      },
+      { ...request.payload, retrievalScope: { sectionPath: ['Championships'] } },
+      {
+        ...request.payload,
+        retrievalScope: {
+          pageTitle: 'Monday Night Raw',
+          pageId: '00000000-0000-4000-8000-000000000000',
+        },
+      },
+    ]) {
+      expect(validateRequest({ ...request, payload })).toBe(false);
+    }
+
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...result,
+        coverage: { ...result.coverage, nextCursor: undefined },
+      },
+    })).toBe(false);
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...result,
+        sources: [{
+          ...result.sources[0]!,
+          pageId: '00000000-0000-4000-8000-000000000000',
+        }],
+      },
+    })).toBe(false);
+
+    expect(schemas.QueryContinuityPayload.required).toEqual([
+      'universeId',
+      'query',
+    ]);
+    expect(schemas.ContinuityRetrievalScope.required).toEqual(['pageTitle']);
+    expect(schemas.ContinuityResolvedScope.required).toEqual([
+      'pageTitle',
+      'pagePath',
+    ]);
+    expect(schemas.ContinuityRetrievalMode.enum).toEqual([
+      'relevant',
+      'complete_scope',
+    ]);
+    expect(schemas.ContinuitySource.properties.headingPath.maxItems).toBe(32);
+    expect(schemas.QueryContinuityResult.required).toEqual([
+      'universeId',
+      'authority',
+      'answer',
+      'coverage',
+      'sources',
+    ]);
+    expect(schemas.ContinuityCoverage.required).toEqual([
+      'status',
+      'scopeChunks',
+      'selectedChunks',
+      'omittedChunks',
+      'promptTruncated',
+      'exhaustive',
+      'hasMore',
+    ]);
+    expect(JSON.stringify({
+      action: schemas.QueryContinuityActionRequest,
+      payload: schemas.QueryContinuityPayload,
+      result: schemas.QueryContinuityResult,
+      source: schemas.ContinuitySource,
+    })).not.toContain('pageId');
+
+    const protocolRequest = loadProtocolSchema(
+      'queryContinuity.request.schema.json'
+    );
+    const protocolResponse = loadProtocolSchema(
+      'queryContinuity.response.schema.json'
+    );
+    expect(schemas.QueryContinuityPayload.required).toEqual(protocolRequest.required);
+    expect(schemas.QueryContinuityPayload.properties.query).toEqual(
+      protocolRequest.properties.query
+    );
+    expect(schemas.QueryContinuityResult.required).toEqual(protocolResponse.required);
+  });
+
+  it('publishes the safe closed Notion scope and cursor error details', () => {
+    const contract = loadContract();
+    const validateError = compileComponent(contract, 'BackstagePublicErrorResponse');
+    const operation = contract.paths['/gpt/backstage-booker'].post;
+
+    expect(validateError({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+        message: 'The requested Backstage Notion scope is ambiguous.',
+        details: {
+          retryable: false,
+          reason: 'ambiguous',
+        },
+      },
+    })).toBe(true);
+    expect(validateError({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_SCOPE_UNRESOLVED',
+        message: 'The requested Backstage Notion scope was not found.',
+        details: {
+          retryable: false,
+          reason: 'provider-secret',
+        },
+      },
+    })).toBe(false);
+    expect(validateError({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_NOTION_CURSOR_INVALID',
+        message: 'The Backstage continuity cursor is invalid or no longer applies. Restart the scoped read without a cursor.',
+        details: {
+          retryable: false,
+        },
+      },
+    })).toBe(true);
+    expect(operation.responses['409'].description).toContain('cursor');
+    expect(operation.responses['409'].description).toContain('without a cursor');
+    expect(operation.responses['409'].description).toContain(
+      'repeated heading occurrences'
+    );
+    expect(operation.responses['500'].description).toContain(
+      'BACKSTAGE_CONTINUITY_QUERY_FAILED'
+    );
+    expect(operation.responses['500'].description).toContain(
+      'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE'
+    );
   });
 
   it('keeps the exact-ID universe read closed, bounded, and non-consequential', () => {
@@ -823,6 +1062,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       'saveStoryline',
       'generateBooking',
       'generateBookingWithHRC',
+      'queryContinuity',
       'simulateMatch',
     ]) {
       expect(protectedSchemaText).not.toContain(legacyAction);
@@ -946,7 +1186,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(publicOperation.responses['200'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstagePublicSuccessResponse',
     });
-    for (const status of ['400', '503', '504']) {
+    for (const status of ['400', '404', '409', '503', '504']) {
       expect(publicOperation.responses[status].content['application/json'].schema)
         .toEqual({
           $ref: '#/components/schemas/BackstagePublicErrorResponse',
@@ -1007,6 +1247,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(schemas.BackstageRouteMeta.properties.action.enum).toEqual([
       'generateBooking',
       'generateBookingWithHRC',
+      'queryContinuity',
       'simulateMatch',
     ]);
 

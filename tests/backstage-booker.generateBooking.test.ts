@@ -634,10 +634,112 @@ describe('backstage-booker generateBooking', () => {
     }));
   });
 
-  it('preserves the provider failure as the internal cause of the public booking error', async () => {
-    const providerError = Object.assign(
+  it('retries one length-exhausted provider response with the same context and token cap', async () => {
+    const firstLengthError = Object.assign(
       new Error('OpenAI completion ended before a complete answer was available.'),
       { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    );
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(firstLengthError);
+
+    await expect(
+      generateBooking('Generate three rivalries for RAW after WrestleMania.')
+    ).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as {
+        input: { prompt: string; tokenLimit: number };
+        context: {
+          runtimeBudget: unknown;
+          runOptions: {
+            directAnswerTokenCapOverride: number;
+            directAnswerTokenLimitOverride: number;
+            trustedPolicyPrompt?: string;
+          };
+        };
+      }
+    );
+    expect(compactRetry.input.prompt.startsWith(
+      `${firstAttempt.input.prompt}\n\n`
+    )).toBe(true);
+    expect(compactRetry.input.prompt).toContain('<<OUTPUT_LENGTH_RECOVERY>>');
+    expect(compactRetry.input.prompt).toContain(
+      'Return a complete answer within the existing output limit'
+    );
+    expect(compactRetry.input.tokenLimit).toBe(firstAttempt.input.tokenLimit);
+    expect(compactRetry.context.runOptions.directAnswerTokenLimitOverride).toBe(
+      firstAttempt.context.runOptions.directAnswerTokenLimitOverride
+    );
+    expect(compactRetry.context.runOptions.directAnswerTokenCapOverride).toBe(2400);
+    expect(compactRetry.context.runtimeBudget).toBe(firstAttempt.context.runtimeBudget);
+  });
+
+  it('propagates a non-length compact-retry failure through the bounded booking error', async () => {
+    const firstLengthError = Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    );
+    const retryError = new Error('test-only compact retry failure');
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(firstLengthError)
+      .mockRejectedValueOnce(retryError);
+
+    try {
+      await expect(
+        generateBooking('Generate three rivalries for RAW after WrestleMania.')
+      ).rejects.toMatchObject({
+        message: 'Booking generation failed',
+        cause: retryError,
+      });
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('throws one cause-free typed error when the compact retry also exhausts output length', async () => {
+    const firstLengthError = Object.assign(
+      new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    );
+    const retryLengthError = Object.assign(
+      new Error('PRIVATE-RETRY-PARTIAL-OUTPUT'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    );
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(firstLengthError)
+      .mockRejectedValueOnce(retryLengthError);
+
+    let failure: Error & { cause?: unknown; code?: string; retryable?: boolean } | undefined;
+    try {
+      await generateBooking('Generate three rivalries for RAW after WrestleMania.');
+    } catch (error) {
+      failure = error as typeof failure;
+    }
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    expect(failure).toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      message:
+        'Backstage Booker could not produce a complete response within the output limit. Narrow the request and try again.',
+      retryable: false,
+    });
+    expect(failure?.cause).toBeUndefined();
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE-FIRST-PARTIAL-OUTPUT');
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE-RETRY-PARTIAL-OUTPUT');
+  });
+
+  it('does not retry content-filtered incomplete provider output', async () => {
+    const providerError = Object.assign(
+      new Error('OpenAI completion was content filtered.'),
+      {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        contentFiltered: true,
+        finishReason: 'content_filter',
+        incompleteReason: 'content_filter',
+        lengthTruncated: true,
+      }
     );
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerError);
@@ -649,6 +751,7 @@ describe('backstage-booker generateBooking', () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe('Booking generation failed');
       expect((error as Error & { cause?: unknown }).cause).toBe(providerError);
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     } finally {
       consoleErrorSpy.mockRestore();
     }

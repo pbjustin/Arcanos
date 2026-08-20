@@ -337,9 +337,10 @@ config-free production MCP pre-parser core
 are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
-Research abort-drain wrapper, Backstage action/timeout policy, GPT route timeout
-resolver, HRC cache policy, and exact request-abort runtime source are also
-semantic-digest pinned; only the reviewed timeout and AsyncLocalStorage
+Research abort-drain wrapper, Backstage action/timeout policy, Backstage
+continuity-query core, GPT route timeout resolver, HRC cache policy, and exact
+request-abort runtime source are also semantic-digest pinned; only the reviewed
+timeout and AsyncLocalStorage
 capabilities are admitted. A tracked checker-only TypeScript resolver points the
 contained graph at that reviewed source without depending on ignored build
 output. An exact package-manifest assertion pins the public subpath, and a
@@ -350,13 +351,15 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The fixed 119-request plan is the
+evidence, not Railway control-plane provenance. The current fixed 121-request
+plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, four sealed Backstage generation
-timeout/cache/review-completion/Notion-authority cases, one sealed
+worker-role approval-contract denial, five sealed Backstage generation
+timeout/cache/review-completion/Notion-authority/continuity-query cases, one
+worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, and one canon-summary pagination case.
 The excerpt case executes the production-shared pure projector
 over the full ECMAScript leading-whitespace set and explicitly reports that no
@@ -412,10 +415,13 @@ custom ownership predicate before deleting by UUID and verifies both ID and
 name disappear; absence is success only after complete inventory proves base
 and production visibility.
 
-The sealed 119-request E2E runs in a separate job that has no Railway secret. It
-executes the trusted default-branch verifier and uses the exact opted-in head
-checkout only as clean Git provenance evidence; PR code cannot weaken its own
-verdict. A final trusted, no-Railway-authority job revalidates that head and
+The sealed E2E runs in a separate job that has no Railway secret. It executes
+the verifier from the trusted default-branch workflow SHA and uses the exact
+opted-in head checkout only as clean Git provenance evidence; PR code cannot
+weaken its own verdict. A PR that adds a selector must therefore run its
+exact-head verifier separately against the lifecycle-created hosts; until the
+change reaches the default branch, the trusted verifier may have the preceding
+request count. A final trusted, no-Railway-authority job revalidates that head and
 publishes `Railway PR Preview E2E` as an informational commit
 status, because an ordinary `pull_request_target` job result belongs to the
 trusted workflow SHA rather than the PR head. The workflow writes `pending`

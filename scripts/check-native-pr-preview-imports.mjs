@@ -48,6 +48,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
@@ -135,7 +136,7 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    new Set(['crypto']),
+    new Set(['crypto', 'entities']),
   ],
   [
     'scripts/start-railway-service.mjs',
@@ -230,6 +231,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     'src/shared/backstage/backstageNotionRagCore.ts',
     new Map([
       ['crypto', new Set(['createHash:createHash'])],
+      ['entities', new Set(['decodeHTMLStrict:decodeHTMLStrict'])],
     ]),
   ],
   [
@@ -601,7 +603,11 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',
-    '022f1e9d77a92170792a769ff29dbd7df107a1bb5ff21e14d925f55e0ead2e61',
+    '5609ace9e84dacfbca8b0e29be0d8b8f9269cd0d1cc2ed0b4987449a13de548c',
+  ],
+  [
+    'src/shared/backstage/backstageContinuityQueryCore.ts',
+    'f7b95bb664829d09be4d81374a993029cd25de2fac4d16028f7bc87750d4d2bb',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
@@ -613,7 +619,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    'c4fbf33f1bbc3a6ab9a574444d4bd3428515d7713215d1715982d6f306590522',
+    '6112fbb4d5ee38c5ec3059342d0fe134333b74494a312faa68512ebfbea76e9b',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',
