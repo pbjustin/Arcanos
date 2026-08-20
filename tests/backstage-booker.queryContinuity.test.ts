@@ -207,6 +207,60 @@ describe('Backstage continuity query core', () => {
     expect(JSON.stringify(response)).not.toContain(retrieval.citations[0].pageId);
     expect(JSON.stringify(response)).not.toContain(retrieval.prompt);
   });
+
+  it('projects explicit subtree scope with page and chunk coverage', () => {
+    const subtreeRetrieval = {
+      ...retrieval,
+      resolvedScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        scopeKind: 'subtree' as const,
+      },
+      coverage: {
+        ...retrieval.coverage,
+        scopePages: 4,
+        selectedPages: 2,
+        omittedPages: 2,
+      },
+    };
+
+    const policy = buildBackstageContinuityPolicyPrompt(
+      request,
+      subtreeRetrieval,
+      false
+    );
+    const response = buildBackstageContinuityResponse(
+      request,
+      subtreeRetrieval,
+      '- CM Punk is champion.'
+    );
+
+    expect(policy).toContain(
+      'scope_pages=4; selected_pages=2; omitted_pages=2'
+    );
+    expect(response.resolvedScope).toEqual({
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+      scopeKind: 'subtree',
+    });
+    expect(response.coverage).toEqual(subtreeRetrieval.coverage);
+    expect(response.resolvedScope).not.toHaveProperty('sectionPath');
+  });
+
+  it('fails closed when subtree response coverage omits page counts', () => {
+    expect(() => buildBackstageContinuityResponse(
+      request,
+      {
+        ...retrieval,
+        resolvedScope: {
+          pageTitle: 'Monday Night Raw',
+          pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+          scopeKind: 'subtree',
+        },
+      },
+      '- CM Punk is champion.'
+    )).toThrow('Subtree continuity coverage is incomplete.');
+  });
 });
 
 describe('Backstage Booker queryContinuity', () => {
@@ -263,6 +317,47 @@ describe('Backstage Booker queryContinuity', () => {
         }),
       }),
     }));
+  });
+
+  it('passes an explicit subtree scope through retrieval and returns page coverage', async () => {
+    const subtreeRequest = {
+      universeId: request.universeId,
+      query: 'Summarize the complete Monday Night Raw hierarchy.',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        scopeKind: 'subtree',
+      },
+      retrievalMode: 'complete_scope',
+    } as const;
+    const subtreeRetrieval = {
+      ...retrieval,
+      resolvedScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        scopeKind: 'subtree' as const,
+      },
+      coverage: {
+        ...retrieval.coverage,
+        scopePages: 4,
+        selectedPages: 2,
+        omittedPages: 2,
+      },
+    };
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce(subtreeRetrieval);
+
+    const result = await queryBackstageContinuity(subtreeRequest);
+
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledWith(
+      subtreeRequest.universeId,
+      {
+        query: subtreeRequest.query,
+        retrievalScope: subtreeRequest.retrievalScope,
+        retrievalMode: 'complete_scope',
+      }
+    );
+    expect(result.resolvedScope).toEqual(subtreeRetrieval.resolvedScope);
+    expect(result.coverage).toEqual(subtreeRetrieval.coverage);
   });
 
   it.each([

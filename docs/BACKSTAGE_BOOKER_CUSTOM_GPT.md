@@ -13,7 +13,7 @@ during booking generation; these share the existing Builder operation count.
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
 - Repository contract: [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
-- Schema version: `1.3.0`
+- Schema version: `1.4.0`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
@@ -130,7 +130,7 @@ authorization, tenant identity, or proof that the caller owns that universe.
 ## Optional Notion generation context
 
 This legacy supplement is backend-only at the operation level and does not add
-a fifth operation. Schema `1.3.0` must nevertheless be re-imported because it
+a fifth operation. Schema `1.4.0` must nevertheless be re-imported because it
 declares
 the saved bearer on `runBackstageBooker`, materializes the nested public
 payload fields for Builder, and documents the authority-specific error
@@ -167,7 +167,7 @@ and verify the web service emits the sanitized
 `backstage.notion_context.loaded` event without inspecting raw prompt content.
 For a non-authoritative test universe, make the same request directly without
 the dedicated bearer and verify no Notion request/event occurs while the
-legacy generation behavior remains available. Schema `1.3.0` explicitly marks
+legacy generation behavior remains available. Schema `1.4.0` explicitly marks
 the Builder operation with `bearerAuth`; after import, verify the outgoing
 Builder request carries the credential without exposing it. Do not weaken the
 backend gate if that verification fails.
@@ -187,24 +187,35 @@ For an authoritative universe, the saved Action bearer is mandatory on
 `runBackstageBooker`: unauthenticated continuity queries and generation fail
 closed rather than using private RAG data or old PostgreSQL continuity. Use
 `queryContinuity` for factual questions and bounded continuity reviews. Its
-payload always requires the exact `universeId` and `query`. To focus one page,
-set `retrievalScope.pageTitle`; add `pagePath` when the title is duplicated and
-add `sectionPath` to select an exact nested heading and its descendant
-headings. Never send a Notion page ID or URL.
+payload always requires the exact `universeId` and `query`. A scope requires
+`retrievalScope.pageTitle`; add `pagePath` when the title is duplicated.
+Omitting `scopeKind`, or setting it to `"page"`, selects only that exact page
+and may use `sectionPath` for one exact heading and its descendants. Set
+`scopeKind: "subtree"` only when the user asks for that exact parent plus every
+descendant page. Subtree scope excludes siblings, supports a blank navigation
+parent whose descendants contain the facts, and must not include `sectionPath`.
+Never send a Notion page ID or URL.
 
-The default `retrievalMode: "relevant"` returns only the best bounded sample.
-Use `"complete_scope"` when the request requires every chunk in the resolved
-scope. Start without a cursor; while `coverage.hasMore` is true, repeat the
-unchanged universe, query, scope, and mode with `coverage.nextCursor`. The
-cursor is opaque, tamper-resistant, and bound to that snapshot and request. An
-invalid, changed-request, or superseded-snapshot cursor returns nonretryable
-`409 BACKSTAGE_NOTION_CURSOR_INVALID`; discard collected pages and restart the
-same scoped read without a cursor. Treat
-`coverage.status: "sampled"`, a positive `omittedChunks`, or
-`promptTruncated: true` as an explicit completeness limit. Never call one
-response exhaustive unless `coverage.exhaustive` is true. Returned `sources`
-contain sanitized page/heading paths, categories, and opaque hashes only; they
-contain no source excerpts or raw Notion page IDs.
+The default `retrievalMode: "relevant"` returns only the best bounded sample;
+subtree sampling is diversified across pages rather than allowing one page to
+consume the sample. Use `"complete_scope"` when every chunk is required. Start
+without a cursor; while `coverage.hasMore` is true, repeat the unchanged
+universe, query, scope (including `scopeKind`), and mode with
+`coverage.nextCursor`. The opaque cursor is bound to that request and active
+snapshot. Invalid, changed-request, or superseded-snapshot cursors return
+nonretryable `409 BACKSTAGE_NOTION_CURSOR_INVALID`; discard collected pages and
+restart without a cursor. Version-2 cursors issued before the 1.4.0 rollout are
+also invalid and must be restarted cursor-free.
+
+All responses report chunk coverage. Only subtree responses additionally set
+`resolvedScope.scopeKind: "subtree"` and report `coverage.scopePages`,
+`selectedPages`, and `omittedPages`. Those counts include only pages with
+indexed chunks, so a blank parent does not add to them. Treat sampled status,
+positive omitted counts, prompt truncation, or `hasMore` as an explicit
+completeness limit;
+never call one response exhaustive unless `coverage.exhaustive` is true.
+Returned sources contain sanitized paths, categories, and opaque hashes only,
+never source excerpts or raw Notion page IDs.
 
 `queryContinuity` runs only in the originating synchronous web request and
 never enters the worker job queue. The worker maintains retrieval snapshots;
@@ -246,7 +257,8 @@ the exact backend revision and contract route are deployed:
 2. Open the existing Backstage Booker GPT in ChatGPT Builder and edit its
    existing Action. Import
    `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`.
-   Do not create a second ARCANOS Action schema.
+   Import schema `1.4.0` only after that backend version is deployed. Do not
+   create a second ARCANOS Action schema.
 3. Under Authentication, select **API Key** and **Bearer**, then enter the same
    dedicated credential in the authentication field.
 4. Verify the imported operation IDs are exactly `runBackstageBooker`,
@@ -264,9 +276,10 @@ the exact backend revision and contract route are deployed:
 5. Preserve the GPT's name, instructions, knowledge, conversation starters,
    model selection, visibility, and sharing settings except for the reviewed
    Action/instruction changes. Save the same GPT.
-6. Reopen the saved GPT. Check one authoritative scoped `queryContinuity`
-   request and, if it returns `hasMore`, one cursor continuation with the exact
-   same query and scope. Check one authoritative generation request. In a
+6. Reopen the saved GPT. Check one exact-page and one subtree
+   `queryContinuity` request. Confirm the subtree excludes a sibling and, if it
+   returns `hasMore`, continue with the exact same query, scope, and
+   `scopeKind`. Check one authoritative generation request. In a
    separate non-authoritative test universe, check one generation/simulation
    request, one exact-ID snapshot read, one paged storyline-summary read, then
    perform a separately authorized canon write.
@@ -274,8 +287,9 @@ the exact backend revision and contract route are deployed:
    sends no mutation, allowance produces one response, and the response does
    not ask for a second confirmation token.
 
-Use the following policy text in the GPT instructions without placing the
-credential there:
+Use the following compact policy text in the GPT instructions without placing
+the credential there. Keep the GPT's complete saved instructions within
+Builder's practical 8,000-character limit:
 
 ```text
 Use runBackstageBooker only for queryContinuity, generateBooking,
@@ -283,25 +297,26 @@ generateBookingWithHRC, and simulateMatch.
 Always keep executionMode set to "sync" for runBackstageBooker, as required by
 the Action schema.
 
-For a universe configured as Notion-authoritative, including
-my-universe-2k26, use queryContinuity for factual retrieval and continuity
-reviews. Pass the exact universeId and complete question in payload.query. If
-the user names one page, set retrievalScope.pageTitle to that exact title; add
-pagePath only to disambiguate duplicate titles and sectionPath only for an
-exact nested heading and its descendant headings. Never send or request a raw
-Notion page ID or URL.
+For a Notion-authoritative universe, including my-universe-2k26, use
+queryContinuity for factual retrieval and continuity reviews. Send the exact
+universeId and full question in payload.query. Set retrievalScope.pageTitle to
+the exact page and add pagePath only for duplicate titles. scopeKind defaults
+to page; page scope may use sectionPath for one exact heading subtree. Use
+scopeKind subtree only for the exact parent plus all descendant pages; it
+excludes siblings, supports blank navigation parents, and rejects sectionPath.
+Never send or request a raw Notion page ID or URL.
 
-Use retrievalMode relevant for a bounded best-match answer. Use complete_scope
-when the user requires the full resolved scope. Start without cursor. While
-coverage.hasMore is true, repeat the exact same universeId, query,
-retrievalScope, and retrievalMode with coverage.nextCursor. Treat a sampled
-status, omittedChunks greater than zero, promptTruncated true, or hasMore true
-as an explicit completeness limit. Never invent omitted facts or call the
-answer exhaustive unless coverage.exhaustive is true. Treat sources as
-sanitized opaque provenance only; they contain no excerpts or raw page IDs.
-If the backend returns BACKSTAGE_NOTION_CURSOR_INVALID, discard the paged
-result and restart the same scoped complete_scope request without a cursor.
-Never send queryContinuity through an async or queued workflow.
+Use relevant for a bounded best-match answer; subtree samples are diversified
+across pages. Use complete_scope for the full scope. Start without cursor and,
+while coverage.hasMore is true, repeat the unchanged universeId, query,
+retrievalScope, and retrievalMode with coverage.nextCursor. Treat sampled
+status, positive omitted chunk/page counts, promptTruncated, or hasMore as a
+completeness limit. Only subtree results have resolvedScope.scopeKind and
+scopePages, selectedPages, and omittedPages. Never claim exhaustive unless
+coverage.exhaustive is true. Sources are opaque provenance with no excerpts or
+raw page IDs. On BACKSTAGE_NOTION_CURSOR_INVALID, discard collected pages and
+restart cursor-free; version-2 cursors from before schema 1.4.0 are invalid.
+Never queue queryContinuity.
 
 Use generateBooking or generateBookingWithHRC for booking work and put the
 complete request in payload.prompt. Notion-derived facts are authoritative,

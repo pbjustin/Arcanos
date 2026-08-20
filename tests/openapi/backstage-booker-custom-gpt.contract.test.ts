@@ -16,6 +16,10 @@ const contractPath = join(
   process.cwd(),
   'contracts/backstage_booker.openapi.v1.json'
 );
+const builderGuidePath = join(
+  process.cwd(),
+  'docs/BACKSTAGE_BOOKER_CUSTOM_GPT.md'
+);
 const protocolSchemaDirectory = join(
   process.cwd(),
   'packages/protocol/schemas/v1/backstage-booker'
@@ -84,11 +88,34 @@ function compileComponent(contract: any, schemaName: string) {
 }
 
 describe('Backstage Booker Custom GPT builder contract', () => {
+  it('keeps the copy-ready Builder policy within the practical instruction limit', () => {
+    const guide = readFileSync(builderGuidePath, 'utf8');
+    const policyLead = 'Use the following compact policy text in the GPT instructions';
+    const leadOffset = guide.indexOf(policyLead);
+    const fenceOffset = guide.indexOf('```text', leadOffset);
+    const policyOffset = guide.indexOf('\n', fenceOffset) + 1;
+    const fenceEnd = guide.indexOf('\n```', policyOffset);
+
+    expect(leadOffset).toBeGreaterThanOrEqual(0);
+    expect(fenceOffset).toBeGreaterThan(leadOffset);
+    expect(policyOffset).toBeGreaterThan(fenceOffset);
+    expect(fenceEnd).toBeGreaterThan(policyOffset);
+
+    const policy = guide.slice(policyOffset, fenceEnd).replace(/\r\n/gu, '\n');
+    expect(policy.length).toBeGreaterThan(0);
+    expect(Array.from(policy).length).toBeLessThanOrEqual(8_000);
+    expect(Buffer.byteLength(policy, 'utf8')).toBeLessThanOrEqual(8_000);
+  });
+
   it('exposes only the fixed public, exact reads, and canon-write operations', () => {
-    const contract = loadContract();
+    const contractText = readFileSync(contractPath, 'utf8');
+    const contract = JSON.parse(contractText);
+    const crlfContractText = contractText.replace(/\r?\n/gu, '\r\n');
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.3.0');
+    expect(contract.info.version).toBe('1.4.0');
+    expect(Buffer.byteLength(contractText, 'utf8')).toBeLessThanOrEqual(100_000);
+    expect(Buffer.byteLength(crlfContractText, 'utf8')).toBeLessThanOrEqual(100_000);
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -133,14 +160,14 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       payload: {
         type: 'object',
         description:
-          'Action-specific input. For queryContinuity, provide the exact universeId and a query, with optional exact page/section scope, retrieval mode, and cursor. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.',
+          'Action-specific input. For queryContinuity, provide the exact universeId and a query, with optional exact page, subtree, or section scope, retrieval mode, and cursor. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.',
         additionalProperties: false,
         properties: {
           universeId: { $ref: '#/components/schemas/UniverseId' },
           prompt: {
             type: 'string',
             description:
-              'Required for generation actions. Put the complete booking, factual lookup, or review request here.',
+              'Required only for generateBooking and generateBookingWithHRC. Put the complete creative booking request here. For factual lookup, current-state checks, results, champions, storylines, or continuity reviews, use queryContinuity and payload.query.',
             minLength: 1,
             maxLength: 10000,
             pattern: '\\S',
@@ -416,6 +443,23 @@ describe('Backstage Booker Custom GPT builder contract', () => {
           prompt: 'Book a premium live event and evaluate the result.',
         },
       },
+      {
+        action: 'simulateMatch',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'backstage-demo',
+          match: {
+            wrestler1: 'Rhea Ripley',
+            wrestler2: 'Bianca Belair',
+            matchType: 'Singles',
+            kayfabeMode: true,
+          },
+          rosters: [
+            { name: 'Rhea Ripley', overall: 96 },
+            { name: 'Bianca Belair', overall: 95 },
+          ],
+        },
+      },
     ];
 
     for (const request of requests) {
@@ -425,14 +469,19 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         errors: null,
       });
     }
-    const simulationExample = examples.find(
-      example => example.value.action === 'simulateMatch'
-    )?.value as { payload?: { rosters?: unknown[] } } | undefined;
-    expect(simulationExample?.payload?.rosters).toHaveLength(2);
-    expect(
-      (simulationExample as { payload?: { universeId?: string } } | undefined)
-        ?.payload?.universeId
-    ).toBe('backstage-demo');
+    const subtreeExample = examples.find(example => (
+      example.value.action === 'queryContinuity'
+      && (example.value.payload as {
+        retrievalScope?: { scopeKind?: string };
+      } | undefined)?.retrievalScope?.scopeKind === 'subtree'
+    ))?.value as {
+      payload?: { retrievalScope?: Record<string, unknown> };
+    } | undefined;
+    expect(subtreeExample?.payload?.retrievalScope).toEqual(expect.objectContaining({
+      pageTitle: 'Monday Night Raw',
+      scopeKind: 'subtree',
+    }));
+    expect(subtreeExample?.payload?.retrievalScope).not.toHaveProperty('sectionPath');
 
     const asynchronousExample = {
       ...requests[0],
@@ -525,9 +574,44 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         contentHash: 'b'.repeat(64),
       }],
     };
+    const subtreeRequest = {
+      action: 'queryContinuity',
+      executionMode: 'sync',
+      payload: {
+        universeId: 'my-universe-2k26',
+        query: 'Summarize the complete Monday Night Raw hierarchy.',
+        retrievalScope: {
+          pageTitle: 'Monday Night Raw',
+          pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+          scopeKind: 'subtree',
+        },
+        retrievalMode: 'complete_scope',
+      },
+    };
+    const subtreeResult = {
+      ...result,
+      resolvedScope: subtreeRequest.payload.retrievalScope,
+      coverage: {
+        status: 'sampled',
+        scopeChunks: 24,
+        selectedChunks: 8,
+        omittedChunks: 16,
+        scopePages: 4,
+        selectedPages: 2,
+        omittedPages: 2,
+        promptTruncated: false,
+        exhaustive: false,
+        hasMore: true,
+        nextCursor: 'continuity-subtree-page-2',
+      },
+    };
 
     expect({ valid: validateRequest(request), errors: validateRequest.errors })
       .toEqual({ valid: true, errors: null });
+    expect({
+      valid: validateRequest(subtreeRequest),
+      errors: validateRequest.errors,
+    }).toEqual({ valid: true, errors: null });
     expect(validateRequest({
       action: 'queryContinuity',
       executionMode: 'sync',
@@ -550,6 +634,10 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     };
     expect({ valid: validateSuccess(envelope), errors: validateSuccess.errors })
       .toEqual({ valid: true, errors: null });
+    expect({
+      valid: validateSuccess({ ...envelope, result: subtreeResult }),
+      errors: validateSuccess.errors,
+    }).toEqual({ valid: true, errors: null });
 
     for (const payload of [
       { query: request.payload.query },
@@ -569,6 +657,20 @@ describe('Backstage Booker Custom GPT builder contract', () => {
           pageId: '00000000-0000-4000-8000-000000000000',
         },
       },
+      {
+        ...subtreeRequest.payload,
+        retrievalScope: {
+          ...subtreeRequest.payload.retrievalScope,
+          sectionPath: ['Championships'],
+        },
+      },
+      {
+        ...subtreeRequest.payload,
+        retrievalScope: {
+          ...subtreeRequest.payload.retrievalScope,
+          scopeKind: 'descendants',
+        },
+      },
     ]) {
       expect(validateRequest({ ...request, payload })).toBe(false);
     }
@@ -578,6 +680,48 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       result: {
         ...result,
         coverage: { ...result.coverage, nextCursor: undefined },
+      },
+    })).toBe(false);
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...result,
+        coverage: {
+          ...result.coverage,
+          scopePages: 1,
+          selectedPages: 1,
+          omittedPages: 0,
+        },
+      },
+    })).toBe(false);
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...subtreeResult,
+        coverage: {
+          ...subtreeResult.coverage,
+          omittedPages: undefined,
+        },
+      },
+    })).toBe(false);
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...subtreeResult,
+        resolvedScope: {
+          ...subtreeResult.resolvedScope,
+          sectionPath: ['Championships'],
+        },
+      },
+    })).toBe(false);
+    expect(validateSuccess({
+      ...envelope,
+      result: {
+        ...result,
+        resolvedScope: {
+          ...result.resolvedScope,
+          scopeKind: 'page',
+        },
       },
     })).toBe(false);
     expect(validateSuccess({
@@ -596,10 +740,18 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       'query',
     ]);
     expect(schemas.ContinuityRetrievalScope.required).toEqual(['pageTitle']);
+    expect(schemas.ContinuityScopeKind).toEqual({
+      type: 'string',
+      enum: ['page', 'subtree'],
+      default: 'page',
+    });
     expect(schemas.ContinuityResolvedScope.required).toEqual([
       'pageTitle',
       'pagePath',
     ]);
+    expect(schemas.ContinuityResolvedScope.properties.scopeKind).toEqual({
+      const: 'subtree',
+    });
     expect(schemas.ContinuityRetrievalMode.enum).toEqual([
       'relevant',
       'complete_scope',
@@ -621,6 +773,11 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       'exhaustive',
       'hasMore',
     ]);
+    expect(schemas.ContinuityCoverage.dependentRequired).toEqual({
+      scopePages: ['selectedPages', 'omittedPages'],
+      selectedPages: ['scopePages', 'omittedPages'],
+      omittedPages: ['scopePages', 'selectedPages'],
+    });
     expect(JSON.stringify({
       action: schemas.QueryContinuityActionRequest,
       payload: schemas.QueryContinuityPayload,
@@ -631,12 +788,16 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const protocolRequest = loadProtocolSchema(
       'queryContinuity.request.schema.json'
     );
+    const protocolCommon = loadProtocolSchema('common.schema.json');
     const protocolResponse = loadProtocolSchema(
       'queryContinuity.response.schema.json'
     );
     expect(schemas.QueryContinuityPayload.required).toEqual(protocolRequest.required);
     expect(schemas.QueryContinuityPayload.properties.query).toEqual(
       protocolRequest.properties.query
+    );
+    expect(schemas.ContinuityScopeKind).toEqual(
+      protocolCommon.$defs.continuityScopeKind
     );
     expect(schemas.QueryContinuityResult.required).toEqual(protocolResponse.required);
   });
@@ -1021,16 +1182,48 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       contract,
       'BackstageCanonWriteRequest'
     );
-    const canonExamples = Object.values(
+    expect(
       contract.paths['/gpt-access/capabilities/v1/backstage-booker/run']
-        .post.requestBody.content['application/json'].examples
-    ) as Array<{ value: Record<string, unknown> }>;
-    for (const example of canonExamples) {
+        .post.requestBody.content['application/json']
+    ).not.toHaveProperty('examples');
+    const canonRequests = [
+      {
+        action: 'upsertStoryline',
+        payload: {
+          universeId: 'legacy-demo-universe',
+          mutationId: '5d87478f-57a3-45e0-9d5a-6b9d56e94ec8',
+          expectedVersion: 0,
+          storyline: {
+            key: 'demo-storyline',
+            title: 'Demo Storyline',
+            summary: 'Illustrative legacy canon for a non-authoritative universe.',
+            status: 'active',
+            participantNames: [],
+          },
+        },
+      },
+      {
+        action: 'appendCanonBeat',
+        payload: {
+          universeId: 'legacy-demo-universe',
+          mutationId: '9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c',
+          storylineKey: 'demo-storyline',
+          expectedVersion: 1,
+          beat: {
+            kind: 'development',
+            summary: 'The challenger interrupts the champion.',
+            occurredAt: '2026-08-15T20:00:00Z',
+            participantNames: [],
+          },
+        },
+      },
+    ];
+    for (const request of canonRequests) {
       expect({
-        valid: validateCanonRequest(example.value),
+        valid: validateCanonRequest(request),
         errors: validateCanonRequest.errors,
       }).toEqual({ valid: true, errors: null });
-      expect(JSON.stringify(example.value)).not.toContain('my-universe-2k26');
+      expect(JSON.stringify(request)).not.toContain('my-universe-2k26');
     }
 
     for (const schemaName of [

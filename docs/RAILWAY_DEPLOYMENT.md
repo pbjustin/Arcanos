@@ -376,7 +376,7 @@ revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
 Custom GPT. The web service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
-`1.3.0` declares that credential for continuity queries, generation, and
+`1.4.0` declares that credential for continuity queries, generation, and
 simulation as well as the exact
 universe and storyline-summary reads, which are
 non-consequential, and return a bounded repeatable-read PostgreSQL projection
@@ -406,7 +406,7 @@ workaround. See
 Builder and security contract.
 
 Optional Notion enrichment is a web-only configuration rollout and does not
-add a Builder operation. Schema `1.3.0` must still be re-imported because it
+add a Builder operation. Schema `1.4.0` must still be re-imported because it
 declares bearer provenance and materializes the nested public payload. Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
@@ -416,7 +416,7 @@ Deploy the backend first. Then call `generateBooking` for a mapped disposable
 scope through the existing private GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
 bearer and verify generation stays available but no Notion event/request occurs.
-After importing `1.3.0`, verify Builder attaches its saved API-key
+After importing `1.4.0`, verify Builder attaches its saved API-key
 authentication to `runBackstageBooker`. If it does not, enrichment must remain
 disabled; do not remove the server-side gate.
 
@@ -464,23 +464,34 @@ configuration error, not a migration mechanism. Removing the mapping also does
 not downgrade the durable authority head.
 
 After worker proof, smoke-test the already deployed compatible web revision
-with `queryContinuity`. Use an exact `pageTitle`, then optional `pagePath` and
-`sectionPath`; verify `relevant` reports sampled coverage. Exercise
-`complete_scope` from a cursor-free first request and, when `hasMore` is true,
-continue with the opaque `nextCursor` and the exact unchanged query/scope.
-Verify the action stays request-local and synchronous and creates no worker
-job. Confirm a tampered cursor, a changed query/scope/mode, and a cursor from a
-superseded snapshot each return nonretryable
+with `queryContinuity`. First verify omitted/default `scopeKind: "page"` reads
+only one exact `pageTitle`, with optional `pagePath` and `sectionPath`. Then use
+explicit `scopeKind: "subtree"` for a parent with descendants, including a
+blank navigation parent when available. Confirm it includes the exact parent
+and descendants, excludes a sibling, rejects `sectionPath`, and diversifies a
+`relevant` sample across pages. Exercise `complete_scope` from a cursor-free
+first request and, when `hasMore` is true, continue with the opaque
+`nextCursor` and the exact unchanged query, scope kind, and mode. Verify the
+action stays request-local and synchronous and creates no worker job.
+
+Confirm a tampered cursor, a changed query/scope/kind/mode, a version-2 cursor,
+and a cursor from a superseded snapshot each return nonretryable
 `409 BACKSTAGE_NOTION_CURSOR_INVALID`; the safe recovery is to discard the
-paged result and restart without a cursor.
-Confirm omission/truncation fields are truthful and public sources contain only
-sanitized paths/categories and opaque hashes—no excerpts or raw page IDs. Also
+paged result and restart without a cursor. Confirm all responses report chunk
+coverage, while only subtree responses set
+`resolvedScope.scopeKind: "subtree"` and add `scopePages`, `selectedPages`, and
+`omittedPages`. Confirm omission/truncation fields are truthful and public
+sources contain only sanitized paths/categories and opaque hashes—no excerpts
+or raw page IDs. Also
 exercise the sealed max-output seam: only max-output exhaustion gets one compact
 retry over the same retrieval and budget, and a second exhaustion returns the
 sanitized incomplete-output error. Confirm each response used one snapshot, no
 Notion request originated from web, no legacy repository/fallback was called,
 and OpenAI storage/transcript/cache suppression remained active.
-Then remove any authority-only Notion token left on web. A failed new crawl
+Only after the backend serves schema `1.4.0`, re-import that contract into the
+existing Builder Action, preserve its saved bearer and visibility, and repeat
+one page and one subtree request through the GPT. Then remove any
+authority-only Notion token left on web. A failed new crawl
 must leave the prior active snapshot unchanged; once its verification age
 exceeds the configured limit, generation must stop rather than use old canon.
 Restoring PostgreSQL authority is a separate emergency governance operation,

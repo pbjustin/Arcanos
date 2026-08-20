@@ -335,11 +335,53 @@ describe('Backstage Booker protocol contract', () => {
   it('keeps queryContinuity exact-scoped, coverage-aware, and free of raw page IDs', () => {
     const request = validRequests.queryContinuity as Record<string, unknown>;
     const response = validResponses.queryContinuity as Record<string, unknown>;
+    const subtreeRequest = {
+      universeId: 'promotion:raw',
+      query: 'Summarize the complete Monday Night Raw hierarchy.',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        scopeKind: 'subtree',
+      },
+      retrievalMode: 'complete_scope',
+    };
+    const subtreeResponse = {
+      ...response,
+      resolvedScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: ['My Universe 2K26', 'Monday Night Raw'],
+        scopeKind: 'subtree',
+      },
+      coverage: {
+        status: 'sampled',
+        scopeChunks: 24,
+        selectedChunks: 8,
+        omittedChunks: 16,
+        scopePages: 4,
+        selectedPages: 2,
+        omittedPages: 2,
+        promptTruncated: false,
+        exhaustive: false,
+        hasMore: true,
+        nextCursor: 'continuity-subtree-page-2',
+      },
+    };
 
     expect(validateBackstageBookerActionPayload('queryContinuity', request).ok)
       .toBe(true);
     expect(validateBackstageBookerActionData('queryContinuity', response).ok)
       .toBe(true);
+    expect(validateBackstageBookerActionPayload('queryContinuity', subtreeRequest).ok)
+      .toBe(true);
+    expect(validateBackstageBookerActionData('queryContinuity', subtreeResponse).ok)
+      .toBe(true);
+    expect(validateBackstageBookerActionPayload('queryContinuity', {
+      ...request,
+      retrievalScope: {
+        ...(request.retrievalScope as Record<string, unknown>),
+        scopeKind: 'page',
+      },
+    }).ok).toBe(true);
     expect(validateBackstageBookerActionPayload('queryContinuity', {
       universeId: 'promotion:raw',
       query: 'Summarize the complete universe in bounded pages.',
@@ -365,6 +407,20 @@ describe('Backstage Booker protocol contract', () => {
           pageId: '00000000-0000-4000-8000-000000000000',
         },
       },
+      {
+        ...subtreeRequest,
+        retrievalScope: {
+          ...subtreeRequest.retrievalScope,
+          sectionPath: ['Championships'],
+        },
+      },
+      {
+        ...subtreeRequest,
+        retrievalScope: {
+          ...subtreeRequest.retrievalScope,
+          scopeKind: 'descendants',
+        },
+      },
     ]) {
       expect(validateBackstageBookerActionPayload('queryContinuity', invalidRequest).ok)
         .toBe(false);
@@ -385,6 +441,36 @@ describe('Backstage Booker protocol contract', () => {
       ...response,
       coverage: {
         ...(response.coverage as Record<string, unknown>),
+        scopePages: 1,
+        selectedPages: 1,
+        omittedPages: 0,
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...subtreeResponse,
+      coverage: {
+        ...(subtreeResponse.coverage as Record<string, unknown>),
+        omittedPages: undefined,
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...subtreeResponse,
+      resolvedScope: {
+        ...(subtreeResponse.resolvedScope as Record<string, unknown>),
+        sectionPath: ['Championships'],
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      resolvedScope: {
+        ...(response.resolvedScope as Record<string, unknown>),
+        scopeKind: 'page',
+      },
+    }).ok).toBe(false);
+    expect(validateBackstageBookerActionData('queryContinuity', {
+      ...response,
+      coverage: {
+        ...(response.coverage as Record<string, unknown>),
         hasMore: false,
       },
     }).ok).toBe(false);
@@ -398,6 +484,12 @@ describe('Backstage Booker protocol contract', () => {
     expect(JSON.stringify(
       getProtocolSchemaCatalog().backstageBooker.actions.queryContinuity
     )).not.toContain('pageId');
+    expect(getProtocolSchemaCatalog().backstageBooker.common.$defs.continuityScopeKind)
+      .toEqual({
+        type: 'string',
+        enum: ['page', 'subtree'],
+        default: 'page',
+      });
   });
 
   it('requires explicit universe and mutation identities for Phase Two canon writes', () => {

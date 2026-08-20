@@ -80,6 +80,7 @@ export type {
   BackstageContinuityResolvedScope,
   BackstageContinuityRetrievalMode,
   BackstageContinuityRetrievalScope,
+  BackstageContinuityScopeKind,
   BackstageContinuitySource,
   BackstageContinuitySourceCategory,
   BackstageDurablePersistence,

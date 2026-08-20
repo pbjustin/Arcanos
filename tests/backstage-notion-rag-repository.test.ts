@@ -184,8 +184,8 @@ function validPageScopeCandidate(overrides: Record<string, unknown> = {}) {
     page_id: CHILD_PAGE_ID,
     page_title: CHILD_TITLE,
     page_path: CHILD_PATH,
-    page_anchor_chunk_id: CHUNK_ID,
     scope_chunk_count: '15',
+    scope_page_count: '1',
     ...overrides
   };
 }
@@ -827,6 +827,18 @@ describe('PostgresBackstageNotionRagRepository', () => {
       {
         lookup: { ...validLookup, pagePathKey: Array(102).fill(HASH_A) },
         message: 'pagePathKey must contain 1-101 scope keys'
+      },
+      {
+        lookup: { ...validLookup, scopeKind: 'unsupported' },
+        message: 'scopeKind must describe a page or section-free subtree scope'
+      },
+      {
+        lookup: {
+          ...validLookup,
+          scopeKind: 'subtree',
+          sectionPathKey: [HASH_A]
+        },
+        message: 'scopeKind must describe a page or section-free subtree scope'
       }
     ];
 
@@ -848,14 +860,14 @@ describe('PostgresBackstageNotionRagRepository', () => {
       if (sql.includes('scope_integrity_valid')) {
         return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
       }
-      if (sql.includes('WITH matching_pages AS')) {
+      if (sql.includes('title_matching_pages AS')) {
         return {
           rows: [{
             page_id: CHILD_PAGE_ID,
             page_title: CHILD_TITLE,
             page_path: CHILD_PATH,
-            page_anchor_chunk_id: CHUNK_ID,
-            scope_chunk_count: '15'
+            scope_chunk_count: '15',
+            scope_page_count: '1'
           }],
           rowCount: 1
         };
@@ -885,10 +897,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
       pagePath: CHILD_PATH,
       sectionPath: ['Kayfabe'],
       selector: {
-        pageAnchorChunkId: CHUNK_ID,
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'page',
         sectionOccurrencePath: [1]
       },
-      scopeChunkCount: 13
+      scopeChunkCount: 13,
+      scopePageCount: 1
     });
 
     expect(commands).toHaveLength(3);
@@ -918,13 +932,72 @@ describe('PostgresBackstageNotionRagRepository', () => {
     ))).toBe(false);
   });
 
+  it('resolves a blank subtree anchor through bounded recursive descendants', async () => {
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async (rawSql, values) => {
+        const sql = normalizeSql(rawSql);
+        commands.push({ sql, values });
+        if (sql.includes('scope_integrity_valid')) {
+          return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
+        }
+        return {
+          rows: [{
+            page_id: CHILD_PAGE_ID,
+            page_title: CHILD_TITLE,
+            page_path: CHILD_PATH,
+            scope_chunk_count: '4',
+            scope_page_count: '2'
+          }],
+          rowCount: 1
+        };
+      }
+    ));
+
+    await expect(repository.resolveSnapshotScope(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageTitleKey: normalizeBackstageNotionScopeKey(CHILD_TITLE),
+        pagePathKey: normalizeBackstageNotionScopePath(CHILD_PATH),
+        sectionPathKey: null,
+        scopeKind: 'subtree'
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      pageTitle: CHILD_TITLE,
+      pagePath: CHILD_PATH,
+      sectionPath: null,
+      selector: {
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'subtree',
+        sectionOccurrencePath: null
+      },
+      scopeChunkCount: 4,
+      scopePageCount: 2
+    });
+
+    expect(commands).toHaveLength(2);
+    expect(commands[1]?.sql).toContain('WITH RECURSIVE title_matching_pages AS');
+    expect(commands[1]?.sql).toContain('child.parent_page_id = scoped_page.scoped_page_id');
+    expect(commands[1]?.sql).toContain('COUNT(DISTINCT scoped_chunk.page_id)');
+    expect(commands[1]?.sql).toContain('ORDER BY page.page_id COLLATE "C" LIMIT 2');
+    expect(commands[1]?.values).toEqual([
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      normalizeBackstageNotionScopeKey(CHILD_TITLE),
+      normalizeBackstageNotionScopePath(CHILD_PATH),
+      'subtree'
+    ]);
+  });
+
   it('fails closed or reports bounded ambiguity without loading section rows', async () => {
     const pageCandidate = {
       page_id: CHILD_PAGE_ID,
       page_title: CHILD_TITLE,
       page_path: CHILD_PATH,
-      page_anchor_chunk_id: CHUNK_ID,
-      scope_chunk_count: '1'
+      scope_chunk_count: '1',
+      scope_page_count: '1'
     };
     const run = async (integrityValid: boolean, pageRows: unknown[]) => {
       const commands: string[] = [];
@@ -976,7 +1049,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
           if (sql.includes('scope_integrity_valid')) {
             return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
           }
-          if (sql.includes('WITH matching_pages AS')) {
+          if (sql.includes('title_matching_pages AS')) {
             return { rows: pageRows, rowCount: pageRows.length };
           }
           throw new Error('SENTINEL_UNEXPECTED_SECTION_QUERY');
@@ -1015,10 +1088,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
       pagePath: CHILD_PATH,
       sectionPath: null,
       selector: {
-        pageAnchorChunkId: CHUNK_ID,
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'page',
         sectionOccurrencePath: null
       },
-      scopeChunkCount: 2
+      scopeChunkCount: 2,
+      scopePageCount: 1
     });
 
     for (const pagePath of [
@@ -1040,7 +1115,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
           if (sql.includes('scope_integrity_valid')) {
             return { rows: [{ scope_integrity_valid: true }], rowCount: 1 };
           }
-          if (sql.includes('WITH matching_pages AS')) {
+          if (sql.includes('title_matching_pages AS')) {
             return { rows: [validPageScopeCandidate()], rowCount: 1 };
           }
           return { rows: sectionRows, rowCount: sectionRows.length };
@@ -1085,10 +1160,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
     ])).resolves.toEqual(expect.objectContaining({
       status: 'resolved',
       selector: {
-        pageAnchorChunkId: CHUNK_ID,
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'page',
         sectionOccurrencePath: [1]
       },
-      scopeChunkCount: 1
+      scopeChunkCount: 1,
+      scopePageCount: 1
     }));
 
     await expect(resolveSectionRows([
@@ -1134,7 +1211,8 @@ describe('PostgresBackstageNotionRagRepository', () => {
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: CHUNK_ID,
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'page',
         sectionOccurrencePath: [1, 2]
       },
       null,
@@ -1154,14 +1232,14 @@ describe('PostgresBackstageNotionRagRepository', () => {
     const page = commands[1];
     expect(count?.sql).toContain('chunk.snapshot_id = $2::UUID');
     expect(count?.sql).toContain('anchor.snapshot_id = $2::UUID');
-    expect(count?.sql).toContain('unnest($4::INTEGER[]) WITH ORDINALITY');
+    expect(count?.sql).toContain('unnest($5::INTEGER[]) WITH ORDINALITY');
     expect(count?.sql).not.toContain('chunk.content');
     expect(count?.sql).not.toMatch(/\bchunk\.embedding\b/u);
     expect(page?.sql).toContain('jsonb_array_elements_text(page.path) WITH ORDINALITY');
     expect(page?.sql).toContain('path_segment.value COLLATE "C"');
     expect(page?.sql).toContain('page.title COLLATE "C"');
     expect(page?.sql).not.toContain('page.path::TEXT');
-    expect(page?.sql).toContain('LIMIT $5 OFFSET $6');
+    expect(page?.sql).toContain('LIMIT $6 OFFSET $7');
     expect(page?.sql).not.toMatch(/\bchunk\.embedding\b/u);
     expect(page?.sql).not.toContain('page.canonical_url');
     expect(page?.sql).toContain('jsonb_build_object(');
@@ -1169,11 +1247,70 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(page?.values).toEqual([
       UNIVERSE_ID,
       SNAPSHOT_ID,
-      CHUNK_ID,
+      CHILD_PAGE_ID,
+      'page',
       [1, 2],
       12,
       12
     ]);
+  });
+
+  it('pages subtree chunks through the internal page-id recursive selector', async () => {
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async (rawSql, values) => {
+        const sql = normalizeSql(rawSql);
+        commands.push({ sql, values });
+        if (sql.includes('COUNT(*) AS scope_chunk_count')) {
+          return { rows: [{ scope_chunk_count: '1' }], rowCount: 1 };
+        }
+        return {
+          rows: [{
+            chunk_id: CHUNK_ID,
+            page_id: CHILD_PAGE_ID,
+            page_title: CHILD_TITLE,
+            page_path: CHILD_PATH,
+            ordinal: 0,
+            content_hash: CHUNK_CONTENT_HASH,
+            content: CHUNK_CONTENT,
+            code_points: Array.from(CHUNK_CONTENT).length,
+            chunk_embedding_model: 'text-embedding-test',
+            heading_path: [],
+            chunk_metadata: {
+              category: 'kayfabe',
+              headingOccurrencePath: []
+            }
+          }],
+          rowCount: 1
+        };
+      }
+    ));
+
+    await expect(repository.loadSnapshotChunkPage(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageId: ROOT_PAGE_ID,
+        scopeKind: 'subtree',
+        sectionOccurrencePath: null
+      },
+      null,
+      0,
+      12
+    )).resolves.toMatchObject({ scopeChunkCount: 1, chunks: [{ id: CHUNK_ID }] });
+
+    expect(commands).toHaveLength(2);
+    for (const command of commands) {
+      expect(command.sql).toContain('WITH RECURSIVE scope_pages(page_id) AS');
+      expect(command.sql).toContain('child.parent_page_id = parent.page_id');
+      expect(command.values.slice(0, 5)).toEqual([
+        UNIVERSE_ID,
+        SNAPSHOT_ID,
+        ROOT_PAGE_ID,
+        'subtree',
+        null
+      ]);
+    }
   });
 
   it('uses the signed immutable scope count to avoid rescanning continuation scope metadata', async () => {
@@ -1208,7 +1345,8 @@ describe('PostgresBackstageNotionRagRepository', () => {
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: CHUNK_ID,
+        pageId: CHILD_PAGE_ID,
+        scopeKind: 'page',
         sectionOccurrencePath: [1]
       },
       15,
@@ -1219,7 +1357,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(page.scopeChunkCount).toBe(15);
     expect(commands).toHaveLength(1);
     expect(commands[0]?.sql).not.toContain('COUNT(*) AS scope_chunk_count');
-    expect(commands[0]?.sql).toContain('LIMIT $5 OFFSET $6');
+    expect(commands[0]?.sql).toContain('LIMIT $6 OFFSET $7');
     expect(commands[0]?.sql).toContain('chunk.content');
     expect(commands[0]?.sql).toContain('jsonb_build_object(');
     expect(commands[0]?.sql).not.toContain('chunk.metadata AS chunk_metadata');
@@ -1236,9 +1374,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
       null,
       42,
       [],
-      { pageAnchorChunkId: 42, sectionOccurrencePath: null },
-      { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath: 'not-an-array' },
-      { pageAnchorChunkId: null, sectionOccurrencePath: [1] }
+      { pageId: 42, scopeKind: 'page', sectionOccurrencePath: null },
+      { pageId: CHILD_PAGE_ID, scopeKind: 'page', sectionOccurrencePath: 'not-an-array' },
+      { pageId: null, scopeKind: 'all', sectionOccurrencePath: [1] },
+      { pageId: CHILD_PAGE_ID, scopeKind: 'all', sectionOccurrencePath: null },
+      { pageId: null, scopeKind: 'subtree', sectionOccurrencePath: null },
+      { pageId: CHILD_PAGE_ID, scopeKind: 'subtree', sectionOccurrencePath: [1] }
     ];
 
     for (const selector of malformedSelectors) {
@@ -1259,7 +1400,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
       await expect(repository.loadSnapshotChunkPage(
         UNIVERSE_ID,
         SNAPSHOT_ID,
-        { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath },
+        { pageId: CHILD_PAGE_ID, scopeKind: 'page', sectionOccurrencePath },
         1,
         0,
         1
@@ -1280,7 +1421,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
       return repository.loadSnapshotChunkPage(
         UNIVERSE_ID,
         SNAPSHOT_ID,
-        { pageAnchorChunkId: null, sectionOccurrencePath: null },
+        { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
         null,
         offset,
         1
@@ -1308,7 +1449,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     await expect(offsetRepository.loadSnapshotChunkPage(
       UNIVERSE_ID,
       SNAPSHOT_ID,
-      { pageAnchorChunkId: null, sectionOccurrencePath: null },
+      { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
       3,
       3,
       1
@@ -1325,7 +1466,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     await expect(repository.loadSnapshotChunkPage(
       UNIVERSE_ID,
       SNAPSHOT_ID,
-      { pageAnchorChunkId: CHUNK_ID, sectionOccurrencePath: null },
+      { pageId: CHILD_PAGE_ID, scopeKind: 'page', sectionOccurrencePath: null },
       2,
       0,
       1

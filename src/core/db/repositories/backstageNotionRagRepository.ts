@@ -163,7 +163,8 @@ export interface BackstageNotionActiveSnapshot
 }
 
 export interface BackstageNotionSnapshotChunkPageSelector {
-  pageAnchorChunkId: string | null;
+  pageId: string | null;
+  scopeKind: 'all' | 'page' | 'subtree';
   sectionOccurrencePath: readonly number[] | null;
 }
 
@@ -171,6 +172,7 @@ export interface BackstageNotionSnapshotScopeLookup {
   pageTitleKey: string;
   pagePathKey: readonly string[] | null;
   sectionPathKey: readonly string[] | null;
+  scopeKind?: 'page' | 'subtree';
 }
 
 export type BackstageNotionSnapshotScopeResolution =
@@ -182,6 +184,7 @@ export type BackstageNotionSnapshotScopeResolution =
       sectionPath: string[] | null;
       selector: BackstageNotionSnapshotChunkPageSelector;
       scopeChunkCount: number;
+      scopePageCount: number;
     };
 
 export interface BackstageNotionSnapshotChunkPageChunk
@@ -337,8 +340,8 @@ interface SnapshotPageScopeCandidateRow {
   page_id: string;
   page_title: string;
   page_path: unknown;
-  page_anchor_chunk_id: string;
   scope_chunk_count: number | string;
+  scope_page_count: number | string;
 }
 
 interface SnapshotSectionScopeCandidateRow {
@@ -1578,6 +1581,13 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       'lookup.sectionPathKey',
       32
     );
+    const scopeKind = lookup.scopeKind ?? 'page';
+    if (
+      (scopeKind !== 'page' && scopeKind !== 'subtree')
+      || (scopeKind === 'subtree' && sectionPathKey !== null)
+    ) {
+      throw new Error('lookup.scopeKind must describe a page or section-free subtree scope.');
+    }
 
     const integrityResult = await this.pool.query<SnapshotScopeIntegrityRow>(
       `SELECT (
@@ -1694,54 +1704,78 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     }
 
     const pageResult = await this.pool.query<SnapshotPageScopeCandidateRow>(
-      `WITH matching_pages AS (
+      `WITH RECURSIVE title_matching_pages AS (
          SELECT page.page_id, page.title, page.path
          FROM backstage_notion_snapshot_pages AS page
          WHERE page.universe_id = $1
            AND page.snapshot_id = $2::UUID
            AND (page.metadata ->> 'scopeTitleKey') COLLATE "C"
              = $3 COLLATE "C"
-           AND (
-             $4::TEXT[] IS NULL
-             OR page.metadata -> 'scopePathKey' = to_jsonb($4::TEXT[])
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM backstage_notion_snapshot_chunks AS retrievable_chunk
-             WHERE retrievable_chunk.universe_id = page.universe_id
-               AND retrievable_chunk.snapshot_id = page.snapshot_id
-               AND retrievable_chunk.page_id = page.page_id
-           )
-         ORDER BY page.page_id COLLATE "C"
+            AND (
+              $4::TEXT[] IS NULL
+              OR page.metadata -> 'scopePathKey' = to_jsonb($4::TEXT[])
+            )
+            AND (
+              $5::TEXT = 'subtree'
+              OR EXISTS (
+                SELECT 1
+                FROM backstage_notion_snapshot_chunks AS retrievable_chunk
+                WHERE retrievable_chunk.universe_id = page.universe_id
+                  AND retrievable_chunk.snapshot_id = page.snapshot_id
+                  AND retrievable_chunk.page_id = page.page_id
+              )
+            )
+          ORDER BY page.page_id COLLATE "C"
+          LIMIT 2
+        ), scoped_pages(anchor_page_id, scoped_page_id) AS (
+         SELECT matching_page.page_id, matching_page.page_id
+         FROM title_matching_pages AS matching_page
+         UNION
+         SELECT scoped_page.anchor_page_id, child.page_id
+         FROM scoped_pages AS scoped_page
+         INNER JOIN backstage_notion_snapshot_pages AS child
+           ON child.universe_id = $1
+          AND child.snapshot_id = $2::UUID
+          AND child.parent_page_id = scoped_page.scoped_page_id
+         WHERE $5::TEXT = 'subtree'
+       ), scope_counts AS (
+         SELECT
+           scoped_page.anchor_page_id,
+           COUNT(scoped_chunk.id) AS scope_chunk_count,
+           COUNT(DISTINCT scoped_chunk.page_id) AS scope_page_count
+         FROM scoped_pages AS scoped_page
+         LEFT JOIN backstage_notion_snapshot_chunks AS scoped_chunk
+           ON scoped_chunk.universe_id = $1
+          AND scoped_chunk.snapshot_id = $2::UUID
+          AND scoped_chunk.page_id = scoped_page.scoped_page_id
+         GROUP BY scoped_page.anchor_page_id
+       ), matching_pages AS (
+         SELECT
+           matching_page.page_id,
+           matching_page.title,
+           matching_page.path,
+           scope_count.scope_chunk_count,
+           scope_count.scope_page_count
+         FROM title_matching_pages AS matching_page
+         INNER JOIN scope_counts AS scope_count
+           ON scope_count.anchor_page_id = matching_page.page_id
+         ORDER BY matching_page.page_id COLLATE "C"
          LIMIT 2
        )
        SELECT
          matching_page.page_id,
          matching_page.title AS page_title,
          matching_page.path AS page_path,
-         (
-           SELECT anchor.id
-           FROM backstage_notion_snapshot_chunks AS anchor
-           WHERE anchor.universe_id = $1
-             AND anchor.snapshot_id = $2::UUID
-             AND anchor.page_id = matching_page.page_id
-           ORDER BY anchor.ordinal, anchor.id COLLATE "C"
-           LIMIT 1
-         ) AS page_anchor_chunk_id,
-         (
-           SELECT COUNT(*)
-           FROM backstage_notion_snapshot_chunks AS scoped_chunk
-           WHERE scoped_chunk.universe_id = $1
-             AND scoped_chunk.snapshot_id = $2::UUID
-             AND scoped_chunk.page_id = matching_page.page_id
-         ) AS scope_chunk_count
+         matching_page.scope_chunk_count,
+         matching_page.scope_page_count
        FROM matching_pages AS matching_page
        ORDER BY matching_page.page_id COLLATE "C"`,
       [
         normalizedUniverseId,
         normalizedSnapshotId,
         pageTitleKey,
-        pagePathKey
+        pagePathKey,
+        scopeKind
       ]
     );
     if (pageResult.rows.length === 0) {
@@ -1755,7 +1789,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     if (!page) {
       return { status: 'invalid' };
     }
-    normalizeUuid(page.page_id, 'page_id');
+    const pageId = normalizeUuid(page.page_id, 'page_id');
     const pageTitle = normalizeRequiredText(page.page_title, 'page_title', 500);
     const pagePath = parseBoundedPersistedStringArray(
       page.page_path,
@@ -1763,17 +1797,22 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       101,
       1
     );
-    const pageAnchorChunkId = normalizeSha256(
-      page.page_anchor_chunk_id,
-      'page_anchor_chunk_id'
-    );
     const pageScopeChunkCount = parseInteger(
       page.scope_chunk_count,
       'scope_chunk_count'
     );
+    const pageScopePageCount = parseInteger(
+      page.scope_page_count,
+      'scope_page_count'
+    );
+    if (pageScopeChunkCount === 0 && pageScopePageCount === 0) {
+      return { status: 'not_found' };
+    }
     if (
       pageScopeChunkCount < 1
       || pageScopeChunkCount > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      || pageScopePageCount < 1
+      || pageScopePageCount > BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT
     ) {
       return { status: 'invalid' };
     }
@@ -1785,10 +1824,12 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
         pagePath,
         sectionPath: null,
         selector: {
-          pageAnchorChunkId,
+          pageId,
+          scopeKind,
           sectionOccurrencePath: null,
         },
         scopeChunkCount: pageScopeChunkCount,
+        scopePageCount: pageScopePageCount,
       };
     }
 
@@ -1900,10 +1941,12 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       pagePath,
       sectionPath,
       selector: {
-        pageAnchorChunkId,
+        pageId,
+        scopeKind: 'page',
         sectionOccurrencePath,
       },
       scopeChunkCount,
+      scopePageCount: 1,
     };
   }
 
@@ -1921,18 +1964,20 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       !selector
       || typeof selector !== 'object'
       || Array.isArray(selector)
-      || (selector.pageAnchorChunkId !== null
-        && typeof selector.pageAnchorChunkId !== 'string')
+      || (selector.pageId !== null && typeof selector.pageId !== 'string')
+      || !['all', 'page', 'subtree'].includes(selector.scopeKind)
       || (selector.sectionOccurrencePath !== null
         && !Array.isArray(selector.sectionOccurrencePath))
       || (selector.sectionOccurrencePath !== null
-        && selector.pageAnchorChunkId === null)
+        && (selector.pageId === null || selector.scopeKind !== 'page'))
+      || (selector.scopeKind === 'all' && selector.pageId !== null)
+      || (selector.scopeKind !== 'all' && selector.pageId === null)
     ) {
       throw new Error('selector must describe a supported snapshot scope.');
     }
-    const normalizedPageAnchorChunkId = selector.pageAnchorChunkId === null
+    const normalizedPageId = selector.pageId === null
       ? null
-      : normalizeSha256(selector.pageAnchorChunkId, 'selector.pageAnchorChunkId');
+      : normalizeUuid(selector.pageId, 'selector.pageId');
     const normalizedSectionOccurrencePath = selector.sectionOccurrencePath === null
       ? null
       : selector.sectionOccurrencePath.map((occurrence, index) => normalizeInteger(
@@ -1973,38 +2018,47 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     const queryValues = [
       normalizedUniverseId,
       normalizedSnapshotId,
-      normalizedPageAnchorChunkId,
+      normalizedPageId,
+      selector.scopeKind,
       normalizedSectionOccurrencePath
     ];
     let scopeChunkCount = normalizedKnownScopeChunkCount;
     if (scopeChunkCount === null) {
       const countResult = await this.pool.query<SnapshotChunkScopeCountRow>(
-        `WITH scope_anchor AS (
+        `WITH RECURSIVE scope_pages(page_id) AS (
            SELECT anchor.page_id
-           FROM backstage_notion_snapshot_chunks AS anchor
+           FROM backstage_notion_snapshot_pages AS anchor
            WHERE anchor.universe_id = $1
              AND anchor.snapshot_id = $2::UUID
-             AND anchor.id = $3
+             AND anchor.page_id = $3
+           UNION
+           SELECT child.page_id
+           FROM scope_pages AS parent
+           INNER JOIN backstage_notion_snapshot_pages AS child
+             ON child.universe_id = $1
+            AND child.snapshot_id = $2::UUID
+            AND child.parent_page_id = parent.page_id
+           WHERE $4::TEXT = 'subtree'
          )
          SELECT COUNT(*) AS scope_chunk_count
          FROM backstage_notion_snapshot_chunks AS chunk
          WHERE chunk.universe_id = $1
            AND chunk.snapshot_id = $2::UUID
            AND (
-             $3::TEXT IS NULL
-             OR chunk.page_id = (SELECT scope_anchor.page_id FROM scope_anchor)
+             $4::TEXT = 'all'
+             OR chunk.page_id IN (SELECT scope_page.page_id FROM scope_pages AS scope_page)
            )
            AND (
-             $4::INTEGER[] IS NULL
+             $5::INTEGER[] IS NULL
              OR CASE
                WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
                THEN
                  jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
-                   >= cardinality($4::INTEGER[])
-                 AND NOT EXISTS (
-                   SELECT 1
-                   FROM unnest($4::INTEGER[]) WITH ORDINALITY
-                     AS requested_occurrence(value, position)
+                   >= cardinality($5::INTEGER[])
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM unnest($5::INTEGER[]) WITH ORDINALITY
+                      AS requested_occurrence(value, position)
                    WHERE chunk.metadata -> 'headingOccurrencePath'
                      ->> (requested_occurrence.position - 1)::INTEGER
                      IS DISTINCT FROM requested_occurrence.value::TEXT
@@ -2030,12 +2084,20 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     }
 
     const pageResult = await this.pool.query<SnapshotChunkPageRow>(
-      `WITH scope_anchor AS (
+      `WITH RECURSIVE scope_pages(page_id) AS (
          SELECT anchor.page_id
-         FROM backstage_notion_snapshot_chunks AS anchor
+         FROM backstage_notion_snapshot_pages AS anchor
          WHERE anchor.universe_id = $1
            AND anchor.snapshot_id = $2::UUID
-           AND anchor.id = $3
+           AND anchor.page_id = $3
+         UNION
+         SELECT child.page_id
+         FROM scope_pages AS parent
+         INNER JOIN backstage_notion_snapshot_pages AS child
+           ON child.universe_id = $1
+          AND child.snapshot_id = $2::UUID
+          AND child.parent_page_id = parent.page_id
+         WHERE $4::TEXT = 'subtree'
        )
        SELECT
          chunk.id AS chunk_id,
@@ -2057,20 +2119,20 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
        WHERE chunk.universe_id = $1
          AND chunk.snapshot_id = $2::UUID
          AND (
-           $3::TEXT IS NULL
-           OR chunk.page_id = (SELECT scope_anchor.page_id FROM scope_anchor)
+           $4::TEXT = 'all'
+           OR chunk.page_id IN (SELECT scope_page.page_id FROM scope_pages AS scope_page)
          )
          AND (
-           $4::INTEGER[] IS NULL
+           $5::INTEGER[] IS NULL
            OR CASE
              WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
              THEN
                jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
-                 >= cardinality($4::INTEGER[])
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM unnest($4::INTEGER[]) WITH ORDINALITY
-                   AS requested_occurrence(value, position)
+                 >= cardinality($5::INTEGER[])
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM unnest($5::INTEGER[]) WITH ORDINALITY
+                    AS requested_occurrence(value, position)
                  WHERE chunk.metadata -> 'headingOccurrencePath'
                    ->> (requested_occurrence.position - 1)::INTEGER
                    IS DISTINCT FROM requested_occurrence.value::TEXT
@@ -2088,8 +2150,8 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
          page.title COLLATE "C",
          chunk.ordinal,
          chunk.id COLLATE "C"
-       LIMIT $5
-       OFFSET $6`,
+       LIMIT $6
+       OFFSET $7`,
       [...queryValues, normalizedLimit, normalizedOffset]
     );
     if (pageResult.rows.length > normalizedLimit) {

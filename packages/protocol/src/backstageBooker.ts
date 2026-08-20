@@ -153,17 +153,37 @@ export interface BackstageSimulateMatchResponse {
   hrc: BackstageHrcResult;
 }
 
-export interface BackstageContinuityRetrievalScope {
+export type BackstageContinuityScopeKind = "page" | "subtree";
+
+interface BackstageContinuityRetrievalScopeBase {
   pageTitle: string;
   pagePath?: string[];
-  sectionPath?: string[];
 }
 
-export interface BackstageContinuityResolvedScope {
+export type BackstageContinuityRetrievalScope =
+  | (BackstageContinuityRetrievalScopeBase & {
+      scopeKind?: "page";
+      sectionPath?: string[];
+    })
+  | (BackstageContinuityRetrievalScopeBase & {
+      scopeKind: "subtree";
+      sectionPath?: never;
+    });
+
+interface BackstageContinuityResolvedScopeBase {
   pageTitle: string;
   pagePath: string[];
-  sectionPath?: string[];
 }
+
+export type BackstageContinuityResolvedScope =
+  | (BackstageContinuityResolvedScopeBase & {
+      scopeKind?: never;
+      sectionPath?: string[];
+    })
+  | (BackstageContinuityResolvedScopeBase & {
+      scopeKind: "subtree";
+      sectionPath?: never;
+    });
 
 export type BackstageContinuityRetrievalMode = "relevant" | "complete_scope";
 
@@ -183,7 +203,7 @@ export type BackstageQueryContinuityRequest =
       cursor?: string;
     });
 
-export interface BackstageContinuityCoverage {
+interface BackstageContinuityCoverageBase {
   status: "complete" | "sampled";
   scopeChunks: number;
   selectedChunks: number;
@@ -193,6 +213,19 @@ export interface BackstageContinuityCoverage {
   hasMore: boolean;
   nextCursor?: string;
 }
+
+export type BackstageContinuityCoverage = BackstageContinuityCoverageBase & (
+  | {
+      scopePages?: never;
+      selectedPages?: never;
+      omittedPages?: never;
+    }
+  | {
+      scopePages: number;
+      selectedPages: number;
+      omittedPages: number;
+    }
+);
 
 export type BackstageContinuitySourceCategory =
   | "championships"

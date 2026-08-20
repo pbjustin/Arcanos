@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for scoped continuity queries, generation, simulation, exact reads, and canon writes; only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
@@ -64,29 +64,23 @@
                     }
                   }
                 },
-                "simulateMatch": {
-                  "summary": "Simulate a match",
+                "queryContinuitySubtree": {
+                  "summary": "Query an exact Notion page and all descendant pages",
                   "value": {
-                    "action": "simulateMatch",
+                    "action": "queryContinuity",
                     "executionMode": "sync",
                     "payload": {
-                      "universeId": "backstage-demo",
-                      "match": {
-                        "wrestler1": "Rhea Ripley",
-                        "wrestler2": "Bianca Belair",
-                        "matchType": "Singles",
-                        "kayfabeMode": true
+                      "universeId": "my-universe-2k26",
+                      "query": "Summarize the complete Monday Night Raw hierarchy.",
+                      "retrievalScope": {
+                        "pageTitle": "Monday Night Raw",
+                        "pagePath": [
+                          "My Universe 2K26",
+                          "Monday Night Raw"
+                        ],
+                        "scopeKind": "subtree"
                       },
-                      "rosters": [
-                        {
-                          "name": "Rhea Ripley",
-                          "overall": 96
-                        },
-                        {
-                          "name": "Bianca Belair",
-                          "overall": 95
-                        }
-                      ]
+                      "retrievalMode": "complete_scope"
                     }
                   }
                 }
@@ -200,44 +194,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BackstageCanonWriteRequest"
-              },
-              "examples": {
-                "upsertStoryline": {
-                  "summary": "Create or update a storyline",
-                  "value": {
-                    "action": "upsertStoryline",
-                    "payload": {
-                      "universeId": "legacy-demo-universe",
-                      "mutationId": "5d87478f-57a3-45e0-9d5a-6b9d56e94ec8",
-                      "expectedVersion": 0,
-                      "storyline": {
-                        "key": "demo-storyline",
-                        "title": "Demo Storyline",
-                        "summary": "Illustrative legacy canon for a non-authoritative universe.",
-                        "status": "active",
-                        "participantNames": []
-                      }
-                    }
-                  }
-                },
-                "appendCanonBeat": {
-                  "summary": "Append a canon beat to an existing storyline",
-                  "value": {
-                    "action": "appendCanonBeat",
-                    "payload": {
-                      "universeId": "legacy-demo-universe",
-                      "mutationId": "9c3d1957-9f45-4a9c-99e7-f0b9022d7a4c",
-                      "storylineKey": "demo-storyline",
-                      "expectedVersion": 1,
-                      "beat": {
-                        "kind": "development",
-                        "summary": "The challenger interrupts the champion.",
-                        "occurredAt": "2026-08-15T20:00:00Z",
-                        "participantNames": []
-                      }
-                    }
-                  }
-                }
               }
             }
           }
@@ -1535,7 +1491,7 @@
           },
           "payload": {
             "type": "object",
-            "description": "Action-specific input. For queryContinuity, provide the exact universeId and a query, with optional exact page/section scope, retrieval mode, and cursor. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.",
+            "description": "Action-specific input. For queryContinuity, provide the exact universeId and a query, with optional exact page, subtree, or section scope, retrieval mode, and cursor. For generateBooking or generateBookingWithHRC, provide prompt and the exact universeId when known. For simulateMatch, provide match and a numeric roster; winProbModifier is optional.",
             "additionalProperties": false,
             "properties": {
               "universeId": {
@@ -1543,7 +1499,7 @@
               },
               "prompt": {
                 "type": "string",
-                "description": "Required for generation actions. Put the complete booking, factual lookup, or review request here.",
+                "description": "Required only for generateBooking and generateBookingWithHRC. Put the complete creative booking request here. For factual lookup, current-state checks, results, champions, storylines, or continuity reviews, use queryContinuity and payload.query.",
                 "minLength": 1,
                 "maxLength": 10000,
                 "pattern": "\\S"
@@ -1973,10 +1929,34 @@
           "pagePath": {
             "$ref": "#/components/schemas/ContinuityPagePath"
           },
+          "scopeKind": {
+            "$ref": "#/components/schemas/ContinuityScopeKind"
+          },
           "sectionPath": {
             "$ref": "#/components/schemas/ContinuitySectionPath"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "scopeKind"
+              ],
+              "properties": {
+                "scopeKind": {
+                  "const": "subtree"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "sectionPath"
+                ]
+              }
+            }
+          }
+        ]
       },
       "ContinuityResolvedScope": {
         "type": "object",
@@ -1992,10 +1972,42 @@
           "pagePath": {
             "$ref": "#/components/schemas/ContinuityPagePath"
           },
+          "scopeKind": {
+            "const": "subtree"
+          },
           "sectionPath": {
             "$ref": "#/components/schemas/ContinuitySectionPath"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "scopeKind"
+              ],
+              "properties": {
+                "scopeKind": {
+                  "const": "subtree"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "sectionPath"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ContinuityScopeKind": {
+        "type": "string",
+        "enum": [
+          "page",
+          "subtree"
+        ],
+        "default": "page"
       },
       "ContinuityRetrievalMode": {
         "type": "string",
@@ -2913,7 +2925,50 @@
               "$ref": "#/components/schemas/ContinuitySource"
             }
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "resolvedScope"
+              ],
+              "properties": {
+                "resolvedScope": {
+                  "required": [
+                    "scopeKind"
+                  ],
+                  "properties": {
+                    "scopeKind": {
+                      "const": "subtree"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "coverage": {
+                  "required": [
+                    "scopePages",
+                    "selectedPages",
+                    "omittedPages"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "coverage": {
+                  "not": {
+                    "required": [
+                      "scopePages"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "ContinuityCoverage": {
         "type": "object",
@@ -2946,6 +3001,21 @@
             "maximum": 2147483647
           },
           "omittedChunks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "scopePages": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "selectedPages": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "omittedPages": {
             "type": "integer",
             "minimum": 0,
             "maximum": 2147483647
@@ -3004,7 +3074,21 @@
               }
             }
           }
-        ]
+        ],
+        "dependentRequired": {
+          "scopePages": [
+            "selectedPages",
+            "omittedPages"
+          ],
+          "selectedPages": [
+            "scopePages",
+            "omittedPages"
+          ],
+          "omittedPages": [
+            "scopePages",
+            "selectedPages"
+          ]
+        }
       },
       "ContinuitySource": {
         "type": "object",

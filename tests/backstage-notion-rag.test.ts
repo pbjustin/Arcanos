@@ -152,6 +152,7 @@ function snapshotScopeResolution(
   if (!active || snapshotId !== active.snapshot.id) {
     return { status: 'invalid' };
   }
+  const scopeKind = lookup.scopeKind ?? 'page';
   const pages = new Map<string, BackstageNotionActiveChunk[]>();
   for (const candidate of active.chunks) {
     if (
@@ -181,6 +182,14 @@ function snapshotScopeResolution(
   if (!representative) {
     return { status: 'invalid' };
   }
+  const scopedPageChunks = scopeKind === 'subtree'
+    ? active.chunks.filter(candidate => (
+        representative.pagePath.every((segment, index) => (
+          normalizeBackstageNotionScopeKey(candidate.pagePath[index] ?? '')
+            === normalizeBackstageNotionScopeKey(segment)
+        ))
+      ))
+    : pageChunks;
   if (lookup.sectionPathKey === null) {
     return {
       status: 'resolved',
@@ -188,10 +197,12 @@ function snapshotScopeResolution(
       pagePath: [...representative.pagePath],
       sectionPath: null,
       selector: {
-        pageAnchorChunkId: representative.id,
+        pageId: representative.pageId,
+        scopeKind,
         sectionOccurrencePath: null,
       },
-      scopeChunkCount: pageChunks.length,
+      scopeChunkCount: scopedPageChunks.length,
+      scopePageCount: new Set(scopedPageChunks.map(candidate => candidate.pageId)).size,
     };
   }
   const sectionChunks = pageChunks.filter(candidate => (
@@ -217,10 +228,12 @@ function snapshotScopeResolution(
     pagePath: [...representative.pagePath],
     sectionPath: sectionChunks[0]?.headingPath.slice(0, lookup.sectionPathKey.length) ?? [],
     selector: {
-      pageAnchorChunkId: representative.id,
+      pageId: representative.pageId,
+      scopeKind: 'page',
       sectionOccurrencePath: [...occurrencePrefixes.values()][0] ?? [],
     },
     scopeChunkCount: sectionChunks.length,
+    scopePageCount: 1,
   };
 }
 
@@ -259,10 +272,17 @@ function snapshotChunkPage(
     return { scopeChunkCount: 0, chunks: [] };
   }
   let scoped = [...active.chunks];
-  if (selector.pageAnchorChunkId !== null) {
-    const anchor = active.chunks.find(item => item.id === selector.pageAnchorChunkId);
+  if (selector.pageId !== null) {
+    const anchor = active.chunks.find(item => item.pageId === selector.pageId);
     scoped = anchor
-      ? scoped.filter(item => item.pageId === anchor.pageId)
+      ? scoped.filter(item => (
+          selector.scopeKind === 'subtree'
+            ? anchor.pagePath.every((segment, index) => (
+                normalizeBackstageNotionScopeKey(item.pagePath[index] ?? '')
+                  === normalizeBackstageNotionScopeKey(segment)
+              ))
+            : item.pageId === anchor.pageId
+        ))
       : [];
   }
   if (selector.sectionOccurrencePath !== null) {
@@ -387,23 +407,17 @@ function resignTestCursor(
   decoded: Record<string, unknown>,
   active: BackstageNotionActiveSnapshot
 ): string {
-  const selector = decoded.scopeSelector as {
-    pageAnchorChunkId: string | null;
-    sectionOccurrencePath: number[] | null;
-  };
   const payload = {
     v: decoded.v,
     snapshotId: decoded.snapshotId,
     requestBinding: decoded.requestBinding,
-    scopeSelector: {
-      pageAnchorChunkId: selector.pageAnchorChunkId,
-      sectionOccurrencePath: selector.sectionOccurrencePath,
-    },
+    scopeKind: decoded.scopeKind,
     scopeChunkCount: decoded.scopeChunkCount,
+    scopePageCount: decoded.scopePageCount,
     offset: decoded.offset,
   };
   const signingKey = sha256(JSON.stringify({
-    format: 'backstage-notion-rag-cursor-key-v2',
+    format: 'backstage-notion-rag-cursor-key-v3',
     universeId: UNIVERSE_ID,
     snapshotId: active.snapshot.id,
     manifestHash: active.snapshot.manifestHash,
@@ -934,8 +948,252 @@ describe('Backstage Notion authority RAG retrieval', () => {
         pageTitleKey: normalizeBackstageNotionScopeKey(raw.pageTitle),
         pagePathKey: null,
         sectionPathKey: null,
+        scopeKind: 'page',
       }
     );
+  });
+
+  it('retrieves and diversifies relevant chunks across an exact page subtree', async () => {
+    const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const subtreeChunks = [
+      ...Array.from({ length: 5 }, (_unused, ordinal) => chunk({
+        pageIndex: 1,
+        ordinal,
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        content: `Raw overview ${ordinal}.`,
+      })),
+      ...Array.from({ length: 5 }, (_unused, ordinal) => chunk({
+        pageIndex: 2,
+        ordinal,
+        pageTitle: 'Raw Roster',
+        pagePath: [...rawPath, 'Raw Roster'],
+        content: `Raw roster ${ordinal}.`,
+      })),
+    ];
+    const sibling = chunk({
+      pageIndex: 3,
+      pageTitle: 'SmackDown',
+      pagePath: ['WWE Universe Mode', 'Brands', 'SmackDown'],
+      content: 'SmackDown continuity.',
+    });
+    const state = harness(activeSnapshot([...subtreeChunks, sibling]));
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read the Raw brand',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        scopeKind: 'subtree',
+      },
+    });
+
+    expect(result.resolvedScope).toEqual({
+      pageTitle: 'Monday Night Raw',
+      pagePath: rawPath,
+      scopeKind: 'subtree',
+    });
+    expect(result.citations).toHaveLength(6);
+    expect(result.citations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ pageId: sibling.pageId }),
+    ]));
+    for (const selectedPageId of new Set(result.citations.map(item => item.pageId))) {
+      expect(result.citations.filter(item => item.pageId === selectedPageId)).toHaveLength(3);
+    }
+    expect(result.coverage).toMatchObject({
+      scopeChunks: 10,
+      selectedChunks: 6,
+      omittedChunks: 4,
+      scopePages: 2,
+      selectedPages: 2,
+      omittedPages: 0,
+    });
+    expect(state.resolveSnapshotScope).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      expect.objectContaining({ scopeKind: 'subtree' })
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      'backstage.notion_rag.retrieved',
+      expect.objectContaining({
+        scopeKind: 'subtree',
+        scopePages: 2,
+        selectedPages: 2,
+        omittedPages: 0,
+      })
+    );
+  });
+
+  it('accepts a blank navigation page as a relevant subtree root', async () => {
+    const anchorPageId = pageId(9);
+    const anchorPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const descendants = [
+      chunk({
+        pageIndex: 10,
+        pageTitle: 'Raw Roster',
+        pagePath: [...anchorPath, 'Raw Roster'],
+        content: 'Raw roster continuity.',
+      }),
+      chunk({
+        pageIndex: 11,
+        pageTitle: 'Raw Stories',
+        pagePath: [...anchorPath, 'Raw Stories'],
+        content: 'Raw storyline continuity.',
+      }),
+    ];
+    const active = activeSnapshot(descendants);
+    active.snapshot.pageCount = 3;
+    const state = harness(active, {
+      resolveSnapshotScope: async () => ({
+        status: 'resolved',
+        pageTitle: 'Monday Night Raw',
+        pagePath: anchorPath,
+        sectionPath: null,
+        selector: {
+          pageId: anchorPageId,
+          scopeKind: 'subtree',
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 2,
+        scopePageCount: 2,
+      }),
+    });
+
+    const result = await retrieveAuthorized(state.dependencies, {
+      query: 'read Raw continuity',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: anchorPath,
+        scopeKind: 'subtree',
+      },
+    });
+
+    expect(result.citations.map(item => item.pageId).sort()).toEqual(
+      descendants.map(item => item.pageId).sort()
+    );
+    expect(result.coverage).toMatchObject({
+      scopePages: 2,
+      selectedPages: 2,
+      omittedPages: 0,
+    });
+  });
+
+  it('paginates complete subtrees with a re-resolved v3 cursor and no internal selector', async () => {
+    const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const rawChunks = [
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        content: 'Raw overview.',
+      }),
+      ...Array.from({ length: 6 }, (_unused, ordinal) => chunk({
+        pageIndex: 2,
+        ordinal,
+        pageTitle: 'Raw Roster',
+        pagePath: [...rawPath, 'Raw Roster'],
+        content: `Raw roster ${ordinal}.`,
+      })),
+      ...Array.from({ length: 6 }, (_unused, ordinal) => chunk({
+        pageIndex: 3,
+        ordinal,
+        pageTitle: 'Raw Stories',
+        pagePath: [...rawPath, 'Raw Stories'],
+        content: `Raw story ${ordinal}.`,
+      })),
+    ];
+    const state = harness(activeSnapshot(rawChunks));
+    const request = {
+      query: 'read all Raw continuity',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        scopeKind: 'subtree' as const,
+      },
+      retrievalMode: 'complete_scope' as const,
+    };
+
+    const first = await retrieveAuthorized(state.dependencies, request);
+    const decoded = decodeTestCursor(first.nextCursor ?? '');
+    expect(decoded).toMatchObject({
+      v: 3,
+      scopeKind: 'subtree',
+      scopeChunkCount: 13,
+      scopePageCount: 3,
+      offset: 12,
+    });
+    expect(decoded).not.toHaveProperty('scopeSelector');
+    expect(JSON.stringify(decoded)).not.toContain(rawChunks[0]?.pageId);
+    expect(first.coverage).toMatchObject({
+      scopePages: 3,
+      selectedPages: 3,
+      omittedPages: 0,
+      hasMore: true,
+    });
+
+    const second = await retrieveAuthorized(state.dependencies, {
+      ...request,
+      cursor: first.nextCursor ?? undefined,
+    });
+    expect(second.citations).toHaveLength(1);
+    expect(second.coverage).toMatchObject({
+      scopePages: 3,
+      selectedPages: 1,
+      omittedPages: 2,
+      hasMore: false,
+    });
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(2);
+    expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      {
+        pageId: rawChunks[0]?.pageId,
+        scopeKind: 'subtree',
+        sectionOccurrencePath: null,
+      },
+      13,
+      12,
+      12
+    );
+  });
+
+  it('rejects a subtree continuation when re-resolved coverage counts drift', async () => {
+    const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const rawChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
+      pageIndex: 1,
+      ordinal,
+      pageTitle: 'Monday Night Raw',
+      pagePath: rawPath,
+      content: `Raw continuity ${ordinal}.`,
+    }));
+    const active = activeSnapshot(rawChunks);
+    let resolutionCalls = 0;
+    const state = harness(active, {
+      resolveSnapshotScope: async (_universeId, snapshotId, lookup) => {
+        const resolution = snapshotScopeResolution(active, snapshotId, lookup);
+        resolutionCalls += 1;
+        return resolution.status === 'resolved' && resolutionCalls > 1
+          ? { ...resolution, scopeChunkCount: resolution.scopeChunkCount - 1 }
+          : resolution;
+      },
+    });
+    const request = {
+      query: 'read all Raw continuity',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: rawPath,
+        scopeKind: 'subtree' as const,
+      },
+      retrievalMode: 'complete_scope' as const,
+    };
+    const first = await retrieveAuthorized(state.dependencies, request);
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      ...request,
+      cursor: first.nextCursor ?? undefined,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(2);
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -967,10 +1225,12 @@ describe('Backstage Notion authority RAG retrieval', () => {
         pagePath: ['WWE Universe Mode', 'Universe page 1'],
         sectionPath: null,
         selector: {
-          pageAnchorChunkId: undefined as unknown as string,
+          pageId: undefined as unknown as string,
+          scopeKind: 'page',
           sectionOccurrencePath: null,
         },
         scopeChunkCount: 1,
+        scopePageCount: 1,
       },
       {
         status: 'resolved',
@@ -978,10 +1238,12 @@ describe('Backstage Notion authority RAG retrieval', () => {
         pagePath: ['WWE Universe Mode', 'Universe page 1'],
         sectionPath: ['Roster'],
         selector: {
-          pageAnchorChunkId: active.chunks[0]?.id ?? '',
+          pageId: active.chunks[0]?.pageId ?? '',
+          scopeKind: 'page',
           sectionOccurrencePath: [1],
         },
         scopeChunkCount: 1,
+        scopePageCount: 1,
       },
     ];
 
@@ -996,6 +1258,80 @@ describe('Backstage Notion authority RAG retrieval', () => {
       })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
       expect(state.loadSnapshotChunkPage).not.toHaveBeenCalled();
     }
+  });
+
+  it('fails closed when resolved subtree page counts exceed chunk counts', async () => {
+    const active = activeSnapshot();
+    active.snapshot.pageCount = 2;
+    const state = harness(active, {
+      resolveSnapshotScope: async () => ({
+        status: 'resolved',
+        pageTitle: 'Universe page 1',
+        pagePath: ['WWE Universe Mode', 'Universe page 1'],
+        sectionPath: null,
+        selector: {
+          pageId: active.chunks[0]?.pageId ?? '',
+          scopeKind: 'subtree',
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 1,
+        scopePageCount: 2,
+      }),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'read the subtree',
+      retrievalScope: {
+        pageTitle: 'Universe page 1',
+        scopeKind: 'subtree',
+      },
+      retrievalMode: 'complete_scope',
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(state.loadSnapshotChunkPage).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a complete subtree page emits more pages than resolved', async () => {
+    const anchorPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
+    const active = activeSnapshot([
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'Monday Night Raw',
+        pagePath: anchorPath,
+        content: 'Raw overview.',
+      }),
+      chunk({
+        pageIndex: 2,
+        pageTitle: 'Raw Roster',
+        pagePath: [...anchorPath, 'Raw Roster'],
+        content: 'Raw roster continuity.',
+      }),
+    ]);
+    const state = harness(active, {
+      resolveSnapshotScope: async () => ({
+        status: 'resolved',
+        pageTitle: 'Monday Night Raw',
+        pagePath: anchorPath,
+        sectionPath: null,
+        selector: {
+          pageId: active.chunks[0]?.pageId ?? '',
+          scopeKind: 'subtree',
+          sectionOccurrencePath: null,
+        },
+        scopeChunkCount: 2,
+        scopePageCount: 1,
+      }),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies, {
+      query: 'read the subtree',
+      retrievalScope: {
+        pageTitle: 'Monday Night Raw',
+        pagePath: anchorPath,
+        scopeKind: 'subtree',
+      },
+      retrievalMode: 'complete_scope',
+    })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
   });
 
   it('paginates complete exact scopes with a snapshot-and-request-bound cursor', async () => {
@@ -1040,16 +1376,16 @@ describe('Backstage Notion authority RAG retrieval', () => {
       Buffer.from(first.nextCursor ?? '', 'base64url').toString('utf8')
     ) as Record<string, unknown>;
     expect(decodedCursor).toMatchObject({
-      v: 2,
+      v: 3,
       snapshotId: SNAPSHOT_ID,
+      scopeKind: 'page',
       scopeChunkCount: 15,
+      scopePageCount: 1,
       offset: 12,
-      scopeSelector: {
-        pageAnchorChunkId: rawChunks[0]?.id,
-        sectionOccurrencePath: [1],
-      },
     });
+    expect(decodedCursor).not.toHaveProperty('scopeSelector');
     expect(JSON.stringify(decodedCursor)).not.toContain(rawChunks[0]?.pageId);
+    expect(JSON.stringify(decodedCursor)).not.toContain(rawChunks[0]?.id);
     expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
     expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
     expect(state.resolveSnapshotScope).toHaveBeenCalledWith(
@@ -1059,13 +1395,15 @@ describe('Backstage Notion authority RAG retrieval', () => {
         pageTitleKey: normalizeBackstageNotionScopeKey('Monday Night Raw'),
         pagePathKey: normalizeBackstageNotionScopePath(rawPath),
         sectionPathKey: normalizeBackstageNotionScopePath(['Roster']),
+        scopeKind: 'page',
       }
     );
     expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: rawChunks[0]?.id,
+        pageId: rawChunks[0]?.pageId,
+        scopeKind: 'page',
         sectionOccurrencePath: [1],
       },
       15,
@@ -1085,16 +1423,13 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
     expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
 
-    const selectorTamperedCursor = Buffer.from(JSON.stringify({
+    const kindTamperedCursor = Buffer.from(JSON.stringify({
       ...decodedCursor,
-      scopeSelector: {
-        ...(decodedCursor.scopeSelector as Record<string, unknown>),
-        pageAnchorChunkId: 'f'.repeat(64),
-      },
+      scopeKind: 'subtree',
     }), 'utf8').toString('base64url');
     await expect(retrieveAuthorized(state.dependencies, {
       ...request,
-      cursor: selectorTamperedCursor,
+      cursor: kindTamperedCursor,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
     expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(1);
 
@@ -1154,13 +1489,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
     });
     expect(second.nextCursor).toBeNull();
     expect(state.embedQuery).not.toHaveBeenCalled();
-    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(2);
     expect(state.loadActiveSnapshotHeader).toHaveBeenCalled();
     expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: rawChunks[0]?.id,
+        pageId: rawChunks[0]?.pageId,
+        scopeKind: 'page',
         sectionOccurrencePath: [1],
       },
       15,
@@ -1225,44 +1561,29 @@ describe('Backstage Notion authority RAG retrieval', () => {
       cursor: 'e',
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
 
-    const malformedSelectors: unknown[] = [
-      null,
-      [],
-      {},
-      { pageAnchorChunkId: 'bad', sectionOccurrencePath: null },
-      {
-        pageAnchorChunkId: unscopedChunks[0]?.id,
-        sectionOccurrencePath: 'not-an-array',
-      },
-      { pageAnchorChunkId: unscopedChunks[0]?.id, sectionOccurrencePath: [] },
-      {
-        pageAnchorChunkId: unscopedChunks[0]?.id,
-        sectionOccurrencePath: Array.from({ length: 33 }, () => 1),
-      },
-      { pageAnchorChunkId: unscopedChunks[0]?.id, sectionOccurrencePath: [0] },
-      { pageAnchorChunkId: null, sectionOccurrencePath: [1] },
-    ];
-    for (const scopeSelector of malformedSelectors) {
-      const cursor = Buffer.from(JSON.stringify({
-        ...unscopedDecoded,
-        scopeSelector,
-      }), 'utf8').toString('base64url');
+    for (const malformedPayload of [
+      { ...unscopedDecoded, scopeKind: 'unsupported' },
+      { ...unscopedDecoded, scopePageCount: 0 },
+      { ...unscopedDecoded, scopePageCount: Number.MAX_SAFE_INTEGER },
+      { ...unscopedDecoded, scopeSelector: null },
+    ]) {
+      const cursor = Buffer.from(
+        JSON.stringify(malformedPayload),
+        'utf8'
+      ).toString('base64url');
       await expect(retrieveAuthorized(unscopedState.dependencies, {
         ...unscopedRequest,
         cursor,
       })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
     }
 
-    const unscopedSelectorMismatch = resignTestCursor({
+    const unscopedKindMismatch = resignTestCursor({
       ...unscopedDecoded,
-      scopeSelector: {
-        pageAnchorChunkId: unscopedChunks[0]?.id,
-        sectionOccurrencePath: null,
-      },
+      scopeKind: 'page',
     }, unscopedActive);
     await expect(retrieveAuthorized(unscopedState.dependencies, {
       ...unscopedRequest,
-      cursor: unscopedSelectorMismatch,
+      cursor: unscopedKindMismatch,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
 
     const offsetAtEnd = resignTestCursor({
@@ -1283,6 +1604,15 @@ describe('Backstage Notion authority RAG retrieval', () => {
       cursor: mismatchedScopeCount,
     })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
 
+    const mismatchedPageCount = resignTestCursor({
+      ...unscopedDecoded,
+      scopePageCount: 2,
+    }, unscopedActive);
+    await expect(retrieveAuthorized(unscopedState.dependencies, {
+      ...unscopedRequest,
+      cursor: mismatchedPageCount,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
+
     const rawPath = ['WWE Universe Mode', 'Brands', 'Monday Night Raw'];
     const scopedChunks = Array.from({ length: 13 }, (_unused, ordinal) => chunk({
       ordinal,
@@ -1301,16 +1631,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
     };
     const pageFirst = await retrieveAuthorized(scopedState.dependencies, pageRequest);
     const pageDecoded = decodeTestCursor(pageFirst.nextCursor ?? '');
-    for (const scopeSelector of [
-      { pageAnchorChunkId: null, sectionOccurrencePath: null },
-      { pageAnchorChunkId: scopedChunks[0]?.id, sectionOccurrencePath: [1] },
-    ]) {
-      const cursor = resignTestCursor({ ...pageDecoded, scopeSelector }, scopedActive);
-      await expect(retrieveAuthorized(scopedState.dependencies, {
-        ...pageRequest,
-        cursor,
-      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
-    }
+    const scopeKindMismatch = resignTestCursor({
+      ...pageDecoded,
+      scopeKind: 'subtree',
+    }, scopedActive);
+    await expect(retrieveAuthorized(scopedState.dependencies, {
+      ...pageRequest,
+      cursor: scopeKindMismatch,
+    })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
 
     const sectionRequest = {
       ...pageRequest,
@@ -1318,20 +1646,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
       retrievalScope: { ...pageRequest.retrievalScope, sectionPath: ['Roster'] },
     };
     const sectionFirst = await retrieveAuthorized(scopedState.dependencies, sectionRequest);
-    const sectionDecoded = decodeTestCursor(sectionFirst.nextCursor ?? '');
-    for (const sectionOccurrencePath of [null, [1, 2]]) {
-      const cursor = resignTestCursor({
-        ...sectionDecoded,
-        scopeSelector: {
-          pageAnchorChunkId: scopedChunks[0]?.id,
-          sectionOccurrencePath,
-        },
-      }, scopedActive);
-      await expect(retrieveAuthorized(scopedState.dependencies, {
-        ...sectionRequest,
-        cursor,
-      })).rejects.toBeInstanceOf(BackstageNotionCursorInvalidError);
-    }
+    expect(decodeTestCursor(sectionFirst.nextCursor ?? '')).not.toHaveProperty('scopeSelector');
   });
 
   it('binds complete-scope cursors to exact query and scope spelling', async () => {
@@ -1412,6 +1727,18 @@ describe('Backstage Notion authority RAG retrieval', () => {
       { query: 'continuity', retrievalScope: null },
       { query: 'continuity', retrievalScope: [] },
       { query: 'continuity', retrievalScope: { pageTitle: 42 } },
+      {
+        query: 'continuity',
+        retrievalScope: { pageTitle: 'Raw', scopeKind: 'unsupported' },
+      },
+      {
+        query: 'continuity',
+        retrievalScope: {
+          pageTitle: 'Raw',
+          scopeKind: 'subtree',
+          sectionPath: ['Roster'],
+        },
+      },
       {
         query: 'continuity',
         retrievalScope: { pageTitle: 'Raw', pagePath: 'not-an-array' },
@@ -1505,14 +1832,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(state.loadSnapshotChunkPage).toHaveBeenCalledWith(
       UNIVERSE_ID,
       SNAPSHOT_ID,
-      { pageAnchorChunkId: null, sectionOccurrencePath: null },
+      { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
       BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
       0,
       12
     );
   });
 
-  it('keeps the maximum signed duplicate-heading selector within the cursor contract', async () => {
+  it('keeps the maximum signed duplicate-heading cursor bounded without serializing its selector', async () => {
     const headingPath = Array.from(
       { length: 32 },
       (_unused, index) => `Heading ${index.toString().padStart(2, '0')}`
@@ -1553,25 +1880,27 @@ describe('Backstage Notion authority RAG retrieval', () => {
       'base64url'
     ).toString('utf8')) as {
       scopeChunkCount: number;
-      scopeSelector: { sectionOccurrencePath: number[] };
+      scopeKind: string;
+      scopePageCount: number;
     };
     expect(decoded.scopeChunkCount).toBe(BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS);
-    expect(decoded.scopeSelector.sectionOccurrencePath).toEqual(
-      headingOccurrencePath
-    );
+    expect(decoded.scopeKind).toBe('page');
+    expect(decoded.scopePageCount).toBe(1);
+    expect(decoded).not.toHaveProperty('scopeSelector');
 
     const second = await retrieveAuthorized(state.dependencies, {
       ...request,
       cursor: first.nextCursor ?? undefined,
     });
     expect(second.citations).toHaveLength(12);
-    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(1);
+    expect(state.resolveSnapshotScope).toHaveBeenCalledTimes(2);
     expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(2);
     expect(state.loadSnapshotChunkPage).toHaveBeenLastCalledWith(
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: rawChunks[0]?.id,
+        pageId: rawChunks[0]?.pageId,
+        scopeKind: 'page',
         sectionOccurrencePath: headingOccurrencePath,
       },
       BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
@@ -1606,7 +1935,8 @@ describe('Backstage Notion authority RAG retrieval', () => {
       UNIVERSE_ID,
       SNAPSHOT_ID,
       {
-        pageAnchorChunkId: null,
+        pageId: null,
+        scopeKind: 'all',
         sectionOccurrencePath: null,
       },
       13,
@@ -1700,10 +2030,12 @@ describe('Backstage Notion authority RAG retrieval', () => {
         pagePath: ['WWE Universe Mode', 'Monday Night Raw'],
         sectionPath: null,
         selector: {
-          pageAnchorChunkId: variant.id,
+          pageId: variant.pageId,
+          scopeKind: 'page',
           sectionOccurrencePath: null,
         },
         scopeChunkCount: 1,
+        scopePageCount: 1,
       }),
     });
     await expect(retrieveAuthorized(

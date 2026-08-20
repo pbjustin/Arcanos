@@ -30,6 +30,7 @@ const { AUDITED_TRANSIENT_READ_QUERIES } = await import(
 
 jest.unstable_mockModule('@core/db/repositories/backstageNotionRagRepository.js', () => ({
   BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT: 2_048,
+  BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT: 5_000,
   getBackstageNotionRagRepository: () => ({
     loadAuthorityHead,
     loadActiveSnapshot,
