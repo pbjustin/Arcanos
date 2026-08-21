@@ -68,7 +68,7 @@ const NUMBER_WORDS = new Map<string, number>([
 const BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN =
   Array.from(NUMBER_WORDS.keys()).join('|');
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
-  '(?:angles?|alternatives?|beats?|bouts?|bullets?|cards?|chapters?|feuds?|finishes?|ideas?|items?|matches?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
+  '(?:angles?|alternatives?|beats?|bouts?|bullets?|cards?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
   '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
 
@@ -217,12 +217,14 @@ function isBackstageCompactRetryDirectiveNegated(
   );
 }
 
-function buildBackstageNextNonWhitespaceIndexes(characters: string[]): number[] {
+const BACKSTAGE_SINGLE_QUOTE_WEAK_SUFFIX_SEPARATOR_PATTERN = /[\s,]/u;
+
+function buildBackstageNextSingleQuoteSignificantIndexes(characters: string[]): number[] {
   const indexes = Array<number>(characters.length).fill(-1);
   let nextIndex = -1;
   for (let index = characters.length - 1; index >= 0; index -= 1) {
     indexes[index] = nextIndex;
-    if (!/\s/u.test(characters[index]!)) {
+    if (!BACKSTAGE_SINGLE_QUOTE_WEAK_SUFFIX_SEPARATOR_PATTERN.test(characters[index]!)) {
       nextIndex = index;
     }
   }
@@ -234,7 +236,7 @@ function classifyBackstageSingleQuoteEvent(
   index: number,
   openingQuote: "'" | '‘',
   closingQuote: "'" | '’',
-  nextNonWhitespaceIndexes: number[]
+  nextSignificantIndexes: number[]
 ): BackstageSingleQuoteEvent {
   const character = characters[index]!;
   if (openingQuote !== closingQuote && character === openingQuote) {
@@ -255,12 +257,12 @@ function classifyBackstageSingleQuoteEvent(
     return 'open';
   }
 
-  const nextNonWhitespaceIndex = nextNonWhitespaceIndexes[index]!;
+  const nextSignificantIndex = nextSignificantIndexes[index]!;
   if (
     precedingCharacter.toLowerCase() === 's'
-    && /\s/u.test(followingCharacter)
-    && nextNonWhitespaceIndex >= 0
-    && /\p{L}/u.test(characters[nextNonWhitespaceIndex]!)
+    && BACKSTAGE_SINGLE_QUOTE_WEAK_SUFFIX_SEPARATOR_PATTERN.test(followingCharacter)
+    && nextSignificantIndex >= 0
+    && /\p{L}/u.test(characters[nextSignificantIndex]!)
   ) {
     return 'weakClose';
   }
@@ -378,13 +380,13 @@ function buildBackstageSingleQuoteDispositionByCodeUnit(
   closingQuote: "'" | '’'
 ): BackstageCompactRetryQuotedDisposition[] {
   const characters = Array.from(text);
-  const nextNonWhitespaceIndexes = buildBackstageNextNonWhitespaceIndexes(characters);
+  const nextSignificantIndexes = buildBackstageNextSingleQuoteSignificantIndexes(characters);
   const events = characters.map((_, index) => classifyBackstageSingleQuoteEvent(
     characters,
     index,
     openingQuote,
     closingQuote,
-    nextNonWhitespaceIndexes
+    nextSignificantIndexes
   ));
   return buildBackstageQuoteDispositionByCodeUnit(text, characters, events);
 }
@@ -539,7 +541,7 @@ function collectBackstageCompactRetryDirectiveCounts(
   embeddedContentState: BackstageCompactRetryEmbeddedContentState
 ): BackstageCompactRetryDirectiveCount[] {
   const matches = prompt.matchAll(
-    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|matches?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
+    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
   );
   const directiveCounts: BackstageCompactRetryDirectiveCount[] = [];
 
@@ -807,7 +809,7 @@ function resolveBackstageCallerWordsPerItemLimit(
 ): number | null {
   const candidates: Array<{ index: number; wordLimit: number }> = [];
   const itemNounPattern =
-    '(?:items?|options?|matches?|rivalr(?:y|ies)|ideas?|alternatives?|scenarios?|bullets?|paragraphs?)';
+    '(?:items?|options?|match(?:es)?|rivalr(?:y|ies)|ideas?|alternatives?|scenarios?|bullets?|paragraphs?)';
   const perItemSuffixPattern =
     `(?:each\\b|apiece\\b|per\\s+${itemNounPattern}\\b|for\\s+(?:each|every)\\s+${itemNounPattern}\\b)`;
   const itemScopePrefixPattern =

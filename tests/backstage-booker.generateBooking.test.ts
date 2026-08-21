@@ -787,6 +787,97 @@ describe('backstage-booker generateBooking', () => {
     expect(retry.input.prompt).toMatch(/at most 500 words total/iu);
   });
 
+  it('enforces a singular match count and per-match word ceiling on both attempts', async () => {
+    const prompt = [
+      'Generate exactly one match for Raw.',
+      'One numbered paragraph per match, maximum 20 words per match.',
+    ].join(' ');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(1)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(1));
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string } }
+    );
+    for (const attempt of [firstAttempt, compactRetry]) {
+      expect(attempt.input.prompt).toMatch(/exactly 1 numbered paragraph/iu);
+      expect(attempt.input.prompt).toMatch(/at most 20 words each/iu);
+      expect(attempt.input.prompt).toMatch(/at most 20 words total/iu);
+    }
+    expect(compactRetry.input.prompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('rejects a two-item compact retry for an explicit singular match request', async () => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking('Book one match for Raw.')).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 1 numbered paragraph/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('enforces a caller word ceiling expressed per singular match', async () => {
+    const prompt = [
+      'Generate exactly two matches for Raw.',
+      'One numbered paragraph per match, maximum 20 words per match.',
+    ].join(' ');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2, 21)));
+
+    await expect(generateBooking(prompt)).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string } }
+    );
+    for (const attempt of [firstAttempt, compactRetry]) {
+      expect(attempt.input.prompt).toMatch(/at most 20 words each/iu);
+      expect(attempt.input.prompt).toMatch(/at most 40 words total/iu);
+    }
+  });
+
+  it('preserves a singular finish request outside the exact item grammar', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking('Generate one finish for Raw.')).resolves.toBe(
+      'Rivalry matrix output'
+    );
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
   it.each([
     'maximum 100 words each',
     'under 100 words each',
@@ -1162,6 +1253,7 @@ describe('backstage-booker generateBooking', () => {
 
   it.each([
     "'Give three options' to illustrate the format. Generate two match options.",
+    "Treat 'Give three options', then generate two match options.",
     "'Give six options' then generate two match options. 'Another example.'",
     "'Give six options' then generate two match options and quote 'another example.'",
     "Treat 'Give three-to-six options' as an example, then generate two match options.",
@@ -1170,6 +1262,7 @@ describe('backstage-booker generateBooking', () => {
     "Treat 'Using the wrestlers' records, give three options' as an example, then generate two match options.",
     "Treat 'Using the wrestlers' and managers' records, give three options' as an example, then generate two match options.",
     '‘Give three options to Punk’ then generate two match options.',
+    'Treat ‘Give three options’, then generate two match options.',
     '‘Give three options’ as an example. Generate two match options.',
     '‘Give six options’ then generate two match options. ‘Another example.’',
     '‘Give six options’ then generate two match options and quote ‘another example.’',
@@ -1191,6 +1284,25 @@ describe('backstage-booker generateBooking', () => {
     }).input.prompt;
     expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
     expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    "The literal is 'Give three options', then stop.",
+    'The literal is ‘Give three options’, then stop.',
+  ])('keeps a comma-followed single-quoted count embedded: %s', async prompt => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return at most 8 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Preserve every caller-required item count/iu);
   });
 
   it('preserves an inherently ambiguous single-quote sequence instead of promoting a count', async () => {
@@ -1242,6 +1354,31 @@ describe('backstage-booker generateBooking', () => {
       input: { prompt: string };
     }).input.prompt;
     expect(retryPrompt).toMatch(/Return exactly 10 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it.each([
+    "Considering the wrestlers', coaches', and managers' schedules, generate exactly two match options.",
+    'Considering the wrestlers’, coaches’, and managers’ schedules, generate exactly two match options.',
+  ])('keeps comma-delimited plural possessives outside single-quote spans: %s', async prompt => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
+
+    await expect(generateBooking(prompt)).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Preserve every caller-required item count/iu);
     expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
   });
 
