@@ -54,6 +54,14 @@ const BACKSTAGE_REVIEW_CONTRACT_URL = new URL(
   '../src/shared/backstage/backstageReviewContract.ts',
   import.meta.url
 );
+const BACKSTAGE_COMPACT_OUTPUT_CONTRACT_URL = new URL(
+  '../src/shared/backstage/backstageCompactOutputContract.ts',
+  import.meta.url
+);
+const BACKSTAGE_GENERATION_ERROR_URL = new URL(
+  '../src/shared/backstage/backstageGenerationError.ts',
+  import.meta.url
+);
 const BACKSTAGE_NOTION_PREVIEW_CANARY_URL = new URL(
   '../src/shared/backstage/backstageNotionPreviewCanary.ts',
   import.meta.url
@@ -134,6 +142,16 @@ async function readUniverseReadProjectionSource() {
 
 async function readBackstageReviewContractSource() {
   return (await readFile(BACKSTAGE_REVIEW_CONTRACT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageCompactOutputContractSource() {
+  return (await readFile(BACKSTAGE_COMPACT_OUTPUT_CONTRACT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageGenerationErrorSource() {
+  return (await readFile(BACKSTAGE_GENERATION_ERROR_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -352,6 +370,56 @@ describe('native PR preview import boundary', () => {
           sources[2],
           'export const BACKSTAGE_REVIEW_BULLET_COUNT = 6;',
           'export const BACKSTAGE_REVIEW_BULLET_COUNT = 7;'
+        ),
+      ],
+    ];
+    for (const [filePath, driftedSource] of semanticDrifts) {
+      expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('admits and pins the pure Backstage compact retry seam', async () => {
+    const reviewedFiles = [
+      'src/shared/backstage/backstageCompactOutputContract.ts',
+      'src/shared/backstage/backstageGenerationError.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(
+      'src/services/backstage-booker.ts'
+    );
+
+    const sources = [
+      await readBackstageCompactOutputContractSource(),
+      await readBackstageGenerationErrorSource(),
+    ];
+    for (let index = 0; index < reviewedFiles.length; index += 1) {
+      expect(findUnsafeRuntimeSyntax(
+        reviewedFiles[index],
+        sources[index]
+      )).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        reviewedFiles[0],
+        replaceRequired(
+          sources[0],
+          "result: await runAttempt(false),",
+          "result: await runAttempt(true),"
+        ),
+      ],
+      [
+        reviewedFiles[1],
+        replaceRequired(
+          sources[1],
+          "finishReason === 'length'",
+          "finishReason === 'stop'"
         ),
       ],
     ];

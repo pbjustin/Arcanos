@@ -676,18 +676,77 @@ function buildFallbackHonestyText(reasoningHonesty: TrinityReasoningHonesty): st
     || 'I can help with general guidance, but I cannot verify external or executed state here.';
 }
 
+const TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN =
+  '(?:items?|options?|match(?:es)?|rivalr(?:y|ies)|ideas?|alternatives?|scenarios?|bullets?|paragraphs?|sections?|segments?|steps?|entries?|results?)';
+
+function isPerItemWordLimit(
+  prompt: string,
+  matchIndex: number,
+  matchLength: number
+): boolean {
+  const precedingClause = prompt.slice(Math.max(0, matchIndex - 96), matchIndex);
+  const followingClause = prompt.slice(matchIndex + matchLength, matchIndex + matchLength + 64);
+  const precedingItemScopePattern = new RegExp(
+    `(?:\\b(?:each|every)\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b|\\bfor\\s+(?:each|every)\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b)(?:(?!\\b(?:answer|response)\\b)[^.!?;\\n]){0,72}$`,
+    'iu'
+  );
+  const precedingScopedResponsePattern = new RegExp(
+    `(?:\\b(?:each|every)\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b(?:['’]s)?\\s+(?:(?:can|may|must|should|will)\\s+)?(?:(?:have|include|use)\\s+(?:an?\\s+)?)?(?:(?:whole|overall|entire|combined|final|complete|full)\\s+)?(?:answer|response)\\b[^.!?;\\n]{0,48}|\\bfor\\s+(?:each|every)\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b\\s*,?\\s*(?:answer|respond)\\b[^.!?;\\n]{0,24})$`,
+    'iu'
+  );
+  const followingItemScopePattern = new RegExp(
+    `^\\s*,?\\s*(?:each\\b|apiece\\b|per\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b|for\\s+(?:each|every)\\s+${TRINITY_PER_ITEM_WORD_LIMIT_NOUN_PATTERN}\\b)`,
+    'iu'
+  );
+  const precedingGlobalResponseScopePattern =
+    /\b(?:(?:keep|limit|make|hold|write|ensure|use)\s+(?:the\s+)?(?:(?:whole|overall|entire|total|combined|final|complete|full)\s+(?:answer|response|output)|(?:answer|response|output)\s+as\s+a\s+whole|(?:all\s+)?(?:answers|responses|outputs)\s+combined)|(?:but|however|instead|then|while)\s+(?:the\s+)?(?:(?:whole|overall|entire|total|combined|final|complete|full)\s+(?:answer|response|output)|(?:answer|response|output)\s+as\s+a\s+whole|(?:all\s+)?(?:answers|responses|outputs)\s+combined)\s+(?:(?:must|should|will|can)\s+)?(?:be|stay|remain))\b[^.!?;\n]{0,24}$/iu;
+  const precedingStandaloneGlobalResponseScopePattern =
+    /\b(?:(?:whole|overall|entire|total|combined|final|complete|full)\s+(?:answer|response|output)|(?:answer|response|output)\s+as\s+a\s+whole|(?:all\s+)?(?:answers|responses|outputs)\s+combined)\b[^.!?;\n]{0,24}$/iu;
+  const followingGlobalResponseScopePattern = /^\s*,?\s*in\s+total\b/iu;
+
+  if (followingGlobalResponseScopePattern.test(followingClause)) {
+    return false;
+  }
+
+  const precedingItemScopeMatch = precedingItemScopePattern.exec(precedingClause);
+  const precedingScopedResponseMatch = precedingScopedResponsePattern.exec(precedingClause);
+  const precedingGlobalResponseScopeMatch = precedingGlobalResponseScopePattern.exec(
+    precedingClause
+  );
+  const nearestItemScopeIndex = Math.max(
+    precedingItemScopeMatch?.index ?? -1,
+    precedingScopedResponseMatch?.index ?? -1
+  );
+  const hasStandaloneGlobalResponseScope = nearestItemScopeIndex < 0
+    && precedingStandaloneGlobalResponseScopePattern.test(precedingClause);
+  if (
+    hasStandaloneGlobalResponseScope
+    || (
+      precedingGlobalResponseScopeMatch
+      && precedingGlobalResponseScopeMatch.index >= nearestItemScopeIndex
+    )
+  ) {
+    return false;
+  }
+
+  return nearestItemScopeIndex >= 0
+    || followingItemScopePattern.test(followingClause);
+}
+
 function parseMaxWordsFromPrompt(prompt: string): number | null {
   const patterns = [
-    /\bunder\s+(\d+)\s+words?\b/i,
-    /\bwithin\s+(\d+)\s+words?\b/i,
-    /\bno more than\s+(\d+)\s+words?\b/i,
-    /\bmax(?:imum)?\s+(\d+)\s+words?\b/i,
-    /\b(\d+)\s*-\s*word\s+max\b/i,
-    /\b(\d+)\s+word\s+limit\b/i
+    /\bunder\s+(\d+)\s+words?\b/gi,
+    /\bwithin\s+(\d+)\s+words?\b/gi,
+    /\bno more than\s+(\d+)\s+words?\b/gi,
+    /\bmax(?:imum)?\s+(\d+)\s+words?\b/gi,
+    /\b(\d+)\s*-\s*word\s+max\b/gi,
+    /\b(\d+)\s+word\s+limit\b/gi
   ] as const;
   for (const pattern of patterns) {
-    const match = prompt.match(pattern);
-    if (match) {
+    for (const match of prompt.matchAll(pattern)) {
+      if (isPerItemWordLimit(prompt, match.index, match[0].length)) {
+        continue;
+      }
       const parsedValue = Number.parseInt(match[1] ?? '', 10);
       if (Number.isFinite(parsedValue) && parsedValue > 0) {
         return Math.min(parsedValue, 2_000);

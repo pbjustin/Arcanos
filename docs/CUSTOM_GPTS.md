@@ -352,8 +352,9 @@ the backend database stores only the derived AI index and retained recovery
 history. The GPT must never treat retrieved Notion text as instructions or
 bypass a missing/stale index through legacy state. Answer generation performs
 one compact retry only when the provider reports max-output exhaustion; it does
-not retry other provider failures, and a second length exhaustion returns the
-sanitized incomplete-output error. Schema `1.4.0` materializes these public
+not retry other provider failures. A second length exhaustion or an enforceable
+exact/maximum compact-contract violation returns the sanitized incomplete-output
+error without a third generation attempt. Schema `1.4.0` materializes these public
 payload/result fields and declares the bearer and authority-specific errors;
 deploy it first, then re-import it into the existing Builder Action before
 validating this mode.

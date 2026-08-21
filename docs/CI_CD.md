@@ -229,8 +229,8 @@ the public schema and production guard, which admit no preview-only field;
 preview provenance.
 
 The exact `POST /backstage/storyline-contract` surface accepts only the
-server-owned `lifecycle-exact`, `phase-one-universe-binding`, `payload-over`, and
-`saved-storyline-projection` selectors. `lifecycle-exact`
+server-owned `lifecycle-exact`, `phase-one-universe-binding`, `payload-over`,
+`saved-storyline-projection`, and `summary-pagination` selectors. `lifecycle-exact`
 calls the real storyline validator, response selector, and repository
 transaction helper through a fresh per-request in-memory query adapter. Its two
 mutations prove the exact 16,384-byte beat boundary, 100-beat retention,
@@ -254,7 +254,8 @@ protected effect.
 
 The exact `POST /backstage/generation-contract` surface accepts only the
 server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
-`review-completion-contract`, `notion-authority-rag-contract`,
+`review-completion-contract`, `compact-retry-contract`,
+`notion-authority-rag-contract`,
 `continuity-query-contract`, and `continuity-subtree-contract` selectors.
 The route-budget case uses the
 production Backstage route-ID policy,
@@ -276,7 +277,16 @@ balanced and unmatched quotes, astral-letter apostrophes, quoted contractions,
 Markdown markers, inline/collapsed honesty caveats, and spaced/single initials.
 It proves that the canonical six-bullet response style overrides an earlier
 three-bullet user request and asserts a deterministic bound on
-quoted-contraction delimiter-disambiguation work. The Notion-authority case
+quoted-contraction delimiter-disambiguation work. The review selector also
+executes the new compact-retry assertion without changing its response so a
+trusted base-pinned verifier still covers the PR-head seam. The detailed
+compact-retry selector derives exact and at-most contracts plus recovery
+instructions from sealed prompts, then runs the production-shared one-retry
+coordinator and strict final validator across valid, malformed, under-count,
+over-count, word-overflow, second-length, and non-length outcomes without a
+third call. It is credential-free component evidence and does not call the
+canonical route, a model provider, HRC, RAG, a database, or persistence. The
+Notion-authority case
 makes one fixed-origin, fixed-path, no-redirect request from the deployed web
 process to `api.notion.com` with a hard-coded invalid non-secret bearer and an
 absolute four-second DNS/TLS/header deadline. It
@@ -352,14 +362,14 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 122-request
+evidence, not Railway control-plane provenance. The current fixed 123-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, six sealed Backstage generation
-timeout/cache/review-completion/Notion-authority/continuity cases, one
+worker-role approval-contract denial, seven sealed Backstage generation
+timeout/cache/review-completion/compact-retry/Notion-authority/continuity cases, one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, and one canon-summary pagination case.
 The additive subtree selector runs the production-shared continuity prompt and

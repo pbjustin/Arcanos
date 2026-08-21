@@ -572,7 +572,8 @@ or raw Notion page IDs. Deploy schema 1.4.0 before re-importing it into the
 existing Builder Action. Continuity and booking answer generation make exactly one
 compact retry only for provider max-output exhaustion, reuse the same retrieval
 and budget, do not retry other provider failures, and return a sanitized
-incomplete-output error after a second length exhaustion.
+incomplete-output error after a second length exhaustion or an enforceable
+exact/maximum compact-contract violation.
 
 Reinforcement HTTP limits are also fixed rather than environment settings.
 `POST /reinforce` accepts a strict object JSON body up to 32 KiB;

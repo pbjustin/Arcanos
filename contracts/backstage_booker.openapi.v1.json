@@ -145,7 +145,7 @@
             }
           },
           "500": {
-            "description": "Backstage Booker encountered a sanitized internal execution failure. BACKSTAGE_CONTINUITY_QUERY_FAILED means a continuity answer could not be completed; BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE means the original response and its one compact retry both exhausted the output limit. No partial provider output is returned.",
+            "description": "Backstage Booker encountered a sanitized internal execution failure. BACKSTAGE_CONTINUITY_QUERY_FAILED means a continuity answer could not be completed; BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE means the original response exhausted the output limit and its one compact retry either exhausted the limit or violated an enforceable exact/maximum compact contract. No partial provider output is returned and no third generation attempt is made.",
             "content": {
               "application/json": {
                 "schema": {

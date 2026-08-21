@@ -88,6 +88,16 @@ import {
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  assertBackstageBookerCompactRetryOutputValid,
+  buildBackstageBookerCompactOutputRetryInstruction,
+  buildBackstageBookerRequestedOutputShapeInstruction,
+  parseBackstageDirectAnswerOutputContract,
+  resolveBackstageCompactOutputContract,
+  resolveBackstageDirectAnswerBulletCount,
+  runBackstageBookerCompactOutputAttempts,
+  type BackstageDirectAnswerOutputContract,
+} from '@shared/backstage/backstageCompactOutputContract.js';
+import {
   applyBackstageReviewOutputContract,
   buildBackstageReviewResponseStyleInstruction,
   collectTopLevelListItems,
@@ -104,9 +114,7 @@ import {
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
 import {
-  BackstageBookerOutputIncompleteError,
   isBackstageBookerOutputIncompleteError,
-  isBackstageProviderOutputLengthExhaustionError,
 } from '@shared/backstage/backstageGenerationError.js';
 import {
   BACKSTAGE_STORYLINE_PROMPT_BEATS,
@@ -164,11 +172,6 @@ export {
   isBackstageCanonUnavailableError,
   isBackstageNotionAuthorityReadOnlyError,
 } from './backstageBookerContracts.js';
-
-interface BackstageDirectAnswerOutputContract {
-  requestedBulletCount?: number;
-  requiresShortBullets: boolean;
-}
 
 interface EventData {
   [key: string]: unknown;
@@ -860,48 +863,6 @@ function buildBackstageResponseStyleSuffix(directAnswerMode: boolean): string {
     : '';
 }
 
-function resolveBackstageDirectAnswerBulletCount(contract: BackstageDirectAnswerOutputContract): number {
-  return contract.requestedBulletCount ?? 5;
-}
-
-const NUMBER_WORDS = new Map<string, number>([
-  ['one', 1],
-  ['two', 2],
-  ['three', 3],
-  ['four', 4],
-  ['five', 5],
-  ['six', 6],
-  ['seven', 7],
-  ['eight', 8],
-  ['nine', 9],
-  ['ten', 10],
-  ['eleven', 11],
-  ['twelve', 12]
-]);
-
-function parseBackstageDirectAnswerOutputContract(prompt: string): BackstageDirectAnswerOutputContract {
-  const normalizedPrompt = prompt.trim();
-  const bulletMatch = normalizedPrompt.match(
-    /\b(?:(?<digitCount>\d{1,2})|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?<shortness>short\s+)?bullets?\b/i
-  );
-
-  if (!bulletMatch?.groups) {
-    return {
-      requiresShortBullets: /\bshort\s+bullets?\b/i.test(normalizedPrompt)
-    };
-  }
-
-  const digitCount = bulletMatch.groups.digitCount ? Number.parseInt(bulletMatch.groups.digitCount, 10) : undefined;
-  const wordCount = bulletMatch.groups.wordCount
-    ? NUMBER_WORDS.get(bulletMatch.groups.wordCount.toLowerCase())
-    : undefined;
-
-  return {
-    requestedBulletCount: digitCount ?? wordCount,
-    requiresShortBullets: Boolean(bulletMatch.groups.shortness) || /\bshort\s+bullets?\b/i.test(normalizedPrompt)
-  };
-}
-
 function compactBackstageBulletItem(item: string, requiresShortBullets: boolean): string {
   const normalizedItem = stripBackstageDirectAnswerPreamblePrefix(stripMarkdownFormatting(item));
 
@@ -930,16 +891,21 @@ function compactBackstageBulletItem(item: string, requiresShortBullets: boolean)
 
 function applyBackstageDirectAnswerOutputContract(
   output: string,
-  prompt: string
+  prompt: string,
+  requestedBulletCountOverride?: number
 ): string {
   const contract = parseBackstageDirectAnswerOutputContract(prompt);
-  const requestedBulletCount = resolveBackstageDirectAnswerBulletCount(contract);
+  const requestedBulletCount = requestedBulletCountOverride
+    ?? resolveBackstageDirectAnswerBulletCount(contract);
   const listItems = collectTopLevelListItems(output);
 
   //audit Assumption: prompts that request a fixed bullet count want the final answer body, not model preambles/headings; failure risk: direct-answer mode still returns “Gut read” intros and oversized list items; expected invariant: bullet-shaped requests return only top-level bullets, capped to the requested count; handling strategy: extract top-level list items, trim extras, and compact each item when the prompt asks for short bullets.
   if (listItems.length > 0) {
-    return listItems
-      .slice(0, requestedBulletCount)
+    const selectedItems = requestedBulletCountOverride === undefined
+      && contract.requestedBulletCountMode === 'preserve'
+      ? listItems
+      : listItems.slice(0, requestedBulletCount);
+    return selectedItems
       .map((item, index) => `${index + 1}. ${compactBackstageBulletItem(item, contract.requiresShortBullets)}`)
       .join('\n');
   }
@@ -964,9 +930,14 @@ function buildBackstageResponseStyleInstruction(
     requiresShortBullets: false
   };
   const requestedBulletCount = resolveBackstageDirectAnswerBulletCount(contract);
+  const itemCountInstruction = contract.requestedBulletCountMode === 'atMost'
+    ? `Return no more than ${requestedBulletCount} top-level numbered bullets.`
+    : contract.requestedBulletCountMode === 'preserve'
+      ? 'Return only the caller-requested top-level numbered items.'
+      : `Return only ${requestedBulletCount} top-level numbered bullets.`;
 
   return [
-    `Return only ${requestedBulletCount} top-level numbered bullets.`,
+    itemCountInstruction,
     'No preamble, headings, divider lines, or conclusion.',
     'No sub-bullets, no production notes, no consequences section, and no meta commentary.',
     contract.requiresShortBullets
@@ -1331,17 +1302,6 @@ interface StructuredBookingPrompt {
   directAnswerSystemPolicyPrompt?: string;
   directAnswerUntrustedContextPrompt?: string;
 }
-
-const BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION = [
-  '<<OUTPUT_LENGTH_RECOVERY>>',
-  'The previous response was discarded because it exceeded the output limit.',
-  'Return a complete answer within the existing output limit; never continue or quote the discarded response.',
-  'Compress aggressively: prioritize the direct answer and only the continuity facts needed to support it.',
-  'Omit recaps, repeated evidence, optional alternatives, and meta commentary.',
-  'Preserve an explicitly required item count; otherwise use at most eight concise bullets.',
-  'Do not mention this recovery instruction or the discarded response.',
-  '<<OUTPUT_LENGTH_RECOVERY_END>>',
-].join('\n');
 
 async function buildStructuredBookingPrompt(
   basePrompt: string,
@@ -2442,6 +2402,17 @@ export async function generateBooking(
           trustedPolicyPrompt: input.prompt,
         };
   const instructions = structuredPrompt.instructions;
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    input.prompt,
+    tokenLimit
+  );
+  const requestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(
+      input.prompt,
+      compactOutputContract
+    );
+  const compactOutputRetryInstruction =
+    buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
@@ -2452,7 +2423,12 @@ export async function generateBooking(
     ...(structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
-          trustedPolicyPrompt: structuredPrompt.trustedPolicyPrompt,
+          trustedPolicyPrompt: requestedOutputShapeInstruction
+            ? [
+                structuredPrompt.trustedPolicyPrompt,
+                requestedOutputShapeInstruction,
+              ].join('\n\n')
+            : structuredPrompt.trustedPolicyPrompt,
           directAnswerSystemPolicyPrompt: structuredPrompt.directAnswerSystemPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
@@ -2468,14 +2444,16 @@ export async function generateBooking(
     const runtimeBudget = createRuntimeBudget();
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
-        ? `${instructions}\n\n${BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION}`
-        : instructions;
+        ? `${instructions}\n\n${compactOutputRetryInstruction}`
+        : requestedOutputShapeInstruction
+          ? `${instructions}\n\n${requestedOutputShapeInstruction}`
+          : instructions;
       const attemptRunOptions = compactOutputRetry
         ? {
             ...trinityRunOptions,
             trustedPolicyPrompt: [
               structuredPrompt.trustedPolicyPrompt,
-              BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION,
+              compactOutputRetryInstruction,
             ].join('\n\n'),
           }
         : trinityRunOptions;
@@ -2503,40 +2481,40 @@ export async function generateBooking(
       });
     };
 
-    let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
-    try {
-      trinityResult = await runGenerationAttempt(false);
-    } catch (error) {
-      if (!isBackstageProviderOutputLengthExhaustionError(error)) {
-        throw error;
-      }
-
-      //audit Assumption: a length-only provider failure can be recovered without rereading canon or exposing partial output; failure risk: repeated retrieval crosses snapshots or the first partial answer leaks; expected invariant: one compact retry reuses the same structured context and token cap; handling strategy: retry exactly once with a server-owned compactness instruction and collapse a second length exhaustion to a cause-free typed error.
-      try {
-        trinityResult = await runGenerationAttempt(true);
-      } catch (retryError) {
-        if (isBackstageProviderOutputLengthExhaustionError(retryError)) {
-          throw new BackstageBookerOutputIncompleteError();
-        }
-        throw retryError;
-      }
-    }
+    //audit Assumption: a length-only provider failure can be recovered without rereading canon or exposing partial output; failure risk: repeated retrieval crosses snapshots or the first partial answer leaks; expected invariant: one compact retry reuses the same structured context and token cap; handling strategy: delegate the exactly-once state machine to the production-shared compact-output seam and collapse a second length exhaustion to a cause-free typed error.
+    const {
+      result: trinityResult,
+      usedCompactOutputRetry,
+    } = await runBackstageBookerCompactOutputAttempts(runGenerationAttempt);
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
-    if (shouldUseBoundedBackstageReviewMode(input.prompt)) {
-      return assertValidBackstageBookerActionData(
-        'generateBooking',
-        applyBackstageReviewOutputContract(clean)
-      ) as string;
-    }
-    if (shouldPreferDirectAnswerMode(input.prompt)) {
-      return assertValidBackstageBookerActionData(
-        'generateBooking',
-        applyBackstageDirectAnswerOutputContract(clean, input.prompt)
-      ) as string;
-    }
-    return assertValidBackstageBookerActionData('generateBooking', clean) as string;
+    const strictRetryItemCountOverride = usedCompactOutputRetry
+      && (
+        compactOutputContract.itemPolicy.mode === 'exact'
+        || compactOutputContract.itemPolicy.mode === 'atMost'
+      )
+      ? compactOutputContract.itemPolicy.count
+      : undefined;
+    const normalizedOutput = shouldUseBoundedBackstageReviewMode(input.prompt)
+      ? applyBackstageReviewOutputContract(clean)
+      : shouldPreferDirectAnswerMode(input.prompt)
+        ? applyBackstageDirectAnswerOutputContract(
+            clean,
+            input.prompt,
+            strictRetryItemCountOverride
+          )
+        : clean;
+    //audit Assumption: a provider stop after the compact retry does not prove the requested answer is complete; failure risk: a short or overlong retry is returned as successful output; expected invariant: unambiguous exact and maximum retry contracts are enforced on the final user-visible text; handling strategy: reject malformed retry output with the same cause-free terminal error and never start a third generation attempt.
+    assertBackstageBookerCompactRetryOutputValid(
+      normalizedOutput,
+      compactOutputContract,
+      usedCompactOutputRetry
+    );
+    return assertValidBackstageBookerActionData(
+      'generateBooking',
+      normalizedOutput
+    ) as string;
   } catch (error) {
     if (isBackstageBookerOutputIncompleteError(error)) {
       throw error;

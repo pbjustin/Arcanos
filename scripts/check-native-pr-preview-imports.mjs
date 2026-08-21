@@ -48,7 +48,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageCompactOutputContract.ts',
   'src/shared/backstage/backstageContinuityQueryCore.ts',
+  'src/shared/backstage/backstageGenerationError.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
@@ -606,8 +608,16 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '5609ace9e84dacfbca8b0e29be0d8b8f9269cd0d1cc2ed0b4987449a13de548c',
   ],
   [
+    'src/shared/backstage/backstageCompactOutputContract.ts',
+    '49befcaa52e8ea1671090c8f1df620fc7d00bd1153fb8bf2505fdf29c17d0498',
+  ],
+  [
     'src/shared/backstage/backstageContinuityQueryCore.ts',
     '65539139100841a1f96925747ce6382093611e7427155a31dd24ab290e6ab12e',
+  ],
+  [
+    'src/shared/backstage/backstageGenerationError.ts',
+    'b6b991068df34e28238d88c6b90fe764192abfe06deb27538366380b09b60b60',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',

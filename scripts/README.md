@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 122-request plan without network access.
+untracked worktree, limits, and the fixed 123-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -50,11 +50,13 @@ project/service/deployment ownership.
 The trusted Railway lifecycle intentionally executes the probe implementation
 and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
-only as exact-SHA Git evidence. For a PR that introduces the subtree continuity
-fixture, the trusted run can therefore remain on the pre-merge 121-request plan.
-After it reports the exact preview hosts, run the 122-request probe from a separate,
-clean, detached checkout of the exact PR head to obtain supplemental evidence
-for the new selector; the trusted contract already covers its worker denial. That
+only as exact-SHA Git evidence. For this PR, the trusted run can therefore remain
+on the pre-merge 122-request plan. The existing review-completion selector
+silently executes the new production-shared compact-retry assertion without
+changing its trusted response shape. After the lifecycle reports the exact
+preview hosts, run the 123-request probe from a separate, clean checkout of the
+exact PR head to obtain explicit supplemental evidence for the new detailed
+selector; the trusted contract already covers its worker denial. That
 supplemental run is
 credential-free and does not replace the lifecycle's Railway ownership,
 exact-deployment, or cleanup checks.
@@ -120,8 +122,9 @@ normal protected GET route, bearer authentication, or a database reader.
 
 The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
-`review-completion-contract`, `notion-authority-rag-contract`, and
-`continuity-query-contract`. The first
+`review-completion-contract`, `compact-retry-contract`,
+`notion-authority-rag-contract`, `continuity-query-contract`, and
+`continuity-subtree-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
@@ -150,6 +153,20 @@ shape, parsing, sanitization, chunking, citation framing, message isolation,
 and mutation recognition. This proves deployed Notion API reachability, not a
 valid credential, live page read, PostgreSQL activation, worker run, or model
 provider call. Protected effects stay disabled.
+
+The compact-retry case derives an exact two-item, 20-words-per-item recovery
+contract from a server-owned prompt, then executes the same production-shared
+exactly-one-retry coordinator and post-normalization numbered-paragraph
+validator used by Booker generation. It proves that the first partial result is
+discarded, only the second call receives the recovery instruction, request
+state is reused, valid exact and at-most retries are accepted, malformed,
+under-count, over-count, and word-overflow retries fail with the cause-free
+terminal error, non-length failures are not retried, a second length failure is
+collapsed, and no third call occurs. The existing review-completion selector
+also runs this assertion without changing its response shape so a trusted
+base-pinned lifecycle verifier still exercises the PR-head compact seam. This
+is synthetic component evidence: it does not call a model provider, the
+canonical route, HRC, RAG, a database, persistence, or protected effects.
 
 The continuity-query case executes the production-shared cursor-shape
 preflight, sampled/exhaustive and compact-retry policy prompts, prompt assembly,

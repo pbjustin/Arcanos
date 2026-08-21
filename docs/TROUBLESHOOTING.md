@@ -148,12 +148,33 @@ If failing, inspect Railway build/deploy logs first.
   request-local and synchronous-only, so do not enqueue it or look for a worker
   job to resume. If Builder does not expose `scopeKind`, deploy schema 1.4.0
   first, re-import it into the existing Action, and preserve the saved bearer.
-- Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the provider exhausted
-  its output limit on both the original attempt and the backend's one compact
-  retry. The retry reused the same retrieval and token budget and occurs only
-  for max-output exhaustion; other provider failures are not retried. Report
-  the sanitized failure without exposing or presenting partial provider text,
-  and do not automatically start another generation.
+- Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the original attempt
+  exhausted the provider output limit, and the backend's one compact retry
+  either exhausted that limit again or failed its enforceable output contract.
+  The retry reused the same retrieval and token budget and occurs only for
+  max-output exhaustion. An unambiguous request for one numbered paragraph
+  per item with an explicit per-item word maximum receives the same compact
+  shape instructions on the first attempt. They request one numbered paragraph
+  per requested item, no headings or sub-bullets, explicitly requested fields
+  inline, at most 125 words per item without relaxing a tighter caller maximum,
+  and a total target that scales down with the existing token cap, the requested
+  item count, and the caller maximum and never exceeds 1,000 words. Three items
+  at 100 words each are therefore capped at 300 words. Qualified maximums stay
+  maximums; ranges, corrections, per-group counts, and conflicting counts
+  preserve the caller's constraints instead of inventing an exact count. The
+  backend validates final numbered shape, consecutive count, and derived word
+  ceilings for unambiguous exact and qualified-maximum policies after the retry;
+  the initial attempt remains prompt-guided. Ambiguous
+  count semantics and requested-field contents remain prompt-guided. Only a
+  prompt with no recognized item-count constraint uses at most eight items. The
+  retry stops after the final item. Other provider failures are not retried, and
+  a malformed compact retry does not start a third attempt. Report the sanitized failure
+  without exposing or presenting partial provider text, and do not
+  automatically retry, decompose the request, or fan it out into replacement
+  generation calls. A client must send one generation call per requested card
+  or booking task unless the user explicitly asks for separate independent
+  alternatives; concurrent client calls are separate full provider attempts,
+  not parts of the backend retry.
 - Backstage Booker `BACKSTAGE_CONTINUITY_QUERY_FAILED`: the backend could not
   safely complete the bounded continuity answer. The nonretryable envelope
   deliberately omits the provider cause. Do not infer or expose that cause,
