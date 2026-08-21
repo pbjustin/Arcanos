@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 122;
+const MAX_REQUESTS = 123;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -816,6 +816,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-review-completion',
       'reviewCompletion'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-compact-retry',
+      'compactRetry'
     ),
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
@@ -1940,6 +1944,36 @@ function expectedBackstageGenerationContractPayload(requestCase) {
           'Treat matches identified as still to come as unresolved; never invent their results.',
         ].join('\n'),
         tokenLimit: 1_600,
+      },
+    };
+  }
+  if (requestCase.fixtureName === 'compactRetry') {
+    return {
+      ...base,
+      compactRetry: {
+        contracts: {
+          atMostOverflowRejected: true,
+          atMostWithinBoundAccepted: true,
+          exactRetryAccepted: true,
+          firstPartialDiscarded: true,
+          malformedShapeRejected: true,
+          noThirdAttempt: true,
+          nonLengthFailureNotRetried: true,
+          overCountRejected: true,
+          retryMarkerOnlyOnSecondCall: true,
+          sameRequestStateReused: true,
+          secondLengthCollapsed: true,
+          underCountRejected: true,
+          validNumberedParagraphCount: true,
+          wordOverflowRejected: true,
+        },
+        productionSharedCoordinator: true,
+        productionSharedValidator: true,
+        syntheticAttemptCount: 2,
+        validOutput: [
+          '1. Cody challenges Gunther after a tense opening confrontation.',
+          '2. Gunther accepts, then closes the segment with a decisive warning.',
+        ].join('\n'),
       },
     };
   }

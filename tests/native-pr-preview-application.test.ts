@@ -1061,6 +1061,9 @@ describe('native PR contained application', () => {
     const reviewCompletion = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.reviewCompletion });
+    const compactRetry = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.compactRetry });
     const notionAuthorityRag = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.notionAuthorityRag });
@@ -1207,6 +1210,44 @@ describe('native PR contained application', () => {
         ].join('\n'),
         tokenLimit: 1_600,
       },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+    });
+
+    expect(compactRetry.status).toBe(200);
+    expect(compactRetry.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      compactRetry: {
+        contracts: {
+          atMostOverflowRejected: true,
+          atMostWithinBoundAccepted: true,
+          exactRetryAccepted: true,
+          firstPartialDiscarded: true,
+          malformedShapeRejected: true,
+          noThirdAttempt: true,
+          nonLengthFailureNotRetried: true,
+          overCountRejected: true,
+          retryMarkerOnlyOnSecondCall: true,
+          sameRequestStateReused: true,
+          secondLengthCollapsed: true,
+          underCountRejected: true,
+          validNumberedParagraphCount: true,
+          wordOverflowRejected: true,
+        },
+        productionSharedCoordinator: true,
+        productionSharedValidator: true,
+        syntheticAttemptCount: 2,
+        validOutput: [
+          '1. Cody challenges Gunther after a tense opening confrontation.',
+          '2. Gunther accepts, then closes the segment with a decisive warning.',
+        ].join('\n'),
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.compactRetry,
       protectedEffectsEnabled: false,
       providerBoundaryReached: false,
       schemaVersion: 1,
@@ -1446,6 +1487,7 @@ describe('native PR contained application', () => {
       routeBudget,
       hrcRetryCache,
       reviewCompletion,
+      compactRetry,
       notionAuthorityRag,
       continuityQuery,
       continuitySubtree,

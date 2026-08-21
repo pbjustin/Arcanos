@@ -40,6 +40,7 @@ export interface NativePrPreviewE2eContract {
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
       reviewCompletion: 'review-completion-contract';
+      compactRetry: 'compact-retry-contract';
       notionAuthorityRag: 'notion-authority-rag-contract';
       continuityQuery: 'continuity-query-contract';
       continuitySubtree: 'continuity-subtree-contract';

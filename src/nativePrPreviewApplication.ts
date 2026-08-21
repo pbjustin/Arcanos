@@ -86,6 +86,15 @@ import {
   resolveBackstageGptAction,
 } from './shared/backstage/backstageActionPolicy.js';
 import {
+  assertBackstageBookerCompactRetryOutputValid,
+  buildBackstageBookerCompactOutputRetryInstruction,
+  buildBackstageBookerRequestedOutputShapeInstruction,
+  parseBackstageBookerCompactRetryNumberedParagraphs,
+  resolveBackstageCompactOutputContract,
+  runBackstageBookerCompactOutputAttempts,
+  type BackstageCompactOutputContract,
+} from './shared/backstage/backstageCompactOutputContract.js';
+import {
   buildBackstageContinuityPolicyPrompt,
   buildBackstageContinuityResponse,
   isBackstageContinuityCursorRequestValid,
@@ -2955,9 +2964,320 @@ function runBackstageContinuitySubtreeFixture(
   };
 }
 
+interface BackstageCompactRetryScenarioResult {
+  accepted: boolean;
+  attemptCount: number;
+  causeFreeIncomplete: boolean;
+  contextIdentityReused: boolean;
+  firstPartialDiscarded: boolean;
+  modes: string[];
+  nonLengthErrorPropagated: boolean;
+  retryMarkerCalls: number[];
+  runtimeBudgetIdentityReused: boolean;
+  tokenLimitReused: boolean;
+}
+
+function createSyntheticBackstageLengthError(): Record<string, unknown> {
+  return {
+    code: 'OPENAI_COMPLETION_INCOMPLETE',
+    contentFiltered: false,
+    finishReason: 'length',
+    incompleteReason: 'max_output_tokens',
+    partialOutput: 'SYNTHETIC_PARTIAL_OUTPUT_MUST_NOT_ESCAPE',
+  };
+}
+
+function isCauseFreeBackstageIncompleteError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const candidate = error as Error & {
+    code?: unknown;
+    retryable?: unknown;
+  };
+  return candidate.code === 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE'
+    && candidate.retryable === false
+    && !Object.hasOwn(candidate, 'cause')
+    && !candidate.message.includes('SYNTHETIC_PARTIAL_OUTPUT_MUST_NOT_ESCAPE');
+}
+
+async function exerciseBackstageCompactRetryScenario(params: {
+  contract: BackstageCompactOutputContract;
+  firstError?: unknown;
+  prompt: string;
+  recoveryInstruction: string;
+  retryOutcome: string | unknown;
+  tokenLimit: number;
+}): Promise<BackstageCompactRetryScenarioResult> {
+  const contextIdentity = Object.freeze({ snapshot: 'sealed-compact-retry' });
+  const runtimeBudgetIdentity = Object.freeze({ budget: 'sealed-request-budget' });
+  const contexts: object[] = [];
+  const runtimeBudgets: object[] = [];
+  const tokenLimits: number[] = [];
+  const modes: string[] = [];
+  const retryMarkerCalls: number[] = [];
+  const nonLengthError = params.firstError instanceof Error
+    ? params.firstError
+    : null;
+  let output: string | null = null;
+  let caughtError: unknown = null;
+
+  try {
+    const attempt = await runBackstageBookerCompactOutputAttempts(
+      async compactOutputRetry => {
+        contexts.push(contextIdentity);
+        runtimeBudgets.push(runtimeBudgetIdentity);
+        tokenLimits.push(params.tokenLimit);
+        modes.push(compactOutputRetry ? 'compact' : 'initial');
+        const attemptPrompt = compactOutputRetry
+          ? `${params.prompt}\n\n${params.recoveryInstruction}`
+          : params.prompt;
+        if (compactOutputRetry) {
+          if (attemptPrompt.includes('<<OUTPUT_LENGTH_RECOVERY>>')) {
+            retryMarkerCalls.push(modes.length);
+          }
+          if (typeof params.retryOutcome !== 'string') {
+            throw params.retryOutcome;
+          }
+          return params.retryOutcome;
+        }
+        throw params.firstError ?? createSyntheticBackstageLengthError();
+      }
+    );
+    output = attempt.result;
+    assertBackstageBookerCompactRetryOutputValid(
+      output,
+      params.contract,
+      attempt.usedCompactOutputRetry
+    );
+  } catch (error) {
+    caughtError = error;
+  }
+
+  return {
+    accepted: caughtError === null,
+    attemptCount: modes.length,
+    causeFreeIncomplete: isCauseFreeBackstageIncompleteError(caughtError),
+    contextIdentityReused:
+      contexts.length > 0 && contexts.every(value => value === contextIdentity),
+    firstPartialDiscarded:
+      output === null
+      || !output.includes('SYNTHETIC_PARTIAL_OUTPUT_MUST_NOT_ESCAPE'),
+    modes,
+    nonLengthErrorPropagated:
+      nonLengthError !== null && caughtError === nonLengthError,
+    retryMarkerCalls,
+    runtimeBudgetIdentityReused:
+      runtimeBudgets.length > 0
+      && runtimeBudgets.every(value => value === runtimeBudgetIdentity),
+    tokenLimitReused:
+      tokenLimits.length > 0
+      && tokenLimits.every(value => value === params.tokenLimit),
+  };
+}
+
+async function runBackstageCompactRetryFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const tokenLimit = 240;
+  const exactPrompt =
+    'Generate exactly two match options for Raw, one numbered paragraph per option, at most 20 words each.';
+  const atMostPrompt =
+    'Generate at most two match options for Raw, one numbered paragraph per option, at most 20 words each.';
+  const exactContract = resolveBackstageCompactOutputContract(
+    exactPrompt,
+    tokenLimit
+  );
+  const atMostContract = resolveBackstageCompactOutputContract(
+    atMostPrompt,
+    tokenLimit
+  );
+  const exactRecoveryInstruction =
+    buildBackstageBookerCompactOutputRetryInstruction(exactContract);
+  const atMostRecoveryInstruction =
+    buildBackstageBookerCompactOutputRetryInstruction(atMostContract);
+  const exactRequestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(
+      exactPrompt,
+      exactContract
+    );
+  const validOutput = [
+    '1. Cody challenges Gunther after a tense opening confrontation.',
+    '2. Gunther accepts, then closes the segment with a decisive warning.',
+  ].join('\n');
+  const valid = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: validOutput,
+    tokenLimit,
+  });
+  const underCount = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: '1. Cody challenges Gunther after the opening confrontation.',
+    tokenLimit,
+  });
+  const overCount = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: `${validOutput}\n3. An optional rematch is added.`,
+    tokenLimit,
+  });
+  const malformed = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: `Booking plan\n${validOutput}`,
+    tokenLimit,
+  });
+  const wordOverflow = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: [
+      `1. ${Array.from({ length: 21 }, () => 'word').join(' ')}`,
+      '2. Gunther answers with a concise warning.',
+    ].join('\n'),
+    tokenLimit,
+  });
+  const atMostValid = await exerciseBackstageCompactRetryScenario({
+    contract: atMostContract,
+    prompt: atMostPrompt,
+    recoveryInstruction: atMostRecoveryInstruction,
+    retryOutcome: '1. Cody challenges Gunther after the opening confrontation.',
+    tokenLimit,
+  });
+  const atMostOverflow = await exerciseBackstageCompactRetryScenario({
+    contract: atMostContract,
+    prompt: atMostPrompt,
+    recoveryInstruction: atMostRecoveryInstruction,
+    retryOutcome: `${validOutput}\n3. An optional rematch is added.`,
+    tokenLimit,
+  });
+  const secondLength = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: createSyntheticBackstageLengthError(),
+    tokenLimit,
+  });
+  const nonLengthError = new Error('SYNTHETIC_NON_LENGTH_FAILURE');
+  const nonLength = await exerciseBackstageCompactRetryScenario({
+    contract: exactContract,
+    firstError: nonLengthError,
+    prompt: exactPrompt,
+    recoveryInstruction: exactRecoveryInstruction,
+    retryOutcome: validOutput,
+    tokenLimit,
+  });
+  const parsedItems = parseBackstageBookerCompactRetryNumberedParagraphs(
+    validOutput
+  );
+  const promptContractsDerived =
+    exactContract.itemPolicy.mode === 'exact'
+    && exactContract.itemPolicy.count === 2
+    && exactContract.wordBounds.wordsPerItem === 20
+    && exactContract.wordBounds.totalWordLimit === 40
+    && atMostContract.itemPolicy.mode === 'atMost'
+    && atMostContract.itemPolicy.count === 2
+    && atMostContract.wordBounds.wordsPerItem === 20
+    && atMostContract.wordBounds.totalWordLimit === 40
+    && exactRequestedOutputShapeInstruction?.includes(
+      'Return exactly 2 numbered paragraphs, numbered 1 through 2.'
+    ) === true;
+
+  const contracts = {
+    atMostOverflowRejected:
+      !atMostOverflow.accepted && atMostOverflow.causeFreeIncomplete,
+    atMostWithinBoundAccepted:
+      atMostValid.accepted && atMostValid.attemptCount === 2,
+    exactRetryAccepted:
+      valid.accepted
+      && valid.attemptCount === 2
+      && valid.modes.join(',') === 'initial,compact',
+    firstPartialDiscarded: valid.firstPartialDiscarded,
+    malformedShapeRejected:
+      !malformed.accepted && malformed.causeFreeIncomplete,
+    noThirdAttempt:
+      [
+        valid,
+        underCount,
+        overCount,
+        malformed,
+        wordOverflow,
+        atMostValid,
+        atMostOverflow,
+        secondLength,
+      ].every(result => result.attemptCount === 2),
+    nonLengthFailureNotRetried:
+      nonLength.attemptCount === 1
+      && nonLength.nonLengthErrorPropagated
+      && nonLength.retryMarkerCalls.length === 0,
+    overCountRejected:
+      !overCount.accepted && overCount.causeFreeIncomplete,
+    retryMarkerOnlyOnSecondCall:
+      valid.retryMarkerCalls.length === 1
+      && valid.retryMarkerCalls[0] === 2
+      && exactRecoveryInstruction.includes(
+        'Return exactly 2 numbered paragraphs, numbered 1 through 2.'
+      )
+      && exactRecoveryInstruction.includes(
+        'at most 20 words each'
+      )
+      && exactRecoveryInstruction.includes('Use at most 40 words total.'),
+    sameRequestStateReused:
+      valid.contextIdentityReused
+      && valid.runtimeBudgetIdentityReused
+      && valid.tokenLimitReused,
+    secondLengthCollapsed:
+      !secondLength.accepted
+      && secondLength.causeFreeIncomplete
+      && secondLength.attemptCount === 2,
+    underCountRejected:
+      !underCount.accepted && underCount.causeFreeIncomplete,
+    validNumberedParagraphCount: parsedItems?.length === 2,
+    wordOverflowRejected:
+      !wordOverflow.accepted && wordOverflow.causeFreeIncomplete,
+  };
+  if (
+    !promptContractsDerived
+    || Object.values(contracts).some(value => !value)
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_COMPACT_RETRY_CONTRACT_INVALID');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    compactRetry: {
+      contracts,
+      productionSharedCoordinator: true,
+      productionSharedValidator: true,
+      syntheticAttemptCount: valid.attemptCount,
+      validOutput,
+    },
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+  };
+}
+
 async function runBackstageReviewCompletionFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
+  // The trusted workflow verifier is pinned to the base revision. Keep this
+  // existing fixture response stable while ensuring that its deployed PR-head
+  // execution also runs the production-shared compact-retry proof.
+  await runBackstageCompactRetryFixture(
+    NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures.compactRetry
+  );
   const fullReviewPrompt =
     'BACKEND REVIEW REQUEST: Please briefly review this completed Raw card using current external events.';
   const namedEventReviewPrompts = [
@@ -3240,6 +3560,8 @@ async function runBackstageGenerationFixture(
       return runBackstageHrcRetryCacheFixture(fixture);
     case fixtures.reviewCompletion:
       return runBackstageReviewCompletionFixture(fixture);
+    case fixtures.compactRetry:
+      return runBackstageCompactRetryFixture(fixture);
     case fixtures.notionAuthorityRag:
       return runBackstageNotionAuthorityRagFixture(
         fixture,

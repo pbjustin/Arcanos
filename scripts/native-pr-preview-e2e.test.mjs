@@ -377,7 +377,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 122);
+  assert.equal(requestPlan.length, 123);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -411,7 +411,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    6
+    7
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -692,6 +692,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   const reviewCompletionCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-review-completion'
   );
+  const compactRetryCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-compact-retry'
+  );
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
@@ -704,6 +707,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(routeBudgetCase);
   assert.ok(hrcRetryCacheCase);
   assert.ok(reviewCompletionCase);
+  assert.ok(compactRetryCase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(continuityQueryCase);
   assert.ok(continuitySubtreeCase);
@@ -828,6 +832,35 @@ test('executes the bounded credential-free matrix and detects identity stability
     reviewCompletionPayload.policy.responseStyleInstruction,
     /^Return exactly 6 top-level numbered bullets:/u
   );
+  const compactRetryPayload = expectedNativePrPreviewResponseBody(
+    compactRetryCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(compactRetryPayload.compactRetry.contracts, {
+    atMostOverflowRejected: true,
+    atMostWithinBoundAccepted: true,
+    exactRetryAccepted: true,
+    firstPartialDiscarded: true,
+    malformedShapeRejected: true,
+    noThirdAttempt: true,
+    nonLengthFailureNotRetried: true,
+    overCountRejected: true,
+    retryMarkerOnlyOnSecondCall: true,
+    sameRequestStateReused: true,
+    secondLengthCollapsed: true,
+    underCountRejected: true,
+    validNumberedParagraphCount: true,
+    wordOverflowRejected: true,
+  });
+  assert.equal(
+    compactRetryPayload.compactRetry.productionSharedCoordinator,
+    true
+  );
+  assert.equal(
+    compactRetryPayload.compactRetry.productionSharedValidator,
+    true
+  );
+  assert.equal(compactRetryPayload.compactRetry.syntheticAttemptCount, 2);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
       commitSha: COMMIT_SHA,
@@ -1133,14 +1166,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 122);
+  assert.equal(result.summary.requestsMade, 123);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 122);
+  assert.equal(result.checks.length, 123);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 122);
+  assert.equal(mock.requestCount, 123);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1212,12 +1245,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 7);
+  assert.equal(backstageGenerationCalls.length, 8);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    6
+    7
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
