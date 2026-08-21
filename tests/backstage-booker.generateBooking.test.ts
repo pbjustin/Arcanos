@@ -8,6 +8,40 @@ const mockSaveMemory = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
+
+function buildNumberedRetryOutput(itemCount: number, wordsPerItem = 4): string {
+  return Array.from({ length: itemCount }, (_, itemIndex) => {
+    const body = Array.from(
+      { length: wordsPerItem },
+      (_, wordIndex) => `item${itemIndex + 1}word${wordIndex + 1}`
+    ).join(' ');
+    return `${itemIndex + 1}. ${body}`;
+  }).join('\n');
+}
+
+function buildMockTrinityResult(result: string) {
+  return {
+    result,
+    activeModel: 'trinity-model',
+    fallbackFlag: false,
+    routingStages: ['TRINITY'],
+    auditSafe: { mode: 'true', passed: true, flags: [] },
+    taskLineage: [],
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: [],
+    },
+    meta: {
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'backstage-booker.generateBooking',
+      classification: 'writing',
+    },
+  };
+}
+
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 
@@ -58,26 +92,9 @@ describe('backstage-booker generateBooking', () => {
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
     mockQuery.mockResolvedValue({ rows: [] });
     mockSaveMemory.mockResolvedValue(undefined);
-    mockRunTrinityWritingPipeline.mockResolvedValue({
-      result: 'Rivalry matrix output',
-      activeModel: 'trinity-model',
-      fallbackFlag: false,
-      routingStages: ['TRINITY'],
-      auditSafe: { mode: 'true', passed: true, flags: [] },
-      taskLineage: [],
-      fallbackSummary: {
-        intakeFallbackUsed: false,
-        gpt5FallbackUsed: false,
-        finalFallbackUsed: false,
-        fallbackReasons: [],
-      },
-      meta: {
-        pipeline: 'trinity',
-        bypass: false,
-        sourceEndpoint: 'backstage-booker.generateBooking',
-        classification: 'writing',
-      },
-    });
+    mockRunTrinityWritingPipeline.mockResolvedValue(
+      buildMockTrinityResult('Rivalry matrix output')
+    );
   });
 
   it('uses the shared GPT-5 model and default output budget when USER_GPT_ID is absent', async () => {
@@ -634,16 +651,31 @@ describe('backstage-booker generateBooking', () => {
     }));
   });
 
+  it('keeps an explicit direct-answer bullet maximum qualified', async () => {
+    await expect(generateBooking(
+      'Answer directly. Book the next four weeks in at most five short bullets.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const dispatched = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(dispatched.input.tokenLimit).toBe(240);
+    expect(dispatched.input.prompt).toMatch(/Return no more than 5 top-level numbered bullets/iu);
+    expect(dispatched.input.prompt).not.toMatch(/Return only 5 top-level numbered bullets/iu);
+  });
+
   it('retries one length-exhausted provider response with the same context and token cap', async () => {
     const firstLengthError = Object.assign(
       new Error('OpenAI completion ended before a complete answer was available.'),
       { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
     );
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(firstLengthError);
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(firstLengthError)
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
 
     await expect(
       generateBooking('Generate three rivalries for RAW after WrestleMania.')
-    ).resolves.toBe('Rivalry matrix output');
+    ).resolves.toBe(buildNumberedRetryOutput(3));
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
     const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
@@ -703,16 +735,18 @@ describe('backstage-booker generateBooking', () => {
     _requestKind,
     prompt
   ) => {
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
-      {
-        code: 'OPENAI_COMPLETION_INCOMPLETE',
-        incompleteReason: 'max_output_tokens',
-        outputText: 'PRIVATE-FIRST-PARTIAL-OUTPUT',
-      }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
+        {
+          code: 'OPENAI_COMPLETION_INCOMPLETE',
+          incompleteReason: 'max_output_tokens',
+          outputText: 'PRIVATE-FIRST-PARTIAL-OUTPUT',
+        }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(6)));
 
-    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(6));
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
     const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
@@ -733,14 +767,16 @@ describe('backstage-booker generateBooking', () => {
     mockGetEnvNumber.mockImplementation((name: string, fallback: number) => (
       name === 'BOOKER_TOKEN_LIMIT' ? 1_200 : fallback
     ));
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(6)));
 
     await expect(generateBooking(
       'Generate six match options for Raw, each with a matchup, finish, and next-week consequence.'
-    )).resolves.toBe('Rivalry matrix output');
+    )).resolves.toBe(buildNumberedRetryOutput(6));
 
     const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string; tokenLimit: number };
@@ -751,18 +787,35 @@ describe('backstage-booker generateBooking', () => {
     expect(retry.input.prompt).toMatch(/at most 500 words total/iu);
   });
 
-  it('preserves a tighter caller word ceiling on the first attempt and compact retry', async () => {
+  it.each([
+    'maximum 100 words each',
+    'under 100 words each',
+    'within 100 words per option',
+    'no more than 100 words for each option',
+    'within 100 words apiece',
+    '100-word max per option',
+    '100 word limit per option',
+    "each option's response must be under 100 words",
+    'each option should have a combined response under 100 words',
+    'each option should have an entire response under 100 words',
+    'each option should have an overall response under 100 words',
+    'each option should have a complete response under 100 words',
+    'for each option, answer under 100 words',
+    'each option has a 100-word max',
+  ])('preserves a tighter caller word ceiling on the first attempt and compact retry: %s', async wordClause => {
     const prompt = [
       'Give exactly three Raw main-event options for the men’s world-title story.',
-      'One numbered paragraph per option, maximum 100 words each.',
+      `One numbered paragraph per option, ${wordClause}.`,
       'Include only the matchup, finish, and next-week consequence.',
     ].join(' ');
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
 
-    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(3));
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
     const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
@@ -780,6 +833,57 @@ describe('backstage-booker generateBooking', () => {
     expect(compactRetry.input.prompt).toMatch(/at most 300 words total/iu);
     expect(compactRetry.input.prompt).not.toMatch(/at most 125 words each/iu);
     expect(compactRetry.input.tokenLimit).toBe(firstAttempt.input.tokenLimit);
+  });
+
+  it('preserves an explicit at-most paragraph and word contract on both attempts', async () => {
+    const prompt = [
+      'Give up to six Raw main-event options.',
+      'One numbered paragraph per option, maximum 100 words each.',
+      'Include only the matchup, finish, and next-week consequence.',
+    ].join(' ');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(4)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(4));
+
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string } }
+    );
+    for (const attempt of [firstAttempt, compactRetry]) {
+      expect(attempt.input.prompt).toMatch(/Return no more than 6 numbered paragraphs/iu);
+      expect(attempt.input.prompt).toMatch(/at most 100 words each/iu);
+      expect(attempt.input.prompt).toMatch(/at most 600 words total/iu);
+      expect(attempt.input.prompt).toMatch(/Stop after the final numbered item/iu);
+      expect(attempt.input.prompt).not.toMatch(/Return exactly 6 numbered paragraphs/iu);
+      expect(attempt.input.prompt).not.toMatch(/Stop after item 6/iu);
+    }
+    expect(firstAttempt.input.prompt).not.toMatch(/OUTPUT_LENGTH_RECOVERY/u);
+    expect(compactRetry.input.prompt).toMatch(/OUTPUT_LENGTH_RECOVERY/u);
+  });
+
+  it('keeps an ambiguous range out of trusted first-attempt policy while preserving it on retry', async () => {
+    const prompt = [
+      'Give three to six Raw main-event options.',
+      'One numbered paragraph per option, maximum 100 words each.',
+    ].join(' ');
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string } }
+    );
+    expect(firstAttempt.input.prompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+    expect(compactRetry.input.prompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 100 words each/iu);
+    expect(compactRetry.input.prompt).not.toMatch(/Return exactly (?:3|6) numbered paragraphs/iu);
   });
 
   it('applies an explicit compact paragraph contract on a successful first attempt without rewriting its output', async () => {
@@ -837,6 +941,40 @@ describe('backstage-booker generateBooking', () => {
     expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
   });
 
+  it.each([
+    'Each option should have a response, but keep the combined response under 100 words.',
+    'Each option should have a response, but keep the answer as a whole under 100 words.',
+    'Each option should have a response, but keep all responses combined under 100 words.',
+    'Each option should have a response, but the whole answer must be under 100 words.',
+    'Each option should have a response, but all responses combined must stay under 100 words.',
+    'Each option should have a response, but keep the final answer under 100 words.',
+    'Each option should have a response, but limit the complete output to under 100 words.',
+    'Each option should have a response, but keep the full response under 100 words.',
+    'Each option should have a response under 100 words in total.',
+  ])('does not turn a global response ceiling into a per-item contract: %s', async wordConstraint => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'Use one numbered paragraph per option.',
+      wordConstraint,
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('requires the explicit numbered-paragraph clause before trusting a per-item maximum', async () => {
+    await expect(generateBooking(
+      'Give exactly three Raw main-event options, maximum 100 words each. Use a table.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
   it('does not turn a negated numbered-paragraph phrase into trusted output policy', async () => {
     await expect(generateBooking([
       'Give exactly three Raw main-event options, maximum 100 words each.',
@@ -860,6 +998,104 @@ describe('backstage-booker generateBooking', () => {
       input: { prompt: string };
     }).input.prompt;
     expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('keeps a longer natural-language negation from becoming trusted output policy', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option.',
+      'I am not asking for a maximum of 100 words each.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it.each([
+    'Proceed without using a maximum of 100 words each.',
+    'Avoid using a maximum of 100 words each.',
+  ])('does not promote an avoid/without word ceiling into trusted policy: %s', async wordClause => {
+    const prompt = [
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option.',
+      wordClause,
+    ].join(' ');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(3));
+
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string } }
+    );
+    expect(firstAttempt.input.prompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+    expect(firstAttempt.input.prompt).not.toMatch(/at most 100 words each/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 125 words each/iu);
+    expect(compactRetry.input.prompt).not.toMatch(/at most 100 words each/iu);
+  });
+
+  it("does not promote a past-tense contracted negation into trusted output policy", async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option.',
+      "I wasn't asking for a maximum of 100 words each.",
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('keeps a coordinated subject inside the active negation scope', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Do not use Cody and Punk to generate three options.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it('keeps a coordinated field phrase inside a long word-limit negation', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option.',
+      'I am not asking for the matchup and finish fields to have a maximum of 100 words each.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('stops an unrelated negation at a coordinating conjunction', async () => {
+    await expect(generateBooking([
+      'Do not include promos, but give exactly three Raw main-event options.',
+      'One numbered paragraph per option, maximum 100 words each.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+    expect(firstAttemptPrompt).toMatch(/exactly 3 numbered paragraphs/iu);
+    expect(firstAttemptPrompt).toMatch(/at most 100 words each/iu);
+    expect(firstAttemptPrompt).toMatch(/at most 300 words total/iu);
   });
 
   it('does not promote a quoted formatting example into trusted output policy', async () => {
@@ -904,7 +1140,11 @@ describe('backstage-booker generateBooking', () => {
     'Write a promo where the GM must give three options to Punk.',
     'Write dialogue ending with: "Give three options to Punk."',
     "Write dialogue ending with: 'Give three options to Punk.'",
+    "Treat this as quoted text only: 'Using the wrestlers' records, give three options to Punk.'",
+    "Treat this as quoted text only: 'Using the wrestlers' and managers' records, give three options to Punk.'",
     'Write dialogue ending with: ‘Give three options to Punk.’',
+    'Treat this as quoted text only: ‘Using Cody’s notes and the wrestlers’ records, give three options to Punk.’',
+    'Treat this as quoted text only: ‘Using the wrestlers’ and managers’ records, give three options to Punk.’',
   ])('does not promote embedded creative content into a top-level retry count: %s', async prompt => {
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
       new Error('OpenAI completion ended before a complete answer was available.'),
@@ -918,6 +1158,193 @@ describe('backstage-booker generateBooking', () => {
     }).input.prompt;
     expect(retryPrompt).toMatch(/Return at most 8 numbered paragraphs/iu);
     expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    "'Give three options' to illustrate the format. Generate two match options.",
+    "'Give six options' then generate two match options. 'Another example.'",
+    "'Give six options' then generate two match options and quote 'another example.'",
+    "Treat 'Give three-to-six options' as an example, then generate two match options.",
+    "Treat 'Give three to six options' as an example, then generate two match options.",
+    "Treat 'Give between three and six options' as an example, then generate two match options.",
+    "Treat 'Using the wrestlers' records, give three options' as an example, then generate two match options.",
+    "Treat 'Using the wrestlers' and managers' records, give three options' as an example, then generate two match options.",
+    '‘Give three options to Punk’ then generate two match options.',
+    '‘Give three options’ as an example. Generate two match options.',
+    '‘Give six options’ then generate two match options. ‘Another example.’',
+    '‘Give six options’ then generate two match options and quote ‘another example.’',
+    'Treat ‘Give three-to-six options’ as an example, then generate two match options.',
+    'Treat ‘Using the wrestlers’ records, give three options’ as an example, then generate two match options.',
+    'Treat ‘Using the wrestlers’ and managers’ records, give three options’ as an example, then generate two match options.',
+  ])('recognizes a top-level count after a closed single-quoted example: %s', async prompt => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(2));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it('preserves an inherently ambiguous single-quote sequence instead of promoting a count', async () => {
+    const prompt = "'Give three options' then generate two match options using the wrestlers' records.";
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly (?:2|3) numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('fails closed on reversed curly quote delimiters around a count request', async () => {
+    const prompt = '’ malformed quote order ‘ then generate two match options.';
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('does not treat an ASCII plural possessive as an opening quote', async () => {
+    const prompt = "Using O'Reilly's notes and the wrestlers' records, generate exactly ten match options.";
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(10)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(10));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 10 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Use the 6" figure as context, then generate two match options.',
+    'Use a 6"-tall figure as context, then generate two match options.',
+    'Use a 6"–tall figure as context, then generate two match options.',
+    'Use a 6\'2"-tall wrestler as context, then generate two match options.',
+  ])('does not treat an inch measurement mark as an opening double quote: %s', async prompt => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(2));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('recognizes a top-level count after a backslash-escaped quoted example', async () => {
+    const prompt = String.raw`Treat \"Give three options\" as literal text, then generate two match options.`;
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(2));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Treat "Use the 6" figure, then give three options" as literal text, then generate two match options.',
+    'Treat "Use the 6\'2"-tall wrestler, then give three options" as literal text, then generate two match options.',
+    'Treat “Use the 6” figure, then give three options” as literal text, then generate two match options.',
+  ])('keeps an inch mark inside quoted text from closing the quote: %s', async prompt => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(2));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Book ten segments for Raw.',
+    'Give thirteen options for Raw.',
+    'Book thirty segments for Raw.',
+    'Give a dozen options for Raw.',
+    'Book ten bouts for Raw.',
+    'Book ten programs for Raw.',
+  ])('preserves a supported count-like request outside the exact grammar: %s', async prompt => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Generate 0 options for Raw.',
+    'Generate 9007199254740992 options for Raw.',
+  ])('preserves an invalid or unsafe numeric count without emitting it as exact policy: %s', async prompt => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(retryPrompt).toMatch(/at most \d+ words each/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly (?:0|9007199254740992) numbered paragraphs/iu);
   });
 
   it.each([
@@ -977,15 +1404,57 @@ describe('backstage-booker generateBooking', () => {
     expect(retry.input.prompt).not.toMatch(rejectedPattern);
   });
 
-  it('uses the requested output count instead of an earlier contextual count', async () => {
+  it.each([
+    'Answer directly: give three to six options.',
+    'Answer directly: give between three and six options.',
+  ])('budgets a direct preserve-mode range from its upper endpoint: %s', async prompt => {
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
       new Error('OpenAI completion ended before a complete answer was available.'),
       { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
     ));
 
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string; tokenLimit: number } }
+    );
+    expect(firstAttempt.input.tokenLimit).toBe(480);
+    expect(compactRetry.input.tokenLimit).toBe(480);
+    expect(compactRetry.input.prompt).toMatch(/Preserve every caller-required item count/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 33 words each/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 200 words total/iu);
+    expect(compactRetry.input.prompt).not.toMatch(/Return exactly (?:3|6) numbered paragraphs/iu);
+  });
+
+  it('ignores a negated between-range before a definite replacement count', async () => {
+    const prompt = 'Do not give between three and six options; generate two match options instead.';
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(2)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(2));
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 2 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Preserve every caller-required item count/iu);
+  });
+
+  it('uses the requested output count instead of an earlier contextual count', async () => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
+
     await expect(generateBooking(
       'Use these six matches as context and give three main-event options.'
-    )).resolves.toBe('Rivalry matrix output');
+    )).resolves.toBe(buildNumberedRetryOutput(3));
 
     const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string };
@@ -995,14 +1464,16 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('treats an explicitly qualified item count as a maximum instead of an exact count', async () => {
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(4)));
 
     await expect(generateBooking(
       'Give up to six main-event options for Raw.'
-    )).resolves.toBe('Rivalry matrix output');
+    )).resolves.toBe(buildNumberedRetryOutput(4));
 
     const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string };
@@ -1012,10 +1483,12 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('preserves the established six-item review contract over a contextual match count', async () => {
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(6)));
 
     await generateBooking('Review a completed Raw card with nine matches.');
 
@@ -1044,14 +1517,16 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('does not replace a recognized large requested count with the generic item ceiling', async () => {
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(40)));
 
     await expect(generateBooking(
       'Generate 40 options for the Raw main event.'
-    )).resolves.toBe('Rivalry matrix output');
+    )).resolves.toBe(buildNumberedRetryOutput(40));
 
     const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string };
@@ -1062,21 +1537,240 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('scales retry bounds from the effective prompt-derived token limit', async () => {
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('OpenAI completion ended before a complete answer was available.'),
-      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(6)));
 
     await expect(generateBooking(
-      'Answer directly: give six bullets for Raw.'
-    )).resolves.toBe('Rivalry matrix output');
+      'Answer directly: generate six match options for Raw.'
+    )).resolves.toBe(buildNumberedRetryOutput(6));
 
+    const firstAttempt = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
     const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string; tokenLimit: number };
     };
+    expect(firstAttempt.input.tokenLimit).toBe(480);
+    expect(firstAttempt.input.prompt).toMatch(/Return only 6 top-level numbered bullets/iu);
     expect(retry.input.tokenLimit).toBe(480);
     expect(retry.input.prompt).toMatch(/at most 33 words each/iu);
     expect(retry.input.prompt).toMatch(/at most 200 words total/iu);
+  });
+
+  it('uses the resolved requested count instead of an earlier context count in direct mode', async () => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(3)));
+
+    await expect(generateBooking(
+      'Answer directly: use these six matches as context and give three options.'
+    )).resolves.toBe(buildNumberedRetryOutput(3));
+
+    const firstAttempt = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(firstAttempt.input.tokenLimit).toBe(240);
+    expect(firstAttempt.input.prompt).toMatch(/Return only 3 top-level numbered bullets/iu);
+    expect(firstAttempt.input.prompt).not.toMatch(/Return only 6 top-level numbered bullets/iu);
+    expect(retry.input.prompt).toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Answer directly: book three matches per division for Raw and SmackDown.',
+    'Answer directly: give three bullets per division for Raw and SmackDown.',
+    'Answer directly: book three matches per wrestler for Raw.',
+  ])('does not slice a direct preserve-mode per-group retry: %s', async prompt => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(6)));
+
+    await expect(generateBooking(prompt)).resolves.toBe(buildNumberedRetryOutput(6));
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).toMatch(/Return only the caller-requested top-level numbered items/iu);
+    expect(firstAttemptPrompt).not.toMatch(/Return only 3 top-level numbered bullets/iu);
+    expect(retryPrompt).toMatch(/Preserve every caller-required item count/iu);
+  });
+
+  it('keeps every direct preserve-mode item above the closed exact grammar', async () => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(13)));
+
+    await expect(generateBooking(
+      'Answer directly: give thirteen bullets for Raw.'
+    )).resolves.toBe(buildNumberedRetryOutput(13));
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).toMatch(/Return only 13 top-level numbered bullets/iu);
+  });
+
+  it('accepts consecutive compact retry paragraphs with bold markers and soft wrapping', async () => {
+    const retryOutput = [
+      ' **1.** First compact item',
+      'with a soft-wrapped continuation.',
+      ' 2) Second compact item.',
+      '',
+      ' 3. Third compact item.',
+    ].join('\n');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(retryOutput));
+
+    await expect(generateBooking(
+      'Generate exactly three match options for Raw.'
+    )).resolves.toBe(retryOutput.trim());
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts inline requested fields separated by pipes', async () => {
+    const retryOutput = [
+      '1. Matchup: Punk vs. Drew | Finish: Punk wins | Consequence: Drew demands a rematch.',
+      '2. Matchup: Rhea vs. Iyo | Finish: Rhea wins | Consequence: Iyo changes tactics.',
+      '3. Matchup: Cody vs. Randy | Finish: Cody wins | Consequence: Randy turns hostile.',
+    ].join('\n');
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(retryOutput));
+
+    await expect(generateBooking(
+      'Generate exactly three match options for Raw.'
+    )).resolves.toBe(retryOutput);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [
+      'too few exact items',
+      'Generate exactly three match options for Raw.',
+      buildNumberedRetryOutput(2),
+    ],
+    [
+      'too many at-most items',
+      'Give up to two match options for Raw.',
+      buildNumberedRetryOutput(3),
+    ],
+    [
+      'unnumbered prose',
+      'Generate exactly three match options for Raw.',
+      'Rivalry matrix output',
+    ],
+    [
+      'an ordinal gap',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n3. Third item.\n2. Second item.',
+    ],
+    [
+      'a heading before the items',
+      'Generate exactly three match options for Raw.',
+      '# Options\n1. First item.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a second paragraph inside an item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n\nExtra paragraph.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a nested bullet',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n- Nested detail.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'an indented nested numbered item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n  2. Nested detail.\n3. Third item.',
+    ],
+    [
+      'a tab-indented nested numbered item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n\t2. Nested detail.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'an indented alphabetic sub-item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n  a. Nested finish.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a flush-left alphabetic sub-item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\na. Nested finish.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a one-space alphabetic sub-item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n a. Nested finish.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a flush-left uppercase alphabetic sub-item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\nA. Nested finish.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a one-space uppercase alphabetic sub-item',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n A) Nested finish.\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'a Markdown table',
+      'Generate exactly three match options for Raw.',
+      '1. First item.\n| Field | Value |\n| --- | --- |\n2. Second item.\n3. Third item.',
+    ],
+    [
+      'whitespace-only output',
+      'Generate exactly three match options for Raw.',
+      ' \n\t',
+    ],
+    [
+      'an overlong item',
+      'Generate exactly three match options for Raw.',
+      buildNumberedRetryOutput(3, 126),
+    ],
+  ])('fails closed when a successful compact retry returns %s', async (
+    _caseLabel,
+    prompt,
+    retryOutput
+  ) => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('OpenAI completion ended before a complete answer was available.'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildMockTrinityResult(retryOutput));
+
+    await expect(generateBooking(prompt)).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
   });
 
   it('propagates a non-length compact-retry failure through the bounded booking error', async () => {

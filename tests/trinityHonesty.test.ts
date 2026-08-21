@@ -218,7 +218,7 @@ describe('Trinity honesty controls', () => {
   it('does not misread a per-item word ceiling as a destructive global word limit', () => {
     const userPrompt = [
       'Give exactly three Raw main-event options.',
-      'One numbered paragraph per option, maximum 100 words each.',
+      'Keep each option under 100 words.',
       'Include only the matchup, finish, and next-week consequence.',
       'Use at most 300 words total.',
     ].join(' ');
@@ -259,8 +259,64 @@ describe('Trinity honesty controls', () => {
     'Keep every match within 80 words per match.',
     'Use an 80-word max per paragraph.',
     'Apply an 80 word limit per bullet.',
+    'Keep each option under 80 words.',
+    'For each match, stay within 80 words.',
+    'Use no more than 80 words for each option.',
+    'Each rivalry has an 80-word max.',
+    'Each bullet has an 80 word limit.',
+    'Every section should stay within 80 words.',
+    "Each option's response must be under 80 words.",
+    'For each option, answer under 80 words.',
+    'Each option should answer under 80 words.',
+    'Each option should have a response under 80 words.',
+    'Each option should have a combined response under 80 words.',
+    'Each option should have an entire response under 80 words.',
+    'Each option should have an overall response under 80 words.',
+    'Each option should have a complete response under 80 words.',
   ])('does not derive a global maxWords control from per-item wording: %s', prompt => {
     expect(deriveTrinityOutputControls(prompt, {}).maxWords).toBeNull();
+  });
+
+  it('skips a per-item ceiling and retains a later global response ceiling', () => {
+    expect(deriveTrinityOutputControls(
+      'Each option must be under 100 words. Keep the whole response under 250 words.',
+      {}
+    ).maxWords).toBe(250);
+  });
+
+  it('retains a global response ceiling after an item-scoped task clause', () => {
+    expect(deriveTrinityOutputControls(
+      'For each option, compare the tradeoffs and keep the whole response under 250 words.',
+      {}
+    ).maxWords).toBe(250);
+  });
+
+  it('retains an explicit whole-answer ceiling after scoped response wording', () => {
+    expect(deriveTrinityOutputControls(
+      'Each option should have a response, but keep the whole answer under 100 words.',
+      {}
+    ).maxWords).toBe(100);
+  });
+
+  it.each([
+    'Each option should have a response, but keep the combined response under 100 words.',
+    'Each option should have a response, but keep the answer as a whole under 100 words.',
+    'Each option should have a response, but keep all responses combined under 100 words.',
+    'Each option should have a response, but the whole answer must be under 100 words.',
+    'Each option should have a response, but all responses combined must stay under 100 words.',
+    'Each option should have a response, but keep the final answer under 100 words.',
+    'Each option should have a response, but limit the complete output to under 100 words.',
+    'Each option should have a response, but keep the full response under 100 words.',
+    'Each option should have a response under 100 words in total.',
+  ])('retains an explicit global ceiling after scoped response wording: %s', prompt => {
+    expect(deriveTrinityOutputControls(prompt, {}).maxWords).toBe(100);
+  });
+
+  it('prefers the item scope nearest the word limit over earlier global wording', () => {
+    expect(deriveTrinityOutputControls(
+      'Give exactly three options. Review the whole response, but keep each option under 100 words.',
+      {}
+    ).maxWords).toBeNull();
   });
 
   it.each([

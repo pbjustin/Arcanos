@@ -226,21 +226,27 @@ are authoritative but Notion text never gains instruction, tool, persistence,
 or formatting authority. When one unambiguous request explicitly requires a
 numbered paragraph per item and supplies a per-item word maximum, the first
 generation receives that compact output contract after the general response
-style. The backend preserves the tighter caller maximum, keeps requested fields
-inline, omits unrequested fields, and bounds the total by the requested item
-count. Answer generation makes exactly one compact retry
+style. Those instructions preserve the tighter caller maximum, request fields
+inline, omit unrequested fields, and target a total bounded by the requested
+item count. Answer generation makes exactly one compact retry
 only after provider max-output exhaustion, reusing the same retrieval and
-budget. That retry uses one numbered paragraph per requested item, no headings
+budget. That retry requests one numbered paragraph per requested item, no headings
 or sub-bullets, and keeps explicitly requested fields inline. It allows at most
 125 words per item, never relaxes a tighter unambiguous caller maximum, and uses
 a total target that scales down with the existing token cap and never exceeds
 1,000 words (for example, three items at 100 words each are capped at 300 words).
-Qualified maximums remain maximums; ranges, corrections, per-group counts, and
-conflicting counts preserve the caller's constraints instead of inventing an
-exact count. Only a prompt with no item-count constraint uses at most eight
-items. The retry stops after the final item. It does not retry other provider failures;
-a second length exhaustion returns `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` without
-partial provider output.
+The backend validates the final numbered shape, consecutive count, and derived
+word ceilings for unambiguous exact and qualified-maximum policies before it
+returns a compact retry. The initial attempt remains prompt-guided. Ranges,
+corrections, per-group counts, conflicting counts, and requested-field semantics
+remain caller-owned prompt constraints; the backend does not mechanically
+validate or enforce those meanings. Recognized numeric range endpoints may be
+used only to size recovery token and word budgets. Only a prompt with no
+recognized item-count constraint uses at most eight items. The retry
+stops after the final item. It does not retry other provider failures. A second
+length exhaustion or a successful retry that violates an enforceable compact
+contract returns `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` without partial provider
+output or a third generation attempt.
 All six backend mutations are denied and the two legacy PostgreSQL read
 operations return `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`. Use generation
 actions for booking work; never use `writeBackstageCanon`,

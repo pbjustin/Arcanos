@@ -19,6 +19,30 @@ const mockLoadBackstageNotionPromptContext = jest.fn();
 const mockIsBackstageNotionAuthoritativeUniverse = jest.fn();
 const mockRetrieveBackstageNotionRagContext = jest.fn();
 
+function buildPersistenceNumberedRetryOutput(itemCount: number): string {
+  return Array.from(
+    { length: itemCount },
+    (_, index) => `${index + 1}. Compact booking item ${index + 1}.`
+  ).join('\n');
+}
+
+function buildPersistenceTrinityResult(result: string) {
+  return {
+    result,
+    activeModel: 'gpt-test',
+    fallbackFlag: false,
+    routingStages: ['TRINITY'],
+    auditSafe: { mode: 'true', passed: true, flags: [] },
+    taskLineage: [],
+    fallbackSummary: {
+      fallbackUsed: false,
+      fallbackCount: 0,
+      finalFallbackStage: null,
+      fallbackReasons: []
+    }
+  };
+}
+
 const mockRepository = {
   appendCanonBeat: jest.fn(),
   bookEvent: jest.fn(),
@@ -337,20 +361,9 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockRetrieveBackstageNotionRagContext.mockRejectedValue(
       new MockBackstageNotionIndexUnavailableError()
     );
-    mockRunTrinityWritingPipeline.mockResolvedValue({
-      result: 'Generated booking',
-      activeModel: 'gpt-test',
-      fallbackFlag: false,
-      routingStages: ['TRINITY'],
-      auditSafe: { mode: 'true', passed: true, flags: [] },
-      taskLineage: [],
-      fallbackSummary: {
-        fallbackUsed: false,
-        fallbackCount: 0,
-        finalFallbackStage: null,
-        fallbackReasons: []
-      }
-    });
+    mockRunTrinityWritingPipeline.mockResolvedValue(
+      buildPersistenceTrinityResult('Generated booking')
+    );
   });
 
   it('reports a successful transactional event write as durable', async () => {
@@ -604,6 +617,28 @@ describe('Backstage Booker service persistence outcomes', () => {
 
     expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+
+  it('does not start HRC when a successful compact retry violates its exact contract', async () => {
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('provider output incomplete'),
+        { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+      ))
+      .mockResolvedValueOnce(buildPersistenceTrinityResult('Generated booking'));
+
+    await expect(
+      BackstageBookerModule.actions.generateBookingWithHRC({
+        universeId: 'hrc-invalid-compact-retry',
+        prompt: 'Review the complete Raw card.'
+      })
+    ).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
   });
 
   it('does not start HRC when both booking attempts exhaust output length', async () => {
@@ -2902,19 +2937,23 @@ describe('Backstage Booker service persistence outcomes', () => {
       truncated: false,
       citations: [],
     });
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
-      new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
-      {
-        code: 'OPENAI_COMPLETION_INCOMPLETE',
-        incompleteReason: 'max_output_tokens',
-        outputText: 'PRIVATE-FIRST-PARTIAL-OUTPUT',
-      }
-    ));
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(
+        new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
+        {
+          code: 'OPENAI_COMPLETION_INCOMPLETE',
+          incompleteReason: 'max_output_tokens',
+          outputText: 'PRIVATE-FIRST-PARTIAL-OUTPUT',
+        }
+      ))
+      .mockResolvedValueOnce(buildPersistenceTrinityResult(
+        buildPersistenceNumberedRetryOutput(6)
+      ));
 
     await expect(runWithBackstageNotionEnrichmentAuthorization(
       true,
       () => generateBooking(prompt, universeId)
-    )).resolves.toBe('Generated booking');
+    )).resolves.toBe(buildPersistenceNumberedRetryOutput(6));
 
     expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
     expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledWith(universeId, prompt);

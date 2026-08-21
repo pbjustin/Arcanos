@@ -565,8 +565,9 @@ excerpts and Notion page IDs remain server-side. Deploy schema 1.4.0 before
 re-importing it into the existing Builder Action. Answer
 generation performs one compact retry only when the provider reports
 max-output exhaustion, reusing the same retrieval and runtime budget. Other
-provider failures are not retried; a second length exhaustion becomes the
-sanitized `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` error without partial output.
+provider failures are not retried; a second length exhaustion or an enforceable
+exact/maximum compact-contract violation becomes the sanitized
+`BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` error without partial output or a third attempt.
 Other internal continuity-answer failures become the cause-free,
 nonretryable `BACKSTAGE_CONTINUITY_QUERY_FAILED` error.
 Readers also reject snapshots from before the current heading-aware index
