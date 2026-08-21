@@ -678,12 +678,12 @@ function buildFallbackHonestyText(reasoningHonesty: TrinityReasoningHonesty): st
 
 function parseMaxWordsFromPrompt(prompt: string): number | null {
   const patterns = [
-    /\bunder\s+(\d+)\s+words?\b/i,
-    /\bwithin\s+(\d+)\s+words?\b/i,
-    /\bno more than\s+(\d+)\s+words?\b/i,
-    /\bmax(?:imum)?\s+(\d+)\s+words?\b/i,
-    /\b(\d+)\s*-\s*word\s+max\b/i,
-    /\b(\d+)\s+word\s+limit\b/i
+    /\bunder\s+(\d+)\s+words?\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i,
+    /\bwithin\s+(\d+)\s+words?\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i,
+    /\bno more than\s+(\d+)\s+words?\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i,
+    /\bmax(?:imum)?\s+(\d+)\s+words?\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i,
+    /\b(\d+)\s*-\s*word\s+max\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i,
+    /\b(\d+)\s+word\s+limit\b(?!\s+(?:each\b|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)\b))/i
   ] as const;
   for (const pattern of patterns) {
     const match = prompt.match(pattern);

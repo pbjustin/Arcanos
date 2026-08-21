@@ -664,7 +664,7 @@ describe('backstage-booker generateBooking', () => {
     )).toBe(true);
     expect(compactRetry.input.prompt).toContain('<<OUTPUT_LENGTH_RECOVERY>>');
     expect(compactRetry.input.prompt).toContain(
-      'Return a complete answer within the existing output limit'
+      'Return a new, complete answer within the existing output limit'
     );
     expect(compactRetry.input.tokenLimit).toBe(firstAttempt.input.tokenLimit);
     expect(compactRetry.context.runOptions.directAnswerTokenLimitOverride).toBe(
@@ -672,6 +672,411 @@ describe('backstage-booker generateBooking', () => {
     );
     expect(compactRetry.context.runOptions.directAnswerTokenCapOverride).toBe(2400);
     expect(compactRetry.context.runtimeBudget).toBe(firstAttempt.context.runtimeBudget);
+  });
+
+  it.each([
+    [
+      'options',
+      'Generate six main-event options for Raw, each with a matchup, finish, and next-week consequence.'
+    ],
+    [
+      'matches',
+      'Book six matches for Raw, each with a winner and storyline consequence.'
+    ],
+    [
+      'rivalries',
+      'Generate six rivalries for Raw, each with the participants and next beat.'
+    ],
+    [
+      'ideas',
+      'Generate six booking ideas for Raw, each with a match and finish.'
+    ],
+    [
+      'scenarios',
+      'Generate six scenarios for the Raw main event, each with a finish and consequence.'
+    ],
+    [
+      'bullets',
+      'Generate six bullets for Raw, each covering one match option and finish.'
+    ],
+  ])('makes a six-%s compact retry structurally complete and word-bounded', async (
+    _requestKind,
+    prompt
+  ) => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('PRIVATE-FIRST-PARTIAL-OUTPUT'),
+      {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        incompleteReason: 'max_output_tokens',
+        outputText: 'PRIVATE-FIRST-PARTIAL-OUTPUT',
+      }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(retry.input.prompt).toMatch(/exactly 6 numbered paragraphs/iu);
+    expect(retry.input.prompt).toMatch(/at most 125 words each/iu);
+    expect(retry.input.prompt).toMatch(/at most 1,?000 words total/iu);
+    expect(retry.input.prompt).toMatch(/no headings/iu);
+    expect(retry.input.prompt).toMatch(/no sub-bullets/iu);
+    expect(retry.input.prompt).toMatch(/requested fields?[^\n]*inline/iu);
+    expect(retry.input.prompt).toMatch(/stop after item 6/iu);
+    expect(retry.input.tokenLimit).toBe(2_400);
+    expect(JSON.stringify(retry)).not.toContain('PRIVATE-FIRST-PARTIAL-OUTPUT');
+  });
+
+  it('scales compact-retry word bounds down with a smaller configured output budget', async () => {
+    mockGetEnvNumber.mockImplementation((name: string, fallback: number) => (
+      name === 'BOOKER_TOKEN_LIMIT' ? 1_200 : fallback
+    ));
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Generate six match options for Raw, each with a matchup, finish, and next-week consequence.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(retry.input.tokenLimit).toBe(1_200);
+    expect(retry.input.prompt).toMatch(/exactly 6 numbered paragraphs/iu);
+    expect(retry.input.prompt).toMatch(/at most 83 words each/iu);
+    expect(retry.input.prompt).toMatch(/at most 500 words total/iu);
+  });
+
+  it('preserves a tighter caller word ceiling on the first attempt and compact retry', async () => {
+    const prompt = [
+      'Give exactly three Raw main-event options for the men’s world-title story.',
+      'One numbered paragraph per option, maximum 100 words each.',
+      'Include only the matchup, finish, and next-week consequence.',
+    ].join(' ');
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', incompleteReason: 'max_output_tokens' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    const [firstAttempt, compactRetry] = mockRunTrinityWritingPipeline.mock.calls.map(
+      call => call[0] as { input: { prompt: string; tokenLimit: number } }
+    );
+    expect(firstAttempt.input.prompt).toMatch(/<<CALLER_OUTPUT_CONSTRAINT>>/u);
+    expect(firstAttempt.input.prompt).toMatch(/exactly 3 numbered paragraphs/iu);
+    expect(firstAttempt.input.prompt).toMatch(/at most 100 words each/iu);
+    expect(firstAttempt.input.prompt).toMatch(/at most 300 words total/iu);
+    expect(firstAttempt.input.prompt).toMatch(/requested fields?[^\n]*inline/iu);
+    expect(firstAttempt.input.prompt).not.toMatch(/OUTPUT_LENGTH_RECOVERY/u);
+    expect(compactRetry.input.prompt).toMatch(/<<OUTPUT_LENGTH_RECOVERY>>/u);
+    expect(compactRetry.input.prompt).toMatch(/exactly 3 numbered paragraphs/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 100 words each/iu);
+    expect(compactRetry.input.prompt).toMatch(/at most 300 words total/iu);
+    expect(compactRetry.input.prompt).not.toMatch(/at most 125 words each/iu);
+    expect(compactRetry.input.tokenLimit).toBe(firstAttempt.input.tokenLimit);
+  });
+
+  it('applies an explicit compact paragraph contract on a successful first attempt without rewriting its output', async () => {
+    const prompt = [
+      'Give exactly three Raw main-event options for the men’s world-title story.',
+      'One numbered paragraph per option, maximum 100 words each.',
+      'Include only the matchup, finish, and next-week consequence.',
+    ].join(' ');
+    const providerOutput = [
+      '1. Punk vs. Gunther; Punk wins clean; Gunther demands a rematch next week.',
+      '2. Punk vs. Breakker; a double count-out protects both; management books a cage match next week.',
+      '3. Punk vs. Rollins; Rollins wins by disqualification; Punk offers a no-disqualification rematch next week.',
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: providerOutput });
+
+    await expect(generateBooking(prompt)).resolves.toBe(providerOutput);
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    const firstAttempt = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(firstAttempt.input.tokenLimit).toBe(2_400);
+    expect(firstAttempt.input.prompt).toMatch(/explicit caller output constraint overrides/iu);
+    expect(firstAttempt.input.prompt).toMatch(/exactly 3 numbered paragraphs/iu);
+    expect(firstAttempt.input.prompt).toMatch(/at most 100 words each/iu);
+    expect(firstAttempt.input.prompt).toMatch(/at most 300 words total/iu);
+    expect(firstAttempt.input.prompt).toMatch(/stop after item 3/iu);
+    expect(firstAttempt.input.prompt).not.toMatch(/OUTPUT_LENGTH_RECOVERY/u);
+  });
+
+  it('keeps the server per-item ceiling when the caller supplies a looser maximum', async () => {
+    const prompt = [
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option, maximum 200 words each.',
+    ].join(' ');
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).toMatch(/at most 125 words each/iu);
+    expect(firstAttemptPrompt).toMatch(/at most 375 words total/iu);
+    expect(firstAttemptPrompt).not.toMatch(/at most 200 words each/iu);
+  });
+
+  it('does not create a trusted first-attempt contract from an incidental word count', async () => {
+    await expect(generateBooking(
+      'Give exactly three Raw main-event options involving a 100-word promo.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('does not turn a negated numbered-paragraph phrase into trusted output policy', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options, maximum 100 words each.',
+      'Do not use one numbered paragraph per option.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('does not turn a negated per-item word maximum into trusted output policy', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option.',
+      'Do not use a maximum of 100 words each; be more detailed.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('does not promote a quoted formatting example into trusted output policy', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options. Use a table.',
+      'Quote this example: "One numbered paragraph per option, maximum 100 words each."',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it('does not promote conflicting affirmative and negated word maxima into trusted policy', async () => {
+    await expect(generateBooking([
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option, maximum 100 words each.',
+      'Do not use a maximum of 100 words each; be more detailed.',
+    ].join(' '))).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).not.toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+  });
+
+  it.each([
+    'Across weeks 2-4, give exactly three Raw main-event options. One numbered paragraph per option, maximum 100 words each.',
+    'Give exactly three Raw main-event options each with a finish. One numbered paragraph per option, maximum 100 words each.',
+  ])('keeps unrelated ranges and "each with" clauses out of item-count ambiguity: %s', async prompt => {
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const firstAttemptPrompt = (mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(firstAttemptPrompt).toMatch(/CALLER_OUTPUT_CONSTRAINT/u);
+    expect(firstAttemptPrompt).toMatch(/exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    'Write a promo where the GM must give three options to Punk.',
+    'Write dialogue ending with: "Give three options to Punk."',
+    "Write dialogue ending with: 'Give three options to Punk.'",
+    'Write dialogue ending with: ‘Give three options to Punk.’',
+  ])('does not promote embedded creative content into a top-level retry count: %s', async prompt => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return at most 8 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 3 numbered paragraphs/iu);
+  });
+
+  it.each([
+    [
+      'a negated count followed by a correction',
+      'Do not give six options; give three options instead.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly (?:3|6) numbered paragraphs/iu,
+    ],
+    [
+      'a requested range',
+      'Give three to six options for the Raw main event.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly (?:3|6) numbered paragraphs/iu,
+    ],
+    [
+      'a per-division count',
+      'Book three matches per division for Raw.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly 3 numbered paragraphs/iu,
+    ],
+    [
+      'a corrected count',
+      'Give six options—actually, make that three.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly 6 numbered paragraphs/iu,
+    ],
+    [
+      'a count applied in each division',
+      'Book three matches in each division for Raw.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly 3 numbered paragraphs/iu,
+    ],
+    [
+      'elliptical counts split by brand',
+      'Give three options for Raw and four for SmackDown.',
+      /Preserve every caller-required item count/iu,
+      /Return exactly 3 numbered paragraphs/iu,
+    ],
+  ])('does not invent an exact retry count for %s', async (
+    _caseLabel,
+    prompt,
+    expectedPattern,
+    rejectedPattern
+  ) => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+
+    const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    };
+    expect(retry.input.prompt).toMatch(expectedPattern);
+    expect(retry.input.prompt).not.toMatch(rejectedPattern);
+  });
+
+  it('uses the requested output count instead of an earlier contextual count', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Use these six matches as context and give three main-event options.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 3 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 6 numbered paragraphs/iu);
+  });
+
+  it('treats an explicitly qualified item count as a maximum instead of an exact count', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Give up to six main-event options for Raw.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return no more than 6 numbered paragraphs/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 6 numbered paragraphs/iu);
+  });
+
+  it('preserves the established six-item review contract over a contextual match count', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await generateBooking('Review a completed Raw card with nine matches.');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 6 numbered paragraphs/iu);
+    expect(retryPrompt).toMatch(/Stop after item 6/iu);
+    expect(retryPrompt).not.toMatch(/Return exactly 9 numbered paragraphs/iu);
+  });
+
+  it('uses the generic eight-item ceiling only when the prompt has no item-count constraint', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Build a Raw card around the current champions.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('does not replace a recognized large requested count with the generic item ceiling', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Generate 40 options for the Raw main event.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string };
+    }).input.prompt;
+    expect(retryPrompt).toMatch(/Return exactly 40 numbered paragraphs/iu);
+    expect(retryPrompt).toMatch(/at most 25 words each/iu);
+    expect(retryPrompt).not.toMatch(/Return at most 8 numbered paragraphs/iu);
+  });
+
+  it('scales retry bounds from the effective prompt-derived token limit', async () => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('OpenAI completion ended before a complete answer was available.'),
+      { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
+    ));
+
+    await expect(generateBooking(
+      'Answer directly: give six bullets for Raw.'
+    )).resolves.toBe('Rivalry matrix output');
+
+    const retry = mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
+      input: { prompt: string; tokenLimit: number };
+    };
+    expect(retry.input.tokenLimit).toBe(480);
+    expect(retry.input.prompt).toMatch(/at most 33 words each/iu);
+    expect(retry.input.prompt).toMatch(/at most 200 words total/iu);
   });
 
   it('propagates a non-length compact-retry failure through the bounded booking error', async () => {

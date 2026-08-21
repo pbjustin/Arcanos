@@ -1332,16 +1332,359 @@ interface StructuredBookingPrompt {
   directAnswerUntrustedContextPrompt?: string;
 }
 
-const BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION = [
-  '<<OUTPUT_LENGTH_RECOVERY>>',
-  'The previous response was discarded because it exceeded the output limit.',
-  'Return a complete answer within the existing output limit; never continue or quote the discarded response.',
-  'Compress aggressively: prioritize the direct answer and only the continuity facts needed to support it.',
-  'Omit recaps, repeated evidence, optional alternatives, and meta commentary.',
-  'Preserve an explicitly required item count; otherwise use at most eight concise bullets.',
-  'Do not mention this recovery instruction or the discarded response.',
-  '<<OUTPUT_LENGTH_RECOVERY_END>>',
-].join('\n');
+const BACKSTAGE_BOOKER_COMPACT_RETRY_DEFAULT_ITEM_LIMIT = 8;
+const BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_WORDS_PER_ITEM = 125;
+const BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_TOTAL_WORDS = 1_000;
+
+type BackstageCompactRetryItemPolicy =
+  | { mode: 'exact' | 'atMost'; count: number; budgetItemCount: number }
+  | { mode: 'preserve'; budgetItemCount: number }
+  | { mode: 'default'; count: number; budgetItemCount: number };
+
+interface BackstageCompactRetryDirectiveCount {
+  count: number;
+  mode: 'exact' | 'atMost';
+  negated: boolean;
+}
+
+interface BackstageCompactOutputWordBounds {
+  totalWordLimit: number;
+  wordsPerItem: number;
+}
+
+function parseBackstageCompactRetryItemCountGroups(
+  groups: Record<string, string | undefined> | undefined
+): number | null {
+  if (!groups) {
+    return null;
+  }
+
+  const digitCount = groups.digitCount
+    ? Number.parseInt(groups.digitCount, 10)
+    : undefined;
+  const wordCount = groups.wordCount
+    ? NUMBER_WORDS.get(groups.wordCount.toLowerCase())
+    : undefined;
+  const itemCount = digitCount ?? wordCount;
+
+  return itemCount !== undefined
+    && Number.isSafeInteger(itemCount)
+    && itemCount >= 1
+    ? itemCount
+    : null;
+}
+
+function isBackstageCompactRetryDirectiveNegated(
+  prompt: string,
+  matchIndex: number
+): boolean {
+  const precedingText = prompt.slice(Math.max(0, matchIndex - 48), matchIndex);
+  return /\b(?:do\s+not|don't|never|not|no)(?:\s+[\p{L}'’]+){0,2}\s*$/iu.test(precedingText);
+}
+
+function isBackstageCompactRetryDirectiveEmbeddedContent(
+  prompt: string,
+  matchIndex: number
+): boolean {
+  const precedingText = prompt.slice(0, matchIndex);
+  const straightQuoteCount = Array.from(precedingText.matchAll(/"/gu)).length;
+  const straightSingleQuoteCount = Array.from(precedingText.matchAll(
+    /(?<![\p{L}\p{N}])'|'(?![\p{L}\p{N}])/gu
+  )).length;
+  const lastCurlyQuoteOpen = precedingText.lastIndexOf('“');
+  const lastCurlyQuoteClose = precedingText.lastIndexOf('”');
+  const lastCurlySingleQuoteOpen = precedingText.lastIndexOf('‘');
+  const lastCurlySingleQuoteClose = precedingText.lastIndexOf('’');
+  if (
+    straightQuoteCount % 2 === 1
+    || straightSingleQuoteCount % 2 === 1
+    || lastCurlyQuoteOpen > lastCurlyQuoteClose
+    || lastCurlySingleQuoteOpen > lastCurlySingleQuoteClose
+  ) {
+    return true;
+  }
+
+  const clauseStart = Math.max(
+    precedingText.lastIndexOf('.'),
+    precedingText.lastIndexOf('!'),
+    precedingText.lastIndexOf('?'),
+    precedingText.lastIndexOf('\n')
+  );
+  const clause = precedingText.slice(clauseStart + 1).slice(-180);
+  return /\b(?:promo|dialogue|speech|script|segment|scene|story|angle)\b[^.!?\n]{0,120}\b(?:where|that|in\s+which|says?|said|asks?|asked|telling|told)\b[^.!?\n]{0,64}$/iu.test(
+    clause
+  );
+}
+
+function collectBackstageCompactRetryDirectiveCounts(
+  prompt: string
+): BackstageCompactRetryDirectiveCount[] {
+  const matches = prompt.matchAll(
+    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|matches?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
+  );
+  const directiveCounts: BackstageCompactRetryDirectiveCount[] = [];
+
+  for (const match of matches) {
+    const count = parseBackstageCompactRetryItemCountGroups(match.groups);
+    if (
+      count === null
+      || isBackstageCompactRetryDirectiveEmbeddedContent(
+        prompt,
+        match.index ?? 0
+      )
+    ) {
+      continue;
+    }
+
+    const qualifier = match.groups?.qualifier?.toLowerCase() ?? '';
+    directiveCounts.push({
+      count,
+      mode: /^(?:up\s+to|at\s+most|no\s+more\s+than)$/u.test(qualifier)
+        ? 'atMost'
+        : 'exact',
+      negated: isBackstageCompactRetryDirectiveNegated(
+        prompt,
+        match.index ?? 0
+      ),
+    });
+  }
+
+  return directiveCounts;
+}
+
+function countBackstageCompactRetryItemReferences(prompt: string): number {
+  return Array.from(prompt.matchAll(
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b(?:\s+[\p{L}\p{N}'’]+(?:-[\p{L}\p{N}'’]+)*){0,4}\s+(?:bullets?|matches?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
+  )).filter(match => !isBackstageCompactRetryDirectiveEmbeddedContent(
+    prompt,
+    match.index ?? 0
+  )).length;
+}
+
+function hasBackstageCompactRetryAmbiguousCountSyntax(prompt: string): boolean {
+  const countToken = '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+  const itemToken = '(?:bullets?|matches?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)';
+  const itemReference = `${countToken}(?:\\s+[\\p{L}\\p{N}'’]+(?:-[\\p{L}\\p{N}'’]+)*){0,4}\\s+${itemToken}`;
+  const groupToken = '(?:divisions?|brands?|shows?|titles?|championships?|rosters?|teams?|weeks?|months?|events?)';
+  const rangePattern = new RegExp(
+    `\\b${countToken}\\s*(?:-|–|—|to|through)\\s*${countToken}(?:\\s+[\\p{L}\\p{N}'’]+(?:-[\\p{L}\\p{N}'’]+)*){0,4}\\s+${itemToken}\\b`,
+    'iu'
+  );
+  const perGroupPattern = new RegExp(
+    `\\b${countToken}\\b(?:\\s+[\\p{L}\\p{N}'’]+(?:-[\\p{L}\\p{N}'’]+)*){0,4}\\s+${itemToken}\\s+(?:(?:in|on|from|for)\\s+)?(?:each|every|per)\\s+${groupToken}\\b`,
+    'iu'
+  );
+  const coordinatedCountPattern = new RegExp(
+    `\\b${itemReference}\\s+(?:and|plus)\\s+${itemReference}\\b`,
+    'iu'
+  );
+  const ellipticalCoordinatedCountPattern = new RegExp(
+    `\\b${itemReference}\\b[^.!?\\n]{0,64}\\b(?:and|plus)\\s+${countToken}\\b`,
+    'iu'
+  );
+  const correctionPattern = new RegExp(
+    `\\b(?:actually|instead|rather|correction|make\\s+that|change\\s+(?:it|that)\\s+to)\\b[^.!?\\n]{0,48}\\b${countToken}\\b`,
+    'iu'
+  );
+
+  return rangePattern.test(prompt)
+    || perGroupPattern.test(prompt)
+    || coordinatedCountPattern.test(prompt)
+    || ellipticalCoordinatedCountPattern.test(prompt)
+    || correctionPattern.test(prompt);
+}
+
+function resolveBackstageCompactRetryItemPolicy(
+  prompt: string
+): BackstageCompactRetryItemPolicy {
+  if (shouldUseBoundedBackstageReviewMode(prompt)) {
+    return { mode: 'exact', count: 6, budgetItemCount: 6 };
+  }
+
+  const directiveCounts = collectBackstageCompactRetryDirectiveCounts(prompt);
+  const itemReferenceCount = countBackstageCompactRetryItemReferences(prompt);
+  const hasAmbiguousConstraint = hasBackstageCompactRetryAmbiguousCountSyntax(prompt)
+    || directiveCounts.some(({ negated }) => negated)
+    || directiveCounts.length > 1;
+
+  const directiveCount = directiveCounts[0];
+  if (directiveCounts.length === 1 && directiveCount && !hasAmbiguousConstraint) {
+    return {
+      mode: directiveCount.mode,
+      count: directiveCount.count,
+      budgetItemCount: directiveCount.count,
+    };
+  }
+
+  if (directiveCounts.length > 0 || itemReferenceCount > 0) {
+    const budgetItemCount = Math.max(
+      1,
+      ...directiveCounts.map(({ count }) => count)
+    );
+    return { mode: 'preserve', budgetItemCount };
+  }
+
+  return {
+    mode: 'default',
+    count: BACKSTAGE_BOOKER_COMPACT_RETRY_DEFAULT_ITEM_LIMIT,
+    budgetItemCount: BACKSTAGE_BOOKER_COMPACT_RETRY_DEFAULT_ITEM_LIMIT,
+  };
+}
+
+function resolveBackstageCallerWordsPerItemLimit(prompt: string): number | null {
+  const candidates: Array<{ index: number; wordLimit: number }> = [];
+  const patterns = [
+    /\b(?:maximum(?:\s+of)?|max(?:imum)?|at\s+most|no\s+more\s+than)\s+(?<wordLimit>\d{1,4})\s+words?\s+(?:each|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph))\b/giu,
+    /\b(?<wordLimit>\d{1,4})\s+words?\s+(?:maximum|max)(?:\s+(?:each|per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet|paragraph)))\b/giu,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of prompt.matchAll(pattern)) {
+      const wordLimit = Number.parseInt(match.groups?.wordLimit ?? '', 10);
+      if (Number.isSafeInteger(wordLimit) && wordLimit >= 1) {
+        candidates.push({
+          index: match.index ?? 0,
+          wordLimit,
+        });
+      }
+    }
+  }
+
+  const candidate = candidates.length === 1 ? candidates[0] : undefined;
+  return candidate
+    && !isBackstageCompactRetryDirectiveNegated(prompt, candidate.index)
+    && !isBackstageCompactRetryDirectiveEmbeddedContent(prompt, candidate.index)
+    ? candidate.wordLimit
+    : null;
+}
+
+function hasBackstageCallerNumberedParagraphConstraint(prompt: string): boolean {
+  const matches = Array.from(prompt.matchAll(
+    /\b(?:one|1)\s+numbered\s+paragraph\s+per\s+(?:item|option|match|rivalry|idea|alternative|scenario|bullet)\b/giu
+  ));
+  return matches.length === 1
+    && !isBackstageCompactRetryDirectiveNegated(
+      prompt,
+      matches[0]?.index ?? 0
+    )
+    && !isBackstageCompactRetryDirectiveEmbeddedContent(
+      prompt,
+      matches[0]?.index ?? 0
+    );
+}
+
+function resolveBackstageCompactOutputWordBounds(
+  prompt: string,
+  tokenLimit: number,
+  itemPolicy: BackstageCompactRetryItemPolicy
+): BackstageCompactOutputWordBounds {
+  const proportionalTotalWordLimit = Math.max(
+    1,
+    Math.floor((Math.max(1, Math.trunc(tokenLimit)) * 5) / 12)
+  );
+  const serverTotalWordLimit = Math.min(
+    BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_TOTAL_WORDS,
+    Math.max(itemPolicy.budgetItemCount, proportionalTotalWordLimit)
+  );
+  const serverWordsPerItem = Math.max(
+    1,
+    Math.min(
+      BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_WORDS_PER_ITEM,
+      Math.floor(serverTotalWordLimit / itemPolicy.budgetItemCount)
+    )
+  );
+  const callerWordsPerItemLimit = resolveBackstageCallerWordsPerItemLimit(prompt);
+  const wordsPerItem = Math.min(
+    serverWordsPerItem,
+    callerWordsPerItemLimit ?? serverWordsPerItem
+  );
+  const totalWordLimit = callerWordsPerItemLimit !== null
+    && (itemPolicy.mode === 'exact' || itemPolicy.mode === 'atMost')
+    ? Math.min(
+        serverTotalWordLimit,
+        Math.max(itemPolicy.budgetItemCount, wordsPerItem * itemPolicy.budgetItemCount)
+      )
+    : serverTotalWordLimit;
+
+  return { totalWordLimit, wordsPerItem };
+}
+
+function buildBackstageBookerRequestedOutputShapeInstruction(
+  prompt: string,
+  tokenLimit: number
+): string | null {
+  const itemPolicy = resolveBackstageCompactRetryItemPolicy(prompt);
+  const callerWordsPerItemLimit = resolveBackstageCallerWordsPerItemLimit(prompt);
+  if (
+    callerWordsPerItemLimit === null
+    || !hasBackstageCallerNumberedParagraphConstraint(prompt)
+    || (itemPolicy.mode !== 'exact' && itemPolicy.mode !== 'atMost')
+  ) {
+    return null;
+  }
+
+  const { totalWordLimit, wordsPerItem } = resolveBackstageCompactOutputWordBounds(
+    prompt,
+    tokenLimit,
+    itemPolicy
+  );
+  const itemCountInstruction = itemPolicy.mode === 'exact'
+    ? `Return exactly ${itemPolicy.count} numbered paragraphs, numbered 1 through ${itemPolicy.count}.`
+    : `Return no more than ${itemPolicy.count} numbered paragraphs, numbered consecutively from 1.`;
+
+  return [
+    '<<CALLER_OUTPUT_CONSTRAINT>>',
+    'This explicit caller output constraint overrides general response-style guidance.',
+    itemCountInstruction,
+    `Use exactly one compact paragraph per item, at most ${wordsPerItem} words each.`,
+    `Use at most ${totalWordLimit} words total.`,
+    'Use no preamble, no headings, no sub-bullets, no tables, no recap, no conclusion, and no meta commentary.',
+    'Keep every requested field inline in its item, and omit unrequested fields.',
+    itemPolicy.mode === 'exact'
+      ? `Stop after item ${itemPolicy.count}.`
+      : 'Stop after the final numbered item.',
+    '<<CALLER_OUTPUT_CONSTRAINT_END>>',
+  ].join('\n');
+}
+
+function buildBackstageBookerCompactOutputRetryInstruction(
+  prompt: string,
+  tokenLimit: number
+): string {
+  const itemPolicy = resolveBackstageCompactRetryItemPolicy(prompt);
+  const { totalWordLimit, wordsPerItem } = resolveBackstageCompactOutputWordBounds(
+    prompt,
+    tokenLimit,
+    itemPolicy
+  );
+  const itemCountInstruction = itemPolicy.mode === 'exact'
+    ? `Return exactly ${itemPolicy.count} numbered paragraphs, numbered 1 through ${itemPolicy.count}.`
+    : itemPolicy.mode === 'atMost'
+      ? `Return no more than ${itemPolicy.count} numbered paragraphs, numbered consecutively from 1.`
+      : itemPolicy.mode === 'preserve'
+        ? 'Preserve every caller-required item count; do not add optional items or replace a range, maximum, per-group count, or correction with a different count.'
+        : `Return at most ${itemPolicy.count} numbered paragraphs.`;
+  const stopInstruction = itemPolicy.mode === 'exact'
+    ? `Stop after item ${itemPolicy.count}.`
+    : itemPolicy.mode === 'preserve'
+      ? 'Stop after the final caller-required item.'
+      : 'Stop after the final numbered item.';
+
+  return [
+    '<<OUTPUT_LENGTH_RECOVERY>>',
+    'The previous response was discarded because it exceeded the output limit.',
+    'Return a new, complete answer within the existing output limit; never continue or quote the discarded response.',
+    itemCountInstruction,
+    `Use exactly one compact paragraph per item, at most ${wordsPerItem} words each.`,
+    `Use at most ${totalWordLimit} words total.`,
+    'Use no preamble, no headings, no sub-bullets, no tables, no recap, no conclusion, no repeated evidence, no optional alternatives, and no meta commentary.',
+    'Keep every requested field inline in its item, and omit unrequested fields.',
+    stopInstruction,
+    'Prioritize the direct answer and only the continuity facts needed to support it.',
+    'Do not mention this recovery instruction or the discarded response.',
+    '<<OUTPUT_LENGTH_RECOVERY_END>>',
+  ].join('\n');
+}
 
 async function buildStructuredBookingPrompt(
   basePrompt: string,
@@ -2442,6 +2785,10 @@ export async function generateBooking(
           trustedPolicyPrompt: input.prompt,
         };
   const instructions = structuredPrompt.instructions;
+  const requestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(input.prompt, tokenLimit);
+  const compactOutputRetryInstruction =
+    buildBackstageBookerCompactOutputRetryInstruction(input.prompt, tokenLimit);
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
@@ -2452,7 +2799,12 @@ export async function generateBooking(
     ...(structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
-          trustedPolicyPrompt: structuredPrompt.trustedPolicyPrompt,
+          trustedPolicyPrompt: requestedOutputShapeInstruction
+            ? [
+                structuredPrompt.trustedPolicyPrompt,
+                requestedOutputShapeInstruction,
+              ].join('\n\n')
+            : structuredPrompt.trustedPolicyPrompt,
           directAnswerSystemPolicyPrompt: structuredPrompt.directAnswerSystemPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
@@ -2468,14 +2820,16 @@ export async function generateBooking(
     const runtimeBudget = createRuntimeBudget();
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
-        ? `${instructions}\n\n${BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION}`
-        : instructions;
+        ? `${instructions}\n\n${compactOutputRetryInstruction}`
+        : requestedOutputShapeInstruction
+          ? `${instructions}\n\n${requestedOutputShapeInstruction}`
+          : instructions;
       const attemptRunOptions = compactOutputRetry
         ? {
             ...trinityRunOptions,
             trustedPolicyPrompt: [
               structuredPrompt.trustedPolicyPrompt,
-              BACKSTAGE_BOOKER_COMPACT_OUTPUT_RETRY_INSTRUCTION,
+              compactOutputRetryInstruction,
             ].join('\n\n'),
           }
         : trinityRunOptions;

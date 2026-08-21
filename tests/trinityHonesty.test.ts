@@ -215,6 +215,61 @@ describe('Trinity honesty controls', () => {
     expect(outputControls.intentMode).toBe('EXECUTE_TASK');
   });
 
+  it('does not misread a per-item word ceiling as a destructive global word limit', () => {
+    const userPrompt = [
+      'Give exactly three Raw main-event options.',
+      'One numbered paragraph per option, maximum 100 words each.',
+      'Include only the matchup, finish, and next-week consequence.',
+      'Use at most 300 words total.',
+    ].join(' ');
+    const outputControls = deriveTrinityOutputControls(userPrompt, {
+      answerMode: 'direct',
+      strictUserVisibleOutput: true,
+    });
+    const providerOutput = [1, 2, 3]
+      .map(index => (
+        `${index}. ${Array.from(
+          { length: 40 },
+          (_, wordIndex) => `option${index}detail${wordIndex + 1}`
+        ).join(' ')}.`
+      ))
+      .join('\n');
+
+    expect(countWords(providerOutput)).toBeGreaterThan(100);
+    expect(countWords(providerOutput)).toBeLessThan(300);
+    expect(outputControls.maxWords).toBeNull();
+
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: providerOutput,
+      userPrompt,
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: createDefaultTrinityReasoningHonesty(),
+    });
+
+    expect(countWords(enforcementResult.text)).toBe(countWords(providerOutput));
+    expect(enforcementResult.text).toMatch(/(?:^|\s)1\.\s/u);
+    expect(enforcementResult.text).toMatch(/\s2\.\s/u);
+    expect(enforcementResult.text).toMatch(/\s3\.\s/u);
+  });
+
+  it.each([
+    'Answer under 80 words each.',
+    'Use no more than 80 words per option.',
+    'Keep every match within 80 words per match.',
+    'Use an 80-word max per paragraph.',
+    'Apply an 80 word limit per bullet.',
+  ])('does not derive a global maxWords control from per-item wording: %s', prompt => {
+    expect(deriveTrinityOutputControls(prompt, {}).maxWords).toBeNull();
+  });
+
+  it.each([
+    'Answer under 80 words per response.',
+    'Use maximum 80 words per answer.',
+  ])('retains valid global word limits with a response-level qualifier: %s', prompt => {
+    expect(deriveTrinityOutputControls(prompt, {}).maxWords).toBe(80);
+  });
+
   it.each([
     'Generate a prompt for Codex to update my documentation in my repo.',
     'Write instructions for another agent to inspect the repo and verify the API responses.',
