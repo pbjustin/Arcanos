@@ -503,10 +503,9 @@ last-edited timestamps twice, sanitizes only after child discovery, chunks
 Unicode text and Markdown tables, and embeds bounded chunks. A candidate with
 an inaccessible child, malformed child link, provider truncation, unknown
 block, database, or unsupported media/file block is incomplete and is never
-activated. The currently confirmed `WWE universe mode` tree is 18 pages with
-text and Markdown tables and no binary attachments, so it is covered by this
-extractor. Future attachments require an explicit bounded extractor before a
-complete replacement snapshot can activate.
+activated. A configured tree containing only supported text and Markdown tables
+is covered by this extractor. Attachments require an explicit bounded extractor
+before a complete replacement snapshot can activate.
 
 Complete pages and chunks are written to immutable, universe-scoped snapshot
 tables. One transaction rechecks the sync lease, drains legacy writes, inserts

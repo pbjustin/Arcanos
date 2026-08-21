@@ -9,6 +9,41 @@ Action credential also establishes request-local authorization for scoped
 Notion-authoritative continuity queries and optional read-only Notion context
 during booking generation; these share the existing Builder operation count.
 
+## What Backstage Booker does for you
+
+Backstage Booker is a universe-scoped professional wrestling creative desk,
+continuity reference, and match simulator. Treat each `universeId` like a
+separate save file: it selects the roster, events, story beats, saved prose,
+typed canon, or Notion snapshot that belongs to that wrestling universe. The ID
+selects data only; it is not proof of identity, ownership, or authorization.
+Here, "booking" means planning wrestling cards and stories, not scheduling
+venues, tickets, or calendar appointments.
+
+| What you want to do | Operation | What changes |
+| --- | --- | --- |
+| Ask what is currently true in a Notion-authoritative universe | `runBackstageBooker` with `queryContinuity` | Reads the authoritative Notion snapshot; does not change Backstage universe or canon state. |
+| Plan a show, feud, promo, turn, match finish, or longer arc | `runBackstageBooker` with `generateBooking` | Generates a proposal from one universe snapshot; does not make it canon. |
+| Generate a plan and critique it | `runBackstageBooker` with `generateBookingWithHRC` | Adds HRC fidelity, resilience, and verdict fields; does not make it canon. |
+| Test a matchup | `runBackstageBooker` with `simulateMatch` | Runs a ratings-weighted, randomized simulation; does not record the result in Backstage universe state. |
+| Inspect stored non-Notion state | `getBackstageUniverse` or `getBackstageStoryline` | Reads bounded PostgreSQL state; does not generate or save. |
+| Create or extend durable typed canon in a PostgreSQL-authoritative, non-Notion universe | `writeBackstageCanon` | Writes only after ChatGPT displays its consequential-action Allow/Deny banner. |
+
+Normal creative responses use the Kay "Spotlight" Morales veteran-booker
+persona. HRC is a model-based critique signal, not proof that a creative answer
+is objectively correct. Match simulation is game-like rather than predictive.
+Base odds come from 0-100 wrestler ratings, and an optional modifier can change
+them. If at least one eligible third wrestler exists, there is a 10% chance that
+one of them interferes; an interference shifts the first wrestler's win
+probability by 15 percentage points in either direction. The winner and 1.0-5.0
+match rating are randomized.
+
+The backend module has ten actions in total. The Builder contract intentionally
+exposes only the four operations below. Its generation actions do not persist
+their proposals as Backstage universe or canon records; in the Builder
+contract, saving a suggestion as canon is a separate operation. The older
+`/backstage/book-gpt` compatibility route is different because it explicitly
+generates and then saves, so it remains a protected mutation.
+
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
@@ -127,7 +162,9 @@ existing backend confirmation contract.
 `universeId` only selects the durable data scope. It is not authentication,
 authorization, tenant identity, or proof that the caller owns that universe.
 
-## Optional Notion generation context
+## Notion integration
+
+### Supplemental generation context (legacy mode)
 
 This legacy supplement is backend-only at the operation level and does not add
 a fifth operation. Schema `1.4.0` must nevertheless be re-imported because it
@@ -179,9 +216,9 @@ App or add a fifth Action operation. Keep Apps disabled and keep the existing
 Action bearer. Configure the same closed
 `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` mapping on web and worker, and
 the outbound read-content-only Notion token on the worker. The worker follows
-the configured `WWE universe mode` root through all direct child pages,
-including blank navigation pages so later content is discovered automatically,
-then atomically promotes one complete immutable retrieval snapshot.
+each configured root through all direct child pages, including blank navigation
+pages so later content is discovered automatically, then atomically promotes
+one complete immutable retrieval snapshot.
 
 For an authoritative universe, the saved Action bearer is mandatory on
 `runBackstageBooker`: unauthenticated continuity queries and generation fail
@@ -221,14 +258,225 @@ never source excerpts or raw Notion page IDs.
 never enters the worker job queue. The worker maintains retrieval snapshots;
 it does not answer or resume continuity queries.
 
+#### Send a Notion continuity query to the backend
+
+Use this wire-level guide for a direct backend client or when verifying what the
+Builder Action sends. Use `queryContinuity` for facts, current state, results,
+champions, and continuity reviews. Use `generateBooking` only when the requested
+output is a new creative proposal. Merely naming a Notion page in `query` does
+not scope retrieval; send `retrievalScope` when the page boundary matters.
+
+Send an HTTP `POST` to the canonical route with the dedicated Backstage bearer:
+
+```http
+POST /gpt/backstage-booker HTTP/1.1
+Host: acranos-production.up.railway.app
+Authorization: Bearer <dedicated-backstage-bearer>
+Content-Type: application/json
+```
+
+Never place the literal bearer in source, a saved script, command history,
+screenshots, logs, or chat. Load it through the approved secret-management flow.
+The closed request envelope requires `action`, `executionMode`, and `payload`;
+do not add unrelated top-level or payload fields. A minimal universe-wide
+relevance query is:
+
+```json
+{
+  "action": "queryContinuity",
+  "executionMode": "sync",
+  "payload": {
+    "universeId": "your-exact-universe-id",
+    "query": "Who currently holds the world championship?",
+    "retrievalMode": "relevant"
+  }
+}
+```
+
+`retrievalMode` may be omitted because `relevant` is the default. `universeId`
+and `query` may not be omitted. `queryContinuity` is
+synchronous and request-local, so always send `executionMode: "sync"` and never
+look for an asynchronous job result.
+
+In PowerShell 7, the following helper uses a bearer already loaded into the
+process environment without printing it or putting its value in command-line
+arguments. `-SkipHttpErrorCheck` keeps the backend's bounded JSON error envelope
+available so the helper can report its sanitized code:
+
+```powershell
+$bookerUrl = 'https://acranos-production.up.railway.app/gpt/backstage-booker'
+$bookerToken = $env:ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN
+if ([string]::IsNullOrWhiteSpace($bookerToken)) {
+  throw 'Load ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN out of band.'
+}
+$bookerHeaders = @{ Authorization = ('Bearer {0}' -f $bookerToken) }
+
+function Invoke-BackstageContinuity(
+  [System.Collections.IDictionary] $Payload
+) {
+  $bookerRequest = [ordered]@{
+    action = 'queryContinuity'
+    executionMode = 'sync'
+    payload = $Payload
+  }
+  $bookerBody = $bookerRequest | ConvertTo-Json -Depth 10
+  $bookerResult = Invoke-RestMethod `
+    -Method Post `
+    -Uri $bookerUrl `
+    -Headers $bookerHeaders `
+    -ContentType 'application/json' `
+    -Body $bookerBody `
+    -SkipHttpErrorCheck
+  if ($bookerResult.ok -ne $true) {
+    $bookerErrorCode = [string] $bookerResult.error.code
+    if ([string]::IsNullOrWhiteSpace($bookerErrorCode)) {
+      $bookerErrorCode = [string] $bookerResult.error
+    }
+    if ([string]::IsNullOrWhiteSpace($bookerErrorCode)) {
+      $bookerErrorCode = 'UNKNOWN_BACKSTAGE_ERROR'
+    }
+    throw "Backstage query failed: $bookerErrorCode"
+  }
+  $bookerResult
+}
+
+$bookerResponse = Invoke-BackstageContinuity ([ordered]@{
+  universeId = 'your-exact-universe-id'
+  query = 'Who currently holds the world championship?'
+  retrievalMode = 'relevant'
+})
+$bookerResponse.result
+```
+
+Do not inspect or print `$bookerToken` or `$bookerHeaders`. On success, read the
+answer from `result.answer`, not from the top level. `result.coverage` describes
+what the response actually covered, and `result.sources` contains bounded,
+sanitized provenance rather than source text or raw Notion page IDs.
+
+##### Choose the retrieval scope
+
+| Requested boundary | Fields to send |
+| --- | --- |
+| Search the mapped universe | Omit `retrievalScope` intentionally. |
+| One exact page | Send `pageTitle`; add the full `pagePath`, including the selected page, when duplicate titles need disambiguation. `scopeKind: "page"` is optional because it is the default. |
+| One heading and its descendant headings on that page | Use page scope and add the exact `sectionPath`. |
+| One parent page and every descendant page | Set `scopeKind: "subtree"`. It excludes siblings and must not include `sectionPath`. |
+
+An exact section request looks like this:
+
+```json
+{
+  "action": "queryContinuity",
+  "executionMode": "sync",
+  "payload": {
+    "universeId": "your-exact-universe-id",
+    "query": "Summarize the current championship picture on Monday Night Raw.",
+    "retrievalScope": {
+      "pageTitle": "Monday Night Raw",
+      "pagePath": ["Your Universe", "Brands", "Monday Night Raw"],
+      "scopeKind": "page",
+      "sectionPath": ["Championships"]
+    },
+    "retrievalMode": "relevant"
+  }
+}
+```
+
+For the selected parent plus its descendant pages, change the scope to:
+
+```json
+{
+  "pageTitle": "Monday Night Raw",
+  "pagePath": ["Your Universe", "Brands", "Monday Night Raw"],
+  "scopeKind": "subtree"
+}
+```
+
+Never send a Notion page ID or URL. A missing exact page or section returns
+`404`. Duplicate page titles can return `409`; add the full exact `pagePath`.
+If repeated headings still make a section ambiguous, query the containing page
+or parent section, or distinguish the headings in Notion. Do not silently merge
+them.
+
+##### Traverse a complete scope
+
+Use `relevant` for a fast, bounded best-match sample. Use `complete_scope` when
+the client must visit every chunk in the mapped universe, page, section, or
+subtree. Start without `cursor`. While `result.coverage.hasMore` is `true`,
+resend the exact same `universeId`, `query`, `retrievalScope`, and
+`retrievalMode`, changing only the cursor to `result.coverage.nextCursor`.
+
+```powershell
+$bookerPayload = [ordered]@{
+  universeId = 'your-exact-universe-id'
+  query = 'List every current champion on Monday Night Raw.'
+  retrievalScope = [ordered]@{
+    pageTitle = 'Monday Night Raw'
+    pagePath = @('Your Universe', 'Brands', 'Monday Night Raw')
+    scopeKind = 'page'
+    sectionPath = @('Championships')
+  }
+  retrievalMode = 'complete_scope'
+}
+
+$bookerPages = [System.Collections.Generic.List[object]]::new()
+do {
+  $bookerResponse = Invoke-BackstageContinuity $bookerPayload
+  $bookerPages.Add($bookerResponse.result)
+  if ($bookerResponse.result.coverage.hasMore) {
+    $bookerNextCursor = $bookerResponse.result.coverage.nextCursor
+    if ([string]::IsNullOrWhiteSpace($bookerNextCursor)) {
+      throw 'The response set hasMore without returning nextCursor.'
+    }
+    $bookerPayload['cursor'] = $bookerNextCursor
+  }
+} while ($bookerResponse.result.coverage.hasMore)
+```
+
+Do not decode, edit, cache for a later traversal, or transfer the opaque cursor
+outside that unchanged traversal. Its binding includes the exact query, scope,
+mode, and active snapshot. On
+`BACKSTAGE_NOTION_CURSOR_INVALID`, discard the entire collected traversal and
+restart the same request without a cursor.
+
+`coverage.exhaustive: true` means the entire scope fit in that single first
+response. In a multi-response `complete_scope` traversal, each response remains
+`status: "sampled"` and `exhaustive: false`, including the final response. The
+evidence for a completed traversal is an uninterrupted, unchanged cursor chain
+from the cursor-free first request through a response with `hasMore: false`.
+Retain every answer and its sources; do not sum `omittedChunks`, because it is a
+per-response comparison with the whole scope rather than a remaining-item
+counter.
+
+##### Handle the response or error
+
+| Status | Meaning and safe next step |
+| --- | --- |
+| `200` | Read `result.answer`, `result.coverage`, and `result.sources`. Do not infer more coverage than the metadata supports. An answer ending in `...[truncated]` was shortened by transport projection and is not a complete answer. |
+| `400` | The closed request envelope or action payload is invalid. Correct the request shape. |
+| `404` | The exact page or section was not found. Correct the title, full path, or section path. |
+| `409` | The scope is ambiguous or the cursor is invalid/stale. Disambiguate the scope, or discard a failed traversal and restart cursor-free. |
+| `429` | The request budget was exceeded. Honor `Retry-After`. |
+| `500` | The continuity answer or bounded output could not be completed. Do not present partial output or substitute legacy data. |
+| `503` | Dedicated-bearer provenance is missing or unverified, the Notion authority latch cannot be resolved, or the authoritative index is unavailable or stale. Correct authentication or configuration when applicable; otherwise retry later. Never fall back to PostgreSQL or process memory. |
+| `504` | The synchronous route deadline expired. Report the timeout; a narrower user-approved query may be appropriate. |
+
+The protocol and OpenAPI schemas model source and resolved-scope paths as
+segment arrays and permit longer answer strings. The current generic `/gpt`
+response guard can summarize nested path arrays, cap the source list, and
+truncate individual strings to 4 KiB of UTF-8 with an `...[truncated]` marker
+before serialization. `coverage` describes retrieval completeness, not
+transport completeness. Treat `sources` as opaque provenance, and never present
+a marked answer as complete, until that route projection and schema are aligned.
+
 Booker retrieves selected excerpts from one verified snapshot; Notion facts
 are authoritative but Notion text never gains instruction, tool, persistence,
 or formatting authority. When one unambiguous request explicitly requires a
 numbered paragraph per item and supplies a per-item word maximum, the first
 generation receives that compact output contract after the general response
-style. Those instructions preserve the tighter caller maximum, request fields
-inline, omit unrequested fields, and target a total bounded by the requested
-item count. Answer generation makes exactly one compact retry
+style. Those instructions preserve a tighter caller maximum, keep explicitly
+requested fields inline, omit unrequested fields, and target a total bounded by
+the requested item count. Answer generation makes exactly one compact retry
 only after provider max-output exhaustion, reusing the same retrieval and
 budget. That retry requests one numbered paragraph per requested item, no headings
 or sub-bullets, and keeps explicitly requested fields inline. It allows at most
@@ -257,11 +505,11 @@ For `simulateMatch`, provide `payload.rosters` with explicit numeric overall
 ratings; the RAG reader does not infer ratings from prose or use the
 quarantined legacy roster.
 
-The current 18-page hierarchy contains supported text and Markdown tables and
-no binary attachments. Future unsupported media, file, database, truncated,
-unknown, inaccessible, or malformed descendant content blocks replacement
-activation instead of silently producing a partial authority snapshot. A
-stale or missing active snapshot returns `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`;
+Authority snapshots support bounded text and Markdown tables. Unsupported media
+or file blocks, databases, provider-truncated content, unknown block types, and
+inaccessible or malformed descendants prevent replacement activation instead
+of silently producing a partial authority snapshot. A stale or missing active
+snapshot returns `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`;
 the GPT must report temporary authority-index unavailability and must not claim
 that legacy canon is current. A snapshot built before the current heading-aware
 index format is also rejected until the worker rebuilds and activates it.
@@ -317,9 +565,9 @@ generateBookingWithHRC, and simulateMatch.
 Always keep executionMode set to "sync" for runBackstageBooker, as required by
 the Action schema.
 
-For a Notion-authoritative universe, including my-universe-2k26, use
-queryContinuity for factual retrieval and continuity reviews. Send the exact
-universeId and full question in payload.query. Set retrievalScope.pageTitle to
+For a Notion-authoritative universe, use queryContinuity for factual retrieval
+and continuity reviews. Send the exact universeId and full question in
+payload.query. Set retrievalScope.pageTitle to
 the exact page and add pagePath only for duplicate titles. scopeKind defaults
 to page; page scope may use sectionPath for one exact heading subtree. Use
 scopeKind subtree only for the exact parent plus all descendant pages; it
@@ -332,11 +580,14 @@ while coverage.hasMore is true, repeat the unchanged universeId, query,
 retrievalScope, and retrievalMode with coverage.nextCursor. Treat sampled
 status, positive omitted chunk/page counts, promptTruncated, or hasMore as a
 completeness limit. Only subtree results have resolvedScope.scopeKind and
-scopePages, selectedPages, and omittedPages. Never claim exhaustive unless
-coverage.exhaustive is true. Sources are opaque provenance with no excerpts or
-raw page IDs. On BACKSTAGE_NOTION_CURSOR_INVALID, discard collected pages and
-restart cursor-free; version-2 cursors from before schema 1.4.0 are invalid.
-Never queue queryContinuity.
+scopePages, selectedPages, and omittedPages. Never call one response exhaustive
+unless coverage.exhaustive is true. A successful unchanged cursor chain from a
+cursor-free first request through hasMore false completes a multi-response
+traversal even though each response remains sampled and non-exhaustive. Retain
+every page and do not sum omitted counts. Sources are opaque provenance with no
+excerpts or raw page IDs. On BACKSTAGE_NOTION_CURSOR_INVALID, discard collected
+pages and restart cursor-free; version-2 cursors from before schema 1.4.0 are
+invalid. Never queue queryContinuity.
 
 Use generateBooking or generateBookingWithHRC for booking work and put the
 complete request in payload.prompt. Notion-derived facts are authoritative,

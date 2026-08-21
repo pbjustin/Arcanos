@@ -447,10 +447,12 @@ revision-6 legacy state. Put the reviewed authority root mapping on the already
 compatible web service first, without a web Notion token, and verify its exact
 universe guard is active. Then put the identical mapping plus the read-content
 Notion token on the already compatible worker and enable its sync loop. Keep
-the authoritative universe out of the legacy page supplement. For the initial
-`WWE universe mode` cutover, set `initialMinimumPageCount` to `18` and verify one
-worker cycle activates a complete 18-page snapshot with no unsupported/error
-count, the current heading-index format, and a fresh verification timestamp.
+the authoritative universe out of the legacy page supplement. For each initial
+cutover, set `initialMinimumPageCount` to the independently reviewed reachable
+page count (for example, `18` for a reviewed 18-page hierarchy). Verify one
+worker cycle activates a complete snapshot that meets that floor, reports zero
+unsupported blocks and zero errors, uses the current heading-index format, and
+has a fresh verification timestamp.
 Existing heading-empty snapshots from before this format intentionally fail
 closed until the worker rebuilds and activates a compatible snapshot; do not
 patch them or relax the reader. Do not use the ordinary paired

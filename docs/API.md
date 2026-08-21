@@ -404,8 +404,12 @@ enforcement.
 
 Backstage generation and simulation actions remain public through the
 canonical GPT and compatibility writing routes: `generateBooking`,
-`generateBookingWithHRC`, and `simulateMatch`. `queryContinuity` is registered
-on the module surfaces, but Notion-authoritative execution requires the
+`generateBookingWithHRC`, and `simulateMatch`. On the canonical GPT route these
+three actions return proposals or simulated results without persisting them as
+Backstage universe or canon records;
+the compatibility `/backstage/book-gpt` route is separately protected because
+it generates and then saves. `queryContinuity` is registered on the module
+surfaces, but Notion-authoritative execution requires the
 dedicated bearer provenance established only by canonical
 `POST /gpt/backstage-booker`; compatibility aliases fail closed instead of
 falling back to legacy state. The state-changing module actions
@@ -573,6 +577,9 @@ nonretryable `BACKSTAGE_CONTINUITY_QUERY_FAILED` error.
 Readers also reject snapshots from before the current heading-aware index
 format with `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`; the worker must rebuild and
 activate a compatible snapshot before continuity reads resume.
+Copyable request bodies, PowerShell examples, scope recipes, cursor-loop
+semantics, and the response/error guide are maintained in
+[BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md#send-a-notion-continuity-query-to-the-backend).
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation
@@ -584,9 +591,9 @@ snapshot activation. Existing `getBackstageUniverse` and
 `409 BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`; they never relabel old canon
 as Notion data. Match simulation accepts an explicitly supplied numeric roster
 but does not infer ratings from retrieved prose or fall back to the old roster.
-The current text/table-only 18-page WWE hierarchy is supported. A later file,
-image, audio, video, PDF, database, unknown block, or inaccessible descendant
-prevents replacement activation until an explicit extractor exists.
+Authority snapshots support bounded text and Markdown tables. A file, image,
+audio, video, PDF, database, unknown block, or inaccessible descendant prevents
+replacement activation until an explicit extractor exists.
 
 The first successful activation also stores a durable PostgreSQL authority
 head. Removing the environment mapping cannot downgrade that head or reopen

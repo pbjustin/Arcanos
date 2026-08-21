@@ -183,12 +183,22 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 ## Custom GPT Catalog
 
 ### Backstage Booker
-**What it is:** A pro wrestling booking assistant that handles event scheduling, roster updates, storyline tracking, match simulation, and GPT-generated booking narratives. It is implemented as the `BACKSTAGE:BOOKER` module and exposes multiple actions for booking workflows. (`src/services/backstage-booker.ts`) (`src/routes/backstage.ts`)
+
+**What it is:** A pro wrestling creative and continuity assistant for card
+planning, event recording, roster updates, storyline tracking, ratings-based
+match simulation, and GPT-generated booking narratives. It is not a ticket,
+venue, or calendar scheduler. It is implemented as the `BACKSTAGE:BOOKER` module
+and exposes multiple actions for booking workflows.
+(`src/services/backstage-booker.ts`) (`src/routes/backstage.ts`)
 
 **Known GPT IDs:** `backstage-booker`, `backstage`. The catalog registers `backstage-booker.ts` at route `backstage-booker`, and both declared GPT IDs map to that route. (`src/services/backstage-booker.ts`) (`src/services/moduleCatalog.ts`)
 
 **Available actions (via `/gpt/<gpt-id>`):**
-- Public continuity/generation/simulation: `queryContinuity`, `simulateMatch`,
+- Authenticated Notion-authoritative continuity: `queryContinuity`, only on
+  exact canonical `POST /gpt/backstage-booker`; compatibility IDs do not carry
+  the dedicated bearer provenance
+- Generation and simulation that do not mutate Backstage universe state:
+  `simulateMatch`,
   `generateBooking`, `generateBookingWithHRC`
 - Operator mutations: `bookEvent`, `updateRoster`, `trackStoryline`,
   `saveStoryline`, `upsertStoryline`, `appendCanonBeat`
@@ -359,10 +369,10 @@ payload/result fields and declares the bearer and authority-specific errors;
 deploy it first, then re-import it into the existing Builder Action before
 validating this mode.
 
-See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for exact
-Builder, instruction, security-tradeoff, rotation, and rollback guidance. Never
-put the credential in the imported schema, GPT instructions, chat, source, or
-logs.
+See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the
+end-user action guide, exact Notion backend-query examples, Builder instructions,
+security tradeoff, rotation, and rollback guidance. Never put the credential in
+the imported schema, GPT instructions, chat, source, or logs.
 
 ### Arcanos Gaming
 **What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities. (`src/services/arcanos-gaming.ts`) (`src/services/gamingModes.ts`)
