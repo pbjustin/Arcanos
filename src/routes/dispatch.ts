@@ -4,6 +4,7 @@ import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import {
   dispatchDagCompatibilityBoundary,
+  dispatchGptIdentifierBoundary,
   resolveDispatchLaneForRequest,
 } from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
 import { backstageMutationHttpBoundary } from '@services/controlPlane/backstageMutationHttpBoundary.js';
@@ -360,6 +361,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
 router.post(
   '/dispatch',
   dispatchDagCompatibilityBoundary,
+  dispatchGptIdentifierBoundary,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
   universalDispatch

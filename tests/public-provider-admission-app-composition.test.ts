@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import type { NextFunction, Request, Response } from 'express';
 import { afterAll, describe, expect, it, jest } from '@jest/globals';
 
@@ -210,11 +212,100 @@ function addRotatedCallerMetadata(
 }
 
 describe('public provider admission in the production application composition', () => {
+  it('places the dispatch GPT identifier boundary before admission and the GPT leaf', () => {
+    const appSource = readFileSync(new URL('../src/app.ts', import.meta.url), 'utf8');
+    const broadParserIndex = appSource.indexOf('app.use(express.json');
+    const appDispatchPathIndex = appSource.indexOf("'/dispatch',", broadParserIndex);
+    const appDagBoundaryIndex = appSource.indexOf(
+      'dispatchDagCompatibilityBoundary',
+      appDispatchPathIndex,
+    );
+    const appGptIdentifierBoundaryIndex = appSource.indexOf(
+      'dispatchGptIdentifierBoundary',
+      appDispatchPathIndex,
+    );
+    const appBackstageBoundaryIndex = appSource.indexOf(
+      'backstageMutationHttpBoundary',
+      appDispatchPathIndex,
+    );
+    const providerAdmissionIndex = appSource.indexOf(
+      'app.use(publicProviderAdmission)',
+      appDispatchPathIndex,
+    );
+
+    expect(broadParserIndex).toBeGreaterThanOrEqual(0);
+    expect(appDispatchPathIndex).toBeGreaterThan(broadParserIndex);
+    expect(appDagBoundaryIndex).toBeGreaterThan(appDispatchPathIndex);
+    expect(appGptIdentifierBoundaryIndex).toBeGreaterThan(appDagBoundaryIndex);
+    expect(appBackstageBoundaryIndex).toBeGreaterThan(appGptIdentifierBoundaryIndex);
+    expect(providerAdmissionIndex).toBeGreaterThan(appBackstageBoundaryIndex);
+
+    const dispatchRouteSource = readFileSync(
+      new URL('../src/routes/dispatch.ts', import.meta.url),
+      'utf8',
+    );
+    const routerDispatchPathIndex = dispatchRouteSource.lastIndexOf("'/dispatch',");
+    const routerDagBoundaryIndex = dispatchRouteSource.indexOf(
+      'dispatchDagCompatibilityBoundary',
+      routerDispatchPathIndex,
+    );
+    const routerGptIdentifierBoundaryIndex = dispatchRouteSource.indexOf(
+      'dispatchGptIdentifierBoundary',
+      routerDispatchPathIndex,
+    );
+    const routerBackstageBoundaryIndex = dispatchRouteSource.indexOf(
+      'backstageMutationHttpBoundary',
+      routerDispatchPathIndex,
+    );
+    const universalDispatchIndex = dispatchRouteSource.indexOf(
+      'universalDispatch',
+      routerDispatchPathIndex,
+    );
+
+    expect(routerDispatchPathIndex).toBeGreaterThanOrEqual(0);
+    expect(routerDagBoundaryIndex).toBeGreaterThan(routerDispatchPathIndex);
+    expect(routerGptIdentifierBoundaryIndex).toBeGreaterThan(routerDagBoundaryIndex);
+    expect(routerBackstageBoundaryIndex).toBeGreaterThan(routerGptIdentifierBoundaryIndex);
+    expect(universalDispatchIndex).toBeGreaterThan(routerBackstageBoundaryIndex);
+  });
+
   it('shares one hierarchical ceiling without charging health, control, or DAG lanes', async () => {
     const app = createApp();
     app.set('trust proxy', (address: string) => (
       address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
     ));
+
+    const oversizedDispatchGptId = 'x'.repeat(257);
+    const readyRouteCallsBeforeInvalidId = routeGptRequestMock.mock.calls.length;
+    const readyResolveCallsBeforeInvalidId = resolveGptRoutingMock.mock.calls.length;
+    const readyInvalidDispatchResponse = await addRotatedCallerMetadata(
+      request(app).post('/dispatch'),
+      '01',
+    ).send({
+      target: 'gpt',
+      gptId: oversizedDispatchGptId,
+      action: 'query',
+      prompt: 'Reject this identifier before ready admission capacity is consumed.',
+    });
+
+    expect(readyInvalidDispatchResponse.status).toBe(400);
+    expect(readyInvalidDispatchResponse.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(readyInvalidDispatchResponse.headers['cache-control']).toBe('no-store');
+    expect(readyInvalidDispatchResponse.body).toEqual(expect.objectContaining({
+      ok: false,
+      target: 'gpt',
+      routeFamily: 'dispatch',
+      gptId: 'invalid',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+    }));
+    expect(JSON.stringify(readyInvalidDispatchResponse.body)).not.toContain(
+      oversizedDispatchGptId,
+    );
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(readyRouteCallsBeforeInvalidId);
+    expect(resolveGptRoutingMock).toHaveBeenCalledTimes(readyResolveCallsBeforeInvalidId);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const healthResponse = await request(app).get('/healthz');
@@ -368,6 +459,35 @@ describe('public provider admission in the production application composition', 
     expect(deniedResearchResponse.headers['retry-after']).toBeTruthy();
     expect(deniedResearchResponse.headers['cache-control']).toBe('no-store');
     expect(researchMock).toHaveBeenCalledTimes(1);
+
+    const exhaustedRouteCallsBeforeInvalidId = routeGptRequestMock.mock.calls.length;
+    const exhaustedResolveCallsBeforeInvalidId = resolveGptRoutingMock.mock.calls.length;
+    const exhaustedInvalidDispatchResponse = await addRotatedCallerMetadata(
+      request(app).post('/dispatch'),
+      '65',
+    ).send({
+      target: 'gpt',
+      gptId: oversizedDispatchGptId,
+      action: 'query',
+      prompt: 'Reject this identifier while provider admission is already exhausted.',
+    });
+
+    expect(exhaustedInvalidDispatchResponse.status).toBe(400);
+    expect(exhaustedInvalidDispatchResponse.headers['x-ratelimit-bucket']).toBeUndefined();
+    expect(exhaustedInvalidDispatchResponse.headers['cache-control']).toBe('no-store');
+    expect(exhaustedInvalidDispatchResponse.body).toEqual(expect.objectContaining({
+      ok: false,
+      gptId: 'invalid',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+    }));
+    expect(JSON.stringify(exhaustedInvalidDispatchResponse.body)).not.toContain(
+      oversizedDispatchGptId,
+    );
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(exhaustedRouteCallsBeforeInvalidId);
+    expect(resolveGptRoutingMock).toHaveBeenCalledTimes(exhaustedResolveCallsBeforeInvalidId);
 
     const deniedDirectDiagnosticAction = await addRotatedCallerMetadata(
       request(app).post('/gpt/arcanos-core'),

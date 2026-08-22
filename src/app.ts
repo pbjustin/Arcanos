@@ -71,6 +71,7 @@ import {
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
   dispatchDagCompatibilityBoundary,
+  dispatchGptIdentifierBoundary,
 } from '@services/controlPlane/dispatchDagCompatibilityBoundary.js';
 import {
   backstageMutationHttpBoundary,
@@ -301,6 +302,7 @@ export function createApp(): Express {
   app.post(
     '/dispatch',
     dispatchDagCompatibilityBoundary,
+    dispatchGptIdentifierBoundary,
     backstageMutationHttpBoundary,
     backstageMutationConfirmationGate,
     dispatchResearchGptAdmissionBoundary
