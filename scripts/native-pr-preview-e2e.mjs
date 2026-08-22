@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 123;
+const MAX_REQUESTS = 126;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -416,6 +416,24 @@ function mcpBodyCapCase(caseId, fixtureName, status) {
     method: 'POST',
     path: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
     pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
+    role: 'web',
+  };
+}
+
+function dispatchGptIdentifierCase(caseId, fixtureName, status) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: status,
+    expectedType: 'dispatch-gpt-identifier-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
     role: 'web',
   };
 }
@@ -837,6 +855,16 @@ export function buildNativePrPreviewRequestPlan() {
       'mcp-body-cap-effective-limits',
       'effectiveLimits',
       200
+    ),
+    dispatchGptIdentifierCase(
+      'dispatch-gpt-identifier-maximum-length',
+      'maximumLength',
+      200
+    ),
+    dispatchGptIdentifierCase(
+      'dispatch-gpt-identifier-oversized',
+      'oversized',
+      400
     ),
     selfHealApprovalCase(
       'self-heal-approval-denied-outcomes',
@@ -1322,6 +1350,20 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'POST',
       path: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.mcpBodyCap.path,
+      role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.fixtures
+            .oversized,
+      },
+      caseId: 'worker-dispatch-gpt-identifier-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
       role: 'worker',
     },
     {
@@ -2697,6 +2739,53 @@ function expectedGamingSourcePayload(requestCase) {
   }
 }
 
+const DISPATCH_GPT_IDENTIFIER_TIMESTAMP_SENTINEL =
+  '<validated-iso-8601-timestamp>';
+
+function expectedDispatchGptIdentifierContractPayload(requestCase) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
+  if (requestCase.fixtureName === 'maximumLength') {
+    return {
+      accepted: true,
+      actionCodeUnits: contract.actionLength,
+      boundaryContinued: true,
+      fixture: contract.fixtures.maximumLength,
+      gptIdCodeUnits: contract.gptIdLengths.maximum,
+      nextCalls: 1,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      quotaBoundaryReached: false,
+      schemaVersion: 1,
+    };
+  }
+  if (requestCase.fixtureName !== 'oversized') {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  const correlation = nativePrPreviewCaseCorrelation(requestCase);
+  return {
+    ok: false,
+    error: {
+      code: 'BAD_REQUEST',
+      message: 'gptId too long',
+    },
+    _route: {
+      requestId: correlation.requestId,
+      traceId: correlation.traceId,
+      gptId: 'invalid',
+      timestamp: DISPATCH_GPT_IDENTIFIER_TIMESTAMP_SENTINEL,
+    },
+    target: 'gpt',
+    routeFamily: 'dispatch',
+    gptId: 'invalid',
+    executionMode: 'gpt',
+    _dispatch: {
+      target: 'gpt',
+      executionMode: 'gpt',
+      reason: 'explicit_target_gpt',
+    },
+  };
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
   if (
     requestCase.expectedType === 'health'
@@ -2807,6 +2896,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedBackstageGenerationContractPayload(requestCase);
     case 'mcp-body-cap-contract':
       return expectedMcpBodyCapContractPayload(requestCase);
+    case 'dispatch-gpt-identifier-contract':
+      return expectedDispatchGptIdentifierContractPayload(requestCase);
     case 'self-heal-approval-contract':
       return expectedSelfHealApprovalContractPayload(requestCase);
     case 'gaming-canary':
@@ -2844,6 +2935,44 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
 
   const body = parseJsonBody(bodyText, requestCase.caseId);
+  if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
+    if (
+      bodyText.includes(contract.actionMarker)
+      || bodyText.includes('x'.repeat(contract.gptIdLengths.oversized))
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_REFLECTION',
+        requestCase.caseId
+      );
+    }
+    if (requestCase.fixtureName === 'oversized') {
+      const timestamp = body?._route?.timestamp;
+      let timestampValid = false;
+      if (typeof timestamp === 'string') {
+        try {
+          timestampValid = new Date(timestamp).toISOString() === timestamp;
+        } catch {
+          timestampValid = false;
+        }
+      }
+      if (!timestampValid) {
+        fail(
+          'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_TIMESTAMP_INVALID',
+          requestCase.caseId
+        );
+      }
+      const normalizedBody = {
+        ...body,
+        _route: {
+          ...body._route,
+          timestamp: DISPATCH_GPT_IDENTIFIER_TIMESTAMP_SENTINEL,
+        },
+      };
+      requireExactJson(normalizedBody, expectedBody, requestCase.caseId);
+      return;
+    }
+  }
   requireExactJson(body, expectedBody, requestCase.caseId);
 }
 
@@ -2985,7 +3114,10 @@ async function executeRequestCase(
     }
   }
   if (
-    requestCase.expectedType === 'gaming-source'
+    (
+      requestCase.expectedType === 'gaming-source'
+      || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+    )
     && response.headers.get('pragma') !== 'no-cache'
   ) {
     fail('NATIVE_PR_PREVIEW_NO_CACHE_MISSING', requestCase.caseId);
@@ -2997,6 +3129,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'backstage-storyline-contract'
       || requestCase.expectedType === 'backstage-generation-contract'
+      || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
     )
     && response.headers.get(
@@ -3004,6 +3137,28 @@ async function executeRequestCase(
     ) !== NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value
   ) {
     fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
+  }
+  if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
+    const maximumLength = requestCase.fixtureName === 'maximumLength';
+    if (
+      response.headers.get(contract.proofHeaders.actionLength)
+        !== String(contract.actionLength)
+      || response.headers.get(contract.proofHeaders.gptIdLength)
+        !== String(
+          maximumLength
+            ? contract.gptIdLengths.maximum
+            : contract.gptIdLengths.oversized
+        )
+      || response.headers.get(contract.proofHeaders.nextCalls)
+        !== (maximumLength ? '1' : '0')
+      || response.headers.has('x-response-truncated')
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
 
   const bodyBytes = await readBoundedResponseBody(
@@ -3020,6 +3175,15 @@ async function executeRequestCase(
     ) {
       fail('NATIVE_PR_PREVIEW_BOUNDED_RESPONSE_INVALID', requestCase.caseId);
     }
+  }
+  if (
+    requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+    && bodyBytes.length > 2 * 1024
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_RESPONSE_TOO_LARGE',
+      requestCase.caseId
+    );
   }
   validateResponseBody(requestCase, bodyBytes, options);
   if (

@@ -57,6 +57,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
+  'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+  'src/shared/dispatch/universalDispatch.ts',
+  'src/shared/gpt/gptIdentifier.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
@@ -273,6 +276,15 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     'src/shared/gpt/gptJobResult.ts',
     new Map([
       ['zod', new Set(['z:z'])],
+    ]),
+  ],
+  [
+    'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+    new Map([
+      [
+        'express',
+        new Set(['Request:Request', 'RequestHandler:RequestHandler']),
+      ],
     ]),
   ],
   [
@@ -634,6 +646,18 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageReviewContract.ts',
     'e413bf2b84f358cc6dce8ad1ff39bfd9c4322629b55acbd94b74d2582ce6dcd5',
+  ],
+  [
+    'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+    '5554111d8b6bfd0dba409d1fec6b0abc3c36d5a7a3fb0fa2368fda0c1231c69f',
+  ],
+  [
+    'src/shared/dispatch/universalDispatch.ts',
+    'e3ebb2cae5501b419712013b7f64c69faaddcd876f9b6672f666b18ad3040883',
+  ],
+  [
+    'src/shared/gpt/gptIdentifier.ts',
+    'fb0047bf8bc554e33c217bf47fae59ced14507ce0facf9039acee55b4ed6d3bb',
   ],
   [
     'src/shared/hrcEvaluationPolicy.ts',

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T05:30:24.839Z",
+  "generatedAt": "2026-08-22T03:31:24.823Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2448,6 +2448,9 @@
         },
         {
           "relativePath": "src/shared/dag/dagExecutionRouting.ts"
+        },
+        {
+          "relativePath": "src/shared/dispatch/dispatchGptIdentifierBoundary.ts"
         },
         {
           "relativePath": "src/shared/dispatch/universalDispatch.ts"
