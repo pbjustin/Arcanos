@@ -229,6 +229,14 @@ module-action schema family, not Arcanos protocol command IDs, so they do not
 add entries to either protocol command-ID list. The raw-string
 `generateBooking` response remains accepted for existing callers while the
 structured response shape carries `universeId` when used.
+Every non-literal `generateBooking` run, including the booking generated before
+`generateBookingWithHRC` evaluates it, receives a mandatory server-owned CLEAR
+system policy. The model silently drafts, reviews Clarity, Leverage,
+Efficiency, Alignment, and Resilience, revises weak areas, and returns only the
+final booking or review. This changes neither response contract nor persistence
+behavior and adds no score, threshold gate, ActionPlan decision, or separate
+booking-generation call. Recognized exact-literal requests still bypass model
+generation.
 
 `upsertStoryline` provides version-fenced typed storyline aggregates;
 `appendCanonBeat` records immutable beats, append-only retcons, and atomic

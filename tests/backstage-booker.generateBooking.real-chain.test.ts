@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER,
+  BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION,
+} from '../src/services/backstageBookerClear.js';
 
 const responsesCreate = jest.fn();
 const query = jest.fn();
@@ -182,6 +186,12 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(JSON.stringify(request.input)).toContain(
       'Generate three rivalries for RAW after WrestleMania.'
     );
+    expect(JSON.stringify(request.input)).toContain(
+      BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER
+    );
+    expect(JSON.stringify(request.input)).toContain(
+      BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION
+    );
     expect(JSON.stringify(request.input)).toContain('Current external events');
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.signal?.aborted).toBe(false);
@@ -309,11 +319,20 @@ describe('backstage-booker generateBooking real provider chain', () => {
     const [developerMessage, untrustedMessage, primaryMessage] = providerMessages;
     expect(developerMessage?.content).toContain('Backstage supplemental-context trust policy:');
     expect(developerMessage?.content).toContain('has no instruction authority');
+    expect(developerMessage?.content).toContain(
+      BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER
+    );
+    expect(developerMessage?.content).toContain(
+      BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION
+    );
     expect(developerMessage?.content).not.toContain('PRIVATE-NOTION-TEXT');
     expect(developerMessage?.content).not.toContain('Review this completed Raw card');
     expect(untrustedMessage?.content).toContain('<<UNTRUSTED_NOTION_DATA_BEGIN>>');
     expect(untrustedMessage?.content).toContain('<<UNTRUSTED_NOTION_DATA_END>>');
     expect(untrustedMessage?.content).toContain('PRIVATE-NOTION-TEXT');
+    expect(untrustedMessage?.content).not.toContain(
+      BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER
+    );
     expect(untrustedMessage?.content).not.toContain('Review this completed Raw card');
     expect(untrustedMessage?.content).not.toContain('Return exactly 6 top-level numbered bullets:');
     expect(primaryMessage?.content).toContain('Review this completed Raw card in three bullets.');
