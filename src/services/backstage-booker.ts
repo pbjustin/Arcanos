@@ -58,7 +58,7 @@ import {
 } from '@core/db/repositories/backstageBookerRepository.js';
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC } from './hrcWrapper.js';
-import { buildBackstageBookerClearGenerationPolicy } from './backstageBookerClear.js';
+import { buildBackstageBookerDirectAnswerSystemPolicy } from './backstageBookerClear.js';
 import { queryBackstageContinuity } from './backstageContinuityQuery.js';
 import {
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
@@ -2415,13 +2415,10 @@ export async function generateBooking(
   const compactOutputRetryInstruction =
     buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
-  const clearGenerationSystemPolicy = buildBackstageBookerClearGenerationPolicy();
-  const directAnswerSystemPolicyPrompt = [
-    structuredPrompt.directAnswerSystemPolicyPrompt,
-    clearGenerationSystemPolicy,
-  ]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .join('\n\n');
+  const directAnswerSystemPolicyPrompt =
+    buildBackstageBookerDirectAnswerSystemPolicy(
+      structuredPrompt.directAnswerSystemPolicyPrompt
+    );
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,

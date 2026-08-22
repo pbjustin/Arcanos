@@ -54,6 +54,10 @@ const BACKSTAGE_REVIEW_CONTRACT_URL = new URL(
   '../src/shared/backstage/backstageReviewContract.ts',
   import.meta.url
 );
+const BACKSTAGE_BOOKER_CLEAR_URL = new URL(
+  '../src/services/backstageBookerClear.ts',
+  import.meta.url
+);
 const BACKSTAGE_COMPACT_OUTPUT_CONTRACT_URL = new URL(
   '../src/shared/backstage/backstageCompactOutputContract.ts',
   import.meta.url
@@ -169,6 +173,11 @@ async function readUniverseReadProjectionSource() {
 
 async function readBackstageReviewContractSource() {
   return (await readFile(BACKSTAGE_REVIEW_CONTRACT_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageBookerClearSource() {
+  return (await readFile(BACKSTAGE_BOOKER_CLEAR_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -466,6 +475,28 @@ describe('native PR preview import boundary', () => {
         ])
       );
     }
+  });
+
+  it('admits and pins the pure Backstage CLEAR policy composer', async () => {
+    const filePath = 'src/services/backstageBookerClear.ts';
+    const sourceText = await readBackstageBookerClearSource();
+
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(
+      'src/services/backstage-booker.ts'
+    );
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+
+    const weakenedPolicy = replaceRequired(
+      sourceText,
+      'Return only the final booking or review.',
+      'Return the draft and final booking or review.'
+    );
+    expect(findUnsafeRuntimeSyntax(filePath, weakenedPolicy)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ])
+    );
   });
 
   it('admits and pins the pure Backstage compact retry seam', async () => {

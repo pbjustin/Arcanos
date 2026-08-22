@@ -25,3 +25,20 @@ export function buildBackstageBookerClearGenerationPolicy(): string {
     'Exact literal, fixed-count, brevity, review-output, and factual-authority constraints remain controlling.',
   ].join('\n');
 }
+
+/**
+ * Compose any higher-priority Backstage authority policy with the mandatory
+ * server-owned CLEAR policy used by every provider-backed generation attempt.
+ */
+export function buildBackstageBookerDirectAnswerSystemPolicy(
+  authoritySystemPolicyPrompt?: string
+): string {
+  return [
+    authoritySystemPolicyPrompt,
+    buildBackstageBookerClearGenerationPolicy(),
+  ]
+    .filter((value): value is string =>
+      typeof value === 'string' && value.trim().length > 0
+    )
+    .join('\n\n');
+}
