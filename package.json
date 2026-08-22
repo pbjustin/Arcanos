@@ -301,7 +301,7 @@
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"
     },
     "router": {
-      "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v8.4.0"
+      "path-to-regexp": "8.4.0"
     },
     "@typescript-eslint/typescript-estree": {
       "minimatch": "file:../../vendor/minimatch-9.0.7"
@@ -328,9 +328,14 @@
       "minimatch": "file:../../vendor/minimatch-9.0.7"
     }
   },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "msgpackr-extract@3.0.3": true,
+    "unrs-resolver@1.11.1": true
+  },
   "engines": {
-    "node": ">=20.18.1",
-    "npm": ">=8.0.0"
+    "node": "24.18.1",
+    "npm": "11.16.0"
   },
   "workspaces": [
     "packages/*",

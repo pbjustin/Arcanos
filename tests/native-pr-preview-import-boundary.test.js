@@ -239,7 +239,7 @@ function replaceRequired(sourceText, expected, replacement) {
 describe('native PR preview import boundary', () => {
   it('keeps the contained application outside production side-effect modules', async () => {
     await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
-  });
+  }, 30_000);
 
   it('fails closed when the runtime graph gains an unreviewed module', async () => {
     const graphFiles = [

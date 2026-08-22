@@ -1,8 +1,8 @@
 # Refresh deliberately with:
-# docker buildx imagetools inspect node:20-bookworm-slim
+# docker buildx imagetools inspect node:24.18.1-bookworm-slim
 # Review the upstream change, replace this digest, rebuild, and configure the
 # daemon with the resulting RepoDigest or immutable local image ID.
-FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+FROM node:24.18.1-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

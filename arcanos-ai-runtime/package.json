@@ -24,9 +24,13 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^25.2.3",
+    "@types/node": "^24.3.0",
     "@types/uuid": "^10.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": "24.18.1",
+    "npm": "11.16.0"
   }
 }

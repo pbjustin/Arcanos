@@ -25,36 +25,36 @@ export interface EnvironmentFingerprintRecord {
  */
 export const KNOWN_ENVIRONMENT_FINGERPRINTS: EnvironmentFingerprintRecord[] = [
   {
-    id: 'arc-docker-node-22',
-    label: 'ARCANOS Docker baseline (Node 22.x, Linux x64)',
+    id: 'arc-docker-node-24',
+    label: 'ARCANOS Docker baseline (Node 24.x, Linux x64)',
     platform: 'linux',
     arch: 'x64',
-    nodeMajors: [22],
+    nodeMajors: [24],
     releasePrefixes: ['5', '6'],
     packageVersions: ['1.0.0', '1.1.0']
   },
   {
-    id: 'railway-node-20',
-    label: 'Railway managed deployment (Node 20.x, Linux x64)',
+    id: 'railway-node-24',
+    label: 'Railway managed deployment (Node 24.x, Linux x64)',
     platform: 'linux',
     arch: 'x64',
-    nodeMajors: [20],
+    nodeMajors: [24],
     releasePrefixes: ['5', '6']
   },
   {
-    id: 'dev-macos-node-20',
-    label: 'Local development (macOS, Node 20.x)',
+    id: 'dev-macos-node-24',
+    label: 'Local development (macOS, Node 24.x)',
     platform: 'darwin',
     arch: 'x64',
-    nodeMajors: [20],
+    nodeMajors: [24],
     releasePrefixes: ['22', '23']
   },
   {
     id: 'dev-windows-node-24',
-    label: 'Local development (Windows, Node 20–24.x)',
+    label: 'Local development (Windows, Node 24.x)',
     platform: 'win32',
     arch: 'x64',
-    nodeMajors: [20, 22, 24],
+    nodeMajors: [24],
     releasePrefixes: ['10']
   }
 ];

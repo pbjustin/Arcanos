@@ -6,6 +6,7 @@ import {
   EnvironmentFingerprint
 } from '../src/utils/environmentSecurity.js';
 import type { EnvironmentFingerprintRecord } from '../src/config/environmentFingerprints.js';
+import { KNOWN_ENVIRONMENT_FINGERPRINTS } from '../src/config/environmentFingerprints.js';
 
 describe('environment security utilities', () => {
   test('collectEnvironmentFingerprint provides stable structure', () => {
@@ -15,6 +16,18 @@ describe('environment security utilities', () => {
     expect(typeof fingerprint.nodeMajor).toBe('number');
     expect(typeof fingerprint.hash).toBe('string');
     expect(fingerprint.hash.length).toBeGreaterThan(10);
+  });
+
+  test('known deployment fingerprints admit only the supported Node 24 runtime', () => {
+    expect(KNOWN_ENVIRONMENT_FINGERPRINTS).not.toHaveLength(0);
+    expect(
+      KNOWN_ENVIRONMENT_FINGERPRINTS.map(record => record.nodeMajors)
+    ).toEqual(KNOWN_ENVIRONMENT_FINGERPRINTS.map(() => [24]));
+    expect(
+      KNOWN_ENVIRONMENT_FINGERPRINTS.every(record =>
+        record.id.includes('node-24') && record.label.includes('Node 24.x')
+      )
+    ).toBe(true);
   });
 
   test('matchFingerprint matches compatible record', () => {

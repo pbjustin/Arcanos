@@ -16,10 +16,19 @@ update additionally records the repaired draft candidate for
 unmerged. No credit is assigned for a hosted preview, deployment, live provider
 or database behavior, or production.
 
+This targeted 2026-08-22 update also records the published draft candidate for
+`RUNTIME-NODE-BASELINE-001` in
+[#1457](https://github.com/pbjustin/Arcanos/pull/1457), on exact implementation
+base `8eb958b442cba008f555033ef2de255000b39c97` with published implementation
+commit `80e8cf69367a29f81174e3cb24af8cbebf3fd405`. This is draft-PR evidence only;
+the prior PR entries retain their recorded evidence cutoffs and are not
+re-adjudicated here.
+
 Original audit capture: 2026-07-28
 
-Last reconciled: 2026-08-22 UTC for repaired draft PR #1456; unrelated entries
-retain their prior evidence cutoffs
+Last reconciled: 2026-08-22 UTC for Node 24 runtime-baseline draft PR #1457 on
+exact base `8eb958b442cba008f555033ef2de255000b39c97`; PR #1456 and unrelated entries
+retain their prior recorded evidence cutoffs
 
 This report is advisory evidence. Current tracked source, tests, required CI,
 maintained documentation, and freshly read provider state supersede every
@@ -33,10 +42,12 @@ action. GPT-OSS is explicitly excluded from the active queue.
 - [findings.md](findings.md) is the normalized open/closed finding register
   through audit-scoped product PR #1432, delivery PRs #1428–#1430, and
   documentation-only PR #1431, with the targeted reviewed-PR #1444 dependency
-  remediation update and bounded repaired-draft evidence for PR #1456.
+  remediation update, bounded repaired-draft evidence for PR #1456, and the
+  Node 24 draft-candidate addendum.
 - [evidence.md](evidence.md) is the PR, validation, preview, merge, production,
   and provider-state ledger through product PR #1432 plus the bounded reviewed-PR
-  #1444 dependency evidence and repaired-draft PR #1456 evidence.
+  #1444 dependency evidence, repaired-draft PR #1456 evidence, and the Node 24
+  draft-candidate dossier.
 - [history-through-2026-07-31.md](history-through-2026-07-31.md) preserves the
   former long-form tracked narrative and its dated anchors.
 
@@ -59,6 +70,7 @@ dossier; they should not append another full chronological audit.
 | PR #1433 reviewed implementation evidence | Published implementation commit `63c31baa1bff8d7e1d21035214168012a1e860e7` removes the redundant unchecked `@railway/cli` npm postinstall, installs one checksum-pinned musl binary with bounded retries and both executable names, and supplies the report-only documentation server a masked per-run job-read signing fixture. All surfaced exact-commit CI checks passed |
 | PR #1433 external evidence | Railway Compatibility run [`31626187034`](https://github.com/pbjustin/Arcanos/actions/runs/31626187034), job `94213819744`, verified `railway-cli.tar.gz: OK` and built image `sha256:69ab55f9e73ef4b12f099b0d240f77fbd9ffc534153b32bd34623d93c74cb3fd`. Analyze Documentation Updates [`31626739806`](https://github.com/pbjustin/Arcanos/actions/runs/31626739806) cleared the former startup failure in configured allow-partial mode; it generated zero sections with six dependency failures and no validated proposal. Manually created credential-empty Railway preview `c88804be-b13b-46b0-b860-63304bdd5984` deployed the same commit to successful web/worker roles and passed the sealed 112/112 probe. The PR remains unmerged; none of this promotes #1432 |
 | PR #1456 repaired draft candidate | Merge base `ee5df80e7134471c8e92e8c153d88572d2c97d66`; live `main`/base at review `b925cc963be9191c16092a337f510c069bf1bef9`; initial reviewed head `d0eace9cff51a0626c09256ea73ebfe1d4044353`; repaired implementation `4f8e4d629e7fd89b23b43289d73798c5726fa88b`. Initial-head CI passed but did not validate the review repair. Repaired-head CI/CD run [`32545560057`](https://github.com/pbjustin/Arcanos/actions/runs/32545560057) and `All Checks Complete` job `96965034387` passed. The PR remains a draft and unmerged; no hosted preview, deployment, or production evidence is credited |
+| PR #1457 Node 24 runtime/toolchain draft candidate | Exact base `8eb958b442cba008f555033ef2de255000b39c97`; published implementation `80e8cf69367a29f81174e3cb24af8cbebf3fd405` aligns maintained Railpack/npm, `.nvmrc`, workflow, Docker, daemon-image, workspace, documentation, and test contracts on Node `24.18.1` with bundled npm `11.16.0`. Exact Windows clean-install, native-module, compiled-startup, and bounded-soak evidence is recorded in [evidence.md](evidence.md#draft-pr-1457--node-24-lts-runtimetoolchain-baseline). Broad aggregate Jest completion remains indeterminate because named tests exceeded their local timeouts only under full-suite load and passed when focused. The PR is open and draft; required exact-head CI and review remain outstanding. No Linux/Alpine container, provider, deployment, database, Redis, or production credit is inferred |
 | Latest product slice | Predictive/reactive self-heal approval is closed in merged source but not production-promoted. The contained live policy probe ran at intermediate head `286e7397`, so final-head rollback/rejection corrections retain local-test and CI—not live-preview—credit |
 | Next active implementation slice | Hard versus advisory worker-budget semantics |
 | Explicit exclusion | GPT-OSS remains outside this queue and is not made ready by any result in this report |
@@ -401,9 +413,12 @@ configuration change is credited to #1423.
 ## Active implementation queue
 
 This order supersedes every older queue in the historical narrative.
+The targeted Node runtime candidate is tracked outside the older ranked product
+queue; it does not reorder or close those findings.
 
 | Order | Priority | Slice | Completion contract |
 | --- | --- | --- | --- |
+| Candidate | Targeted maintenance | Node 24 LTS runtime/toolchain baseline | Draft PR #1457 is published. Complete required exact-head CI/review and obtain Linux/Alpine native and Docker evidence in CI or with a disposable daemon before merge; deployment remains separate |
 | 1 | Older ranked | Hard versus advisory worker-budget semantics | Ratify the product semantics, implement them at the authoritative ownership seam, and align readiness/diagnostic claims |
 | 2 | P2 | `/dispatch` GPT-ID validation before quota admission | Repaired draft PR #1456 moves canonical identifier rejection before provider admission and omits unbounded caller-controlled `action` metadata from the fixed rejection. Local regression evidence covers ready, exhausted, and unavailable stores plus a 40,000-character action. Repaired-head review and required CI passed; merge remains required for source closure |
 | 3 | P2 | `/dispatch` parser/auth/admission ordering | Characterize and introduce bounded selector/route parsing before broad parsing without weakening DAG authentication, admission, or unrelated route contracts |

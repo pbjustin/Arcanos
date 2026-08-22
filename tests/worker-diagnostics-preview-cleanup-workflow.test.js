@@ -65,7 +65,7 @@ describe('Railway worker-diagnostics preview cleanup workflow', () => {
   it('uses minimal permissions, a pinned runtime, and one step-scoped cleanup token', () => {
     expect(workflow).toContain('contents: read');
     expect(workflow).toContain('pull-requests: read');
-    expect(workflow).toContain("node-version: '20.19.0'");
+    expect(workflow).toContain("node-version: '24.18.1'");
     expect(workflow).toContain(
       'RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_WORKER_DIAGNOSTICS_CLEANUP_API_TOKEN }}'
     );

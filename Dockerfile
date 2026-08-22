@@ -1,5 +1,10 @@
 # Optimized Railway Dockerfile
-FROM node:20.18.1-alpine
+FROM node:24.18.1-alpine
+
+# Fail closed before dependency installation if the official image toolchain
+# no longer matches the repository's exact Railway runtime contract.
+RUN test "$(node -p 'process.versions.node')" = "24.18.1" && \
+    test "$(npm --version)" = "11.16.0"
 
 # Set production environment
 ENV NODE_ENV=production
