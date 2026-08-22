@@ -78,6 +78,8 @@ function buildMinimalRailwayConfig(overrides = {}) {
 
 function buildMinimalDockerfile() {
   return [
+    'RUN test "$(node -p \'process.versions.node\')" = "24.18.1" && \\',
+    '    test "$(npm --version)" = "11.16.0"',
     'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native',
     'RUN railway_cli_url=https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz',
     'railway_cli_sha256=7dd6633ced5c0ac579cbeb1842bc7e4bc14cfd2d43ea2e3a00b376320f80d1ce',
@@ -503,6 +505,8 @@ describe('validate-railway-compatibility', () => {
       expect.stringContaining(
         'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]'
       ),
+      expect.stringContaining('test "$(node -p \'process.versions.node\')" = "24.18.1"'),
+      expect.stringContaining('test "$(npm --version)" = "11.16.0"'),
       expect.stringContaining('COPY prisma/ ./prisma/'),
       expect.stringContaining('COPY vendor/ ./vendor/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
@@ -521,6 +525,30 @@ describe('validate-railway-compatibility', () => {
     ]);
 
     expect(validateDockerfile(buildMinimalDockerfile())).toEqual([]);
+  });
+
+  it('requires exact Node and npm smoke tests in the Railway Docker image', () => {
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'test "$(node -p \'process.versions.node\')" = "24.18.1"',
+          'test "$(node -p \'process.versions.node\')" = "24.19.0"'
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('must verify the exact Node version'),
+    ]);
+
+    expect(
+      validateDockerfile(
+        buildMinimalDockerfile().replace(
+          'test "$(npm --version)" = "11.16.0"',
+          'test "$(npm --version)" = "11.17.0"'
+        )
+      )
+    ).toEqual([
+      expect.stringContaining('must verify the exact npm version'),
+    ]);
   });
 
   it('rejects unverified Railway CLI installation and post-extraction verification', () => {

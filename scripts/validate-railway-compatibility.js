@@ -33,6 +33,10 @@ const EXPECTED_DRAINING_SECONDS = 60;
 const RAILWAY_DRAINING_SECONDS_VARIABLE = 'RAILWAY_DEPLOYMENT_DRAINING_SECONDS';
 const EXPECTED_DOCKERFILE_CMD =
   'CMD ["node", "scripts/start-railway-service-with-integrity.mjs"]';
+const EXPECTED_DOCKERFILE_NODE_VERSION_SMOKE_TEST =
+  'test "$(node -p \'process.versions.node\')" = "24.18.1"';
+const EXPECTED_DOCKERFILE_NPM_VERSION_SMOKE_TEST =
+  'test "$(npm --version)" = "11.16.0"';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_VENDOR_COPY = 'COPY vendor/ ./vendor/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
@@ -424,6 +428,14 @@ export function validateDockerfile(dockerfileRaw) {
   //audit Assumption: Dockerfile-backed Railway deploys must boot through the same launcher as railway.json; risk: image CMD bypasses service-role logic and starts web instances with worker settings; invariant: Dockerfile CMD points at the shared Railway launcher; handling: fail validation when the launcher command is absent.
   if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_CMD)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_CMD}`);
+  }
+
+  //audit Assumption: the Dockerfile-backed Railway preview must build and run with the same exact toolchain selected by the manifest; risk: a mutable or mistagged base image silently changes Node or bundled npm; invariant: the image fails before dependency installation unless both runtime versions match; handling: reject Dockerfiles without both exact smoke tests.
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_NODE_VERSION_SMOKE_TEST)) {
+    errors.push(`Dockerfile must verify the exact Node version with ${EXPECTED_DOCKERFILE_NODE_VERSION_SMOKE_TEST}`);
+  }
+  if (!dockerfileNonCommentText.includes(EXPECTED_DOCKERFILE_NPM_VERSION_SMOKE_TEST)) {
+    errors.push(`Dockerfile must verify the exact npm version with ${EXPECTED_DOCKERFILE_NPM_VERSION_SMOKE_TEST}`);
   }
 
   //audit Assumption: Railway images that expose Prisma-backed routes must include the schema during build and generate the client before pruning dev tooling; risk: routes importing @prisma/client fail at runtime even though the service boots successfully; invariant: Dockerfile copies prisma/ and runs Prisma client generation; handling: fail validation when either build step is absent.
