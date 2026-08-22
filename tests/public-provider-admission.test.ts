@@ -586,12 +586,14 @@ describe('public provider admission policy', () => {
       app.use(unavailableHandler);
 
       const oversizedGptId = 'x'.repeat(257);
+      const oversizedActionMarker = 'oversized-action-sentinel';
+      const oversizedAction = `${oversizedActionMarker}:${'a'.repeat(40_000)}`;
       const invalidResponse = await request(app)
         .post('/dispatch')
         .send({
           target: 'gpt',
           gptId: oversizedGptId,
-          action: 'query',
+          action: oversizedAction,
           prompt: 'This provider-intended request must stop before admission.',
         });
 
@@ -599,6 +601,7 @@ describe('public provider admission policy', () => {
       expect(invalidResponse.headers['x-ratelimit-bucket']).toBeUndefined();
       expect(invalidResponse.headers['cache-control']).toBe('no-store');
       expect(invalidResponse.headers.pragma).toBe('no-cache');
+      expect(invalidResponse.headers['x-response-truncated']).toBeUndefined();
       expect(invalidResponse.body).toEqual(expect.objectContaining({
         ok: false,
         target: 'gpt',
@@ -609,13 +612,18 @@ describe('public provider admission policy', () => {
           message: 'gptId too long',
         },
       }));
+      expect(invalidResponse.body.action).toBeUndefined();
+      expect(invalidResponse.body.result).toBeUndefined();
       expect(JSON.stringify(invalidResponse.body)).not.toContain(oversizedGptId);
-      expect(JSON.stringify([
+      expect(JSON.stringify(invalidResponse.body)).not.toContain(oversizedActionMarker);
+      const serializedLogs = JSON.stringify([
         logger.debug.mock.calls,
         logger.info.mock.calls,
         logger.warn.mock.calls,
         logger.error.mock.calls,
-      ])).not.toContain(oversizedGptId);
+      ]);
+      expect(serializedLogs).not.toContain(oversizedGptId);
+      expect(serializedLogs).not.toContain(oversizedActionMarker);
       expect(rateLimitInvocations).not.toHaveBeenCalled();
       expect(consume).not.toHaveBeenCalled();
       expect(gptLeaf).not.toHaveBeenCalled();

@@ -51,7 +51,7 @@ export const dispatchGptIdentifierBoundary: RequestHandler = (req, res, next) =>
     target: 'gpt',
     routeFamily: 'dispatch',
     gptId: validation.value,
-    action: resolution.input.action,
+    // action is intentionally omitted: this fixed rejection must not reflect unbounded metadata.
     executionMode: 'gpt',
     _dispatch: {
       target: resolution.input.target,

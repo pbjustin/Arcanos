@@ -288,7 +288,6 @@ describe('dispatcher priority routing', () => {
       target: 'gpt',
       routeFamily: 'dispatch',
       gptId: 'invalid',
-      action: 'query',
       executionMode: 'gpt',
       error: {
         code: 'BAD_REQUEST',
@@ -303,9 +302,54 @@ describe('dispatcher priority routing', () => {
         reason: 'explicit_target_gpt',
       },
     }));
+    expect(response.body.action).toBeUndefined();
     expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers.pragma).toBe('no-cache');
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it('preserves the structured invalid-ID envelope for oversized action metadata', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    const oversizedActionMarker = 'oversized-action-sentinel';
+    const oversizedAction = `${oversizedActionMarker}:${'a'.repeat(40_000)}`;
+
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: oversizedGptId,
+        action: oversizedAction,
+        prompt: 'Stop before provider admission without reflecting oversized metadata.',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      target: 'gpt',
+      routeFamily: 'dispatch',
+      gptId: 'invalid',
+      executionMode: 'gpt',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+      _route: expect.objectContaining({
+        gptId: 'invalid',
+      }),
+      _dispatch: {
+        target: 'gpt',
+        executionMode: 'gpt',
+        reason: 'explicit_target_gpt',
+      },
+    }));
+    expect(response.body.action).toBeUndefined();
+    expect(response.body.result).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
+    expect(JSON.stringify(response.body)).not.toContain(oversizedActionMarker);
     expect(mockResolveGptRouting).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
     expect(mockCreateDagRun).not.toHaveBeenCalled();
