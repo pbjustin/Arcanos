@@ -536,6 +536,17 @@ stale/missing index, model mismatch, or retrieval failure returns
 `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy PostgreSQL or
 process memory.
 
+Every ordinary `generateBooking` generation, including the booking generated
+before `generateBookingWithHRC` evaluates it, receives a mandatory server-owned
+CLEAR draft-review-revise system policy. The model silently drafts, checks
+Clarity, Leverage, Efficiency, Alignment, and Resilience, revises weak areas,
+and returns only the final booking or review. This policy adds no score or
+threshold gate, no extra booking-generation call, and no ActionPlan CLEAR 2.0
+guarantee. The raw-string `generateBooking` contract, HRC response contract,
+token and timeout budgets, max-output-only compact retry, and non-persistent
+generation boundary remain unchanged. Exact-literal shortcuts still return
+before model generation and therefore bypass this policy.
+
 `queryContinuity` is read-only and requires `payload.universeId` plus
 `payload.query`; it never substitutes the compatibility `legacy` universe. An
 optional `payload.retrievalScope` requires an exact `pageTitle` and may add

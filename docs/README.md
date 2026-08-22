@@ -61,10 +61,10 @@ ownership, lifecycle, consolidation, and validation rules.
 | Document | Lifecycle | Scope |
 | --- | --- | --- |
 | [Arcanos Gaming Custom GPT](ARCANOS_GAMING_CUSTOM_GPT.md) | Docs-as-contract | Builder instructions and OpenAPI contract expectations. |
-| [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | End-user workflow, scoped Notion continuity queries, generation and simulation, protected exact reads, approval-gated canon writes, Builder setup, rotation, and rollback. |
+| [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | End-user workflow, scoped Notion continuity queries, mandatory CLEAR-guided generation, simulation, protected exact reads, approval-gated canon writes, Builder setup, rotation, and rollback. |
 | [MCP server](ARCANOS_MCP_SERVER.md) | Companion | Current MCP transports, tools, principals, and gates. |
 | [CEF hardening controls](cef-hardening-controls.md) | Companion | CEF dispatch and validation controls. |
-| [CLEAR 2.0](CLEAR_METHOD_2_0.md) | Companion | CLEAR scoring and decision behavior. |
+| [CLEAR 2.0](CLEAR_METHOD_2_0.md) | Companion | ActionPlan CLEAR scoring/decision behavior and the separate Backstage Booker generation policy. |
 | [TypeScript CLI overview](CLI_OVERVIEW.md) | Canonical | `@arcanos/cli` commands and transports. |
 | [Custom GPTs](CUSTOM_GPTS.md) | Companion | Module-bound GPT behavior and builder workflows. |
 | [Execution contract](execution_contract.md) | Companion | Compact execution invariants. |

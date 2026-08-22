@@ -58,6 +58,7 @@ import {
 } from '@core/db/repositories/backstageBookerRepository.js';
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC } from './hrcWrapper.js';
+import { buildBackstageBookerDirectAnswerSystemPolicy } from './backstageBookerClear.js';
 import { queryBackstageContinuity } from './backstageContinuityQuery.js';
 import {
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
@@ -2360,7 +2361,7 @@ export async function trackStoryline(
 }
 
 /**
- * Generate a backstage booking response from the current roster and continuity context.
+ * Generate a CLEAR-guided backstage booking response from current roster and continuity context.
  * Inputs/outputs: natural-language booking prompt -> finalized storyline or booking plan string.
  * Edge cases: exact-literal anti-simulation prompts short-circuit before persona/context expansion, and database failures fall back to in-memory continuity snapshots.
  */
@@ -2413,6 +2414,11 @@ export async function generateBooking(
     );
   const compactOutputRetryInstruction =
     buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
+  //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
+  const directAnswerSystemPolicyPrompt =
+    buildBackstageBookerDirectAnswerSystemPolicy(
+      structuredPrompt.directAnswerSystemPolicyPrompt
+    );
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
@@ -2420,6 +2426,7 @@ export async function generateBooking(
       userIntentPrompt: input.prompt,
       modelStageTimeoutMs: generationStageTimeoutMs,
     }),
+    directAnswerSystemPolicyPrompt,
     ...(structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
@@ -2429,7 +2436,6 @@ export async function generateBooking(
                 requestedOutputShapeInstruction,
               ].join('\n\n')
             : structuredPrompt.trustedPolicyPrompt,
-          directAnswerSystemPolicyPrompt: structuredPrompt.directAnswerSystemPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
           redactAuditContent: true as const,
@@ -2969,8 +2975,8 @@ const actionDescriptions: Record<BackstageBookerAction, string> = {
   trackStoryline: 'Append one universe-scoped storyline beat.',
   simulateMatch: 'Simulate a match using supplied or universe-scoped roster ratings.',
   queryContinuity: 'Query bounded Notion-authoritative continuity with explicit coverage and sources.',
-  generateBooking: 'Generate a booking plan from one universe snapshot.',
-  generateBookingWithHRC: 'Generate a booking plan and attach HRC evaluation.',
+  generateBooking: 'Generate a CLEAR-guided booking plan from one universe snapshot.',
+  generateBookingWithHRC: 'Generate a CLEAR-guided booking plan and attach HRC evaluation.',
   saveStoryline: 'Upsert a named storyline in a universe.',
   upsertStoryline: 'Create or version-fence a typed storyline aggregate.',
   appendCanonBeat: 'Append an immutable canon beat to a typed storyline.'

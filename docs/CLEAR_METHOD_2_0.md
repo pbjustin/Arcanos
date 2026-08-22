@@ -10,6 +10,20 @@ The five CLEAR dimensions are:
 - **A — Alignment**
 - **R — Resilience** (`src/services/clear2.ts`)
 
+### Backstage Booker generation use
+
+Backstage Booker's ordinary `generateBooking` path, including generation used
+by `generateBookingWithHRC`, receives a mandatory server-owned CLEAR quality
+policy. The model silently drafts the booking, reviews Clarity, Leverage,
+Efficiency, Alignment, and Resilience, revises weak areas, and returns only the
+final booking or review. The same policy remains present on the existing
+max-output compact retry. This is a generation instruction, not the ActionPlan
+CLEAR 2.0 scorer: it returns no score or `allow`/`confirm`/`block` decision,
+enforces no quality threshold, creates no ActionPlan, adds no separate booking
+generation call, and does not persist or independently verify roster/canon
+truth. Exact-literal shortcuts still bypass model generation.
+(`src/services/backstageBookerClear.ts`) (`src/services/backstage-booker.ts`)
+
 ## Scoring Model
 
 ### 1) Principle scoring
@@ -85,5 +99,6 @@ Operationally, this separation provides:
 - `src/stores/actionPlanStore.ts`
 - `src/services/audit.ts`
 - `src/services/clearScorecard.ts`
+- `src/services/backstageBookerClear.ts`
 - `src/core/logic/trinity.ts`
 

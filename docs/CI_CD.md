@@ -286,6 +286,18 @@ coordinator and strict final validator across valid, malformed, under-count,
 over-count, word-overflow, second-length, and non-length outcomes without a
 third call. It is credential-free component evidence and does not call the
 canonical route, a model provider, HRC, RAG, a database, or persistence. The
+common generation dispatcher also executes the semantic-digest-pinned pure
+CLEAR policy composer shared with production before every one of the seven
+selectors. It assembles server-owned authority and CLEAR policy through the
+production Trinity direct-answer message helper, forces one synthetic
+length-exhaustion retry, and requires the same single marker/version and five
+dimensions on both attempts while keeping caller and untrusted override
+sentinels outside the system policy. A successful response carries the fixed
+`x-arcanos-preview-backstage-clear-policy-version` proof header, which the
+PR-head verifier requires; response bodies remain unchanged for the trusted
+base-pinned verifier. This proves contained policy construction, ordering, and
+retry reuse, not canonical-route composition, live-model compliance, or output
+quality. The
 Notion-authority case
 makes one fixed-origin, fixed-path, no-redirect request from the deployed web
 process to `api.notion.com` with a hard-coded invalid non-secret bearer and an

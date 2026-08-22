@@ -1499,6 +1499,9 @@ describe('native PR contained application', () => {
         'native-pr-preview',
         true
       );
+      expect(
+        response.headers[contract.proofHeaders.clearPolicyVersion]
+      ).toBe(contract.clearPolicyVersion);
       expect(response.headers['x-response-bytes']).toBe(
         String(Buffer.byteLength(response.text, 'utf8'))
       );
@@ -1517,6 +1520,9 @@ describe('native PR contained application', () => {
 
     for (const response of responses) {
       expect(response.status).toBe(400);
+      expect(
+        response.headers[contract.proofHeaders.clearPolicyVersion]
+      ).toBeUndefined();
       expect(response.body).toEqual({
         error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',
       });

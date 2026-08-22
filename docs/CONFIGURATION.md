@@ -487,6 +487,13 @@ retention controls. Enriched generation and its sensitive HRC follow-up always
 send OpenAI Responses with `store: false`,
 overriding `OPENAI_STORE` for that request only.
 
+Backstage CLEAR-guided generation needs no environment setting or feature flag.
+Every non-literal `generateBooking` attempt, including generation used by
+`generateBookingWithHRC`, receives the fixed server-owned draft-review-revise
+system policy. It adds no separate generation call, score, threshold gate, or
+ActionPlan CLEAR 2.0 guarantee; existing token/timeout budgets, max-output-only
+compact retry, response contracts, and persistence boundaries remain unchanged.
+
 #### Notion-authoritative hierarchy and RAG
 
 Authority mode is separate from the optional one-to-three-page supplement.
