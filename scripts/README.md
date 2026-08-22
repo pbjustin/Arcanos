@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 123-request plan without network access.
+untracked worktree, limits, and the fixed 126-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -50,14 +50,11 @@ project/service/deployment ownership.
 The trusted Railway lifecycle intentionally executes the probe implementation
 and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
-only as exact-SHA Git evidence. For this PR, the trusted run can therefore remain
-on the pre-merge 122-request plan. The existing review-completion selector
-silently executes the new production-shared compact-retry assertion without
-changing its trusted response shape. After the lifecycle reports the exact
-preview hosts, run the 123-request probe from a separate, clean checkout of the
-exact PR head to obtain explicit supplemental evidence for the new detailed
-selector; the trusted contract already covers its worker denial. That
-supplemental run is
+only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
+exercise that new selector until the verifier reaches the default branch. After
+the lifecycle reports the exact preview hosts, run the current 126-request probe
+from a separate, clean checkout of the exact PR head to obtain explicit
+supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
 exact-deployment, or cleanup checks.
 
@@ -187,6 +184,18 @@ reach that sentinel. This is contained component evidence. The caller sends no
 large body, and the fixture does not expose or prove the normal `/mcp` route,
 authentication, compression, or slow-upload behavior; focused assembled-app
 tests remain authoritative for those properties.
+
+The sealed `POST /dispatch/gpt-identifier-contract` selectors are
+`maximum-length-large-action` and `oversized-large-action`. Both construct a
+server-owned 40,000-code-unit action behind the 4 KiB caller-body boundary and
+invoke the exact semantic-digest-pinned production GPT identifier middleware.
+The 256-code-unit identifier must continue exactly once into a no-effect preview
+sentinel; the 257-code-unit identifier must return the intact bounded
+`400 BAD_REQUEST` envelope with zero downstream calls, no truncation, and no action or
+identifier reflection. A paired worker request proves the passive worker denies
+the selector. This is component evidence for the identifier boundary, not the
+normal `/dispatch` route, authentication, a real admission/quota store, provider
+work, or persistent effects.
 
 Native contained application previews protect trusted PRs against accidental
 effects. They do not protect inherited secrets from malicious PR code; untrusted

@@ -57,6 +57,18 @@ function responseBodyForCase(requestCase) {
     commitSha: COMMIT_SHA,
     prNumber: PR_NUMBER,
   });
+  if (
+    requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+    && requestCase.fixtureName === 'oversized'
+  ) {
+    return JSON.stringify({
+      ...expectedBody,
+      _route: {
+        ...expectedBody._route,
+        timestamp: '2026-08-21T12:00:00.000Z',
+      },
+    });
+  }
   return typeof expectedBody === 'string'
     ? expectedBody
     : JSON.stringify(expectedBody);
@@ -135,6 +147,7 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'gaming-source'
     || requestCase.expectedType === 'backstage-storyline-contract'
     || requestCase.expectedType === 'backstage-generation-contract'
+    || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
     || requestCase.expectedType === 'self-heal-approval-contract';
   return {
     'cache-control': 'no-store',
@@ -163,8 +176,29 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value,
         }
       : {}),
-    ...(requestCase.expectedType === 'gaming-source'
+    ...(
+      requestCase.expectedType === 'gaming-source'
+      || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       ? { pragma: 'no-cache' }
+      : {}
+    ),
+    ...(requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
+            .actionLength]: String(
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.actionLength
+          ),
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
+            .gptIdLength]: String(
+            requestCase.fixtureName === 'maximumLength'
+              ? NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier
+                  .gptIdLengths.maximum
+              : NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier
+                  .gptIdLengths.oversized
+          ),
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
+            .nextCalls]: requestCase.fixtureName === 'maximumLength' ? '1' : '0',
+        }
       : {}),
     ...(overrides ?? {}),
   };
@@ -377,13 +411,14 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 123);
+  assert.equal(requestPlan.length, 126);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
       && expectedType !== 'backstage-storyline-contract'
       && expectedType !== 'backstage-generation-contract'
       && expectedType !== 'mcp-body-cap-contract'
+      && expectedType !== 'dispatch-gpt-identifier-contract'
       && expectedType !== 'self-heal-approval-contract'
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
@@ -391,9 +426,16 @@ test('executes the bounded credential-free matrix and detects identity stability
       && caseId !== 'worker-backstage-storyline-denied'
       && caseId !== 'worker-backstage-generation-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
+      && caseId !== 'worker-dispatch-gpt-identifier-denied'
       && caseId !== 'worker-self-heal-approval-denied'
     ).length,
     50
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'dispatch-gpt-identifier-contract'
+    ).length,
+    2
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -498,6 +540,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(
     requestPlan.filter(({ caseId }) =>
       caseId === 'worker-mcp-body-cap-denied'
+    ).length,
+    1
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-dispatch-gpt-identifier-denied'
     ).length,
     1
   );
@@ -1166,14 +1214,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 123);
+  assert.equal(result.summary.requestsMade, 126);
   assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 123);
+  assert.equal(result.checks.length, 126);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     20
   );
-  assert.equal(mock.requestCount, 123);
+  assert.equal(mock.requestCount, 126);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1281,6 +1329,35 @@ test('executes the bounded credential-free matrix and detects identity stability
   for (const { init } of mcpBodyCapCalls) {
     assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
     assert.equal(init.body.includes('https://'), false);
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const dispatchGptIdentifierCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/dispatch/gpt-identifier-contract')
+  );
+  assert.equal(dispatchGptIdentifierCalls.length, 3);
+  assert.equal(
+    dispatchGptIdentifierCalls.filter(({ url }) =>
+      url.startsWith(WEB_BASE_URL)
+    ).length,
+    2
+  );
+  assert.equal(
+    dispatchGptIdentifierCalls.filter(({ url }) =>
+      url.startsWith(WORKER_BASE_URL)
+    ).length,
+    1
+  );
+  for (const { init } of dispatchGptIdentifierCalls) {
+    assert.deepEqual(Object.keys(JSON.parse(init.body)), ['fixture']);
+    assert.equal(
+      init.body.includes(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.actionMarker
+      ),
+      false
+    );
     assert.equal(
       /authorization|cookie|credential|secret|session|token/iu.test(init.body),
       false
@@ -1583,6 +1660,32 @@ test('rejects missing synthetic provenance and correlation or security header dr
       },
     },
     {
+      caseId: 'dispatch-gpt-identifier-oversized',
+      code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+        ];
+      },
+    },
+    {
+      caseId: 'dispatch-gpt-identifier-oversized',
+      code: 'NATIVE_PR_PREVIEW_NO_CACHE_MISSING',
+      mutate(headers) {
+        delete headers.pragma;
+      },
+    },
+    {
+      caseId: 'dispatch-gpt-identifier-oversized',
+      code: 'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
+            .nextCalls
+        ];
+      },
+    },
+    {
       caseId: 'web-readiness-initial',
       code: 'NATIVE_PR_PREVIEW_CORRELATION_INVALID',
       mutate(headers) {
@@ -1637,6 +1740,55 @@ test('rejects missing synthetic provenance and correlation or security header dr
         error instanceof NativePrPreviewE2eError
         && error.code === testCase.code
         && error.caseId === testCase.caseId
+    );
+  }
+});
+
+test('rejects dispatch identifier reflection and invalid timestamp evidence', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  for (const testCase of [
+    {
+      code: 'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_REFLECTION',
+      mutate(body) {
+        body.action =
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.actionMarker;
+      },
+    },
+    {
+      code: 'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_TIMESTAMP_INVALID',
+      mutate(body) {
+        body._route.timestamp = 'not-a-timestamp';
+      },
+    },
+  ]) {
+    const mock = buildMockFetch(requestPlan, (requestCase) => {
+      if (requestCase.caseId !== 'dispatch-gpt-identifier-oversized') {
+        return undefined;
+      }
+      const parsedBody = JSON.parse(responseBodyForCase(requestCase));
+      testCase.mutate(parsedBody);
+      const body = JSON.stringify(parsedBody);
+      const response = new Response(body, {
+        headers: responseHeadersForCase(requestCase, Buffer.byteLength(body)),
+        status: requestCase.expectedStatus,
+      });
+      Object.defineProperty(response, 'url', {
+        value: `${WEB_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    });
+
+    await assert.rejects(
+      runNativePrPreviewE2e({
+        args: validArguments('--execute', '--allow-network'),
+        fetchImpl: mock.fetchImpl,
+        localGitState: LOCAL_GIT_STATE,
+        monotonicNow: mock.monotonicNow,
+      }),
+      (error) =>
+        error instanceof NativePrPreviewE2eError
+        && error.code === testCase.code
+        && error.caseId === 'dispatch-gpt-identifier-oversized'
     );
   }
 });

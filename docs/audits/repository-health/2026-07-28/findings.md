@@ -1,10 +1,8 @@
 # Repository health-audit finding register
 
-Last reconciled: 2026-08-16 UTC for the expired npm-audit exception removal in
-reviewed PR #1444. Other findings retain the prior 2026-08-12 evidence cutoff
-through audit-scoped product PR #1432, delivery-control PRs #1428–#1430,
-documentation-only PR #1431, and the then-reviewed delivery-maintenance state
-for PR #1433
+Last reconciled: 2026-08-22 UTC for the repaired draft candidate in PR #1456
+for `SEC-DISPATCH-QUOTA-ORDER-001`. Other findings retain their prior dated
+evidence cutoffs, including the targeted 2026-08-16 reviewed-PR #1444 update.
 
 This register distinguishes source closure from deployment and production
 verification. `Merged` never means `deployed`. Current source and tests remain
@@ -16,7 +14,7 @@ authoritative. GPT-OSS is explicitly excluded from the active non-GPT queue.
 | --- | --- |
 | Open | No accepted current-main implementation closes the finding |
 | Local candidate | A current-base working-tree implementation exists but is not yet published, reviewed in CI, or merged |
-| Draft PR | A published candidate identity exists, but exact-head review, required CI, and merge are not complete |
+| Draft PR | A published candidate identity exists, but the GitHub PR remains draft or the candidate has not met the `Reviewed PR` evidence contract; merge/source closure is incomplete |
 | Reviewed PR | A named implementation commit has complete review, required CI, and bounded preview evidence, but merge remains open and live exact-head state still governs merge |
 | Local-only | A historical isolated candidate exists but must be re-integrated and revalidated on current `main` |
 | Closed in merged source | The reviewed correction is present on `main`; production rollout is a separate state |
@@ -30,7 +28,7 @@ The order here matches the current queue in [progress.md](progress.md#active-imp
 | Order | Finding | Priority | Status | Current evidence | Next action |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Hard versus advisory worker-budget semantics | Older ranked | Open | Worker identity/accounting is merged, but enforcement meaning is not ratified consistently | Decide the product contract, implement at the owner seam, and align readiness/diagnostics |
-| 2 | `SEC-DISPATCH-QUOTA-ORDER-001` — oversized `/dispatch` GPT ID consumes admission first | P2 | Open | GPT-lane provider admission still precedes the later canonical identifier-length rejection | Move deterministic rejection before admission and prove no quota consumption in ready, exhausted, and unavailable-store states |
+| 2 | `SEC-DISPATCH-QUOTA-ORDER-001` — oversized `/dispatch` GPT ID consumes admission first | P2 | Draft PR | Draft PR [#1456](https://github.com/pbjustin/Arcanos/pull/1456), repaired implementation `4f8e4d629e7fd89b23b43289d73798c5726fa88b`, rejects an oversized explicit GPT-lane identifier before provider admission in ready, exhausted, and unavailable-store states. Independent review found that initial head `d0eace9cff51a0626c09256ea73ebfe1d4044353` reflected an unbounded `action` and could collapse the structured error envelope; the repaired implementation omits that metadata and preserves the fixed bounded rejection under a 40,000-character action. Required repaired-head CI passed, but merge remains open | Merge the reviewed candidate before moving this finding to closed source; deployment and production verification remain separate |
 | 3 | `SEC-PARSER-ADMISSION-001` broader pre-admission parsing | P2 | Open | The global JSON parser still precedes `/dispatch` DAG authentication and public-provider admission | Characterize and introduce bounded selector/route parsing without changing unrelated contracts |
 | 4a | `OBS-MODEL-CARDINALITY-001` — generic AI model metric label | P2 | Open | Generic AI metrics still accept normalized caller-selected model values, including the public Vision path | Map models to a finite registry/constant identity and add a high-cardinality regression |
 | 4b | `OBS-GPT-LOG-CARDINALITY-001` — caller-controlled GPT log values | P2 conditional | Open | Unknown route IDs and forbidden body-level `gptId` values can still become distinct structured log values | Log route templates and finite identities/length metadata, never the raw value |

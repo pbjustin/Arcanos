@@ -52,6 +52,24 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       effectiveLimits: 'effective-limits',
     }),
   }),
+  dispatchGptIdentifier: Object.freeze({
+    path: '/dispatch/gpt-identifier-contract',
+    fixtures: Object.freeze({
+      maximumLength: 'maximum-length-large-action',
+      oversized: 'oversized-large-action',
+    }),
+    actionLength: 40_000,
+    actionMarker: 'sealed-dispatch-oversized-action',
+    gptIdLengths: Object.freeze({
+      maximum: 256,
+      oversized: 257,
+    }),
+    proofHeaders: Object.freeze({
+      actionLength: 'x-arcanos-preview-dispatch-action-length',
+      gptIdLength: 'x-arcanos-preview-dispatch-gpt-id-length',
+      nextCalls: 'x-arcanos-preview-dispatch-next-calls',
+    }),
+  }),
   selfHealApproval: Object.freeze({
     path: '/self-heal/approval-contract',
     fixtures: Object.freeze({

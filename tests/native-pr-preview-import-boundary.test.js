@@ -94,6 +94,18 @@ const PUBLIC_GAMING_CANARY_FIXTURE_URL = new URL(
   '../src/services/publicGamingCanaryFixture.ts',
   import.meta.url
 );
+const DISPATCH_GPT_IDENTIFIER_BOUNDARY_URL = new URL(
+  '../src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+  import.meta.url
+);
+const UNIVERSAL_DISPATCH_URL = new URL(
+  '../src/shared/dispatch/universalDispatch.ts',
+  import.meta.url
+);
+const GPT_IDENTIFIER_URL = new URL(
+  '../src/shared/gpt/gptIdentifier.ts',
+  import.meta.url
+);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -117,6 +129,21 @@ async function readResearchAbortDrainSource() {
 
 async function readResearchRequestSource() {
   return (await readFile(RESEARCH_REQUEST_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readDispatchGptIdentifierBoundarySource() {
+  return (await readFile(DISPATCH_GPT_IDENTIFIER_BOUNDARY_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readUniversalDispatchSource() {
+  return (await readFile(UNIVERSAL_DISPATCH_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readGptIdentifierSource() {
+  return (await readFile(GPT_IDENTIFIER_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -231,6 +258,65 @@ describe('native PR preview import boundary', () => {
         'scripts/register-esm-loader.mjs',
       ])
     );
+  });
+
+  it('admits and pins only the pure dispatch GPT identifier boundary seam', async () => {
+    const reviewedFiles = [
+      'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+      'src/shared/dispatch/universalDispatch.ts',
+      'src/shared/gpt/gptIdentifier.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/services/controlPlane/dispatchDagCompatibilityBoundary.ts',
+        'src/services/controlPlane/dagHttpBoundary.ts',
+        'src/routes/dispatch.ts',
+        'src/platform/publicProviderAdmission.ts',
+      ])
+    );
+
+    const sources = new Map([
+      [reviewedFiles[0], await readDispatchGptIdentifierBoundarySource()],
+      [reviewedFiles[1], await readUniversalDispatchSource()],
+      [reviewedFiles[2], await readGptIdentifierSource()],
+    ]);
+    for (const [filePath, source] of sources) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(
+        filePath,
+        source.replace(/\n/gu, '\r\n')
+      )).toEqual([]);
+    }
+
+    const driftedBoundary = replaceRequired(
+      sources.get(reviewedFiles[0]),
+      'statusCode: 400,',
+      'statusCode: 401,'
+    );
+    const driftedResolution = replaceRequired(
+      sources.get(reviewedFiles[1]),
+      "if (input.target === 'dag') {",
+      "if (input.target === 'gpt') {"
+    );
+    const driftedIdentifier = replaceRequired(
+      sources.get(reviewedFiles[2]),
+      'export const MAX_GPT_IDENTIFIER_LENGTH = 256;',
+      'export const MAX_GPT_IDENTIFIER_LENGTH = 255;'
+    );
+    for (const [filePath, source] of [
+      [reviewedFiles[0], driftedBoundary],
+      [reviewedFiles[1], driftedResolution],
+      [reviewedFiles[2], driftedIdentifier],
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
   });
 
   it('admits only the pinned storyline component seam from the database tree', async () => {

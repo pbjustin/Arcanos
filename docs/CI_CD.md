@@ -348,7 +348,8 @@ config-free production MCP pre-parser core
 are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
-Research abort-drain wrapper, Backstage action/timeout policy, Backstage
+Research abort-drain wrapper, the exact dispatch GPT identifier middleware and
+its pure lane/identifier dependencies, Backstage action/timeout policy, Backstage
 continuity-query core, GPT route timeout resolver, HRC cache policy, and exact
 request-abort runtime source are also semantic-digest pinned; only the reviewed
 timeout and AsyncLocalStorage
@@ -362,7 +363,7 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 123-request
+evidence, not Railway control-plane provenance. The current fixed 126-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
@@ -371,7 +372,9 @@ Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
 worker-role approval-contract denial, seven sealed Backstage generation
 timeout/cache/review-completion/compact-retry/Notion-authority/continuity cases, one
 worker-role Backstage generation denial, one sealed
-saved-storyline excerpt projection case, and one canon-summary pagination case.
+saved-storyline excerpt projection case, one canon-summary pagination case, two
+sealed dispatch GPT identifier boundary cases, and one worker-role dispatch
+selector denial.
 The additive subtree selector runs the production-shared continuity prompt and
 public-response core over sealed relevant and two-page continuation projections.
 It proves subtree-only scope/page fields stay coupled, coverage totals and source
@@ -382,7 +385,7 @@ or reach PostgreSQL, Notion credentials, or a model provider.
 The excerpt case executes the production-shared pure projector
 over the full ECMAScript leading-whitespace set and explicitly reports that no
 database or SQL projection ran; PostgreSQL 18 CI remains the SQL-engine proof. It
-checks correlation, security, `no-store`, source `no-cache`, bounded-body, and
+checks correlation, security, `no-store`, source and dispatch `no-cache`, bounded-body, and
 synthetic-provenance headers; it is not real bearer-auth, provider, storage,
 queue, or worker-execution evidence.
 

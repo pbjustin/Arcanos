@@ -8,6 +8,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
+  NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
@@ -1587,6 +1588,162 @@ describe('native PR contained application', () => {
       request(app)
         .post('/mcp')
         .send({ fixture }),
+    ]);
+    for (const response of deniedResponses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+  });
+
+  it('executes the exact production GPT identifier boundary at 256 and 257 code units', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT;
+    const maximum = await request(app)
+      .post(contract.path)
+      .set('x-request-id', 'req-dispatch-maximum')
+      .set('x-trace-id', 'trace-dispatch-maximum')
+      .send({ fixture: contract.fixtures.maximumLength });
+    const oversized = await request(app)
+      .post(contract.path)
+      .set('x-request-id', 'req-dispatch-oversized')
+      .set('x-trace-id', 'trace-dispatch-oversized')
+      .send({ fixture: contract.fixtures.oversized });
+
+    expect(maximum.status).toBe(200);
+    expect(maximum.body).toEqual({
+      accepted: true,
+      actionCodeUnits: 40_000,
+      boundaryContinued: true,
+      fixture: contract.fixtures.maximumLength,
+      gptIdCodeUnits: 256,
+      nextCalls: 1,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      quotaBoundaryReached: false,
+      schemaVersion: 1,
+    });
+    expectContainedResponseHeaders(
+      maximum,
+      'req-dispatch-maximum',
+      'trace-dispatch-maximum',
+      true
+    );
+
+    expect(oversized.status).toBe(400);
+    expect(Object.keys(oversized.body).sort()).toEqual([
+      '_dispatch',
+      '_route',
+      'error',
+      'executionMode',
+      'gptId',
+      'ok',
+      'routeFamily',
+      'target',
+    ]);
+    expect(oversized.body).toEqual({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+      _route: {
+        requestId: 'req-dispatch-oversized',
+        traceId: 'trace-dispatch-oversized',
+        gptId: 'invalid',
+        timestamp: expect.any(String),
+      },
+      target: 'gpt',
+      routeFamily: 'dispatch',
+      gptId: 'invalid',
+      executionMode: 'gpt',
+      _dispatch: {
+        target: 'gpt',
+        executionMode: 'gpt',
+        reason: 'explicit_target_gpt',
+      },
+    });
+    expect(new Date(oversized.body._route.timestamp).toISOString()).toBe(
+      oversized.body._route.timestamp
+    );
+    expectContainedResponseHeaders(
+      oversized,
+      'req-dispatch-oversized',
+      'trace-dispatch-oversized',
+      true
+    );
+
+    for (const [response, gptIdLength, nextCalls] of [
+      [maximum, 256, 1],
+      [oversized, 257, 0],
+    ] as const) {
+      expect(response.headers.pragma).toBe('no-cache');
+      expect(response.headers[contract.proofHeaders.actionLength]).toBe(
+        String(contract.actionLength)
+      );
+      expect(response.headers[contract.proofHeaders.gptIdLength]).toBe(
+        String(gptIdLength)
+      );
+      expect(response.headers[contract.proofHeaders.nextCalls]).toBe(
+        String(nextCalls)
+      );
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expect(response.headers['x-response-truncated']).toBeUndefined();
+      expect(response.text).not.toContain(contract.actionMarker);
+      expect(response.text).not.toContain('x'.repeat(257));
+      expect(response.body.action).toBeUndefined();
+      expect(response.body.result).toBeUndefined();
+    }
+  });
+
+  it('keeps the dispatch identifier fixtures sealed before production parsing', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT;
+    const invalidResponses = await Promise.all([
+      request(app).post(contract.path).send({ fixture: 'unlisted' }),
+      request(app)
+        .post(contract.path)
+        .send({ fixture: contract.fixtures.oversized, gptId: 'caller-owned' }),
+    ]);
+    for (const response of invalidResponses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_DISPATCH_GPT_IDENTIFIER_FIXTURE_INVALID',
+      });
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
+    }
+
+    const deniedResponses = await Promise.all([
+      request(app)
+        .post(`${contract.path}?fixture=${contract.fixtures.oversized}`)
+        .send({ fixture: contract.fixtures.oversized }),
+      request(app)
+        .post('/dispatch%2fgpt-identifier-contract')
+        .send({ fixture: contract.fixtures.oversized }),
+      request(app)
+        .post(contract.path)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ fixture: contract.fixtures.oversized }),
+      request(app)
+        .post(contract.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture: contract.fixtures.oversized }),
+      request(app)
+        .post(contract.path)
+        .send({ fixture: 'x'.repeat(4_097) }),
+      request(app)
+        .post('/dispatch')
+        .send({ fixture: contract.fixtures.oversized }),
     ]);
     for (const response of deniedResponses) {
       expect(response.status).toBe(404);

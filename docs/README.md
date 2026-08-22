@@ -169,12 +169,13 @@ Migration-local implementation notes live beside their artifacts under
 - [2026-04-29 refactor audit](audits/reusable-code/2026-04-29/refactor-audit.md)
   — relocated baseline snapshot retained only as historical evidence.
 - [2026-07-28 repository-health audit](audits/repository-health/2026-07-28/progress.md)
-  — compact current dashboard with a targeted 2026-08-16 update for the
-  expired npm-audit exception removal in reviewed PR #1444. Other audit entries
-  retain their existing dated evidence bounds; successful terminal retention
-  in PR #1427, paired-promotion restoration in PRs #1428–#1430, and
-  documentation reconciliation in PR #1431 remain recorded. Arcanos Gaming
-  PRs #1425/#1426 remain excluded from this audit lineage, with separate
+  — compact current dashboard with a targeted 2026-08-22 update for repaired
+  draft PR #1456 and `SEC-DISPATCH-QUOTA-ORDER-001`. The candidate has bounded
+  local, review, and exact repaired-implementation CI evidence but remains
+  unmerged; no hosted preview, deployment, or production credit is assigned.
+  Other audit entries
+  retain their existing dated evidence bounds. Arcanos Gaming PRs #1425/#1426
+  remain excluded from this audit lineage, with separate
   [findings register](audits/repository-health/2026-07-28/findings.md),
   [evidence](audits/repository-health/2026-07-28/evidence.md), and
   [historical narrative](audits/repository-health/2026-07-28/history-through-2026-07-31.md)

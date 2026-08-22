@@ -22,6 +22,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
+  NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
@@ -33,6 +34,9 @@ import {
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
 } from './nativePrPreviewContract.js';
+import {
+  dispatchGptIdentifierBoundary,
+} from './shared/dispatch/dispatchGptIdentifierBoundary.js';
 import {
   createMcpHttpBodyParser,
   MCP_HTTP_BODY_LIMIT_BYTES,
@@ -207,6 +211,9 @@ const BACKSTAGE_GENERATION_FIXTURE_NAMES = new Set<string>(
 );
 const MCP_BODY_CAP_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.fixtures)
+);
+const DISPATCH_GPT_IDENTIFIER_FIXTURE_NAMES = new Set<string>(
+  Object.values(NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.fixtures)
 );
 const SELF_HEAL_APPROVAL_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.fixtures)
@@ -4598,6 +4605,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /readyz',
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
@@ -4725,6 +4733,7 @@ export function createNativePrPreviewApplication(
       || rawPath === NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path
       || gamingSourcePath
     ) {
       response.setHeader(
@@ -5307,6 +5316,103 @@ export function createNativePrPreviewApplication(
           correlation
         ),
         `native_pr_preview.gaming_status_${status}`
+      );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path,
+    (request, response, next) => {
+      response.setHeader('Pragma', 'no-cache');
+      const body = request.body as unknown;
+      const bodyKeys = isPreviewRecord(body) ? Object.keys(body) : [];
+      const fixture = bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+        ? (body as { fixture?: unknown }).fixture
+        : undefined;
+      if (
+        typeof fixture !== 'string'
+        || !DISPATCH_GPT_IDENTIFIER_FIXTURE_NAMES.has(fixture)
+      ) {
+        sendPreviewJson(
+          request,
+          response,
+          { error: 'PREVIEW_DISPATCH_GPT_IDENTIFIER_FIXTURE_INVALID' },
+          400,
+          MAX_RESEARCH_RESPONSE_BYTES,
+          'native_pr_preview.dispatch_gpt_identifier_fixture_invalid'
+        );
+        return;
+      }
+
+      const contract = NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT;
+      const gptIdLength = fixture === contract.fixtures.maximumLength
+        ? contract.gptIdLengths.maximum
+        : contract.gptIdLengths.oversized;
+      const actionPrefix = `${contract.actionMarker}:`;
+      const action = `${actionPrefix}${'a'.repeat(
+        contract.actionLength - actionPrefix.length
+      )}`;
+      if (action.length !== contract.actionLength) {
+        throw new Error('PREVIEW_DISPATCH_GPT_IDENTIFIER_ACTION_INVALID');
+      }
+
+      const correlation = readPreviewCorrelation(response);
+      request.requestId = correlation.requestId;
+      request.traceId = correlation.traceId;
+      request.body = {
+        action,
+        executionMode: 'gpt',
+        gptId: 'x'.repeat(gptIdLength),
+        prompt: 'Exercise the sealed GPT identifier boundary.',
+        target: 'gpt',
+      };
+      (response.locals as Record<string, unknown>)
+        .nativePreviewDispatchFixture = fixture;
+      response.setHeader(contract.proofHeaders.actionLength, String(action.length));
+      response.setHeader(contract.proofHeaders.gptIdLength, String(gptIdLength));
+      response.setHeader(contract.proofHeaders.nextCalls, '0');
+      next();
+    },
+    (request, response, next) => dispatchGptIdentifierBoundary(
+      request,
+      response,
+      (error?: unknown) => {
+        const headerName =
+          NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.proofHeaders
+            .nextCalls;
+        const previous = Number.parseInt(
+          response.getHeader(headerName)?.toString() ?? '0',
+          10
+        );
+        response.setHeader(headerName, String(previous + 1));
+        next(error);
+      }
+    ),
+    (request, response) => {
+      const contract = NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT;
+      const fixture = (response.locals as Record<string, unknown>)
+        .nativePreviewDispatchFixture;
+      const maximumLengthAccepted = fixture === contract.fixtures.maximumLength;
+      sendPreviewJson(
+        request,
+        response,
+        {
+          accepted: maximumLengthAccepted,
+          actionCodeUnits: contract.actionLength,
+          boundaryContinued: true,
+          fixture,
+          gptIdCodeUnits: maximumLengthAccepted
+            ? contract.gptIdLengths.maximum
+            : contract.gptIdLengths.oversized,
+          nextCalls: 1,
+          protectedEffectsEnabled: false,
+          providerBoundaryReached: false,
+          quotaBoundaryReached: false,
+          schemaVersion: 1,
+        },
+        maximumLengthAccepted ? 200 : 500,
+        MAX_RESEARCH_RESPONSE_BYTES,
+        'native_pr_preview.dispatch_gpt_identifier_fixture'
       );
     }
   );

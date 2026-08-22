@@ -52,6 +52,24 @@ export interface NativePrPreviewE2eContract {
       effectiveLimits: 'effective-limits';
     }>;
   }>;
+  readonly dispatchGptIdentifier: Readonly<{
+    path: '/dispatch/gpt-identifier-contract';
+    fixtures: Readonly<{
+      maximumLength: 'maximum-length-large-action';
+      oversized: 'oversized-large-action';
+    }>;
+    actionLength: 40000;
+    actionMarker: 'sealed-dispatch-oversized-action';
+    gptIdLengths: Readonly<{
+      maximum: 256;
+      oversized: 257;
+    }>;
+    proofHeaders: Readonly<{
+      actionLength: 'x-arcanos-preview-dispatch-action-length';
+      gptIdLength: 'x-arcanos-preview-dispatch-gpt-id-length';
+      nextCalls: 'x-arcanos-preview-dispatch-next-calls';
+    }>;
+  }>;
   readonly selfHealApproval: Readonly<{
     path: '/self-heal/approval-contract';
     fixtures: Readonly<{

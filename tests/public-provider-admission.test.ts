@@ -1,4 +1,8 @@
-import express, { type Request } from 'express';
+import express, {
+  type ErrorRequestHandler,
+  type Request,
+  type RequestHandler,
+} from 'express';
 import { describe, expect, it, jest } from '@jest/globals';
 
 import {
@@ -21,6 +25,14 @@ import {
 } from '../src/platform/runtime/publicProviderRateLimitPolicy.js';
 import { resolveDispatchLane } from '../src/shared/dispatch/universalDispatch.js';
 import { ResearchRequestValidationError } from '../src/shared/researchRequest.js';
+import {
+  dispatchDagCompatibilityBoundary,
+  dispatchGptIdentifierBoundary,
+} from '../src/services/controlPlane/dispatchDagCompatibilityBoundary.js';
+import type {
+  PublicProviderRateLimitDecision,
+  PublicProviderRateLimitStore,
+} from '../src/platform/runtime/publicProviderRateLimitStore.js';
 
 const request = (await import('supertest')).default;
 
@@ -500,6 +512,139 @@ describe('public provider admission policy', () => {
       reason: 'safe_fallback_gpt',
     });
   });
+
+  it.each(['ready', 'already-exhausted', 'unavailable'] as const)(
+    'rejects invalid dispatch GPT identifiers before %s provider admission state',
+    async (storeState) => {
+      const resetTimeMs = Date.now() + 60_000;
+      const consume = jest.fn<PublicProviderRateLimitStore['consume']>(async () => {
+        if (storeState === 'unavailable') {
+          throw new Error('provider admission store unavailable');
+        }
+
+        const decision: PublicProviderRateLimitDecision = storeState === 'ready'
+          ? {
+              allowed: true,
+              limitedTier: null,
+              client: { limit: 2, remaining: 1, retryAfterMs: 0, resetTimeMs },
+              global: { limit: 2, remaining: 1, retryAfterMs: 0, resetTimeMs },
+            }
+          : {
+              allowed: false,
+              limitedTier: 'global',
+              client: { limit: 2, remaining: 1, retryAfterMs: 0, resetTimeMs },
+              global: { limit: 2, remaining: 0, retryAfterMs: 30_000, resetTimeMs },
+            };
+        return decision;
+      });
+      const rateLimitMiddleware = createPublicProviderRateLimitMiddleware({
+        clientIdentityResolver: () => 'dispatch-boundary-client',
+        clientMaxRequests: 2,
+        maxRequests: 2,
+        store: { consume },
+        windowMs: 60_000,
+      });
+      const rateLimitInvocations = jest.fn();
+      const observedRateLimitMiddleware: RequestHandler = (req, res, next) => {
+        rateLimitInvocations();
+        rateLimitMiddleware(req, res, next);
+      };
+      const logger = {
+        debug: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      };
+      const attachRequestContext: RequestHandler = (req, _res, next) => {
+        req.requestId = 'dispatch-boundary-request';
+        req.traceId = 'dispatch-boundary-trace';
+        req.logger = logger;
+        next();
+      };
+      const gptLeaf = jest.fn();
+      const app = express();
+      app.use(express.json());
+      app.use(attachRequestContext);
+      app.post(
+        '/dispatch',
+        dispatchDagCompatibilityBoundary,
+        dispatchGptIdentifierBoundary,
+      );
+      app.use(createPublicProviderAdmissionMiddleware({
+        rateLimitMiddleware: observedRateLimitMiddleware,
+      }));
+      app.post('/dispatch', (req, res) => {
+        gptLeaf(req.body);
+        res.status(200).json({ ok: true });
+      });
+      const unavailableHandler: ErrorRequestHandler = (_error, _req, res, _next) => {
+        res.status(503).json({
+          ok: false,
+          error: { code: 'PROVIDER_ADMISSION_UNAVAILABLE' },
+        });
+      };
+      app.use(unavailableHandler);
+
+      const oversizedGptId = 'x'.repeat(257);
+      const oversizedActionMarker = 'oversized-action-sentinel';
+      const oversizedAction = `${oversizedActionMarker}:${'a'.repeat(40_000)}`;
+      const invalidResponse = await request(app)
+        .post('/dispatch')
+        .send({
+          target: 'gpt',
+          gptId: oversizedGptId,
+          action: oversizedAction,
+          prompt: 'This provider-intended request must stop before admission.',
+        });
+
+      expect(invalidResponse.status).toBe(400);
+      expect(invalidResponse.headers['x-ratelimit-bucket']).toBeUndefined();
+      expect(invalidResponse.headers['cache-control']).toBe('no-store');
+      expect(invalidResponse.headers.pragma).toBe('no-cache');
+      expect(invalidResponse.headers['x-response-truncated']).toBeUndefined();
+      expect(invalidResponse.body).toEqual(expect.objectContaining({
+        ok: false,
+        target: 'gpt',
+        routeFamily: 'dispatch',
+        gptId: 'invalid',
+        error: {
+          code: 'BAD_REQUEST',
+          message: 'gptId too long',
+        },
+      }));
+      expect(invalidResponse.body.action).toBeUndefined();
+      expect(invalidResponse.body.result).toBeUndefined();
+      expect(JSON.stringify(invalidResponse.body)).not.toContain(oversizedGptId);
+      expect(JSON.stringify(invalidResponse.body)).not.toContain(oversizedActionMarker);
+      const serializedLogs = JSON.stringify([
+        logger.debug.mock.calls,
+        logger.info.mock.calls,
+        logger.warn.mock.calls,
+        logger.error.mock.calls,
+      ]);
+      expect(serializedLogs).not.toContain(oversizedGptId);
+      expect(serializedLogs).not.toContain(oversizedActionMarker);
+      expect(rateLimitInvocations).not.toHaveBeenCalled();
+      expect(consume).not.toHaveBeenCalled();
+      expect(gptLeaf).not.toHaveBeenCalled();
+
+      const validResponse = await request(app)
+        .post('/dispatch')
+        .send({
+          target: 'gpt',
+          gptId: 'x'.repeat(256),
+          action: 'query',
+          prompt: 'This valid provider-intended request must enter admission once.',
+        });
+
+      expect(validResponse.status).toBe(
+        storeState === 'ready' ? 200 : storeState === 'already-exhausted' ? 429 : 503,
+      );
+      expect(rateLimitInvocations).toHaveBeenCalledTimes(1);
+      expect(consume).toHaveBeenCalledTimes(1);
+      expect(gptLeaf).toHaveBeenCalledTimes(storeState === 'ready' ? 1 : 0);
+    },
+  );
 
   it('charges one hierarchical budget exactly once and preserves global capacity on client denial', async () => {
     const limiter = createPublicProviderRateLimitMiddleware({

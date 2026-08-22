@@ -322,9 +322,17 @@ correlation. Railway deployments use `GET /readyz` for activation; retain
   select DAG execution use the canonical DAG client-admission, control-plane
   operator, `mcp:invoke`, principal-admission, and `no-store` policy before a
   run can be created; GPT-selected Backstage mutations use the separate shared
-  Backstage operator boundary; other GPT-selected requests retain compatibility behavior;
-  asynchronous branch failures return the stable `500 DISPATCH_FAILED`
-  envelope without internal exception text)
+  Backstage operator boundary; other GPT-selected requests retain compatibility
+  behavior. On the GPT lane, an explicit body `gptId` after trimming may contain
+  at most 256 UTF-16 code units. An oversized value returns a bounded,
+  deterministic HTTP `400` response with `error.code: "BAD_REQUEST"` and
+  `gptId: "invalid"` before provider admission, registry resolution, or GPT
+  work, so it consumes no public-provider quota. When the existing selector
+  precedence resolves a request to the DAG or MCP/tool control lane, that lane
+  remains authoritative and any unused `gptId` is not validated; omitted or
+  blank GPT-lane values use the `arcanos-core` default. Asynchronous branch
+  failures return the stable `500 DISPATCH_FAILED` envelope without internal
+  exception text)
 - `GET|HEAD|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation; GET uses query input while POST and implicit HEAD use body input)
 - `GET /trinity/status` (public aggregate worker-health projection; `no-store`)
 - `POST /arcanos` (confirmation required)

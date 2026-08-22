@@ -270,19 +270,8 @@ describe('dispatcher priority routing', () => {
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
-  it('preserves the bounded direct-dispatch envelope for oversized GPT identifiers', async () => {
+  it('rejects oversized GPT identifiers before GPT routing or dispatch work', async () => {
     const oversizedGptId = 'x'.repeat(257);
-    mockRouteGptRequest.mockResolvedValueOnce({
-      ok: false,
-      error: {
-        code: 'BAD_REQUEST',
-        message: 'gptId too long',
-      },
-      _route: {
-        gptId: 'invalid',
-        timestamp: '2026-04-25T00:00:00.000Z',
-      },
-    });
 
     const response = await request(buildApp())
       .post('/dispatch')
@@ -297,17 +286,120 @@ describe('dispatcher priority routing', () => {
     expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       target: 'gpt',
+      routeFamily: 'dispatch',
       gptId: 'invalid',
+      executionMode: 'gpt',
       error: {
         code: 'BAD_REQUEST',
         message: 'gptId too long',
       },
+      _route: expect.objectContaining({
+        gptId: 'invalid',
+      }),
+      _dispatch: {
+        target: 'gpt',
+        executionMode: 'gpt',
+        reason: 'explicit_target_gpt',
+      },
     }));
+    expect(response.body.action).toBeUndefined();
     expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it('preserves the structured invalid-ID envelope for oversized action metadata', async () => {
+    const oversizedGptId = 'x'.repeat(257);
+    const oversizedActionMarker = 'oversized-action-sentinel';
+    const oversizedAction = `${oversizedActionMarker}:${'a'.repeat(40_000)}`;
+
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: oversizedGptId,
+        action: oversizedAction,
+        prompt: 'Stop before provider admission without reflecting oversized metadata.',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      target: 'gpt',
+      routeFamily: 'dispatch',
+      gptId: 'invalid',
+      executionMode: 'gpt',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'gptId too long',
+      },
+      _route: expect.objectContaining({
+        gptId: 'invalid',
+      }),
+      _dispatch: {
+        target: 'gpt',
+        executionMode: 'gpt',
+        reason: 'explicit_target_gpt',
+      },
+    }));
+    expect(response.body.action).toBeUndefined();
+    expect(response.body.result).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain(oversizedGptId);
+    expect(JSON.stringify(response.body)).not.toContain(oversizedActionMarker);
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exactly 256-character explicit GPT identifier', async () => {
+    const maximumLengthGptId = 'x'.repeat(256);
+
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        gptId: maximumLengthGptId,
+        action: 'query',
+        prompt: 'Continue to the GPT leaf.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      target: 'gpt',
+      gptId: maximumLengthGptId,
+    }));
     expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
-      gptId: oversizedGptId,
+      gptId: maximumLengthGptId,
     }));
     expect(mockCreateDagRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['omitted', {}],
+    ['blank', { gptId: '   ' }],
+  ] as const)('preserves the default GPT identifier when body gptId is %s', async (
+    _case,
+    gptIdInput,
+  ) => {
+    const response = await request(buildApp())
+      .post('/dispatch')
+      .send({
+        target: 'gpt',
+        ...gptIdInput,
+        action: 'query',
+        prompt: 'Use the default GPT identifier.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.gptId).toBe('arcanos-core');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'arcanos-core',
+    }));
   });
 
   it.each([
@@ -401,19 +493,24 @@ describe('dispatcher priority routing', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('lets target=dag outrank an explicit GPT id and still requires DAG authority', async () => {
+  it('lets target=dag outrank an unused oversized GPT id after DAG authorization', async () => {
     const response = await request(buildApp())
       .post('/dispatch')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
       .send({
         target: 'dag',
-        gptId: 'arcanos-core',
+        gptId: 'x'.repeat(257),
         prompt: 'Run the workflow now.',
       });
 
-    expect(response.status).toBe(401);
-    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      target: 'dag',
+      operation: 'dag.run.create',
+    }));
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(mockCreateDagRun).not.toHaveBeenCalled();
+    expect(mockCreateDagRun).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -440,22 +537,25 @@ describe('dispatcher priority routing', () => {
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
-  it('keeps explicit MCP control rejection ahead of GPT and DAG selectors', async () => {
-    const response = await request(buildApp())
-      .post('/dispatch')
-      .send({
-        target: 'mcp',
-        gptId: 'arcanos-core',
-        action: 'dag.run.create',
-        executionMode: 'dag',
-        prompt: 'Run the workflow now.',
-      });
+  it.each(['mcp', 'tool'] as const)(
+    'keeps explicit %s control rejection ahead of an unused oversized GPT id',
+    async (target) => {
+      const response = await request(buildApp())
+        .post('/dispatch')
+        .send({
+          target,
+          gptId: 'x'.repeat(257),
+          action: 'dag.run.create',
+          executionMode: 'dag',
+          prompt: 'Run the workflow now.',
+        });
 
-    expect(response.status).toBe(400);
-    expect(response.body.code).toBe('MCP_CONTROL_REQUIRES_MCP_API');
-    expect(mockRouteGptRequest).not.toHaveBeenCalled();
-    expect(mockCreateDagRun).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('MCP_CONTROL_REQUIRES_MCP_API');
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+      expect(mockCreateDagRun).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['a malformed bearer', 'malformed', 'arcanos:read,mcp:invoke', 401, 'CONTROL_PLANE_AUTH_REQUIRED'],
