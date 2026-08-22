@@ -1,5 +1,5 @@
 # Optimized Railway Dockerfile
-FROM node:20.18.1-alpine
+FROM node:24.18.1-alpine
 
 # Set production environment
 ENV NODE_ENV=production

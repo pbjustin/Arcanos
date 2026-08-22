@@ -1,4 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   extractEnvTemplateKeys,
   validateConfig,
@@ -6,6 +9,25 @@ import {
   validateEnvTemplate,
   validateRailwayIgnore,
 } from '../scripts/validate-railway-compatibility.js';
+
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
+const expectedNodeVersion = '24.18.1';
+const expectedNpmVersion = '11.16.0';
+
+function readRepositoryFile(relativePath) {
+  return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
+}
+
+function readRepositoryJson(relativePath) {
+  return JSON.parse(readRepositoryFile(relativePath));
+}
+
+function normalizeYamlScalar(value) {
+  return value.trim().replace(/^['"]|['"]$/gu, '');
+}
 
 function buildMinimalRailwayConfig(overrides = {}) {
   return {
@@ -78,6 +100,114 @@ function buildMinimalDockerfile() {
 }
 
 describe('validate-railway-compatibility', () => {
+  it('pins the supported Node and bundled npm versions across Railpack, CI, containers, workspaces, and maintained guidance', () => {
+    const expectedEngines = {
+      node: expectedNodeVersion,
+      npm: expectedNpmVersion,
+    };
+    const rootManifest = readRepositoryJson('package.json');
+    const workersManifest = readRepositoryJson('workers/package.json');
+    const runtimeManifest = readRepositoryJson('arcanos-ai-runtime/package.json');
+    const rootLock = readRepositoryJson('package-lock.json');
+    const workersLock = readRepositoryJson('workers/package-lock.json');
+    const runtimeLock = readRepositoryJson('arcanos-ai-runtime/package-lock.json');
+
+    expect(readRepositoryFile('.nvmrc').trim()).toBe(expectedNodeVersion);
+    for (const manifest of [rootManifest, workersManifest, runtimeManifest]) {
+      expect(manifest.engines).toEqual(expectedEngines);
+      expect(manifest.packageManager).toBeUndefined();
+    }
+    expect(rootLock.packages[''].engines).toEqual(expectedEngines);
+    expect(rootLock.packages.workers.engines).toEqual(expectedEngines);
+    expect(rootLock.packages['arcanos-ai-runtime'].engines).toEqual(expectedEngines);
+    expect(workersLock.packages[''].engines).toEqual(expectedEngines);
+    expect(runtimeLock.packages[''].engines).toEqual(expectedEngines);
+
+    expect(rootManifest.devDependencies['@types/node']).toBe('^24.3.0');
+    expect(workersManifest.devDependencies['@types/node']).toBe('^24.3.0');
+    expect(runtimeManifest.devDependencies['@types/node']).toBe('^24.3.0');
+    expect(rootManifest.overrides.router['path-to-regexp']).toBe('8.4.0');
+    expect(rootManifest.allowScripts).toEqual({
+      '@prisma/client@5.22.0': true,
+      'msgpackr-extract@3.0.3': true,
+      'unrs-resolver@1.11.1': true,
+    });
+    for (const lock of [rootLock, workersLock, runtimeLock]) {
+      const nodeTypeVersions = Object.entries(lock.packages)
+        .filter(([packagePath]) => packagePath.endsWith('node_modules/@types/node'))
+        .map(([, metadata]) => metadata.version);
+      expect(nodeTypeVersions).not.toHaveLength(0);
+      expect(nodeTypeVersions.every(version => version.startsWith('24.'))).toBe(true);
+    }
+
+    const workflowDirectory = path.join(repositoryRoot, '.github', 'workflows');
+    const workflowNames = fs.readdirSync(workflowDirectory)
+      .filter(name => /\.ya?ml$/u.test(name));
+    let setupNodeStepCount = 0;
+    for (const workflowName of workflowNames) {
+      const workflow = readRepositoryFile(path.join('.github', 'workflows', workflowName));
+      const lines = workflow.split(/\r?\n/u);
+      for (let index = 0; index < lines.length; index += 1) {
+        if (!/uses:\s*actions\/setup-node@/u.test(lines[index])) {
+          continue;
+        }
+        setupNodeStepCount += 1;
+        const selectorLine = lines.slice(index + 1, index + 8)
+          .find(line => /^\s*node-version:\s*/u.test(line));
+        expect(selectorLine).toBeDefined();
+        const selector = normalizeYamlScalar(
+          selectorLine.replace(/^\s*node-version:\s*/u, ''),
+        );
+        expect([
+          expectedNodeVersion,
+          '${{ env.NODE_VERSION }}',
+          '${{ matrix.node-version }}',
+        ]).toContain(selector);
+      }
+      if (workflow.includes('${{ env.NODE_VERSION }}')) {
+        expect(workflow).toMatch(/^\s*NODE_VERSION:\s*['"]?24\.18\.1['"]?\s*$/mu);
+      }
+      if (workflow.includes('${{ matrix.node-version }}')) {
+        expect(workflow).toMatch(/^\s*node-version:\s*\[\s*['"]?24\.18\.1['"]?\s*\]\s*$/mu);
+      }
+    }
+    expect(setupNodeStepCount).toBeGreaterThan(0);
+
+    for (const [dockerfilePath, expectedStageCount] of [
+      ['Dockerfile', 1],
+      ['Dockerfile.phase2e-postgres18-integration', 1],
+      ['Dockerfile.phase2e-validator', 2],
+    ]) {
+      const baseImages = readRepositoryFile(dockerfilePath)
+        .split(/\r?\n/u)
+        .filter(line => /^FROM\s+/u.test(line));
+      expect(baseImages).toHaveLength(expectedStageCount);
+      expect(baseImages.every(line =>
+        line === `FROM node:${expectedNodeVersion}-alpine` ||
+        line === `FROM node:${expectedNodeVersion}-alpine AS runtime-verifier-build`
+      )).toBe(true);
+    }
+    expect(readRepositoryFile('daemon-python/Dockerfile.local-agent-tests')).toContain(
+      'FROM node:24.18.1-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7',
+    );
+
+    for (const guidancePath of [
+      'AGENTS.md',
+      'README.md',
+      'CONTRIBUTING.md',
+      'docs/RUN_LOCAL.md',
+      'docs/WORKSPACE_PACKAGES.md',
+      'docs/RAILWAY_DEPLOYMENT.md',
+      'docs/CI_CD.md',
+      'scripts/README.md',
+    ]) {
+      const guidance = readRepositoryFile(guidancePath);
+      expect(guidance).toContain(expectedNodeVersion);
+      expect(guidance).toContain(expectedNpmVersion);
+      expect(guidance).not.toMatch(/Node(?:\.js)?\s+20(?:\.18\.1|\.19\.0|\b)/u);
+    }
+  });
+
   it('accepts the minimal runtime contract without optional default-backed variables', () => {
     const validationErrors = validateConfig(buildMinimalRailwayConfig());
 

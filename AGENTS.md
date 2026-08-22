@@ -42,7 +42,8 @@
 
 ## Environment and dependency setup
 
-- Run npm workspace commands from the repository root. Use Node `20.19.0` for parity with the authoritative required CI workflow and `.nvmrc`. Docker uses `20.18.1`, auxiliary workflows use the Node `20` line, and `package.json` permits `>=20.18.1`.
+- Run npm workspace commands from the repository root. Use exact Node `24.18.1` with its bundled npm `11.16.0`; `package.json`, `.nvmrc`, maintained workflows, Docker stages, and standalone workspace engine metadata intentionally align on that baseline.
+- The root manifest intentionally omits `packageManager`: Railpack treats that field as a Corepack opt-in and installs a moving `corepack@latest`, while the supported toolchain is the npm version bundled with the exact Node release. Do not add the field or substitute a floating Node range without reviewing current Railpack resolution behavior.
 - Use `npm install` for local development and `npm ci` for reproducible CI/Docker-style installs.
 - Both install commands run `postinstall`. Outside CI/production it preserves existing hooks but may create missing Git hooks and local `.vscode/`/`.workspace/` tooling; it may also rebuild vendored `minimatch` output under `node_modules/`. Inspect those effects when preserving local tooling matters.
 - `daemon-python/` requires Python 3.10+; CI uses Python 3.11. From that directory, install daemon development dependencies with `python -m pip install -e ".[dev]"`.

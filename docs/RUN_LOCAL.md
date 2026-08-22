@@ -4,7 +4,7 @@
 This runbook covers local backend startup, optional daemon startup, and quick validation checks.
 
 ## Prerequisites
-- Node.js 20.19.0 recommended; supported floor is Node 20.18.1. npm 8+.
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0.
 - Optional Python 3.10+ for daemon
 - OpenAI API key for live AI calls; mock-mode tests do not require a real key
 

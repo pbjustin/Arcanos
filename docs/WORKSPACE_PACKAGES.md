@@ -4,7 +4,7 @@
 Arcanos is an npm workspace. The root backend owns deploy/runtime startup, while shared TypeScript packages own protocol, CLI, runtime helpers, and OpenAI adapter utilities.
 
 ## Prerequisites
-- Node.js 20.19.0 recommended; supported floor is Node 20.18.1. npm 8+.
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0.
 - Dependencies installed from the repository root with `npm install`
 
 ## Setup

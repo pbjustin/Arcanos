@@ -7,6 +7,11 @@ This runbook documents the repository-tracked Railway configuration and release 
 - Approved Railway account and project access.
 - A confirmed project, environment, and service target.
 - Repository connection or GitHub-side deploy credentials configured through an approved operator workflow.
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0 for local validation. Railpack resolves the same exact Node version from root `engines.node`; `.nvmrc`, CI, and Docker use the identical selector.
+
+The root manifest deliberately has no `packageManager` field. Under current
+Railpack behavior that field opts into a moving `corepack@latest`, while this
+repository's npm contract is the version bundled with the pinned Node release.
 - Required secrets available (`OPENAI_API_KEY`; `DATABASE_URL` for durable async jobs; GPT Access variables when Custom GPT diagnostics are enabled).
 
 ## Setup

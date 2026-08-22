@@ -4,6 +4,7 @@
 This repository uses GitHub Actions workflows in `.github/workflows/` for build/test validation, docs checks, release automation, and Railway deployment helpers.
 
 ## Prerequisites
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0 for local workflow parity. Every maintained `actions/setup-node` selector resolves to that exact version.
 - GitHub repository write access.
 - Required secrets configured in repository/environment settings.
 - Railway project access for deployment workflows.
