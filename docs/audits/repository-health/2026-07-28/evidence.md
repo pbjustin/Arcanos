@@ -1,9 +1,8 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-16 UTC for reviewed PR #1444 dependency remediation.
-Other evidence retains the prior 2026-08-12 cutoff through audit-scoped product
-PR #1432, delivery-control PRs #1428–#1430, documentation-only PR #1431, and
-the then-reviewed delivery-maintenance state for PR #1433
+Last reconciled: 2026-08-22 UTC for repaired draft PR #1456. Other evidence
+retains its prior dated cutoff, including the targeted 2026-08-16 reviewed-PR
+#1444 dependency-remediation update.
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -20,6 +19,49 @@ remain authoritative.
 | Contained preview | Served commit identity and the explicitly exposed sealed/read-only contract | Normal production handlers, credentials, provider calls, PostgreSQL behavior unless specifically connected, or production state |
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
+
+## Draft PR #1456 — `/dispatch` GPT-ID rejection before provider admission
+
+| Field | Value |
+| --- | --- |
+| Merge base | `ee5df80e7134471c8e92e8c153d88572d2c97d66` |
+| Live base at initial review | `b925cc963be9191c16092a337f510c069bf1bef9` |
+| Initial published and reviewed head | `d0eace9cff51a0626c09256ea73ebfe1d4044353` |
+| Repaired implementation | `4f8e4d629e7fd89b23b43289d73798c5726fa88b` |
+| PR state | Open draft; merge remains required and live PR metadata remains authoritative |
+
+The candidate applies the canonical 256-code-unit GPT identifier boundary,
+measured in UTF-16 code units, after `/dispatch` lane resolution and before
+public-provider admission. An
+oversized explicit GPT-lane identifier receives a deterministic, non-cacheable
+HTTP `400 BAD_REQUEST` response with sanitized `gptId: "invalid"` without
+invoking admission, consuming quota, resolving GPT routing, or starting
+downstream work. Valid 256-unit identifiers continue into admission, while
+authoritative DAG and control-lane selection remains unchanged.
+
+Independent review of initial head
+`d0eace9cff51a0626c09256ea73ebfe1d4044353` found one P2 defect: the rejection
+reflected an unbounded caller-controlled `action`, allowing the generic bounded
+response fallback to remove `error`, `gptId`, `target`, `routeFamily`, and
+`_dispatch` and reflect part of the action through `result`. Repaired
+implementation `4f8e4d629e7fd89b23b43289d73798c5726fa88b` omits `action` from this
+fixed rejection and adds a 40,000-character regression requiring the complete
+structured envelope, no truncation fallback or raw action reflection, and zero
+admission, store, routing, or downstream calls.
+
+| Evidence | Result |
+| --- | --- |
+| Initial-head local review | On Node `24.13.0`, 253/253 focused and adjacent tests across seven suites passed, together with type-check, build, lint with zero errors and 76 existing warnings, and `git diff --check`. The adversarial large-action probe exposed the P2 above, so these results did not make the initial head merge-ready |
+| Initial-head CI | CI/CD [`32543787056`](https://github.com/pbjustin/Arcanos/actions/runs/32543787056) checked synthetic merge `d522838c40feec96d0b23e71484bf7d56edc9274` under Node `20.19.0`; `All Checks Complete` job `96960441564` passed. The surfaced rollup contained 20 successes, three intentional preview-lifecycle skips, zero failures, and zero pending checks. Both full unit executions reported 637 suites and 9,320 tests. This CI predates and does not validate the repair |
+| Repaired local validation | On Node `24.13.0`, 254/254 tests across seven focused and adjacent suites passed: 135/135 in the three changed suites and 119/119 in four adjacent dispatch/composition suites. `npm run type-check`, `npm run build`, and `npm run lint` passed with zero errors and 76 existing warnings; `npm run docs:check` passed 337/337, `npm run docs:links -- --local-only` passed 179 targets with zero failures, and `git diff --check` passed. No live provider, database, or Redis path was exercised |
+| Repaired-head CI | CI/CD [`32545560057`](https://github.com/pbjustin/Arcanos/actions/runs/32545560057) checked synthetic merge `02a84a0756ab2fb90ee1ee8adc77fcc390e5a996` with exact base `b925cc963be9191c16092a337f510c069bf1bef9` and repaired head `4f8e4d629e7fd89b23b43289d73798c5726fa88b`. That run, PR CI [`32545560064`](https://github.com/pbjustin/Arcanos/actions/runs/32545560064), API Endpoint Tests [`32545560066`](https://github.com/pbjustin/Arcanos/actions/runs/32545560066), and Documentation Audit [`32545560068`](https://github.com/pbjustin/Arcanos/actions/runs/32545560068) passed; Documentation Audit reported 338/338 with generated indexes current. `All Checks Complete` job `96965034387` passed. The rollup contained 20 successes, three intentional preview-lifecycle skips, zero failures, and zero pending checks; both full unit executions reported 637 passing suites and 9,321 passing tests |
+| Review disposition | The confirmed P2 is repaired. Terminal GitHub state reported `MERGEABLE` / `CLEAN` with zero review threads. PR #1456 remains a draft and unmerged, so this is reviewed candidate evidence rather than source closure |
+
+The PR had no `railway-preview` opt-in. Its lifecycle reported
+`PASS / noop / not-opted-in`, and sealed Railway E2E was skipped. CI's isolated
+PostgreSQL and Redis jobs are test-environment evidence only. No hosted preview,
+Railway deployment, provider/model call, configured external data-store
+operation, merge, or production verification is credited.
 
 ## PR #1444 — expired npm-audit exception removal
 
