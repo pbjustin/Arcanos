@@ -1,9 +1,10 @@
 # Repository health-audit evidence ledger
 
-Last reconciled: 2026-08-22 UTC for Node 24 runtime-baseline draft PR #1457 on
-exact base `8eb958b442cba008f555033ef2de255000b39c97`. PR #1456 and other evidence
-retain their prior recorded cutoffs, including the targeted 2026-08-16
-reviewed-PR #1444 dependency-remediation update.
+Last reconciled: 2026-08-22 UTC for Node 24 runtime-baseline PR #1457 at
+reviewed runtime/toolchain head `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4`
+on current merge base `f9c29767f1d527d03118008cc9c910d71304b228`.
+PR #1456 and other evidence retain their prior recorded cutoffs, including the
+targeted 2026-08-16 reviewed-PR #1444 dependency-remediation update.
 
 This ledger records durable delivery identities and bounded proof. It does not
 turn local, preview, merge, or CI evidence into production credit. Current
@@ -21,18 +22,21 @@ remain authoritative.
 | Exact merge | Source/tree integrated into `main` plus exact-merge checks | Deployment unless an exact deployed revision is attested |
 | Production verification | Only the exact target, revision, time, and contract observed under explicit authorization | Future state or unobserved paths |
 
-## Draft PR #1457 — Node 24 LTS runtime/toolchain baseline
+## Reviewed PR #1457 — Node 24 LTS runtime/toolchain baseline
 
 | Field | Value |
 | --- | --- |
-| Exact implementation base | `8eb958b442cba008f555033ef2de255000b39c97` |
-| Published implementation | `80e8cf69367a29f81174e3cb24af8cbebf3fd405` |
-| Candidate identity | Draft PR [#1457](https://github.com/pbjustin/Arcanos/pull/1457) on `codex/node24-runtime-baseline`; current live PR-head metadata remains authoritative |
+| Original implementation base | `8eb958b442cba008f555033ef2de255000b39c97` |
+| Current merge base | `f9c29767f1d527d03118008cc9c910d71304b228` |
+| Initial published implementation | `80e8cf69367a29f81174e3cb24af8cbebf3fd405` |
+| Reviewed runtime/toolchain head | `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4` |
+| Reviewed tree | `4d7f0221e1dd7696e373407566a8d51ec62aea6d` |
+| Candidate identity | PR [#1457](https://github.com/pbjustin/Arcanos/pull/1457) on `codex/node24-runtime-baseline`; current live PR-head metadata remains authoritative |
 | Selected runtime | Exact Node `24.18.1` with bundled npm `11.16.0` |
 | Runtime integrity | The official Windows x64 archive matched published SHA-256 `ec56b84a7551893ab2324ebdfdc4ab974a63b4781162600b68a1293cc3e53765` |
-| Source state | `Draft PR`; GitHub reported `OPEN`, draft, and `MERGEABLE` at initial publication. Required exact-head CI, review, merge, and deployment remain separate |
+| Source state | Reviewed runtime/toolchain head with required CI and bounded contained-preview evidence complete; merge remains open. The later ledger-only head must pass exact-head checks and live GitHub must report `MERGEABLE` / `CLEAN`; deployment and production remain separate |
 
-The draft candidate aligns the root Railpack-authoritative engine and lockfile mirror,
+The reviewed candidate aligns the root Railpack-authoritative engine and lockfile mirror,
 `.nvmrc`, required and auxiliary workflows, main and auxiliary Docker stages,
 the digest-pinned Python local-agent Node image, standalone workspace engines
 and Node typings, maintained runtime guidance, runtime fingerprints, and focused
@@ -61,11 +65,23 @@ unrs native resolution passed on Windows x64.
 | Bounded 2 GiB soak | `90,042` ms and 319 successful sealed requests under `--max-old-space-size=2048`; post-GC heap was 13.5 MiB initially and 13.8 MiB finally, measured warm growth was 0.7 MiB, RSS maximum/final was 90.5 MiB, and external and array-buffer memory remained flat. No dependency boundary or OOM was reached |
 | Container and disposable-service evidence | Skipped locally: the Docker client existed but its daemon and buildx did not. Official image-manifest reads passed for `node:24.18.1-alpine` and the digest-pinned `node:24.18.1-bookworm-slim` daemon image, but no Alpine/musl execution or Docker build is claimed. WSL lacked native Linux Node, Docker/Podman, PostgreSQL, and Redis, so no disposable PostgreSQL or Redis integration claim is made |
 
+### Reviewed-head CI, container, and contained-preview evidence
+
+| Evidence | Result |
+| --- | --- |
+| Exact-head GitHub | CI/CD [`32603103950`](https://github.com/pbjustin/Arcanos/actions/runs/32603103950), PR CI [`32603103923`](https://github.com/pbjustin/Arcanos/actions/runs/32603103923), Documentation Audit [`32603103907`](https://github.com/pbjustin/Arcanos/actions/runs/32603103907), and API Endpoint Tests [`32603103927`](https://github.com/pbjustin/Arcanos/actions/runs/32603103927) passed at reviewed runtime/toolchain head `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4`. `All Checks Complete` verified all required CI dependency results as successful; zero review-thread objects existed |
+| Main Alpine image | Railway Compatibility job [`97104478212`](https://github.com/pbjustin/Arcanos/actions/runs/32603103950/job/97104478212) built the repository `Dockerfile`. Its fail-closed gate verified Node `24.18.1` and npm `11.16.0` before installation; npm installs, Prisma 5.22 generation, and the complete image build passed. This proves the Dockerfile path, not provider-side Railpack resolution |
+| Digest-pinned daemon image | Local Agent Sandbox job [`97104213743`](https://github.com/pbjustin/Arcanos/actions/runs/32603103950/job/97104213743) built the digest-pinned `daemon-python/Dockerfile.local-agent-tests` image and passed its focused sandbox suite. The two Phase 2E auxiliary Dockerfiles retain static contract coverage only |
+| Exact-head contained preview | Dockerfile-backed lifecycle run [`32603643672`](https://github.com/pbjustin/Arcanos/actions/runs/32603643672) deployed and reconciled worker first and then web at exact head `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4`; run [`32603649405`](https://github.com/pbjustin/Arcanos/actions/runs/32603649405) idempotently reconciled the same exact-head environment. Each sealed E2E execution passed 126/126. This proves the contained application and passive-worker startup on the built Alpine image; it does not exercise normal authenticated handlers, AI/model-provider calls, configured PostgreSQL/Redis, or active job claiming |
+| Review and teardown | GitHub reported the reviewed runtime/toolchain head `MERGEABLE` with zero review threads. Label-removal cleanup run [`32604148212`](https://github.com/pbjustin/Arcanos/actions/runs/32604148212) and the subsequent draft-state reconciliation run [`32604187698`](https://github.com/pbjustin/Arcanos/actions/runs/32604187698) passed; both former `/readyz` endpoints returned HTTP 404. Cleanup E2E skips were intentional |
+
 The 90-second Windows soak cannot exclude the multi-hour Linux/Alpine symptoms
 reported in [nodejs/node#65110](https://github.com/nodejs/node/issues/65110);
 that unresolved risk is why the candidate retains `24.18.1` rather than moving
-to `24.19.0`. No configured or live database, Redis, provider, Railway, live
-memory, deployment, or external mutation occurred.
+to `24.19.0`. No configured or live database, Redis, external AI/model-provider
+call, normal authenticated handler, live memory, or production operation occurred. The
+authorized Railway activity above was limited to a credential-empty,
+Dockerfile-backed contained preview and its teardown.
 
 ## Draft PR #1456 — `/dispatch` GPT-ID rejection before provider admission
 
