@@ -43,6 +43,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
   'src/services/gamingModes.ts',
+  'src/services/backstageBookerClear.ts',
   'src/services/directAnswerMode.ts',
   'src/services/gamingPublicDispatcher.ts',
   'src/services/publicGamingCanary.ts',
@@ -97,7 +98,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
+  /^src\/services\/(?!(?:backstageBookerClear|directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -578,6 +579,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/services/directAnswerMode.ts',
     'a4002ca1d79e508ffa8d95d52383e0db7ddac56e54704d583d82eb0746ff6b63',
+  ],
+  [
+    'src/services/backstageBookerClear.ts',
+    '001cd70c7af10701bc1f58e335f500d9a554951e8ef5ef00ef3b90ff532527ce',
   ],
   [
     'src/services/gamingPublicDispatcher.ts',

@@ -176,6 +176,14 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value,
         }
       : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .clearPolicyVersion]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+              .clearPolicyVersion,
+        }
+      : {}),
     ...(
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -1231,6 +1239,7 @@ test('executes the bounded credential-free matrix and detects identity stability
         caseId === 'backstage-generation-route-budget'
       ).bodySha256,
       caseId: 'backstage-generation-route-budget',
+      clearPolicyVersionVerified: true,
       httpStatus: 200,
       method: 'POST',
       minimumResponseMs: 13_000,
@@ -1657,6 +1666,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
         delete headers[
           NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
         ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-review-completion',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_CLEAR_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .clearPolicyVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-compact-retry',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_CLEAR_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .clearPolicyVersion
+        ] = 'backstage-booker-clear-generation/drifted';
       },
     },
     {

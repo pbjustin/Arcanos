@@ -3138,6 +3138,18 @@ async function executeRequestCase(
   ) {
     fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
   }
+  if (requestCase.expectedType === 'backstage-generation-contract') {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
+    if (
+      response.headers.get(contract.proofHeaders.clearPolicyVersion)
+        !== contract.clearPolicyVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_CLEAR_POLICY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
     const maximumLength = requestCase.fixtureName === 'maximumLength';
@@ -3215,6 +3227,9 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      ? { clearPolicyVersionVerified: true }
+      : {}),
     ...(generationProofStartedAt === null
       ? {}
       : {

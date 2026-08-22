@@ -165,6 +165,19 @@ base-pinned lifecycle verifier still exercises the PR-head compact seam. This
 is synthetic component evidence: it does not call a model provider, the
 canonical route, HRC, RAG, a database, persistence, or protected effects.
 
+Every successful generation selector also executes the semantic-digest-pinned
+pure CLEAR policy composer shared with production, assembles the policy through
+the production Trinity direct-answer message helper, and runs a synthetic
+length-exhaustion retry. The assertion requires the authority policy before one
+fixed CLEAR marker/version and all five dimensions, keeps caller and untrusted
+override sentinels out of the system policy, and proves the same composed policy
+survives the retry. Successful responses carry
+`x-arcanos-preview-backstage-clear-policy-version` with the fixed policy
+version; the PR-head runner requires it. Existing response bodies stay unchanged
+so the base-pinned trusted lifecycle verifier still exercises the deployed
+PR-head proof. This attests contained construction, ordering, and retry reuse,
+not the canonical route, a live provider, model compliance, or booking quality.
+
 The continuity-query case executes the production-shared cursor-shape
 preflight, sampled/exhaustive and compact-retry policy prompts, prompt assembly,
 and public response projection over server-owned sealed input. It also proves
