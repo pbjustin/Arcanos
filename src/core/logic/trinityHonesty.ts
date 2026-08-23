@@ -468,6 +468,15 @@ function buildComparisonTokenSet(segment: string): Set<string> {
   );
 }
 
+function buildExplicitNumericTokenSet(segment: string): Set<string> {
+  return new Set(segment.match(/\b\d+\b/gu) ?? []);
+}
+
+function setsContainSameValues(left: Set<string>, right: Set<string>): boolean {
+  return left.size === right.size
+    && [...left].every(value => right.has(value));
+}
+
 function calculateTokenOverlap(leftTokens: Set<string>, rightTokens: Set<string>): number {
   if (leftTokens.size === 0 || rightTokens.size === 0) {
     return 0;
@@ -1024,7 +1033,12 @@ function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoni
     !LIMITATION_LANGUAGE_PATTERN.test(text) &&
     reasoningHonesty.userVisibleCaveats.length > 0
   ) {
-    return normalizeWhitespace(`${ensureSingleSentence(reasoningHonesty.userVisibleCaveats[0] ?? '')} ${text}`);
+    const separator = /^\s*(?:\*\*|__)?\d+[.)]\s/u.test(text)
+      ? '\n'
+      : ' ';
+    return normalizeWhitespace(
+      `${ensureSingleSentence(reasoningHonesty.userVisibleCaveats[0] ?? '')}${separator}${text}`
+    );
   }
   return text;
 }
@@ -1128,6 +1142,14 @@ function areNearDuplicateSegments(leftSegment: string, rightSegment: string): bo
   }
   if (normalizedLeftSegment === normalizedRightSegment) {
     return true;
+  }
+  // Distinct explicit numbers are factual differences (dates, scores, match
+  // order, title reigns), not padding. Preserve them before fuzzy overlap.
+  if (!setsContainSameValues(
+    buildExplicitNumericTokenSet(leftSegment),
+    buildExplicitNumericTokenSet(rightSegment)
+  )) {
+    return false;
   }
   const leftTokens = buildComparisonTokenSet(leftSegment);
   const rightTokens = buildComparisonTokenSet(rightSegment);
@@ -1277,6 +1299,7 @@ function repairOrphanNumberedListMarkers(text: string): string {
 export type TrinityAnswerIntegrityIssue =
   | 'abrupt_mid_sentence_ending'
   | 'broken_numbering'
+  | 'incomplete_final_section'
   | 'fallback_spliced_mid_answer';
 
 export interface TrinityAnswerIntegrityResult {
@@ -1293,20 +1316,87 @@ function hasAbruptEnding(text: string): boolean {
     .test(normalizedText);
 }
 
-function hasBrokenNumbering(text: string): boolean {
+function readTopLevelNumberedMarkers(text: string): number[] {
+  return text
+    .split(/\r?\n/gu)
+    .flatMap(line => {
+      if (!/^[^\S\r\n]?\d+\.\s+\S/u.test(line)) {
+        return [];
+      }
+      const normalizedLine = line.replace(/^[^\S\r\n]?/u, '').trimEnd();
+      return Array.from(
+        normalizedLine.matchAll(/(?=(?:^|[.!?]\s+)(\d+)\.\s+(?=\S))/gu)
+      )
+        .map(match => Number.parseInt(match[1] ?? '', 10))
+        .filter(Number.isFinite);
+    });
+}
+
+function hasBrokenNumbering(
+  text: string,
+  expectedNumberedItemCount?: number
+): boolean {
   const normalizedText = normalizeWhitespace(text);
-  if (/(?:^|\s)\d+\.\s*(?=\d+\.|$)/.test(normalizedText)) {
+  const hasOrphanMarker = /\r?\n/u.test(text)
+    ? text
+        .split(/\r?\n/gu)
+        .some(line => /^[^\S\r\n]?\d+\.\s*$/u.test(line))
+    : /^1\.\s*(?=\d+\.|$)/u.test(normalizedText)
+      || /[.!?]\s+\d+\.\s*(?=\d+\.|$)/u.test(normalizedText);
+  if (hasOrphanMarker) {
     return true;
   }
 
-  const markers = Array.from(normalizedText.matchAll(/(?:^|\s)(\d+)\.\s+/g))
-    .map(match => Number.parseInt(match[1] ?? '', 10))
-    .filter(Number.isFinite);
-  if (markers.length < 2) {
+  const markers = readTopLevelNumberedMarkers(text);
+  if (markers.length === 0) {
+    return false;
+  }
+  const hasExactNumberedItemContract =
+    typeof expectedNumberedItemCount === 'number'
+    && Number.isFinite(expectedNumberedItemCount)
+    && expectedNumberedItemCount >= 1;
+  if (markers[0] !== 1 && !hasExactNumberedItemContract) {
+    return false;
+  }
+  if (
+    markers.length === 1
+    && (
+      !hasExactNumberedItemContract
+      || markers[0]! > Math.trunc(expectedNumberedItemCount)
+    )
+  ) {
     return false;
   }
 
   return markers.some((marker, index) => marker !== index + 1);
+}
+
+function hasIncompleteFinalSection(
+  text: string,
+  expectedNumberedItemCount?: number
+): boolean {
+  const lines = text
+    .trimEnd()
+    .split(/\r?\n/gu)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const finalLine = lines.at(-1) ?? '';
+  if (
+    /^#{1,6}\s+\S.{0,159}$/u.test(finalLine)
+    || /^(?:\*\*)?[^\n:]{1,120}:(?:\*\*)?$/u.test(finalLine)
+  ) {
+    return true;
+  }
+  if (
+    typeof expectedNumberedItemCount !== 'number'
+    || !Number.isFinite(expectedNumberedItemCount)
+    || expectedNumberedItemCount < 1
+  ) {
+    return false;
+  }
+  const expectedCount = Math.trunc(expectedNumberedItemCount);
+  const markers = readTopLevelNumberedMarkers(text);
+  return markers.length === 0 || markers.length !== expectedCount;
 }
 
 function hasFallbackSplice(text: string, reasoningHonesty: TrinityReasoningHonesty): boolean {
@@ -1323,13 +1413,20 @@ function hasFallbackSplice(text: string, reasoningHonesty: TrinityReasoningHones
 export function validateTrinityAnswerIntegrity(params: {
   text: string;
   reasoningHonesty?: TrinityReasoningHonesty;
+  expectedNumberedItemCount?: number;
 }): TrinityAnswerIntegrityResult {
   const issues: TrinityAnswerIntegrityIssue[] = [];
   if (hasAbruptEnding(params.text)) {
     issues.push('abrupt_mid_sentence_ending');
   }
-  if (hasBrokenNumbering(params.text)) {
+  if (hasBrokenNumbering(params.text, params.expectedNumberedItemCount)) {
     issues.push('broken_numbering');
+  }
+  if (hasIncompleteFinalSection(
+    params.text,
+    params.expectedNumberedItemCount
+  )) {
+    issues.push('incomplete_final_section');
   }
   if (params.reasoningHonesty && hasFallbackSplice(params.text, params.reasoningHonesty)) {
     issues.push('fallback_spliced_mid_answer');

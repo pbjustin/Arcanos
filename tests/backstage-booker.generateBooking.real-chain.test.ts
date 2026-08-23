@@ -123,6 +123,7 @@ afterAll(() => {
 describe('backstage-booker generateBooking real provider chain', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    responsesCreate.mockReset();
     query.mockResolvedValue({ rows: [] });
     poolClientQuery.mockResolvedValue({ rows: [] });
     poolClientRelease.mockReturnValue(undefined);
@@ -163,6 +164,19 @@ describe('backstage-booker generateBooking real provider chain', () => {
   });
 
   it('preserves the Booker model and token budget through the Responses request', async () => {
+    const providerBooking = [
+      '1. Cody Rhodes starts a rivalry with Seth Rollins.',
+      '2. Rhea Ripley confronts Iyo Sky.',
+      '3. CM Punk closes Raw with Drew McIntyre.',
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_booking_three_rivalries',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: providerBooking,
+      output: [],
+      usage: { input_tokens: 10, output_tokens: 30, total_tokens: 40 },
+    });
     query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -176,7 +190,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
 
     await expect(
       generateBooking('Generate three rivalries for RAW after WrestleMania.')
-    ).resolves.toBe('Rivalry matrix output.');
+    ).resolves.toBe(providerBooking);
 
     expect(responsesCreate).toHaveBeenCalledTimes(1);
     const [request, options] = responsesCreate.mock.calls[0] as unknown as [
@@ -229,6 +243,238 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.signal?.aborted).toBe(false);
     expect(options.timeout).toBeUndefined();
+    expect(storePattern).not.toHaveBeenCalled();
+  });
+
+  it('repairs one abrupt worker response through the real Booker provider chain', async () => {
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_repair_primary',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text:
+          'Cody Rhodes defeats Seth Rollins. The closing angle should',
+        output: [],
+        usage: {
+          input_tokens: 120,
+          output_tokens: 120,
+          total_tokens: 240,
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_repair_continuation',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: 'end with Roman Reigns watching from the stage.',
+        output: [],
+        usage: {
+          input_tokens: 180,
+          output_tokens: 24,
+          total_tokens: 204,
+        },
+      });
+
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(
+        'Generate a production-sized Raw closing angle where Cody Rhodes defeats Seth Rollins. The closing angle should end with Roman Reigns watching from the stage.',
+        'worker-integrity-repair-fixture'
+      )
+    );
+
+    expect(result).toContain('Cody Rhodes defeats Seth Rollins.');
+    expect(result).toContain('The closing angle should');
+    expect(result).toContain('end with Roman Reigns watching from the stage.');
+
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    const [primaryRequest] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>
+    ];
+    const [repairRequest] = responsesCreate.mock.calls[1] as unknown as [
+      Record<string, unknown>
+    ];
+    expect(primaryRequest.max_output_tokens).toBe(6_000);
+    expect(repairRequest.max_output_tokens).toBe(1_200);
+    expect(JSON.stringify(repairRequest.input)).toContain(
+      '<<UNTRUSTED_INTEGRITY_REPAIR_DATA>>'
+    );
+  });
+
+  it('fails closed after one content-filtered repair response without a third call', async () => {
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_repair_filtered_primary',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: 'The closing angle should',
+        output: [],
+        usage: {
+          input_tokens: 120,
+          output_tokens: 120,
+          total_tokens: 240,
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_repair_filtered',
+        model: 'gpt-5.1',
+        status: 'incomplete',
+        incomplete_details: { reason: 'content_filter' },
+        output_text: 'PRIVATE-FILTERED-REPAIR',
+        output: [],
+        usage: {
+          input_tokens: 180,
+          output_tokens: 8,
+          total_tokens: 188,
+        },
+      });
+
+    let failure: unknown;
+    try {
+      await runWithBackstageProtectedQueuedExecution(true, () => generateBooking(
+        'Generate a production-sized Raw closing angle with complete consequences.',
+        'worker-integrity-filter-fixture'
+      ));
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    expect(failure).toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      retryable: false,
+      repairAttempted: true,
+      repairFailureReason: 'content_filtered',
+    });
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE-FILTERED-REPAIR');
+  });
+
+  it('rejects a structurally valid repair that introduces an ungrounded booking fact', async () => {
+    const inventedFact =
+      'end with INVENTED-RESULT-777 awarding CM Punk the WWE title.';
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_ungrounded_primary',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text:
+          'Cody Rhodes defeats Seth Rollins. The closing angle should',
+        output: [],
+        usage: {
+          input_tokens: 120,
+          output_tokens: 120,
+          total_tokens: 240,
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_ungrounded_repair',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: inventedFact,
+        output: [],
+        usage: {
+          input_tokens: 180,
+          output_tokens: 24,
+          total_tokens: 204,
+        },
+      });
+
+    let failure: unknown;
+    try {
+      await runWithBackstageProtectedQueuedExecution(true, () => generateBooking(
+        'Generate a Raw angle where Cody Rhodes defeats Seth Rollins and celebrates after the match.',
+        'worker-integrity-grounding-fixture'
+      ));
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    expect(failure).toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      retryable: false,
+      repairAttempted: true,
+      repairFailureReason: 'invalid_continuation',
+    });
+    expect(JSON.stringify(failure)).not.toContain('INVENTED-RESULT-777');
+    expect(JSON.stringify(failure)).not.toContain('CM Punk');
+  });
+
+  it('preserves event numbers in complete single-line prose without a repair call', async () => {
+    const chronology =
+      'At WrestleMania 41. Cody Rhodes retains. At WrestleMania 42. Roman Reigns challenges.';
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_event_number_prose',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: chronology,
+      output: [],
+      usage: {
+        input_tokens: 100,
+        output_tokens: 24,
+        total_tokens: 124,
+      },
+    });
+
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(
+        'Summarize the established WrestleMania 41 and WrestleMania 42 chronology in complete prose.',
+        'worker-event-number-fixture'
+      )
+    );
+
+    expect(result).toContain('At WrestleMania 41.');
+    expect(result).toContain('Cody Rhodes retains.');
+    expect(result).toContain('At WrestleMania 42.');
+    expect(result).toContain('Roman Reigns challenges.');
+    expect(result).not.toContain('WrestleMania 1.');
+    expect(result).not.toContain('WrestleMania 2.');
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not accept unnumbered prose for an exact numbered booking contract', async () => {
+    const unnumberedOutput =
+      'Cody Rhodes retains in a complete main event paragraph.';
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_unnumbered_primary',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: unnumberedOutput,
+        output: [],
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          total_tokens: 120,
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_unnumbered_repair',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: 'STRUCTURAL_REPAIR_UNAVAILABLE',
+        output: [],
+        usage: {
+          input_tokens: 140,
+          output_tokens: 4,
+          total_tokens: 144,
+        },
+      });
+
+    let failure: unknown;
+    try {
+      await runWithBackstageProtectedQueuedExecution(true, () => generateBooking(
+        'Return exactly five numbered booking items for Raw.',
+        'worker-exact-numbered-fixture'
+      ));
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    expect(failure).toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      repairAttempted: true,
+    });
+    expect(JSON.stringify(failure)).not.toContain(unnumberedOutput);
   });
 
   it('completes a near-limit full-state review through the bounded provider path', async () => {
@@ -480,12 +726,76 @@ describe('backstage-booker generateBooking real provider chain', () => {
     }
   });
 
+  it.each([
+    [
+      'an unsupported provider incomplete reason',
+      { reason: 'safety_policy' },
+      'PRIVATE-SAFETY-INCOMPLETE-SENTINEL',
+    ],
+    [
+      'missing provider incomplete details',
+      undefined,
+      'PRIVATE-MISSING-DETAILS-INCOMPLETE-SENTINEL',
+    ],
+  ])('does not compact-retry %s', async (_label, incompleteDetails, privatePartial) => {
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_non_length_incomplete',
+      model: 'gpt-5.1',
+      status: 'incomplete',
+      ...(incompleteDetails ? { incomplete_details: incompleteDetails } : {}),
+      output_text: privatePartial,
+      output: [],
+      usage: {
+        input_tokens: 1_100,
+        output_tokens: 1_200,
+        total_tokens: 2_300,
+      },
+    });
+    const consoleErrorSpy = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+
+    try {
+      const failure = await runWithBackstageProtectedQueuedExecution(
+        true,
+        () => generateBooking(
+          'Generate a complete Raw booking without returning partial output.',
+          'worker-non-length-incomplete-fixture'
+        )
+      ).catch(error => error);
+
+      expect(failure).toMatchObject({ message: 'Booking generation failed' });
+      expect(JSON.stringify(failure)).not.toContain(privatePartial);
+      expect(responsesCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('retains the honesty caveat when the user directive requests current external events', async () => {
-    await expect(
-      generateBooking('Generate three rivalries using current external events.')
-    ).resolves.toBe(
-      "I can't verify current external state here without live access. Rivalry matrix output."
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_backstage_external_rivalries',
+      model: 'gpt-5.1',
+      status: 'completed',
+      output_text: [
+        '1. Cody Rhodes starts a rivalry with Seth Rollins.',
+        '2. Rhea Ripley confronts Iyo Sky.',
+        '3. CM Punk closes Raw with Drew McIntyre.',
+      ].join('\n'),
+      output: [],
+      usage: { input_tokens: 10, output_tokens: 30, total_tokens: 40 },
+    });
+
+    const result = await generateBooking(
+      'Generate three rivalries using current external events.'
     );
+
+    expect(result).toContain(
+      "I can't verify current external state here without live access."
+    );
+    expect(result).toContain('Cody Rhodes starts a rivalry with Seth Rollins.');
+    expect(result).toContain('Rhea Ripley confronts Iyo Sky.');
+    expect(result).toContain('CM Punk closes Raw with Drew McIntyre.');
   });
 
   it('preserves all bounded review bullets when honesty adds a caveat before the first item', async () => {

@@ -609,6 +609,16 @@ max-output exhaustion, reusing the same retrieval and runtime budget. Other
 provider failures are not retried; a second length exhaustion or an enforceable
 exact/maximum compact-contract violation becomes the sanitized
 `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE` error without partial output or a third attempt.
+For a provider response that is complete but fails only the closed structural
+integrity set (broken numbering, an abrupt ending, or a missing exact final
+section), the primary generation may use one bounded repair pass. Numbering is
+repaired deterministically; the other two cases allow only a minimal append-only
+continuation within the reserved timeout and output budget. The repaired result
+must pass the same honesty, output-contract, and integrity gates again. Empty,
+content-filtered, provider-incomplete, irreparable, or still-invalid output fails
+closed as `BACKSTAGE_BOOKER_INTEGRITY_FAILED`; the response includes only safe
+classifications and never partial booking text. Compact max-output retry does not
+receive another structural-repair allowance.
 Other internal continuity-answer failures become the cause-free,
 nonretryable `BACKSTAGE_CONTINUITY_QUERY_FAILED` error.
 Readers also reject snapshots from before the current heading-aware index

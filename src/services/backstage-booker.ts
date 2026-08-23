@@ -138,6 +138,7 @@ import {
 } from '@shared/backstage/backstageRoster.js';
 import {
   isBackstageBookerOutputIncompleteError,
+  toBackstageBookerIntegrityFailedError,
 } from '@shared/backstage/backstageGenerationError.js';
 import {
   BACKSTAGE_STORYLINE_PROMPT_BEATS,
@@ -2553,6 +2554,28 @@ export async function generateBooking(
         executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
+    directAnswerIntegrityRepair: {
+      maxAttempts: 1 as const,
+      timeoutMs: executionBudget.recoveryStageTimeoutMs,
+      tokenLimit: executionBudget.recoveryOutputTokenReserve,
+      totalOutputTokenCap: outputBudget.tokenCap,
+      minimumOutputTokens: executionBudget.recoveryOutputTokenReserve,
+      minimumRuntimeRemainingMs:
+        executionBudget.recoveryStageTimeoutMs
+        + executionBudget.hrcStageReserveMs,
+      minimumRequestRemainingMs:
+        executionBudget.recoveryStageTimeoutMs
+        + executionBudget.hrcStageReserveMs
+        + (executionBudget.profile === 'queued_generation'
+          ? 0
+          : executionBudget.finalizationReserveMs),
+      ...(compactOutputContract.itemPolicy.mode === 'exact'
+        ? {
+            expectedNumberedItemCount:
+              compactOutputContract.itemPolicy.count,
+          }
+        : {}),
+    },
     ...(protectedQueuedExecution || structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
@@ -2590,6 +2613,7 @@ export async function generateBooking(
       const attemptRunOptions = compactOutputRetry
         ? {
             ...trinityRunOptions,
+            directAnswerIntegrityRepair: undefined,
             modelStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
             trustedPolicyPrompt: [
               structuredPrompt.trustedPolicyPrompt,
@@ -2667,6 +2691,10 @@ export async function generateBooking(
   } catch (error) {
     if (isBackstageBookerOutputIncompleteError(error)) {
       throw error;
+    }
+    const integrityFailure = toBackstageBookerIntegrityFailedError(error);
+    if (integrityFailure) {
+      throw integrityFailure;
     }
     if (protectedQueuedExecution || structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');

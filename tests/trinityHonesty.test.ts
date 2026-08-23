@@ -772,6 +772,56 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.text).toContain('PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.');
   });
 
+  it('preserves near-matching factual segments when their explicit numbers differ', () => {
+    const chronology =
+      'At WrestleMania 41. Cody Rhodes retains. At WrestleMania 42. Roman Reigns challenges.';
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: chronology,
+      userPrompt: 'Summarize the WrestleMania 41 and WrestleMania 42 chronology.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Answer directly.', {}),
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Summarize the supplied chronology'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: [],
+      },
+    });
+
+    expect(enforcementResult.text).toContain('At WrestleMania 41.');
+    expect(enforcementResult.text).toContain('At WrestleMania 42.');
+  });
+
+  it('preserves every consecutively numbered item during near-duplicate cleanup', () => {
+    const numberedItems = [
+      '1. The show has a coherent through-line.',
+      '2. The results and ratings establish the hierarchy.',
+      '3. The promos and segments advance the central conflict.',
+      '4. The rivalries preserve established continuity.',
+      '5. The pacing needs one earlier transition.',
+      '6. The unfinished matches should determine the next branch.',
+    ].join('\n');
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: numberedItems,
+      userPrompt: 'Review the full show in six numbered bullets.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls(
+        'Review the full show in six numbered bullets.',
+        {}
+      ),
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Review the full show'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: [],
+      },
+    });
+
+    expect(enforcementResult.text).toBe(numberedItems);
+  });
+
   it('removes unrequested qualifier insertions that drift beyond the prompt scope', () => {
     const enforcementResult = enforceFinalStageHonestyAndMinimalism({
       text: "I can't verify current competitor moves or your actual tooling without live browsing. Lead with differentiated positioning.",
@@ -984,6 +1034,88 @@ describe('Trinity honesty controls', () => {
     expect(integrity).toEqual({
       valid: false,
       issues: ['abrupt_mid_sentence_ending']
+    });
+  });
+
+  it('flags a missing final numbered item without weakening valid prefixes', () => {
+    const integrity = validateTrinityAnswerIntegrity({
+      text: '1. Cody Rhodes retains.\n2. Rhea Ripley confronts Iyo Sky.',
+      expectedNumberedItemCount: 3,
+    });
+
+    expect(integrity).toEqual({
+      valid: false,
+      issues: ['incomplete_final_section'],
+    });
+  });
+
+  it('rejects unnumbered prose and wrong-start markers under an exact numbered contract', () => {
+    expect(validateTrinityAnswerIntegrity({
+      text: 'Cody Rhodes retains in a complete main event paragraph.',
+      expectedNumberedItemCount: 5,
+    }).issues).toContain('incomplete_final_section');
+
+    for (const marker of [2, 5]) {
+      const integrity = validateTrinityAnswerIntegrity({
+        text: `${marker}. Cody Rhodes retains.`,
+        expectedNumberedItemCount: 5,
+      });
+      expect(integrity.issues).toEqual(expect.arrayContaining([
+        'broken_numbering',
+        'incomplete_final_section',
+      ]));
+    }
+  });
+
+  it('evaluates top-level numbering without flattening valid nested lists', () => {
+    expect(validateTrinityAnswerIntegrity({
+      text: [
+        '1. Raw opener.',
+        '   1. Nested production note.',
+        '2. Raw main event.',
+      ].join('\n'),
+    })).toEqual({ valid: true, issues: [] });
+
+    expect(validateTrinityAnswerIntegrity({
+      text: [
+        ' 1. Raw opener.',
+        '   1. Nested production note.',
+        ' 3. Raw main event.',
+      ].join('\n'),
+    }).issues).toContain('broken_numbering');
+  });
+
+  it('does not classify event numbers in single-line prose as broken list numbering', () => {
+    expect(validateTrinityAnswerIntegrity({
+      text: 'At WrestleMania 41. Cody Rhodes retains. At WrestleMania 42. Roman Reigns challenges.',
+    })).toEqual({ valid: true, issues: [] });
+  });
+
+  it('does not infer a list from line-leading event sequence facts without an exact contract', () => {
+    const text = [
+      '41. WrestleMania closes with Cody Rhodes retaining.',
+      '42. WrestleMania opens the next chapter.',
+    ].join('\n');
+
+    expect(validateTrinityAnswerIntegrity({ text }))
+      .toEqual({ valid: true, issues: [] });
+    expect(validateTrinityAnswerIntegrity({
+      text,
+      expectedNumberedItemCount: 5,
+    }).issues).toEqual(expect.arrayContaining([
+      'broken_numbering',
+      'incomplete_final_section',
+    ]));
+  });
+
+  it('flags an empty final heading as an incomplete final section', () => {
+    const integrity = validateTrinityAnswerIntegrity({
+      text: 'The main event closes cleanly.\n## Closing Consequences',
+    });
+
+    expect(integrity).toEqual({
+      valid: false,
+      issues: ['incomplete_final_section'],
     });
   });
 

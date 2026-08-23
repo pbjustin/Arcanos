@@ -14,9 +14,12 @@ import {
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
   BackstageBookerOutputIncompleteError,
+  BackstageBookerIntegrityFailedError,
   BackstageContinuityQueryFailedError,
 } from '../src/shared/backstage/backstageGenerationError.js';
 import {
@@ -870,6 +873,96 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       })
     );
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves only bounded Booker integrity-repair diagnostics', async () => {
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerIntegrityFailedError({
+        integrityIssues: ['abrupt_mid_sentence_ending'],
+        originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+        repairedIntegrityIssues: ['abrupt_mid_sentence_ending'],
+        repairAttempted: true,
+        repairFailureReason: 'revalidation_failed',
+      })
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'PRIVATE-PROMPT-MUST-NOT-ESCAPE',
+        },
+      },
+      requestId: 'req-backstage-integrity-failed',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
+        message: BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
+        details: {
+          retryable: false,
+          integrityIssues: ['abrupt_mid_sentence_ending'],
+          originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+          repairedIntegrityIssues: ['abrupt_mid_sentence_ending'],
+          repairAttempted: true,
+          repairFailureReason: 'revalidation_failed',
+        },
+      },
+    });
+    expect(JSON.stringify(envelope)).not.toContain(
+      'PRIVATE-PROMPT-MUST-NOT-ESCAPE'
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-backstage-integrity-failed',
+        error: BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
+      })
+    );
+  });
+
+  it('preserves the original issue when structural repair is safely skipped', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerIntegrityFailedError({
+        integrityIssues: ['abrupt_mid_sentence_ending'],
+        repairAttempted: false,
+        repairFailureReason: 'insufficient_time',
+      })
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: { prompt: 'Book a bounded ending.' },
+      },
+      requestId: 'req-backstage-integrity-skipped',
+      logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
+        details: {
+          integrityIssues: ['abrupt_mid_sentence_ending'],
+          originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+          repairedIntegrityIssues: [],
+          repairAttempted: false,
+          repairFailureReason: 'insufficient_time',
+        },
+      },
+    });
   });
 
   it('preserves the safe nonretryable continuity-query internal-failure envelope', async () => {

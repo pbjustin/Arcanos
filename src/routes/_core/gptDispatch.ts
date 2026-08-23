@@ -28,9 +28,12 @@ import {
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
   isBackstageBookerOutputIncompleteError,
+  isBackstageBookerIntegrityFailedError,
   isBackstageContinuityQueryFailedError,
 } from '@shared/backstage/backstageGenerationError.js';
 import {
@@ -574,6 +577,22 @@ function buildDispatchErrorDetails(
     && isBackstageBookerOutputIncompleteError(error)
   ) {
     return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageBookerIntegrityFailedError(error)
+  ) {
+    return {
+      retryable: error.retryable,
+      integrityIssues: error.integrityIssues,
+      originalIntegrityIssues: error.originalIntegrityIssues,
+      repairedIntegrityIssues: error.repairedIntegrityIssues,
+      repairAttempted: error.repairAttempted,
+      ...(error.repairFailureReason
+        ? { repairFailureReason: error.repairFailureReason }
+        : {}),
+    };
   }
 
   if (
@@ -2144,6 +2163,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isBackstageOutputIncompleteFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageBookerOutputIncompleteError(err);
+      const isBackstageIntegrityFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageBookerIntegrityFailedError(err);
       const isBackstageContinuityQueryFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'queryContinuity'
@@ -2157,7 +2179,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         && !isNotionIndexUnavailableFailure
         && !isNotionAuthorityUnavailableFailure
         && !isNotionAuthorityReadOnlyFailure
-        && !isBackstageOutputIncompleteFailure;
+        && !isBackstageOutputIncompleteFailure
+        && !isBackstageIntegrityFailure;
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
@@ -2181,6 +2204,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE
         : isBackstageOutputIncompleteFailure
         ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
+        : isBackstageIntegrityFailure
+        ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE
         : isBackstageContinuityQueryFailure
         ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE
         : isProtectedBackstageQueuedGenerationFailure
@@ -2392,6 +2417,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
               || isNotionAuthorityUnavailableFailure
               || isNotionAuthorityReadOnlyFailure
               || isBackstageOutputIncompleteFailure
+              || isBackstageIntegrityFailure
               || isBackstageContinuityQueryFailure
             )
             ? (
@@ -2407,6 +2433,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
                   ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE
                   : isBackstageOutputIncompleteFailure
                   ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+                  : isBackstageIntegrityFailure
+                  ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE
                   : isBackstageContinuityQueryFailure
                   ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
                   : err.code

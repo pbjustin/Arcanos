@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T08:40:38.813Z",
+  "generatedAt": "2026-08-23T09:09:34.823Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -564,6 +564,9 @@
         },
         {
           "relativePath": "src/core/logic/trinityHonestyTypes.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityIntegrityRecovery.ts"
         },
         {
           "relativePath": "src/core/logic/trinityJudgedFeedback.ts"
@@ -4649,6 +4652,9 @@
         },
         {
           "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-integrity-recovery.test.ts"
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"

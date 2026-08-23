@@ -625,8 +625,19 @@ describe('backstage-booker generateBooking', () => {
             watchdogModelTimeoutMs: 170_000,
             modelStageTimeoutMs: 80_000,
             cooperativeModelStageTimeout: true,
+            disableOptionalSideEffects: true,
+            redactAuditContent: true,
             directAnswerTokenLimitOverride: 6_000,
             directAnswerTokenCapOverride: 6_000,
+            directAnswerIntegrityRepair: {
+              maxAttempts: 1,
+              timeoutMs: 45_000,
+              tokenLimit: 1_200,
+              totalOutputTokenCap: 6_000,
+              minimumOutputTokens: 1_200,
+              minimumRuntimeRemainingMs: 45_000,
+              minimumRequestRemainingMs: 45_000,
+            },
             directAnswerSystemPolicyPrompt: expect.stringContaining(
               'Complete every requested section within 6000 output tokens.'
             ),
@@ -2189,6 +2200,26 @@ describe('backstage-booker generateBooking', () => {
     }
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+    expect(mockRunTrinityWritingPipeline.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            directAnswerIntegrityRepair: expect.objectContaining({
+              maxAttempts: 1,
+            }),
+          }),
+        }),
+      })
+    );
+    expect(mockRunTrinityWritingPipeline.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            directAnswerIntegrityRepair: undefined,
+          }),
+        }),
+      })
+    );
     expect(failure).toMatchObject({
       code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
       message:
@@ -2198,6 +2229,43 @@ describe('backstage-booker generateBooking', () => {
     expect(failure?.cause).toBeUndefined();
     expect(JSON.stringify(failure)).not.toContain('PRIVATE-FIRST-PARTIAL-OUTPUT');
     expect(JSON.stringify(failure)).not.toContain('PRIVATE-RETRY-PARTIAL-OUTPUT');
+  });
+
+  it('preserves a terminal structural repair failure without entering compact retry', async () => {
+    const privateFailure = Object.assign(
+      new Error('PRIVATE-UNREPAIRED-OUTPUT'),
+      {
+        code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+        integrityIssues: ['abrupt_mid_sentence_ending'],
+        originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+        repairedIntegrityIssues: ['abrupt_mid_sentence_ending'],
+        repairAttempted: true,
+        repairFailureReason: 'revalidation_failed',
+      }
+    );
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(privateFailure);
+
+    let failure: unknown;
+    try {
+      await generateBooking(
+        'Generate a complete Raw main event and closing consequence.'
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(failure).toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      retryable: false,
+      integrityIssues: ['abrupt_mid_sentence_ending'],
+      originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+      repairedIntegrityIssues: ['abrupt_mid_sentence_ending'],
+      repairAttempted: true,
+      repairFailureReason: 'revalidation_failed',
+    });
+    expect((failure as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE-UNREPAIRED-OUTPUT');
   });
 
   it('does not retry content-filtered incomplete provider output', async () => {

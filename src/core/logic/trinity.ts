@@ -37,7 +37,9 @@ import type {
   TrinityDryRunPreview,
   TrinityCapabilityFlags,
   TrinityOutputControls,
-  TrinityReasoningHonesty
+  TrinityReasoningHonesty,
+  TrinityIntegrityRecoveryMeta,
+  TrinityMetaTokens,
 } from './trinityTypes.js';
 import {
   TRINITY_PREVIEW_SNIPPET_LENGTH,
@@ -94,6 +96,16 @@ import {
   validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
+import {
+  appendTrinityIntegrityContinuation,
+  buildTrinityIntegrityRepairSystemPolicy,
+  buildTrinityIntegrityRepairUntrustedContext,
+  classifyTrinityProviderIntegrityBlocker,
+  classifyTrinityIntegrityRepairFailure,
+  repairTrinityBrokenNumbering,
+  resolveTrinityIntegrityRepairDecision,
+  TRINITY_INTEGRITY_REPAIR_TIMEOUT_MAX_MS,
+} from './trinityIntegrityRecovery.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
@@ -164,6 +176,21 @@ function normalizeTrinityIntegrityDiagnosticString(value: unknown): string | und
     .trim()
     .slice(0, MAX_TRINITY_INTEGRITY_DIAGNOSTIC_CHARS);
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function combineTrinityTokenUsage(
+  primary: TrinityMetaTokens | undefined,
+  repair: TrinityMetaTokens | undefined
+): TrinityMetaTokens | undefined {
+  if (!primary && !repair) {
+    return undefined;
+  }
+  return {
+    prompt_tokens: (primary?.prompt_tokens ?? 0) + (repair?.prompt_tokens ?? 0),
+    completion_tokens:
+      (primary?.completion_tokens ?? 0) + (repair?.completion_tokens ?? 0),
+    total_tokens: (primary?.total_tokens ?? 0) + (repair?.total_tokens ?? 0),
+  };
 }
 
 function isInternalArchitecturalMode(prompt: string): boolean {
@@ -907,7 +934,11 @@ export async function runThroughBrain(
       tier,
       runtimeBudget,
       getGPT5Model(),
-      options.watchdogModelTimeoutMs
+      options.watchdogModelTimeoutMs,
+      Math.min(
+        options.directAnswerIntegrityRepair?.timeoutMs ?? 0,
+        TRINITY_INTEGRITY_REPAIR_TIMEOUT_MAX_MS
+      )
     );
     const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
     const stageTimeoutOverrideMs =
@@ -1022,65 +1053,87 @@ export async function runThroughBrain(
       }
       checkWatchdog();
 
-      const directAnswerReasoningHonesty = createDefaultTrinityReasoningHonesty();
-      const honestyFilteredFinal = enforceFinalStageHonesty(
-        directAnswerOutput.output,
-        directAnswerReasoningHonesty,
-        capabilityFlags,
-        readIntentMode(outputControls)
-      );
       const directAnswerNeedsCurrentStateLimitation =
         (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
         /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(directAnswerUserIntentPrompt) &&
         /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(directAnswerUserIntentPrompt);
-      if (honestyFilteredFinal.blocked || directAnswerNeedsCurrentStateLimitation) {
-        directAnswerReasoningHonesty.responseMode = 'partial_refusal';
-        if (
-          directAnswerNeedsCurrentStateLimitation ||
-          honestyFilteredFinal.blockedCategories.includes('live_verification') ||
-          honestyFilteredFinal.blockedCategories.includes('current_external_state')
-        ) {
-          directAnswerReasoningHonesty.blockedSubtasks.push('verify current external state');
-          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't verify current external state here without live access.");
-        }
-        if (honestyFilteredFinal.blockedCategories.includes('backend_action')) {
-          directAnswerReasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
-          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't confirm backend state or run backend actions here.");
-        }
-      }
-      const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
-        text: honestyFilteredFinal.text,
-        userPrompt: directAnswerUserIntentPrompt,
-        capabilityFlags,
-        outputControls,
-        reasoningHonesty: directAnswerReasoningHonesty
-      });
-      const finalText = applyTrinityDirectAnswerOutputContract(
-        enforcedFinalOutput.text,
-        trustedPolicyPrompt
+      const integrityTraceId = normalizeTraceString(
+        getAiExecutionContext()?.traceId
       );
-      const integrity = validateTrinityAnswerIntegrity({
-        text: finalText,
-        reasoningHonesty: directAnswerReasoningHonesty
-      });
-      if (!integrity.valid) {
-        const providerCompletion = directAnswerOutput.provider;
+      const prepareDirectAnswerCandidate = (candidateText: string) => {
+        const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+        const honestyFiltered = enforceFinalStageHonesty(
+          candidateText,
+          reasoningHonesty,
+          capabilityFlags,
+          readIntentMode(outputControls)
+        );
+        if (honestyFiltered.blocked || directAnswerNeedsCurrentStateLimitation) {
+          reasoningHonesty.responseMode = 'partial_refusal';
+          if (
+            directAnswerNeedsCurrentStateLimitation
+            || honestyFiltered.blockedCategories.includes('live_verification')
+            || honestyFiltered.blockedCategories.includes('current_external_state')
+          ) {
+            reasoningHonesty.blockedSubtasks.push('verify current external state');
+            reasoningHonesty.userVisibleCaveats.push("I can't verify current external state here without live access.");
+          }
+          if (honestyFiltered.blockedCategories.includes('backend_action')) {
+            reasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
+            reasoningHonesty.userVisibleCaveats.push("I can't confirm backend state or run backend actions here.");
+          }
+        }
+        const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
+          text: honestyFiltered.text,
+          userPrompt: directAnswerUserIntentPrompt,
+          capabilityFlags,
+          outputControls,
+          reasoningHonesty
+        });
+        const text = applyTrinityDirectAnswerOutputContract(
+          enforcedOutput.text,
+          trustedPolicyPrompt
+        );
+        return {
+          directAnswerReasoningHonesty: reasoningHonesty,
+          honestyFilteredFinal: honestyFiltered,
+          enforcedFinalOutput: enforcedOutput,
+          finalText: text,
+          integrity: validateTrinityAnswerIntegrity({
+            text,
+            reasoningHonesty,
+            expectedNumberedItemCount:
+              options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
+          })
+        };
+      };
+
+      const throwDirectAnswerIntegrityFailure = (params: {
+        candidateOutput: typeof directAnswerOutput;
+        candidateText: string;
+        integrityIssues: readonly string[];
+        extraDiagnostics?: Record<string, unknown>;
+      }): never => {
+        const providerCompletion = params.candidateOutput.provider;
         const recovery = directAnswerOptions.recovery === true;
         const trinityStage = recovery ? 'direct-answer-recovery' : 'direct-answer';
-        const integrityIssues = integrity.issues.slice(0, MAX_TRINITY_INTEGRITY_ISSUES);
+        const integrityIssues = params.integrityIssues
+          .slice(0, MAX_TRINITY_INTEGRITY_ISSUES);
         const selectionReasonDiagnostic = normalizeTrinityIntegrityDiagnosticString(selectionReason);
         const recoveryFromStage = recovery
           ? normalizeTrinityIntegrityDiagnosticString(
               resolveRuntimeTimeoutPhase(directAnswerOptions.recoveryError) ?? 'unknown'
             )
           : undefined;
-        const activeModel = normalizeTrinityIntegrityDiagnosticString(directAnswerOutput.activeModel);
+        const activeModel = normalizeTrinityIntegrityDiagnosticString(
+          params.candidateOutput.activeModel
+        );
         const finishReason = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.finishReason);
         const responseStatus = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.responseStatus);
         const incompleteReason = normalizeTrinityIntegrityDiagnosticString(providerCompletion?.incompleteReason);
         const integrityDiagnostics = {
           integrityIssues,
-          outputChars: finalText.length,
+          outputChars: params.candidateText.length,
           ...(selectionReasonDiagnostic ? { selectionReason: selectionReasonDiagnostic } : {}),
           recovery,
           trinityStage,
@@ -1097,12 +1150,14 @@ export async function runThroughBrain(
                 lengthTruncated: providerCompletion.lengthTruncated === true,
                 contentFiltered: providerCompletion.contentFiltered === true
               }
-            : {})
+            : {}),
+          ...(params.extraDiagnostics ?? {})
         };
         logger.warn('trinity.direct_answer.integrity_failed', {
           module: 'trinity',
           operation: 'direct-answer-integrity',
           requestId,
+          traceId: integrityTraceId,
           sourceEndpoint: options.sourceEndpoint,
           errorCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
           issues: integrityIssues,
@@ -1114,7 +1169,267 @@ export async function runThroughBrain(
           ...integrityDiagnostics
         });
         throw integrityError;
+      };
+
+      let preparedDirectAnswer = prepareDirectAnswerCandidate(
+        directAnswerOutput.output
+      );
+      const providerCompletionBlocker =
+        classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
+      if (
+        providerCompletionBlocker
+        && preparedDirectAnswer.integrity.valid
+      ) {
+        throwDirectAnswerIntegrityFailure({
+          candidateOutput: directAnswerOutput,
+          candidateText: preparedDirectAnswer.finalText,
+          integrityIssues: [],
+          extraDiagnostics: {
+            repairAttempted: false,
+            repairSkippedReason: providerCompletionBlocker,
+            repairFailureReason: providerCompletionBlocker,
+          },
+        });
       }
+      let integrityRecoveryMeta: TrinityIntegrityRecoveryMeta | undefined;
+      if (!preparedDirectAnswer.integrity.valid) {
+        const originalIntegrityIssues = preparedDirectAnswer.integrity.issues
+          .slice(0, MAX_TRINITY_INTEGRITY_ISSUES);
+        const sourceCodeUnits = auditSafePrompt.length
+          + (options.directAnswerUntrustedContextPrompt?.length ?? 0)
+          + preparedDirectAnswer.finalText.length;
+        const repairDecision = resolveTrinityIntegrityRepairDecision({
+          options: directAnswerOptions.recovery
+            ? undefined
+            : options.directAnswerIntegrityRepair,
+          integrity: preparedDirectAnswer.integrity,
+          provider: directAnswerOutput.provider,
+          outputCodeUnits: directAnswerOutput.output.length,
+          sourceCodeUnits,
+          primaryCompletionTokens:
+            directAnswerOutput.usage?.completion_tokens ?? Number.NaN,
+          runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
+          requestRemainingMs: getRequestRemainingMs(),
+          repairAttempted: false,
+        });
+        if (repairDecision.eligible === false) {
+          throwDirectAnswerIntegrityFailure({
+            candidateOutput: directAnswerOutput,
+            candidateText: preparedDirectAnswer.finalText,
+            integrityIssues: originalIntegrityIssues,
+            extraDiagnostics: {
+              originalIntegrityIssues,
+              repairedIntegrityIssues: [],
+              repairAttempted: false,
+              repairSkippedReason: repairDecision.reason,
+              repairFailureReason: repairDecision.reason,
+            },
+          });
+        }
+        const approvedRepairDecision = repairDecision as Extract<
+          typeof repairDecision,
+          { eligible: true }
+        >;
+
+        logger.info('trinity.direct_answer.integrity_repair_started', {
+          module: 'trinity',
+          operation: 'direct-answer-integrity-repair',
+          requestId,
+          traceId: integrityTraceId,
+          sourceEndpoint: options.sourceEndpoint,
+          attempt: 1,
+          method: approvedRepairDecision.method,
+          originalIssues: originalIntegrityIssues,
+          timeoutMs: approvedRepairDecision.timeoutMs,
+          tokenLimit: approvedRepairDecision.tokenLimit,
+          sourceCodeUnits,
+          outputCodeUnits: preparedDirectAnswer.finalText.length,
+        });
+
+        let repairedDraft = originalIntegrityIssues.includes('broken_numbering')
+          ? repairTrinityBrokenNumbering(
+              preparedDirectAnswer.finalText,
+              options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
+            )
+          : preparedDirectAnswer.finalText;
+        let repairedDirectAnswerOutput = directAnswerOutput;
+        if (approvedRepairDecision.method === 'bounded_continuation') {
+          budget.increment();
+          checkWatchdog();
+          const repairSystemPolicy = buildTrinityIntegrityRepairSystemPolicy(
+            originalIntegrityIssues
+          );
+          let continuationOutput:
+            | Awaited<ReturnType<typeof runDirectAnswerStage>>
+            | null = null;
+          try {
+            continuationOutput = await runLoggedStage({
+              requestId,
+              stage: 'direct-answer-integrity-repair',
+              runtimeBudget,
+              preserveAggregateAbortContext: false,
+              sourceEndpoint: options.sourceEndpoint,
+              redactErrorDetails: true,
+              operation: () => runDirectAnswerStage(
+                client,
+                'No additional memory context is available.',
+                'Return only the minimal fact-preserving structural continuation.',
+                cognitiveDomain,
+                runtimeBudget,
+                requestId,
+                options.directAnswerModelOverride,
+                approvedRepairDecision.tokenLimit,
+                approvedRepairDecision.timeoutMs,
+                false,
+                approvedRepairDecision.tokenLimit,
+                true,
+                repairSystemPolicy,
+                repairSystemPolicy,
+                buildTrinityIntegrityRepairUntrustedContext({
+                  sourceRequestAndContext: auditSafePrompt,
+                  supplementalContext:
+                    options.directAnswerUntrustedContextPrompt,
+                  originalDraft: repairedDraft,
+                }),
+                true
+              )
+            });
+          } catch (error) {
+            const repairFailureReason =
+              classifyTrinityIntegrityRepairFailure(error);
+            logger.warn('trinity.direct_answer.integrity_repair_failed', {
+              module: 'trinity',
+              operation: 'direct-answer-integrity-repair',
+              requestId,
+              traceId: integrityTraceId,
+              sourceEndpoint: options.sourceEndpoint,
+              attempt: 1,
+              method: approvedRepairDecision.method,
+              originalIssues: originalIntegrityIssues,
+              repairFailureReason,
+            });
+            throwDirectAnswerIntegrityFailure({
+              candidateOutput: directAnswerOutput,
+              candidateText: preparedDirectAnswer.finalText,
+              integrityIssues: originalIntegrityIssues,
+              extraDiagnostics: {
+                originalIntegrityIssues,
+                repairedIntegrityIssues: [],
+                repairAttempted: true,
+                repairFailureReason,
+              },
+            });
+          }
+          if (!continuationOutput) {
+            throw new Error('Trinity integrity repair did not return a stage result.');
+          }
+
+          const repairProviderBlocker =
+            classifyTrinityProviderIntegrityBlocker(continuationOutput.provider);
+          if (repairProviderBlocker) {
+            logger.warn('trinity.direct_answer.integrity_repair_failed', {
+              module: 'trinity',
+              operation: 'direct-answer-integrity-repair',
+              requestId,
+              traceId: integrityTraceId,
+              sourceEndpoint: options.sourceEndpoint,
+              attempt: 1,
+              method: approvedRepairDecision.method,
+              originalIssues: originalIntegrityIssues,
+              repairFailureReason: repairProviderBlocker,
+            });
+            return throwDirectAnswerIntegrityFailure({
+              candidateOutput: continuationOutput,
+              candidateText: preparedDirectAnswer.finalText,
+              integrityIssues: originalIntegrityIssues,
+              extraDiagnostics: {
+                originalIntegrityIssues,
+                repairedIntegrityIssues: [],
+                repairAttempted: true,
+                repairFailureReason: repairProviderBlocker,
+              },
+            });
+          }
+
+          const appendedDraft = appendTrinityIntegrityContinuation(
+            repairedDraft,
+            continuationOutput.output,
+            {
+              sourceRequestAndContext: auditSafePrompt,
+              supplementalContext: options.directAnswerUntrustedContextPrompt,
+            }
+          );
+          if (appendedDraft === null) {
+            return throwDirectAnswerIntegrityFailure({
+              candidateOutput: continuationOutput,
+              candidateText: repairedDraft,
+              integrityIssues: originalIntegrityIssues,
+              extraDiagnostics: {
+                originalIntegrityIssues,
+                repairedIntegrityIssues: [],
+                repairAttempted: true,
+                repairFailureReason: 'invalid_continuation',
+              },
+            });
+          }
+          repairedDraft = appendedDraft;
+          repairedDirectAnswerOutput = {
+            ...continuationOutput,
+            output: repairedDraft,
+            usage: combineTrinityTokenUsage(
+              directAnswerOutput.usage,
+              continuationOutput.usage
+            ),
+          };
+        }
+
+        const repairedCandidate = prepareDirectAnswerCandidate(repairedDraft);
+        const repairedIntegrityIssues = repairedCandidate.integrity.issues
+          .slice(0, MAX_TRINITY_INTEGRITY_ISSUES);
+        logger.info('trinity.direct_answer.integrity_repair_completed', {
+          module: 'trinity',
+          operation: 'direct-answer-integrity-repair',
+          requestId,
+          traceId: integrityTraceId,
+          sourceEndpoint: options.sourceEndpoint,
+          attempt: 1,
+          method: approvedRepairDecision.method,
+          originalIssues: originalIntegrityIssues,
+          repairedIssues: repairedIntegrityIssues,
+          valid: repairedCandidate.integrity.valid,
+          outputCodeUnits: repairedCandidate.finalText.length,
+        });
+        if (!repairedCandidate.integrity.valid) {
+          throwDirectAnswerIntegrityFailure({
+            candidateOutput: repairedDirectAnswerOutput,
+            candidateText: repairedCandidate.finalText,
+            integrityIssues: repairedIntegrityIssues,
+            extraDiagnostics: {
+              originalIntegrityIssues,
+              repairedIntegrityIssues,
+              repairAttempted: true,
+              repairFailureReason: 'revalidation_failed',
+            },
+          });
+        }
+
+        directAnswerOutput = repairedDirectAnswerOutput;
+        preparedDirectAnswer = repairedCandidate;
+        integrityRecoveryMeta = {
+          attempted: true,
+          method: approvedRepairDecision.method,
+          originalIssues: originalIntegrityIssues,
+          repairedIssues: repairedIntegrityIssues,
+          outcome: 'repaired',
+        };
+      }
+
+      const {
+        directAnswerReasoningHonesty,
+        honestyFilteredFinal,
+        enforcedFinalOutput,
+        finalText,
+      } = preparedDirectAnswer;
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -1217,6 +1532,9 @@ export async function runThroughBrain(
       );
       if (directAnswerOutput.provider) {
         result.meta.provider = directAnswerOutput.provider;
+      }
+      if (integrityRecoveryMeta) {
+        result.meta.integrityRecovery = integrityRecoveryMeta;
       }
 
       result.tierInfo = {

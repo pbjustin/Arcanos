@@ -41,6 +41,33 @@ export interface TrinityProviderCompletionMetadata {
   contentFiltered?: boolean;
 }
 
+export interface TrinityDirectAnswerIntegrityRepairOptions {
+  /** The repair stage is hard-coded to one attempt; any other value disables it. */
+  maxAttempts: 1;
+  /** Finite provider-stage allowance reserved by the caller. */
+  timeoutMs: number;
+  /** Maximum tokens for the append-only repair response. */
+  tokenLimit: number;
+  /** Total visible-output allowance shared by the primary and repair stages. */
+  totalOutputTokenCap: number;
+  /** Smallest useful repair allowance; lower remaining capacity skips repair. */
+  minimumOutputTokens: number;
+  /** Runtime budget that must remain before repair begins. */
+  minimumRuntimeRemainingMs: number;
+  /** Ambient request/deadline budget that must remain before repair begins. */
+  minimumRequestRemainingMs: number;
+  /** Optional exact top-level numbered-item contract for missing-final-item detection. */
+  expectedNumberedItemCount?: number;
+}
+
+export interface TrinityIntegrityRecoveryMeta {
+  attempted: true;
+  method: 'deterministic_renumber' | 'bounded_continuation';
+  originalIssues: string[];
+  repairedIssues: string[];
+  outcome: 'repaired';
+}
+
 export type TrinityRequestedVerbosity = 'minimal' | 'normal' | 'detailed';
 export type TrinityAnswerMode = 'direct' | 'explained' | 'audit' | 'debug';
 export type TrinityIntentMode = IntentMode;
@@ -115,6 +142,7 @@ export interface TrinityResult {
     outputLimit?: number;
     background?: Record<string, unknown>;
     provider?: TrinityProviderCompletionMetadata;
+    integrityRecovery?: TrinityIntegrityRecoveryMeta;
   };
   activeModel: string;
   fallbackFlag: boolean;
@@ -251,6 +279,8 @@ export interface TrinityRunOptions {
   directAnswerUntrustedContextPrompt?: string;
   /** Redact sensitive audit/provider diagnostics and force stateless provider execution. */
   redactAuditContent?: boolean;
+  /** Optional server-owned, exactly-once structural repair allowance. */
+  directAnswerIntegrityRepair?: TrinityDirectAnswerIntegrityRepairOptions;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }
 
