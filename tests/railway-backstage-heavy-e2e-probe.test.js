@@ -27,6 +27,7 @@ const ID = {
   workerDeployment: '66666666-6666-4666-8666-666666666666',
   postgres: '77777777-7777-4777-8777-777777777777',
   redis: '88888888-8888-4888-8888-888888888888',
+  webDomain: '99999999-9999-4999-8999-999999999998',
 };
 const SOURCE_SHA = 'a'.repeat(40);
 const WEB_DOMAIN = 'arcanos-web-pr1460-heavy.up.railway.app';
@@ -234,7 +235,9 @@ function controlPlanePayloads(config) {
         }],
       },
     },
-    webDomains: { domains: [`https://${WEB_DOMAIN}`] },
+    webDomains: {
+      domains: [{ id: ID.webDomain, domain: WEB_DOMAIN, type: 'service' }],
+    },
     workerDomains: { domains: [] },
     postgresDomains: { domains: [] },
     redisDomains: { domains: [] },
@@ -447,8 +450,10 @@ describe('Backstage heavy network proof', () => {
 
     for (const domains of [
       [WEB_DOMAIN],
-      [{ domain: WEB_DOMAIN }],
-      [`HTTPS://${WEB_DOMAIN}`],
+      [{ id: ID.webDomain, domain: `https://${WEB_DOMAIN}`, type: 'service' }],
+      [{ id: ID.webDomain, domain: WEB_DOMAIN.toUpperCase(), type: 'service' }],
+      [{ id: ID.webDomain, domain: WEB_DOMAIN, type: 'custom' }],
+      [{ id: 'not-a-uuid', domain: WEB_DOMAIN, type: 'service' }],
     ]) {
       const invalidDomainList = structuredClone(payloads);
       invalidDomainList.webDomains = { domains };

@@ -654,15 +654,18 @@ function attestDeploymentList(payload, serviceId, deploymentId, sourceSha) {
 }
 
 function attestDomainList(payload, expectedDomains) {
-  const domains = Array.isArray(payload?.domains)
-    ? payload.domains.map(item => (
-        typeof item === 'string' ? item.trim() : ''
-      )).filter(Boolean)
-    : null;
+  const domains = Array.isArray(payload?.domains) ? payload.domains : null;
   if (
     domains === null
     || domains.length !== expectedDomains.length
-    || domains.some((domain, index) => domain !== expectedDomains[index])
+    || domains.some((domain, index) => (
+      !isRecord(domain)
+      || typeof domain.id !== 'string'
+      || !UUID_PATTERN.test(domain.id.toLowerCase())
+      || domain.type !== 'service'
+      || typeof domain.domain !== 'string'
+      || domain.domain.trim() !== expectedDomains[index]
+    ))
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_DOMAIN_LIST_MISMATCH');
   }
@@ -908,7 +911,7 @@ export function attestBackstageHeavyRailwayControlPlane(
   config
 ) {
   const status = attestBackstageHeavyRailwayStatus(payloads.status, config);
-  attestDomainList(payloads.webDomains, [`https://${status.webDomain}`]);
+  attestDomainList(payloads.webDomains, [status.webDomain]);
   attestDomainList(payloads.workerDomains, []);
   attestDomainList(payloads.postgresDomains, []);
   attestDomainList(payloads.redisDomains, []);
