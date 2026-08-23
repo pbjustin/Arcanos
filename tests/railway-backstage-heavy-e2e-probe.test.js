@@ -416,6 +416,7 @@ describe('Backstage heavy network proof', () => {
     )).toMatchObject({ projectId: ID.project });
     for (const projectName of [
       `arc-pr1460-heavy-${'a'.repeat(15)}`,
+      'arc-pr1460-heavy-MixedCase',
       'arcanos-pr-1460-heavy-e2e-test',
     ]) {
       const invalidProject = structuredClone(payloads);

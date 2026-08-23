@@ -168,7 +168,7 @@ export function resolveBackstageHeavyProofTargetOrThrow(
 
   const environmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim().toLowerCase() || '';
   const environmentMatch = ENVIRONMENT_PATTERN.exec(environmentName);
-  const projectName = env.RAILWAY_PROJECT_NAME?.trim().toLowerCase() || '';
+  const projectName = env.RAILWAY_PROJECT_NAME?.trim() || '';
   const projectMatch = PROJECT_NAME_PATTERN.exec(projectName);
   const prNumber = environmentMatch?.[1] || '';
   if (

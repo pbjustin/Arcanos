@@ -205,6 +205,7 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
 
     for (const projectName of [
       `arc-pr1460-heavy-${'a'.repeat(15)}`,
+      'arc-pr1460-heavy-MixedCase',
       'arcanos-pr-1460-heavy-e2e-test',
     ]) {
       expect(() => resolveBackstageHeavyProofTargetOrThrow('worker', {

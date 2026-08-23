@@ -459,7 +459,7 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
     config.environmentName
   )?.[1];
   const projectName = typeof statusPayload.name === 'string'
-    ? statusPayload.name.trim().toLowerCase()
+    ? statusPayload.name.trim()
     : '';
   const expectedProjectPrefix = `arc-pr${prNumber}-heavy-`;
   const expectedProjectPattern = new RegExp(
