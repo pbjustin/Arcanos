@@ -20,15 +20,14 @@ describe('PR Assistant command utilities', () => {
     const complexArg = '(test-pr-assistant|gaming.direct-answer)&safe';
 
     const result = await runCommand('npm', [
-      'exec',
-      '--',
-      'node',
-      '-e',
-      'process.stdout.write(process.argv[1])',
-      complexArg
+      '--user-agent',
+      complexArg,
+      'config',
+      'get',
+      'user-agent'
     ], { timeout: 60_000 });
 
-    expect(result.stdout).toBe(complexArg);
+    expect(result.stdout.trim()).toBe(complexArg);
   }, 70_000);
 
   it('fails closed when Windows npm CLI resolution is unavailable', async () => {

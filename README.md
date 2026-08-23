@@ -34,7 +34,7 @@ Start the local daemon bridge with `arcanos bridge`; it binds to `127.0.0.1` by 
 
 
 ## Prerequisites
-- Node.js 20.19.0 recommended; supported floor is Node 20.18.1. npm 8+.
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0.
 - Optional: Python 3.10+ for daemon work in `daemon-python/`
 - Optional: OpenAI API key for non-mock model calls
 

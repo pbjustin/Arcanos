@@ -1,8 +1,10 @@
 # Repository health-audit finding register
 
-Last reconciled: 2026-08-22 UTC for the repaired draft candidate in PR #1456
-for `SEC-DISPATCH-QUOTA-ORDER-001`. Other findings retain their prior dated
-evidence cutoffs, including the targeted 2026-08-16 reviewed-PR #1444 update.
+Last reconciled: 2026-08-22 UTC for Node 24 runtime-baseline PR #1457 at
+reviewed runtime/toolchain head `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4`
+on current merge base `f9c29767f1d527d03118008cc9c910d71304b228`.
+PR #1456 and other findings retain their prior recorded evidence cutoffs,
+including the targeted 2026-08-16 reviewed-PR #1444 update.
 
 This register distinguishes source closure from deployment and production
 verification. `Merged` never means `deployed`. Current source and tests remain
@@ -23,10 +25,13 @@ authoritative. GPT-OSS is explicitly excluded from the active non-GPT queue.
 
 ## Active findings
 
-The order here matches the current queue in [progress.md](progress.md#active-implementation-queue).
+Rows 1 onward match the current queue in
+[progress.md](progress.md#active-implementation-queue). The targeted
+maintenance candidate is tracked outside the older ranked product queue.
 
 | Order | Finding | Priority | Status | Current evidence | Next action |
 | --- | --- | --- | --- | --- | --- |
+| Candidate | `RUNTIME-NODE-BASELINE-001` — unsupported Node 20 runtime/toolchain baseline | Targeted maintenance | Reviewed PR | PR [#1457](https://github.com/pbjustin/Arcanos/pull/1457), current merge base `f9c29767f1d527d03118008cc9c910d71304b228`, and reviewed runtime/toolchain head `8e846fa8357a79f24c69ceb37f02ecead0ac4bc4` align maintained executable selectors on Node `24.18.1`/npm `11.16.0`, prevent Railpack from simplifying back to major 20, align standalone workspace engines/types, explicitly approve the three required install-script packages, and add drift coverage. Exact Windows native, compiled web/worker startup, and 90-second 2 GiB soak checks passed. Exact-head CI passed, including the main Alpine Docker build, fail-closed Node/npm gate, Prisma generation, digest-pinned daemon image, unit/integration suites, and aggregate completion. One Dockerfile-backed contained preview passed 126/126 in two exact-head E2E executions and was torn down. Broad local aggregate Jest remains load-sensitive indeterminate; no provider-side Railpack build, normal authenticated handler, configured database/Redis, external AI/model-provider call, live-memory, or production behavior is claimed | Merge only after the documentation-only reconciliation head passes exact-head checks and live GitHub reports `MERGEABLE` / `CLEAN`; deployment and production verification remain separate |
 | 1 | Hard versus advisory worker-budget semantics | Older ranked | Open | Worker identity/accounting is merged, but enforcement meaning is not ratified consistently | Decide the product contract, implement at the owner seam, and align readiness/diagnostics |
 | 2 | `SEC-DISPATCH-QUOTA-ORDER-001` — oversized `/dispatch` GPT ID consumes admission first | P2 | Draft PR | Draft PR [#1456](https://github.com/pbjustin/Arcanos/pull/1456), repaired implementation `4f8e4d629e7fd89b23b43289d73798c5726fa88b`, rejects an oversized explicit GPT-lane identifier before provider admission in ready, exhausted, and unavailable-store states. Independent review found that initial head `d0eace9cff51a0626c09256ea73ebfe1d4044353` reflected an unbounded `action` and could collapse the structured error envelope; the repaired implementation omits that metadata and preserves the fixed bounded rejection under a 40,000-character action. Required repaired-head CI passed, but merge remains open | Merge the reviewed candidate before moving this finding to closed source; deployment and production verification remain separate |
 | 3 | `SEC-PARSER-ADMISSION-001` broader pre-admission parsing | P2 | Open | The global JSON parser still precedes `/dispatch` DAG authentication and public-provider admission | Characterize and introduce bounded selector/route parsing without changing unrelated contracts |

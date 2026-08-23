@@ -4,8 +4,8 @@
 This directory contains operational scripts for sync, diagnostics, migration, docs audit, and deployment helpers.
 
 ## Prerequisites
-- Node.js 20.19.0 and npm for JavaScript scripts and package-managed
-  TypeScript entry points.
+- Exact Node.js 24.18.1 with its bundled npm 11.16.0 for JavaScript scripts
+  and package-managed TypeScript entry points.
 - PowerShell for `.ps1` scripts on Windows.
 - Bash for `.sh` scripts in Unix-like environments.
 

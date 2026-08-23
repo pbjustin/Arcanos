@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '20.19.0'
+  NODE_VERSION: '24.18.1'
   OPENAI_API_KEY: 'mock-api-key'
   FORCE_MOCK: 'true'
   OPENAI_BASE_URL: 'http://127.0.0.1:9/v1'
@@ -56,7 +56,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: ['20.19.0']
+        node-version: ['24.18.1']
 
     steps:
       - name: 📥 Checkout code
