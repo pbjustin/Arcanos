@@ -234,7 +234,7 @@ function controlPlanePayloads(config) {
         }],
       },
     },
-    webDomains: { domains: [{ domain: WEB_DOMAIN }] },
+    webDomains: { domains: [`https://${WEB_DOMAIN}`] },
     workerDomains: { domains: [] },
     postgresDomains: { domains: [] },
     redisDomains: { domains: [] },
@@ -444,6 +444,19 @@ describe('Backstage heavy network proof', () => {
       slashRedisPath,
       config
     )).toMatchObject({ projectId: ID.project });
+
+    for (const domains of [
+      [WEB_DOMAIN],
+      [{ domain: WEB_DOMAIN }],
+      [`HTTPS://${WEB_DOMAIN}`],
+    ]) {
+      const invalidDomainList = structuredClone(payloads);
+      invalidDomainList.webDomains = { domains };
+      expect(() => attestBackstageHeavyRailwayControlPlane(
+        invalidDomainList,
+        config
+      )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DOMAIN_LIST_MISMATCH');
+    }
 
     expect(() => attestBackstageHeavyRailwayControlPlane({
       ...payloads,

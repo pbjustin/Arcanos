@@ -656,7 +656,7 @@ function attestDeploymentList(payload, serviceId, deploymentId, sourceSha) {
 function attestDomainList(payload, expectedDomains) {
   const domains = Array.isArray(payload?.domains)
     ? payload.domains.map(item => (
-        typeof item?.domain === 'string' ? item.domain.toLowerCase() : ''
+        typeof item === 'string' ? item.trim() : ''
       )).filter(Boolean)
     : null;
   if (
@@ -908,7 +908,7 @@ export function attestBackstageHeavyRailwayControlPlane(
   config
 ) {
   const status = attestBackstageHeavyRailwayStatus(payloads.status, config);
-  attestDomainList(payloads.webDomains, [status.webDomain]);
+  attestDomainList(payloads.webDomains, [`https://${status.webDomain}`]);
   attestDomainList(payloads.workerDomains, []);
   attestDomainList(payloads.postgresDomains, []);
   attestDomainList(payloads.redisDomains, []);
