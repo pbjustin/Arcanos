@@ -98,7 +98,7 @@ and confirmation-gated flows after deploy.
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, public health alias `GET /status`, operator mutation alias `POST /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -284,8 +284,10 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /status` (deprecated no-store alias for the public health response;
   unexpected failures retain the deprecation headers and return a fixed
   `500` message without exception text)
-- `POST /status` (confirmation required; confirmation challenges and handler
-  responses are no-store, and persistence failures return fixed text)
+- `POST /status` (control-plane bearer, operator role, `mcp:invoke`, and
+  confirmation required; authentication and the fixed 64 KiB JSON cap run
+  before broad parsing, all responses are no-store, and persistence failures
+  return fixed text)
 - `POST /heartbeat` (confirmation required)
 - `GET /api/test`
 - `GET /api/fallback/test`

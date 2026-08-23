@@ -22,6 +22,7 @@ export const SYSTEM_STATE_READ_SCOPE = 'arcanos:read';
 export const SYSTEM_STATE_MUTATION_SCOPE = 'mcp:invoke';
 
 const SYSTEM_STATE_PATH = '/system-state';
+const LEGACY_STATUS_PATH = '/status';
 const SYSTEM_STATE_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const SYSTEM_STATE_READ_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_SYSTEM_STATE_CLIENT_RATE_LIMIT = 120;
@@ -40,6 +41,10 @@ const SYSTEM_STATE_OPERATIONS = new Map<string, SystemStateOperation>([
     scope: SYSTEM_STATE_READ_SCOPE,
   }],
   [`POST ${SYSTEM_STATE_PATH}`, {
+    kind: 'mutation',
+    scope: SYSTEM_STATE_MUTATION_SCOPE,
+  }],
+  [`POST ${LEGACY_STATUS_PATH}`, {
     kind: 'mutation',
     scope: SYSTEM_STATE_MUTATION_SCOPE,
   }],
