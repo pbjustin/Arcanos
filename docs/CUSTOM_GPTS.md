@@ -342,7 +342,7 @@ key within that scope. If Notion enrichment is configured, it can also invoke
 generation for any universe present in the server-owned page mapping; keep this
 GPT private within one trust domain.
 
-A separately configured Notion-authority mode keeps the same four Builder
+A separately configured Notion-authority mode keeps the same five Builder
 operations but changes the server-owned source policy for an exact universe.
 `queryContinuity` performs bounded RAG over one fresh immutable Notion snapshot
 and requires the saved bearer. Its optional `retrievalScope` requires the exact
@@ -372,8 +372,9 @@ bypass a missing/stale index through legacy state. Answer generation performs
 one compact retry only when the provider reports max-output exhaustion; it does
 not retry other provider failures. A second length exhaustion or an enforceable
 exact/maximum compact-contract violation returns the sanitized incomplete-output
-error without a third generation attempt. Schema `1.4.0` materializes these public
-payload/result fields and declares the bearer and authority-specific errors;
+error without a third generation attempt. Schema `1.5.0` materializes these public
+payload/result fields, declares the bearer and authority-specific errors, and
+adds the capability-protected async-result read;
 deploy it first, then re-import it into the existing Builder Action before
 validating this mode.
 

@@ -24,10 +24,15 @@ const workerControlModuleMock = {
 };
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
+  AUDITED_TRANSIENT_READ_QUERIES: {},
+  applyBackstageRosterMutation: jest.fn(),
+  applyBackstageStorylineMutation: jest.fn(),
   getPool: jest.fn(),
   getStatus: jest.fn(),
+  isTransactionCommitAmbiguousError: jest.fn(),
   isDatabaseConnected: jest.fn(),
   query: jest.fn(),
+  saveMemory: jest.fn(),
   transaction: jest.fn(),
 }));
 

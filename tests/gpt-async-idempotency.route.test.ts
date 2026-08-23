@@ -1769,7 +1769,7 @@ describe('async /gpt idempotency', () => {
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
   });
 
-  it('supports explicit query_and_wait for non-core gpt ids without creating duplicate jobs', async () => {
+  it('preserves query_and_wait transport semantics without creating duplicate jobs', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
         id: 'job-query-and-wait',

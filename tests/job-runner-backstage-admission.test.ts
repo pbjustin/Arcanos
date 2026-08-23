@@ -132,9 +132,24 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 }));
 
 const { executeQueuedGptRequest } = await import('../src/workers/jobRunner.js');
-const { buildQueuedGptBackstageMutationAdmission } = await import(
+const {
+  buildProtectedBackstageQueuedGptJobInput,
+  buildQueuedGptBackstageMutationAdmission,
+} = await import(
   '../src/shared/gpt/asyncGptJob.js'
 );
+const { unprotectBackstageQueuedGptJobOutput } = await import(
+  '../src/shared/backstage/backstageQueuedJobResultProtection.js'
+);
+const {
+  isBackstageNotionEnrichmentAuthorized,
+  isBackstageProtectedQueuedExecution,
+} = await import(
+  '../src/services/backstageNotionEnrichmentAuthorization.js'
+);
+
+const originalBackstagePayloadKey =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
 
 const introducedSignalListeners = {
   SIGINT: process
@@ -152,17 +167,28 @@ afterAll(() => {
   for (const listener of introducedSignalListeners.SIGTERM) {
     process.removeListener('SIGTERM', listener);
   }
+  if (originalBackstagePayloadKey === undefined) {
+    delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+  } else {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      originalBackstagePayloadKey;
+  }
 });
 
 describe('normal worker queued Backstage mutation admission', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDispatchModuleAction.mockReset();
     mockGetJobById.mockResolvedValue(null);
     mockGetGptModuleMap.mockResolvedValue({
       backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' },
+      'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
     });
     mockRebuildGptModuleMap.mockResolvedValue({
       backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' },
+      'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
     });
     mockValidateGptRegistry.mockReturnValue({
       requiredGptIds: [],
@@ -170,13 +196,31 @@ describe('normal worker queued Backstage mutation admission', () => {
       registeredGptIds: ['backstage'],
       registeredGptCount: 1,
     });
-    mockGetModuleMetadata.mockReturnValue({
-      name: 'BACKSTAGE:BOOKER',
-      actions: ['updateRoster', 'trackStoryline', 'upsertStoryline', 'appendCanonBeat', 'generateBooking'],
-      route: 'backstage',
-      defaultAction: 'updateRoster',
-      defaultTimeoutMs: 60_000,
-    });
+    mockGetModuleMetadata.mockImplementation((moduleName: string) =>
+      moduleName === 'ARCANOS:CORE'
+        ? {
+            name: 'ARCANOS:CORE',
+            actions: ['query'],
+            route: 'arcanos-core',
+            defaultAction: 'query',
+            defaultTimeoutMs: 60_000,
+          }
+        : {
+            name: 'BACKSTAGE:BOOKER',
+            actions: [
+              'updateRoster',
+              'trackStoryline',
+              'upsertStoryline',
+              'appendCanonBeat',
+              'generateBooking',
+              'generateBookingWithHRC',
+              'queryContinuity',
+            ],
+            route: 'backstage',
+            defaultAction: 'updateRoster',
+            defaultTimeoutMs: 60_000,
+          }
+    );
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
@@ -185,6 +229,536 @@ describe('normal worker queued Backstage mutation admission', () => {
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
     mockDetectBackstageBookerIntent.mockReturnValue(null);
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x61).toString('base64');
+  });
+
+  it('decrypts protected generation only in the worker authorization context and seals the retrievable result', async () => {
+    const privatePrompt = 'private-worker-booking-prompt-sentinel';
+    const privateResult = 'private-worker-booking-result-sentinel';
+    let authorizedInsideDispatch = false;
+    let protectedQueueInsideDispatch = false;
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+      protectedQueueInsideDispatch = isBackstageProtectedQueuedExecution();
+      return privateResult;
+    });
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-booker',
+      traceId: 'trace-worker-booker',
+      correlationId: 'trace-worker-booker',
+      executionModeReason: 'backstage_notion_authority_context',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '11111111-1111-4111-8111-111111111111',
+      rawInput,
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(authorizedInsideDispatch).toBe(true);
+    expect(protectedQueueInsideDispatch).toBe(true);
+    expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+    expect(isBackstageProtectedQueuedExecution()).toBe(false);
+    expect(JSON.stringify(rawInput)).not.toContain(privatePrompt);
+    expect(JSON.stringify(outcome.output)).not.toContain(privateResult);
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '11111111-1111-4111-8111-111111111111',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: true,
+      result: privateResult,
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        traceId: 'trace-worker-booker',
+      },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['direct generation', 'backstage-booker', { action: 'generateBooking' }],
+    [
+      'nested HRC generation alias',
+      'backstage-booker',
+      { payload: { action: [null, ['', ['generateBookingWithHRC']]] } },
+    ],
+    ['default generation', 'backstage-booker', {}],
+    ['legacy-route direct generation', 'backstage', { action: 'generateBooking' }],
+    [
+      'legacy-route nested HRC generation alias',
+      'backstage',
+      { payload: { action: [null, ['', ['generateBookingWithHRC']]] } },
+    ],
+    ['legacy-route default generation', 'backstage', {}],
+  ])('rejects legacy plaintext %s before worker dispatch', async (_label, gptId, body) => {
+    const privatePrompt = 'private-legacy-worker-generation-sentinel';
+    const outcome = await executeQueuedGptRequest({
+      jobId: '77777777-7777-4777-8777-777777777777',
+      rawInput: {
+        gptId,
+        body: {
+          ...body,
+          payload: {
+            ...((body as { payload?: Record<string, unknown> }).payload ?? {}),
+            universeId: 'my-universe-2k26',
+            prompt: privatePrompt,
+          },
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      output: null,
+      errorMessage: 'Protected Backstage generation job payload is required.',
+      retryable: false,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privatePrompt);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a configured Backstage GPT alias plaintext generation before dispatch', async () => {
+    mockGetGptModuleMap.mockResolvedValueOnce({
+      'booker-configured-alias': {
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+      },
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '45454545-4545-4454-8454-454545454545',
+      rawInput: {
+        gptId: 'booker-configured-alias',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'private-configured-alias-booking-sentinel',
+          },
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'Protected Backstage generation job payload is required.',
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['core query handoff', 'arcanos-core'],
+    ['Backstage query upgrade', 'backstage-booker'],
+  ])('rejects legacy plaintext automatic Booker generation from %s', async (_label, gptId) => {
+    mockDetectBackstageBookerIntent.mockReturnValueOnce({
+      score: 6,
+      reason: 'booking_verb+wrestling_brand',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '46464646-4646-4464-8464-464646464646',
+      rawInput: {
+        gptId,
+        body: {
+          action: 'query',
+          prompt: 'Book six Raw matches for the next WWE show.',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'Protected Backstage generation job payload is required.',
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('preserves a non-booking queued core query', async () => {
+    mockDispatchModuleAction.mockResolvedValueOnce('Core query result.');
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '47474747-4747-4474-8474-474747474747',
+      rawInput: {
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Explain deterministic finite automata.',
+        },
+      },
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves explicit queued CORE intent routing despite booking language', async () => {
+    mockDetectBackstageBookerIntent.mockReturnValueOnce({
+      score: 6,
+      reason: 'booking_verb+wrestling_brand',
+    });
+    mockDispatchModuleAction.mockResolvedValueOnce('Core query result.');
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '48484848-4848-4484-8484-484848484848',
+      rawInput: {
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Book six Raw matches as a hypothetical classification example.',
+        },
+        bypassIntentRouting: true,
+      },
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['array query', { action: [null, ['', ['query']]] }],
+    ['payload operation query', { payload: { operation: 'query' } }],
+  ] as const)(
+    'canonicalizes a queued CORE %s alias before admission and dispatch',
+    async (_caseName, actionFields) => {
+      mockDetectBackstageBookerIntent.mockReturnValueOnce({
+        score: 6,
+        reason: 'booking_verb+wrestling_brand',
+      });
+      mockDispatchModuleAction.mockResolvedValueOnce('Core query result.');
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: '49494949-4949-4494-8494-494949494949',
+        rawInput: {
+          gptId: 'arcanos-core',
+          body: {
+            ...actionFields,
+            prompt: 'Book six Raw matches as a hypothetical classification example.',
+          },
+          bypassIntentRouting: true,
+        },
+      });
+
+      expect(outcome.status).toBe('completed');
+      expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+        'ARCANOS:CORE',
+        'query',
+        expect.anything(),
+      );
+    }
+  );
+
+  it.each(['ask', 'chat'] as const)(
+    'rejects a queued CORE %s alias that would auto-route to plaintext Booker generation',
+    async (action) => {
+      mockDetectBackstageBookerIntent.mockReturnValueOnce({
+        score: 6,
+        reason: 'booking_verb+wrestling_brand',
+      });
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: '50505050-5050-4050-8050-505050505050',
+        rawInput: {
+          gptId: 'arcanos-core',
+          body: {
+            action,
+            prompt: 'Book six Raw matches for the next WWE show.',
+          },
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'failed',
+        retryable: false,
+        errorMessage: 'Protected Backstage generation job payload is required.',
+      });
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('continues to execute a legacy plaintext non-generation Backstage action', async () => {
+    mockDispatchModuleAction.mockResolvedValueOnce({ answer: 'continuity answer' });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '66666666-6666-4666-8666-666666666666',
+      rawInput: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'queryContinuity',
+          payload: {
+            universeId: 'my-universe-2k26',
+            query: 'Who is champion?',
+          },
+        },
+      },
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['array action', { action: [null, ['', ['queryContinuity']]] }],
+    ['payload operation', { payload: { operation: 'queryContinuity' } }],
+  ] as const)(
+    'canonicalizes a legacy Backstage continuity %s before dispatch',
+    async (_caseName, actionFields) => {
+      mockDispatchModuleAction.mockResolvedValueOnce({ answer: 'continuity answer' });
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: '51515151-5151-4151-8151-515151515151',
+        rawInput: {
+          gptId: 'backstage-booker',
+          body: {
+            ...actionFields,
+            payload: {
+              ...('payload' in actionFields ? actionFields.payload : {}),
+              universeId: 'my-universe-2k26',
+              query: 'Who is champion?',
+            },
+          },
+        },
+      });
+
+      expect(outcome.status).toBe('completed');
+      expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+        'BACKSTAGE:BOOKER',
+        'queryContinuity',
+        expect.anything(),
+      );
+    }
+  );
+
+  it('fails closed at dispatch when registry recovery reveals plaintext background generation', async () => {
+    mockGetGptModuleMap
+      .mockRejectedValueOnce(new Error('transient registry lookup failure'))
+      .mockResolvedValueOnce({
+        'booker-recovered-alias': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '52525252-5252-4252-8252-525252525252',
+      rawInput: {
+        gptId: 'booker-recovered-alias',
+        body: {
+          action: 'generateBooking',
+          prompt: 'private-recovered-alias-generation-sentinel',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED: Background Backstage generation requires a protected queued execution context.',
+      output: {
+        ok: false,
+        error: { code: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED' },
+      },
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('fails a malformed protected marker without plaintext fallback or dispatch', async () => {
+    const outcome = await executeQueuedGptRequest({
+      jobId: '55555555-5555-4555-8555-555555555555',
+      rawInput: {
+        gptId: 'backstage-booker',
+        protectedBackstage: {
+          version: 99,
+          ciphertext: 'private-malformed-ciphertext-sentinel',
+        },
+        body: {
+          action: 'generateBooking',
+          payload: { prompt: 'private-malformed-plaintext-sentinel' },
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      output: null,
+      errorMessage: 'Invalid GPT job.input: Protected Backstage job payload is invalid.',
+    });
+    expect(JSON.stringify(outcome)).not.toContain('private-malformed-ciphertext-sentinel');
+    expect(JSON.stringify(outcome)).not.toContain('private-malformed-plaintext-sentinel');
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('keeps protected execution and result sealing when Notion enrichment was not authorized', async () => {
+    const privatePrompt = 'private-worker-no-notion-prompt-sentinel';
+    const privateResult = 'private-worker-no-notion-result-sentinel';
+    let authorizedInsideDispatch = true;
+    let protectedQueueInsideDispatch = false;
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+      protectedQueueInsideDispatch = isBackstageProtectedQueuedExecution();
+      return privateResult;
+    });
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+      requestId: 'request-worker-no-notion',
+      traceId: 'trace-worker-no-notion',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '88888888-8888-4888-8888-888888888888',
+      rawInput,
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(authorizedInsideDispatch).toBe(false);
+    expect(protectedQueueInsideDispatch).toBe(true);
+    expect(JSON.stringify(rawInput)).not.toContain(privatePrompt);
+    expect(JSON.stringify(outcome.output)).not.toContain(privateResult);
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '88888888-8888-4888-8888-888888888888',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({ ok: true, result: privateResult });
+  });
+
+  it('propagates the protected HRC action through worker dispatch metadata', async () => {
+    mockDispatchModuleAction.mockResolvedValueOnce({
+      storyline: 'Protected HRC result.',
+      headcanon: { score: 88 },
+    });
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBookingWithHRC',
+      body: {
+        action: 'generateBookingWithHRC',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Generate and evaluate a complete Raw card.',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-hrc',
+      traceId: 'trace-worker-hrc',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '99999999-9999-4999-8999-999999999999',
+      rawInput,
+    });
+
+    expect(outcome.status).toBe('completed');
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'BACKSTAGE:BOOKER',
+      'generateBookingWithHRC',
+      expect.objectContaining({
+        __arcanosRequestedAction: 'generateBookingWithHRC',
+        prompt: 'Generate and evaluate a complete Raw card.',
+      })
+    );
+  });
+
+  it('persists protected worker failure as one stable terminal encrypted error', async () => {
+    const privateFailure = 'private-provider-failure-sentinel';
+    mockDispatchModuleAction.mockRejectedValueOnce(new Error(privateFailure));
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches.',
+        },
+      },
+      prompt: 'Return exactly six matches.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-failure',
+      traceId: 'trace-worker-failure',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '22222222-2222-4222-8222-222222222222',
+      rawInput,
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'MODULE_ERROR: Protected Backstage generation failed.',
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateFailure);
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '22222222-2222-4222-8222-222222222222',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'MODULE_ERROR' },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reflect a protected cancellation reason across the worker boundary', async () => {
+    const privateCancellationReason = 'private-protected-cancellation-sentinel';
+    mockGetJobById.mockResolvedValueOnce({
+      cancel_requested_at: new Date('2026-08-23T12:00:00.000Z'),
+      cancel_reason: privateCancellationReason,
+    });
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches.',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-cancelled',
+      traceId: 'trace-worker-cancelled',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '33333333-3333-4333-8333-333333333333',
+      rawInput,
+    });
+
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      output: null,
+      errorMessage: 'Protected Backstage generation cancellation requested.',
+      retryable: false,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('fails a missing admission non-retryably before module execution', async () => {
@@ -546,7 +1120,7 @@ describe('normal worker queued Backstage mutation admission', () => {
       () => new BackstageNotionAuthorityUnavailableError('phase-two'),
     ],
   ] as const)(
-    'retries a details-qualified transient %s outage',
+    'rejects legacy plaintext generation before a transient %s outage can dispatch',
     async (errorCode, buildError) => {
       mockDispatchModuleAction.mockRejectedValueOnce(buildError());
 
@@ -567,15 +1141,11 @@ describe('normal worker queued Backstage mutation admission', () => {
 
       expect(outcome).toMatchObject({
         status: 'failed',
-        retryable: true,
-        output: {
-          ok: false,
-          error: {
-            code: errorCode,
-            details: { retryable: true },
-          },
-        },
+        retryable: false,
+        output: null,
+        errorMessage: 'Protected Backstage generation job payload is required.',
       });
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
     }
   );
 });

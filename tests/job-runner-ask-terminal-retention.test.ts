@@ -26,12 +26,22 @@ const signalListenersBeforeImport = {
 };
 const originalOpenAIKey = process.env.OPENAI_API_KEY;
 const originalAskRetentionMs = process.env.QUEUE_ASK_TERMINAL_RETENTION_MS;
+const originalBackstagePayloadKey =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
 
 process.env.OPENAI_API_KEY = 'provider-free-worker-test-key';
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: jest.fn(),
+  initializeDatabase: jest.fn(),
   isDatabaseConnected: isDatabaseConnectedMock
+}));
+
+jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
+  getGptModuleMap: jest.fn(async () => ({
+    'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+    'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' }
+  }))
 }));
 
 jest.unstable_mockModule('@core/db/query.js', () => ({
@@ -54,12 +64,15 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
+  assertValidResponsesCreateParams: jest.fn(),
+  normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
   getOpenAIAdapter: jest.fn(() => ({
     getClient: () => fakeOpenAIClient
   }))
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
+  getOpenAIServiceHealth: jest.fn(() => providerRuntime),
   getOpenAIProviderRuntimeStatus: jest.fn(() => providerRuntime),
   probeOpenAIProviderHealth: jest.fn(async () => ({
     ok: true,
@@ -68,6 +81,10 @@ jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
   syncOpenAIProviderRuntime: jest.fn(() => ({
     runtime: providerRuntime
   }))
+}));
+
+jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
+  detectBackstageBookerIntent: jest.fn(() => null)
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
@@ -115,6 +132,12 @@ jest.unstable_mockModule('@shared/sleep.js', () => ({
 }));
 
 const { runWorkerConsumerSlot } = await import('../src/workers/jobRunner.js');
+const { buildProtectedBackstageQueuedGptJobInput } = await import(
+  '../src/shared/gpt/asyncGptJob.js'
+);
+const { unprotectBackstageQueuedGptJobOutput } = await import(
+  '../src/shared/backstage/backstageQueuedJobResultProtection.js'
+);
 
 const introducedSignalListeners = {
   SIGINT: process
@@ -143,9 +166,159 @@ afterAll(() => {
   } else {
     process.env.QUEUE_ASK_TERMINAL_RETENTION_MS = originalAskRetentionMs;
   }
+  if (originalBackstagePayloadKey === undefined) {
+    delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+  } else {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      originalBackstagePayloadKey;
+  }
 });
 
 describe('job runner terminal persistence', () => {
+  it('claims protected Booker work once and persists only its sealed terminal result', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-23T12:00:00.000Z'));
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    routeGptRequestMock.mockReset();
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6a).toString('base64');
+    const privatePrompt = 'private-claimed-booker-prompt-sentinel';
+    const privateResult = 'private-claimed-booker-result-sentinel';
+    const jobId = '11111111-1111-4111-8111-111111111111';
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-claimed-booker',
+      traceId: 'trace-claimed-booker',
+      correlationId: 'trace-claimed-booker',
+      executionModeReason: 'backstage_action_policy_heavy',
+    });
+    const claimedJob = {
+      id: jobId,
+      worker_id: 'queue',
+      job_type: 'gpt',
+      status: 'running',
+      claim_generation: '9',
+      input: queuedInput,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2026-08-23T12:01:00.000Z'),
+      correlation_id: 'trace-claimed-booker',
+      cancel_requested_at: null,
+      cancel_reason: null,
+      created_at: new Date('2026-08-23T11:59:59.000Z'),
+      updated_at: new Date('2026-08-23T12:00:00.000Z'),
+    };
+    let terminalParams: unknown[] = [];
+
+    claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+    routeGptRequestMock.mockResolvedValueOnce({
+      ok: true,
+      result: privateResult,
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+        traceId: 'trace-claimed-booker',
+      },
+    });
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        return { rows: [claimedJob] };
+      }
+      if (normalizedSql.includes('UPDATE job_data')) {
+        terminalParams = params;
+        return {
+          rows: [{
+            ...claimedJob,
+            status: 'completed',
+            output: JSON.parse(String(params[1])),
+            last_heartbeat_at: null,
+            lease_expires_at: null,
+            completed_at: new Date('2026-08-23T12:00:00.100Z'),
+          }],
+        };
+      }
+      throw new Error(`Unexpected repository query: ${normalizedSql}`);
+    });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 30_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markJobCompleted: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    try {
+      await expect(runWorkerConsumerSlot(
+        {
+          slotIndex: 0,
+          slotNumber: 1,
+          workerId: 'worker-test-slot-1',
+          statsWorkerId: 'worker-test-stats',
+          isInspectorSlot: true,
+        },
+        {
+          pollMs: 1,
+          idleBackoffMs: 1,
+          concurrency: 1,
+          baseWorkerId: 'worker-test',
+          statsWorkerId: 'worker-test-stats',
+        },
+        autonomyService as never
+      )).rejects.toBe(stopAfterOneIteration);
+
+      expect(claimNextMock).toHaveBeenCalledTimes(1);
+      expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+      expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+        gptId: 'backstage-booker',
+        body: expect.objectContaining({
+          action: 'generateBooking',
+          payload: expect.objectContaining({ prompt: privatePrompt }),
+        }),
+        requestId: 'request-claimed-booker',
+        traceId: 'trace-claimed-booker',
+        runtimeExecutionMode: 'background',
+      }));
+      expect(terminalParams[0]).toBe('completed');
+      const persistedOutput = JSON.parse(String(terminalParams[1]));
+      expect(JSON.stringify(queuedInput)).not.toContain(privatePrompt);
+      expect(JSON.stringify(persistedOutput)).not.toContain(privateResult);
+      expect(unprotectBackstageQueuedGptJobOutput({
+        jobId,
+        rawInput: queuedInput,
+        output: persistedOutput,
+      })).toMatchObject({ ok: true, result: privateResult });
+      expect(autonomyService.markJobCompleted).toHaveBeenCalledWith(jobId);
+      expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('executes Ask through Trinity and reaches the real claimed terminal writer with retention', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-08-10T12:00:00.000Z'));

@@ -28,7 +28,24 @@ import {
   buildCompletedQueuedAskOutput,
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
-import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  isProtectedBackstageQueuedGptJobInput,
+  parseQueuedGptJobInput,
+} from '@shared/gpt/asyncGptJob.js';
+import {
+  extractGptDispatchPromptText,
+  resolveRequestedGptAction,
+} from '@shared/gpt/gptRequestAction.js';
+import { resolveGptModuleRequestedActionAlias } from '@shared/gpt/gptModuleAction.js';
+import {
+  BACKSTAGE_ACTIONS,
+  BACKSTAGE_MODULE_NAME,
+  isBackstageGptRoute,
+} from '@shared/backstage/backstageActionPolicy.js';
+import {
+  PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE,
+  protectBackstageQueuedGptJobOutput,
+} from '@shared/backstage/backstageQueuedJobResultProtection.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
@@ -101,6 +118,11 @@ import {
   syncOpenAIProviderRuntime
 } from '@services/openai/serviceHealth.js';
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
+import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
+import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
+import {
+  runWithBackstageProtectedQueuedExecution,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 import { initializeModuleRegistry } from '@services/moduleRegistry.js';
@@ -716,6 +738,8 @@ export async function executeQueuedGptRequest(params: {
     };
   }
 
+  const protectedBackstageQueuedExecution =
+    parsedGptJobInput.value.protectedBackstage !== undefined;
   const routeStartedAtMs = Date.now();
   const {
     gptId,
@@ -729,8 +753,74 @@ export async function executeQueuedGptRequest(params: {
     routeHint,
     backstageMutationAdmission,
   } = parsedGptJobInput.value;
+  let queuedModuleName: string | null = null;
+  if (!protectedBackstageQueuedExecution) {
+    try {
+      const gptModuleMap = await getGptModuleMap();
+      queuedModuleName = (
+        gptModuleMap[gptId]
+        ?? gptModuleMap[gptId.trim().toLowerCase()]
+      )?.module ?? null;
+    } catch {
+      // Normal routing retains ownership of unavailable-map diagnostics below.
+    }
+  }
+  const queuedTargetsBackstage =
+    queuedModuleName === BACKSTAGE_MODULE_NAME
+    || isBackstageGptRoute(gptId);
+  const requestedQueuedAction = resolveRequestedGptAction({ body });
+  const queuedAvailableActions: readonly string[] = queuedTargetsBackstage
+    ? BACKSTAGE_ACTIONS
+    : queuedModuleName === 'ARCANOS:CORE'
+      ? ['query']
+      : [];
+  const canonicalQueuedAction = resolveGptModuleRequestedActionAlias(
+    requestedQueuedAction ?? undefined,
+    queuedAvailableActions,
+  );
+  const requestedBackstageAction = queuedTargetsBackstage
+    ? canonicalQueuedAction ?? null
+    : null;
+  const automaticBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && bypassIntentRouting !== true
+    && (
+      queuedModuleName === BACKSTAGE_MODULE_NAME
+      || queuedModuleName === 'ARCANOS:CORE'
+    )
+    && (
+      canonicalQueuedAction === undefined
+      || canonicalQueuedAction === 'query'
+    )
+    && detectBackstageBookerIntent(
+      extractGptDispatchPromptText(body) ?? prompt ?? null
+    ) !== null;
+  const isUnprotectedBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && (
+      (
+        queuedTargetsBackstage
+        && (
+          requestedBackstageAction === null
+          || requestedBackstageAction === 'generateBooking'
+          || requestedBackstageAction === 'generateBookingWithHRC'
+        )
+      )
+      || automaticBackstageGeneration
+    );
+  if (isUnprotectedBackstageGeneration) {
+    return {
+      status: 'failed',
+      output: null,
+      errorMessage: 'Protected Backstage generation job payload is required.',
+      retryable: false,
+    };
+  }
+  const canonicalQueuedBody = canonicalQueuedAction
+    ? { ...body, action: canonicalQueuedAction }
+    : body;
   const hydratedBody = attachQueuedGptExecutionMetadata(
-    hydrateQueuedGptBodyPrompt(body, prompt),
+    hydrateQueuedGptBodyPrompt(canonicalQueuedBody, prompt),
     {
       requestPath,
       executionModeReason,
@@ -742,6 +832,10 @@ export async function executeQueuedGptRequest(params: {
     fallbackMessage: string,
     error?: unknown
   ): Promise<string> => {
+    if (protectedBackstageQueuedExecution) {
+      return PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
+    }
+
     try {
       const refreshedJob = await getJobById(params.jobId);
       return (
@@ -765,7 +859,9 @@ export async function executeQueuedGptRequest(params: {
     return {
       status: 'cancelled',
       output: null,
-      errorMessage: latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
+      errorMessage: protectedBackstageQueuedExecution
+        ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+        : latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
       retryable: false
     };
   }
@@ -851,18 +947,24 @@ export async function executeQueuedGptRequest(params: {
 
   let envelope;
   try {
-    envelope = await routeGptRequest({
-      gptId,
-      body: hydratedBody,
-      requestId,
-      traceId: traceId ?? requestId ?? null,
-      logger: routeLogger,
-      bypassIntentRouting,
-      runtimeExecutionMode: 'background',
-      parentAbortSignal: params.cancellationSignal,
-      enforceQueuedBackstageMutationAdmission: true,
-      queuedBackstageMutationAdmission: backstageMutationAdmission,
+    const dispatch = () => routeGptRequest({
+        gptId,
+        body: hydratedBody,
+        requestId,
+        traceId: traceId ?? requestId ?? null,
+        logger: routeLogger,
+        bypassIntentRouting,
+        runtimeExecutionMode: 'background',
+        parentAbortSignal: params.cancellationSignal,
+        enforceQueuedBackstageMutationAdmission: true,
+        queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
+    envelope = parsedGptJobInput.value.protectedBackstage
+      ? await runWithBackstageProtectedQueuedExecution(
+          parsedGptJobInput.value.protectedBackstage.notionEnrichmentAuthorized,
+          dispatch
+        )
+      : await dispatch();
   } catch (error: unknown) {
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
       return {
@@ -874,6 +976,42 @@ export async function executeQueuedGptRequest(params: {
         ),
         retryable: false
       };
+    }
+
+    if (parsedGptJobInput.value.protectedBackstage) {
+      const output = {
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+          message: 'Protected Backstage generation failed in the worker.',
+        },
+        _route: {
+          gptId,
+          action: parsedGptJobInput.value.protectedBackstage.action,
+          route: 'worker',
+          ...(requestId ? { requestId } : {}),
+          ...(traceId ? { traceId } : {}),
+        },
+      };
+      try {
+        return {
+          status: 'failed',
+          output: protectBackstageQueuedGptJobOutput({
+            jobId: params.jobId,
+            rawInput: params.rawInput,
+            output,
+          }),
+          errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
+          retryable: false,
+        };
+      } catch {
+        return {
+          status: 'failed',
+          output: null,
+          errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+          retryable: false,
+        };
+      }
     }
 
     throw error;
@@ -896,14 +1034,36 @@ export async function executeQueuedGptRequest(params: {
       requestId,
       durationMs: Date.now() - routeStartedAtMs,
       errorCode: envelope.error.code,
-      errorMessage: envelope.error.message
+      errorMessage: parsedGptJobInput.value.protectedBackstage
+        ? 'Protected Backstage generation failed.'
+        : envelope.error.message
     });
+    let failureOutput: unknown = envelope;
+    if (parsedGptJobInput.value.protectedBackstage) {
+      try {
+        failureOutput = protectBackstageQueuedGptJobOutput({
+          jobId: params.jobId,
+          rawInput: params.rawInput,
+          output: envelope,
+        });
+      } catch {
+        return {
+          status: 'failed',
+          output: null,
+          errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+          retryable: false,
+        };
+      }
+    }
     return {
       status: 'failed',
-      output: envelope,
-      errorMessage: `${envelope.error.code}: ${envelope.error.message}`,
-      retryable:
-        envelope.error.code === 'MODULE_TIMEOUT'
+      output: failureOutput,
+      errorMessage: parsedGptJobInput.value.protectedBackstage
+        ? `${envelope.error.code}: Protected Backstage generation failed.`
+        : `${envelope.error.code}: ${envelope.error.message}`,
+      retryable: parsedGptJobInput.value.protectedBackstage
+        ? false
+        : envelope.error.code === 'MODULE_TIMEOUT'
         || envelope.error.code === 'MODULE_ERROR'
         || (
           (
@@ -931,9 +1091,26 @@ export async function executeQueuedGptRequest(params: {
     backstageMutationAdmission?.action,
     envelope.result
   );
+  let completedOutput: unknown = envelope;
+  if (parsedGptJobInput.value.protectedBackstage) {
+    try {
+      completedOutput = protectBackstageQueuedGptJobOutput({
+        jobId: params.jobId,
+        rawInput: params.rawInput,
+        output: envelope,
+      });
+    } catch {
+      return {
+        status: 'failed',
+        output: null,
+        errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+        retryable: false,
+      };
+    }
+  }
   return {
     status: 'completed',
-    output: envelope,
+    output: completedOutput,
     ...(
       backstageMutationAdmission?.action === 'upsertStoryline'
       || backstageMutationAdmission?.action === 'appendCanonBeat'
@@ -1109,19 +1286,23 @@ async function persistClaimedJobCancellation(params: {
   cancellationReason: string;
   output: unknown;
 }): Promise<boolean> {
+  const cancellationReason = params.job.job_type === 'gpt'
+    && isProtectedBackstageQueuedGptJobInput(params.job.input)
+    ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+    : params.cancellationReason;
   const terminalJob = await updateClaimedJobTerminal(
     params.job.id,
     'cancelled',
     {
       fence: params.fence,
       output: params.output,
-      errorMessage: params.cancellationReason,
+      errorMessage: cancellationReason,
       metadata: {
         ...(params.job.job_type === 'gpt'
           ? computeGptJobLifecycleDeadlines('cancelled')
           : { idempotencyUntil: null, retentionUntil: null }),
         cancelRequestedAt: new Date().toISOString(),
-        cancelReason: params.cancellationReason
+        cancelReason: cancellationReason
       }
     }
   );
@@ -1129,7 +1310,10 @@ async function persistClaimedJobCancellation(params: {
     return false;
   }
 
-  await recordCancelledJobCompletion(params);
+  await recordCancelledJobCompletion({
+    ...params,
+    cancellationReason
+  });
   return true;
 }
 

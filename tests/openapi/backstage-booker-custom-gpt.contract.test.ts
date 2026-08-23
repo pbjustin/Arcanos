@@ -107,15 +107,15 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(Buffer.byteLength(policy, 'utf8')).toBeLessThanOrEqual(8_000);
   });
 
-  it('exposes only the fixed public, exact reads, and canon-write operations', () => {
+  it('exposes only the fixed public, durable-result, exact-read, and canon-write operations', () => {
     const contractText = readFileSync(contractPath, 'utf8');
     const contract = JSON.parse(contractText);
     const crlfContractText = contractText.replace(/\r?\n/gu, '\r\n');
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.4.0');
-    expect(Buffer.byteLength(contractText, 'utf8')).toBeLessThanOrEqual(100_000);
-    expect(Buffer.byteLength(crlfContractText, 'utf8')).toBeLessThanOrEqual(100_000);
+    expect(contract.info.version).toBe('1.5.0');
+    expect(Buffer.byteLength(contractText, 'utf8')).toBeLessThanOrEqual(110_000);
+    expect(Buffer.byteLength(crlfContractText, 'utf8')).toBeLessThanOrEqual(110_000);
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -125,6 +125,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(contract.security).toBeUndefined();
     expect(Object.keys(contract.paths)).toEqual([
       '/gpt/backstage-booker',
+      '/jobs/{jobId}/result',
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
@@ -238,6 +239,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     ]);
     expect(Object.keys(publicOperation.responses)).toEqual([
       '200',
+      '202',
       '400',
       '404',
       '409',
@@ -246,6 +248,40 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '503',
       '504',
     ]);
+    expect(publicOperation.responses['202']).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/BackstageAsyncAcceptedResponse' },
+        },
+      },
+    });
+    const resultOperation = contract.paths['/jobs/{jobId}/result'].get;
+    expect(resultOperation.operationId).toBe('getBackstageBookerJobResult');
+    expect(resultOperation.security).toEqual([]);
+    expect(resultOperation['x-openai-isConsequential']).toBe(false);
+    expect(resultOperation.parameters).toEqual(expect.arrayContaining([
+      { $ref: '#/components/parameters/JobReadToken' },
+    ]));
+    expect(contract.components.parameters.JobReadToken).toMatchObject({
+      name: 'x-arcanos-job-read-token',
+      in: 'header',
+      required: true,
+    });
+
+    const validateAccepted = compileComponent(
+      contract,
+      'BackstageAsyncAcceptedResponse'
+    );
+    expect(validateAccepted({
+      ok: true,
+      status: 'queued',
+      jobId: '11111111-1111-4111-8111-111111111111',
+      poll: '/jobs/11111111-1111-4111-8111-111111111111/result',
+      stream: '/jobs/11111111-1111-4111-8111-111111111111/stream',
+      jobReadToken: `v1.${'a'.repeat(43)}`,
+      jobReadTokenHeader: 'x-arcanos-job-read-token',
+      deduped: false,
+    })).toBe(true);
 
     const canonOperation = contract.paths[
       '/gpt-access/capabilities/v1/backstage-booker/run'

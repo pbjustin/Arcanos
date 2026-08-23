@@ -65,7 +65,10 @@ import {
   buildBackstageNotionUntrustedContextPrompt,
 } from '@shared/backstage/backstageNotionContextCore.js';
 import { loadBackstageNotionPromptContext } from './backstageNotionContext.js';
-import { wasBackstageNotionEnrichmentUsed } from './backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageProtectedQueuedExecution,
+  wasBackstageNotionEnrichmentUsed,
+} from './backstageNotionEnrichmentAuthorization.js';
 import {
   isBackstageNotionAuthorityDatabaseError,
   isBackstageNotionAuthorityEnforced,
@@ -2367,7 +2370,8 @@ export async function trackStoryline(
  */
 export async function generateBooking(
   prompt: string,
-  universeId?: string
+  universeId?: string,
+  executionAction: 'generateBooking' | 'generateBookingWithHRC' = 'generateBooking'
 ): Promise<string> {
   const structuredScope = universeId !== undefined;
   const input = normalizeBackstageBookerActionPayload('generateBooking', {
@@ -2394,6 +2398,7 @@ export async function generateBooking(
     input.prompt,
     defaultTokenLimit
   );
+  const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
   const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
   const structuredPrompt: StructuredBookingPrompt = structuredScope
       ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
@@ -2427,9 +2432,14 @@ export async function generateBooking(
       modelStageTimeoutMs: generationStageTimeoutMs,
     }),
     directAnswerSystemPolicyPrompt,
-    ...(structuredPrompt.includesNotion
+    ...(protectedQueuedExecution || structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
+          redactAuditContent: true as const,
+        }
+      : {}),
+    ...(structuredPrompt.includesNotion
+      ? {
           trustedPolicyPrompt: requestedOutputShapeInstruction
             ? [
                 structuredPrompt.trustedPolicyPrompt,
@@ -2438,7 +2448,6 @@ export async function generateBooking(
             : structuredPrompt.trustedPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
-          redactAuditContent: true as const,
         }
       : {}),
   };
@@ -2469,7 +2478,7 @@ export async function generateBooking(
           prompt: attemptInstructions,
           moduleId: 'BACKSTAGE:BOOKER',
           sourceEndpoint: 'backstage-booker.generateBooking',
-          requestedAction: 'generateBooking',
+          requestedAction: executionAction,
           body: {
             prompt: input.prompt,
             ...(structuredScope ? { universeId: resolvedUniverseId } : {}),
@@ -2525,7 +2534,7 @@ export async function generateBooking(
     if (isBackstageBookerOutputIncompleteError(error)) {
       throw error;
     }
-    if (structuredPrompt.includesNotion) {
+    if (protectedQueuedExecution || structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');
       throw new Error('Booking generation failed');
     }
@@ -3054,14 +3063,19 @@ export const BackstageBookerModule = {
         payload
       );
       const universeId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
-      const storyline = await BackstageBooker.generateBooking(input.prompt, universeId);
-      const enrichedWithNotion = wasBackstageNotionEnrichmentUsed();
+      const storyline = await BackstageBooker.generateBooking(
+        input.prompt,
+        universeId,
+        'generateBookingWithHRC'
+      );
+      const sensitiveContext =
+        wasBackstageNotionEnrichmentUsed() || isBackstageProtectedQueuedExecution();
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
         hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
           timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
-          ...(enrichedWithNotion ? { sensitiveContext: true } : {})
+          ...(sensitiveContext ? { sensitiveContext: true } : {})
         }))
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);

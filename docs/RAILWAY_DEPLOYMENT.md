@@ -246,8 +246,11 @@ Environment variables:
 | `PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP` | Optional; default `false` | Set exact `true` only after verifying public-edge-only provenance for provider routes. Even then, the app accepts `X-Real-IP` only with a valid Railway edge marker and an immediate peer in `100.0.0.0/8`; direct/private traffic remains socket-cohorted. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Required for generic protected `/gpt-access/*` routes | Strong generic gateway bearer token stored only in Railway Variables and authorized generic GPT Access client authentication. `/gpt-access/openapi.json` is public. The generic token remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but do not configure it in the dedicated Backstage Booker Custom GPT; use `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` there. It cannot authorize the exact Backstage universe or storyline-summary reads and is not accepted by Gaming source lifecycle routes. |
 | `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | Optional; required for protected Backstage Booker Custom GPT operations and private Notion-derived generation on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the existing Backstage Booker Custom GPT Action's API Key/Bearer field; do not copy it to a worker, schema, GPT instructions, chat, source, or logs. Legacy supplement remains optional, but mapped Notion-authority generation requires the credential and fails closed when it is missing or invalid. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | Optional; configure on web for legacy supplement or worker for authority sync | Outbound 16–4096-character visible-ASCII token for a dedicated read-content-only Notion integration. Authority-only rollout moves it off web and onto worker. It must differ from every ARCANOS application credential and never appears in Builder. |
-| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | Optional; configure with the Notion token on the web service only | Sensitive JSON mapping from at most 32 exact universe IDs to one to three unique raw Notion page UUIDs each. URLs and partial/invalid configuration disable enrichment before provider work. Selected excerpts enter the existing OpenAI generation request. |
+| `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` | Optional web automatic-routing flag; defaults false | Only exact `true` promotes workload-classified heavy generation, and malformed values fail to the false routing default. Explicit async and idempotent generation remain protected queue jobs under either setting. Enable automatic promotion only after the current payload-protection key is present on both web and worker. Enabled heavy generation fails closed rather than executing in web if the queue or protection boundary is unavailable. Set exact `false` for automatic-routing rollback. |
+| `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Required on both web and worker for any job-backed Booker generation | Canonical base64 for exactly 32 random bytes, distinct from all other credentials. It seals private queue input and output; never put it in Builder, requests, logs, or source. Rotate in worker-first deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
+| `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | Optional on web and worker during key rotation | Decryption-only previous 32-byte base64 key. Retain through the maximum protected-job retention window, then remove. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | Optional; configure where the selected Notion mode executes | Outbound 16–4096-character visible-ASCII token for a dedicated read-content-only Notion integration. Synchronous legacy supplement uses web; authority sync and queued legacy generation use worker. It must differ from every ARCANOS application credential and never appears in Builder. |
+| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | Optional; configure with the Notion token on every service that can execute legacy supplement generation | Sensitive JSON mapping from at most 32 exact universe IDs to one to three unique raw Notion page UUIDs each. Before enabling queued heavy generation for a legacy-supplement universe, copy the identical mapping to worker through the approved secret workflow. URLs and partial/invalid configuration disable enrichment before provider work. Selected excerpts enter the existing OpenAI generation request. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | Optional; identical closed mapping on web and worker | Selects exact Notion-authoritative universes and their fixed recursive roots. Web uses it to block/quarantine legacy state and require RAG; worker uses it to build full immutable snapshots. A malformed present value fails writes closed. After first activation, the PostgreSQL authority head is a durable one-way latch: deleting this variable does not restore legacy authority, and an unreadable/conflicting authority state fails closed with `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | Optional; worker only | Full-hierarchy sync cadence; default 900,000 ms, clamped to 60,000–86,400,000 ms. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | Optional; web only | Maximum last-complete-verification age; default 86,400,000 ms, clamped to 300,000–604,800,000 ms. |
@@ -381,7 +384,7 @@ revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
 Custom GPT. The web service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
-`1.4.0` declares that credential for continuity queries, generation, and
+`1.5.0` declares that credential for continuity queries, generation, and
 simulation as well as the exact
 universe and storyline-summary reads, which are
 non-consequential, and return a bounded repeatable-read PostgreSQL projection
@@ -394,6 +397,20 @@ server-side `MCP_ALLOW_MODULE_ACTIONS` allowlist must still include
 `BACKSTAGE:BOOKER:upsertStoryline` and
 `BACKSTAGE:BOOKER:appendCanonBeat`. Every other action fails closed on the
 dedicated credential.
+
+Heavy-generation rollout additionally requires the same distinct
+`ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` on web and worker before enabling
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` on web. The existing
+PostgreSQL queue remains the only job system: web encrypts private input,
+deduplicates by its authenticated actor and semantic fingerprint, and returns
+the existing job-read capability; worker decrypts, dispatches, encrypts the
+terminal result, and never receives the Action bearer. Payload/protection or
+queue unavailability fails closed while enabled. Setting the flag to `false`
+restores the previous synchronous routing policy. For payload-key rotation,
+first configure both roles with K1 current/K2 previous, deploy the worker with
+K2 current/K1 previous, and only then deploy the web role with K2 current/K1
+previous. Keep K1 configured as previous until every K1-sealed retained job
+has drained.
 
 In ChatGPT Builder configure that value as API Key/Bearer authentication, not
 OAuth or a user password. Both imported read operations are non-consequential;
@@ -410,18 +427,19 @@ workaround. See
 [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the full
 Builder and security contract.
 
-Optional Notion enrichment is a web-only configuration rollout and does not
-add a Builder operation. Schema `1.4.0` must still be re-imported because it
-declares bearer provenance and materializes the nested public payload. Create a dedicated Notion integration
+Optional Notion enrichment is configured wherever generation executes: web for
+synchronous rollback and worker for queued heavy generation. Schema `1.5.0`
+must be re-imported because it adds the protected result operation while retaining
+bearer provenance and the nested public payload. Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
-`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on the web service. Never reuse
-an ARCANOS bearer or copy the Notion token to Builder/worker configuration.
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on each executing service. Never reuse
+an ARCANOS bearer or copy the Notion token to Builder configuration.
 Deploy the backend first. Then call `generateBooking` for a mapped disposable
 scope through the existing private GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
 bearer and verify generation stays available but no Notion event/request occurs.
-After importing `1.4.0`, verify Builder attaches its saved API-key
+After importing `1.5.0`, verify Builder attaches its saved API-key
 authentication to `runBackstageBooker`. If it does not, enrichment must remain
 disabled; do not remove the server-side gate.
 
@@ -495,7 +513,7 @@ retry over the same retrieval and budget, and a second exhaustion returns the
 sanitized incomplete-output error. Confirm each response used one snapshot, no
 Notion request originated from web, no legacy repository/fallback was called,
 and OpenAI storage/transcript/cache suppression remained active.
-Only after the backend serves schema `1.4.0`, re-import that contract into the
+Only after the backend serves schema `1.5.0`, re-import that contract into the
 existing Builder Action, preserve its saved bearer and visibility, and repeat
 one page and one subtree request through the GPT. Then remove any
 authority-only Notion token left on web. A failed new crawl

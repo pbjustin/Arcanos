@@ -143,9 +143,10 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(response.body.info?.version).toBe('1.4.0');
+    expect(response.body.info?.version).toBe('1.5.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
+      '/jobs/{jobId}/result',
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
@@ -156,6 +157,10 @@ describe('custom GPT OpenAPI contract route', () => {
       .toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.['x-openai-isConsequential'])
       .toBe(false);
+    expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.operationId)
+      .toBe('getBackstageBookerJobResult');
+    expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.security)
+      .toEqual([]);
     expect(response.body.paths?.[
       '/gpt-access/capabilities/v1/backstage-booker/run'
     ]?.post?.operationId).toBe('writeBackstageCanon');

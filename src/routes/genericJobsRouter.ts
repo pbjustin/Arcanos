@@ -12,6 +12,13 @@ import {
   buildGptJobResultLookupPayload,
   buildStoredJobStatusPayload
 } from '@shared/gpt/gptJobResult.js';
+import {
+  PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE,
+  hasProtectedBackstageQueuedGptJobMarker,
+  isProtectedBackstageQueuedGptJobEnvelope,
+  markProtectedBackstageQueuedGptJobResultMaterialized,
+  unprotectBackstageQueuedGptJobOutput,
+} from '@shared/backstage/backstageQueuedJobResultProtection.js';
 import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import {
@@ -228,6 +235,37 @@ function sendJobRepositoryUnavailable(
   );
 }
 
+function materializeProtectedJobOutput(job: GenericJobData): GenericJobData {
+  if (!hasProtectedBackstageQueuedGptJobMarker(job.input)) {
+    return job;
+  }
+  const output = unprotectBackstageQueuedGptJobOutput({
+    jobId: job.id,
+    rawInput: job.input,
+    output: job.output,
+  });
+  return markProtectedBackstageQueuedGptJobResultMaterialized(
+    output === job.output ? job : { ...job, output }
+  );
+}
+
+function sendProtectedJobResultUnavailable(
+  req: express.Request,
+  res: express.Response,
+  jobId: string,
+  logEvent: string
+): void {
+  req.logger?.error?.('gpt.job.protected_result_unavailable', {
+    endpoint: req.originalUrl,
+    jobId,
+    requestId: (req as any).requestId,
+  });
+  sendJobsJsonResponse(req, res, {
+    error: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+    message: 'Protected Backstage generation result is unavailable.',
+  }, logEvent, 503);
+}
+
 type JobLookupResult =
   | { available: true; job: GenericJobData | null }
   | { available: false };
@@ -374,7 +412,7 @@ router.get(
       return;
     }
 
-    const job = lookup.job;
+    let job = lookup.job;
     if (!isPublicReadableJob(job)) {
       req.logger?.warn?.('gpt.job.status_lookup.not_found', {
         endpoint: req.originalUrl,
@@ -387,6 +425,12 @@ router.get(
         outcome: 'not_found'
       });
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.status.not_found', 404);
+      return;
+    }
+    try {
+      job = materializeProtectedJobOutput(job);
+    } catch {
+      sendProtectedJobResultUnavailable(req, res, id, 'jobs.status.protected_result_unavailable');
       return;
     }
 
@@ -446,7 +490,15 @@ router.get(
     }
 
     const job = lookup.job;
-    const publicJob = isPublicReadableJob(job) ? job : null;
+    let publicJob = isPublicReadableJob(job) ? job : null;
+    if (publicJob) {
+      try {
+        publicJob = materializeProtectedJobOutput(publicJob);
+      } catch {
+        sendProtectedJobResultUnavailable(req, res, id, 'jobs.result.protected_result_unavailable');
+        return;
+      }
+    }
     const jobLookup = buildGptJobResultLookupPayload(id, publicJob);
 
     req.logger?.info?.(
@@ -488,7 +540,7 @@ router.post(
   confirmCancellation,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
-    const reason =
+    let reason =
       typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
         ? req.body.reason.trim()
         : 'Job cancellation requested by client.';
@@ -497,10 +549,19 @@ router.post(
       return;
     }
 
-    const job = lookup.job;
+    let job = lookup.job;
 
     if (!isPublicReadableJob(job)) {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
+      return;
+    }
+    if (isProtectedBackstageQueuedGptJobEnvelope(job.input)) {
+      reason = PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
+    }
+    try {
+      job = materializeProtectedJobOutput(job);
+    } catch {
+      sendProtectedJobResultUnavailable(req, res, id, 'jobs.cancel.protected_result_unavailable');
       return;
     }
 
@@ -610,6 +671,18 @@ router.post(
       return;
     }
 
+    if (cancellation.job) {
+      try {
+        cancellation = {
+          ...cancellation,
+          job: materializeProtectedJobOutput(cancellation.job),
+        };
+      } catch {
+        sendProtectedJobResultUnavailable(req, res, id, 'jobs.cancel.protected_result_unavailable');
+        return;
+      }
+    }
+
     if (cancellation.outcome === 'already_terminal') {
       sendJobsJsonResponse(req, res, {
         ok: false,
@@ -687,13 +760,22 @@ router.get(
 
     try {
       while (!closed) {
-        const job = nextObservedJob ?? await getJobById(id);
+        let job = nextObservedJob ?? await getJobById(id);
         nextObservedJob = null;
 
         if (!isPublicReadableJob(job)) {
           writeSseEvent(res, 'error', {
             code: 'JOB_NOT_FOUND',
             jobId: id
+          });
+          return;
+        }
+        try {
+          job = materializeProtectedJobOutput(job);
+        } catch {
+          writeSseEvent(res, 'error', {
+            code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+            jobId: id,
           });
           return;
         }

@@ -85,6 +85,12 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 const { generateBooking } = await import('../src/services/backstage-booker.js');
+const { logger: structuredLogger } = await import(
+  '../src/platform/logging/structuredLogging.js'
+);
+const { runWithBackstageProtectedQueuedExecution } = await import(
+  '../src/services/backstageNotionEnrichmentAuthorization.js'
+);
 
 describe('backstage-booker generateBooking', () => {
   beforeEach(() => {
@@ -148,6 +154,56 @@ describe('backstage-booker generateBooking', () => {
       'R - Resilience:',
     ]) {
       expect(runOptions.directAnswerSystemPolicyPrompt).toContain(dimension);
+    }
+  });
+
+  it('preserves the HRC generation action in Trinity request metadata', async () => {
+    await expect(generateBooking(
+      'Generate and evaluate a complete Raw booking.',
+      undefined,
+      'generateBookingWithHRC'
+    )).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          requestedAction: 'generateBookingWithHRC',
+          sourceEndpoint: 'backstage-booker.generateBooking',
+        }),
+      })
+    );
+  });
+
+  it('redacts protected queue execution even when Notion enrichment was not authorized', async () => {
+    const privateErrorMarker = 'PRIVATE-PROTECTED-PROVIDER-ERROR-SENTINEL';
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(
+      new Error(privateErrorMarker)
+    );
+    const consoleErrorSpy = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking('Generate a protected Raw card without Notion enrichment.')
+      )).rejects.toThrow('Booking generation failed');
+
+      const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+        context: {
+          runOptions: {
+            disableOptionalSideEffects?: boolean;
+            redactAuditContent?: boolean;
+          };
+        };
+      };
+      expect(request.context.runOptions).toMatchObject({
+        disableOptionalSideEffects: true,
+        redactAuditContent: true,
+      });
+      expect(JSON.stringify(consoleErrorSpy.mock.calls))
+        .not.toContain(privateErrorMarker);
+    } finally {
+      consoleErrorSpy.mockRestore();
     }
   });
 

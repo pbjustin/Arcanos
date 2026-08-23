@@ -392,4 +392,111 @@ describe('jobRepository initial claim generations', () => {
       job: { id: 'job-completed-reusable' }
     });
   });
+
+  it('serializes concurrent protected Booker submissions into one active job', async () => {
+    const fingerprintHash = 'd'.repeat(64);
+    const scopeHash = 'e'.repeat(64);
+    const protectedInput = {
+      gptId: 'backstage-booker',
+      protectedBackstage: {
+        version: 1,
+        source: 'backstage-booker-http',
+        envelopeId: '11111111-1111-4111-8111-111111111111',
+        action: 'generateBooking',
+        universeId: 'my-universe-2k26',
+        sealedPayload: { ciphertext: 'server-protected-input' },
+      },
+    };
+    const activeJobs: Array<Record<string, unknown>> = [];
+    let advisoryLockHeld = false;
+    const advisoryLockWaiters: Array<() => void> = [];
+    let insertCount = 0;
+
+    const acquireAdvisoryLock = async (): Promise<void> => {
+      if (!advisoryLockHeld) {
+        advisoryLockHeld = true;
+        return;
+      }
+      await new Promise<void>((resolve) => advisoryLockWaiters.push(resolve));
+      advisoryLockHeld = true;
+    };
+    const releaseAdvisoryLock = (): void => {
+      advisoryLockHeld = false;
+      advisoryLockWaiters.shift()?.();
+    };
+    const connect = jest.fn(async () => {
+      let ownsAdvisoryLock = false;
+      return {
+        query: jest.fn(async (sql: unknown, params?: unknown[]) => {
+          if (sql === 'BEGIN') {
+            return { rows: [] };
+          }
+          if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+            if (ownsAdvisoryLock) {
+              ownsAdvisoryLock = false;
+              releaseAdvisoryLock();
+            }
+            return { rows: [] };
+          }
+          if (typeof sql === 'string' && sql.includes('pg_advisory_xact_lock')) {
+            if (!ownsAdvisoryLock) {
+              await acquireAdvisoryLock();
+              ownsAdvisoryLock = true;
+            }
+            return { rows: [] };
+          }
+          if (typeof sql === 'string' && sql.includes('request_fingerprint_hash = $2')) {
+            return { rows: activeJobs.length > 0 ? [activeJobs[0]] : [] };
+          }
+          if (typeof sql === 'string' && sql.includes('INSERT INTO job_data')) {
+            insertCount += 1;
+            const created = returnedJob('pending', String(params?.[22]), 'gpt', {
+              id: 'job-protected-booker-canonical',
+              input: protectedInput,
+              request_fingerprint_hash: fingerprintHash,
+              idempotency_scope_hash: scopeHash,
+              idempotency_until: new Date(Date.now() + 60_000),
+              autonomy_state: {},
+            });
+            activeJobs.push(created);
+            return { rows: [created] };
+          }
+          return { rows: [] };
+        }),
+        release: clientReleaseMock,
+      };
+    });
+    getPoolMock.mockReturnValue({ connect });
+
+    const options = {
+      workerId: 'api',
+      input: protectedInput,
+      requestFingerprintHash: fingerprintHash,
+      idempotencyScopeHash: scopeHash,
+      idempotencyOrigin: 'derived' as const,
+      createOptions: { status: 'pending' as const },
+    };
+    const results = await Promise.all([
+      findOrCreateGptJob(options),
+      findOrCreateGptJob(options),
+    ]);
+
+    expect(insertCount).toBe(1);
+    expect(results.map(result => result.created).sort()).toEqual([false, true]);
+    expect(results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        created: true,
+        deduped: false,
+        job: expect.objectContaining({ id: 'job-protected-booker-canonical' }),
+      }),
+      expect.objectContaining({
+        created: false,
+        deduped: true,
+        dedupeReason: 'reused_inflight_job',
+        job: expect.objectContaining({ id: 'job-protected-booker-canonical' }),
+      }),
+    ]));
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(clientReleaseMock).toHaveBeenCalledTimes(2);
+  });
 });

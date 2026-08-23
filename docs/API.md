@@ -412,7 +412,8 @@ automation bypasses are not accepted. The server accepts caller-selected
 deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
 
-Backstage generation and simulation actions remain public through the
+Backstage generation and simulation actions retain their existing authorization
+classification through the
 canonical GPT and compatibility writing routes: `generateBooking`,
 `generateBookingWithHRC`, and `simulateMatch`. On the canonical GPT route these
 three actions return proposals or simulated results without persisting them as
@@ -442,13 +443,25 @@ envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
-The Builder-specific schema `1.4.0` at
-`GET /contracts/backstage_booker.openapi.v1.json` defines four operations. Its
-saved dedicated bearer is declared on all four so Notion-authoritative
+The Builder-specific schema `1.5.0` at
+`GET /contracts/backstage_booker.openapi.v1.json` defines five operations. Its
+saved dedicated bearer is declared on the four Booker operations so Notion-authoritative
 continuity queries and generation have verified provenance. The underlying
 generation and simulation route remains publicly compatible for
 non-authoritative direct clients; `queryContinuity` has no non-authoritative or
 legacy fallback.
+When `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, the pure Booker
+workload policy overrides an unsafe explicit synchronous preference for heavy
+`generateBooking` or `generateBookingWithHRC` requests. The route returns the
+existing `202` durable-job acknowledgement and performs no provider call in the
+web process. Private input and terminal output are encrypted before persistence;
+only bounded action, universe, correlation, and planning metadata remain visible
+on the queue row. Repeated authenticated semantic submissions reuse the existing
+in-flight job. The returned job-specific capability authorizes
+`GET /jobs/{jobId}/result`, which decrypts only after the normal read gate and
+returns the existing terminal job envelope. Lightweight `queryContinuity` and
+`simulateMatch` stay synchronous. Disabling the flag restores the prior routing
+policy without changing endpoint or action authorization.
 `getBackstageUniverse`
 calls exactly
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
@@ -489,9 +502,12 @@ quarantine `409` without reading legacy canon.
 `generateBooking` and `generateBookingWithHRC` can optionally enrich their
 existing PostgreSQL-derived model request with explicitly mapped Notion pages.
 This legacy supplement adds no endpoint or module action. It runs only on
-canonical synchronous Backstage generation when the request carries the valid dedicated Backstage
+canonical Backstage generation when the request carries the valid dedicated Backstage
 bearer and both `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
-`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the web service.
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the executing
+service. For queued work, the worker receives only encrypted private input and a
+server-owned authorization attestation; it never receives or persists the
+Action bearer.
 Missing/invalid authentication, incomplete configuration, an unmapped universe,
 or a PostgreSQL-context failure preserves the existing database/process-memory
 behavior and makes no Notion request. Exact-literal responses and match
@@ -586,7 +602,7 @@ chunks, so a blank anchor can resolve without increasing them. These fields
 prevent a bounded sample or page from being represented as complete. Sources
 expose only opaque chunk/content
 hashes plus bounded page titles, page paths, heading paths, and categories; raw
-excerpts and Notion page IDs remain server-side. Deploy schema 1.4.0 before
+excerpts and Notion page IDs remain server-side. Deploy schema 1.5.0 before
 re-importing it into the existing Builder Action. Answer
 generation performs one compact retry only when the provider reports
 max-output exhaustion, reusing the same retrieval and runtime budget. Other

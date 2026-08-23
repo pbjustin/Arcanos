@@ -53,6 +53,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageJobPayloadProtection.ts',
+  'src/shared/backstage/backstageQueuedJobResultProtection.ts',
   'src/shared/backstage/backstageCompactOutputContract.ts',
   'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageGenerationError.ts',
@@ -160,6 +162,21 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  [
+    'src/shared/backstage/backstageJobPayloadProtection.ts',
+    new Map([
+      [
+        'node:crypto',
+        new Set([
+          'createCipheriv:createCipheriv',
+          'createDecipheriv:createDecipheriv',
+          'createHash:createHash',
+          'randomBytes:randomBytes',
+          'timingSafeEqual:timingSafeEqual',
+        ]),
+      ],
+    ]),
+  ],
   [
     'packages/arcanos-runtime/src/requestAbort.ts',
     new Map([
@@ -639,6 +656,14 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageActionPolicy.ts',
     '639fb7efb528310d03bf9c3c421202f087b5a232d5c268e662dec94fdbaa41ac',
+  ],
+  [
+    'src/shared/backstage/backstageJobPayloadProtection.ts',
+    '07af40fc9f66086f28727c0accc09c9ac9b95767e8b15802608a9dc756793de0',
+  ],
+  [
+    'src/shared/backstage/backstageQueuedJobResultProtection.ts',
+    '290eff6f6d00d047583ba10a109e8498605f4165f35f38311bd7a503669214b2',
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',

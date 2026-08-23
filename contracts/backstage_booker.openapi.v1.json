@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.4.0",
-    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for scoped continuity queries, generation, simulation, exact reads, and canon writes; only canon writes require ChatGPT's consequential-action approval banner."
+    "version": "1.5.0",
+    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for scoped continuity queries, generation, simulation, exact reads, and canon writes; production-sized generation is durably queued and retrieved with a job-specific read capability. Only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
     {
@@ -16,7 +16,7 @@
       "post": {
         "operationId": "runBackstageBooker",
         "summary": "Query, generate, or simulate with Backstage Booker",
-        "description": "Run one non-persistent Backstage Booker action synchronously with the configured bearer. Accepts scoped Notion-authoritative continuity queries, booking generation, HRC generation, and match simulation; canon writes use writeBackstageCanon. executionMode is fixed to sync.",
+        "description": "Run one non-persistent Booker action with the configured bearer. Continuity and simulation remain synchronous. Heavy booking generation may override executionMode=sync and return 202; poll getBackstageBookerJobResult with its jobReadToken. Canon writes use writeBackstageCanon.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -99,6 +99,13 @@
               }
             }
           },
+          "202": {
+            "description": "Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it; poll the returned path with the job-specific read token.",
+            "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstageAsyncAcceptedResponse" } }
+            }
+          },
           "400": {
             "description": "The public action or its payload was invalid.",
             "content": {
@@ -172,6 +179,40 @@
                   "$ref": "#/components/schemas/BackstagePublicErrorResponse"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{jobId}/result": {
+      "get": {
+        "operationId": "getBackstageBookerJobResult",
+        "summary": "Retrieve queued Backstage Booker generation",
+        "description": "Read one accepted booking job with its returned job-specific capability. This never creates or retries work; invalid capabilities are concealed as not_found.",
+        "x-openai-isConsequential": false,
+        "security": [],
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "$ref": "#/components/parameters/JobReadToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current queued-job lifecycle and terminal result or error.",
+            "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstageJobResultLookup" } }
+            }
+          },
+          "400": {
+            "description": "The job identifier is invalid.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Durable job reads or protected Booker result materialization are unavailable.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstageJobReadUnavailable" } }
             }
           }
         }
@@ -690,6 +731,15 @@
     }
   },
   "components": {
+    "parameters": {
+      "JobReadToken": {
+        "name": "x-arcanos-job-read-token",
+        "in": "header",
+        "required": true,
+        "description": "Exact job-specific capability returned as jobReadToken. Never send it in a query string, body, or log.",
+        "schema": { "type": "string", "pattern": "^v1\\.[A-Za-z0-9_-]{43}$" }
+      }
+    },
     "securitySchemes": {
       "bearerAuth": {
         "type": "http",
@@ -717,6 +767,45 @@
       }
     },
     "schemas": {
+      "BackstageAsyncAcceptedResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["ok", "status", "jobId", "poll", "jobReadToken", "jobReadTokenHeader"],
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "status": { "type": "string", "enum": ["queued", "running"] },
+          "jobId": { "type": "string" },
+          "poll": { "type": "string" },
+          "stream": { "type": "string" },
+          "jobReadToken": { "type": "string", "pattern": "^v1\\.[A-Za-z0-9_-]{43}$" },
+          "jobReadTokenHeader": { "type": "string", "const": "x-arcanos-job-read-token" },
+          "deduped": { "type": "boolean" }
+        }
+      },
+      "BackstageJobResultLookup": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["jobId", "status", "jobStatus", "lifecycleStatus", "poll", "stream", "result", "error"],
+        "properties": {
+          "jobId": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "completed", "failed", "expired", "not_found"] },
+          "jobStatus": { "type": ["string", "null"] },
+          "lifecycleStatus": { "type": "string" },
+          "poll": { "type": "string" },
+          "stream": { "type": "string" },
+          "result": {},
+          "error": {}
+        }
+      },
+      "BackstageJobReadUnavailable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      },
       "BackstageStorylineSummaryReadSuccessResponse": {
         "type": "object",
         "additionalProperties": false,
@@ -1466,7 +1555,7 @@
           "sync"
         ],
         "default": "sync",
-        "description": "Required by the Builder contract to request inline execution and avoid automatic heavy-prompt queueing."
+        "description": "Required by the Builder contract for compatibility. The server preserves it for lightweight work but overrides it when production-sized generation would recreate the unsafe synchronous timeout condition."
       },
       "BackstagePublicRequest": {
         "type": "object",

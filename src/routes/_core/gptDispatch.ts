@@ -11,7 +11,10 @@ import {
 } from "@services/moduleRegistry.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
-import { wasBackstageNotionEnrichmentUsed } from '@services/backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageProtectedQueuedExecution,
+  wasBackstageNotionEnrichmentUsed,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
   BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
   BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE,
@@ -1135,7 +1138,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const suppressTimeoutFallback =
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
-  const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
+  const protectedBackstageQueuedExecution = isBackstageProtectedQueuedExecution();
+  const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload)
+    || protectedBackstageQueuedExecution;
   const diagnosticTextInput = boundedPromptOverride
     ? boundedPromptOverride.promptText
     : extractPreparedGptDispatchPromptText(body, preDispatchPayload);
@@ -1392,6 +1397,45 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   };
+  const rejectUnprotectedBackstageBackgroundGeneration = (params: {
+    action: string | null;
+    availableActions: string[];
+    moduleName: string;
+    moduleVersion: string | null;
+    route: string;
+  }): AskEnvelope | null => {
+    if (
+      runtimeExecutionMode !== 'background'
+      || params.moduleName !== BACKSTAGE_MODULE_NAME
+      || (params.action !== 'generateBooking' && params.action !== 'generateBookingWithHRC')
+      || protectedBackstageQueuedExecution
+    ) {
+      return null;
+    }
+
+    logger?.warn?.('gpt.dispatch.backstage_background_protection_required', {
+      requestId,
+      gptId: trimmedGptId,
+      module: params.moduleName,
+      action: params.action,
+    });
+    return {
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED',
+        message: 'Background Backstage generation requires a protected queued execution context.',
+      },
+      _route: {
+        ...baseRoute,
+        module: params.moduleName,
+        action: params.action,
+        matchMethod,
+        route: params.route,
+        availableActions: params.availableActions,
+        moduleVersion: params.moduleVersion,
+      },
+    };
+  };
   logger?.info?.("gpt.dispatch.lookup.resolved", {
     requestId,
     gptId: trimmedGptId,
@@ -1431,6 +1475,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const initialActionCandidate = requestedAction
     ? pickGptModuleAction(availableActions, requestedAction)
     : fallbackActionCandidate;
+  const initialBackgroundGenerationDenial =
+    rejectUnprotectedBackstageBackgroundGeneration({
+      action: initialActionCandidate,
+      availableActions,
+      moduleName: activeEntry.module,
+      moduleVersion: (moduleMetadata as any)?.version ?? null,
+      route: activeEntry.route,
+    });
+  if (initialBackgroundGenerationDenial) {
+    return initialBackgroundGenerationDenial;
+  }
   const initialAdmissionDenial = rejectQueuedBackstageMutationAdmission({
     action: initialActionCandidate,
     availableActions,
@@ -1821,6 +1876,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
+  const finalBackgroundGenerationDenial =
+    rejectUnprotectedBackstageBackgroundGeneration({
+      action,
+      availableActions,
+      moduleName: activeEntry.module,
+      moduleVersion: (moduleMetadata as any)?.version ?? null,
+      route: activeEntry.route,
+    });
+  if (finalBackgroundGenerationDenial) {
+    return finalBackgroundGenerationDenial;
+  }
+
   const finalAdmissionDenial = rejectQueuedBackstageMutationAdmission({
     action,
     availableActions,
@@ -1922,7 +1989,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
     // Research owns and fences its persistence inside its aggregate workflow.
     // Starting generic transcript writes here would escape that deadline/signal.
-    if (!isResearchRun && !notionEnrichmentUsed) {
+    if (!isResearchRun && !notionEnrichmentUsed && !protectedBackstageQueuedExecution) {
       const resolvedSessionId = resolveSessionId(body, payload);
       await persistModuleConversation({
         moduleName: activeEntry.module,
@@ -2038,6 +2105,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'queryContinuity'
         && isBackstageContinuityQueryFailedError(err);
+      const isProtectedBackstageQueuedGenerationFailure =
+        protectedBackstageQueuedExecution
+        && activeEntry.module === BACKSTAGE_MODULE_NAME
+        && (action === 'generateBooking' || action === 'generateBookingWithHRC');
       const isUnclassifiedCanonFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'upsertStoryline' || action === 'appendCanonBeat')
@@ -2073,6 +2144,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
         : isBackstageContinuityQueryFailure
         ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE
+        : isProtectedBackstageQueuedGenerationFailure
+        ? 'Protected Backstage generation failed.'
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -2081,7 +2154,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       module: activeEntry.module,
       action,
       matchMethod,
-      error: errorMessage,
+      error: isProtectedBackstageQueuedGenerationFailure
+        ? dispatchErrorMessage
+        : errorMessage,
       timeoutMs,
       timeoutSource,
       durationMs: Date.now() - dispatchStartedAt,

@@ -11,6 +11,8 @@ const getDatabaseStatusMock = jest.fn();
 const getWorkerControlHealthMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
 const isRegisteredResearchGptIdMock = jest.fn();
+const getGptModuleMapMock = jest.fn();
+const detectBackstageBookerIntentMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -47,6 +49,14 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 
 jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
   isRegisteredResearchGptId: isRegisteredResearchGptIdMock,
+}));
+
+jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
+  getGptModuleMap: getGptModuleMapMock,
+}));
+
+jest.unstable_mockModule('../src/services/backstageBookerRouteShortcut.js', () => ({
+  detectBackstageBookerIntent: detectBackstageBookerIntentMock,
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -97,6 +107,15 @@ describe('Custom GPT bridge route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     isRegisteredResearchGptIdMock.mockResolvedValue(false);
+    getGptModuleMapMock.mockResolvedValue({
+      'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+      'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+    });
+    detectBackstageBookerIntentMock.mockImplementation((prompt: unknown) => (
+      typeof prompt === 'string' && /\bbook\b.*\b(?:raw|wwe)\b/iu.test(prompt)
+        ? { score: 4, reason: 'booking_verb+wrestling_brand' }
+        : null
+    ));
     process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.OPENAI_ACTION_SHARED_SECRET = 'test-bridge-secret';
     process.env.DEFAULT_GPT_ID = 'arcanos-core';
@@ -456,6 +475,34 @@ describe('Custom GPT bridge route', () => {
         }),
       }),
     );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a core-to-Booker bridge handoff before queue persistence', async () => {
+    const privatePrompt =
+      'private-bridge-booking-handoff-sentinel: book six Raw matches for WWE.';
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        action: 'query',
+        prompt: privatePrompt,
+        metadata: {},
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'invalid_request',
+      error: {
+        source: 'routing',
+        message: 'Job-backed booking generation requires the canonical Backstage Booker route.',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privatePrompt);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 

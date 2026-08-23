@@ -4,8 +4,10 @@ import type { NextFunction, Request, Response } from 'express';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 import {
   isBackstageNotionEnrichmentAuthorized,
+  isBackstageProtectedQueuedExecution,
   markBackstageNotionEnrichmentUsed,
   optionalBackstageNotionEnrichmentAuth,
+  runWithBackstageProtectedQueuedExecution,
   wasBackstageNotionEnrichmentUsed,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 
@@ -67,6 +69,30 @@ describe('optional Backstage Notion enrichment authorization', () => {
       authorization: `Bearer ${accessToken}`,
     }))).resolves.toBe(true);
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+  });
+
+  it('establishes a stable server-derived actor key without retaining the bearer', async () => {
+    const firstRequest = buildRequest({ authorization: `Bearer ${accessToken}` });
+    const secondRequest = buildRequest({ authorization: `Bearer ${accessToken}` });
+
+    optionalBackstageNotionEnrichmentAuth(firstRequest, {} as Response, () => undefined);
+    optionalBackstageNotionEnrichmentAuth(secondRequest, {} as Response, () => undefined);
+
+    expect(firstRequest.authenticatedActorKey).toMatch(/^backstage-booker-access:/u);
+    expect(secondRequest.authenticatedActorKey).toBe(firstRequest.authenticatedActorKey);
+    expect(firstRequest.authenticatedActorKey).not.toContain(accessToken);
+    expect(firstRequest).not.toHaveProperty('authorization');
+  });
+
+  it('keeps protected queue provenance worker-local and authorization-compatible', async () => {
+    const inside = runWithBackstageProtectedQueuedExecution(true, () => ({
+      authorized: isBackstageNotionEnrichmentAuthorized(),
+      protectedQueue: isBackstageProtectedQueuedExecution(),
+    }));
+
+    expect(inside).toEqual({ authorized: true, protectedQueue: true });
+    expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+    expect(isBackstageProtectedQueuedExecution()).toBe(false);
   });
 
   it('keeps missing and invalid credentials unauthorized for non-authority fallback policy', async () => {
