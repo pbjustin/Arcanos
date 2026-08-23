@@ -15,6 +15,8 @@ import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from "@platfor
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { writePublicHealthResponse } from "@core/diagnostics.js";
 import { logger } from '@platform/logging/structuredLogging.js';
+import { systemStateHttpBoundary } from '@services/controlPlane/systemStateHttpBoundary.js';
+import { systemStateBodyParser } from '@services/controlPlane/systemStateBodyParser.js';
 
 const router = express.Router();
 const STATUS_UNAVAILABLE_CODE = 'STATUS_UNAVAILABLE';
@@ -144,33 +146,40 @@ router.get('/health', markNoStore, async (req: Request, res: Response) => {
 /**
  * POST /status - Update system state
  */
-router.post('/status', markNoStore, confirmGate, (req: Request, res: Response) => {
-  try {
-    const updates: Partial<SystemState> = req.body;
-    
-    // Validate that we have some data to update
-    if (!updates || Object.keys(updates).length === 0) {
-      //audit Assumption: empty updates are invalid; risk: accepting no-op updates; invariant: update requires payload; handling: return 400 with message.
-      return sendBadRequestPayload(res, {
-        error: 'No update data provided',
-        message: 'Request body must contain state updates'
-      });
-    }
-    
-    const updatedState = updateState(updates);
-    console.log('[STATUS] System state updated:', Object.keys(updates));
+router.post(
+  '/status',
+  systemStateHttpBoundary,
+  systemStateBodyParser,
+  markNoStore,
+  confirmGate,
+  (req: Request, res: Response) => {
+    try {
+      const updates: Partial<SystemState> = req.body;
 
-    res.json(updatedState);
-  } catch (error) {
-    //audit Assumption: update failures need correlation without retaining filesystem or serialization text; risk: response or log disclosure; invariant: fixed public message and closed log classification; handling: log stable metadata and return a no-store error.
-    logStatusFailure(req, 'status.update.failed', STATUS_UPDATE_FAILED_CODE, error);
-    sendJsonError(
-      res,
-      500,
-      'Failed to update system state',
-      STATUS_UPDATE_FAILED_MESSAGE
-    );
+      // Validate that we have some data to update
+      if (!updates || Object.keys(updates).length === 0) {
+        //audit Assumption: empty updates are invalid; risk: accepting no-op updates; invariant: update requires payload; handling: return 400 with message.
+        return sendBadRequestPayload(res, {
+          error: 'No update data provided',
+          message: 'Request body must contain state updates'
+        });
+      }
+
+      const updatedState = updateState(updates);
+      console.log('[STATUS] System state updated:', Object.keys(updates));
+
+      res.json(updatedState);
+    } catch (error) {
+      //audit Assumption: update failures need correlation without retaining filesystem or serialization text; risk: response or log disclosure; invariant: fixed public message and closed log classification; handling: log stable metadata and return a no-store error.
+      logStatusFailure(req, 'status.update.failed', STATUS_UPDATE_FAILED_CODE, error);
+      sendJsonError(
+        res,
+        500,
+        'Failed to update system state',
+        STATUS_UPDATE_FAILED_MESSAGE
+      );
+    }
   }
-});
+);
 
 export default router;

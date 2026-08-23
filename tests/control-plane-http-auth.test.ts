@@ -5,6 +5,7 @@ import {
   authenticateControlPlaneHttpRequest,
   CONTROL_PLANE_PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
   controlPlaneHttpAuthenticationMiddleware,
+  createControlPlaneHttpAuthenticationMiddleware,
   extractControlPlaneBearerToken,
   requireControlPlaneOperator,
 } from '../src/services/controlPlane/httpAuth.js';
@@ -52,6 +53,15 @@ function responseRecorder(): {
 }
 
 describe('HTTP control-plane authentication', () => {
+  it('preserves three-argument Express middleware arity for default and injected authentication', () => {
+    const injectedMiddleware = createControlPlaneHttpAuthenticationMiddleware(
+      configuredEnvironment()
+    );
+
+    expect(controlPlaneHttpAuthenticationMiddleware).toHaveLength(3);
+    expect(injectedMiddleware).toHaveLength(3);
+  });
+
   it('maps the purpose-bound credential to a credential-free server principal', () => {
     const result = authenticateControlPlaneHttpRequest(
       requestWithAuthorization(`Bearer ${accessToken}`),

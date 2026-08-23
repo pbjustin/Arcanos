@@ -213,6 +213,11 @@ export function createApp(): Express {
   app.use('/backstage/book-gpt', backstageMutationHttpBoundary);
   app.use('/backstage/track-storyline', backstageMutationHttpBoundary);
   app.use('/backstage/update-roster', backstageMutationHttpBoundary);
+  // The legacy POST /status alias mutates the same filesystem state as the
+  // canonical system-state surface. Protect only that exact method so the
+  // deprecated public GET health alias remains unchanged.
+  app.post('/status', systemStateHttpBoundary);
+  app.post('/status', systemStateBodyParser);
   // System-state is a direct control-plane surface. Establish operator identity,
   // method-specific scope, and a bounded body before the broad application parser.
   app.use('/system-state', systemStateHttpBoundary);

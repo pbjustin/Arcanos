@@ -15,6 +15,7 @@ import {
   authenticateControlPlaneHttpRequest,
   authorizeControlPlaneHttpScopes,
   controlPlaneHttpAuthenticationMiddleware,
+  createControlPlaneHttpAuthenticationMiddleware,
   requireControlPlaneOperator,
 } from './httpAuth.js';
 
@@ -22,6 +23,7 @@ export const SYSTEM_STATE_READ_SCOPE = 'arcanos:read';
 export const SYSTEM_STATE_MUTATION_SCOPE = 'mcp:invoke';
 
 const SYSTEM_STATE_PATH = '/system-state';
+const LEGACY_STATUS_PATH = '/status';
 const SYSTEM_STATE_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const SYSTEM_STATE_READ_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_SYSTEM_STATE_CLIENT_RATE_LIMIT = 120;
@@ -40,6 +42,10 @@ const SYSTEM_STATE_OPERATIONS = new Map<string, SystemStateOperation>([
     scope: SYSTEM_STATE_READ_SCOPE,
   }],
   [`POST ${SYSTEM_STATE_PATH}`, {
+    kind: 'mutation',
+    scope: SYSTEM_STATE_MUTATION_SCOPE,
+  }],
+  [`POST ${LEGACY_STATUS_PATH}`, {
     kind: 'mutation',
     scope: SYSTEM_STATE_MUTATION_SCOPE,
   }],
@@ -65,6 +71,7 @@ type SystemStateBoundaryRequest = Request & {
 };
 
 export interface SystemStateHttpBoundaryOptions {
+  authenticationEnvironment?: NodeJS.ProcessEnv;
   maxClientRequests?: number;
   windowMs?: number;
 }
@@ -125,6 +132,11 @@ function sendSystemStateNotFound(res: Response): void {
 export function createSystemStateHttpBoundary(
   options: SystemStateHttpBoundaryOptions = {}
 ): RequestHandler {
+  const authenticateRequest = (req: Request) =>
+    authenticateControlPlaneHttpRequest(
+      req,
+      options.authenticationEnvironment
+    );
   const defaultWindowMs = options.windowMs
     ?? SYSTEM_STATE_RATE_LIMIT_WINDOW_MS;
   const clientRateLimit = createRateLimitMiddleware({
@@ -132,7 +144,7 @@ export function createSystemStateHttpBoundary(
     maxRequests: options.maxClientRequests
       ?? DEFAULT_SYSTEM_STATE_CLIENT_RATE_LIMIT,
     windowMs: defaultWindowMs,
-    skip: (req) => authenticateControlPlaneHttpRequest(req).ok,
+    skip: (req) => authenticateRequest(req).ok,
     keyGenerator: (req) => (
       `ingress:${resolveIngressClientAddress(req)}:system-state`
     ),
@@ -171,11 +183,16 @@ export function createSystemStateHttpBoundary(
       'system_state.http_authorization.denied'
     );
   };
+  const authenticateRequestMiddleware = options.authenticationEnvironment
+    ? createControlPlaneHttpAuthenticationMiddleware(
+        options.authenticationEnvironment
+      )
+    : controlPlaneHttpAuthenticationMiddleware;
   const middlewareChain: RequestHandler[] = [
     securityHeaders,
     setSystemStateNoStoreHeaders,
     clientRateLimit,
-    controlPlaneHttpAuthenticationMiddleware,
+    authenticateRequestMiddleware,
     requireControlPlaneOperator,
     principalRateLimit,
     requireOperationScope,

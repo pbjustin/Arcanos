@@ -40,10 +40,14 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/mcp/httpBodyParserCore.ts',
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
+  'src/platform/runtime/security.ts',
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
   'src/services/gamingModes.ts',
   'src/services/backstageBookerClear.ts',
+  'src/services/controlPlane/httpAuth.ts',
+  'src/services/controlPlane/systemStateBodyParser.ts',
+  'src/services/controlPlane/systemStateHttpBoundary.ts',
   'src/services/directAnswerMode.ts',
   'src/services/gamingPublicDispatcher.ts',
   'src/services/publicGamingCanary.ts',
@@ -94,11 +98,11 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/core\/diagnostics\.ts$/u,
   /^src\/core\/init-openai\.ts$/u,
   /^src\/middleware\//u,
-  /^src\/platform\//u,
+  /^src\/platform\/(?!runtime\/security\.ts$)/u,
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:backstageBookerClear|directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$)/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -212,6 +216,18 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
       ['express', new Set(['default:express'])],
       ['node:stream', new Set(['Readable:Readable'])],
       ['node:timers/promises', new Set(['setTimeout:delay'])],
+    ]),
+  ],
+  [
+    'src/platform/runtime/security.ts',
+    new Map([
+      ['node:crypto', new Set(['default:crypto'])],
+    ]),
+  ],
+  [
+    'src/services/controlPlane/systemStateBodyParser.ts',
+    new Map([
+      ['express', new Set(['default:express'])],
     ]),
   ],
   [
@@ -685,6 +701,22 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '31a5ac406ecd6517f3d8163663fb30d9b65f285d7c09f93e2f824742e13fed20',
   ],
   [
+    'src/platform/runtime/security.ts',
+    '080cbb45b1bbb0d5cb6a7a9319c70699c1e455b1d652f52e1449ec3fe2a28541',
+  ],
+  [
+    'src/services/controlPlane/httpAuth.ts',
+    '9c73c3c77d60ca54a962cb3859d8be4f5a215384eb2365d20bb5792b44e70ffa',
+  ],
+  [
+    'src/services/controlPlane/systemStateBodyParser.ts',
+    '09075362c98cfa17d157ed83be7601d430b9171106de2e69153379ff8667a447',
+  ],
+  [
+    'src/services/controlPlane/systemStateHttpBoundary.ts',
+    'b6f69af614c4a008337a54e9ea1bebf59cd11c799c41b2c4d28b0aa13a0f6c47',
+  ],
+  [
     'src/routes/_core/researchAbortDrain.ts',
     '0f8ca2e91c799218e3fa873bd3f247ef7eec9061924f1ce0c92e71f9a8b7521c',
   ],
@@ -693,6 +725,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '0ffb63a5137f1992a1901f8690c01b68562e737a320a52987d07b598c6053c38',
   ],
 ]);
+const REVIEWED_STATUS_AUTH_DYNAMIC_CALL_FILE =
+  'src/services/controlPlane/httpAuth.ts';
+const REVIEWED_STATUS_AUTH_CAPABILITY_REFERENCE_FILE =
+  'src/services/controlPlane/systemStateHttpBoundary.ts';
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([
   'EventSource',
   'Function',
@@ -4518,6 +4554,16 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
   const observedEntryFileDigest = expectedEntryFileDigest
     ? sourceNodeDigest(sourceFile, sourceFile)
     : null;
+  const hasExactReviewedEntryDigest = Boolean(
+    expectedEntryFileDigest
+    && observedEntryFileDigest === expectedEntryFileDigest
+  );
+  const allowsReviewedStatusAuthDynamicCall =
+    hasExactReviewedEntryDigest
+    && filePath === REVIEWED_STATUS_AUTH_DYNAMIC_CALL_FILE;
+  const allowsReviewedStatusAuthCapabilityReference =
+    hasExactReviewedEntryDigest
+    && filePath === REVIEWED_STATUS_AUTH_CAPABILITY_REFERENCE_FILE;
   const listenerObjectBindingNames =
     collectListenerObjectBindingNames(syntaxNodes);
   const invokedBindingNames =
@@ -4770,6 +4816,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       && literalPropertyName(
         unwrapExpression(node.expression).argumentExpression
       ) === null
+      && !allowsReviewedStatusAuthDynamicCall
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden dynamic runtime effect call`
@@ -4828,6 +4875,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
         processEffectContract.approvedAccesses,
         mutableProcessCallContract.approvedArguments
       ).length > 0
+      && !allowsReviewedStatusAuthDynamicCall
     ) {
       violations.push(
         `${filePath}:${lineNumber}: mutable process object escapes to an unreviewed call`
@@ -4898,6 +4946,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
         )
       )
       && !isDirectCallOrConstructorTarget(node)
+      && !allowsReviewedStatusAuthCapabilityReference
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden runtime capability reference`

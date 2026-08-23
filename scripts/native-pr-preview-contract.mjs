@@ -75,6 +75,19 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       nextCalls: 'x-arcanos-preview-dispatch-next-calls',
     }),
   }),
+  statusAuthBoundary: Object.freeze({
+    path: '/status/auth-before-parser-contract',
+    fixtures: Object.freeze({
+      authBeforeParser: 'auth-before-parser',
+    }),
+    requiredScope: 'mcp:invoke',
+    bodyLimitBytes: 65_536,
+    proofHeaders: Object.freeze({
+      authBeforeParser: 'x-arcanos-preview-status-auth-before-parser',
+      bodyLimitBytes: 'x-arcanos-preview-status-body-limit-bytes',
+      downstreamCalls: 'x-arcanos-preview-status-downstream-calls',
+    }),
+  }),
   selfHealApproval: Object.freeze({
     path: '/self-heal/approval-contract',
     fixtures: Object.freeze({

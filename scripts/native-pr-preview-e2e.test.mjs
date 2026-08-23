@@ -148,6 +148,7 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'backstage-storyline-contract'
     || requestCase.expectedType === 'backstage-generation-contract'
     || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+    || requestCase.expectedType === 'status-auth-boundary-contract'
     || requestCase.expectedType === 'self-heal-approval-contract';
   return {
     'cache-control': 'no-store',
@@ -187,6 +188,7 @@ function responseHeadersForCase(
     ...(
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+      || requestCase.expectedType === 'status-auth-boundary-contract'
       ? { pragma: 'no-cache' }
       : {}
     ),
@@ -206,6 +208,18 @@ function responseHeadersForCase(
           ),
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
             .nextCalls]: requestCase.fixtureName === 'maximumLength' ? '1' : '0',
+        }
+      : {}),
+    ...(requestCase.expectedType === 'status-auth-boundary-contract'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.proofHeaders
+            .authBeforeParser]: 'true',
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.proofHeaders
+            .bodyLimitBytes]: String(
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.bodyLimitBytes
+          ),
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.proofHeaders
+            .downstreamCalls]: '1',
         }
       : {}),
     ...(overrides ?? {}),
@@ -419,7 +433,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 126);
+  assert.equal(requestPlan.length, 128);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -427,6 +441,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       && expectedType !== 'backstage-generation-contract'
       && expectedType !== 'mcp-body-cap-contract'
       && expectedType !== 'dispatch-gpt-identifier-contract'
+      && expectedType !== 'status-auth-boundary-contract'
       && expectedType !== 'self-heal-approval-contract'
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
@@ -435,6 +450,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       && caseId !== 'worker-backstage-generation-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
       && caseId !== 'worker-dispatch-gpt-identifier-denied'
+      && caseId !== 'worker-status-auth-boundary-denied'
       && caseId !== 'worker-self-heal-approval-denied'
     ).length,
     50
@@ -444,6 +460,12 @@ test('executes the bounded credential-free matrix and detects identity stability
       expectedType === 'dispatch-gpt-identifier-contract'
     ).length,
     2
+  );
+  assert.equal(
+    requestPlan.filter(({ expectedType }) =>
+      expectedType === 'status-auth-boundary-contract'
+    ).length,
+    1
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -483,7 +505,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   );
   assert.equal(
     requestPlan.filter(({ simulatedAuth }) => simulatedAuth === true).length,
-    20
+    21
   );
   assert.equal(
     requestPlan.filter(({ expectedType, simulatedAuth }) =>
@@ -556,6 +578,44 @@ test('executes the bounded credential-free matrix and detects identity stability
       caseId === 'worker-dispatch-gpt-identifier-denied'
     ).length,
     1
+  );
+  assert.equal(
+    requestPlan.filter(({ caseId }) =>
+      caseId === 'worker-status-auth-boundary-denied'
+    ).length,
+    1
+  );
+  assert.deepEqual(
+    requestPlan.find(({ caseId }) => caseId === 'status-auth-before-parser'),
+    {
+      body: { fixture: 'auth-before-parser' },
+      boundedResponse: true,
+      caseId: 'status-auth-before-parser',
+      expectedStatus: 200,
+      expectedType: 'status-auth-boundary-contract',
+      fixture: 'auth-before-parser',
+      fixtureName: 'authBeforeParser',
+      method: 'POST',
+      path: '/status/auth-before-parser-contract',
+      pathTemplate: '/status/auth-before-parser-contract',
+      role: 'web',
+      simulatedAuth: true,
+    }
+  );
+  assert.deepEqual(
+    requestPlan.find(({ caseId }) =>
+      caseId === 'worker-status-auth-boundary-denied'
+    ),
+    {
+      body: { fixture: 'auth-before-parser' },
+      caseId: 'worker-status-auth-boundary-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: '/status/auth-before-parser-contract',
+      pathTemplate: '/status/auth-before-parser-contract',
+      role: 'worker',
+    }
   );
   assert.equal(
     requestPlan.filter(({ caseId }) =>
@@ -1167,6 +1227,128 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
     ]
   );
+  const statusAuthBoundaryCase = requestPlan.find(({ caseId }) =>
+    caseId === 'status-auth-before-parser'
+  );
+  assert.ok(statusAuthBoundaryCase);
+  const statusAuthBoundaryPayload = expectedNativePrPreviewResponseBody(
+    statusAuthBoundaryCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(statusAuthBoundaryPayload, {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    filesystemBoundaryReached: false,
+    fixture: 'auth-before-parser',
+    identity: {
+      prNumber: PR_NUMBER,
+      sourceCommit: COMMIT_SHA,
+    },
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    statusAuthBoundary: {
+      authBeforeParser: true,
+      bodyLimitBytes: 65_536,
+      callerBodyControlsProbe: false,
+      caseCount: 6,
+      cases: [
+        {
+          bodyBytes: 65_537,
+          bodyBytesRead: 0,
+          boundaryNextCalls: 0,
+          cacheControl: 'no-store',
+          downstreamCalls: 0,
+          errorCode: 'CONTROL_PLANE_AUTH_UNAVAILABLE',
+          name: 'auth-unavailable-over',
+          parsedPaddingLength: null,
+          parserCalls: 0,
+          parserNextCalls: 0,
+          pragma: 'no-cache',
+          statusCode: 503,
+        },
+        {
+          bodyBytes: 65_537,
+          bodyBytesRead: 0,
+          boundaryNextCalls: 0,
+          cacheControl: 'no-store',
+          downstreamCalls: 0,
+          errorCode: 'CONTROL_PLANE_AUTH_REQUIRED',
+          name: 'missing-auth-over',
+          parsedPaddingLength: null,
+          parserCalls: 0,
+          parserNextCalls: 0,
+          pragma: 'no-cache',
+          statusCode: 401,
+        },
+        {
+          bodyBytes: 65_537,
+          bodyBytesRead: 0,
+          boundaryNextCalls: 0,
+          cacheControl: 'no-store',
+          downstreamCalls: 0,
+          errorCode: 'CONTROL_PLANE_AUTH_REQUIRED',
+          name: 'invalid-auth-over',
+          parsedPaddingLength: null,
+          parserCalls: 0,
+          parserNextCalls: 0,
+          pragma: 'no-cache',
+          statusCode: 401,
+        },
+        {
+          bodyBytes: 65_537,
+          bodyBytesRead: 0,
+          boundaryNextCalls: 0,
+          cacheControl: 'no-store',
+          downstreamCalls: 0,
+          errorCode: 'CONTROL_PLANE_SCOPE_DENIED',
+          name: 'read-scope-over',
+          parsedPaddingLength: null,
+          parserCalls: 0,
+          parserNextCalls: 0,
+          pragma: 'no-cache',
+          statusCode: 403,
+        },
+        {
+          bodyBytes: 65_536,
+          bodyBytesRead: 65_536,
+          boundaryNextCalls: 1,
+          cacheControl: 'no-store',
+          downstreamCalls: 1,
+          errorCode: null,
+          name: 'mcp-scope-exact',
+          parsedPaddingLength: 65_522,
+          parserCalls: 1,
+          parserNextCalls: 1,
+          pragma: 'no-cache',
+          statusCode: 204,
+        },
+        {
+          bodyBytes: 65_537,
+          bodyBytesRead: 65_537,
+          boundaryNextCalls: 1,
+          cacheControl: 'no-store',
+          downstreamCalls: 0,
+          errorCode: 'SYSTEM_STATE_REQUEST_INVALID',
+          name: 'mcp-scope-over',
+          parsedPaddingLength: null,
+          parserCalls: 1,
+          parserNextCalls: 0,
+          pragma: 'no-cache',
+          statusCode: 413,
+        },
+      ],
+      componentExecuted: true,
+      downstreamCalls: 1,
+      requiredScope: 'mcp:invoke',
+      serverOwnedBodies: true,
+    },
+  });
   const selfHealApprovalCases = requestPlan.filter(({ expectedType }) =>
     expectedType === 'self-heal-approval-contract'
   );
@@ -1222,14 +1404,34 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 126);
-  assert.equal(result.summary.simulatedAuthRequests, 20);
-  assert.equal(result.checks.length, 126);
+  assert.equal(result.summary.requestsMade, 128);
+  assert.equal(result.summary.simulatedAuthRequests, 21);
+  assert.equal(result.checks.length, 128);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
-    20
+    21
   );
-  assert.equal(mock.requestCount, 126);
+  assert.equal(mock.requestCount, 128);
+  assert.deepEqual(
+    result.checks.find(({ caseId }) =>
+      caseId === 'status-auth-before-parser'
+    ),
+    {
+      bodySha256: result.checks.find(({ caseId }) =>
+        caseId === 'status-auth-before-parser'
+      ).bodySha256,
+      caseId: 'status-auth-before-parser',
+      httpStatus: 200,
+      method: 'POST',
+      pathTemplate: '/status/auth-before-parser-contract',
+      responseBytes: Buffer.byteLength(JSON.stringify(
+        statusAuthBoundaryPayload
+      )),
+      role: 'web',
+      simulatedAuth: true,
+      statusAuthBoundaryVerified: true,
+    }
+  );
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -1367,6 +1569,31 @@ test('executes the bounded credential-free matrix and detects identity stability
       ),
       false
     );
+    assert.equal(
+      /authorization|cookie|credential|secret|session|token/iu.test(init.body),
+      false
+    );
+  }
+  const statusAuthBoundaryCalls = mock.calls.filter(({ url }) =>
+    url.endsWith('/status/auth-before-parser-contract')
+  );
+  assert.equal(statusAuthBoundaryCalls.length, 2);
+  assert.equal(
+    statusAuthBoundaryCalls.filter(({ url }) =>
+      url.startsWith(WEB_BASE_URL)
+    ).length,
+    1
+  );
+  assert.equal(
+    statusAuthBoundaryCalls.filter(({ url }) =>
+      url.startsWith(WORKER_BASE_URL)
+    ).length,
+    1
+  );
+  for (const { init } of statusAuthBoundaryCalls) {
+    assert.deepEqual(JSON.parse(init.body), {
+      fixture: 'auth-before-parser',
+    });
     assert.equal(
       /authorization|cookie|credential|secret|session|token/iu.test(init.body),
       false
@@ -1712,6 +1939,42 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.proofHeaders
             .nextCalls
         ];
+      },
+    },
+    {
+      caseId: 'status-auth-before-parser',
+      code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
+        ];
+      },
+    },
+    {
+      caseId: 'status-auth-before-parser',
+      code: 'NATIVE_PR_PREVIEW_NO_CACHE_MISSING',
+      mutate(headers) {
+        delete headers.pragma;
+      },
+    },
+    {
+      caseId: 'status-auth-before-parser',
+      code: 'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.proofHeaders
+            .downstreamCalls
+        ];
+      },
+    },
+    {
+      caseId: 'status-auth-before-parser',
+      code: 'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.proofHeaders
+            .authBeforeParser
+        ] = 'false';
       },
     },
     {

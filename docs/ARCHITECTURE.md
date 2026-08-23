@@ -49,6 +49,10 @@ Implementation rules:
   invalid traffic from a shared client address cannot starve the operator. The
   current deployment-wide operator boundary does not establish tenant or
   per-session ownership for caller-selected `sessionId` values.
+- The legacy `POST /status` mutation alias shares the system-state purpose-bound
+  bearer, operator, `mcp:invoke`, budget, and 64 KiB strict-JSON admission
+  boundary before broad parsing. Its existing manual confirmation remains a
+  separate post-authentication approval; public `GET /status` is unchanged.
 - `POST /rag/fetch|save|query` uses a separate idempotent exact-path boundary
   before broad JSON parsing. Query requires the operator bearer and
   `arcanos:read`; persistent fetch/save ingestion requires `mcp:invoke` and a

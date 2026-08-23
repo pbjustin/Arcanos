@@ -75,6 +75,22 @@ export interface NativePrPreviewE2eContract {
       nextCalls: 'x-arcanos-preview-dispatch-next-calls';
     }>;
   }>;
+  readonly statusAuthBoundary: Readonly<{
+    readonly path: '/status/auth-before-parser-contract';
+    readonly fixtures: Readonly<{
+      readonly authBeforeParser: 'auth-before-parser';
+    }>;
+    readonly requiredScope: 'mcp:invoke';
+    readonly bodyLimitBytes: 65536;
+    readonly proofHeaders: Readonly<{
+      readonly authBeforeParser:
+        'x-arcanos-preview-status-auth-before-parser';
+      readonly bodyLimitBytes:
+        'x-arcanos-preview-status-body-limit-bytes';
+      readonly downstreamCalls:
+        'x-arcanos-preview-status-downstream-calls';
+    }>;
+  }>;
   readonly selfHealApproval: Readonly<{
     path: '/self-heal/approval-contract';
     fixtures: Readonly<{

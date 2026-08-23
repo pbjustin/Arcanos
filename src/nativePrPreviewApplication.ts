@@ -30,6 +30,7 @@ import {
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
+  NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
@@ -37,6 +38,13 @@ import {
 import {
   dispatchGptIdentifierBoundary,
 } from './shared/dispatch/dispatchGptIdentifierBoundary.js';
+import {
+  createSystemStateHttpBoundary,
+} from './services/controlPlane/systemStateHttpBoundary.js';
+import {
+  SYSTEM_STATE_BODY_LIMIT_BYTES,
+  systemStateBodyParser,
+} from './services/controlPlane/systemStateBodyParser.js';
 import {
   createMcpHttpBodyParser,
   MCP_HTTP_BODY_LIMIT_BYTES,
@@ -170,6 +178,7 @@ const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
 const MAX_STORYLINE_RESPONSE_BYTES = 4 * 1024;
 const MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES = 4 * 1024;
 const MAX_MCP_BODY_CAP_RESPONSE_BYTES = 8 * 1024;
+const MAX_STATUS_AUTH_BOUNDARY_RESPONSE_BYTES = 8 * 1024;
 const MAX_SELF_HEAL_APPROVAL_RESPONSE_BYTES = 8 * 1024;
 const MAX_GAMING_CANARY_RESPONSE_BYTES = 2 * 1024;
 const MAX_GAMING_QUERY_RESPONSE_BYTES = 4 * 1024;
@@ -223,6 +232,26 @@ const DISPATCH_GPT_IDENTIFIER_FIXTURE_NAMES = new Set<string>(
 const SELF_HEAL_APPROVAL_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.fixtures)
 );
+const STATUS_AUTH_FIXTURE_CREDENTIAL = [
+  'native',
+  'pr',
+  'preview',
+  'status',
+  'boundary',
+  'credential',
+  'v1',
+].join('-');
+const STATUS_AUTH_FIXTURE_INVALID_CREDENTIAL = [
+  'native',
+  'pr',
+  'preview',
+  'status',
+  'boundary',
+  'invalid',
+  'v1',
+].join('-');
+const STATUS_AUTH_FIXTURE_PRINCIPAL_ID =
+  'operator:native-pr-preview-status';
 const GAMING_SOURCE_FIXTURE_NAMES = new Set<string>(
   Object.values(NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtures)
 );
@@ -374,6 +403,30 @@ interface SyntheticMcpParserOutcome {
   parsedPaddingLength: number | null;
   rejection: unknown;
   statusCode: number;
+}
+
+interface SyntheticStatusAuthBoundaryOutcome {
+  bodyBytes: number;
+  bodyBytesRead: number;
+  boundaryNextCalls: number;
+  cacheControl: string | null;
+  downstreamCalls: number;
+  errorCode: string | null;
+  name: string;
+  parsedPaddingLength: number | null;
+  parserCalls: number;
+  parserNextCalls: number;
+  pragma: string | null;
+  statusCode: number;
+}
+
+interface SyntheticStatusAuthBoundaryScenario {
+  authorization?: string;
+  bodyBytes: number;
+  environment: NodeJS.ProcessEnv;
+  expectedErrorCode: string | null;
+  expectedStatusCode: number;
+  name: string;
 }
 
 interface StorylineFixtureRow {
@@ -1085,6 +1138,329 @@ async function runMcpBodyCapFixture(
         profileCount: MCP_BODY_CAP_PROFILES.length,
         serverOwnedBodies: true,
       },
+    },
+  };
+}
+
+function requireStatusAuthBoundaryFixtureInvariant(
+  condition: boolean,
+  code: string
+): asserts condition {
+  if (!condition) {
+    throw new Error(code);
+  }
+}
+
+function buildStatusAuthBodyAtByteLength(targetBytes: number): Buffer {
+  const emptyBody = JSON.stringify({ padding: '' });
+  const paddingLength = targetBytes - Buffer.byteLength(emptyBody, 'utf8');
+  requireStatusAuthBoundaryFixtureInvariant(
+    paddingLength >= 0,
+    'PREVIEW_STATUS_AUTH_BODY_TARGET_INVALID'
+  );
+  const body = Buffer.from(JSON.stringify({
+    padding: 'x'.repeat(paddingLength),
+  }), 'utf8');
+  requireStatusAuthBoundaryFixtureInvariant(
+    body.length === targetBytes,
+    'PREVIEW_STATUS_AUTH_BODY_LENGTH_INVALID'
+  );
+  return body;
+}
+
+function buildStatusAuthFixtureEnvironment(
+  scopes: string
+): NodeJS.ProcessEnv {
+  return Object.freeze({
+    ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: STATUS_AUTH_FIXTURE_CREDENTIAL,
+    ARCANOS_CONTROL_PLANE_PRINCIPAL_ID:
+      STATUS_AUTH_FIXTURE_PRINCIPAL_ID,
+    ARCANOS_CONTROL_PLANE_SCOPES: scopes,
+  }) as NodeJS.ProcessEnv;
+}
+
+function readStatusAuthFixtureErrorCode(value: unknown): string | null {
+  if (!isPreviewRecord(value) || !isPreviewRecord(value.error)) {
+    return null;
+  }
+  return typeof value.error.code === 'string' ? value.error.code : null;
+}
+
+async function runStatusAuthBoundaryScenario(
+  scenario: SyntheticStatusAuthBoundaryScenario
+): Promise<SyntheticStatusAuthBoundaryOutcome> {
+  const body = buildStatusAuthBodyAtByteLength(scenario.bodyBytes);
+  const firstBoundary = Math.floor(body.length / 3);
+  const secondBoundary = Math.floor((body.length * 2) / 3);
+  let bodyBytesRead = 0;
+  const bodyChunks = [
+    body.subarray(0, firstBoundary),
+    body.subarray(firstBoundary, secondBoundary),
+    body.subarray(secondBoundary),
+  ];
+  const request = Readable.from((function* streamServerOwnedBody() {
+    for (const chunk of bodyChunks) {
+      bodyBytesRead += chunk.length;
+      yield chunk;
+    }
+  })()) as unknown as express.Request;
+  const requestHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    'transfer-encoding': 'chunked',
+  };
+  const rawHeaders = [
+    'content-type',
+    requestHeaders['content-type'],
+    'transfer-encoding',
+    requestHeaders['transfer-encoding'],
+  ];
+  if (scenario.authorization !== undefined) {
+    requestHeaders.authorization = scenario.authorization;
+    rawHeaders.push('authorization', scenario.authorization);
+  }
+  request.headers = requestHeaders;
+  request.rawHeaders = rawHeaders;
+  request.method = 'POST';
+  request.url = '/status';
+  request.originalUrl = '/status';
+  const getRequestHeader = (name: string): string | undefined =>
+    requestHeaders[name.toLowerCase()];
+  request.get = getRequestHeader as express.Request['get'];
+  request.header = getRequestHeader as express.Request['header'];
+
+  const responseHeaders: Record<string, string> = {};
+  let boundaryNextCalls = 0;
+  let downstreamCalls = 0;
+  let parsedPaddingLength: number | null = null;
+  let parserCalls = 0;
+  let parserNextCalls = 0;
+  let statusCode = 200;
+  const boundary = createSystemStateHttpBoundary({
+    authenticationEnvironment: scenario.environment,
+    maxClientRequests: 100,
+    windowMs: 60_000,
+  });
+  const outcome = await new Promise<SyntheticStatusAuthBoundaryOutcome>((
+    resolve,
+    reject
+  ) => {
+    let settled = false;
+    const finish = (responseBody: unknown): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({
+        bodyBytes: scenario.bodyBytes,
+        bodyBytesRead,
+        boundaryNextCalls,
+        cacheControl: responseHeaders['cache-control'] ?? null,
+        downstreamCalls,
+        errorCode: readStatusAuthFixtureErrorCode(responseBody),
+        name: scenario.name,
+        parsedPaddingLength,
+        parserCalls,
+        parserNextCalls,
+        pragma: responseHeaders.pragma ?? null,
+        statusCode,
+      });
+    };
+    const response = {
+      getHeader(name: string) {
+        return responseHeaders[name.toLowerCase()];
+      },
+      json(value: unknown) {
+        finish(value);
+        return this;
+      },
+      set(
+        nameOrHeaders: string | Record<string, unknown>,
+        value?: unknown
+      ) {
+        if (typeof nameOrHeaders === 'string') {
+          responseHeaders[nameOrHeaders.toLowerCase()] = String(value);
+          return this;
+        }
+        for (const [name, headerValue] of Object.entries(nameOrHeaders)) {
+          responseHeaders[name.toLowerCase()] = String(headerValue);
+        }
+        return this;
+      },
+      setHeader(name: string, value: unknown) {
+        responseHeaders[name.toLowerCase()] = String(value);
+        return this;
+      },
+      status(value: number) {
+        statusCode = value;
+        return this;
+      },
+    } as unknown as express.Response;
+
+    boundary(request, response, (boundaryError?: unknown) => {
+      if (boundaryError !== undefined) {
+        settled = true;
+        reject(boundaryError);
+        return;
+      }
+      boundaryNextCalls += 1;
+      parserCalls += 1;
+      systemStateBodyParser(request, response, (parserError?: unknown) => {
+        if (parserError !== undefined) {
+          settled = true;
+          reject(parserError);
+          return;
+        }
+        parserNextCalls += 1;
+        const parsedBody = request.body as { padding?: unknown } | undefined;
+        parsedPaddingLength = typeof parsedBody?.padding === 'string'
+          ? parsedBody.padding.length
+          : null;
+        downstreamCalls += 1;
+        statusCode = 204;
+        finish(null);
+      });
+    });
+  });
+
+  const preParserDenied = scenario.name !== 'mcp-scope-exact'
+    && scenario.name !== 'mcp-scope-over';
+  const exactAccepted = scenario.name === 'mcp-scope-exact';
+  requireStatusAuthBoundaryFixtureInvariant(
+    outcome.statusCode === scenario.expectedStatusCode
+      && outcome.errorCode === scenario.expectedErrorCode
+      && outcome.cacheControl === 'no-store'
+      && outcome.pragma === 'no-cache'
+      && outcome.bodyBytesRead === (preParserDenied ? 0 : scenario.bodyBytes)
+      && outcome.boundaryNextCalls === (preParserDenied ? 0 : 1)
+      && outcome.parserCalls === (preParserDenied ? 0 : 1)
+      && outcome.parserNextCalls === (exactAccepted ? 1 : 0)
+      && outcome.downstreamCalls === (exactAccepted ? 1 : 0)
+      && outcome.parsedPaddingLength === (
+        exactAccepted
+          ? scenario.bodyBytes - Buffer.byteLength('{"padding":""}', 'utf8')
+          : null
+      ),
+    'PREVIEW_STATUS_AUTH_BOUNDARY_OUTCOME_INVALID'
+  );
+  return outcome;
+}
+
+async function runStatusAuthBoundaryFixture(
+  fixture: string,
+  identity: NativePrPreviewIdentity
+): Promise<Record<string, unknown>> {
+  requireStatusAuthBoundaryFixtureInvariant(
+    fixture
+      === NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.fixtures
+        .authBeforeParser,
+    'PREVIEW_STATUS_AUTH_BOUNDARY_FIXTURE_INVALID'
+  );
+  requireStatusAuthBoundaryFixtureInvariant(
+    SYSTEM_STATE_BODY_LIMIT_BYTES
+      === NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.bodyLimitBytes,
+    'PREVIEW_STATUS_AUTH_BOUNDARY_LIMIT_INVALID'
+  );
+  const overLimitBytes = SYSTEM_STATE_BODY_LIMIT_BYTES + 1;
+  const mutationEnvironment = buildStatusAuthFixtureEnvironment(
+    NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.requiredScope
+  );
+  const readEnvironment = buildStatusAuthFixtureEnvironment('arcanos:read');
+  const scenarios: readonly SyntheticStatusAuthBoundaryScenario[] = [
+    {
+      bodyBytes: overLimitBytes,
+      environment: Object.freeze({}) as NodeJS.ProcessEnv,
+      expectedErrorCode: 'CONTROL_PLANE_AUTH_UNAVAILABLE',
+      expectedStatusCode: 503,
+      name: 'auth-unavailable-over',
+    },
+    {
+      bodyBytes: overLimitBytes,
+      environment: mutationEnvironment,
+      expectedErrorCode: 'CONTROL_PLANE_AUTH_REQUIRED',
+      expectedStatusCode: 401,
+      name: 'missing-auth-over',
+    },
+    {
+      authorization: `Bearer ${STATUS_AUTH_FIXTURE_INVALID_CREDENTIAL}`,
+      bodyBytes: overLimitBytes,
+      environment: mutationEnvironment,
+      expectedErrorCode: 'CONTROL_PLANE_AUTH_REQUIRED',
+      expectedStatusCode: 401,
+      name: 'invalid-auth-over',
+    },
+    {
+      authorization: `Bearer ${STATUS_AUTH_FIXTURE_CREDENTIAL}`,
+      bodyBytes: overLimitBytes,
+      environment: readEnvironment,
+      expectedErrorCode: 'CONTROL_PLANE_SCOPE_DENIED',
+      expectedStatusCode: 403,
+      name: 'read-scope-over',
+    },
+    {
+      authorization: `Bearer ${STATUS_AUTH_FIXTURE_CREDENTIAL}`,
+      bodyBytes: SYSTEM_STATE_BODY_LIMIT_BYTES,
+      environment: mutationEnvironment,
+      expectedErrorCode: null,
+      expectedStatusCode: 204,
+      name: 'mcp-scope-exact',
+    },
+    {
+      authorization: `Bearer ${STATUS_AUTH_FIXTURE_CREDENTIAL}`,
+      bodyBytes: overLimitBytes,
+      environment: mutationEnvironment,
+      expectedErrorCode: 'SYSTEM_STATE_REQUEST_INVALID',
+      expectedStatusCode: 413,
+      name: 'mcp-scope-over',
+    },
+  ];
+  const cases: SyntheticStatusAuthBoundaryOutcome[] = [];
+  for (const scenario of scenarios) {
+    cases.push(await runStatusAuthBoundaryScenario(scenario));
+  }
+  const downstreamCalls = cases.reduce(
+    (total, outcome) => total + outcome.downstreamCalls,
+    0
+  );
+  const authBeforeParser = cases.slice(0, 4).every((outcome) => (
+    outcome.bodyBytesRead === 0
+    && outcome.boundaryNextCalls === 0
+    && outcome.parserCalls === 0
+    && outcome.parserNextCalls === 0
+    && outcome.downstreamCalls === 0
+  ));
+  requireStatusAuthBoundaryFixtureInvariant(
+    cases.length === 6 && authBeforeParser && downstreamCalls === 1,
+    'PREVIEW_STATUS_AUTH_BOUNDARY_AGGREGATE_INVALID'
+  );
+
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    fixture,
+    filesystemBoundaryReached: false,
+    identity: {
+      prNumber: identity.prNumber,
+      sourceCommit: identity.sourceCommit,
+    },
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    statusAuthBoundary: {
+      authBeforeParser,
+      bodyLimitBytes: SYSTEM_STATE_BODY_LIMIT_BYTES,
+      callerBodyControlsProbe: false,
+      caseCount: cases.length,
+      cases,
+      componentExecuted: true,
+      downstreamCalls,
+      requiredScope:
+        NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.requiredScope,
+      serverOwnedBodies: true,
     },
   };
 }
@@ -4768,6 +5144,7 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}`,
@@ -4890,6 +5267,7 @@ export function createNativePrPreviewApplication(
       rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath
       || rawPath === NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath
       || rawPath === NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path
@@ -5573,6 +5951,61 @@ export function createNativePrPreviewApplication(
         MAX_RESEARCH_RESPONSE_BYTES,
         'native_pr_preview.dispatch_gpt_identifier_fixture'
       );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path,
+    (request, response, next) => {
+      response.setHeader('Pragma', 'no-cache');
+      const body = request.body as unknown;
+      const bodyKeys = isPreviewRecord(body) ? Object.keys(body) : [];
+      const fixture = bodyKeys.length === 1 && bodyKeys[0] === 'fixture'
+        ? (body as { fixture?: unknown }).fixture
+        : undefined;
+      if (
+        fixture
+          !== NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.fixtures
+            .authBeforeParser
+      ) {
+        sendPreviewJson(
+          request,
+          response,
+          { error: 'PREVIEW_STATUS_AUTH_BOUNDARY_FIXTURE_INVALID' },
+          400,
+          MAX_STATUS_AUTH_BOUNDARY_RESPONSE_BYTES,
+          'native_pr_preview.status_auth_boundary_fixture_invalid'
+        );
+        return;
+      }
+
+      void runStatusAuthBoundaryFixture(fixture, options.identity)
+        .then(payload => {
+          const contract = NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT;
+          response.setHeader(
+            contract.proofHeaders.authBeforeParser,
+            'true'
+          );
+          response.setHeader(
+            contract.proofHeaders.bodyLimitBytes,
+            String(contract.bodyLimitBytes)
+          );
+          response.setHeader(
+            contract.proofHeaders.downstreamCalls,
+            '1'
+          );
+          return sendBoundedJsonResponse(
+            request,
+            response,
+            payload,
+            {
+              logEvent: 'native_pr_preview.status_auth_boundary_fixture',
+              maxBytes: MAX_STATUS_AUTH_BOUNDARY_RESPONSE_BYTES,
+              statusCode: 200,
+            }
+          );
+        })
+        .catch(next);
     }
   );
 

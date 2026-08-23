@@ -176,8 +176,9 @@ secrets in each workflow file before enabling auto-deploy.
 Railway-native PR deployments run the protected-digest wrapper before the
 tracked `--pr-preview-app-safe-v1` launcher contract. The web role imports only a
 credential-empty, deny-by-default synthetic generic-jobs application plus
-sealed Research, Backstage storyline, MCP body-cap, and Gaming contract fixture
-surfaces; the worker role stays passive and denies the contract paths. The
+sealed Research, Backstage storyline, MCP body-cap, status authorization, and
+Gaming contract fixture surfaces; the worker role stays passive and denies the
+contract paths. The
 Research surface imports the central `src/shared/researchRequest.ts`
 validator and storage-component helper plus the real Research abort-drain
 wrapper and its narrow request-abort runtime. It does not import the normal Research
@@ -325,6 +326,22 @@ literal oversized public upload, the normal `/mcp` route composition,
 authentication, compression, or slow-upload proof; focused assembled-app tests
 remain authoritative for those behaviors.
 
+The exact `POST /status/auth-before-parser-contract` surface accepts only the
+server-owned `auth-before-parser` selector. It executes the same production
+system-state HTTP boundary and 64 KiB JSON parser used by legacy `POST /status`
+against six three-chunk, no-`Content-Length` bodies. Unavailable configuration,
+missing and invalid bearer values, and a valid `arcanos:read`-only principal all
+return their fixed 503/401/403 responses before reading any body byte. A
+server-owned synthetic operator with `mcp:invoke` passes exactly 65,536 bytes to
+one no-effect downstream sentinel; 65,537 bytes return the fixed 413 without
+reaching it. The outer preview request remains credential-free, the frozen
+synthetic environment never mutates `process.env` or leaves the fixture, and a
+paired worker request is denied. This is deployed component evidence for the
+production boundary/parser sequence. It does not invoke the normal application
+route, confirmation, the state manager, filesystem persistence, or a live
+Railway credential; focused assembled-app tests remain authoritative for those
+composition and effect properties.
+
 `npm run check:native-pr-preview-imports` is part of both
 type-check and build, and `npm run test:native-pr-preview-e2e` validates the
 credential-free runner without network access. The import gate fails closed on
@@ -356,8 +373,9 @@ are also pinned by comment/format-normalized semantic digests: every semantic
 edit anywhere in either privileged entry requires the reviewed digest and
 focused contract tests to be updated in the same PR, while comment-only and
 format-only edits do not. The central Research helper, pure public Gaming
-dispatcher/canary/fixture seam, pure saved-storyline excerpt projector, and
-config-free production MCP pre-parser core
+dispatcher/canary/fixture seam, pure saved-storyline excerpt projector,
+config-free production MCP pre-parser core, and the exact status HTTP
+authentication/body-parser seam
 are likewise semantic-digest pinned. The
 Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
@@ -376,7 +394,7 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 126-request
+evidence, not Railway control-plane provenance. The current fixed 128-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
@@ -386,8 +404,9 @@ worker-role approval-contract denial, seven sealed Backstage generation
 timeout/cache/review-completion/compact-retry/Notion-authority/continuity cases, one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, one canon-summary pagination case, two
-sealed dispatch GPT identifier boundary cases, and one worker-role dispatch
-selector denial.
+sealed dispatch GPT identifier boundary cases, one worker-role dispatch
+selector denial, one sealed status auth-before-parser case (the twenty-first
+`simulatedAuth` request), and one worker-role status selector denial.
 The additive subtree selector runs the production-shared continuity prompt and
 public-response core over sealed relevant and two-page continuation projections.
 It proves subtree-only scope/page fields stay coupled, coverage totals and source

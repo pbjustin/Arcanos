@@ -19,6 +19,9 @@
       "@core/*": [
         "src/core/*"
       ],
+      "@platform/runtime/security.js": [
+        "src/platform/runtime/security.ts"
+      ],
       "@shared/redaction.js": [
         "packages/arcanos-runtime/src/redaction.ts"
       ],

@@ -16,6 +16,7 @@ import {
   NATIVE_PR_PREVIEW_MODE,
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
+  NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
 } from '../src/nativePrPreviewContract.js';
 import {
@@ -1551,6 +1552,160 @@ describe('native PR contained application', () => {
     expectNoStore(response);
     expect(response.headers.location).toBeUndefined();
     expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('executes the production status auth boundary before its streamed body parser', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT;
+    const response = await request(app)
+      .post(contract.path)
+      .set('x-request-id', 'req-status-auth-boundary')
+      .set('x-trace-id', 'trace-status-auth-boundary')
+      .send({ fixture: contract.fixtures.authBeforeParser });
+    const expectedCase = (
+      name: string,
+      bodyBytes: number,
+      bodyBytesRead: number,
+      boundaryNextCalls: number,
+      parserCalls: number,
+      parserNextCalls: number,
+      downstreamCalls: number,
+      statusCode: number,
+      errorCode: string | null,
+      parsedPaddingLength: number | null,
+    ) => ({
+      bodyBytes,
+      bodyBytesRead,
+      boundaryNextCalls,
+      cacheControl: 'no-store',
+      downstreamCalls,
+      errorCode,
+      name,
+      parsedPaddingLength,
+      parserCalls,
+      parserNextCalls,
+      pragma: 'no-cache',
+      statusCode,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      accepted: true,
+      confirmationAttempted: false,
+      databaseBoundaryReached: false,
+      durablePersistenceAttempted: false,
+      effectsBoundaryReached: false,
+      fixture: contract.fixtures.authBeforeParser,
+      filesystemBoundaryReached: false,
+      identity,
+      memoryBoundaryReached: false,
+      networkBoundaryReached: false,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      statusAuthBoundary: {
+        authBeforeParser: true,
+        bodyLimitBytes: contract.bodyLimitBytes,
+        callerBodyControlsProbe: false,
+        caseCount: 6,
+        cases: [
+          expectedCase(
+            'auth-unavailable-over', 65_537, 0, 0, 0, 0, 0, 503,
+            'CONTROL_PLANE_AUTH_UNAVAILABLE', null
+          ),
+          expectedCase(
+            'missing-auth-over', 65_537, 0, 0, 0, 0, 0, 401,
+            'CONTROL_PLANE_AUTH_REQUIRED', null
+          ),
+          expectedCase(
+            'invalid-auth-over', 65_537, 0, 0, 0, 0, 0, 401,
+            'CONTROL_PLANE_AUTH_REQUIRED', null
+          ),
+          expectedCase(
+            'read-scope-over', 65_537, 0, 0, 0, 0, 0, 403,
+            'CONTROL_PLANE_SCOPE_DENIED', null
+          ),
+          expectedCase(
+            'mcp-scope-exact', 65_536, 65_536, 1, 1, 1, 1, 204,
+            null, 65_522
+          ),
+          expectedCase(
+            'mcp-scope-over', 65_537, 65_537, 1, 1, 0, 0, 413,
+            'SYSTEM_STATE_REQUEST_INVALID', null
+          ),
+        ],
+        componentExecuted: true,
+        downstreamCalls: 1,
+        requiredScope: 'mcp:invoke',
+        serverOwnedBodies: true,
+      },
+    });
+    expectContainedResponseHeaders(
+      response,
+      'req-status-auth-boundary',
+      'trace-status-auth-boundary',
+      true
+    );
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.headers[contract.proofHeaders.authBeforeParser]).toBe(
+      'true'
+    );
+    expect(response.headers[contract.proofHeaders.bodyLimitBytes]).toBe(
+      String(contract.bodyLimitBytes)
+    );
+    expect(response.headers[contract.proofHeaders.downstreamCalls]).toBe('1');
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expect(response.text).not.toContain('native-pr-preview-status-boundary');
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('keeps the status auth-boundary fixture sealed before outer parsing', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT;
+    const fixture = contract.fixtures.authBeforeParser;
+    const invalidResponses = await Promise.all([
+      request(app).post(contract.path).send({ fixture: 'unlisted' }),
+      request(app).post(contract.path).send({ fixture, extra: true }),
+    ]);
+    for (const response of invalidResponses) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'PREVIEW_STATUS_AUTH_BOUNDARY_FIXTURE_INVALID',
+      });
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
+    }
+
+    const deniedResponses = await Promise.all([
+      request(app).post(`${contract.path}?fixture=${fixture}`).send({ fixture }),
+      request(app).post('/status%2fauth-before-parser-contract').send({ fixture }),
+      request(app)
+        .post(contract.path)
+        .set('authorization', 'Bearer sensitive-sentinel')
+        .send({ fixture }),
+      request(app)
+        .post(contract.path)
+        .set('content-encoding', 'gzip')
+        .send({ fixture }),
+      request(app).post(contract.path).send({ fixture: 'x'.repeat(4_097) }),
+      request(app).post('/status').send({ fixture }),
+      request(app).get(contract.path),
+    ]);
+    for (const response of deniedResponses) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+      expect(response.headers.location).toBeUndefined();
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
   });
 
   it('keeps the MCP body-cap fixture sealed behind the preview transport boundary', async () => {
