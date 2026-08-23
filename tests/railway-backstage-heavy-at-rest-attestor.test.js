@@ -80,7 +80,7 @@ function buildRuntimeEnvironment(overrides = {}) {
     REDIS_URL:
       'redis://default:proof-password@redis.railway.internal:6379',
     RAILWAY_PROJECT_ID: IDS.project,
-    RAILWAY_PROJECT_NAME: 'arcanos-pr-1460-heavy-e2e-test',
+    RAILWAY_PROJECT_NAME: 'arc-pr1460-heavy-test',
     RAILWAY_ENVIRONMENT_ID: IDS.environment,
     RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1460-e2e',
     RAILWAY_SERVICE_ID: IDS.worker,

@@ -312,8 +312,10 @@ starts the credential-free loopback OpenAI fixture; the fixed fictional SDK
 key exists only in the supervised worker child.
 
 The approved target is a new disposable project in the approved workspace,
-with one isolated environment named `backstage-heavy-pr-<PR>-e2e`, exactly the
-services `Postgres`, `Redis`, `arcanos-worker-pr<PR>-heavy`, and
+named `arc-pr<PR>-heavy-<suffix>` with a 1-14 character lowercase
+alphanumeric/hyphen suffix and no more than 32 total characters, with one
+isolated environment named `backstage-heavy-pr-<PR>-e2e`, exactly the services
+`Postgres`, `Redis`, `arcanos-worker-pr<PR>-heavy`, and
 `arcanos-web-pr<PR>-heavy`, and exactly two READY volumes mounted at
 `/var/lib/postgresql/data` and `/data`. Both application services use one
 replica and the exact start command

@@ -186,7 +186,7 @@ function controlPlanePayloads(config) {
   return {
     status: {
       id: config.projectId,
-      name: 'arcanos-pr-1460-heavy-e2e-test',
+      name: 'arc-pr1460-heavy-test',
       workspaceId: '1c9265a3-986f-4304-ad3e-5a874caab039',
       deletedAt: null,
       services: {
@@ -408,6 +408,32 @@ describe('Backstage heavy network proof', () => {
       projectId: ID.project,
       environmentId: ID.environment,
     });
+    const maxProjectSuffix = structuredClone(payloads);
+    maxProjectSuffix.status.name = `arc-pr1460-heavy-${'a'.repeat(14)}`;
+    expect(attestBackstageHeavyRailwayControlPlane(
+      maxProjectSuffix,
+      config
+    )).toMatchObject({ projectId: ID.project });
+    for (const projectName of [
+      `arc-pr1460-heavy-${'a'.repeat(15)}`,
+      'arcanos-pr-1460-heavy-e2e-test',
+    ]) {
+      const invalidProject = structuredClone(payloads);
+      invalidProject.status.name = projectName;
+      expect(() => attestBackstageHeavyRailwayControlPlane(
+        invalidProject,
+        config
+      )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_PROJECT_NAME_INVALID');
+    }
+    const overTotalLength = structuredClone(payloads);
+    overTotalLength.status.name = `arc-pr146000-heavy-${'a'.repeat(14)}`;
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      overTotalLength,
+      {
+        ...config,
+        environmentName: 'backstage-heavy-pr-146000-e2e',
+      }
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_PROJECT_NAME_INVALID');
     const slashRedisPath = structuredClone(payloads);
     const slashRedisUrl = `${REDIS_URL}/`;
     slashRedisPath.webVariables.REDIS_URL = slashRedisUrl;

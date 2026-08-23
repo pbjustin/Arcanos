@@ -44,7 +44,7 @@ const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{7,63}$/u;
 const ENVIRONMENT_PATTERN =
   /^backstage-heavy-pr-([1-9]\d*)-e2e(?:-[a-z0-9]{1,16})?$/u;
 const PROJECT_NAME_PATTERN =
-  /^arcanos-pr-([1-9]\d*)-heavy-e2e-[a-z0-9][a-z0-9-]{0,23}$/u;
+  /^arc-pr([1-9]\d*)-heavy-[a-z0-9][a-z0-9-]{0,13}$/u;
 const STOP_TIMEOUT_MS = 2_000;
 const KILL_TIMEOUT_MS = 2_000;
 const START_TIMEOUT_MS = 5_000;
@@ -175,6 +175,7 @@ export function resolveBackstageHeavyProofTargetOrThrow(
     !environmentMatch
     || !projectMatch
     || projectMatch[1] !== prNumber
+    || projectName.length > 32
     || env.RAILWAY_SERVICE_NAME !== `arcanos-${processKind}-pr${prNumber}-heavy`
   ) {
     fail('BACKSTAGE_HEAVY_PROOF_SERVICE_IDENTITY_INVALID');

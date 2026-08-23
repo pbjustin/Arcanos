@@ -461,16 +461,17 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
   const projectName = typeof statusPayload.name === 'string'
     ? statusPayload.name.trim().toLowerCase()
     : '';
-  const expectedProjectPrefix = `arcanos-pr-${prNumber}-heavy-e2e-`;
+  const expectedProjectPrefix = `arc-pr${prNumber}-heavy-`;
   const expectedProjectPattern = new RegExp(
-    `^arcanos-pr-${prNumber}-heavy-e2e-[a-z0-9][a-z0-9-]{0,23}$`,
+    `^arc-pr${prNumber}-heavy-[a-z0-9][a-z0-9-]{0,13}$`,
     'u'
   );
   if (
     !prNumber
     || !expectedProjectPattern.test(projectName)
     || projectName.length <= expectedProjectPrefix.length
-    || projectName.length > expectedProjectPrefix.length + 24
+    || projectName.length > expectedProjectPrefix.length + 14
+    || projectName.length > 32
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_PROJECT_NAME_INVALID');
   }

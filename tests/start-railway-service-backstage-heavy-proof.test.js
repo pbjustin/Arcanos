@@ -62,7 +62,7 @@ function buildEnvironment(processKind = 'worker') {
     REDIS_URL:
       'redis://default:proof-password@redis.railway.internal:6379',
     RAILWAY_PROJECT_ID: IDS.project,
-    RAILWAY_PROJECT_NAME: 'arcanos-pr-1460-heavy-e2e-test',
+    RAILWAY_PROJECT_NAME: 'arc-pr1460-heavy-test',
     RAILWAY_ENVIRONMENT_ID: IDS.environment,
     RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1460-e2e',
     RAILWAY_SERVICE_ID: processKind === 'worker' ? IDS.worker : IDS.web,
@@ -195,6 +195,30 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
       REDIS_URL:
         'redis://default:proof-password@redis.railway.internal:6379/',
     })).toMatchObject({ enabled: true, processKind: 'worker' });
+  });
+
+  it('enforces the bounded short disposable Railway project name', () => {
+    expect(resolveBackstageHeavyProofTargetOrThrow('worker', {
+      ...buildEnvironment('worker'),
+      RAILWAY_PROJECT_NAME: `arc-pr1460-heavy-${'a'.repeat(14)}`,
+    })).toMatchObject({ projectName: `arc-pr1460-heavy-${'a'.repeat(14)}` });
+
+    for (const projectName of [
+      `arc-pr1460-heavy-${'a'.repeat(15)}`,
+      'arcanos-pr-1460-heavy-e2e-test',
+    ]) {
+      expect(() => resolveBackstageHeavyProofTargetOrThrow('worker', {
+        ...buildEnvironment('worker'),
+        RAILWAY_PROJECT_NAME: projectName,
+      })).toThrow('BACKSTAGE_HEAVY_PROOF_SERVICE_IDENTITY_INVALID');
+    }
+
+    expect(() => resolveBackstageHeavyProofTargetOrThrow('worker', {
+      ...buildEnvironment('worker'),
+      RAILWAY_PROJECT_NAME: `arc-pr146000-heavy-${'a'.repeat(14)}`,
+      RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-146000-e2e',
+      RAILWAY_SERVICE_NAME: 'arcanos-worker-pr146000-heavy',
+    })).toThrow('BACKSTAGE_HEAVY_PROOF_SERVICE_IDENTITY_INVALID');
   });
 
   it.each([
