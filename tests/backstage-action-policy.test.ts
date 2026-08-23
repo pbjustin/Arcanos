@@ -220,6 +220,7 @@ describe('Backstage action policy', () => {
       model: 'gpt-5.1',
       tokenLimit: 900,
       userIntentPrompt: 'Who is champion?',
+      watchdogTimeoutMs: 50_000,
       modelStageTimeoutMs: 40_000,
     })).toEqual({
       answerMode: 'direct',
@@ -229,6 +230,7 @@ describe('Backstage action policy', () => {
       directAnswerTokenLimitOverride: 900,
       directAnswerTokenCapOverride: BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
       directAnswerUserIntentPrompt: 'Who is champion?',
+      watchdogModelTimeoutMs: 50_000,
       modelStageTimeoutMs: 40_000,
     });
   });

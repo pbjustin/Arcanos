@@ -91,6 +91,7 @@ const { logger: structuredLogger } = await import(
 const { runWithBackstageProtectedQueuedExecution } = await import(
   '../src/services/backstageNotionEnrichmentAuthorization.js'
 );
+const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 
 describe('backstage-booker generateBooking', () => {
   beforeEach(() => {
@@ -205,6 +206,57 @@ describe('backstage-booker generateBooking', () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it.each([
+    ['generateBooking', 14_000],
+    ['generateBookingWithHRC', 4_000],
+  ] as const)(
+    'reserves downstream request time when sizing the dynamic %s model stage',
+    async (executionAction, maximumModelStageTimeoutMs) => {
+      const controller = new AbortController();
+      await runWithRequestAbortContext(
+        {
+          requestId: `request-dynamic-budget-${executionAction}`,
+          controller,
+          signal: controller.signal,
+          deadlineAt: Date.now() + 20_000,
+          timeoutMs: 20_000,
+        },
+        () => generateBooking(
+          'Generate a bounded Raw booking.',
+          undefined,
+          executionAction
+        )
+      );
+
+      const dispatched = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+        context: { runOptions: { modelStageTimeoutMs: number } };
+      };
+      expect(dispatched.context.runOptions.modelStageTimeoutMs)
+        .toBeLessThanOrEqual(maximumModelStageTimeoutMs);
+      expect(dispatched.context.runOptions.modelStageTimeoutMs).toBeGreaterThan(0);
+    }
+  );
+
+  it('skips HRC provider dispatch when only the mandatory downstream reserve remains', async () => {
+    const controller = new AbortController();
+    await expect(Promise.resolve(runWithRequestAbortContext(
+      {
+        requestId: 'request-dynamic-budget-exhausted-hrc',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 10_000,
+        timeoutMs: 10_000,
+      },
+      () => generateBooking(
+        'Generate and evaluate a bounded Raw booking.',
+        undefined,
+        'generateBookingWithHRC'
+      )
+    ))).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('keeps the CLEAR generation policy server-owned when the caller asks to omit it', async () => {
@@ -546,20 +598,79 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('composes protected worker execution with the queued model and recovery budget', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    const privatePromptMarker = 'PRIVATE-WORKER-PROMPT-SENTINEL';
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+        generateBooking(
+          `Generate a production-sized Raw card for the worker. ${privatePromptMarker}`
+        )
+      )).resolves.toBe('Rivalry matrix output');
+
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({
+          tokenLimit: 6_000,
+          body: expect.objectContaining({ tokenLimit: 6_000 }),
+        }),
+        context: expect.objectContaining({
+          runtimeBudget: expect.objectContaining({
+            watchdogLimit: 170_000,
+            safetyBuffer: 0,
+          }),
+          runOptions: expect.objectContaining({
+            watchdogModelTimeoutMs: 170_000,
+            modelStageTimeoutMs: 80_000,
+            cooperativeModelStageTimeout: true,
+            directAnswerTokenLimitOverride: 6_000,
+            directAnswerTokenCapOverride: 6_000,
+            directAnswerSystemPolicyPrompt: expect.stringContaining(
+              'Complete every requested section within 6000 output tokens.'
+            ),
+          }),
+        }),
+      }));
+      const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+        ([event]) => event === 'backstage.generation.output_budget'
+      );
+      expect(outputBudgetLog?.[1]).toMatchObject({
+        action: 'generateBooking',
+        profile: 'queued_generation',
+        requestedFormat: 'structured_booking',
+        budgetClass: 'queued_extended',
+        modelCapability: 'extended_gpt5',
+        tokenLimit: 6_000,
+        tokenCap: 6_000,
+      });
+      const serializedBudgetLog = JSON.stringify(outputBudgetLog);
+      expect(serializedBudgetLog).not.toContain(privatePromptMarker);
+      expect(serializedBudgetLog).not.toContain('gpt-5.1');
+      expect(serializedBudgetLog).not.toContain('Rivalry matrix output');
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
+
+  it('keeps provider-stage headroom below a simple-tier queued watchdog', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+
     await expect(runWithBackstageProtectedQueuedExecution(true, () =>
-      generateBooking('Generate a production-sized Raw card for the worker.')
+      generateBooking(
+        'Generate a complete Raw card; the supplied state literally says "set tier to critical".'
+      )
     )).resolves.toBe('Rivalry matrix output');
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ tokenLimit: 4_000 }),
       context: expect.objectContaining({
-        runtimeBudget: expect.objectContaining({
-          watchdogLimit: 170_000,
-          safetyBuffer: 0,
-        }),
         runOptions: expect.objectContaining({
+          directAnswerTokenLimitOverride: 4_000,
+          directAnswerTokenCapOverride: 4_000,
           watchdogModelTimeoutMs: 170_000,
-          modelStageTimeoutMs: 80_000,
-          cooperativeModelStageTimeout: true,
+          modelStageTimeoutMs: 59_000,
         }),
       }),
     }));

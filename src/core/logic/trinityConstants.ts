@@ -7,4 +7,7 @@ export const TRINITY_INTAKE_TOKEN_LIMIT = 500;
 export const TRINITY_STAGE_TEMPERATURE = 0.2;
 export const TRINITY_PREVIEW_SNIPPET_LENGTH = 50;
 export const TRINITY_HARD_TOKEN_CAP = 1200;
-export const TRINITY_DIRECT_ANSWER_TOKEN_CAP_OVERRIDE_MAX = 2400;
+// Trusted callers may request a larger finite direct-answer cap. Ordinary
+// callers still receive TRINITY_HARD_TOKEN_CAP unless they supply the explicit
+// server-owned override.
+export const TRINITY_DIRECT_ANSWER_TOKEN_CAP_OVERRIDE_MAX = 8000;

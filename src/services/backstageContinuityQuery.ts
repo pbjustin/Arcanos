@@ -19,6 +19,11 @@ import {
   resolveBackstageExecutionBudgetPolicy,
 } from '@shared/backstage/backstageExecutionBudget.js';
 import {
+  buildBackstageOutputBudgetCompletionInstruction,
+  buildBackstageOutputBudgetTelemetry,
+  resolveBackstageOutputBudget,
+} from '@shared/backstage/backstageOutputBudget.js';
+import {
   buildBackstageContinuityPolicyPrompt,
   buildBackstageContinuityResponse,
   isBackstageContinuityCursorRequestValid,
@@ -131,6 +136,21 @@ export async function queryBackstageContinuity(
       recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
       finalizationReserveMs: executionBudget.finalizationReserveMs,
     });
+    const outputBudget = resolveBackstageOutputBudget({
+      action: 'queryContinuity',
+      profile: executionBudget.profile,
+      requestedFormat: 'continuity',
+      requestedTokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+      promptCodeUnits: input.query.length,
+      retrievedContextCodeUnits: retrieval.prompt.length,
+      expectedOutputWords: 0,
+      model,
+      modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+    });
+    logger.info(
+      'backstage.continuity_query.output_budget',
+      buildBackstageOutputBudgetTelemetry(outputBudget)
+    );
     const runAttempt = (compactRetry: boolean) => {
       const effectiveStageTimeoutMs = resolveContinuityAttemptTimeoutMs({
         executionBudget,
@@ -160,9 +180,9 @@ export async function queryBackstageContinuity(
             retrievalMode: input.retrievalMode ?? 'relevant',
             ...(input.cursor ? { cursor: input.cursor } : {}),
             model,
-            tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+            tokenLimit: outputBudget.tokenLimit,
           },
-          tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+          tokenLimit: outputBudget.tokenLimit,
           executionMode: 'request',
         },
         context: {
@@ -171,14 +191,18 @@ export async function queryBackstageContinuity(
           runOptions: {
             ...buildBackstageBookerTrinityRunOptions({
               model,
-              tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+              tokenLimit: outputBudget.tokenLimit,
+              tokenCap: outputBudget.tokenCap,
               userIntentPrompt: input.query,
               watchdogTimeoutMs: executionBudget.operationTimeoutMs,
               modelStageTimeoutMs: effectiveStageTimeoutMs,
             }),
             disableOptionalSideEffects: true,
             trustedPolicyPrompt: policyPrompt,
-            directAnswerSystemPolicyPrompt: BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
+            directAnswerSystemPolicyPrompt: [
+              BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
+              buildBackstageOutputBudgetCompletionInstruction(outputBudget),
+            ].join('\n\n'),
             directAnswerUntrustedContextPrompt: retrieval.prompt,
             redactAuditContent: true,
           },
@@ -197,7 +221,7 @@ export async function queryBackstageContinuity(
         policy: executionBudget,
         runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
         requestRemainingMs: getRequestRemainingMs(),
-        remainingOutputTokens: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+        remainingOutputTokens: outputBudget.tokenLimit,
         recoveryAttempted: false,
       })) {
         throw new BackstageBookerOutputIncompleteError();

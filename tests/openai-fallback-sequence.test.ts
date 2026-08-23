@@ -170,6 +170,45 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
   });
 
+  it('passes an extended finite GPT-5.1 budget to Responses and rejects truncation', async () => {
+    const createSpy = jest.fn().mockResolvedValue({
+      id: 'resp_extended_incomplete',
+      model: 'gpt-5.1',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_text: 'PRIVATE-PARTIAL-BOOKING-SENTINEL',
+      output: [],
+      usage: { input_tokens: 800, output_tokens: 6_000, total_tokens: 6_800 }
+    });
+    const client = {
+      responses: {
+        create: createSpy
+      }
+    } as any;
+
+    await expect(createSingleChatCompletion(client, {
+      model: 'gpt-5.1',
+      messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
+      max_completion_tokens: 6_000,
+      reasoning_effort: 'none'
+    })).rejects.toMatchObject({
+      code: 'OPENAI_COMPLETION_INCOMPLETE',
+      finishReason: 'length',
+      incompleteReason: 'max_output_tokens',
+      truncated: true,
+      lengthTruncated: true
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gpt-5.1',
+        max_output_tokens: 6_000,
+        reasoning: { effort: 'none' }
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
   it('omits blank chat reasoning effort from the Responses request shape', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_blank_reasoning_effort',

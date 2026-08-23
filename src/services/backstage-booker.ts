@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
-import { getRequestRemainingMs } from '@arcanos/runtime';
+import { createAbortError, getRequestRemainingMs } from '@arcanos/runtime';
 import {
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   assertValidBackstageBookerActionData,
@@ -24,6 +24,8 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
+import { detectTier } from '@core/logic/trinityTier.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
@@ -100,6 +102,14 @@ import {
   resolveBackstageExecutionBudgetPolicy,
   type BackstageGenerationAction,
 } from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+  BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS,
+  buildBackstageOutputBudgetCompletionInstruction,
+  buildBackstageOutputBudgetTelemetry,
+  resolveBackstageOutputBudget,
+  type BackstageOutputFormat,
+} from '@shared/backstage/backstageOutputBudget.js';
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
@@ -2395,7 +2405,7 @@ export async function generateBooking(
     BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
   );
   const defaultTokenLimit = resolveBackstageGenerationTokenLimit(configuredTokenLimit);
-  const tokenLimit = resolveBackstageBookerPromptTokenLimit(
+  const requestedTokenLimit = resolveBackstageBookerPromptTokenLimit(
     input.prompt,
     defaultTokenLimit
   );
@@ -2441,6 +2451,78 @@ export async function generateBooking(
           trustedPolicyPrompt: input.prompt,
         };
   const instructions = structuredPrompt.instructions;
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(input.prompt);
+  const directAnswerMode = shouldPreferDirectAnswerMode(input.prompt);
+  const requestedFormat: BackstageOutputFormat = boundedReviewMode
+    ? 'bounded_review'
+    : directAnswerMode
+      ? 'compact_direct'
+      : 'structured_booking';
+  const preliminaryCompactOutputContract = resolveBackstageCompactOutputContract(
+    input.prompt,
+    requestedTokenLimit
+  );
+  const requestRemainingMs = getRequestRemainingMs();
+  const trinityTierPolicyPrompt = structuredPrompt.includesNotion
+    ? structuredPrompt.trustedPolicyPrompt
+    : instructions;
+  const trinityTierSoftCapMs = computeTierSoftCap(
+    detectTier(trinityTierPolicyPrompt)
+  );
+  const trinityStageCeilingMs = Math.max(
+    1,
+    trinityTierSoftCapMs - BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS
+  );
+  const requestPostModelReserveMs =
+    BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS
+    + executionBudget.hrcStageReserveMs
+    + (executionBudget.profile === 'queued_generation'
+      ? 0
+      : executionBudget.finalizationReserveMs);
+  if (
+    requestRemainingMs !== null
+    && requestRemainingMs <= requestPostModelReserveMs
+  ) {
+    throw createAbortError(
+      'Backstage generation has insufficient remaining request budget before provider dispatch.'
+    );
+  }
+  const requestStageCeilingMs = requestRemainingMs === null
+    ? Number.POSITIVE_INFINITY
+    : Math.max(
+        1,
+        requestRemainingMs - requestPostModelReserveMs
+      );
+  const effectiveModelStageBudgetMs = requestRemainingMs === null
+    ? Math.min(executionBudget.modelStageTimeoutMs, trinityStageCeilingMs)
+    : Math.min(
+        executionBudget.modelStageTimeoutMs,
+        trinityStageCeilingMs,
+        requestStageCeilingMs
+      );
+  const outputBudget = resolveBackstageOutputBudget({
+    action: executionAction,
+    profile: executionBudget.profile,
+    requestedFormat,
+    requestedTokenLimit,
+    configuredWorkerTokenLimit: getEnvNumber(
+      'BOOKER_WORKER_TOKEN_LIMIT',
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    ),
+    promptCodeUnits: input.prompt.length,
+    retrievedContextCodeUnits:
+      structuredPrompt.directAnswerUntrustedContextPrompt?.length
+      ?? Math.max(0, instructions.length - input.prompt.length),
+    expectedOutputWords:
+      preliminaryCompactOutputContract.wordBounds.totalWordLimit,
+    model,
+    modelStageTimeoutMs: effectiveModelStageBudgetMs,
+  });
+  const tokenLimit = outputBudget.tokenLimit;
+  logger.info(
+    'backstage.generation.output_budget',
+    buildBackstageOutputBudgetTelemetry(outputBudget)
+  );
   const compactOutputContract = resolveBackstageCompactOutputContract(
     input.prompt,
     tokenLimit
@@ -2453,17 +2535,20 @@ export async function generateBooking(
   const compactOutputRetryInstruction =
     buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
-  const directAnswerSystemPolicyPrompt =
+  const directAnswerSystemPolicyPrompt = [
     buildBackstageBookerDirectAnswerSystemPolicy(
       structuredPrompt.directAnswerSystemPolicyPrompt
-    );
+    ),
+    buildBackstageOutputBudgetCompletionInstruction(outputBudget),
+  ].join('\n\n');
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
       tokenLimit,
+      tokenCap: outputBudget.tokenCap,
       userIntentPrompt: input.prompt,
       watchdogTimeoutMs: executionBudget.operationTimeoutMs,
-      modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+      modelStageTimeoutMs: effectiveModelStageBudgetMs,
       cooperativeModelStageTimeout:
         executionBudget.profile === 'queued_generation',
     }),
@@ -2560,9 +2645,9 @@ export async function generateBooking(
       )
       ? compactOutputContract.itemPolicy.count
       : undefined;
-    const normalizedOutput = shouldUseBoundedBackstageReviewMode(input.prompt)
+    const normalizedOutput = boundedReviewMode
       ? applyBackstageReviewOutputContract(clean)
-      : shouldPreferDirectAnswerMode(input.prompt)
+      : directAnswerMode
         ? applyBackstageDirectAnswerOutputContract(
             clean,
             input.prompt,

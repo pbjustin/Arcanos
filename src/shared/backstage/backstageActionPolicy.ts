@@ -248,6 +248,7 @@ export function resolveBackstageGenerationTokenLimit(
 export function buildBackstageBookerTrinityRunOptions(params: {
   model: string;
   tokenLimit: number;
+  tokenCap?: number;
   userIntentPrompt: string;
   watchdogTimeoutMs: number;
   modelStageTimeoutMs: number;
@@ -259,7 +260,8 @@ export function buildBackstageBookerTrinityRunOptions(params: {
     strictUserVisibleOutput: true,
     directAnswerModelOverride: params.model,
     directAnswerTokenLimitOverride: params.tokenLimit,
-    directAnswerTokenCapOverride: BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
+    directAnswerTokenCapOverride:
+      params.tokenCap ?? BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
     directAnswerUserIntentPrompt: params.userIntentPrompt,
     watchdogModelTimeoutMs: params.watchdogTimeoutMs,
     modelStageTimeoutMs: params.modelStageTimeoutMs,

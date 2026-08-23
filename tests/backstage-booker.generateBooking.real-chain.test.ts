@@ -77,6 +77,7 @@ jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
 
 const originalGpt5Model = process.env.GPT5_MODEL;
 const originalBookerTokenLimit = process.env.BOOKER_TOKEN_LIMIT;
+const originalBookerWorkerTokenLimit = process.env.BOOKER_WORKER_TOKEN_LIMIT;
 const originalBookerGenerationStageTimeoutMs = process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS;
 const originalOpenAIStore = process.env.OPENAI_STORE;
 const originalNotionAccessToken = process.env.ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN;
@@ -84,10 +85,14 @@ const originalNotionUniversePages = process.env.ARCANOS_BACKSTAGE_NOTION_UNIVERS
 const originalFetch = globalThis.fetch;
 process.env.GPT5_MODEL = 'gpt-5';
 process.env.BOOKER_TOKEN_LIMIT = '2400';
+process.env.BOOKER_WORKER_TOKEN_LIMIT = '6000';
 process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS = '40000';
 
 const { generateBooking } = await import('../src/services/backstage-booker.js');
-const { runWithBackstageNotionEnrichmentAuthorization } =
+const {
+  runWithBackstageNotionEnrichmentAuthorization,
+  runWithBackstageProtectedQueuedExecution,
+} =
   await import('../src/services/backstageNotionEnrichmentAuthorization.js');
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -101,6 +106,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 afterAll(() => {
   restoreEnv('GPT5_MODEL', originalGpt5Model);
   restoreEnv('BOOKER_TOKEN_LIMIT', originalBookerTokenLimit);
+  restoreEnv('BOOKER_WORKER_TOKEN_LIMIT', originalBookerWorkerTokenLimit);
   restoreEnv(
     'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
     originalBookerGenerationStageTimeoutMs
@@ -195,6 +201,34 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(JSON.stringify(request.input)).toContain('Current external events');
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.signal?.aborted).toBe(false);
+  });
+
+  it('carries a protected worker budget through the real Responses request once', async () => {
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(
+        'Generate a production-sized Raw card with complete matches, segments, finishes, and closing consequences.',
+        'worker-output-budget-fixture'
+      )
+    )).resolves.toBe('Rivalry matrix output.');
+
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    const [request, options] = responsesCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      { signal?: AbortSignal; timeout?: number }
+    ];
+    expect(request).toEqual(expect.objectContaining({
+      model: 'gpt-5.1',
+      max_output_tokens: 6_000,
+      reasoning: { effort: 'none' }
+    }));
+    const serializedInput = JSON.stringify(request.input);
+    expect(serializedInput).toContain('<<BACKSTAGE_OUTPUT_BUDGET>>');
+    expect(serializedInput).toContain(
+      'Complete every requested section within 6000 output tokens.'
+    );
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal?.aborted).toBe(false);
+    expect(options.timeout).toBeUndefined();
   });
 
   it('completes a near-limit full-state review through the bounded provider path', async () => {
@@ -388,7 +422,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(serializedRequest).not.toContain('Each bullet must be one compact sentence.');
   });
 
-  it('continues to reject partial output that exhausts the extended Booker budget', async () => {
+  it('rejects protected worker output that exhausts the extended Booker budget', async () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_incomplete_booking',
@@ -419,7 +453,10 @@ describe('backstage-booker generateBooking real provider chain', () => {
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
-      await generateBooking('Review a complete nine-match Raw card and its established continuity.');
+      await runWithBackstageProtectedQueuedExecution(true, () => generateBooking(
+        'Generate a complete nine-match Raw card and preserve every established continuity fact.',
+        'worker-output-budget-fixture'
+      ));
       throw new Error('Expected generateBooking to reject partial provider output.');
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
@@ -436,6 +473,11 @@ describe('backstage-booker generateBooking real provider chain', () => {
       consoleErrorSpy.mockRestore();
     }
     expect(responsesCreate).toHaveBeenCalledTimes(2);
+    for (const [request] of responsesCreate.mock.calls as unknown as Array<[
+      Record<string, unknown>
+    ]>) {
+      expect(request.max_output_tokens).toBe(6_000);
+    }
   });
 
   it('retains the honesty caveat when the user directive requests current external events', async () => {

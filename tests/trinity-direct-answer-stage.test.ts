@@ -208,7 +208,7 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
-  it('honors a trusted direct-answer cap exception without exceeding 2,400 tokens', async () => {
+  it('honors a trusted workload-selected direct-answer cap above 2,400 tokens', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit
     }));
@@ -226,18 +226,52 @@ describe('runDirectAnswerStage', () => {
       undefined,
       'trinity_req_extended_cap',
       'gpt-5.1',
-      5_000,
+      6_000,
       undefined,
       false,
-      5_000
+      6_000
     );
 
-    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 2_400);
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 6_000);
     expect(loggerInfoMock).toHaveBeenCalledWith(
       'trinity.direct_answer.execution_plan',
       expect.objectContaining({
-        tokenLimit: 2_400,
-        tokenCapApplied: 2_400
+        tokenLimit: 6_000,
+        tokenCapApplied: 6_000
+      })
+    );
+  });
+
+  it('never lets a trusted direct-answer exception exceed 8,000 tokens', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete bounded booking output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete extended wrestling show.',
+      undefined,
+      undefined,
+      'trinity_req_global_cap',
+      'gpt-5.1',
+      99_999,
+      undefined,
+      false,
+      99_999
+    );
+
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 8_000);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.direct_answer.execution_plan',
+      expect.objectContaining({
+        tokenLimit: 8_000,
+        tokenCapApplied: 8_000
       })
     );
   });

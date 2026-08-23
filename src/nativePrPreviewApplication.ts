@@ -2253,6 +2253,7 @@ async function runBackstageRouteBudgetFixture(
       !== BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX
     || trinityRunOptions.directAnswerUserIntentPrompt
       !== 'sealed synthetic provider delay'
+    || trinityRunOptions.watchdogModelTimeoutMs !== routeTimeoutMs
     || trinityRunOptions.modelStageTimeoutMs !== generationStageTimeoutMs
   ) {
     throw new Error('PREVIEW_BACKSTAGE_TRINITY_RUN_OPTIONS_INVALID');

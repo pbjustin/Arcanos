@@ -322,6 +322,10 @@ describe('Backstage Booker queryContinuity', () => {
           directAnswerTokenLimitOverride: 900,
           directAnswerTokenCapOverride: 2400,
           watchdogModelTimeoutMs: 40_000,
+          modelStageTimeoutMs: 20_000,
+          directAnswerSystemPolicyPrompt: expect.stringContaining(
+            'Complete every requested section within 900 output tokens.'
+          ),
           directAnswerUntrustedContextPrompt: retrieval.prompt,
           redactAuditContent: true,
           disableOptionalSideEffects: true,
