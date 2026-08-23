@@ -8,7 +8,12 @@ import {
   resolveBackstageMutationHttpOperation,
 } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
-import { optionalBackstageNotionEnrichmentAuth } from '@services/backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageNotionEnrichmentAuthorized,
+  optionalBackstageNotionEnrichmentAuth,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
+import { resolveBackstageNotionAuthorityRoot } from '@services/backstageNotionAuthority.js';
+import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
@@ -76,8 +81,13 @@ import {
 import {
   BACKSTAGE_MODULE_NAME,
   BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
+  classifyBackstageBookerWorkload,
   isBackstageGptRoute,
+  resolveBackstageGptAction,
+  type BackstageBookerWorkloadDecision,
 } from '@shared/backstage/backstageActionPolicy.js';
+import { resolveBackstageCompactOutputContract } from '@shared/backstage/backstageCompactOutputContract.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
@@ -152,6 +162,7 @@ import {
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import {
   extractGptPromptText,
+  extractGptDispatchPromptText,
   extractGptPromptTextFromRecord,
   extractGptPromptTextFromRequest,
   resolveRequestedGptActionFromRequest,
@@ -421,6 +432,55 @@ function readPayloadRecord(
   return payload && typeof payload === 'object' && !Array.isArray(payload)
     ? (payload as Record<string, unknown>)
     : null;
+}
+
+function readBackstageUniverseId(body: unknown): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  const payload = readPayloadRecord(normalizedBody);
+  const candidate = payload?.universeId ?? normalizedBody?.universeId;
+  return typeof candidate === 'string'
+    && candidate === candidate.trim()
+    && candidate.length > 0
+    && candidate.length <= 128
+      ? candidate
+      : null;
+}
+
+function classifyBackstageRouteWorkload(params: {
+  body: unknown;
+  moduleName: string;
+  action: string | null | undefined;
+  promptText: string | null;
+  requestedExecutionMode: GptExecutionMode | null;
+}): BackstageBookerWorkloadDecision | null {
+  if (params.moduleName !== BACKSTAGE_MODULE_NAME) {
+    return null;
+  }
+
+  const action = resolveBackstageGptAction(params.action);
+  const prompt = params.promptText ?? '';
+  const outputContract = resolveBackstageCompactOutputContract(
+    prompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const universeId = readBackstageUniverseId(params.body);
+  const authorizationEstablished = isBackstageNotionEnrichmentAuthorized();
+  const notionAuthorityContext = authorizationEstablished
+    && universeId !== null
+    && resolveBackstageNotionAuthorityRoot(universeId) !== null;
+
+  return classifyBackstageBookerWorkload({
+    action,
+    authorizationEstablished,
+    requestedExecutionMode: params.requestedExecutionMode,
+    promptCodeUnits: prompt.length,
+    contextCodeUnits: 0,
+    expectedItemCount: outputContract.itemPolicy.budgetItemCount,
+    expectedOutputWords: outputContract.wordBounds.totalWordLimit,
+    notionAuthorityContext,
+    providerInvocationRequired:
+      !prompt || tryExtractExactLiteralPromptShortcut(prompt) === null,
+  });
 }
 
 function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
@@ -1862,6 +1922,17 @@ router.post(
         const backstageContinuityQuerySyncOnly =
           routingValidation.plan.module === BACKSTAGE_MODULE_NAME
           && (requestedModuleAction ?? researchAction) === 'queryContinuity';
+        const requestedExecutionMode = resolveRequestedExecutionMode(req, effectiveBody);
+        const modulePromptText = routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+          ? extractGptDispatchPromptText(effectiveBody)
+          : promptText;
+        const backstageWorkloadDecision = classifyBackstageRouteWorkload({
+          body: effectiveBody,
+          moduleName: routingValidation.plan.module,
+          action: requestedModuleAction ?? researchAction,
+          promptText: modulePromptText,
+          requestedExecutionMode,
+        });
         const researchDiagnosticRequest = isDiagnosticRequest(
           effectiveBodyRecord ?? undefined,
           promptText,
@@ -2746,7 +2817,22 @@ router.post(
           asyncWaitForResultMs,
           asyncPollIntervalMs,
           priorityGpt,
-          priorityQueueActive
+          priorityQueueActive,
+          ...(backstageWorkloadDecision
+            ? {
+                backstageWorkloadClass: backstageWorkloadDecision.workloadClass,
+                backstageWorkloadReason: backstageWorkloadDecision.reason,
+                backstageQueueRequired: backstageWorkloadDecision.queueRequired,
+                backstagePromptCodeUnits: backstageWorkloadDecision.promptCodeUnits,
+                backstageContextCodeUnits: backstageWorkloadDecision.contextCodeUnits,
+                backstageExpectedItemCount: backstageWorkloadDecision.expectedItemCount,
+                backstageExpectedOutputWords: backstageWorkloadDecision.expectedOutputWords,
+                backstageNotionAuthorityContext:
+                  backstageWorkloadDecision.notionAuthorityContext,
+                backstageProviderInvocationRequired:
+                  backstageWorkloadDecision.providerInvocationRequired,
+              }
+            : {})
         });
         if (explicitAsyncWaitForResultMs !== undefined && !directReturnRequested) {
           requestLogger?.info?.('gpt.request.direct_return_ignored', {

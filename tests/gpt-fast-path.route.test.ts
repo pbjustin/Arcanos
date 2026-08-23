@@ -1578,6 +1578,78 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('logs only bounded Booker workload metadata for a heavy authenticated decision', async () => {
+    const accessToken = `backstage-${'l'.repeat(48)}`;
+    const privatePromptSentinel = 'private-prompt-sentinel';
+    const privateContextSentinel = 'private-notion-sentinel';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: 'Safe mocked booking result.',
+      _route: {
+        requestId: 'request-workload-log',
+        traceId: 'trace-workload-log',
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+        timestamp: '2026-08-23T12:00:00.000Z',
+      },
+    });
+    const consoleLogSpy = jest
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
+
+    try {
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          action: 'generateBooking',
+          executionMode: 'sync',
+          payload: {
+            universeId: 'builder-workload-log-universe',
+            prompt: `${privatePromptSentinel}: return exactly six matches.`,
+            retrievedContext: privateContextSentinel,
+          },
+        });
+
+      expect(response.status).toBe(200);
+      const serializedLogs = consoleLogSpy.mock.calls
+        .map(([entry]) => String(entry))
+        .join('\n');
+      const executionPlanLog = consoleLogSpy.mock.calls
+        .map(([entry]) => {
+          try {
+            return JSON.parse(String(entry)) as {
+              event?: string;
+              data?: Record<string, unknown>;
+            };
+          } catch {
+            return null;
+          }
+        })
+        .find(entry => entry?.event === 'gpt.request.execution_plan');
+
+      expect(executionPlanLog?.data).toMatchObject({
+        backstageWorkloadClass: 'production_generation',
+        backstageWorkloadReason: 'expected_item_count',
+        backstageQueueRequired: true,
+        backstageExpectedItemCount: 6,
+        backstageProviderInvocationRequired: true,
+      });
+      expect(serializedLogs).not.toContain(privatePromptSentinel);
+      expect(serializedLogs).not.toContain(privateContextSentinel);
+      expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    } finally {
+      consoleLogSpy.mockRestore();
+    }
+  });
+
   it.each(['backstage-booker', 'backstage'])(
     'returns the documented sixty-second timeout response for synchronous Builder dispatch through %s',
     async (gptId) => {
