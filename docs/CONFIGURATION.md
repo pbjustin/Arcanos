@@ -358,7 +358,9 @@ The OpenAI client resolves keys in this order:
 
 `BOOKER_TOKEN_LIMIT` defaults to `2400` for ordinary generation and is bounded by a Backstage-only `2400`-token cap. Ordinary Trinity callers retain the global `1200`-token cap, while compact direct-answer prompts may use a smaller prompt-derived budget. Explicit full-show, card, or booking-state review/evaluation prompts use a six-bullet synthesis contract and `min(BOOKER_TOKEN_LIMIT, 1600)` so the review can complete before the provider-stage and HRC deadlines. The classifier uses a quote-aware scan of directive-shaped request clauses throughout the prompt; an explicit mixed request to book, rebook, rewrite, draft, or continue vetoes bounded mode and retains the ordinary generation budget. Quoted or attributed dialogue inside supplied show state is inert, while narrow decision analysis or recommendations also stay in ordinary mode. A deployment retaining an explicit historical value such as `512` or `1200` will continue to use that value; remove or update the variable to adopt the `2400` default.
 
-`BOOKER_GENERATION_STAGE_TIMEOUT_MS` defaults to `40000` for the Backstage Booker provider stage and is capped at `45000`. This service-owned override prevents long-form booking requests from inheriting Trinity's shorter generic direct-answer deadline. The HRC follow-up is separately bounded to 10 seconds and inherits request cancellation. Canonical requests through `POST /gpt/backstage-booker` or its `/gpt/backstage` alias enforce a 60-second outer route budget, even when a generic or DAG GPT route timeout is unset or lower, leaving response-handling headroom. This route-specific minimum does not change how requests are classified as synchronous, asynchronous, or DAG execution, and every other GPT route retains its existing timeout profile.
+Backstage execution uses finite profile-specific timeout plans. `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` defaults to `20000` and is capped at `25000`, retaining a low-latency synchronous continuity path. Synchronous generation retains `BOOKER_GENERATION_STAGE_TIMEOUT_MS=40000`; although the compatibility parser accepts values through `45000`, the execution plan caps ordinary generation at `40000` to reserve one 10-second recovery and finalization, and caps HRC generation at `30000` to reserve recovery plus its 10-second review stage below the route's 60-second cap.
+
+Protected queued generation is independent of the originating HTTP connection. `BOOKER_WORKER_JOB_TIMEOUT_MS` defaults to `180000` and is clamped to `120000`-`180000`; `BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS` defaults to `80000` and is clamped to `45000`-`90000`; `BOOKER_REPAIR_STAGE_TIMEOUT_MS` defaults to `45000` and is clamped to `10000`-`45000`. The planner shortens stages when necessary, reserves 30 seconds for retrieval, dispatch, validation, and HRC-independent orchestration, reserves another 10 seconds for terminal result persistence, and permits no more than one recovery attempt. The absolute operation deadline is anchored to the durable first execution-start timestamp, which survives lease recovery and provider deferral without charging time spent waiting for the first worker claim. The worker revalidates its claim fence immediately after start bookkeeping, then renews active leases at least three times per normalized lease. Protected model and module stages receive cooperative cancellation and a finite two-second drain ceiling inside the finalization reserve, so an abort-ignoring provider cannot keep a job active indefinitely. Per-request OpenAI SDK timeouts enforce the planned provider stage without changing the singleton worker timeout for unrelated ask, DAG, or GPT jobs. These settings do not change other GPT routes.
 
 ### Confirmation and automation
 | Variable | Default | Purpose |
@@ -1051,6 +1053,7 @@ database URL as a command-line argument.
 | `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
 | `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
+| `JOB_WORKER_LEASE_MS` | `15000` | Claimed-job lease duration, clamped to `3000`-`300000` ms. Active execution and terminal persistence renew at one-third of the normalized lease, bounded to `1000`-`10000` ms. |
 | `JOB_WORKER_DB_BOOTSTRAP_RETRY_MS` | `5000` | Initial retry delay while waiting for database connectivity. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS` | `30000` | Max DB bootstrap retry delay. |
 | `JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS` | `0` | `0` means retry indefinitely. |
@@ -1238,7 +1241,11 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
 | `GPT5_MODEL` | `gpt-5.1` (commented) | GPT-5-family model preference. Backstage normalizes only the obsolete exact `gpt-5` alias to `gpt-5.1`. |
 | `BOOKER_TOKEN_LIMIT` | `2400` (commented) | Standard Backstage Booker output budget, bounded by its `2400`-token cap. Full-show/card review-only prompts use at most `1600`, compact direct-answer prompts can use a smaller derived budget, and ordinary Trinity callers remain capped at `1200`. |
-| `BOOKER_GENERATION_STAGE_TIMEOUT_MS` | `40000` (commented) | Backstage-only provider stage timeout, capped at `45000`; both canonical Backstage GPT IDs enforce a 60-second outer route budget without changing execution-mode classification. |
+| `BOOKER_GENERATION_STAGE_TIMEOUT_MS` | `40000` (commented) | Synchronous Backstage generation stage preference. Values parse through `45000`, while the plan effectively caps ordinary generation at `40000` and HRC generation at `30000` to preserve recovery, review, and response-finalization reserves below the route deadline. |
+| `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` | `20000` (commented) | Lightweight synchronous continuity stage timeout, clamped to `1000`-`25000`. |
+| `BOOKER_WORKER_JOB_TIMEOUT_MS` | `180000` (commented) | Protected queued-generation terminal deadline anchored to durable first execution start, clamped to `120000`-`180000`; includes 30 seconds of orchestration headroom plus a reserved 10-second result-finalization window. |
+| `BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS` | `80000` (commented) | Protected queued-generation primary provider stage, clamped to `45000`-`90000` and shortened when required by the enclosing job plan. |
+| `BOOKER_REPAIR_STAGE_TIMEOUT_MS` | `45000` (commented) | Protected queued-generation recovery stage, clamped to `10000`-`45000`; at most one recovery is permitted. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`, its compatibility alias, and `/api/bridge/health`. |
 | `ARCANOS_JOB_READ_CAPABILITY_SECRET` | commented empty | Required current server-side HMAC key for job-specific generic read capabilities; new tokens use only this key. |
@@ -1298,12 +1305,13 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Filesystem path for logs (if file logging enabled). |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem path for memory persistence. |
 | `RUN_WORKERS` | `true` | Whether the explicit local/direct API startup lifecycle boots the in-process worker runtime. The Railway launcher sets this by role; the dedicated `jobRunner` owns its own PostgreSQL queue lifecycle. |
-| `WORKER_API_TIMEOUT_MS` | `60000` template override; `30000` unified-config default when unset | Timeout for worker-to-server API calls. |
+| `WORKER_API_TIMEOUT_MS` | `60000` template override; `30000` unified-config default when unset | Singleton worker adapter timeout. Protected Booker model calls use a bounded per-request SDK timeout instead, so unrelated ask, DAG, and GPT jobs retain this configured value. |
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
 | `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` (commented) | Exact persisted worker-group identity for shared inspection and hourly budgets; maximum 255 characters. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
 | `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |
+| `JOB_WORKER_LEASE_MS` | `15000` (commented) | Claimed-job lease duration, clamped to `3000`-`300000` ms and renewed through fenced terminal persistence. |
 | `JOB_WORKER_STALE_AFTER_MS` | `45000` | Age after which a worker heartbeat is considered stale. |
 | `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` (commented) | Per-transaction stale-recovery lock/transition bound, clamped to 1-1,000. This bounds selected rows and result arrays, not the underlying scan; overlapping passes skip locked rows and may process separate batches. |
 | `JOB_WORKER_WATCHDOG_MS` | `10000` | Worker watchdog inspection interval. |

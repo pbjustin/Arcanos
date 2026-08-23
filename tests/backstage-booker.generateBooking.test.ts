@@ -529,7 +529,7 @@ describe('backstage-booker generateBooking', () => {
     ].join('\n'));
   });
 
-  it('caps an oversized Booker generation stage timeout below the module deadline', async () => {
+  it('caps an oversized Booker generation stage timeout with recovery time reserved', async () => {
     mockGetEnvNumber.mockImplementation((name: string, fallback: number) =>
       name === 'BOOKER_GENERATION_STAGE_TIMEOUT_MS' ? 90_000 : fallback
     );
@@ -539,9 +539,29 @@ describe('backstage-booker generateBooking', () => {
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       context: expect.objectContaining({
         runOptions: expect.objectContaining({
-          modelStageTimeoutMs: 45_000
+          modelStageTimeoutMs: 40_000
         })
       })
+    }));
+  });
+
+  it('composes protected worker execution with the queued model and recovery budget', async () => {
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking('Generate a production-sized Raw card for the worker.')
+    )).resolves.toBe('Rivalry matrix output');
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        runtimeBudget: expect.objectContaining({
+          watchdogLimit: 170_000,
+          safetyBuffer: 0,
+        }),
+        runOptions: expect.objectContaining({
+          watchdogModelTimeoutMs: 170_000,
+          modelStageTimeoutMs: 80_000,
+          cooperativeModelStageTimeout: true,
+        }),
+      }),
     }));
   });
 

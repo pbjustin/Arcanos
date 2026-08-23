@@ -131,7 +131,10 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
   },
 }));
 
-const { executeQueuedGptRequest } = await import('../src/workers/jobRunner.js');
+const { executeQueuedGptRequest, startHeartbeatLoop } = await import(
+  '../src/workers/jobRunner.js'
+);
+const { createAbortError, getRequestAbortSignal } = await import('@arcanos/runtime');
 const {
   buildProtectedBackstageQueuedGptJobInput,
   buildQueuedGptBackstageMutationAdmission,
@@ -150,6 +153,7 @@ const {
 
 const originalBackstagePayloadKey =
   process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+const originalWorkerJobTimeout = process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
 
 const introducedSignalListeners = {
   SIGINT: process
@@ -172,6 +176,11 @@ afterAll(() => {
   } else {
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       originalBackstagePayloadKey;
+  }
+  if (originalWorkerJobTimeout === undefined) {
+    delete process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
+  } else {
+    process.env.BOOKER_WORKER_JOB_TIMEOUT_MS = originalWorkerJobTimeout;
   }
 });
 
@@ -231,6 +240,46 @@ describe('normal worker queued Backstage mutation admission', () => {
     mockDetectBackstageBookerIntent.mockReturnValue(null);
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x61).toString('base64');
+    delete process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
+  });
+
+  it('renews the real claimed-job heartbeat loop before each live lease expires', async () => {
+    jest.useFakeTimers();
+    const recordHeartbeat = jest.fn(async () => ({
+      id: 'heartbeat-job',
+      claim_generation: '7',
+    }));
+    const autonomyService = {
+      getClaimOptions: () => ({ leaseMs: 15_000 }),
+      recordHeartbeat,
+    };
+    const loop = startHeartbeatLoop(
+      autonomyService as never,
+      { id: 'heartbeat-job', claim_generation: '7' },
+      'worker-heartbeat-test'
+    );
+
+    try {
+      await jest.advanceTimersByTimeAsync(140_001);
+      expect(recordHeartbeat).toHaveBeenCalledTimes(28);
+      for (const call of recordHeartbeat.mock.calls) {
+        expect(call[0]).toEqual({
+          id: 'heartbeat-job',
+          claim_generation: '7',
+        });
+        expect(call[1]).toMatchObject({
+          source: 'job-heartbeat',
+          shouldApplyResult: expect.any(Function),
+        });
+      }
+
+      loop.stop();
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(recordHeartbeat).toHaveBeenCalledTimes(28);
+    } finally {
+      loop.stop();
+      jest.useRealTimers();
+    }
   });
 
   it('decrypts protected generation only in the worker authorization context and seals the retrievable result', async () => {
@@ -288,6 +337,40 @@ describe('normal worker queued Backstage mutation admission', () => {
       },
     });
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts through the heartbeat error callback before the active lease can expire', async () => {
+    jest.useFakeTimers();
+    const renewalFailure = new Error('heartbeat renewal unavailable');
+    const recordHeartbeat = jest.fn(async () => {
+      throw renewalFailure;
+    });
+    const onHeartbeatError = jest.fn((error: unknown) => {
+      expect(error).toBe(renewalFailure);
+    });
+    const autonomyService = {
+      getClaimOptions: () => ({ leaseMs: 15_000 }),
+      recordHeartbeat,
+    };
+    const loop = startHeartbeatLoop(
+      autonomyService as never,
+      { id: 'heartbeat-error-job', claim_generation: '8' },
+      'worker-heartbeat-error-test',
+      undefined,
+      onHeartbeatError
+    );
+
+    try {
+      await jest.advanceTimersByTimeAsync(5_001);
+      expect(recordHeartbeat).toHaveBeenCalledTimes(1);
+      expect(onHeartbeatError).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(15_000);
+      expect(recordHeartbeat).toHaveBeenCalledTimes(1);
+      expect(onHeartbeatError).toHaveBeenCalledTimes(1);
+    } finally {
+      loop.stop();
+      jest.useRealTimers();
+    }
   });
 
   it.each([
@@ -723,6 +806,207 @@ describe('normal worker queued Backstage mutation admission', () => {
       error: { code: 'MODULE_ERROR' },
     });
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts a stalled provider at the finite worker deadline and returns a terminal error', async () => {
+    jest.useFakeTimers();
+    process.env.BOOKER_WORKER_JOB_TIMEOUT_MS = '120000';
+    let activeProviderSignal: AbortSignal | undefined;
+    let releaseProvider!: () => void;
+    let providerSettled = false;
+    let outcomeSettled = false;
+    mockDispatchModuleAction.mockImplementationOnce(() => new Promise(resolve => {
+      activeProviderSignal = getRequestAbortSignal();
+      releaseProvider = () => {
+        providerSettled = true;
+        resolve('late provider output must be fenced');
+      };
+    }));
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      prompt: 'Return a production-sized card.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-timeout',
+      traceId: 'trace-worker-timeout',
+    });
+
+    try {
+      const outcomePromise = executeQueuedGptRequest({
+        jobId: '44444444-4444-4444-8444-444444444444',
+        rawInput,
+      });
+      void outcomePromise.finally(() => {
+        outcomeSettled = true;
+      }).catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(110_001);
+      expect(activeProviderSignal?.aborted).toBe(true);
+      expect(providerSettled).toBe(false);
+      expect(outcomeSettled).toBe(false);
+      await jest.advanceTimersByTimeAsync(2_000);
+      const outcome = await outcomePromise;
+
+      expect(providerSettled).toBe(false);
+      expect(outcomeSettled).toBe(true);
+      expect(outcome).toMatchObject({
+        status: 'failed',
+        retryable: false,
+        errorMessage: 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.',
+      });
+      expect(unprotectBackstageQueuedGptJobOutput({
+        jobId: '44444444-4444-4444-8444-444444444444',
+        rawInput,
+        output: outcome.output,
+      })).toMatchObject({
+        ok: false,
+        error: { code: 'BACKSTAGE_ASYNC_TIMEOUT' },
+      });
+      releaseProvider();
+      await Promise.resolve();
+      expect(outcome).toMatchObject({
+        status: 'failed',
+        errorMessage: 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.',
+      });
+    } finally {
+      releaseProvider?.();
+      jest.useRealTimers();
+    }
+  });
+
+  it('uses the persisted first-start time so a stale reclaim cannot reset the worker deadline', async () => {
+    process.env.BOOKER_WORKER_JOB_TIMEOUT_MS = '120000';
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      prompt: 'Return a production-sized card.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-stale-reclaim',
+      traceId: 'trace-worker-stale-reclaim',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '66666666-6666-4666-8666-666666666666',
+      rawInput,
+      startedAt: new Date(Date.now() - 110_001),
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.',
+    });
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '66666666-6666-4666-8666-666666666666',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_TIMEOUT' },
+    });
+  });
+
+  it('does not misclassify an early provider AbortError as the worker deadline', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(Object.assign(
+      new Error('provider transport aborted before the deadline'),
+      { name: 'AbortError' }
+    ));
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      prompt: 'Return a production-sized card.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-provider-abort',
+      traceId: 'trace-worker-provider-abort',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '77777777-7777-4777-8777-777777777777',
+      rawInput,
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage: 'MODULE_ERROR: Protected Backstage generation failed.',
+    });
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '77777777-7777-4777-8777-777777777777',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'MODULE_ERROR' },
+    });
+  });
+
+  it('propagates durable cancellation to the active provider request', async () => {
+    const parentController = new AbortController();
+    let activeProviderSignal: AbortSignal | undefined;
+    let providerStarted!: () => void;
+    const providerStartedPromise = new Promise<void>(resolve => {
+      providerStarted = resolve;
+    });
+    mockDispatchModuleAction.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      activeProviderSignal = getRequestAbortSignal();
+      providerStarted();
+      activeProviderSignal?.addEventListener('abort', () => {
+        reject(activeProviderSignal?.reason ?? createAbortError());
+      }, { once: true });
+    }));
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      prompt: 'Return a production-sized card.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-cancel-active',
+      traceId: 'trace-worker-cancel-active',
+    });
+
+    const outcomePromise = executeQueuedGptRequest({
+      jobId: '55555555-5555-4555-8555-555555555555',
+      rawInput,
+      cancellationSignal: parentController.signal,
+    });
+    await providerStartedPromise;
+    parentController.abort(createAbortError('durable protected cancellation'));
+    const outcome = await outcomePromise;
+
+    expect(activeProviderSignal?.aborted).toBe(true);
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      output: null,
+      errorMessage: 'Protected Backstage generation cancellation requested.',
+      retryable: false,
+    });
   });
 
   it('does not reflect a protected cancellation reason across the worker boundary', async () => {

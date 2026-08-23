@@ -12,6 +12,10 @@ import {
   runWithRequestAbortContext,
   runWithRequestAbortTimeout
 } from '@arcanos/runtime';
+import {
+  getTelemetrySnapshot,
+  resetTelemetry,
+} from '../src/platform/logging/telemetry.js';
 
 async function restoreCircuitBreakerIsolation(): Promise<void> {
   const snapshot = getCircuitBreakerSnapshot();
@@ -55,6 +59,7 @@ describe('createChatCompletionWithFallback', () => {
   beforeEach(async () => {
     jest.restoreAllMocks();
     await restoreCircuitBreakerIsolation();
+    resetTelemetry();
   });
 
   afterEach(async () => {
@@ -146,7 +151,8 @@ describe('createChatCompletionWithFallback', () => {
       model: 'gpt-5.1',
       messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
       max_completion_tokens: 777,
-      reasoning_effort: 'none'
+      reasoning_effort: 'none',
+      timeoutMs: 42_000,
     });
 
     expect(createSpy).toHaveBeenCalledTimes(1);
@@ -156,7 +162,10 @@ describe('createChatCompletionWithFallback', () => {
         max_output_tokens: 777,
         reasoning: { effort: 'none' }
       }),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        timeout: 42_000,
+      })
     );
     expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
   });
@@ -292,6 +301,7 @@ describe('createChatCompletionWithFallback', () => {
 
     await providerStarted;
     expect(providerSignal).toBe(controller.signal);
+    expect(createSpy.mock.calls[0]?.[1]).not.toHaveProperty('timeout');
     controller.abort(abortReason);
     await Promise.resolve();
     expect(providerObservedAbort).toBe(true);
@@ -358,6 +368,14 @@ describe('createChatCompletionWithFallback', () => {
       state: 'CLOSED',
       failureCount: 0
     });
+    const cancellationTelemetry = getTelemetrySnapshot();
+    expect(cancellationTelemetry.metrics.operations['openai.failure']).toBeUndefined();
+    expect(cancellationTelemetry.metrics.operations['openai.cancelled']?.count)
+      .toBe(cancellationCount);
+    expect(cancellationTelemetry.traces.recentEvents)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'openai.resilience.failure' }),
+      ]));
 
     const preCancelledController = new AbortController();
     const preCancelledReason = createAbortError('cancelled before admission');
@@ -373,6 +391,8 @@ describe('createChatCompletionWithFallback', () => {
       state: 'CLOSED',
       failureCount: 0
     });
+    expect(getTelemetrySnapshot().metrics.operations['openai.cancelled']?.count)
+      .toBe(cancellationCount + 1);
 
     const healthyCreate = jest.fn().mockResolvedValue({
       id: 'healthy-after-cancellations',
@@ -394,6 +414,69 @@ describe('createChatCompletionWithFallback', () => {
       state: 'CLOSED',
       failureCount: 0
     });
+  });
+
+  it('keeps ordinary ambient parent cancellations breaker- and failure-telemetry-neutral', async () => {
+    const initial = getCircuitBreakerSnapshot();
+    expect(initial).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+    const providerCreate = jest.fn().mockImplementation(
+      (_payload, options?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const onAbort = () => reject(new Error('provider transport closed after parent abort'));
+          if (options?.signal?.aborted) {
+            onAbort();
+          } else {
+            options?.signal?.addEventListener('abort', onAbort, { once: true });
+          }
+        })
+    );
+    const client = { responses: { create: providerCreate } } as any;
+
+    for (
+      let index = 0;
+      index < initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD;
+      index += 1
+    ) {
+      const controller = new AbortController();
+      const cancellation = createAbortError(`ordinary parent cancellation ${index + 1}`);
+      const completion = Promise.resolve(runWithRequestAbortContext(
+        {
+          requestId: `ordinary-parent-cancel-${index + 1}`,
+          controller,
+          signal: controller.signal,
+          deadlineAt: Date.now() + 30_000,
+          timeoutMs: 30_000,
+        },
+        () => createSingleChatCompletion(client, {
+          model: 'gpt-4.1',
+          messages: [{ role: 'user', content: 'Run bounded synchronous work.' }],
+          timeoutMs: 20_000,
+        })
+      ));
+
+      for (
+        let attempt = 0;
+        attempt < 5 && providerCreate.mock.calls.length <= index;
+        attempt += 1
+      ) {
+        await Promise.resolve();
+      }
+      controller.abort(cancellation);
+      await expect(completion).rejects.toBe(cancellation);
+    }
+
+    expect(getCircuitBreakerSnapshot()).toMatchObject({
+      state: 'CLOSED',
+      failureCount: 0,
+    });
+    const telemetry = getTelemetrySnapshot();
+    expect(telemetry.metrics.operations['openai.failure']).toBeUndefined();
+    expect(telemetry.metrics.operations['openai.cancelled']?.count)
+      .toBe(initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD);
+    expect(telemetry.traces.recentEvents)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'openai.resilience.failure' }),
+      ]));
   });
 
   it.each([
@@ -491,6 +574,13 @@ describe('createChatCompletionWithFallback', () => {
     expect(providerCreate).toHaveBeenCalledTimes(
       initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD
     );
+    const providerFailureTelemetry = getTelemetrySnapshot();
+    expect(providerFailureTelemetry.metrics.operations['openai.failure']?.count)
+      .toBe(initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD);
+    expect(providerFailureTelemetry.traces.recentEvents)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'openai.resilience.failure' }),
+      ]));
 
     const blockedHealthyCreate = jest.fn().mockResolvedValue({
       id: 'blocked-while-open',
@@ -528,6 +618,97 @@ describe('createChatCompletionWithFallback', () => {
     expect(getCircuitBreakerSnapshot()).toMatchObject({
       state: 'CLOSED',
       failureCount: 0
+    });
+  });
+
+  it.each([
+    ['aggregate provider boundary', true],
+    ['linked timeout boundary', false],
+  ] as const)('preserves a provider-first AbortError through the %s when caller cancellation lands in the same turn', async (_caseName, preserveAggregateAbortContext) => {
+    const providerAbort = Object.assign(new Error('provider settled before caller cancellation'), {
+      name: 'AbortError'
+    });
+    const initial = getCircuitBreakerSnapshot();
+    const providerCreate = jest.fn();
+
+    for (
+      let index = 0;
+      index < initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD;
+      index += 1
+    ) {
+      const controller = new AbortController();
+      const callerAbort = createAbortError(`later caller cancellation ${index + 1}`);
+      let rejectProvider!: (error: unknown) => void;
+      let notifyProviderStarted!: () => void;
+      const providerStarted = new Promise<void>(resolve => {
+        notifyProviderStarted = resolve;
+      });
+      providerCreate.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectProvider = reject;
+        notifyProviderStarted();
+      }));
+
+      const completion = createSingleChatCompletion(
+        { responses: { create: providerCreate } } as any,
+        {
+          model: 'gpt-4.1',
+          messages: [{ role: 'user', content: 'Preserve provider failure provenance.' }],
+          signal: controller.signal,
+          preserveAggregateAbortContext
+        }
+      );
+      await providerStarted;
+      rejectProvider(providerAbort);
+      controller.abort(callerAbort);
+
+      await expect(completion).rejects.toBe(providerAbort);
+    }
+
+    expect(getCircuitBreakerSnapshot()).toMatchObject({
+      state: 'OPEN',
+      failureCount: initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    });
+    const telemetry = getTelemetrySnapshot();
+    expect(telemetry.metrics.operations['openai.failure']?.count)
+      .toBe(initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD);
+    expect(telemetry.metrics.operations['openai.cancelled']).toBeUndefined();
+  });
+
+  it('preserves a pre-admitted caller cancellation while the circuit breaker is open', async () => {
+    const initial = getCircuitBreakerSnapshot();
+    const providerFailure = new Error('provider unavailable');
+    const failingCreate = jest.fn().mockRejectedValue(providerFailure);
+
+    for (
+      let index = 0;
+      index < initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD;
+      index += 1
+    ) {
+      await expect(createSingleChatCompletion(
+        { responses: { create: failingCreate } } as any,
+        { model: 'gpt-4.1', messages: [] }
+      )).rejects.toBe(providerFailure);
+    }
+    expect(getCircuitBreakerSnapshot().state).toBe('OPEN');
+
+    const cancelledCreate = jest.fn();
+    const controller = new AbortController();
+    const callerReason = createAbortError('caller cancelled before provider admission');
+    controller.abort(callerReason);
+
+    await expect(createChatCompletionWithFallback(
+      { responses: { create: cancelledCreate } } as any,
+      {
+        model: 'gpt-4.1',
+        messages: [],
+        signal: controller.signal,
+      }
+    )).rejects.toBe(callerReason);
+
+    expect(cancelledCreate).not.toHaveBeenCalled();
+    expect(getCircuitBreakerSnapshot()).toMatchObject({
+      state: 'OPEN',
+      failureCount: initial.constants.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
     });
   });
 

@@ -144,6 +144,39 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
+  it('preserves cooperative worker abort provenance at the provider boundary', async () => {
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete queued booking.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete queued wrestling show.',
+      undefined,
+      createRuntimeBudgetWithLimit(120_000, 0),
+      'trinity_req_cooperative_worker',
+      'gpt-5.1',
+      1_200,
+      80_000,
+      false,
+      1_200,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    const providerParams = createSingleChatCompletionMock.mock.calls[0]?.[1] as
+      Record<string, unknown>;
+    expect(providerParams.preserveAggregateAbortContext).toBe(true);
+    expect(providerParams.signal).toBeInstanceOf(AbortSignal);
+    expect(providerParams).not.toHaveProperty('timeoutMs');
+  });
+
   it('keeps ordinary direct-answer requests under Trinity\'s 1,200-token cap', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit

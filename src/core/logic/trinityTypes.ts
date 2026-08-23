@@ -225,6 +225,8 @@ export interface TrinityRunOptions {
   watchdogModelTimeoutMs?: number;
   /** Optional per-model-stage cap when it must differ from the overall Trinity watchdog. */
   modelStageTimeoutMs?: number;
+  /** Abort and drain a timed direct-answer provider call before the stage settles. */
+  cooperativeModelStageTimeout?: boolean;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;
   requestedVerbosity?: TrinityRequestedVerbosity;
   maxWords?: number | null;

@@ -1727,6 +1727,102 @@ describe('workerAutonomyService', () => {
     expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
   });
 
+  it('renews the queue lease without waiting for snapshot liveness persistence', async () => {
+    let releaseLiveness!: () => void;
+    const livenessPending = new Promise<void>(resolve => {
+      releaseLiveness = resolve;
+    });
+    const snapshotPipeline = {
+      recordLiveness: jest.fn<() => Promise<void>>().mockReturnValue(livenessPending),
+      recordSnapshotIntent: jest.fn(),
+      flushWorker: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    };
+    const heartbeatJob = {
+      id: 'job-snapshot-independent-heartbeat',
+      status: 'running',
+      claim_generation: '3'
+    };
+    recordJobHeartbeatMock.mockResolvedValue(heartbeatJob);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 5_000,
+      leaseMs: 15_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 45_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    }, snapshotPipeline);
+
+    await expect(service.recordHeartbeat(heartbeatJob)).resolves.toBe(heartbeatJob);
+    await expect(service.recordHeartbeat(heartbeatJob)).resolves.toBe(heartbeatJob);
+
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(2);
+    expect(snapshotPipeline.recordLiveness).toHaveBeenCalledTimes(2);
+    expect(snapshotPipeline.recordSnapshotIntent).not.toHaveBeenCalled();
+
+    releaseLiveness();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(snapshotPipeline.recordSnapshotIntent).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a job-start snapshot flush consume the claimed lease', async () => {
+    let releaseFlush!: () => void;
+    const flushPending = new Promise<void>(resolve => {
+      releaseFlush = resolve;
+    });
+    const snapshotPipeline = {
+      recordLiveness: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      recordSnapshotIntent: jest.fn(),
+      flushWorker: jest.fn<() => Promise<void>>().mockReturnValue(flushPending),
+      shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    };
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 5_000,
+      leaseMs: 15_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 45_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    }, snapshotPipeline);
+    let markStartedResolved = false;
+
+    void service.markJobStarted({ id: 'job-start-snapshot-independent' } as any)
+      .then(() => { markStartedResolved = true; });
+    await Promise.resolve();
+
+    expect(markStartedResolved).toBe(true);
+    expect(snapshotPipeline.recordSnapshotIntent).toHaveBeenCalledTimes(1);
+    expect(snapshotPipeline.flushWorker).toHaveBeenCalledTimes(1);
+
+    releaseFlush();
+    await Promise.resolve();
+  });
+
   it('requeues stalled jobs assigned to stale workers during the watchdog cycle', async () => {
     jest.useFakeTimers();
 

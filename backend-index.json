@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T07:24:44.744Z",
+  "generatedAt": "2026-08-23T08:06:59.420Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2402,6 +2402,9 @@
           "relativePath": "src/shared/ask/trinityResponseSerializer.ts"
         },
         {
+          "relativePath": "src/shared/async/cooperativeAbortDrain.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
@@ -2412,6 +2415,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageEvent.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageExecutionBudget.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageGenerationError.ts"
@@ -2607,6 +2613,9 @@
         },
         {
           "relativePath": "src/shared/idGenerator.ts"
+        },
+        {
+          "relativePath": "src/shared/jobs/jobLeaseTiming.ts"
         },
         {
           "relativePath": "src/shared/jobs/jobLinks.ts"
@@ -3314,6 +3323,9 @@
         },
         {
           "relativePath": "tests/backstage-booker.storyline-lifecycle.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-execution-budget.test.ts"
         },
         {
           "relativePath": "tests/backstage-generation-error.test.ts"

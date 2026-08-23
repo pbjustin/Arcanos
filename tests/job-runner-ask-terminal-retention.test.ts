@@ -28,6 +28,8 @@ const originalOpenAIKey = process.env.OPENAI_API_KEY;
 const originalAskRetentionMs = process.env.QUEUE_ASK_TERMINAL_RETENTION_MS;
 const originalBackstagePayloadKey =
   process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+const originalBackstageWorkerJobTimeout =
+  process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
 
 process.env.OPENAI_API_KEY = 'provider-free-worker-test-key';
 
@@ -138,6 +140,9 @@ const { buildProtectedBackstageQueuedGptJobInput } = await import(
 const { unprotectBackstageQueuedGptJobOutput } = await import(
   '../src/shared/backstage/backstageQueuedJobResultProtection.js'
 );
+const { createClaimedJobFence, updateClaimedJobTerminal } = await import(
+  '../src/core/db/repositories/jobRepository.js'
+);
 
 const introducedSignalListeners = {
   SIGINT: process
@@ -171,6 +176,12 @@ afterAll(() => {
   } else {
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       originalBackstagePayloadKey;
+  }
+  if (originalBackstageWorkerJobTimeout === undefined) {
+    delete process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
+  } else {
+    process.env.BOOKER_WORKER_JOB_TIMEOUT_MS =
+      originalBackstageWorkerJobTimeout;
   }
 });
 
@@ -219,6 +230,14 @@ describe('job runner terminal persistence', () => {
       updated_at: new Date('2026-08-23T12:00:00.000Z'),
     };
     let terminalParams: unknown[] = [];
+    let terminalReadStarted!: () => void;
+    const terminalReadStartedPromise = new Promise<void>(resolve => {
+      terminalReadStarted = resolve;
+    });
+    let releaseTerminalRead!: () => void;
+    const terminalReadGate = new Promise<void>(resolve => {
+      releaseTerminalRead = resolve;
+    });
 
     claimNextMock.mockResolvedValueOnce({ job: claimedJob });
     routeGptRequestMock.mockResolvedValueOnce({
@@ -235,6 +254,8 @@ describe('job runner terminal persistence', () => {
     queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
       const normalizedSql = String(sql);
       if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        terminalReadStarted();
+        await terminalReadGate;
         return { rows: [claimedJob] };
       }
       if (normalizedSql.includes('UPDATE job_data')) {
@@ -273,7 +294,7 @@ describe('job runner terminal persistence', () => {
     };
 
     try {
-      await expect(runWorkerConsumerSlot(
+      const workerPromise = runWorkerConsumerSlot(
         {
           slotIndex: 0,
           slotNumber: 1,
@@ -289,7 +310,15 @@ describe('job runner terminal persistence', () => {
           statsWorkerId: 'worker-test-stats',
         },
         autonomyService as never
-      )).rejects.toBe(stopAfterOneIteration);
+      );
+      const workerStopped = expect(workerPromise).rejects.toBe(
+        stopAfterOneIteration
+      );
+      await terminalReadStartedPromise;
+      await jest.advanceTimersByTimeAsync(35_001);
+      expect(autonomyService.recordHeartbeat).toHaveBeenCalledTimes(4);
+      releaseTerminalRead();
+      await workerStopped;
 
       expect(claimNextMock).toHaveBeenCalledTimes(1);
       expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
@@ -317,6 +346,298 @@ describe('job runner terminal persistence', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('persists a protected worker deadline as one sealed fenced terminal failure', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-23T12:00:00.000Z'));
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    routeGptRequestMock.mockReset();
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6b).toString('base64');
+    process.env.BOOKER_WORKER_JOB_TIMEOUT_MS = '120000';
+    const privatePrompt = 'private-timeout-booker-prompt-sentinel';
+    const jobId = '22222222-2222-4222-8222-222222222222';
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-timeout-booker',
+      traceId: 'trace-timeout-booker',
+      correlationId: 'trace-timeout-booker',
+      executionModeReason: 'backstage_action_policy_heavy',
+    });
+    const claimedJob = {
+      id: jobId,
+      worker_id: 'queue',
+      job_type: 'gpt',
+      status: 'running',
+      claim_generation: '10',
+      input: queuedInput,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2026-08-23T12:03:00.000Z'),
+      correlation_id: 'trace-timeout-booker',
+      cancel_requested_at: null,
+      cancel_reason: null,
+      started_at: new Date('2026-08-23T12:00:00.000Z'),
+      created_at: new Date('2026-08-23T11:59:59.000Z'),
+      updated_at: new Date('2026-08-23T12:00:00.000Z'),
+    };
+    let terminalParams: unknown[] = [];
+    let providerStarted!: () => void;
+    let releaseLateProvider!: () => void;
+    let activeProviderSignal: AbortSignal | undefined;
+    let terminalWriteCount = 0;
+    const providerStartedPromise = new Promise<void>(resolve => {
+      providerStarted = resolve;
+    });
+
+    claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+    routeGptRequestMock.mockImplementationOnce((input: {
+      parentAbortSignal?: AbortSignal;
+    }) => {
+      activeProviderSignal = input.parentAbortSignal;
+      providerStarted();
+      return new Promise(resolve => {
+        releaseLateProvider = () => resolve({
+          ok: true,
+          result: 'late provider output must not replace the terminal timeout',
+          _route: {
+            gptId: 'backstage-booker',
+            module: 'BACKSTAGE:BOOKER',
+            action: 'generateBooking',
+          },
+        });
+      });
+    });
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        return { rows: [claimedJob] };
+      }
+      if (normalizedSql.includes('UPDATE job_data')) {
+        terminalWriteCount += 1;
+        terminalParams = params;
+        return {
+          rows: [{
+            ...claimedJob,
+            status: 'failed',
+            output: JSON.parse(String(params[1])),
+            error_message: params[2],
+            last_heartbeat_at: null,
+            lease_expires_at: null,
+            completed_at: new Date(),
+          }],
+        };
+      }
+      throw new Error(`Unexpected repository query: ${normalizedSql}`);
+    });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 30_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markJobCompleted: jest.fn(async () => undefined),
+      handleJobFailure: jest.fn(async (
+        job: typeof claimedJob,
+        errorMessage: string,
+        _retryable: boolean,
+        output: unknown
+      ) => {
+        const terminalJob = await updateClaimedJobTerminal(
+          job.id,
+          'failed',
+          {
+            fence: createClaimedJobFence(
+              'worker-test-slot-1',
+              job.claim_generation
+            ),
+            output,
+            errorMessage,
+          }
+        );
+        return { action: terminalJob ? 'failed' : 'lease_lost' };
+      }),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    try {
+      const workerPromise = runWorkerConsumerSlot(
+        {
+          slotIndex: 0,
+          slotNumber: 1,
+          workerId: 'worker-test-slot-1',
+          statsWorkerId: 'worker-test-stats',
+          isInspectorSlot: true,
+        },
+        {
+          pollMs: 1,
+          idleBackoffMs: 1,
+          concurrency: 1,
+          baseWorkerId: 'worker-test',
+          statsWorkerId: 'worker-test-stats',
+        },
+        autonomyService as never
+      );
+      const workerStopped = expect(workerPromise).rejects.toBe(
+        stopAfterOneIteration
+      );
+      await providerStartedPromise;
+      await jest.advanceTimersByTimeAsync(110_001);
+      expect(activeProviderSignal?.aborted).toBe(true);
+      await jest.advanceTimersByTimeAsync(2_000);
+      await workerStopped;
+
+      expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+      expect(terminalParams[0]).toBe('failed');
+      expect(terminalParams[2]).toBe(
+        'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.'
+      );
+      expect(terminalParams[10]).toBe('worker-test-slot-1');
+      expect(terminalParams[11]).toBe('10');
+      const persistedOutput = JSON.parse(String(terminalParams[1]));
+      expect(JSON.stringify(persistedOutput)).not.toContain(privatePrompt);
+      expect(unprotectBackstageQueuedGptJobOutput({
+        jobId,
+        rawInput: queuedInput,
+        output: persistedOutput,
+      })).toMatchObject({
+        ok: false,
+        error: { code: 'BACKSTAGE_ASYNC_TIMEOUT' },
+      });
+      expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(
+        claimedJob,
+        'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.',
+        false,
+        expect.anything()
+      );
+      expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
+      expect(terminalWriteCount).toBe(1);
+      const heartbeatCountAfterTerminal =
+        autonomyService.recordHeartbeat.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(30_000);
+      expect(autonomyService.recordHeartbeat)
+        .toHaveBeenCalledTimes(heartbeatCountAfterTerminal);
+      releaseLateProvider();
+      await Promise.resolve();
+      expect(terminalWriteCount).toBe(1);
+      expect(terminalParams[0]).toBe('failed');
+    } finally {
+      releaseLateProvider?.();
+      delete process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
+      jest.useRealTimers();
+    }
+  });
+
+  it('revalidates the claim fence before scheduling a start snapshot or provider execution', async () => {
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    routeGptRequestMock.mockReset();
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6c).toString('base64');
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'private-delayed-start-booking-sentinel',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+    });
+    const claimedJob = {
+      id: '33333333-3333-4333-8333-333333333333',
+      worker_id: 'queue',
+      job_type: 'gpt',
+      status: 'running',
+      claim_generation: '11',
+      input: queuedInput,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2026-08-23T12:00:15.000Z'),
+      correlation_id: 'trace-delayed-start-booker',
+      cancel_requested_at: null,
+      cancel_reason: null,
+      created_at: new Date('2026-08-23T11:59:59.000Z'),
+      updated_at: new Date('2026-08-23T12:00:00.000Z'),
+    };
+    claimNextMock
+      .mockResolvedValueOnce({ job: claimedJob })
+      .mockResolvedValueOnce({ job: null });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 15_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => null),
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markIdle: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    const workerPromise = runWorkerConsumerSlot(
+      {
+        slotIndex: 0,
+        slotNumber: 1,
+        workerId: 'worker-test-slot-1',
+        statsWorkerId: 'worker-test-stats',
+        isInspectorSlot: true,
+      },
+      {
+        pollMs: 1,
+        idleBackoffMs: 1,
+        concurrency: 1,
+        baseWorkerId: 'worker-test',
+        statsWorkerId: 'worker-test-stats',
+      },
+      autonomyService as never
+    );
+    await expect(workerPromise).rejects.toBe(stopAfterOneIteration);
+
+    expect(autonomyService.recordHeartbeat).toHaveBeenCalledTimes(1);
+    expect(autonomyService.recordHeartbeat).toHaveBeenCalledWith(
+      claimedJob,
+      {
+        source: 'job-start-heartbeat',
+        shouldApplyResult: expect.any(Function),
+      }
+    );
+    expect(autonomyService.markJobStarted).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(autonomyService.markJobLeaseLost).toHaveBeenCalledWith(
+      claimedJob.id,
+      'Initial heartbeat fence was lost before provider initialization.'
+    );
   });
 
   it('executes Ask through Trinity and reaches the real claimed terminal writer with retention', async () => {

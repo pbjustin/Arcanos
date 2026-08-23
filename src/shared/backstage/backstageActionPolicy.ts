@@ -95,7 +95,9 @@ export interface BackstageBookerTrinityRunOptions {
   directAnswerTokenLimitOverride: number;
   directAnswerTokenCapOverride: number;
   directAnswerUserIntentPrompt: string;
+  watchdogModelTimeoutMs: number;
   modelStageTimeoutMs: number;
+  cooperativeModelStageTimeout?: true;
 }
 
 const backstagePublicActionSet = new Set<string>(BACKSTAGE_PUBLIC_ACTIONS);
@@ -247,7 +249,9 @@ export function buildBackstageBookerTrinityRunOptions(params: {
   model: string;
   tokenLimit: number;
   userIntentPrompt: string;
+  watchdogTimeoutMs: number;
   modelStageTimeoutMs: number;
+  cooperativeModelStageTimeout?: boolean;
 }): BackstageBookerTrinityRunOptions {
   return {
     answerMode: 'direct',
@@ -257,7 +261,11 @@ export function buildBackstageBookerTrinityRunOptions(params: {
     directAnswerTokenLimitOverride: params.tokenLimit,
     directAnswerTokenCapOverride: BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
     directAnswerUserIntentPrompt: params.userIntentPrompt,
+    watchdogModelTimeoutMs: params.watchdogTimeoutMs,
     modelStageTimeoutMs: params.modelStageTimeoutMs,
+    ...(params.cooperativeModelStageTimeout === true
+      ? { cooperativeModelStageTimeout: true as const }
+      : {}),
   };
 }
 

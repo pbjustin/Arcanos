@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { getRequestRemainingMs } from '@arcanos/runtime';
 import {
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   assertValidBackstageBookerActionData,
@@ -80,7 +81,11 @@ import {
 } from './backstageNotionRag.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import {
+  createRuntimeBudgetWithLimit,
+  getSafeRemainingMs,
+} from '@platform/resilience/runtimeBudget.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
@@ -88,9 +93,13 @@ import {
   BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
   BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
   buildBackstageBookerTrinityRunOptions,
-  resolveBackstageGenerationStageTimeoutMs,
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  hasBackstageRecoveryBudget,
+  resolveBackstageExecutionBudgetPolicy,
+  type BackstageGenerationAction,
+} from '@shared/backstage/backstageExecutionBudget.js';
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
@@ -1388,14 +1397,6 @@ function resolveBackstageBookerModel(): string {
     : resolvedModel;
 }
 
-function resolveBackstageBookerGenerationStageTimeoutMs(): number {
-  const configuredTimeoutMs = getEnvNumber(
-    'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
-    BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
-  );
-  return resolveBackstageGenerationStageTimeoutMs(configuredTimeoutMs);
-}
-
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
   const serialized = JSON.stringify(data);
   if (typeof serialized !== 'string') {
@@ -2371,7 +2372,7 @@ export async function trackStoryline(
 export async function generateBooking(
   prompt: string,
   universeId?: string,
-  executionAction: 'generateBooking' | 'generateBookingWithHRC' = 'generateBooking'
+  executionAction: BackstageGenerationAction = 'generateBooking'
 ): Promise<string> {
   const structuredScope = universeId !== undefined;
   const input = normalizeBackstageBookerActionPayload('generateBooking', {
@@ -2399,7 +2400,39 @@ export async function generateBooking(
     defaultTokenLimit
   );
   const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
-  const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
+  const executionBudget = resolveBackstageExecutionBudgetPolicy({
+    profile: protectedQueuedExecution
+      ? 'queued_generation'
+      : 'bounded_sync_generation',
+    action: executionAction,
+    configuration: {
+      generationStageTimeoutMs: getEnvNumber(
+        'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+        BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
+      ),
+      workerJobTimeoutMs: getEnvNumber(
+        'BOOKER_WORKER_JOB_TIMEOUT_MS',
+        Number.NaN
+      ),
+      workerGenerationStageTimeoutMs: getEnvNumber(
+        'BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS',
+        Number.NaN
+      ),
+      workerRecoveryStageTimeoutMs: getEnvNumber(
+        'BOOKER_REPAIR_STAGE_TIMEOUT_MS',
+        Number.NaN
+      ),
+    },
+  });
+  logger.info('backstage.generation.timeout_plan', {
+    action: executionAction,
+    profile: executionBudget.profile,
+    totalTimeoutMs: executionBudget.totalTimeoutMs,
+    operationTimeoutMs: executionBudget.operationTimeoutMs,
+    modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+    recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
+    finalizationReserveMs: executionBudget.finalizationReserveMs,
+  });
   const structuredPrompt: StructuredBookingPrompt = structuredScope
       ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
       : {
@@ -2429,7 +2462,10 @@ export async function generateBooking(
       model,
       tokenLimit,
       userIntentPrompt: input.prompt,
-      modelStageTimeoutMs: generationStageTimeoutMs,
+      watchdogTimeoutMs: executionBudget.operationTimeoutMs,
+      modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+      cooperativeModelStageTimeout:
+        executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
     ...(protectedQueuedExecution || structuredPrompt.includesNotion
@@ -2456,7 +2492,10 @@ export async function generateBooking(
     if (!client) {
       throw new Error('OpenAI client unavailable for backstage booking.');
     }
-    const runtimeBudget = createRuntimeBudget();
+    const runtimeBudget = createRuntimeBudgetWithLimit(
+      executionBudget.operationTimeoutMs,
+      0
+    );
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
         ? `${instructions}\n\n${compactOutputRetryInstruction}`
@@ -2466,6 +2505,7 @@ export async function generateBooking(
       const attemptRunOptions = compactOutputRetry
         ? {
             ...trinityRunOptions,
+            modelStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
             trustedPolicyPrompt: [
               structuredPrompt.trustedPolicyPrompt,
               compactOutputRetryInstruction,
@@ -2500,7 +2540,16 @@ export async function generateBooking(
     const {
       result: trinityResult,
       usedCompactOutputRetry,
-    } = await runBackstageBookerCompactOutputAttempts(runGenerationAttempt);
+    } = await runBackstageBookerCompactOutputAttempts(
+      runGenerationAttempt,
+      () => hasBackstageRecoveryBudget({
+        policy: executionBudget,
+        runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
+        requestRemainingMs: getRequestRemainingMs(),
+        remainingOutputTokens: tokenLimit,
+        recoveryAttempted: false,
+      })
+    );
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.

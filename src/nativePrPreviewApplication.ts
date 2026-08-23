@@ -2239,6 +2239,7 @@ async function runBackstageRouteBudgetFixture(
     model: 'native-pr-preview-synthetic',
     tokenLimit: 512,
     userIntentPrompt: 'sealed synthetic provider delay',
+    watchdogTimeoutMs: routeTimeoutMs,
     modelStageTimeoutMs: generationStageTimeoutMs,
   });
   if (
@@ -3009,6 +3010,7 @@ function runBackstageContinuityQueryFixture(
     model: 'native-pr-preview-synthetic',
     tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
     userIntentPrompt: query,
+    watchdogTimeoutMs: BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
     modelStageTimeoutMs: BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   });
   const cursor = 'eyJ2IjoyLCJmaXh0dXJlIjoic2VhbGVkLXByZXZpZXcifQ';

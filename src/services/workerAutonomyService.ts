@@ -18,6 +18,7 @@ import {
 } from '@core/db/repositories/jobRepository.js';
 import type { SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
+import { normalizeJobLeaseMs } from '@shared/jobs/jobLeaseTiming.js';
 import {
   PRIORITY_GPT_JOB_PRIORITY,
   isPriorityGpt,
@@ -315,7 +316,7 @@ function buildDefaultAutonomySettings(): WorkerAutonomySettings {
       'async-queue',
     workerType: 'async_queue',
     heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', DEFAULT_JOB_WORKER_HEARTBEAT_MS),
-    leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 15_000),
+    leaseMs: normalizeJobLeaseMs(readNumberEnv('JOB_WORKER_LEASE_MS', 15_000)),
     inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
     watchdogIntervalMs: readNumberEnv('JOB_WORKER_WATCHDOG_MS', DEFAULT_JOB_WORKER_WATCHDOG_MS),
     staleAfterMs: resolveJobWorkerStaleAfterMs(),
@@ -1065,10 +1066,10 @@ export class WorkerAutonomyService {
   }
 
   /**
-   * Persist that the worker has started processing a specific job.
-   * Purpose: update the snapshot state used by helper routes and stale-job recovery.
-   * Inputs/outputs: accepts the claimed job; returns once the snapshot is persisted.
-   * Edge case behavior: existing snapshot state is preserved even if persistence temporarily fails.
+   * Record that the worker has started processing a specific job.
+   * Purpose: update the snapshot state used by helper routes without delaying the queue lease.
+   * Inputs/outputs: accepts the claimed job; returns after scheduling snapshot persistence.
+   * Edge case behavior: snapshot persistence remains best-effort and cannot consume the claimed lease.
    */
   async markJobStarted(job: JobData): Promise<void> {
     this.state.currentJobId = job.id;
@@ -1076,7 +1077,7 @@ export class WorkerAutonomyService {
     this.state.lastHeartbeatAt = new Date().toISOString();
     this.state.lastActivityAt = this.state.lastHeartbeatAt;
     this.state.lastClaimResult = 'claimed_job';
-    await this.persistSnapshot({
+    this.persistLeaseIndependentSnapshot({
       healthStatus: 'healthy',
       alerts: []
     }, { force: true, source: 'job-start' });
@@ -1115,10 +1116,17 @@ export class WorkerAutonomyService {
     const shouldApplyResult = options.shouldApplyResult?.() ?? true;
     if (!updatedJob) {
       if (shouldApplyResult) {
-        await this.markJobLeaseLost(
+        void this.markJobLeaseLost(
           job.id,
           'Heartbeat fence was lost before the job lease could be renewed.'
-        );
+        ).catch((error: unknown) => {
+          logger.warn('worker.runtime_snapshot.persist.background_failed', {
+            module: 'worker-autonomy',
+            workerId: this.settings.workerId,
+            source: 'job-lease-lost',
+            error: resolveErrorMessage(error)
+          });
+        });
       }
       return null;
     }
@@ -1128,7 +1136,7 @@ export class WorkerAutonomyService {
 
     this.state.lastHeartbeatAt = new Date().toISOString();
     this.state.lastActivityAt = this.state.lastHeartbeatAt;
-    await this.persistSnapshot({
+    this.persistLeaseIndependentSnapshot({
       healthStatus: 'healthy',
       alerts: []
     }, { force: true, source: options.source ?? 'job-heartbeat' });
@@ -1184,7 +1192,7 @@ export class WorkerAutonomyService {
     this.state.currentJobId = null;
     this.state.lastError = reason;
     this.state.lastActivityAt = stoppedAt;
-    await this.persistSnapshot({
+    this.persistLeaseIndependentSnapshot({
       healthStatus: 'degraded',
       alerts: [reason]
     }, { force: true, source: 'job-lease-lost' });
@@ -1647,6 +1655,20 @@ export class WorkerAutonomyService {
       cancelledJobIdsTotal: sampledEvent.cancelledJobIdsTotal,
       cancelledJobIdsTruncated: sampledEvent.cancelledJobIdsTruncated,
       restartRecommended: sampledEvent.restartRecommended
+    });
+  }
+
+  private persistLeaseIndependentSnapshot(
+    context: WorkerSnapshotContext,
+    options: WorkerSnapshotPersistOptions
+  ): void {
+    void this.persistSnapshot(context, options).catch((error: unknown) => {
+      logger.warn('worker.runtime_snapshot.persist.background_failed', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        source: options.source ?? 'unspecified',
+        error: resolveErrorMessage(error)
+      });
     });
   }
 

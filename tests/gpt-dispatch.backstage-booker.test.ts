@@ -1254,6 +1254,56 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     );
   });
 
+  it('keeps an early protected provider abort classified and logged as a redacted execution failure', async () => {
+    const privateAbort = 'private-provider-abort-sentinel-before-deadline';
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockIsBackstageProtectedQueuedExecution.mockReturnValue(true);
+    mockDispatchModuleAction.mockRejectedValueOnce(Object.assign(
+      new Error(privateAbort),
+      { name: 'AbortError' }
+    ));
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'private-aborted-booking-prompt',
+        },
+      },
+      requestId: 'req-protected-provider-abort',
+      traceId: 'trace-protected-provider-abort',
+      runtimeExecutionMode: 'background',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: 'Protected Backstage generation failed.',
+      },
+    });
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-protected-provider-abort',
+        error: 'Protected Backstage generation failed.',
+      })
+    );
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(privateAbort);
+    expect(logger.error).not.toHaveBeenCalledWith(
+      'gpt.dispatch.timeout',
+      expect.anything()
+    );
+  });
+
   it('does not persist a generic transcript for successful protected queued generation', async () => {
     const privatePrompt = 'private-protected-success-prompt-sentinel';
     const privateResult = 'private-protected-success-result-sentinel';

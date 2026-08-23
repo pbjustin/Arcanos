@@ -73,6 +73,10 @@ import {
   runWithRequestAbortTimeout
 } from "@arcanos/runtime";
 import {
+  isCooperativeDeadlineExceededError,
+  runWithCooperativeAbortDrain,
+} from '@shared/async/cooperativeAbortDrain.js';
+import {
   recordDispatcherFallback,
   recordDispatcherMisroute,
   recordDispatcherRoute,
@@ -476,6 +480,25 @@ function isDispatchTimeoutError(err: unknown, timeoutMs?: number): boolean {
   }
 
   return DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) => normalizedMessage.includes(marker));
+}
+
+function isProtectedBackstageDispatchTimeoutError(
+  err: unknown,
+  timeoutMs?: number
+): boolean {
+  if (isCooperativeDeadlineExceededError(err)) {
+    return true;
+  }
+
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  if (isAbortError(err)) {
+    return normalizedMessage.includes('timed out after')
+      || DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) =>
+        normalizedMessage.includes(marker)
+      );
+  }
+
+  return isDispatchTimeoutError(err, timeoutMs);
 }
 
 function isDispatchCancellationError(err: unknown): boolean {
@@ -1982,9 +2005,21 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     const executeModuleAction = () =>
       dispatchModuleAction(activeEntry.module, action, payload);
+    const isProtectedBackstageGeneration =
+      protectedBackstageQueuedExecution
+      && activeEntry.module === BACKSTAGE_MODULE_NAME
+      && (action === 'generateBooking' || action === 'generateBookingWithHRC');
     const result = isResearchRun
       ? await runResearchWithAbortDrain(abortOptions, executeModuleAction)
-      : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
+      : isProtectedBackstageGeneration
+        ? await runWithCooperativeAbortDrain(
+            {
+              ...abortOptions,
+              scope: 'backstage_module_dispatch',
+            },
+            executeModuleAction
+          )
+        : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
     const notionEnrichmentUsed = wasBackstageNotionEnrichmentUsed();
 
     // Research owns and fences its persistence inside its aggregate workflow.
@@ -2055,7 +2090,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   } catch (err: any) {
       const errorMessage = String(err?.message ?? err);
       const isDispatchCancellation = isDispatchCancellationError(err);
-      const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
+      const isProtectedBackstageQueuedGenerationFailure =
+        protectedBackstageQueuedExecution
+        && activeEntry.module === BACKSTAGE_MODULE_NAME
+        && (action === 'generateBooking' || action === 'generateBookingWithHRC');
+      const isDispatchTimeout = !isDispatchCancellation && (
+        isProtectedBackstageQueuedGenerationFailure
+          ? isProtectedBackstageDispatchTimeoutError(err, timeoutMs)
+          : isDispatchTimeoutError(err, timeoutMs)
+      );
       const isRosterValidationFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'updateRoster' || action === 'simulateMatch')
@@ -2105,10 +2148,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'queryContinuity'
         && isBackstageContinuityQueryFailedError(err);
-      const isProtectedBackstageQueuedGenerationFailure =
-        protectedBackstageQueuedExecution
-        && activeEntry.module === BACKSTAGE_MODULE_NAME
-        && (action === 'generateBooking' || action === 'generateBookingWithHRC');
       const isUnclassifiedCanonFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'upsertStoryline' || action === 'appendCanonBeat')
@@ -2168,7 +2207,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         module: activeEntry.module,
         action,
         matchMethod,
-        error: errorMessage,
+        error: isProtectedBackstageQueuedGenerationFailure
+          ? dispatchErrorMessage
+          : errorMessage,
         timeoutMs,
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,

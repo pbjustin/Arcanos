@@ -101,6 +101,7 @@ import {
   type BackstageBookerWorkloadDecision,
 } from '@shared/backstage/backstageActionPolicy.js';
 import { resolveBackstageCompactOutputContract } from '@shared/backstage/backstageCompactOutputContract.js';
+import { BACKSTAGE_RESULT_POLL_WAIT_MS } from '@shared/backstage/backstageExecutionBudget.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
@@ -242,7 +243,6 @@ const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
-const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS = 40_000;
 const QUERY_AND_WAIT_DIRECT_ACTION_REASON = 'query_and_wait_direct_action';
@@ -2870,10 +2870,12 @@ router.post(
           if (queryAndWaitRequested) {
             requestedAsyncWaitForResultMs = resolveGptWaitTimeoutMs();
           } else if (executionPlan.heavyPrompt) {
-            requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
-              'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
-              DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS
-            );
+            requestedAsyncWaitForResultMs = protectedBackstageQueueRequired
+              ? BACKSTAGE_RESULT_POLL_WAIT_MS
+              : readPositiveIntegerEnv(
+                  'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
+                  BACKSTAGE_RESULT_POLL_WAIT_MS
+                );
           }
         }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(

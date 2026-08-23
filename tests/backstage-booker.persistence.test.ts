@@ -225,6 +225,7 @@ const {
 } = await import('../src/services/backstage-booker.js');
 const {
   markBackstageNotionEnrichmentUsed,
+  runWithBackstageProtectedQueuedExecution,
   runWithBackstageNotionEnrichmentAuthorization,
 } = await import('../src/services/backstageNotionEnrichmentAuthorization.js');
 const {
@@ -708,6 +709,21 @@ describe('Backstage Booker service persistence outcomes', () => {
       true,
       () => BackstageBookerModule.actions.generateBookingWithHRC({
         universeId: 'hrc-notion-universe',
+        prompt: 'Review the complete Raw card.'
+      })
+    );
+
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+      timeoutMs: 10_000,
+      sensitiveContext: true,
+    });
+  });
+
+  it('uses the non-caching sensitive HRC path for protected queued generation without Notion', async () => {
+    await runWithBackstageProtectedQueuedExecution(
+      false,
+      () => BackstageBookerModule.actions.generateBookingWithHRC({
+        universeId: 'hrc-protected-queue-universe',
         prompt: 'Review the complete Raw card.'
       })
     );

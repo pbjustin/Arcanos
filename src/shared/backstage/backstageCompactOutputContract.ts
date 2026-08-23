@@ -1025,7 +1025,8 @@ function countWhitespaceDelimitedWords(text: string): number {
  * cause-free terminal error and never starts a third provider attempt.
  */
 export async function runBackstageBookerCompactOutputAttempts<T>(
-  runAttempt: (compactOutputRetry: boolean) => Promise<T>
+  runAttempt: (compactOutputRetry: boolean) => Promise<T>,
+  canRetry: () => boolean = () => true
 ): Promise<BackstageCompactOutputAttemptResult<T>> {
   try {
     return {
@@ -1036,6 +1037,10 @@ export async function runBackstageBookerCompactOutputAttempts<T>(
     if (!isBackstageProviderOutputLengthExhaustionError(error)) {
       throw error;
     }
+  }
+
+  if (!canRetry()) {
+    throw new BackstageBookerOutputIncompleteError();
   }
 
   try {

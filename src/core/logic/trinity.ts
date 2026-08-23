@@ -1007,7 +1007,8 @@ export async function runThroughBrain(
               options.redactAuditContent,
               trustedPolicyPrompt,
               options.directAnswerSystemPolicyPrompt,
-              options.directAnswerUntrustedContextPrompt
+              options.directAnswerUntrustedContextPrompt,
+              options.cooperativeModelStageTimeout
             )
         });
       } catch (error) {

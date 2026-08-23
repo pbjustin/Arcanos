@@ -31,6 +31,7 @@ import {
 import {
   isProtectedBackstageQueuedGptJobInput,
   parseQueuedGptJobInput,
+  resolveProtectedBackstageQueuedGptJobAction,
 } from '@shared/gpt/asyncGptJob.js';
 import {
   extractGptDispatchPromptText,
@@ -46,6 +47,17 @@ import {
   PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE,
   protectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
+import {
+  resolveBackstageProviderDeferralDelayMs,
+  resolveBackstageExecutionBudgetPolicy,
+  resolveBackstageWorkerOperationDeadlineAt,
+  type BackstageExecutionBudgetPolicy,
+} from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  isCooperativeDeadlineExceededError,
+  runWithCooperativeAbortDrain,
+} from '@shared/async/cooperativeAbortDrain.js';
+import { resolveJobLeaseHeartbeatIntervalMs } from '@shared/jobs/jobLeaseTiming.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
@@ -104,8 +116,9 @@ import {
 } from '@services/openai/aiExecutionContext.js';
 import {
   createAbortError,
+  getRequestAbortSignal,
   isAbortError,
-  runWithRequestAbortContext
+  runWithRequestAbortContext,
 } from '@arcanos/runtime';
 import {
   buildNonReusableGptResultAutonomyState,
@@ -240,6 +253,31 @@ function initOpenAIClient() {
 
   const adapter = getOpenAIAdapter(adapterConfig);
   return adapter.getClient();
+}
+
+function readOptionalPositiveIntegerEnv(name: string): number | undefined {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+}
+
+function resolveProtectedBackstageWorkerBudget(
+  action: 'generateBooking' | 'generateBookingWithHRC'
+): BackstageExecutionBudgetPolicy {
+  return resolveBackstageExecutionBudgetPolicy({
+    profile: 'queued_generation',
+    action,
+    configuration: {
+      workerJobTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_WORKER_JOB_TIMEOUT_MS'
+      ),
+      workerGenerationStageTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS'
+      ),
+      workerRecoveryStageTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_REPAIR_STAGE_TIMEOUT_MS'
+      ),
+    },
+  });
 }
 
 function initializeWorkerOpenAIAdapterIfConfigured(): void {
@@ -726,6 +764,7 @@ export async function executeQueuedGptRequest(params: {
   jobId: string;
   rawInput: unknown;
   cancellationSignal?: AbortSignal;
+  startedAt?: Date | string | number;
 }): Promise<JobExecutionOutcome> {
   const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
 
@@ -740,6 +779,17 @@ export async function executeQueuedGptRequest(params: {
 
   const protectedBackstageQueuedExecution =
     parsedGptJobInput.value.protectedBackstage !== undefined;
+  const protectedExecutionBudget = parsedGptJobInput.value.protectedBackstage
+    ? resolveProtectedBackstageWorkerBudget(
+        parsedGptJobInput.value.protectedBackstage.action
+      )
+    : null;
+  const protectedOperationDeadlineAt = protectedExecutionBudget
+    ? resolveBackstageWorkerOperationDeadlineAt(
+        params.startedAt,
+        protectedExecutionBudget
+      )
+    : null;
   const routeStartedAtMs = Date.now();
   const {
     gptId,
@@ -930,6 +980,21 @@ export async function executeQueuedGptRequest(params: {
     executionModeReason: parsedGptJobInput.value.executionModeReason ?? null,
     promptLength: parsedGptJobInput.value.prompt?.length ?? null
   });
+  if (protectedExecutionBudget) {
+    routeLogger.info('gpt.job.backstage_timeout_plan', {
+      action: protectedExecutionBudget.action,
+      profile: protectedExecutionBudget.profile,
+      totalTimeoutMs: protectedExecutionBudget.totalTimeoutMs,
+      operationTimeoutMs: protectedExecutionBudget.operationTimeoutMs,
+      modelStageTimeoutMs: protectedExecutionBudget.modelStageTimeoutMs,
+      recoveryStageTimeoutMs: protectedExecutionBudget.recoveryStageTimeoutMs,
+      orchestrationReserveMs: protectedExecutionBudget.orchestrationReserveMs,
+      finalizationReserveMs: protectedExecutionBudget.finalizationReserveMs,
+      remainingOperationMs: protectedOperationDeadlineAt === null
+        ? null
+        : Math.max(0, protectedOperationDeadlineAt - Date.now()),
+    });
+  }
 
   if (isQueuedBridgeSmokeJobInput(parsedGptJobInput.value)) {
     const output = buildBridgeSmokeCompletedOutput();
@@ -955,14 +1020,36 @@ export async function executeQueuedGptRequest(params: {
         logger: routeLogger,
         bypassIntentRouting,
         runtimeExecutionMode: 'background',
-        parentAbortSignal: params.cancellationSignal,
+        parentAbortSignal: getRequestAbortSignal() ?? params.cancellationSignal,
         enforceQueuedBackstageMutationAdmission: true,
         queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
-    envelope = parsedGptJobInput.value.protectedBackstage
-      ? await runWithBackstageProtectedQueuedExecution(
-          parsedGptJobInput.value.protectedBackstage.notionEnrichmentAuthorized,
-          dispatch
+    const dispatchWithProtectedAuthorization = () =>
+      parsedGptJobInput.value.protectedBackstage
+        ? runWithBackstageProtectedQueuedExecution(
+            parsedGptJobInput.value.protectedBackstage.notionEnrichmentAuthorized,
+            dispatch
+          )
+        : dispatch();
+    envelope = protectedExecutionBudget && protectedOperationDeadlineAt !== null
+      ? await runWithCooperativeAbortDrain(
+          {
+            timeoutMs: protectedExecutionBudget.operationTimeoutMs,
+            deadlineAt: protectedOperationDeadlineAt,
+            requestId,
+            parentSignal: params.cancellationSignal,
+            abortMessage: 'Protected Backstage worker execution deadline exceeded.',
+            scope: 'backstage_worker',
+            maxDrainMs: protectedExecutionBudget.abortDrainTimeoutMs,
+            onDeadline: () => {
+              routeLogger.warn('gpt.job.backstage_deadline_exhausted', {
+                action: protectedExecutionBudget.action,
+                operationTimeoutMs: protectedExecutionBudget.operationTimeoutMs,
+                finalizationReserveMs: protectedExecutionBudget.finalizationReserveMs,
+              });
+            },
+          },
+          dispatchWithProtectedAuthorization
         )
       : await dispatch();
   } catch (error: unknown) {
@@ -979,11 +1066,19 @@ export async function executeQueuedGptRequest(params: {
     }
 
     if (parsedGptJobInput.value.protectedBackstage) {
+      const deadlineExceeded = isCooperativeDeadlineExceededError(
+        error,
+        'backstage_worker'
+      );
       const output = {
         ok: false,
         error: {
-          code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
-          message: 'Protected Backstage generation failed in the worker.',
+          code: deadlineExceeded
+            ? 'BACKSTAGE_ASYNC_TIMEOUT'
+            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+          message: deadlineExceeded
+            ? 'Protected Backstage generation reached its worker deadline.'
+            : 'Protected Backstage generation failed in the worker.',
         },
         _route: {
           gptId,
@@ -1001,7 +1096,9 @@ export async function executeQueuedGptRequest(params: {
             rawInput: params.rawInput,
             output,
           }),
-          errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
+          errorMessage: deadlineExceeded
+            ? 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.'
+            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
           retryable: false,
         };
       } catch {
@@ -1127,17 +1224,29 @@ export async function executeQueuedGptRequest(params: {
   };
 }
 
-interface JobHeartbeatLoopHandle {
+export interface JobHeartbeatLoopHandle {
   stop: () => void;
 }
 
-function startHeartbeatLoop(
+export function startHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
   job: Pick<JobData, 'id' | 'claim_generation'>,
   workerId: string,
-  onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void
+  onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void,
+  onHeartbeatError?: (error: unknown) => void
 ): JobHeartbeatLoopHandle {
   let stopped = false;
+  let intervalHandle: ReturnType<typeof setInterval> | null = null;
+  const stop = (): void => {
+    if (stopped) {
+      return;
+    }
+
+    stopped = true;
+    if (intervalHandle !== null) {
+      clearInterval(intervalHandle);
+    }
+  };
   const runHeartbeat = createNonOverlappingTaskRunner(
     async () => {
       if (stopped) {
@@ -1149,6 +1258,9 @@ function startHeartbeatLoop(
         shouldApplyResult: () => !stopped
       });
       if (!stopped) {
+        if (!heartbeatJob) {
+          stop();
+        }
         onHeartbeat?.(heartbeatJob);
       }
     },
@@ -1158,12 +1270,16 @@ function startHeartbeatLoop(
     }
   );
 
-  const intervalHandle = setInterval(() => {
+  intervalHandle = setInterval(() => {
     if (stopped) {
       return;
     }
 
     void runHeartbeat().catch((error: unknown) => {
+      if (!stopped) {
+        stop();
+        onHeartbeatError?.(error);
+      }
       logger.warn(
         'worker.job_heartbeat.failed',
         { module: 'job-runner', workerId, jobId: job.id },
@@ -1171,23 +1287,16 @@ function startHeartbeatLoop(
         error instanceof Error ? error : undefined
       );
     });
-  }, autonomyService.getClaimOptions().leaseMs
-    ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3))
-    : 10_000);
+  }, resolveJobLeaseHeartbeatIntervalMs(
+    autonomyService.getClaimOptions().leaseMs ?? 15_000
+  ));
 
   if (typeof intervalHandle.unref === 'function') {
     intervalHandle.unref();
   }
 
   return {
-    stop: () => {
-      if (stopped) {
-        return;
-      }
-
-      stopped = true;
-      clearInterval(intervalHandle);
-    }
+    stop
   };
 }
 
@@ -1594,6 +1703,38 @@ export async function runWorkerConsumerSlot(
         retryCount: job.retry_count ?? 0,
         maxRetries: job.max_retries ?? null
       });
+      let initialHeartbeatJob: Awaited<
+        ReturnType<WorkerAutonomyService['recordHeartbeat']>
+      >;
+      try {
+        initialHeartbeatJob = await autonomyService.recordHeartbeat(job, {
+          source: 'job-start-heartbeat',
+          shouldApplyResult: () => false
+        });
+      } catch (error: unknown) {
+        logger.warn(
+          'worker.job_initial_heartbeat.failed',
+          {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            jobId: job.id
+          },
+          { errorMessage: resolveErrorMessage(error) },
+          error instanceof Error ? error : undefined
+        );
+        await autonomyService.markJobLeaseLost(
+          job.id,
+          'Initial heartbeat failed before provider initialization.'
+        );
+        continue;
+      }
+      if (!initialHeartbeatJob) {
+        await autonomyService.markJobLeaseLost(
+          job.id,
+          'Initial heartbeat fence was lost before provider initialization.'
+        );
+        continue;
+      }
       await autonomyService.markJobStarted(job);
       void recordJobEvent({
         jobId: job.id,
@@ -1645,10 +1786,12 @@ export async function runWorkerConsumerSlot(
             { once: true }
           );
         }
-        if (job.cancel_requested_at) {
+        if (job.cancel_requested_at || initialHeartbeatJob.cancel_requested_at) {
           abortClaimedJob(
             'durable_cancellation',
-            job.cancel_reason ?? 'Queue job cancellation requested before execution.'
+            initialHeartbeatJob.cancel_reason
+              ?? job.cancel_reason
+              ?? 'Queue job cancellation requested before execution.'
           );
         }
         heartbeatHandle = startHeartbeatLoop(
@@ -1671,6 +1814,13 @@ export async function runWorkerConsumerSlot(
                 updatedJob.cancel_reason ?? 'Queue job cancellation requested.'
               );
             }
+          },
+          () => {
+            jobLeaseLost = true;
+            abortClaimedJob(
+              'lease_lost',
+              'Queue job lease renewal failed; local execution stopped for recovery.'
+            );
           }
         );
         if (jobLeaseLost) {
@@ -1724,6 +1874,19 @@ export async function runWorkerConsumerSlot(
           });
         }
 
+        const protectedBackstageAction = job.job_type === 'gpt'
+          ? resolveProtectedBackstageQueuedGptJobAction(job.input ?? {})
+          : null;
+        const protectedBackstageBudget = protectedBackstageAction
+          ? resolveProtectedBackstageWorkerBudget(protectedBackstageAction)
+          : null;
+        const protectedBackstageOperationDeadlineAt = protectedBackstageBudget
+          ? resolveBackstageWorkerOperationDeadlineAt(
+              job.started_at ?? job.created_at,
+              protectedBackstageBudget
+            )
+          : null;
+
         if (jobLeaseLost) {
           await autonomyService.markJobLeaseLost(
             job.id,
@@ -1765,36 +1928,54 @@ export async function runWorkerConsumerSlot(
             ensuredClientState.pausedUntil,
             runtimeSettings.idleBackoffMs
           );
-          const nowMs = Date.now();
-          if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-            logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+          const deadlineBoundedDelayMs =
+            protectedBackstageOperationDeadlineAt === null
+              ? delayMs
+              : resolveBackstageProviderDeferralDelayMs({
+                  deadlineAt: protectedBackstageOperationDeadlineAt,
+                  requestedDelayMs: delayMs,
+                });
+          if (deadlineBoundedDelayMs === null) {
+            logger.warn('gpt.job.backstage_deadline_prevents_provider_deferral', {
               module: 'job-runner',
               workerId: slotDefinition.workerId,
               jobId: job.id,
-              jobType: job.job_type,
-              nextRetryAt: ensuredClientState.pausedUntil ?? null,
-              providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
-              delayMs,
-              pollingContinues: true
+              action: protectedBackstageAction,
             });
-            lastProviderPauseLogAtMs = nowMs;
-          }
-          const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
-            delayMs,
-            errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
-            providerNextRetryAt: ensuredClientState.pausedUntil,
-            providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
-          });
-          if (deferralResult.action === 'lease_lost') {
-            await finalizeCancellationAfterTerminalCasMiss({
-              job,
-              fence: claimFence,
-              autonomyService,
-              jobStartedAtMs
+          } else {
+            const nowMs = Date.now();
+            if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+              logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+                module: 'job-runner',
+                workerId: slotDefinition.workerId,
+                jobId: job.id,
+                jobType: job.job_type,
+                nextRetryAt: ensuredClientState.pausedUntil ?? null,
+                providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
+                delayMs: deadlineBoundedDelayMs,
+                deadlineGuarded:
+                  protectedBackstageOperationDeadlineAt !== null,
+                pollingContinues: true
+              });
+              lastProviderPauseLogAtMs = nowMs;
+            }
+            const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
+              delayMs: deadlineBoundedDelayMs,
+              errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+              providerNextRetryAt: ensuredClientState.pausedUntil,
+              providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
             });
+            if (deferralResult.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job,
+                fence: claimFence,
+                autonomyService,
+                jobStartedAtMs
+              });
+            }
+            await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+            continue;
           }
-          await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
-          continue;
         }
         const queueWaitMs = Math.max(
           0,
@@ -1829,6 +2010,17 @@ export async function runWorkerConsumerSlot(
             },
             async () => {
               //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+              if (
+                job.job_type === 'gpt'
+                && protectedBackstageOperationDeadlineAt !== null
+              ) {
+                return executeQueuedGptRequest({
+                  jobId: job.id,
+                  rawInput: job.input ?? {},
+                  cancellationSignal: jobCancellationController.signal,
+                  startedAt: job.started_at ?? job.created_at,
+                });
+              }
               if (!openai) {
                 return {
                   status: 'failed',
@@ -1851,7 +2043,8 @@ export async function runWorkerConsumerSlot(
                 return executeQueuedGptRequest({
                   jobId: job.id,
                   rawInput: job.input ?? {},
-                  cancellationSignal: jobCancellationController.signal
+                  cancellationSignal: jobCancellationController.signal,
+                  startedAt: job.started_at ?? job.created_at,
                 });
               }
               return {
@@ -1873,8 +2066,6 @@ export async function runWorkerConsumerSlot(
           }, { aiUsage: aiUsageSummary });
         }
 
-        heartbeatHandle?.stop();
-        heartbeatHandle = null;
         if (jobLeaseLost) {
           logger.warn('worker.job_lease_lost.local_stop', {
             module: 'job-runner',
@@ -2088,8 +2279,6 @@ export async function runWorkerConsumerSlot(
         }
         }
       } catch (error: unknown) {
-        heartbeatHandle?.stop();
-        heartbeatHandle = null;
         if (jobLeaseLost) {
           logger.warn('worker.job_lease_lost.local_stop', {
             module: 'job-runner',

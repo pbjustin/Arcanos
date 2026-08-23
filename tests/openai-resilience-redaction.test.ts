@@ -38,4 +38,41 @@ describe('OpenAI resilience diagnostic redaction', () => {
       })
     );
   });
+
+  it('records caller cancellation separately from provider failure telemetry', async () => {
+    const cancellation = Object.assign(new Error('caller cancelled'), {
+      name: 'AbortError',
+    });
+
+    await expect(executeWithResilience(
+      async () => Promise.reject(cancellation),
+      { shouldCountFailure: () => false }
+    )).rejects.toBe(cancellation);
+
+    expect(markOperation).toHaveBeenCalledWith('openai.cancelled');
+    expect(markOperation).not.toHaveBeenCalledWith('openai.failure');
+    expect(recordTraceEvent).toHaveBeenCalledWith(
+      'openai.resilience.cancelled',
+      expect.objectContaining({ state: expect.any(String) })
+    );
+    expect(recordTraceEvent).not.toHaveBeenCalledWith(
+      'openai.resilience.failure',
+      expect.anything()
+    );
+  });
+
+  it('fails closed to provider failure telemetry when classification throws', async () => {
+    const providerFailure = new Error('provider-originated failure');
+
+    await expect(executeWithResilience(
+      async () => Promise.reject(providerFailure),
+      { shouldCountFailure: () => { throw new Error('classifier failed'); } }
+    )).rejects.toBe(providerFailure);
+
+    expect(markOperation).toHaveBeenCalledWith('openai.failure');
+    expect(recordTraceEvent).toHaveBeenCalledWith(
+      'openai.resilience.failure',
+      expect.anything()
+    );
+  });
 });
