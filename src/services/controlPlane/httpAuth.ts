@@ -215,12 +215,13 @@ function sendControlPlaneAuthError(
   });
 }
 
-export function controlPlaneHttpAuthenticationMiddleware(
+function applyControlPlaneHttpAuthentication(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
+  env: NodeJS.ProcessEnv
 ): void {
-  const result = authenticateControlPlaneHttpRequest(req);
+  const result = authenticateControlPlaneHttpRequest(req, env);
   if (!result.ok) {
     const configurationUnavailable = result.reason === 'configuration_unavailable';
     const statusCode = configurationUnavailable ? 503 : 401;
@@ -244,6 +245,22 @@ export function controlPlaneHttpAuthenticationMiddleware(
 
   req.controlPlanePrincipal = result.principal;
   next();
+}
+
+export function createControlPlaneHttpAuthenticationMiddleware(
+  env: NodeJS.ProcessEnv
+): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    applyControlPlaneHttpAuthentication(req, res, next, env);
+  };
+}
+
+export function controlPlaneHttpAuthenticationMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  applyControlPlaneHttpAuthentication(req, res, next, process.env);
 }
 
 export function requireControlPlaneOperator(

@@ -113,6 +113,36 @@ describe('system-state HTTP ingress boundary', () => {
     expect(response.headers['cache-control']).toBe('no-store');
   });
 
+  it('uses an explicit frozen authentication environment without mutating ambient configuration', async () => {
+    configureControlPlane('arcanos:read', 'operator:ambient-read-only');
+    const ambientScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+    const explicitToken = 'system-state-explicit-preview-token-1234567890';
+    const authenticationEnvironment = Object.freeze({
+      ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: explicitToken,
+      ARCANOS_CONTROL_PLANE_PRINCIPAL_ID: 'operator:explicit-preview',
+      ARCANOS_CONTROL_PLANE_SCOPES: 'mcp:invoke',
+    }) as NodeJS.ProcessEnv;
+    const app = express();
+    app.post('/status', createSystemStateHttpBoundary({
+      authenticationEnvironment,
+      maxClientRequests: 10,
+      windowMs: 60_000,
+    }));
+    app.post('/status', systemStateBodyParser);
+    app.post('/status', (_req, res) => res.status(204).end());
+
+    const response = await request(app)
+      .post('/status')
+      .set('Authorization', `Bearer ${explicitToken}`)
+      .send({ status: 'active' });
+
+    expect(response.status).toBe(204);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(process.env.ARCANOS_CONTROL_PLANE_SCOPES).toBe(ambientScopes);
+    expect(Object.isFrozen(authenticationEnvironment)).toBe(true);
+  });
+
   it('authenticates before allocating an oversized request body', async () => {
     const response = await request(buildApp())
       .post('/system-state')

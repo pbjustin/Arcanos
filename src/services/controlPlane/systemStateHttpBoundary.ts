@@ -15,6 +15,7 @@ import {
   authenticateControlPlaneHttpRequest,
   authorizeControlPlaneHttpScopes,
   controlPlaneHttpAuthenticationMiddleware,
+  createControlPlaneHttpAuthenticationMiddleware,
   requireControlPlaneOperator,
 } from './httpAuth.js';
 
@@ -70,6 +71,7 @@ type SystemStateBoundaryRequest = Request & {
 };
 
 export interface SystemStateHttpBoundaryOptions {
+  authenticationEnvironment?: NodeJS.ProcessEnv;
   maxClientRequests?: number;
   windowMs?: number;
 }
@@ -130,6 +132,11 @@ function sendSystemStateNotFound(res: Response): void {
 export function createSystemStateHttpBoundary(
   options: SystemStateHttpBoundaryOptions = {}
 ): RequestHandler {
+  const authenticateRequest = (req: Request) =>
+    authenticateControlPlaneHttpRequest(
+      req,
+      options.authenticationEnvironment
+    );
   const defaultWindowMs = options.windowMs
     ?? SYSTEM_STATE_RATE_LIMIT_WINDOW_MS;
   const clientRateLimit = createRateLimitMiddleware({
@@ -137,7 +144,7 @@ export function createSystemStateHttpBoundary(
     maxRequests: options.maxClientRequests
       ?? DEFAULT_SYSTEM_STATE_CLIENT_RATE_LIMIT,
     windowMs: defaultWindowMs,
-    skip: (req) => authenticateControlPlaneHttpRequest(req).ok,
+    skip: (req) => authenticateRequest(req).ok,
     keyGenerator: (req) => (
       `ingress:${resolveIngressClientAddress(req)}:system-state`
     ),
@@ -176,11 +183,16 @@ export function createSystemStateHttpBoundary(
       'system_state.http_authorization.denied'
     );
   };
+  const authenticateRequestMiddleware = options.authenticationEnvironment
+    ? createControlPlaneHttpAuthenticationMiddleware(
+        options.authenticationEnvironment
+      )
+    : controlPlaneHttpAuthenticationMiddleware;
   const middlewareChain: RequestHandler[] = [
     securityHeaders,
     setSystemStateNoStoreHeaders,
     clientRateLimit,
-    controlPlaneHttpAuthenticationMiddleware,
+    authenticateRequestMiddleware,
     requireControlPlaneOperator,
     principalRateLimit,
     requireOperationScope,

@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 126-request plan without network access.
+untracked worktree, limits, and the fixed 128-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -52,7 +52,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 126-request probe
+the lifecycle reports the exact preview hosts, run the current 128-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -209,6 +209,25 @@ identifier reflection. A paired worker request proves the passive worker denies
 the selector. This is component evidence for the identifier boundary, not the
 normal `/dispatch` route, authentication, a real admission/quota store, provider
 work, or persistent effects.
+
+The sealed `POST /status/auth-before-parser-contract` selector is
+`auth-before-parser`. The caller sends only that fixture name. Behind the
+credential-empty outer transport, the server runs the exact production
+system-state HTTP boundary and 64 KiB body parser over six server-owned,
+three-chunk requests. Missing configuration, missing and invalid bearer values,
+and a valid read-only principal all stop before any body byte is read; a valid
+synthetic operator with `mcp:invoke` sends exactly 65,536 bytes through one
+downstream sentinel, while 65,537 bytes return the fixed 413 parser response
+without reaching it. The synthetic environment and bearer never leave the
+fixture, `process.env` is not mutated, and the response reports confirmation,
+filesystem, database, memory, network, provider, and durable effects as
+disabled; the separately digest-gated import graph is the containment evidence
+supporting those declarations. A paired worker request must return the contained
+404. This is
+deployed component evidence for the exact production boundary/parser chain,
+not the normal application route, a live Railway bearer, confirmation, or a
+filesystem mutation; focused assembled-app tests remain authoritative for
+those composition and effect properties.
 
 Native contained application previews protect trusted PRs against accidental
 effects. They do not protect inherited secrets from malicious PR code; untrusted

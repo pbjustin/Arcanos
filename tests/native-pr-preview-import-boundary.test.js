@@ -110,6 +110,22 @@ const GPT_IDENTIFIER_URL = new URL(
   '../src/shared/gpt/gptIdentifier.ts',
   import.meta.url
 );
+const SYSTEM_STATE_HTTP_BOUNDARY_URL = new URL(
+  '../src/services/controlPlane/systemStateHttpBoundary.ts',
+  import.meta.url
+);
+const SYSTEM_STATE_BODY_PARSER_URL = new URL(
+  '../src/services/controlPlane/systemStateBodyParser.ts',
+  import.meta.url
+);
+const CONTROL_PLANE_HTTP_AUTH_URL = new URL(
+  '../src/services/controlPlane/httpAuth.ts',
+  import.meta.url
+);
+const PLATFORM_RUNTIME_SECURITY_URL = new URL(
+  '../src/platform/runtime/security.ts',
+  import.meta.url
+);
 
 async function readRailwayLauncherSource() {
   return (await readFile(RAILWAY_LAUNCHER_URL, 'utf8'))
@@ -149,6 +165,10 @@ async function readUniversalDispatchSource() {
 async function readGptIdentifierSource() {
   return (await readFile(GPT_IDENTIFIER_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
+}
+
+async function readNormalizedSource(url) {
+  return (await readFile(url, 'utf8')).replace(/\r\n/gu, '\n');
 }
 
 async function readSelfHealPredictiveApprovalSource() {
@@ -320,6 +340,83 @@ describe('native PR preview import boundary', () => {
       [reviewedFiles[1], driftedResolution],
       [reviewedFiles[2], driftedIdentifier],
     ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('admits and pins only the production status auth and body-parser seam', async () => {
+    const reviewedFiles = [
+      'src/platform/runtime/security.ts',
+      'src/services/controlPlane/httpAuth.ts',
+      'src/services/controlPlane/systemStateBodyParser.ts',
+      'src/services/controlPlane/systemStateHttpBoundary.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/app.ts',
+        'src/services/stateManager.ts',
+        'src/middleware/confirmGate.ts',
+        'src/routes/status.ts',
+        'src/routes/system-state.ts',
+      ])
+    );
+
+    const sources = new Map([
+      [reviewedFiles[0], await readNormalizedSource(PLATFORM_RUNTIME_SECURITY_URL)],
+      [reviewedFiles[1], await readNormalizedSource(CONTROL_PLANE_HTTP_AUTH_URL)],
+      [reviewedFiles[2], await readNormalizedSource(SYSTEM_STATE_BODY_PARSER_URL)],
+      [reviewedFiles[3], await readNormalizedSource(SYSTEM_STATE_HTTP_BOUNDARY_URL)],
+    ]);
+    for (const [filePath, source] of sources) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(
+        filePath,
+        source.replace(/\n/gu, '\r\n')
+      )).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        reviewedFiles[0],
+        replaceRequired(
+          sources.get(reviewedFiles[0]),
+          "'X-Frame-Options': 'DENY',",
+          "'X-Frame-Options': 'SAMEORIGIN',"
+        ),
+      ],
+      [
+        reviewedFiles[1],
+        replaceRequired(
+          sources.get(reviewedFiles[1]),
+          "const statusCode = configurationUnavailable ? 503 : 401;",
+          "const statusCode = configurationUnavailable ? 401 : 401;"
+        ),
+      ],
+      [
+        reviewedFiles[2],
+        replaceRequired(
+          sources.get(reviewedFiles[2]),
+          'export const SYSTEM_STATE_BODY_LIMIT_BYTES = 64 * 1024;',
+          'export const SYSTEM_STATE_BODY_LIMIT_BYTES = 128 * 1024;'
+        ),
+      ],
+      [
+        reviewedFiles[3],
+        replaceRequired(
+          sources.get(reviewedFiles[3]),
+          "const LEGACY_STATUS_PATH = '/status';",
+          "const LEGACY_STATUS_PATH = '/status-unsafe';"
+        ),
+      ],
+    ];
+    for (const [filePath, source] of semanticDrifts) {
       expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual(
         expect.arrayContaining([
           expect.stringContaining('critical entry file semantic digest'),

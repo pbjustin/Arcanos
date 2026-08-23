@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 126;
+const MAX_REQUESTS = 128;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -435,6 +435,25 @@ function dispatchGptIdentifierCase(caseId, fixtureName, status) {
     path: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
     pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
     role: 'web',
+  };
+}
+
+function statusAuthBoundaryCase(caseId, fixtureName) {
+  const fixture =
+    NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.fixtures[fixtureName];
+  return {
+    body: { fixture },
+    boundedResponse: true,
+    caseId,
+    expectedStatus: 200,
+    expectedType: 'status-auth-boundary-contract',
+    fixture,
+    fixtureName,
+    method: 'POST',
+    path: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
+    pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
+    role: 'web',
+    simulatedAuth: true,
   };
 }
 
@@ -865,6 +884,10 @@ export function buildNativePrPreviewRequestPlan() {
       'dispatch-gpt-identifier-oversized',
       'oversized',
       400
+    ),
+    statusAuthBoundaryCase(
+      'status-auth-before-parser',
+      'authBeforeParser'
     ),
     selfHealApprovalCase(
       'self-heal-approval-denied-outcomes',
@@ -1364,6 +1387,20 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'POST',
       path: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier.path,
+      role: 'worker',
+    },
+    {
+      body: {
+        fixture:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.fixtures
+            .authBeforeParser,
+      },
+      caseId: 'worker-status-auth-boundary-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'POST',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
       role: 'worker',
     },
     {
@@ -2742,6 +2779,135 @@ function expectedGamingSourcePayload(requestCase) {
 const DISPATCH_GPT_IDENTIFIER_TIMESTAMP_SENTINEL =
   '<validated-iso-8601-timestamp>';
 
+function expectedStatusAuthBoundaryContractPayload(requestCase, options) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary;
+  if (requestCase.fixtureName !== 'authBeforeParser') {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  const outcome = (
+    name,
+    bodyBytes,
+    bodyBytesRead,
+    boundaryNextCalls,
+    parserCalls,
+    parserNextCalls,
+    downstreamCalls,
+    statusCode,
+    errorCode,
+    parsedPaddingLength = null
+  ) => ({
+    bodyBytes,
+    bodyBytesRead,
+    boundaryNextCalls,
+    cacheControl: 'no-store',
+    downstreamCalls,
+    errorCode,
+    name,
+    parsedPaddingLength,
+    parserCalls,
+    parserNextCalls,
+    pragma: 'no-cache',
+    statusCode,
+  });
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    filesystemBoundaryReached: false,
+    fixture: contract.fixtures.authBeforeParser,
+    identity: {
+      prNumber: options.prNumber,
+      sourceCommit: options.commitSha,
+    },
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    statusAuthBoundary: {
+      authBeforeParser: true,
+      bodyLimitBytes: contract.bodyLimitBytes,
+      callerBodyControlsProbe: false,
+      caseCount: 6,
+      cases: [
+        outcome(
+          'auth-unavailable-over',
+          contract.bodyLimitBytes + 1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          503,
+          'CONTROL_PLANE_AUTH_UNAVAILABLE'
+        ),
+        outcome(
+          'missing-auth-over',
+          contract.bodyLimitBytes + 1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          401,
+          'CONTROL_PLANE_AUTH_REQUIRED'
+        ),
+        outcome(
+          'invalid-auth-over',
+          contract.bodyLimitBytes + 1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          401,
+          'CONTROL_PLANE_AUTH_REQUIRED'
+        ),
+        outcome(
+          'read-scope-over',
+          contract.bodyLimitBytes + 1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          403,
+          'CONTROL_PLANE_SCOPE_DENIED'
+        ),
+        outcome(
+          'mcp-scope-exact',
+          contract.bodyLimitBytes,
+          contract.bodyLimitBytes,
+          1,
+          1,
+          1,
+          1,
+          204,
+          null,
+          contract.bodyLimitBytes - 14
+        ),
+        outcome(
+          'mcp-scope-over',
+          contract.bodyLimitBytes + 1,
+          contract.bodyLimitBytes + 1,
+          1,
+          1,
+          0,
+          0,
+          413,
+          'SYSTEM_STATE_REQUEST_INVALID'
+        ),
+      ],
+      componentExecuted: true,
+      downstreamCalls: 1,
+      requiredScope: contract.requiredScope,
+      serverOwnedBodies: true,
+    },
+  };
+}
+
 function expectedDispatchGptIdentifierContractPayload(requestCase) {
   const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
   if (requestCase.fixtureName === 'maximumLength') {
@@ -2898,6 +3064,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedMcpBodyCapContractPayload(requestCase);
     case 'dispatch-gpt-identifier-contract':
       return expectedDispatchGptIdentifierContractPayload(requestCase);
+    case 'status-auth-boundary-contract':
+      return expectedStatusAuthBoundaryContractPayload(requestCase, options);
     case 'self-heal-approval-contract':
       return expectedSelfHealApprovalContractPayload(requestCase);
     case 'gaming-canary':
@@ -2971,6 +3139,64 @@ function validateResponseBody(requestCase, bodyBytes, options) {
       };
       requireExactJson(normalizedBody, expectedBody, requestCase.caseId);
       return;
+    }
+  }
+  if (requestCase.expectedType === 'status-auth-boundary-contract') {
+    if (
+      bodyText.includes('Bearer ')
+      || bodyText.includes('x'.repeat(64))
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_REFLECTION',
+        requestCase.caseId
+      );
+    }
+    if (
+      body?.identity?.prNumber !== options.prNumber
+      || body?.identity?.sourceCommit !== options.commitSha
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_IDENTITY_INVALID',
+        requestCase.caseId
+      );
+    }
+    const boundary = body?.statusAuthBoundary;
+    const cases = Array.isArray(boundary?.cases) ? boundary.cases : [];
+    if (
+      boundary?.authBeforeParser !== true
+      || boundary?.bodyLimitBytes
+        !== NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.bodyLimitBytes
+      || boundary?.caseCount !== 6
+      || cases.length !== 6
+      || boundary?.componentExecuted !== true
+      || boundary?.downstreamCalls !== 1
+      || boundary?.requiredScope
+        !== NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.requiredScope
+      || boundary?.serverOwnedBodies !== true
+      || cases.slice(0, 4).some((outcome) => (
+        outcome?.bodyBytesRead !== 0
+        || outcome?.boundaryNextCalls !== 0
+        || outcome?.parserCalls !== 0
+        || outcome?.parserNextCalls !== 0
+        || outcome?.downstreamCalls !== 0
+      ))
+      || cases[4]?.bodyBytesRead
+        !== NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.bodyLimitBytes
+      || cases[4]?.boundaryNextCalls !== 1
+      || cases[4]?.parserCalls !== 1
+      || cases[4]?.parserNextCalls !== 1
+      || cases[4]?.downstreamCalls !== 1
+      || cases[5]?.bodyBytesRead
+        !== NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.bodyLimitBytes + 1
+      || cases[5]?.boundaryNextCalls !== 1
+      || cases[5]?.parserCalls !== 1
+      || cases[5]?.parserNextCalls !== 0
+      || cases[5]?.downstreamCalls !== 0
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_OUTCOME_INVALID',
+        requestCase.caseId
+      );
     }
   }
   requireExactJson(body, expectedBody, requestCase.caseId);
@@ -3117,6 +3343,7 @@ async function executeRequestCase(
     (
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+      || requestCase.expectedType === 'status-auth-boundary-contract'
     )
     && response.headers.get('pragma') !== 'no-cache'
   ) {
@@ -3130,6 +3357,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'backstage-storyline-contract'
       || requestCase.expectedType === 'backstage-generation-contract'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
+      || requestCase.expectedType === 'status-auth-boundary-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
     )
     && response.headers.get(
@@ -3172,6 +3400,21 @@ async function executeRequestCase(
       );
     }
   }
+  if (requestCase.expectedType === 'status-auth-boundary-contract') {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary;
+    if (
+      response.headers.get(contract.proofHeaders.authBeforeParser) !== 'true'
+      || response.headers.get(contract.proofHeaders.bodyLimitBytes)
+        !== String(contract.bodyLimitBytes)
+      || response.headers.get(contract.proofHeaders.downstreamCalls) !== '1'
+      || response.headers.has('x-response-truncated')
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
 
   const bodyBytes = await readBoundedResponseBody(
     response,
@@ -3194,6 +3437,15 @@ async function executeRequestCase(
   ) {
     fail(
       'NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_RESPONSE_TOO_LARGE',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.expectedType === 'status-auth-boundary-contract'
+    && bodyBytes.length > 8 * 1024
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_RESPONSE_TOO_LARGE',
       requestCase.caseId
     );
   }
@@ -3229,6 +3481,9 @@ async function executeRequestCase(
     simulatedAuth: requestCase.simulatedAuth === true,
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'status-auth-boundary-contract'
+      ? { statusAuthBoundaryVerified: true }
       : {}),
     ...(generationProofStartedAt === null
       ? {}
