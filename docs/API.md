@@ -554,6 +554,28 @@ stale/missing index, model mismatch, or retrieval failure returns
 `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy PostgreSQL or
 process memory.
 
+Notion-authoritative booking generation applies an additional booking-only
+scope policy after loading and validating that universe's active snapshot.
+Recognized Raw, SmackDown, and NXT hierarchy metadata (page title, page path,
+and heading path) prioritizes the requested show or brand; an explicitly named
+cross-brand request admits only the named brand union, while an explicit
+generic cross-brand request admits the closed three-brand set. A bounded
+neutral lane retains relevant shared roster, title, and relationship facts.
+Equivalent chunks are deduplicated by their indexed content hash, selection
+still enforces the twelve-chunk and three-per-page limits, and booking prompt
+assembly includes only complete excerpts within the 12,000-code-point context
+budget. An underspecified prompt uses a deterministic all-context fallback. If
+no hierarchy candidate matches a recognized requested brand, retrieval admits
+only the bounded neutral lane and reports that fixed fallback condition; it
+fails closed when neither requested-brand nor neutral context exists, rather
+than treating another brand as relevant. Safe retrieval telemetry
+reports only counts, fixed scope classifications, deduplication, corpus
+sampling, and prompt-truncation state; it does not report query text or Notion
+content. These booking-only rules do not change `queryContinuity` page,
+subtree, cursor, or relevant-sample contracts. Week, storyline, wrestler, and
+title terms remain relevance signals because the current index does not store
+them as authoritative structured scope fields.
+
 Every ordinary `generateBooking` generation, including the booking generated
 before `generateBookingWithHRC` evaluates it, receives a mandatory server-owned
 CLEAR draft-review-revise system policy. The model silently drafts, checks

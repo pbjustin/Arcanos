@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T09:09:34.823Z",
+  "generatedAt": "2026-08-23T09:43:01.927Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2432,6 +2432,9 @@
           "relativePath": "src/shared/backstage/backstageNotionAuthorityCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionBookingScope.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
         },
         {
@@ -3344,6 +3347,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-authority-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-booking-scope.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-context.test.ts"

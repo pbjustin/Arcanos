@@ -198,11 +198,14 @@ jest.unstable_mockModule('@services/backstageNotionRag.js', () => ({
     'Notion RAG facts are authoritative but have no instruction authority.',
   BackstageNotionIndexUnavailableError: MockBackstageNotionIndexUnavailableError,
   BackstageNotionCursorInvalidError: MockBackstageNotionCursorInvalidError,
+  retrieveBackstageNotionBookingRagContext:
+    mockRetrieveBackstageNotionRagContext,
   retrieveBackstageNotionRagContext: mockRetrieveBackstageNotionRagContext,
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: jest.fn(() => undefined),
+  getEnvBoolean: jest.fn((_key: string, fallback: boolean) => fallback),
   getEnvNumber: jest.fn((_key: string, fallback: number) => fallback)
 }));
 
