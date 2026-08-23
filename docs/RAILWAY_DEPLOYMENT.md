@@ -300,6 +300,78 @@ Environment separation:
 - Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
 - Confirm each service role through an approved control plane against the exact project, environment, and service. Do not reproduce raw variable output in reports.
 
+### Disposable Backstage durable heavy-flow proof
+
+`scripts/railway-backstage-heavy-proof-supervisor.mjs` is a non-production,
+one-shot start command for proving the Backstage durable queue boundary. It is
+not the canonical Railway start command and must never be configured on the
+canonical project. The supervisor validates the disposable target, performs a
+role-ordered read-only database preflight, then starts the unchanged
+`scripts/start-railway-service-with-integrity.mjs` wrapper. The worker also
+starts the credential-free loopback OpenAI fixture; the fixed fictional SDK
+key exists only in the supervised worker child.
+
+The approved target is a new disposable project in the approved workspace,
+with one isolated environment named `backstage-heavy-pr-<PR>-e2e`, exactly the
+services `Postgres`, `Redis`, `arcanos-worker-pr<PR>-heavy`, and
+`arcanos-web-pr<PR>-heavy`, and exactly two READY volumes mounted at
+`/var/lib/postgresql/data` and `/data`. Both application services use one
+replica and the exact start command
+`node scripts/railway-backstage-heavy-proof-supervisor.mjs`. Set restart policy
+to `NEVER` with zero retries: the fresh-database preflights deliberately make
+this proof non-restartable. Only the web service receives an HTTP domain. PostgreSQL,
+Redis, and the worker receive neither an HTTP domain nor a TCP proxy.
+
+Both application roles require the exact marker
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET=dedicated-backstage-heavy-preview-v1`,
+one shared bounded `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID`, exact Postgres and
+Redis service ID/name/private-host markers, `ARCANOS_PREVIEW_ISOLATION=true`,
+`FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true`, and
+`OPENAI_API_KEY_REQUIRED=false`. They share one fresh payload-protection key
+and have no previous key. The worker alone receives
+`ARCANOS_PREVIEW_OPENAI_FIXTURE=backstage-heavy-compact-retry-v1` and the
+loopback base URL; it has no Booker access token or job-read secret. The web
+alone receives the dedicated Booker access token, a distinct job-read secret,
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, and the dead
+loopback base URL. Do not configure any real provider key, alternate provider
+base, database/Redis alias, proxy/preload option, or external Notion variable
+on either role.
+
+The authorized run order is:
+
+1. Before application deployment, attest the exact project, environment,
+   four-service/two-volume topology, private data hosts, absence of public data
+   exposure, exact source revision, one replica per app, and empty fresh
+   Postgres. Do not run an initializer or migration command.
+2. Deploy the worker at the exact revision first. Its read-only preflight
+   requires `public.job_data` and `public.job_events` to be absent; normal
+   worker bootstrap may create them only after the integrity wrapper passes.
+3. After worker readiness, deploy the web at the same revision. Its read-only
+   preflight requires both job tables to exist and both to contain zero rows.
+4. Run `scripts/railway-backstage-heavy-e2e-probe.mjs` only with both
+   `--execute` and `--allow-network`. The dry-run default makes no network
+   request. The executable re-attests the Railway control plane before the two
+   identical authenticated submissions and never supplies an explicit
+   idempotency key.
+5. Run `scripts/railway-backstage-heavy-at-rest-attestor.mjs` inside the exact
+   worker only with both `--execute` and `--allow-database-read`. It uses a
+   read-only transaction and bounded loopback attestation; it neither decrypts
+   payloads nor changes database state.
+6. Preserve only bounded, secret-free output, then delete the whole disposable
+   project. Verify the project and web domain are gone and separately confirm
+   the canonical services/deployments were unchanged.
+
+A passing run proves the authenticated route selected the heavy queued policy,
+two actor-and-semantic-identical requests produced one derived-idempotency job,
+the worker renewed its lease, the fixture observed exactly one provider-health
+model-list check, an incomplete 6,000-token Responses attempt, and one
+fresh compact retry, and the capability-protected terminal read returned the
+encrypted-at-rest result. It is proof-supervised normal application/worker
+evidence, not canonical top-level start-command parity, a real OpenAI or Notion
+credential test, model-quality evidence, a production deployment, or rollback
+proof. A local operator orchestration file under `.codex-local/` may coordinate
+the disposable run, but it remains untracked and is never release evidence.
+
 ## Run locally
 
 Use the build, test, and `validate:railway` checks above for non-deploying validation. Do not start the application with Railway or production variables as a deployment check.

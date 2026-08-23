@@ -243,6 +243,40 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['transport literal', 'Write exactly this token: TRANSPORT', 'Book six matches.'],
+    ['canonical literal', 'Book six matches.', 'Write exactly this token: CANONICAL'],
+  ])('executes the explicit canonical prompt when message is a conflicting %s', async (
+    _label,
+    message,
+    prompt
+  ) => {
+    mockDispatchModuleAction.mockImplementationOnce(
+      async (_moduleName: string, action: string, payload: unknown) => {
+        expect(action).toBe('generateBooking');
+        return normalizeBackstageBookerSchemaDrivenActionPayload(
+          'generateBooking',
+          payload
+        ).prompt;
+      }
+    );
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'canonical-prompt-dispatch-universe',
+          message,
+          prompt,
+        },
+      },
+      requestId: `req-booker-canonical-prompt-${_label.replace(' ', '-')}`
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({ ok: true, result: prompt }));
+  });
+
   it('does not forward top-level universe scope into a non-Backstage explicit payload', async () => {
     mockDetectBackstageBookerIntent.mockReturnValue(null);
     mockDispatchModuleAction.mockImplementationOnce(

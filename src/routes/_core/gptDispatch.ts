@@ -102,6 +102,7 @@ import {
 import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
 import {
+  buildGptDispatchPayload,
   extractGptDispatchPromptText,
   extractPreparedGptDispatchPromptText,
 } from '@shared/gpt/gptRequestAction.js';
@@ -233,125 +234,10 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
   };
 }
 
-const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
-  'message',
-  'prompt',
-  'userInput',
-  'content',
-  'text',
-  'query',
-  'messages',
-  'sessionId',
-  'mode',
-  'game',
-  'url',
-  'urls',
-  'guideUrl',
-  'guideUrls',
-  'audit',
-  'enableAudit',
-  'hrc',
-  'enableHrc',
-  'overrideAuditSafe',
-  'answerMode',
-  'maxWords',
-  'max_words',
-  '__arcanosExecutionMode',
-  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
-] as const;
-
-const FORWARDED_PROMPT_ALIAS_KEYS = new Set<string>([
-  'message',
-  'prompt',
-  'userInput',
-  'content',
-  'text',
-  'query',
-  'messages',
-]);
-
-function mergeForwardedTopLevelPayloadFields(
-  body: Record<string, unknown>,
-  explicitPayload: Record<string, unknown>
-): Record<string, unknown> {
-  const mergedPayload = { ...explicitPayload };
-  const explicitPayloadHasPromptAlias = Array.from(FORWARDED_PROMPT_ALIAS_KEYS)
-    .some((key) => Object.prototype.hasOwnProperty.call(explicitPayload, key));
-
-  for (const key of FORWARDED_TOP_LEVEL_PAYLOAD_KEYS) {
-    if (explicitPayloadHasPromptAlias && FORWARDED_PROMPT_ALIAS_KEYS.has(key)) {
-      continue;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(mergedPayload, key)) {
-      continue;
-    }
-
-    const forwardedValue = body[key];
-    if (forwardedValue !== undefined) {
-      mergedPayload[key] = forwardedValue;
-    }
-  }
-
-  return mergedPayload;
-}
-
-/**
- * Build module action payload while preserving explicit caller payloads.
- * Inputs: raw request body and resolved module action.
- * Output: payload object passed to module action handlers.
- * Edge cases: when body.payload exists, it is forwarded verbatim for strict action contracts.
- */
-function buildDispatchPayload(
-  body: unknown,
-  promptOverride?: { promptText: string | null },
-  annotateBackstageOrigin = false,
-): unknown {
-  //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
-  if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
-    const explicitPayload = body.payload;
-    if (isRecord(explicitPayload)) {
-      const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
-      delete sanitizedPayload.gptId;
-      if (annotateBackstageOrigin) {
-        if (
-          !Object.prototype.hasOwnProperty.call(sanitizedPayload, 'universeId')
-          && body.universeId !== undefined
-        ) {
-          sanitizedPayload.universeId = body.universeId;
-        }
-        markBackstageBookerExplicitPayload(sanitizedPayload, Object.keys(explicitPayload));
-      }
-      return sanitizedPayload;
-    }
-    return explicitPayload;
-  }
-
-  const prompt = promptOverride
-    ? promptOverride.promptText
-    : extractGptPromptText(body);
-
-  //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
-  if (isRecord(body)) {
-    const normalizedPayload = { ...body };
-    delete normalizedPayload.gptId;
-    if (prompt) {
-      normalizedPayload.prompt = prompt;
-    }
-    if (annotateBackstageOrigin) {
-      markBackstageBookerFlattenedPayload(normalizedPayload);
-    }
-    return normalizedPayload;
-  }
-
-  //audit Assumption: scalar request bodies should still map to text prompt payloads; failure risk: scalar body dropped by module handlers; expected invariant: string input remains routable as prompt; handling strategy: wrap scalar input in object payload.
-  if (typeof prompt === "string" && prompt.length > 0) {
-    return { prompt };
-  }
-
-  //audit Assumption: legacy callers send top-level fields instead of payload wrappers; failure risk: module breakage for compatibility clients; expected invariant: top-level body remains supported; handling strategy: forward raw body fallback.
-  return body;
-}
+const BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER = Object.freeze({
+  markExplicitPayload: markBackstageBookerExplicitPayload,
+  markFlattenedPayload: markBackstageBookerFlattenedPayload,
+});
 
 function applyRuntimeExecutionModeOverride(
   payload: unknown,
@@ -1170,10 +1056,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       ? { promptText: boundedPromptCandidate }
       : undefined;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
-    buildDispatchPayload(
+    buildGptDispatchPayload(
       body,
       boundedPromptOverride,
       resolved?.entry.module === BACKSTAGE_MODULE_NAME
+        ? BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+        : undefined
     ),
     runtimeExecutionMode
   );
@@ -1740,7 +1628,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     availableActions = moduleMetadata?.actions ?? [];
     requestedAction = resolveGptModuleRequestedActionAlias(rawRequestedAction, availableActions);
     const autoRoutedPreDispatchPayload = applyRuntimeExecutionModeOverride(
-      buildDispatchPayload(body, boundedPromptOverride, true),
+      buildGptDispatchPayload(
+        body,
+        boundedPromptOverride,
+        BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+      ),
       runtimeExecutionMode
     );
     payload = enrichWritingDispatchPayload(autoRoutedPreDispatchPayload, {

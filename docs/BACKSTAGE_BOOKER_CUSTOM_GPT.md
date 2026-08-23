@@ -470,6 +470,7 @@ counter.
 | `400` | The closed request envelope or action payload is invalid. Correct the request shape. |
 | `404` | The exact page or section was not found. Correct the title, full path, or section path. |
 | `409` | The scope is ambiguous or the cursor is invalid/stale. Disambiguate the scope, or discard a failed traversal and restart cursor-free. |
+| `413` | The protected asynchronous generation input exceeds the queue payload limit. Reduce the request; the server rejects it before job planning or persistence. |
 | `429` | The request budget was exceeded. Honor `Retry-After`. |
 | `500` | The continuity answer or bounded output could not be completed. Do not present partial output or substitute legacy data. |
 | `503` | Dedicated-bearer provenance is missing or unverified, the Notion authority latch cannot be resolved, or the authoritative index is unavailable or stale. Correct authentication or configuration when applicable; otherwise retry later. Never fall back to PostgreSQL or process memory. |

@@ -28,10 +28,8 @@ export const BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE =
 const AES_256_KEY_BYTES = 32;
 const AES_GCM_IV_BYTES = 12;
 const AES_GCM_AUTH_TAG_BYTES = 16;
-const MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024;
+export const BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024;
 const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
-const CANONICAL_BASE64_PATTERN =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const IDENTITY_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 export type BackstageJobPayloadPurpose =
@@ -73,6 +71,7 @@ export type BackstageJobPayloadProtectionErrorCode =
   | 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID'
   | 'BACKSTAGE_JOB_PAYLOAD_ENVELOPE_INVALID'
   | 'BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED'
+  | 'BACKSTAGE_JOB_PAYLOAD_TOO_LARGE'
   | 'BACKSTAGE_JOB_PAYLOAD_AUTHENTICATION_FAILED';
 
 const ERROR_MESSAGES: Readonly<Record<BackstageJobPayloadProtectionErrorCode, string>> =
@@ -89,6 +88,8 @@ const ERROR_MESSAGES: Readonly<Record<BackstageJobPayloadProtectionErrorCode, st
       'Backstage job payload envelope is invalid.',
     BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED:
       'Backstage job payload serialization failed.',
+    BACKSTAGE_JOB_PAYLOAD_TOO_LARGE:
+      'Backstage job payload exceeds the protected size limit.',
     BACKSTAGE_JOB_PAYLOAD_AUTHENTICATION_FAILED:
       'Backstage job payload authentication failed.',
   });
@@ -147,6 +148,33 @@ function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly str
     && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
 }
 
+function hasCanonicalBase64Syntax(value: string): boolean {
+  if (value.length === 0 || value.length % 4 !== 0) {
+    return false;
+  }
+
+  const paddingBytes = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const dataLength = value.length - paddingBytes;
+  for (let index = 0; index < dataLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const base64Character =
+      (code >= 0x41 && code <= 0x5a)
+      || (code >= 0x61 && code <= 0x7a)
+      || (code >= 0x30 && code <= 0x39)
+      || code === 0x2b
+      || code === 0x2f;
+    if (!base64Character) {
+      return false;
+    }
+  }
+  for (let index = dataLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 0x3d) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function decodeCanonicalBase64(
   value: unknown,
   options: { exactBytes?: number; maximumBytes?: number }
@@ -154,7 +182,6 @@ function decodeCanonicalBase64(
   if (
     typeof value !== 'string'
     || value.length === 0
-    || !CANONICAL_BASE64_PATTERN.test(value)
   ) {
     return null;
   }
@@ -163,6 +190,9 @@ function decodeCanonicalBase64(
     options.maximumBytes !== undefined
     && value.length > Math.ceil(options.maximumBytes / 3) * 4
   ) {
+    return null;
+  }
+  if (!hasCanonicalBase64Syntax(value)) {
     return null;
   }
 
@@ -176,6 +206,12 @@ function decodeCanonicalBase64(
   }
 
   return decoded;
+}
+
+function isBackstageJobPayloadCiphertextByteLengthAllowed(byteLength: number): boolean {
+  return Number.isSafeInteger(byteLength)
+    && byteLength >= 0
+    && byteLength <= BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES;
 }
 
 function deriveKeyId(key: Buffer): string {
@@ -376,7 +412,7 @@ function parseEnvelope(rawEnvelope: unknown): {
 
   const iv = decodeCanonicalBase64(rawEnvelope.iv, { exactBytes: AES_GCM_IV_BYTES });
   const ciphertext = decodeCanonicalBase64(rawEnvelope.ciphertext, {
-    maximumBytes: MAX_CIPHERTEXT_BYTES,
+    maximumBytes: BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES,
   });
   const authTag = decodeCanonicalBase64(rawEnvelope.authTag, {
     exactBytes: AES_GCM_AUTH_TAG_BYTES,
@@ -415,6 +451,11 @@ export function sealBackstageJobPayload(input: {
   if (serializedPayload === undefined) {
     return fail('BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED');
   }
+  if (!isBackstageJobPayloadCiphertextByteLengthAllowed(
+    Buffer.byteLength(serializedPayload, 'utf8')
+  )) {
+    return fail('BACKSTAGE_JOB_PAYLOAD_TOO_LARGE');
+  }
 
   const iv = randomBytes(AES_GCM_IV_BYTES);
   const cipher = createCipheriv('aes-256-gcm', material.current.key, iv, {
@@ -425,6 +466,9 @@ export function sealBackstageJobPayload(input: {
     cipher.update(serializedPayload, 'utf8'),
     cipher.final(),
   ]);
+  if (!isBackstageJobPayloadCiphertextByteLengthAllowed(ciphertext.length)) {
+    return fail('BACKSTAGE_JOB_PAYLOAD_TOO_LARGE');
+  }
 
   return Object.freeze({
     version: BACKSTAGE_JOB_PAYLOAD_ENVELOPE_VERSION,

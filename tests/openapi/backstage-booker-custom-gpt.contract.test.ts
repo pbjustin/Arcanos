@@ -243,6 +243,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '400',
       '404',
       '409',
+      '413',
       '429',
       '500',
       '503',
@@ -252,6 +253,16 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       content: {
         'application/json': {
           schema: { $ref: '#/components/schemas/BackstageAsyncAcceptedResponse' },
+        },
+      },
+    });
+    expect(publicOperation.responses['413']).toMatchObject({
+      headers: {
+        'Cache-Control': { $ref: '#/components/headers/NoStore' },
+      },
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
         },
       },
     });

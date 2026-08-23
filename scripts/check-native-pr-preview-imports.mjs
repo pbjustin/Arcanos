@@ -659,7 +659,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageJobPayloadProtection.ts',
-    '07af40fc9f66086f28727c0accc09c9ac9b95767e8b15802608a9dc756793de0',
+    '98164fec89091c5281a129c252d97ca42b9b9c68a5e8b3159377599ca6531383',
   ],
   [
     'src/shared/backstage/backstageQueuedJobResultProtection.ts',

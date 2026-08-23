@@ -218,6 +218,23 @@ export const backstageBookerAccessAuthMiddleware: RequestHandler = (
   next();
 };
 
+/**
+ * Establish the dedicated Backstage actor when the exact configured bearer is
+ * present, without authorizing the surrounding route by itself. Callers must
+ * retain their own capability, confirmation, and ownership gates.
+ */
+export const optionalBackstageBookerAccessActorMiddleware: RequestHandler = (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): void => {
+  const result = authenticateBackstageBookerAccessRequest(req);
+  if (result.ok) {
+    establishBackstageBookerAccessAuthentication(req, result.credential);
+  }
+  next();
+};
+
 /** Defense in depth for protected Backstage leaf routes. */
 export const requireBackstageBookerAccessAuthentication: RequestHandler = (
   req: Request,

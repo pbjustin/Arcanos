@@ -136,6 +136,21 @@
               }
             }
           },
+          "413": {
+            "description": "Protected booking generation exceeded the durable worker payload limit and was rejected before job planning or persistence.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "The public request budget was exceeded.",
             "headers": {

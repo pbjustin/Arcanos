@@ -47,6 +47,7 @@ export interface GenericJobCancellationResult {
 }
 
 export interface GenericJobsRouterDependencies {
+  establishCancellationActor?: express.RequestHandler;
   getJobById: (jobId: string) => Promise<GenericJobData | null>;
   isJobRepositoryUnavailable: (error: unknown) => boolean;
   requestJobCancellation: (
@@ -95,6 +96,9 @@ const {
   validateBridgeCredential,
   verifyJobReadCapability,
 } = dependencies;
+const establishCancellationActor: express.RequestHandler =
+  dependencies.establishCancellationActor
+  ?? ((_req, _res, next) => next());
 const router = express.Router();
 router.use('/jobs', noStoreResponse);
 
@@ -537,6 +541,7 @@ router.post(
   '/jobs/:id/cancel',
   validateJobsJsonRouteParams,
   requireJobReadCapabilityBeforeConfirmation,
+  establishCancellationActor,
   confirmCancellation,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;

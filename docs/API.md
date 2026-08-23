@@ -459,7 +459,9 @@ only bounded action, universe, correlation, and planning metadata remain visible
 on the queue row. Repeated authenticated semantic submissions reuse the existing
 in-flight job. The returned job-specific capability authorizes
 `GET /jobs/{jobId}/result`, which decrypts only after the normal read gate and
-returns the existing terminal job envelope. Lightweight `queryContinuity` and
+returns the existing terminal job envelope. Protected input above the shared
+worker ciphertext limit returns bounded `413 BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE`
+before job planning or persistence. Lightweight `queryContinuity` and
 `simulateMatch` stay synchronous. Disabling the flag restores the prior routing
 policy without changing endpoint or action authorization.
 `getBackstageUniverse`

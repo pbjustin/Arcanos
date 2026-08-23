@@ -155,11 +155,18 @@ jest.unstable_mockModule('../src/services/priorityGptDirectExecutionService.js',
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const {
+  BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES,
+} = await import('../src/shared/backstage/backstageJobPayloadProtection.js');
+const {
+  buildProtectedBackstageQueuedGptJobInput,
+} = await import('../src/shared/gpt/asyncGptJob.js');
 
 const ASYNC_IDEMPOTENCY_ENV_KEYS = [
   ...PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
   'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
   'ARCANOS_CONTROL_PLANE_SCOPES',
+  'ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
   'GPT_ASYNC_HEAVY_MAX_WORDS',
@@ -190,9 +197,10 @@ function restoreEnv(snapshot: ReadonlyMap<string, string | undefined>): void {
 function buildApp(options: {
   authenticatedUserId?: number;
   bodyOverride?: unknown;
+  jsonLimit?: string;
 } = {}) {
   const app = express();
-  app.use(express.json());
+  app.use(express.json(options.jsonLimit ? { limit: options.jsonLimit } : undefined));
   app.use(express.text({ type: 'text/plain' }));
   app.use(requestContext);
   if (Object.prototype.hasOwnProperty.call(options, 'bodyOverride')) {
@@ -320,6 +328,41 @@ function storylineBeatAtSerializedBytes(totalBytes: number): Record<string, unkn
   return { detail: 'x'.repeat(totalBytes - envelopeBytes) };
 }
 
+function protectedBackstageRouteBodyAtCiphertextBytes(targetBytes: number) {
+  const universeId = 'payload-boundary-universe';
+  const prompt = 'Generate the next show.';
+  const buildBody = (padding: string) => ({
+    action: 'generateBooking',
+    executionMode: 'async',
+    padding,
+    payload: { universeId, prompt },
+  });
+  const measureCiphertextBytes = (body: ReturnType<typeof buildBody>): number => {
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      body,
+      prompt,
+      action: 'generateBooking',
+      universeId,
+      notionEnrichmentAuthorized: false,
+      envelopeId: '5bd62b28-f1ee-4ef6-bdd4-f3523e0423b8',
+    });
+    return Buffer.from(
+      queuedInput.protectedBackstage.sealedPayload.ciphertext,
+      'base64'
+    ).length;
+  };
+  const emptyBody = buildBody('');
+  const paddingBytes = targetBytes - measureCiphertextBytes(emptyBody);
+  if (paddingBytes < 0) {
+    throw new Error('Protected payload boundary fixture has negative padding.');
+  }
+  const body = buildBody('x'.repeat(paddingBytes));
+  if (measureCiphertextBytes(body) !== targetBytes) {
+    throw new Error('Protected payload boundary fixture did not reach its exact byte target.');
+  }
+  return body;
+}
+
 function configureResearchRoutingMock(): void {
   isRegisteredResearchGptIdMock.mockResolvedValue(true);
   mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
@@ -426,6 +469,64 @@ describe('async /gpt idempotency', () => {
         gptId: 'invalid-id'
       }
     });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('persists protected Booker input at the exact worker ciphertext byte limit', async () => {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6a).toString('base64');
+    configureBackstageRoutingMock();
+    findOrCreateGptJobMock.mockResolvedValueOnce({
+      job: { id: 'job-protected-payload-exact', status: 'pending' },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    const body = protectedBackstageRouteBodyAtCiphertextBytes(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES
+    );
+
+    const response = await request(buildApp({ jsonLimit: '10mb' }))
+      .post('/gpt/backstage-booker')
+      .send(body);
+
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    const queuedInput = findOrCreateGptJobMock.mock.calls[0]?.[0]?.input;
+    expect(Buffer.from(
+      queuedInput.protectedBackstage.sealedPayload.ciphertext,
+      'base64'
+    )).toHaveLength(BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects protected Booker input one worker ciphertext byte over before planning or persistence', async () => {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6b).toString('base64');
+    configureBackstageRoutingMock();
+    const body = protectedBackstageRouteBodyAtCiphertextBytes(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES
+    );
+    body.padding += 'x';
+
+    const response = await request(buildApp({ jsonLimit: '10mb' }))
+      .post('/gpt/backstage-booker')
+      .send(body);
+
+    expect(response.status).toBe(413);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
+        message: 'Protected Backstage generation request exceeds the queue payload size limit.',
+      },
+    });
+    expect(JSON.stringify(response.body).length).toBeLessThanOrEqual(2_048);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();

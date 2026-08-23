@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY_ENV_NAME,
   BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY_ENV_NAME,
+  BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES,
   BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
   BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE,
   BackstageJobPayloadProtectionError,
@@ -107,6 +108,80 @@ describe('Backstage queue payload protection', () => {
       envelope: outputEnvelope,
       config: protectionConfig,
     })).toEqual(outputPayload);
+  });
+
+  it('accepts a payload whose UTF-8 plaintext produces ciphertext at the exact byte limit', () => {
+    const protectionConfig = config();
+    const jsonStringEnvelopeBytes = Buffer.byteLength(JSON.stringify(''), 'utf8');
+    const payload = 'x'.repeat(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES - jsonStringEnvelopeBytes
+    );
+
+    const envelope = sealBackstageJobPayload({
+      purpose: BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
+      identity: inputIdentity,
+      payload,
+      config: protectionConfig,
+    });
+
+    expect(Buffer.from(envelope.ciphertext, 'base64')).toHaveLength(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES
+    );
+    expect(unsealBackstageJobPayload({
+      purpose: BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
+      identity: inputIdentity,
+      envelope,
+      config: protectionConfig,
+    })).toBe(payload);
+  });
+
+  it('rejects one UTF-8 ciphertext byte over the limit before encryption', () => {
+    const protectionConfig = config();
+    const jsonStringEnvelopeBytes = Buffer.byteLength(JSON.stringify(''), 'utf8');
+    const payload = `${'x'.repeat(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES - jsonStringEnvelopeBytes - 1
+    )}\u00e9`;
+
+    expect(payload.length).toBeLessThan(BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBe(
+      BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES + 1
+    );
+    const error = captureProtectionError(() => sealBackstageJobPayload({
+      purpose: BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
+      identity: inputIdentity,
+      payload,
+      config: protectionConfig,
+    }));
+
+    expect(error.code).toBe('BACKSTAGE_JOB_PAYLOAD_TOO_LARGE');
+    expect(error.message.length).toBeLessThanOrEqual(80);
+  });
+
+  it('rejects a decoded ciphertext one byte over the same limit before decryption', () => {
+    const protectionConfig = config();
+    const envelope = sealBackstageJobPayload({
+      purpose: BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
+      identity: inputIdentity,
+      payload: { prompt: SENSITIVE_TEXT },
+      config: protectionConfig,
+    });
+    const oversizedEnvelope = {
+      ...envelope,
+      ciphertext: Buffer.alloc(
+        BACKSTAGE_JOB_PAYLOAD_MAX_CIPHERTEXT_BYTES + 1,
+        0x61
+      ).toString('base64'),
+    };
+
+    const error = captureProtectionError(() => unsealBackstageJobPayload({
+      purpose: BACKSTAGE_JOB_PAYLOAD_INPUT_PURPOSE,
+      identity: inputIdentity,
+      envelope: oversizedEnvelope,
+      config: protectionConfig,
+    }));
+
+    expect(error.code).toBe('BACKSTAGE_JOB_PAYLOAD_ENVELOPE_INVALID');
+    expect(error.message.length).toBeLessThanOrEqual(80);
   });
 
   it.each(['ciphertext', 'iv', 'authTag'] as const)(

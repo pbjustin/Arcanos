@@ -107,6 +107,9 @@ import {
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
+  extractBackstageBookerCanonicalGenerationPrompt,
+  markBackstageBookerExplicitPayload,
+  markBackstageBookerFlattenedPayload,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
 import {
@@ -175,6 +178,7 @@ import {
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import {
+  buildGptDispatchPayload,
   extractGptPromptText,
   extractGptDispatchPromptText,
   extractGptPromptTextFromRecord,
@@ -256,6 +260,10 @@ const DIRECT_RETURN_POLL_KEYS = ['pollIntervalMs', 'poll_interval_ms'];
 const BACKSTAGE_BOOKER_ASYNC_GENERATION_FLAG =
   'ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED';
 const BACKSTAGE_UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER = Object.freeze({
+  markExplicitPayload: markBackstageBookerExplicitPayload,
+  markFlattenedPayload: markBackstageBookerFlattenedPayload,
+});
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -1982,9 +1990,18 @@ router.post(
           routingValidation.plan.module === BACKSTAGE_MODULE_NAME
           && resolvedBackstageAction === 'queryContinuity';
         const requestedExecutionMode = resolveRequestedExecutionMode(req, effectiveBody);
-        const modulePromptText = routingValidation.plan.module === BACKSTAGE_MODULE_NAME
-          ? extractGptDispatchPromptText(effectiveBody)
-          : promptText;
+        const modulePromptText = protectedBackstageGenerationAction
+          ? extractBackstageBookerCanonicalGenerationPrompt(
+              protectedBackstageGenerationAction,
+              buildGptDispatchPayload(
+                effectiveBody,
+                undefined,
+                BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+              )
+            )
+          : routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+            ? extractGptDispatchPromptText(effectiveBody)
+            : promptText;
         const automaticBackstageGenerationWouldCrossQueueBoundary =
           routingValidation.plan.module === 'ARCANOS:CORE'
           && bypassIntentRouting !== true
@@ -2661,6 +2678,14 @@ router.post(
           }
         }
 
+        const protectedBackstageRequestLocalOnly = Boolean(
+          protectedBackstageGenerationAction
+          && backstageWorkloadDecision?.forceSynchronous
+        );
+        const protectedBackstageQueueRequired = Boolean(
+          backstageWorkloadDecision?.queueRequired
+          && readStrictBooleanEnv(BACKSTAGE_BOOKER_ASYNC_GENERATION_FLAG, false)
+        );
         const classifiedFastPathDecision = classifyGptFastPathRequest({
           gptId: incomingGptId,
           body: effectiveBody,
@@ -2677,6 +2702,14 @@ router.post(
               eligible: false,
               reason: 'memory_dispatch_intercept',
               queueBypassed: true,
+            }
+          : protectedBackstageRequestLocalOnly || protectedBackstageQueueRequired
+          ? {
+              ...classifiedFastPathDecision,
+              path: 'orchestrated_path',
+              eligible: false,
+              reason: `backstage_${backstageWorkloadDecision!.reason}`,
+              queueBypassed: protectedBackstageRequestLocalOnly,
             }
           : classifiedFastPathDecision;
         applyGptRouteDecisionHeaders(res, fastPathDecision);
@@ -2810,10 +2843,6 @@ router.post(
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
-        const protectedBackstageQueueRequired = Boolean(
-          backstageWorkloadDecision?.queueRequired
-          && readStrictBooleanEnv(BACKSTAGE_BOOKER_ASYNC_GENERATION_FLAG, false)
-        );
         const executionPlan: GptExecutionPlan = backstageContinuityQuerySyncOnly
           ? {
               ...classifiedExecutionPlan,
@@ -2826,6 +2855,13 @@ router.post(
               ...classifiedExecutionPlan,
               mode: 'sync',
               reason: 'memory_dispatch_intercept',
+              heavyPrompt: false,
+            }
+          : protectedBackstageRequestLocalOnly
+          ? {
+              ...classifiedExecutionPlan,
+              mode: 'sync',
+              reason: `backstage_${backstageWorkloadDecision!.reason}`,
               heavyPrompt: false,
             }
           : protectedBackstageQueueRequired
@@ -2908,6 +2944,7 @@ router.post(
                 backstageWorkloadClass: backstageWorkloadDecision.workloadClass,
                 backstageWorkloadReason: backstageWorkloadDecision.reason,
                 backstageQueueRequired: backstageWorkloadDecision.queueRequired,
+                backstageForceSynchronous: backstageWorkloadDecision.forceSynchronous,
                 backstagePromptCodeUnits: backstageWorkloadDecision.promptCodeUnits,
                 backstageContextCodeUnits: backstageWorkloadDecision.contextCodeUnits,
                 backstageExpectedItemCount: backstageWorkloadDecision.expectedItemCount,
@@ -2945,6 +2982,7 @@ router.post(
 
         const shouldUseJobBackedExecution =
           !backstageContinuityQuerySyncOnly
+          && !protectedBackstageRequestLocalOnly
           && memoryPlaneAuthorized !== true
           && (
             (queryAndWaitRequested && executionPlan.mode === 'async')
@@ -3159,6 +3197,7 @@ router.post(
                 const clientIdentityError =
                   error.code === 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID'
                   || error.code === 'BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED';
+                const payloadTooLarge = error.code === 'BACKSTAGE_JOB_PAYLOAD_TOO_LARGE';
                 requestLogger?.warn?.('gpt.request.backstage_async_payload_rejected', {
                   endpoint: req.originalUrl,
                   gptId: incomingGptId,
@@ -3167,7 +3206,12 @@ router.post(
                 });
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
-                  error: clientIdentityError
+                  error: payloadTooLarge
+                    ? {
+                        code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
+                        message: 'Protected Backstage generation request exceeds the queue payload size limit.',
+                      }
+                    : clientIdentityError
                     ? {
                         code: 'BAD_REQUEST',
                         message: 'Protected Backstage generation request identity is invalid.',
@@ -3182,7 +3226,7 @@ router.post(
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString(),
                   },
-                }, 'gpt.response.backstage_async_payload_rejected', clientIdentityError ? 400 : 503);
+                }, 'gpt.response.backstage_async_payload_rejected', payloadTooLarge ? 413 : clientIdentityError ? 400 : 503);
               }
               throw error;
             }
