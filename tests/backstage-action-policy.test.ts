@@ -224,6 +224,7 @@ describe('Backstage action policy', () => {
       modelStageTimeoutMs: 40_000,
     })).toEqual({
       answerMode: 'direct',
+      intentMode: 'EXECUTE_TASK',
       internalMode: false,
       strictUserVisibleOutput: true,
       directAnswerModelOverride: 'gpt-5.1',

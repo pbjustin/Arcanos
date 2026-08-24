@@ -726,6 +726,49 @@ describe('backstage-booker generateBooking real provider chain', () => {
     }
   });
 
+  it('preserves numbered compact-retry output through the real Trinity honesty chain', async () => {
+    const completedRetry = [
+      '1. Aurora Vale wins the fictional opening match cleanly.',
+      '2. Orion Pike accepts Cassian Reed\'s fictional rematch challenge.',
+      '3. Mira Sol retains her fictional championship after a late counter.',
+      '4. Harbor Lights wins the fictional tag match with a disciplined finish.',
+      '5. Sable North starts the fictional rivalry for the next chapter.',
+      '6. Atlas Wren wins the fictional main event and closes the card.',
+    ].join('\n');
+    const discardedPartial = 'PRIVATE-PARTIAL-BOOKING-OUTPUT';
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_compact_retry_primary',
+        model: 'gpt-5.1',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output_text: discardedPartial,
+        output: [],
+        usage: { input_tokens: 1_100, output_tokens: 1_600, total_tokens: 2_700 },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_backstage_compact_retry_completed',
+        model: 'gpt-5.1',
+        status: 'completed',
+        output_text: completedRetry,
+        output: [],
+        usage: { input_tokens: 1_150, output_tokens: 110, total_tokens: 1_260 },
+      });
+
+    await expect(runWithBackstageProtectedQueuedExecution(true, () => generateBooking(
+      'Generate exactly six numbered booking items for a complete fictional wrestling event.',
+      'worker-compact-retry-success-fixture'
+    ))).resolves.toBe(completedRetry);
+
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    const [retryRequest] = responsesCreate.mock.calls[1] as unknown as [
+      Record<string, unknown>
+    ];
+    const serializedRetry = JSON.stringify(retryRequest);
+    expect(serializedRetry).toContain('<<OUTPUT_LENGTH_RECOVERY>>');
+    expect(serializedRetry).not.toContain(discardedPartial);
+  });
+
   it.each([
     [
       'an unsupported provider incomplete reason',

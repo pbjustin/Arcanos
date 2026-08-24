@@ -89,6 +89,7 @@ export interface BackstageBookerWorkloadInput {
 
 export interface BackstageBookerTrinityRunOptions {
   answerMode: 'direct';
+  intentMode: 'EXECUTE_TASK';
   internalMode: false;
   strictUserVisibleOutput: true;
   directAnswerModelOverride: string;
@@ -256,6 +257,8 @@ export function buildBackstageBookerTrinityRunOptions(params: {
 }): BackstageBookerTrinityRunOptions {
   return {
     answerMode: 'direct',
+    //audit Assumption: Backstage actions execute the caller's booking request even when server-owned recovery instructions contain prompt-like imperatives; failure risk: reclassification as prompt generation flattens numbered recovery output before its closed validator runs; expected invariant: normal and compact-retry attempts share EXECUTE_TASK intent; handling strategy: pin the server-owned action policy instead of reclassifying augmented execution prompts.
+    intentMode: 'EXECUTE_TASK',
     internalMode: false,
     strictUserVisibleOutput: true,
     directAnswerModelOverride: params.model,
