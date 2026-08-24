@@ -39,6 +39,9 @@ export interface GenericJobCancellationResult {
   job: GenericJobData | null;
 }
 
+const GPT_ROLLOUT_CANCELLATION_MESSAGE =
+  'GPT job cancellation requested during rollout compatibility.';
+
 export interface GenericJobsRouterDependencies {
   getJobById: (jobId: string) => Promise<GenericJobData | null>;
   isJobRepositoryUnavailable: (error: unknown) => boolean;
@@ -488,7 +491,7 @@ router.post(
   confirmCancellation,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
-    const reason =
+    let reason =
       typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
         ? req.body.reason.trim()
         : 'Job cancellation requested by client.';
@@ -502,6 +505,14 @@ router.post(
     if (!isPublicReadableJob(job)) {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
+    }
+
+    // This precursor release must be safe before queue producers have a
+    // version marker. Redact every public GPT cancellation at the HTTP
+    // boundary so both pending terminalization and running-job intent persist
+    // only a bounded server-owned value during the following rolling deploy.
+    if (job.job_type === 'gpt') {
+      reason = GPT_ROLLOUT_CANCELLATION_MESSAGE;
     }
 
     const capabilitySurface = resolveGenericJobCapabilitySurface(job);
