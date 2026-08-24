@@ -566,6 +566,26 @@ provider errors, configuration JSON, or embeddings. Shadow failures remain
 nonfatal to readiness and reads and retain the last immutable successful shard
 and manifest history.
 
+The controlled-cutover resolver is additive until the read flag is wired. It
+pins the durable Notion authority head, one sealed active universe manifest,
+and that manifest's exact immutable shard snapshots in one bounded PostgreSQL
+statement. Routing uses the definitions attached to that manifest even when a
+new desired configuration is waiting for synchronization; mutable shard heads
+are never consulted by reads. Exact lowercase scope/category selectors use
+AND semantics within one selector and OR semantics across selectors. Archive
+tiers require an explicit server-derived opt-in, and `required` controls
+manifest publication rather than forcing every shard into every request.
+
+Only the selected manifest members participate in the web freshness fence. A
+stale or omitted unselected archive therefore cannot disable an unrelated hot
+read, while selecting a stale member fails that request closed. Exact page and
+subtree ownership is resolved inside the active manifest with normalized
+SHA-256 title/path keys, an exact shard-relative suffix match, and a two-row
+ambiguity cap. The routing projection is limited to 128 identity/contract rows
+plus one overflow sentinel and contains no Markdown, chunk content, page
+versions, or embeddings. These primitives do not change user-facing reads by
+themselves; the later cutover control remains the authorization point.
+
 The worker recursively discovers direct child `<page>` links, fetches every
 page separately from fixed `api.notion.com` endpoints, verifies parent IDs and
 last-edited timestamps twice, sanitizes only after child discovery, chunks

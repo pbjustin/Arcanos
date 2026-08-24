@@ -769,6 +769,212 @@ async function insertSealedFixture(
   };
 }
 
+type ScopeHierarchyFixture = Readonly<{
+  manifestId: string;
+  snapshotId: string;
+  contentPageId: string;
+  blankPageId: string;
+  secondBlankPageId: string;
+}>;
+
+async function activateScopeHierarchyFixture(
+  client: Client,
+  fixture: SealedFixture
+): Promise<ScopeHierarchyFixture> {
+  const repository = new PostgresBackstageNotionPartitionRepository(
+    createSavepointRepositoryPool(client)
+  );
+  const contentPageId = randomUUID();
+  const blankPageId = randomUUID();
+  const secondBlankPageId = randomUUID();
+  const rootMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: fixture.rootPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const contentMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: contentPageId,
+    contentHash: fingerprint('canon'),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: 'canon',
+    contentCodePoints: 5,
+    chunks: [{
+      ordinal: 0,
+      chunkVersionId: fixture.chunkVersionId,
+      headingPath: ['Canon'],
+      scopeHeadingPathKey: [scopeKey('Canon')],
+      headingOccurrencePath: [0],
+    }],
+  });
+  const blankMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: blankPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const secondBlankMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: secondBlankPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const synchronizationState = await repository.loadUniverseSynchronizationState(
+    fixture.universeId,
+    fixture.configurationId
+  );
+  if (!synchronizationState?.shards[0]) {
+    throw new Error('Scope hierarchy fixture requires one active shard.');
+  }
+  const lease = await repository.acquireShardLease(
+    fixture.universeId,
+    fixture.shardKey,
+    'pg18-scope-hierarchy',
+    60_000
+  );
+  if (!lease) {
+    throw new Error('Scope hierarchy fixture could not acquire its shard lease.');
+  }
+  const snapshotId = randomUUID();
+  const sourceEditedAt = new Date(Date.now() - 60_000);
+  const verifiedAt = new Date();
+  const activated = await repository.activateShardSnapshot({
+    snapshotId,
+    universeId: fixture.universeId,
+    shardKey: fixture.shardKey,
+    partitionVersionId: fixture.partitionVersionId,
+    rootPageId: fixture.rootPageId,
+    sourceManifestHash: fingerprint('scope-hierarchy-source'),
+    embeddingModel: 'pg18-test-model',
+    embeddingVersion: 1,
+    indexFormatVersion: 1,
+    sourceMaxLastEditedAt: sourceEditedAt,
+    expectedHead: synchronizationState.shards[0].expectedHead,
+    lease,
+    pages: [{
+      pageId: fixture.rootPageId,
+      pageVersionId: rootMaterial.id,
+      parentPageId: null,
+      title: 'Navigation Root',
+      canonicalUrl: `https://www.notion.so/${fixture.rootPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 0,
+      path: [fixture.rootPageId],
+      scopePath: ['Navigation Root'],
+      scopeTitleKey: scopeKey('Navigation Root'),
+      scopePathKey: [scopeKey('Navigation Root')],
+    }, {
+      pageId: contentPageId,
+      pageVersionId: contentMaterial.id,
+      parentPageId: fixture.rootPageId,
+      title: 'Content Child',
+      canonicalUrl: `https://www.notion.so/${contentPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 1,
+      path: [fixture.rootPageId, contentPageId],
+      scopePath: ['Navigation Root', 'Content Child'],
+      scopeTitleKey: scopeKey('Content Child'),
+      scopePathKey: [scopeKey('Navigation Root'), scopeKey('Content Child')],
+    }, {
+      pageId: blankPageId,
+      pageVersionId: blankMaterial.id,
+      parentPageId: fixture.rootPageId,
+      title: 'Blank Child',
+      canonicalUrl: `https://www.notion.so/${blankPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 1,
+      path: [fixture.rootPageId, blankPageId],
+      scopePath: ['Navigation Root', 'Blank Child'],
+      scopeTitleKey: scopeKey('Blank Child'),
+      scopePathKey: [scopeKey('Navigation Root'), scopeKey('Blank Child')],
+    }, {
+      pageId: secondBlankPageId,
+      pageVersionId: secondBlankMaterial.id,
+      parentPageId: contentPageId,
+      title: 'Blank Child',
+      canonicalUrl: `https://www.notion.so/${secondBlankPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 2,
+      path: [fixture.rootPageId, contentPageId, secondBlankPageId],
+      scopePath: ['Navigation Root', 'Content Child', 'Blank Child'],
+      scopeTitleKey: scopeKey('Blank Child'),
+      scopePathKey: [
+        scopeKey('Navigation Root'),
+        scopeKey('Content Child'),
+        scopeKey('Blank Child'),
+      ],
+    }],
+    occurrences: [{
+      pageId: contentPageId,
+      pageVersionId: contentMaterial.id,
+      ordinal: 0,
+      chunkVersionId: fixture.chunkVersionId,
+      category: 'general',
+    }],
+    verifications: [{
+      kind: 'source_drift',
+      resultHash: fingerprint('scope-hierarchy-drift'),
+      verifiedAt,
+    }, {
+      kind: 'completeness',
+      resultHash: fingerprint('scope-hierarchy-complete'),
+      verifiedAt,
+    }],
+  });
+  const terminal = await repository.loadUniverseSynchronizationState(
+    fixture.universeId,
+    fixture.configurationId
+  );
+  if (!terminal?.shards[0]) {
+    throw new Error('Scope hierarchy fixture lost its activated shard.');
+  }
+  const manifestId = randomUUID();
+  await repository.activateUniverseManifest({
+    manifestId,
+    universeId: fixture.universeId,
+    configurationVersionId: fixture.configurationId,
+    configurationGeneration: fixture.configurationGeneration,
+    configurationHash: fixture.configurationHash,
+    indexFormatVersion: 1,
+    expectedUniverseHead: terminal.expectedUniverseHead,
+    members: [{
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: activated.snapshotId,
+      decision: 'fresh',
+      verifiedAt: activated.verifiedAt,
+      expectedHead: terminal.shards[0].expectedHead,
+    }],
+    omissions: [],
+  });
+  await repository.releaseShardLease(
+    fixture.universeId,
+    fixture.shardKey,
+    lease
+  );
+  return Object.freeze({
+    manifestId,
+    snapshotId,
+    contentPageId,
+    blankPageId,
+    secondBlankPageId,
+  });
+}
+
 async function insertOptionalOverlapSnapshot(
   client: Client,
   fixture: SealedFixture,
@@ -3725,6 +3931,179 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     expect(serializedPlan).not.toContain('backstage_notion_page_versions');
     expect(serializedPlan).not.toContain('backstage_notion_chunk_versions');
     expect(serializedPlan).not.toContain('backstage_notion_chunk_embeddings');
+
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const originalRoutingState = await repository.loadActiveManifestRoutingState(
+      fixture.universeId
+    );
+    expect(originalRoutingState).toMatchObject({
+        universeId: fixture.universeId,
+        manifestId: fixture.manifestId,
+        manifestGeneration: '1',
+        configurationVersionId: fixture.configurationId,
+        configurationCurrent: true,
+        embeddingModel: 'pg18-test-model',
+        embeddingVersion: 1,
+        embeddingDimension: 2,
+        indexFormatVersion: 1,
+        pageCount: 1,
+        chunkCount: 1,
+        members: [{
+          shardKey: fixture.shardKey,
+          partitionVersionId: fixture.partitionVersionId,
+          snapshotId: fixture.snapshotId,
+          retrievalTier: 'hot',
+          required: true,
+          decision: 'fresh',
+          pageCount: 1,
+          chunkCount: 1,
+          scopeTags: ['current'],
+          categoryTags: ['canon'],
+        }],
+        omissions: [],
+      });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      fixture.manifestId,
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: [scopeKey('Backstage'), normalizedTitleKey],
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: fixture.manifestId,
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: fixture.snapshotId,
+      pageId: fixture.rootPageId,
+      pageTitle: 'Canon Root',
+      pagePath: ['Canon Root'],
+      scopeKind: 'page',
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+
+    const hierarchy = await activateScopeHierarchyFixture(client, fixture);
+    await expect(repository.loadActiveManifestRoutingState(fixture.universeId))
+      .resolves.toMatchObject({
+        manifestId: hierarchy.manifestId,
+        manifestGeneration: '2',
+        pageCount: 4,
+        chunkCount: 1,
+        members: [{
+          shardKey: fixture.shardKey,
+          snapshotId: hierarchy.snapshotId,
+          pageCount: 4,
+          chunkCount: 1,
+        }],
+      });
+
+    // A request that pinned immutable manifest A remains coherent after B wins
+    // the active head; it never mixes B's snapshot into A's routing tuples.
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      originalRoutingState!.manifestId,
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      manifestId: fixture.manifestId,
+      snapshotId: fixture.snapshotId,
+      pageTitle: 'Canon Root',
+    });
+
+    const navigationTitleKey = scopeKey('Navigation Root');
+    const longNavigationPath = [
+      ...Array.from({ length: 100 }, (_, index) => scopeKey(`Ancestor ${index}`)),
+      navigationTitleKey,
+    ];
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: navigationTitleKey,
+        pagePathKey: longNavigationPath,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: navigationTitleKey,
+        pagePathKey: longNavigationPath,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: hierarchy.manifestId,
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: hierarchy.snapshotId,
+      pageId: fixture.rootPageId,
+      pageTitle: 'Navigation Root',
+      pagePath: ['Navigation Root'],
+      scopeKind: 'subtree',
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Content Child'),
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      pageId: hierarchy.contentPageId,
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: null,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({ status: 'ambiguous' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: [scopeKey('Navigation Root'), scopeKey('Blank Child')],
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      randomUUID(),
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'invalid' });
   });
 
   test('empty rollback succeeds and both migration paths reinstall cleanly', async () => {

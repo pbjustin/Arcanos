@@ -9,8 +9,10 @@ import {
   BACKSTAGE_NOTION_PARTITION_MAX_DEPTH,
   BACKSTAGE_NOTION_PARTITION_MAX_PAGES,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
+  BACKSTAGE_NOTION_PARTITION_MAX_TAGS_PER_KIND,
   type BackstageNotionPartitionDefinition,
   type BackstageNotionPartitionUniverse,
+  type BackstageNotionRetrievalTier,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import type { BackstageNotionRagCategory } from '@shared/backstage/backstageNotionRagCore.js';
 import {
@@ -25,6 +27,7 @@ export const BACKSTAGE_NOTION_PROVIDER_DELAY_MAX_MS = 60_000;
 export const BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS = 128;
 export const BACKSTAGE_NOTION_SHADOW_COVERAGE_DEFAULT_SAMPLE_PAGE_IDS = 8;
 export const BACKSTAGE_NOTION_SHADOW_COVERAGE_MAX_SAMPLE_PAGE_IDS = 16;
+export const BACKSTAGE_NOTION_PARTITION_SCOPE_LOOKUP_MAX_PATH_SEGMENTS = 101;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -430,6 +433,75 @@ export interface BackstageNotionPartitionShadowCoverage {
   readonly partitionOnlyPageIds: readonly string[];
 }
 
+export interface BackstageNotionActiveManifestRoutingMember {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly snapshotId: string;
+  readonly retrievalTier: BackstageNotionRetrievalTier;
+  readonly required: boolean;
+  readonly decision: BackstageNotionManifestMemberDecision;
+  readonly verifiedAt: Date;
+  readonly snapshotCreatedAt: Date;
+  readonly snapshotSealedAt: Date;
+  readonly pageCount: number;
+  readonly chunkCount: number;
+  readonly scopeTags: readonly string[];
+  readonly categoryTags: readonly string[];
+}
+
+export interface BackstageNotionActiveManifestRoutingOmission {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly retrievalTier: BackstageNotionRetrievalTier;
+  readonly required: false;
+  readonly decision: BackstageNotionManifestOmissionDecision;
+  readonly safeReasonCode: string;
+  readonly scopeTags: readonly string[];
+  readonly categoryTags: readonly string[];
+}
+
+export interface BackstageNotionActiveManifestRoutingState {
+  readonly universeId: string;
+  readonly manifestId: string;
+  readonly manifestGeneration: string;
+  readonly configurationVersionId: string;
+  readonly configurationGeneration: string;
+  readonly configurationHash: string;
+  readonly configurationCurrent: boolean;
+  readonly embeddingModel: string;
+  readonly embeddingVersion: number;
+  readonly embeddingDimension: number;
+  readonly indexFormatVersion: number;
+  readonly manifestCreatedAt: Date;
+  readonly manifestSealedAt: Date;
+  readonly pageCount: number;
+  readonly chunkCount: number;
+  readonly members: readonly BackstageNotionActiveManifestRoutingMember[];
+  readonly omissions: readonly BackstageNotionActiveManifestRoutingOmission[];
+}
+
+export interface BackstageNotionManifestScopeOwnerLookup {
+  readonly pageTitleKey: string;
+  readonly pagePathKey: readonly string[] | null;
+  readonly scopeKind: 'page' | 'subtree';
+}
+
+export type BackstageNotionManifestScopeOwnerResolution =
+  | Readonly<{ status: 'not_found' | 'ambiguous' | 'invalid' }>
+  | Readonly<{
+      status: 'resolved';
+      manifestId: string;
+      shardKey: string;
+      partitionVersionId: string;
+      snapshotId: string;
+      pageId: string;
+      pageTitle: string;
+      pagePath: readonly string[];
+      scopeKind: 'page' | 'subtree';
+      scopeChunkCount: number;
+      scopePageCount: number;
+    }>;
+
 type TimestampValue = Date | string;
 
 interface ConfigurationRow {
@@ -604,6 +676,63 @@ interface SnapshotEmbeddingCoverageRow {
   page_id: string;
   ordinal: number | string;
   embedding_dimension: number | string;
+}
+
+interface ActiveManifestRoutingRow {
+  manifest_id: string;
+  manifest_generation: number | string;
+  desired_configuration_version_id: string;
+  desired_configuration_generation: string;
+  desired_configuration_hash: string;
+  configuration_version_id: string;
+  configuration_generation: string;
+  configuration_hash: string;
+  configured_shard_count: number | string;
+  configuration_state: string;
+  embedding_model: string;
+  embedding_version: number | string;
+  embedding_dimension: number | string;
+  index_format_version: number | string;
+  member_count: number | string;
+  omission_count: number | string;
+  manifest_page_count: number | string;
+  manifest_chunk_count: number | string;
+  manifest_state: string;
+  manifest_created_at: TimestampValue;
+  manifest_sealed_at: TimestampValue | null;
+  record_kind: string;
+  shard_key: string;
+  partition_version_id: string;
+  retrieval_tier: string;
+  is_required: boolean;
+  scope_tags: unknown;
+  category_tags: unknown;
+  shard_snapshot_id: string | null;
+  member_decision: string | null;
+  member_verified_at: TimestampValue | null;
+  snapshot_page_count: number | string | null;
+  snapshot_chunk_count: number | string | null;
+  snapshot_embedding_model: string | null;
+  snapshot_embedding_version: number | string | null;
+  snapshot_embedding_dimension: number | string | null;
+  snapshot_index_format_version: number | string | null;
+  snapshot_state: string | null;
+  snapshot_created_at: TimestampValue | null;
+  snapshot_sealed_at: TimestampValue | null;
+  omission_decision: string | null;
+  safe_reason_code: string | null;
+}
+
+interface ManifestScopeOwnerRow {
+  manifest_id: string;
+  shard_key: string | null;
+  partition_version_id: string | null;
+  shard_snapshot_id: string | null;
+  page_id: string | null;
+  page_title: string | null;
+  scope_path: unknown | null;
+  scope_chunk_count: number | string | null;
+  scope_page_count: number | string | null;
 }
 
 function repositoryError(
@@ -1239,6 +1368,31 @@ function parseJsonStringArray(value: unknown): readonly string[] {
   return parsed;
 }
 
+function parseRoutingTags(value: unknown, label: string): readonly string[] {
+  const tags = parseJsonStringArray(value).map((tag, index) => normalizePattern(
+    tag,
+    `${label}[${index}]`,
+    TAG_PATTERN
+  ));
+  if (
+    tags.length > BACKSTAGE_NOTION_PARTITION_MAX_TAGS_PER_KIND
+    || new Set(tags).size !== tags.length
+  ) {
+    throw new Error(`${label} violates the routing tag contract.`);
+  }
+  return Object.freeze([...tags].sort(compareText));
+}
+
+function parseRetrievalTier(
+  value: string,
+  label: string
+): BackstageNotionRetrievalTier {
+  if (value !== 'hot' && value !== 'cold' && value !== 'archive') {
+    throw new Error(`${label} is not a supported retrieval tier.`);
+  }
+  return value;
+}
+
 function normalizeShadowCoveragePageIds(
   value: unknown,
   label: string,
@@ -1735,6 +1889,826 @@ export class PostgresBackstageNotionPartitionRepository {
       partitionOnlyPageCount,
       monolithOnlyPageIds,
       partitionOnlyPageIds,
+    });
+  }
+
+  async loadActiveManifestRoutingState(
+    universeId: string
+  ): Promise<BackstageNotionActiveManifestRoutingState | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const result = await this.pool.query<ActiveManifestRoutingRow>(
+      `WITH pinned_manifest AS MATERIALIZED (
+         SELECT
+           partition_head.manifest_generation,
+           partition_head.desired_configuration_version_id,
+           partition_head.desired_configuration_generation,
+           partition_head.desired_configuration_hash,
+           manifest.id AS manifest_id,
+           manifest.partition_configuration_version_id
+             AS configuration_version_id,
+           manifest.configuration_generation,
+           manifest.configuration_hash,
+           configuration.shard_count AS configured_shard_count,
+           configuration.state AS configuration_state,
+           manifest.embedding_model,
+           manifest.embedding_version,
+           manifest.embedding_dimension,
+           manifest.index_format_version,
+           manifest.member_count,
+           manifest.omission_count,
+           manifest.page_count AS manifest_page_count,
+           manifest.chunk_count AS manifest_chunk_count,
+           manifest.state AS manifest_state,
+           manifest.created_at AS manifest_created_at,
+           manifest.sealed_at AS manifest_sealed_at
+         FROM public.backstage_notion_universe_heads AS authority_head
+         JOIN public.backstage_notion_partitioned_universe_heads AS partition_head
+           ON partition_head.universe_id = authority_head.universe_id
+         JOIN public.backstage_notion_universe_manifests AS manifest
+           ON manifest.universe_id = partition_head.universe_id
+          AND manifest.id = partition_head.active_manifest_id
+          AND manifest.partition_configuration_version_id =
+            partition_head.active_configuration_version_id
+          AND manifest.state = 'sealed'
+         JOIN public.backstage_notion_partition_configuration_versions
+           AS configuration
+           ON configuration.universe_id = manifest.universe_id
+          AND configuration.id = manifest.partition_configuration_version_id
+          AND configuration.configuration_generation =
+            manifest.configuration_generation
+          AND configuration.configuration_hash = manifest.configuration_hash
+          AND configuration.state = 'sealed'
+         WHERE authority_head.universe_id = $1
+           AND authority_head.authority = 'notion'
+       ),
+       manifest_records AS MATERIALIZED (
+         SELECT
+           'member'::TEXT AS record_kind,
+           definition.shard_key,
+           definition.id AS partition_version_id,
+           definition.retrieval_tier,
+           member.is_required,
+           definition.scope_tags,
+           definition.category_tags,
+           member.shard_snapshot_id,
+           member.decision AS member_decision,
+           member.verified_at AS member_verified_at,
+           snapshot.page_count AS snapshot_page_count,
+           snapshot.chunk_count AS snapshot_chunk_count,
+           snapshot.embedding_model AS snapshot_embedding_model,
+           snapshot.embedding_version AS snapshot_embedding_version,
+           snapshot.embedding_dimension AS snapshot_embedding_dimension,
+           snapshot.index_format_version AS snapshot_index_format_version,
+           snapshot.state AS snapshot_state,
+           snapshot.created_at AS snapshot_created_at,
+           snapshot.sealed_at AS snapshot_sealed_at,
+           NULL::TEXT AS omission_decision,
+           NULL::TEXT AS safe_reason_code
+         FROM pinned_manifest AS pinned
+         JOIN public.backstage_notion_universe_manifest_shards AS member
+           ON member.universe_id = $1
+          AND member.manifest_id = pinned.manifest_id
+         JOIN public.backstage_notion_partition_configuration_members
+           AS configured_member
+           ON configured_member.universe_id = member.universe_id
+          AND configured_member.partition_configuration_version_id =
+            pinned.configuration_version_id
+          AND configured_member.configuration_generation =
+            pinned.configuration_generation
+          AND configured_member.shard_key = member.shard_key
+          AND configured_member.partition_version_id = member.partition_version_id
+         JOIN public.backstage_notion_partition_versions AS definition
+           ON definition.universe_id = configured_member.universe_id
+          AND definition.shard_key = configured_member.shard_key
+          AND definition.id = configured_member.partition_version_id
+         JOIN public.backstage_notion_shard_snapshots AS snapshot
+           ON snapshot.universe_id = member.universe_id
+          AND snapshot.shard_key = member.shard_key
+          AND snapshot.partition_version_id = member.partition_version_id
+          AND snapshot.id = member.shard_snapshot_id
+         WHERE member.is_required = definition.is_required
+
+         UNION ALL
+
+         SELECT
+           'omission'::TEXT AS record_kind,
+           definition.shard_key,
+           definition.id AS partition_version_id,
+           definition.retrieval_tier,
+           definition.is_required,
+           definition.scope_tags,
+           definition.category_tags,
+           NULL::UUID AS shard_snapshot_id,
+           NULL::TEXT AS member_decision,
+           NULL::TIMESTAMPTZ AS member_verified_at,
+           NULL::INTEGER AS snapshot_page_count,
+           NULL::INTEGER AS snapshot_chunk_count,
+           NULL::TEXT AS snapshot_embedding_model,
+           NULL::INTEGER AS snapshot_embedding_version,
+           NULL::INTEGER AS snapshot_embedding_dimension,
+           NULL::INTEGER AS snapshot_index_format_version,
+           NULL::TEXT AS snapshot_state,
+           NULL::TIMESTAMPTZ AS snapshot_created_at,
+           NULL::TIMESTAMPTZ AS snapshot_sealed_at,
+           omission.decision AS omission_decision,
+           omission.safe_reason_code
+         FROM pinned_manifest AS pinned
+         JOIN public.backstage_notion_universe_manifest_omissions AS omission
+           ON omission.universe_id = $1
+          AND omission.manifest_id = pinned.manifest_id
+         JOIN public.backstage_notion_partition_configuration_members
+           AS configured_member
+           ON configured_member.universe_id = omission.universe_id
+          AND configured_member.partition_configuration_version_id =
+            pinned.configuration_version_id
+          AND configured_member.configuration_generation =
+            pinned.configuration_generation
+          AND configured_member.shard_key = omission.shard_key
+          AND configured_member.partition_version_id = omission.partition_version_id
+         JOIN public.backstage_notion_partition_versions AS definition
+           ON definition.universe_id = configured_member.universe_id
+          AND definition.shard_key = configured_member.shard_key
+          AND definition.id = configured_member.partition_version_id
+       )
+       SELECT pinned.*, record.*
+       FROM pinned_manifest AS pinned
+       JOIN manifest_records AS record ON TRUE
+       ORDER BY record.shard_key, record.record_kind
+       LIMIT $2`,
+      [
+        normalizedUniverseId,
+        BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+      ]
+    );
+    if (result.rows.length === 0) {
+      return null;
+    }
+    if (result.rows.length > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE) {
+      throw new Error('Active manifest routing metadata exceeds its bounded contract.');
+    }
+
+    const first = result.rows[0]!;
+    const manifestId = normalizeUuid(first.manifest_id, 'manifest_id');
+    const manifestGeneration = mapGeneration(
+      first.manifest_generation,
+      'manifest_generation'
+    );
+    const desiredConfigurationVersionId = normalizeUuid(
+      first.desired_configuration_version_id,
+      'desired_configuration_version_id'
+    );
+    const desiredConfigurationGeneration = normalizePattern(
+      first.desired_configuration_generation,
+      'desired_configuration_generation',
+      GENERATION_PATTERN
+    );
+    const desiredConfigurationHash = normalizeSha256(
+      first.desired_configuration_hash,
+      'desired_configuration_hash'
+    );
+    const configurationVersionId = normalizeUuid(
+      first.configuration_version_id,
+      'configuration_version_id'
+    );
+    const configurationGeneration = normalizePattern(
+      first.configuration_generation,
+      'configuration_generation',
+      GENERATION_PATTERN
+    );
+    const configurationHash = normalizeSha256(
+      first.configuration_hash,
+      'configuration_hash'
+    );
+    const configuredShardCount = normalizeDatabaseInteger(
+      first.configured_shard_count,
+      'configured_shard_count',
+      1
+    );
+    const embeddingModel = normalizeRequiredText(
+      first.embedding_model,
+      'embedding_model',
+      200
+    );
+    const embeddingVersion = normalizeDatabaseInteger(
+      first.embedding_version,
+      'embedding_version',
+      1
+    );
+    const embeddingDimension = normalizeDatabaseInteger(
+      first.embedding_dimension,
+      'embedding_dimension',
+      1
+    );
+    const indexFormatVersion = normalizeDatabaseInteger(
+      first.index_format_version,
+      'index_format_version',
+      1
+    );
+    const memberCount = normalizeDatabaseInteger(
+      first.member_count,
+      'member_count',
+      1
+    );
+    const omissionCount = normalizeDatabaseInteger(
+      first.omission_count,
+      'omission_count'
+    );
+    const pageCount = normalizeDatabaseInteger(
+      first.manifest_page_count,
+      'manifest_page_count',
+      1
+    );
+    const chunkCount = normalizeDatabaseInteger(
+      first.manifest_chunk_count,
+      'manifest_chunk_count',
+      1
+    );
+    const manifestCreatedAt = parseDate(
+      first.manifest_created_at,
+      'manifest_created_at'
+    );
+    if (first.manifest_sealed_at === null) {
+      throw new Error('Active manifest routing metadata is not sealed.');
+    }
+    const manifestSealedAt = parseDate(
+      first.manifest_sealed_at,
+      'manifest_sealed_at'
+    );
+    if (
+      first.manifest_state !== 'sealed'
+      || first.configuration_state !== 'sealed'
+      || manifestCreatedAt.getTime() > manifestSealedAt.getTime()
+      || configuredShardCount !== memberCount + omissionCount
+      || result.rows.length !== configuredShardCount
+    ) {
+      throw new Error('Active manifest routing metadata is internally inconsistent.');
+    }
+
+    const members: BackstageNotionActiveManifestRoutingMember[] = [];
+    const omissions: BackstageNotionActiveManifestRoutingOmission[] = [];
+    const shardKeys = new Set<string>();
+    let memberPageCount = 0;
+    let memberChunkCount = 0;
+    for (const [index, row] of result.rows.entries()) {
+      const rowLabel = `routing_rows[${index}]`;
+      const rowManifestSealedAt = row.manifest_sealed_at === null
+        ? null
+        : parseDate(row.manifest_sealed_at, `${rowLabel}.manifest_sealed_at`);
+      if (
+        normalizeUuid(row.manifest_id, `${rowLabel}.manifest_id`) !== manifestId
+        || mapGeneration(
+          row.manifest_generation,
+          `${rowLabel}.manifest_generation`
+        ) !== manifestGeneration
+        || normalizeUuid(
+          row.desired_configuration_version_id,
+          `${rowLabel}.desired_configuration_version_id`
+        ) !== desiredConfigurationVersionId
+        || normalizePattern(
+          row.desired_configuration_generation,
+          `${rowLabel}.desired_configuration_generation`,
+          GENERATION_PATTERN
+        ) !== desiredConfigurationGeneration
+        || normalizeSha256(
+          row.desired_configuration_hash,
+          `${rowLabel}.desired_configuration_hash`
+        ) !== desiredConfigurationHash
+        || normalizeUuid(
+          row.configuration_version_id,
+          `${rowLabel}.configuration_version_id`
+        ) !== configurationVersionId
+        || normalizePattern(
+          row.configuration_generation,
+          `${rowLabel}.configuration_generation`,
+          GENERATION_PATTERN
+        ) !== configurationGeneration
+        || normalizeSha256(
+          row.configuration_hash,
+          `${rowLabel}.configuration_hash`
+        ) !== configurationHash
+        || normalizeDatabaseInteger(
+          row.configured_shard_count,
+          `${rowLabel}.configured_shard_count`,
+          1
+        ) !== configuredShardCount
+        || row.configuration_state !== 'sealed'
+        || normalizeRequiredText(
+          row.embedding_model,
+          `${rowLabel}.embedding_model`,
+          200
+        ) !== embeddingModel
+        || normalizeDatabaseInteger(
+          row.embedding_version,
+          `${rowLabel}.embedding_version`,
+          1
+        ) !== embeddingVersion
+        || normalizeDatabaseInteger(
+          row.embedding_dimension,
+          `${rowLabel}.embedding_dimension`,
+          1
+        ) !== embeddingDimension
+        || normalizeDatabaseInteger(
+          row.index_format_version,
+          `${rowLabel}.index_format_version`,
+          1
+        ) !== indexFormatVersion
+        || normalizeDatabaseInteger(
+          row.member_count,
+          `${rowLabel}.member_count`,
+          1
+        ) !== memberCount
+        || normalizeDatabaseInteger(
+          row.omission_count,
+          `${rowLabel}.omission_count`
+        ) !== omissionCount
+        || normalizeDatabaseInteger(
+          row.manifest_page_count,
+          `${rowLabel}.manifest_page_count`,
+          1
+        ) !== pageCount
+        || normalizeDatabaseInteger(
+          row.manifest_chunk_count,
+          `${rowLabel}.manifest_chunk_count`,
+          1
+        ) !== chunkCount
+        || row.manifest_state !== 'sealed'
+        || parseDate(
+          row.manifest_created_at,
+          `${rowLabel}.manifest_created_at`
+        ).getTime() !== manifestCreatedAt.getTime()
+        || rowManifestSealedAt?.getTime() !== manifestSealedAt.getTime()
+      ) {
+        throw new Error('Active manifest routing rows crossed authority generations.');
+      }
+
+      const shardKey = normalizeShardKey(row.shard_key);
+      if (shardKeys.has(shardKey)) {
+        throw new Error('Active manifest routing metadata contains duplicate shards.');
+      }
+      shardKeys.add(shardKey);
+      const partitionVersionId = normalizeUuid(
+        row.partition_version_id,
+        `${rowLabel}.partition_version_id`
+      );
+      const retrievalTier = parseRetrievalTier(
+        row.retrieval_tier,
+        `${rowLabel}.retrieval_tier`
+      );
+      const scopeTags = parseRoutingTags(row.scope_tags, `${rowLabel}.scope_tags`);
+      const categoryTags = parseRoutingTags(
+        row.category_tags,
+        `${rowLabel}.category_tags`
+      );
+      if (typeof row.is_required !== 'boolean') {
+        throw new Error(`${rowLabel}.is_required is invalid.`);
+      }
+
+      if (row.record_kind === 'member') {
+        if (
+          row.shard_snapshot_id === null
+          || row.member_verified_at === null
+          || row.snapshot_page_count === null
+          || row.snapshot_chunk_count === null
+          || row.snapshot_embedding_model === null
+          || row.snapshot_embedding_version === null
+          || row.snapshot_embedding_dimension === null
+          || row.snapshot_index_format_version === null
+          || row.snapshot_created_at === null
+          || row.snapshot_sealed_at === null
+          || row.omission_decision !== null
+          || row.safe_reason_code !== null
+          || (
+            row.member_decision !== 'fresh'
+            && row.member_decision !== 'retained_last_known_good'
+          )
+          || row.snapshot_state !== 'sealed'
+        ) {
+          throw new Error(`${rowLabel} is not a sealed manifest member.`);
+        }
+        const snapshotCreatedAt = parseDate(
+          row.snapshot_created_at,
+          `${rowLabel}.snapshot_created_at`
+        );
+        const snapshotSealedAt = parseDate(
+          row.snapshot_sealed_at,
+          `${rowLabel}.snapshot_sealed_at`
+        );
+        const verifiedAt = parseDate(
+          row.member_verified_at,
+          `${rowLabel}.member_verified_at`
+        );
+        const snapshotPageCount = normalizeDatabaseInteger(
+          row.snapshot_page_count,
+          `${rowLabel}.snapshot_page_count`,
+          1
+        );
+        const snapshotChunkCount = normalizeDatabaseInteger(
+          row.snapshot_chunk_count,
+          `${rowLabel}.snapshot_chunk_count`,
+          1
+        );
+        if (
+          normalizeRequiredText(
+            row.snapshot_embedding_model,
+            `${rowLabel}.snapshot_embedding_model`,
+            200
+          ) !== embeddingModel
+          || normalizeDatabaseInteger(
+            row.snapshot_embedding_version,
+            `${rowLabel}.snapshot_embedding_version`,
+            1
+          ) !== embeddingVersion
+          || normalizeDatabaseInteger(
+            row.snapshot_embedding_dimension,
+            `${rowLabel}.snapshot_embedding_dimension`,
+            1
+          ) !== embeddingDimension
+          || normalizeDatabaseInteger(
+            row.snapshot_index_format_version,
+            `${rowLabel}.snapshot_index_format_version`,
+            1
+          ) !== indexFormatVersion
+          || snapshotCreatedAt.getTime() > snapshotSealedAt.getTime()
+          || snapshotSealedAt.getTime() > manifestSealedAt.getTime()
+          || verifiedAt.getTime() > manifestSealedAt.getTime()
+        ) {
+          throw new Error(`${rowLabel} conflicts with its sealed manifest.`);
+        }
+        memberPageCount += snapshotPageCount;
+        memberChunkCount += snapshotChunkCount;
+        members.push(Object.freeze({
+          shardKey,
+          partitionVersionId,
+          snapshotId: normalizeUuid(
+            row.shard_snapshot_id,
+            `${rowLabel}.shard_snapshot_id`
+          ),
+          retrievalTier,
+          required: row.is_required,
+          decision: row.member_decision,
+          verifiedAt,
+          snapshotCreatedAt,
+          snapshotSealedAt,
+          pageCount: snapshotPageCount,
+          chunkCount: snapshotChunkCount,
+          scopeTags,
+          categoryTags,
+        }));
+        continue;
+      }
+
+      if (
+        row.record_kind !== 'omission'
+        || row.is_required
+        || (
+          row.omission_decision !== 'optional_unavailable'
+          && row.omission_decision !== 'optional_disabled'
+        )
+        || row.safe_reason_code === null
+        || row.shard_snapshot_id !== null
+        || row.member_decision !== null
+        || row.member_verified_at !== null
+        || row.snapshot_page_count !== null
+        || row.snapshot_chunk_count !== null
+        || row.snapshot_embedding_model !== null
+        || row.snapshot_embedding_version !== null
+        || row.snapshot_embedding_dimension !== null
+        || row.snapshot_index_format_version !== null
+        || row.snapshot_state !== null
+        || row.snapshot_created_at !== null
+        || row.snapshot_sealed_at !== null
+      ) {
+        throw new Error(`${rowLabel} is not a valid optional omission.`);
+      }
+      omissions.push(Object.freeze({
+        shardKey,
+        partitionVersionId,
+        retrievalTier,
+        required: false,
+        decision: row.omission_decision,
+        safeReasonCode: normalizePattern(
+          row.safe_reason_code,
+          `${rowLabel}.safe_reason_code`,
+          SAFE_REASON_CODE_PATTERN
+        ),
+        scopeTags,
+        categoryTags,
+      }));
+    }
+    if (
+      members.length !== memberCount
+      || omissions.length !== omissionCount
+      || memberPageCount !== pageCount
+      || memberChunkCount !== chunkCount
+    ) {
+      throw new Error('Active manifest routing totals are internally inconsistent.');
+    }
+
+    members.sort((left, right) => compareText(left.shardKey, right.shardKey));
+    omissions.sort((left, right) => compareText(left.shardKey, right.shardKey));
+    return Object.freeze({
+      universeId: normalizedUniverseId,
+      manifestId,
+      manifestGeneration,
+      configurationVersionId,
+      configurationGeneration,
+      configurationHash,
+      configurationCurrent:
+        desiredConfigurationVersionId === configurationVersionId
+        && desiredConfigurationGeneration === configurationGeneration
+        && desiredConfigurationHash === configurationHash,
+      embeddingModel,
+      embeddingVersion,
+      embeddingDimension,
+      indexFormatVersion,
+      manifestCreatedAt,
+      manifestSealedAt,
+      pageCount,
+      chunkCount,
+      members: Object.freeze(members),
+      omissions: Object.freeze(omissions),
+    });
+  }
+
+  async resolveManifestScopeOwner(
+    universeId: string,
+    manifestId: string,
+    lookup: BackstageNotionManifestScopeOwnerLookup
+  ): Promise<BackstageNotionManifestScopeOwnerResolution> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedManifestId = normalizeUuid(manifestId, 'manifestId');
+    const pageTitleKey = normalizeSha256(lookup.pageTitleKey, 'lookup.pageTitleKey');
+    if (lookup.scopeKind !== 'page' && lookup.scopeKind !== 'subtree') {
+      throw new Error('lookup.scopeKind is invalid.');
+    }
+    let pagePathKey: readonly string[] | null = null;
+    if (lookup.pagePathKey !== null) {
+      if (
+        !Array.isArray(lookup.pagePathKey)
+        || lookup.pagePathKey.length < 1
+        || lookup.pagePathKey.length
+          > BACKSTAGE_NOTION_PARTITION_SCOPE_LOOKUP_MAX_PATH_SEGMENTS
+      ) {
+        throw new Error('lookup.pagePathKey is invalid.');
+      }
+      pagePathKey = normalizeScopeKeyArray(
+        lookup.pagePathKey,
+        'lookup.pagePathKey',
+        lookup.pagePathKey.length
+      );
+    }
+
+    const result = await this.pool.query<ManifestScopeOwnerRow>(
+      `WITH RECURSIVE pinned_manifest AS MATERIALIZED (
+         SELECT manifest.id AS manifest_id
+         FROM public.backstage_notion_universe_heads AS authority_head
+         JOIN public.backstage_notion_universe_manifests AS manifest
+           ON manifest.universe_id = authority_head.universe_id
+          AND manifest.id = $2
+          AND manifest.state = 'sealed'
+         WHERE authority_head.universe_id = $1
+           AND authority_head.authority = 'notion'
+       ),
+       candidates AS MATERIALIZED (
+         SELECT
+           pinned.manifest_id,
+           member.shard_key,
+           member.partition_version_id,
+           member.shard_snapshot_id,
+           page.page_id,
+           page.title AS page_title,
+           page.scope_path,
+           page.depth AS page_depth
+         FROM pinned_manifest AS pinned
+         JOIN public.backstage_notion_universe_manifest_shards AS member
+           ON member.universe_id = $1
+          AND member.manifest_id = pinned.manifest_id
+         JOIN public.backstage_notion_shard_snapshot_pages AS page
+           ON page.universe_id = member.universe_id
+          AND page.shard_key = member.shard_key
+          AND page.shard_snapshot_id = member.shard_snapshot_id
+         WHERE page.scope_title_key = $3
+           AND (
+             $4::TEXT[] IS NULL
+             OR (
+               pg_catalog.jsonb_array_length(page.scope_path_key)
+                 <= pg_catalog.cardinality($4::TEXT[])
+               AND page.scope_path_key = pg_catalog.to_jsonb(
+                 ($4::TEXT[])[
+                   (
+                     pg_catalog.cardinality($4::TEXT[])
+                     - pg_catalog.jsonb_array_length(page.scope_path_key)
+                     + 1
+                   ):
+                   pg_catalog.cardinality($4::TEXT[])
+                 ]
+               )
+             )
+           )
+           AND (
+             $5::TEXT = 'subtree'
+             OR EXISTS (
+               SELECT 1
+               FROM public.backstage_notion_shard_snapshot_chunk_occurrences
+                 AS retrievable_occurrence
+               WHERE retrievable_occurrence.universe_id = page.universe_id
+                 AND retrievable_occurrence.shard_key = page.shard_key
+                 AND retrievable_occurrence.shard_snapshot_id =
+                   page.shard_snapshot_id
+                 AND retrievable_occurrence.page_id = page.page_id
+             )
+           )
+         ORDER BY member.shard_key, page.scope_path_key, page.page_id
+         LIMIT $6
+       ),
+       scope_pages AS (
+         SELECT
+           candidate.manifest_id,
+           candidate.shard_key,
+           candidate.shard_snapshot_id,
+           candidate.page_id AS scope_root_page_id,
+           candidate.page_id,
+           candidate.page_depth,
+           0 AS traversal_depth
+         FROM candidates AS candidate
+
+         UNION
+
+         SELECT
+           parent.manifest_id,
+           parent.shard_key,
+           parent.shard_snapshot_id,
+           parent.scope_root_page_id,
+           child.page_id,
+           child.depth AS page_depth,
+           parent.traversal_depth + 1 AS traversal_depth
+         FROM scope_pages AS parent
+         JOIN public.backstage_notion_shard_snapshot_pages AS child
+           ON child.universe_id = $1
+          AND child.shard_key = parent.shard_key
+          AND child.shard_snapshot_id = parent.shard_snapshot_id
+          AND child.parent_page_id = parent.page_id
+         WHERE $5::TEXT = 'subtree'
+           AND parent.traversal_depth < $7::INTEGER
+           AND child.depth = parent.page_depth + 1
+       ),
+       resolved_candidates AS MATERIALIZED (
+         SELECT
+           candidate.manifest_id,
+           candidate.shard_key,
+           candidate.partition_version_id,
+           candidate.shard_snapshot_id,
+           candidate.page_id,
+           candidate.page_title,
+           candidate.scope_path,
+           COUNT(DISTINCT occurrence.page_id) AS scope_page_count,
+           COUNT(occurrence.page_id) AS scope_chunk_count
+         FROM candidates AS candidate
+         JOIN scope_pages AS scope_page
+           ON scope_page.manifest_id = candidate.manifest_id
+          AND scope_page.shard_key = candidate.shard_key
+          AND scope_page.shard_snapshot_id = candidate.shard_snapshot_id
+          AND scope_page.scope_root_page_id = candidate.page_id
+         LEFT JOIN public.backstage_notion_shard_snapshot_chunk_occurrences
+           AS occurrence
+           ON occurrence.universe_id = $1
+          AND occurrence.shard_key = scope_page.shard_key
+          AND occurrence.shard_snapshot_id = scope_page.shard_snapshot_id
+          AND occurrence.page_id = scope_page.page_id
+         GROUP BY
+           candidate.manifest_id,
+           candidate.shard_key,
+           candidate.partition_version_id,
+           candidate.shard_snapshot_id,
+           candidate.page_id,
+           candidate.page_title,
+           candidate.scope_path
+       )
+       SELECT
+         resolved.manifest_id,
+         resolved.shard_key,
+         resolved.partition_version_id,
+         resolved.shard_snapshot_id,
+         resolved.page_id,
+         resolved.page_title,
+         resolved.scope_path,
+         resolved.scope_chunk_count,
+         resolved.scope_page_count
+       FROM resolved_candidates AS resolved
+
+       UNION ALL
+
+       SELECT
+         pinned.manifest_id,
+         NULL::TEXT AS shard_key,
+         NULL::UUID AS partition_version_id,
+         NULL::UUID AS shard_snapshot_id,
+         NULL::UUID AS page_id,
+         NULL::TEXT AS page_title,
+         NULL::JSONB AS scope_path,
+         NULL::BIGINT AS scope_chunk_count,
+         NULL::BIGINT AS scope_page_count
+       FROM pinned_manifest AS pinned
+       WHERE NOT EXISTS (SELECT 1 FROM resolved_candidates)
+       ORDER BY shard_key NULLS LAST, scope_path NULLS LAST, page_id NULLS LAST
+       LIMIT $6`,
+      [
+        normalizedUniverseId,
+        normalizedManifestId,
+        pageTitleKey,
+        pagePathKey,
+        lookup.scopeKind,
+        2,
+        BACKSTAGE_NOTION_PARTITION_MAX_DEPTH,
+      ]
+    );
+    if (result.rows.length === 0) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    if (result.rows[0]?.page_id === null) {
+      if (result.rows.length !== 1) {
+        return Object.freeze({ status: 'invalid' as const });
+      }
+      return Object.freeze({ status: 'not_found' as const });
+    }
+    if (result.rows.length > 1) {
+      return Object.freeze({ status: 'ambiguous' as const });
+    }
+    const row = result.rows[0]!;
+    if (
+      row.shard_key === null
+      || row.partition_version_id === null
+      || row.shard_snapshot_id === null
+      || row.page_id === null
+      || row.page_title === null
+      || row.scope_path === null
+      || row.scope_chunk_count === null
+      || row.scope_page_count === null
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const pageTitle = normalizeRequiredText(row.page_title, 'page_title', 500);
+    const rawPagePath = parseJsonStringArray(row.scope_path);
+    if (
+      rawPagePath.length < 1
+      || rawPagePath.length > BACKSTAGE_NOTION_PARTITION_MAX_DEPTH + 1
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const pagePath = normalizeStringArray(
+      rawPagePath,
+      'scope_path',
+      BACKSTAGE_NOTION_PARTITION_MAX_DEPTH + 1,
+      500
+    );
+    const canonicalPagePathKey = normalizeBackstageNotionScopePath(pagePath);
+    if (
+      normalizeBackstageNotionScopeKey(pageTitle) !== pageTitleKey
+      || (
+        pagePathKey !== null
+        && !arraysEqual(
+          canonicalPagePathKey,
+          pagePathKey.slice(pagePathKey.length - canonicalPagePathKey.length)
+        )
+      )
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const scopePageCount = normalizeDatabaseInteger(
+      row.scope_page_count,
+      'scope_page_count'
+    );
+    const scopeChunkCount = normalizeDatabaseInteger(
+      row.scope_chunk_count,
+      'scope_chunk_count'
+    );
+    if (scopePageCount === 0 && scopeChunkCount === 0) {
+      return Object.freeze({ status: 'not_found' as const });
+    }
+    if (
+      scopePageCount < 1
+      || scopeChunkCount < 1
+      || scopePageCount > BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+      || scopeChunkCount > BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+      || (lookup.scopeKind === 'page' && scopePageCount !== 1)
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    return Object.freeze({
+      status: 'resolved' as const,
+      manifestId: normalizeUuid(row.manifest_id, 'manifest_id'),
+      shardKey: normalizeShardKey(row.shard_key),
+      partitionVersionId: normalizeUuid(
+        row.partition_version_id,
+        'partition_version_id'
+      ),
+      snapshotId: normalizeUuid(row.shard_snapshot_id, 'shard_snapshot_id'),
+      pageId: normalizeUuid(row.page_id, 'page_id'),
+      pageTitle,
+      pagePath,
+      scopeKind: lookup.scopeKind,
+      scopeChunkCount,
+      scopePageCount,
     });
   }
 

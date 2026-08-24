@@ -45,6 +45,9 @@ const SOURCE_EDITED_AT = new Date('2026-08-24T12:00:00.000Z');
 const VERIFIED_AT = new Date('2026-08-24T12:02:00.000Z');
 const ROOT_TITLE = 'Monday Night Raw';
 const ROOT_CANONICAL_URL = `https://www.notion.so/${ROOT_PAGE_ID.replaceAll('-', '')}`;
+const MANIFEST_CREATED_AT = new Date('2026-08-24T12:03:00.000Z');
+const SNAPSHOT_SEALED_AT = new Date('2026-08-24T12:03:30.000Z');
+const MANIFEST_SEALED_AT = new Date('2026-08-24T12:04:00.000Z');
 
 interface QueryRecord {
   readonly sql: string;
@@ -65,6 +68,88 @@ function result(
   rowCount = rows.length
 ): MockQueryResult {
   return { rows, rowCount };
+}
+
+function routingMemberRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    manifest_id: MANIFEST_ID,
+    manifest_generation: '3',
+    desired_configuration_version_id: CONFIGURATION_VERSION_ID,
+    desired_configuration_generation: CONFIGURATION_GENERATION,
+    desired_configuration_hash: CONFIGURATION_HASH,
+    configuration_version_id: CONFIGURATION_VERSION_ID,
+    configuration_generation: CONFIGURATION_GENERATION,
+    configuration_hash: CONFIGURATION_HASH,
+    configured_shard_count: '1',
+    configuration_state: 'sealed',
+    embedding_model: 'text-embedding-test',
+    embedding_version: '1',
+    embedding_dimension: '2',
+    index_format_version: '1',
+    member_count: '1',
+    omission_count: '0',
+    manifest_page_count: '1',
+    manifest_chunk_count: '1',
+    manifest_state: 'sealed',
+    manifest_created_at: MANIFEST_CREATED_AT,
+    manifest_sealed_at: MANIFEST_SEALED_AT,
+    record_kind: 'member',
+    shard_key: SHARD_KEY,
+    partition_version_id: PARTITION_VERSION_ID,
+    retrieval_tier: 'hot',
+    is_required: true,
+    scope_tags: ['brand:raw', 'year:2026'],
+    category_tags: ['current'],
+    shard_snapshot_id: SNAPSHOT_ID,
+    member_decision: 'fresh',
+    member_verified_at: VERIFIED_AT,
+    snapshot_page_count: '1',
+    snapshot_chunk_count: '1',
+    snapshot_embedding_model: 'text-embedding-test',
+    snapshot_embedding_version: '1',
+    snapshot_embedding_dimension: '2',
+    snapshot_index_format_version: '1',
+    snapshot_state: 'sealed',
+    snapshot_created_at: SOURCE_EDITED_AT,
+    snapshot_sealed_at: SNAPSHOT_SEALED_AT,
+    omission_decision: null,
+    safe_reason_code: null,
+    ...overrides,
+  };
+}
+
+function routingOmissionRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return routingMemberRow({
+    configured_shard_count: '2',
+    member_count: '1',
+    omission_count: '1',
+    record_kind: 'omission',
+    shard_key: OPTIONAL_SHARD_KEY,
+    partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+    retrieval_tier: 'archive',
+    is_required: false,
+    scope_tags: ['brand:raw', 'year:2025'],
+    category_tags: ['archive'],
+    shard_snapshot_id: null,
+    member_decision: null,
+    member_verified_at: null,
+    snapshot_page_count: null,
+    snapshot_chunk_count: null,
+    snapshot_embedding_model: null,
+    snapshot_embedding_version: null,
+    snapshot_embedding_dimension: null,
+    snapshot_index_format_version: null,
+    snapshot_state: null,
+    snapshot_created_at: null,
+    snapshot_sealed_at: null,
+    omission_decision: 'optional_unavailable',
+    safe_reason_code: 'SHARD_SYNC_INCOMPLETE',
+    ...overrides,
+  });
 }
 
 class PartitionRepositoryHarness {
@@ -748,6 +833,238 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     expect(query).not.toHaveBeenCalled();
     await expect(repository.loadShadowCoverage(UNIVERSE_ID, 1))
       .rejects.toThrow('monolith_only_page_ids exceeds its bounded sample contract');
+  });
+
+  test('loads one bounded routing generation from exact immutable manifest membership', async () => {
+    const nextConfigurationId = 'abababab-abab-4bab-8bab-abababababab';
+    const nextConfigurationHash = 'f'.repeat(64);
+    const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+      const normalized = normalizeSql(sql);
+      expect(normalized).toContain('WITH pinned_manifest AS MATERIALIZED');
+      expect(normalized).toContain('manifest.id = partition_head.active_manifest_id');
+      expect(normalized).toContain('member.shard_snapshot_id');
+      expect(normalized).toContain('LIMIT $2');
+      expect(normalized).not.toMatch(/backstage_notion_partition_heads/iu);
+      expect(normalized).not.toMatch(
+        /backstage_notion_(?:page_versions|chunk_versions|chunk_embeddings)/iu
+      );
+      expect(normalized).not.toMatch(/\b(?:markdown|content)\b/iu);
+      expect(values).toEqual([UNIVERSE_ID, 129]);
+      const common = {
+        configured_shard_count: '2',
+        member_count: '1',
+        omission_count: '1',
+        desired_configuration_version_id: nextConfigurationId,
+        desired_configuration_generation: 'partition-generation-2',
+        desired_configuration_hash: nextConfigurationHash,
+      };
+      return result([
+        routingMemberRow(common),
+        routingOmissionRow(common),
+      ]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository({
+      query,
+    } as unknown as Pool);
+
+    const state = await repository.loadActiveManifestRoutingState(UNIVERSE_ID);
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(state).toMatchObject({
+      universeId: UNIVERSE_ID,
+      manifestId: MANIFEST_ID,
+      manifestGeneration: '3',
+      configurationVersionId: CONFIGURATION_VERSION_ID,
+      configurationGeneration: CONFIGURATION_GENERATION,
+      configurationHash: CONFIGURATION_HASH,
+      configurationCurrent: false,
+      embeddingModel: 'text-embedding-test',
+      embeddingVersion: 1,
+      embeddingDimension: 2,
+      indexFormatVersion: 1,
+      pageCount: 1,
+      chunkCount: 1,
+      members: [{
+        shardKey: SHARD_KEY,
+        snapshotId: SNAPSHOT_ID,
+        verifiedAt: VERIFIED_AT,
+        snapshotSealedAt: SNAPSHOT_SEALED_AT,
+        pageCount: 1,
+        chunkCount: 1,
+        scopeTags: ['brand:raw', 'year:2026'],
+      }],
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        required: false,
+        decision: 'optional_unavailable',
+        safeReasonCode: 'SHARD_SYNC_INCOMPLETE',
+      }],
+    });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state?.members)).toBe(true);
+    expect(Object.isFrozen(state?.members[0])).toBe(true);
+  });
+
+  test('fails closed for missing authority, oversized metadata, and inconsistent totals', async () => {
+    const absent = new PostgresBackstageNotionPartitionRepository({
+      query: jest.fn(async () => result()),
+    } as unknown as Pool);
+    await expect(absent.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .resolves.toBeNull();
+
+    const oversized = new PostgresBackstageNotionPartitionRepository({
+      query: jest.fn(async () => result(Array.from(
+        { length: 129 },
+        () => routingMemberRow()
+      ))),
+    } as unknown as Pool);
+    await expect(oversized.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .rejects.toThrow(/exceeds its bounded contract/u);
+
+    const inconsistent = new PostgresBackstageNotionPartitionRepository({
+      query: jest.fn(async () => result([
+        routingMemberRow({ manifest_chunk_count: '2' }),
+      ])),
+    } as unknown as Pool);
+    await expect(inconsistent.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .rejects.toThrow(/totals are internally inconsistent/u);
+  });
+
+  test('resolves exact manifest scope ownership with bounded suffix matching', async () => {
+    const requestedPath = [
+      ...Array.from({ length: 100 }, (_, index) => `Ancestor ${index}`),
+      'Monday Night Raw',
+    ];
+    const requestedPathKey = normalizeBackstageNotionScopePath(requestedPath);
+    const titleKey = normalizeBackstageNotionScopeKey(ROOT_TITLE);
+    const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+      const normalized = normalizeSql(sql);
+      expect(normalized).toContain('WITH RECURSIVE pinned_manifest AS MATERIALIZED');
+      expect(normalized).toContain('manifest.id = $2');
+      expect(normalized).not.toContain(
+        'backstage_notion_partitioned_universe_heads'
+      );
+      expect(normalized).toContain('page.scope_title_key = $3');
+      expect(normalized).toContain('jsonb_array_length(page.scope_path_key)');
+      expect(normalized).toContain('parent.traversal_depth < $7');
+      expect(normalized).toContain('child.depth = parent.page_depth + 1');
+      expect(normalized).toContain('COUNT(DISTINCT occurrence.page_id)');
+      expect(normalized).toContain(
+        'OR EXISTS ( SELECT 1 FROM public.backstage_notion_shard_snapshot_chunk_occurrences AS retrievable_occurrence'
+      );
+      expect(normalized).toMatch(/FROM candidates AS candidate UNION SELECT/iu);
+      expect(normalized.match(/LIMIT \$6/gu)).toHaveLength(2);
+      expect(normalized).not.toMatch(
+        /backstage_notion_(?:page_versions|chunk_versions|chunk_embeddings)/iu
+      );
+      expect(normalized).not.toMatch(/\b(?:markdown|content|embedding)\b/iu);
+      expect(values).toEqual([
+        UNIVERSE_ID,
+        MANIFEST_ID,
+        titleKey,
+        requestedPathKey,
+        'subtree',
+        2,
+        16,
+      ]);
+      return result([{
+        manifest_id: MANIFEST_ID,
+        shard_key: SHARD_KEY,
+        partition_version_id: PARTITION_VERSION_ID,
+        shard_snapshot_id: SNAPSHOT_ID,
+        page_id: ROOT_PAGE_ID,
+        page_title: ROOT_TITLE,
+        scope_path: [ROOT_TITLE],
+        scope_chunk_count: '3',
+        scope_page_count: '2',
+      }]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository({
+      query,
+    } as unknown as Pool);
+
+    await expect(repository.resolveManifestScopeOwner(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      {
+        pageTitleKey: titleKey,
+        pagePathKey: Array.from({ length: 102 }, () => titleKey),
+        scopeKind: 'subtree',
+      }
+    )).rejects.toThrow(/pagePathKey is invalid/u);
+    expect(query).not.toHaveBeenCalled();
+    await expect(repository.resolveManifestScopeOwner(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      {
+        pageTitleKey: titleKey,
+        pagePathKey: requestedPathKey,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: MANIFEST_ID,
+      shardKey: SHARD_KEY,
+      partitionVersionId: PARTITION_VERSION_ID,
+      snapshotId: SNAPSHOT_ID,
+      pageId: ROOT_PAGE_ID,
+      pageTitle: ROOT_TITLE,
+      pagePath: [ROOT_TITLE],
+      scopeKind: 'subtree',
+      scopeChunkCount: 3,
+      scopePageCount: 2,
+    });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  test('distinguishes stale manifests, missing scopes, ambiguity, and corrupt scope rows', async () => {
+    const titleKey = normalizeBackstageNotionScopeKey(ROOT_TITLE);
+    const baseRow = {
+      manifest_id: MANIFEST_ID,
+      shard_key: SHARD_KEY,
+      partition_version_id: PARTITION_VERSION_ID,
+      shard_snapshot_id: SNAPSHOT_ID,
+      page_id: ROOT_PAGE_ID,
+      page_title: ROOT_TITLE,
+      scope_path: [ROOT_TITLE],
+      scope_chunk_count: '1',
+      scope_page_count: '1',
+    };
+    const resolveRows = async (rows: Array<Record<string, unknown>>) => (
+      new PostgresBackstageNotionPartitionRepository({
+        query: jest.fn(async () => result(rows)),
+      } as unknown as Pool).resolveManifestScopeOwner(
+        UNIVERSE_ID,
+        MANIFEST_ID,
+        { pageTitleKey: titleKey, pagePathKey: null, scopeKind: 'page' }
+      )
+    );
+
+    await expect(resolveRows([])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolveRows([{
+      manifest_id: MANIFEST_ID,
+      shard_key: null,
+      partition_version_id: null,
+      shard_snapshot_id: null,
+      page_id: null,
+      page_title: null,
+      scope_path: null,
+      scope_chunk_count: null,
+      scope_page_count: null,
+    }])).resolves.toEqual({ status: 'not_found' });
+    await expect(resolveRows([
+      baseRow,
+      { ...baseRow, page_id: OPTIONAL_ROOT_PAGE_ID },
+    ])).resolves.toEqual({ status: 'ambiguous' });
+    await expect(resolveRows([{
+      ...baseRow,
+      page_title: 'SmackDown',
+    }])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolveRows([{
+      ...baseRow,
+      scope_chunk_count: '0',
+      scope_page_count: '0',
+    }])).resolves.toEqual({ status: 'not_found' });
   });
 
   test('rejects malformed inputs before obtaining a database connection', async () => {
