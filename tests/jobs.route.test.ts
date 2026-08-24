@@ -1112,6 +1112,8 @@ describe('/jobs routes', () => {
   });
 
   it('cancels queued jobs immediately for the matching authenticated owner despite session input', async () => {
+    const currentProducerCancellationReason =
+      'CURRENT_PRODUCER_PENDING_CANCELLATION_REASON';
     getJobByIdMock.mockResolvedValue({
       id: QUEUED_JOB_ID,
       job_type: 'gpt',
@@ -1125,7 +1127,7 @@ describe('/jobs routes', () => {
       cancel_requested_at: null,
       cancel_reason: null
     });
-    requestJobCancellationMock.mockResolvedValue({
+    requestJobCancellationMock.mockImplementation(async (_jobId, reason) => ({
       outcome: 'cancelled',
       job: {
         id: QUEUED_JOB_ID,
@@ -1135,12 +1137,15 @@ describe('/jobs routes', () => {
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
-        error_message: 'Job cancellation requested by client.',
+        error_message: reason,
         output: null,
+        autonomy_state: {
+          cancellation: { reason },
+        },
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: 'Stop this job'
+        cancel_reason: reason,
       }
-    });
+    }));
 
     const response = await postWithJobReadToken(
       `/jobs/${QUEUED_JOB_ID}/cancel`,
@@ -1149,7 +1154,7 @@ describe('/jobs routes', () => {
     )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'caller-selected-session')
-      .send({ reason: 'Stop this job' });
+      .send({ reason: currentProducerCancellationReason });
 
     expect(response.status).toBe(200);
     expectNoStore(response);
@@ -1161,6 +1166,10 @@ describe('/jobs routes', () => {
       lifecycle_status: 'cancelled',
       cancellationRequested: false
     });
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      QUEUED_JOB_ID,
+      currentProducerCancellationReason
+    );
   });
 
   it('preserves internal-actor cancellation for unscoped public jobs', async () => {
@@ -1580,6 +1589,8 @@ describe('/jobs routes', () => {
   });
 
   it('returns 202 when cancellation is requested for a running job', async () => {
+    const currentProducerCancellationReason =
+      'CURRENT_PRODUCER_RUNNING_CANCELLATION_REASON';
     getJobByIdMock.mockResolvedValue({
       id: CANCEL_REQUEST_JOB_ID,
       job_type: 'gpt',
@@ -1593,7 +1604,7 @@ describe('/jobs routes', () => {
       cancel_requested_at: null,
       cancel_reason: null
     });
-    requestJobCancellationMock.mockResolvedValue({
+    requestJobCancellationMock.mockImplementation(async (_jobId, reason) => ({
       outcome: 'cancellation_requested',
       job: {
         id: CANCEL_REQUEST_JOB_ID,
@@ -1605,10 +1616,13 @@ describe('/jobs routes', () => {
         completed_at: null,
         error_message: null,
         output: null,
+        autonomy_state: {
+          cancellation: { reason },
+        },
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: 'Stop this job'
+        cancel_reason: reason,
       }
-    });
+    }));
 
     const response = await postWithJobReadToken(
       `/jobs/${CANCEL_REQUEST_JOB_ID}/cancel`,
@@ -1616,7 +1630,7 @@ describe('/jobs routes', () => {
       2
     )
       .set('x-confirmed', 'yes')
-      .send({ reason: 'Stop this job' });
+      .send({ reason: currentProducerCancellationReason });
 
     expect(response.status).toBe(202);
     expectNoStore(response);
@@ -1628,6 +1642,10 @@ describe('/jobs routes', () => {
       lifecycle_status: 'running',
       cancellationRequested: true
     });
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      CANCEL_REQUEST_JOB_ID,
+      currentProducerCancellationReason
+    );
   });
 
   it('preserves terminal cancellation conflicts for the owning caller', async () => {

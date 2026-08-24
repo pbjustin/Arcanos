@@ -516,6 +516,36 @@ K2 current/K1 previous, and only then deploy the web role with K2 current/K1
 previous. Keep K1 configured as previous until every K1-sealed retained job
 has drained.
 
+Before the first worker-first promotion of the Phase-A compatibility release,
+deploy a producer-neutral cancellation-sanitizer precursor through the same
+exact-SHA paired workflow. Its web boundary must replace the reason for every
+publicly cancellable `job_type = 'gpt'` row with the reviewed server literal
+`GPT job cancellation requested during rollout compatibility.` independently
+of input shape, alias, or producer marker. Do not begin the Phase-A worker
+upload until the exact precursor web is active and ready on every replica and
+alias, every older web deployment is terminated rather than merely
+superseded, no restart source can revive the older SHA, and the later of the
+tracked 60-second replica drain and the bounded cancellation-route/database
+transaction window has elapsed. Then run a read-only, all-status GPT inventory
+that proves zero non-fixed values in `cancel_reason`,
+`autonomy_state.cancellation.reason`, and `error_message` for cancelled rows,
+plus zero nonterminal raw cancellation requests and zero unexpected
+`producerContract` or `protectedBackstage` rows. Repeat that inventory after
+another quiet window covering route completion, commit visibility, and worker
+cancellation/recovery. Preserve the query digest, timestamps, counts, exact
+target, and deployment IDs as rollout evidence.
+
+Those repeated inventories establish that no unsafe retained cancellation
+data exists at the Phase-A cutover; they do not prove that an older running web
+request never wrote a transient value that was sanitized between snapshots.
+If the acceptance criterion is zero new plaintext ever, hold
+`/jobs/:id/cancel` at the edge while the old web drains. If either the endpoint
+hold or the retained-state cutover evidence required by the chosen criterion
+is unavailable, do not promote this release. Setting
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=false` is not an ingress
+hold because explicit async, query-and-wait, fallback, and idempotent GPT paths
+can still enqueue work.
+
 This release uses a temporary Phase-A compatibility drain for the
 worker-first/web-second overlap. Standard unprotected GPT queue inputs emitted
 by the current producers carry the exact internal marker
