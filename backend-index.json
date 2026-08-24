@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T17:27:22.230Z",
+  "generatedAt": "2026-08-24T17:58:53.330Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -429,6 +429,9 @@
         },
         {
           "relativePath": "src/core/db/auditStore.ts"
+        },
+        {
+          "relativePath": "src/core/db/backstageNotionPartitionStorageSchema.ts"
         },
         {
           "relativePath": "src/core/db/client.ts"
@@ -3364,6 +3367,9 @@
           "relativePath": "tests/backstage-notion-partition-core.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-rag-core.test.ts"
         },
         {
@@ -3902,6 +3908,9 @@
         },
         {
           "relativePath": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"

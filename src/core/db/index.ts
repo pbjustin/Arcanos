@@ -34,6 +34,7 @@ export {
   ReasoningLogSchema,
   RagDocSchema,
   BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS,
+  BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS,
   BackstageNotionAuthoritySchema,
   BackstageNotionUniverseHeadSchema,
   BackstageNotionSnapshotSchema,

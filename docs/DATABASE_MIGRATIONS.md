@@ -353,6 +353,42 @@ V1 retains prior successful immutable snapshots and has no automatic purge.
 Ordinary validation must not apply either file to a configured/shared database;
 use only a dedicated disposable PostgreSQL 18 target.
 
+### Backstage Notion partition shadow storage migration
+
+`migrations/20260824_backstage_notion_partition_storage_v1.sql` adds the
+partitioned index as an independent shadow store. It does not alter the
+monolithic authority head, serve partitioned reads, or perform a production
+cutover. Runtime startup executes the same transactional DDL from
+`src/core/db/backstageNotionPartitionStorageSchema.ts` after the monolithic
+tables exist.
+
+An immutable configuration-generation header identifies the exact desired
+shard set. Stable `(universe_id, shard_key)` identities are separate from
+immutable configuration versions, titles, roots, tags, tiers, and bounded
+per-shard capacity. Normalized page, chunk, and model-version embedding records
+allow unchanged content to be reused. Embeddings use validated one-dimensional
+`DOUBLE PRECISION[]` values; PostgreSQL recomputes the non-zero finite norm and
+does not require `pgvector`.
+
+Page versions, shard snapshots, and universe manifests begin in `building` and
+support exactly one validated transition to `sealed`. Parent-locking triggers
+reject every later child insert, update, or delete. Immutable snapshot chunk
+occurrences pin each selected snapshot page and page version to the exact chunk
+and embedding model/version. A manifest records either a selected snapshot or
+an explicit optional omission for every shard in its sealed configuration;
+its ownership primary key prevents one page from belonging to two member
+shards. Membership also stores the immutable snapshot verification time used by
+future freshness decisions. Mutable shard and universe heads accept only sealed
+objects and require exact compare-and-swap generation increments. Shard and
+provider leases independently fence distributed synchronization.
+
+`migrations/20260824_backstage_notion_partition_storage_v1.rollback.sql`
+acquires exclusive locks in a fixed order and refuses with SQLSTATE `55000` if
+any partition table contains a row. It never uses `CASCADE`. Validate execution
+only through the dedicated PostgreSQL 18 integration suite and its explicitly
+guarded disposable loopback database; ordinary static validation must not apply
+the migration to a configured or shared database.
+
 ### Local-agent hardening migration
 
 The additive

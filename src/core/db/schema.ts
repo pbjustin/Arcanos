@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { Pool } from 'pg';
 import { redactString } from '@shared/redaction.js';
 import { getPool, isDatabaseConnected } from './client.js';
+import { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from './backstageNotionPartitionStorageSchema.js';
+
+export { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from './backstageNotionPartitionStorageSchema.js';
 
 // Zod Schemas for Database Entities
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
@@ -3120,6 +3123,10 @@ $$;`,
   // Install the dedicated Notion snapshot store only after every protected
   // legacy Backstage table exists, because its authority guard covers all of them.
   ...BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS,
+
+  // The partitioned store is additive and shadow-only. Its single transactional
+  // bootstrap statement preserves migration parity without changing legacy reads.
+  ...BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS,
 
   `CREATE INDEX IF NOT EXISTS idx_agent_status_updated_at ON "Agent"("status", "updatedAt" DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_action_plan_status_created_at ON "ActionPlan"("status", "createdAt" DESC)`,

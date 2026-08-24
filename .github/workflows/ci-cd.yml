@@ -428,6 +428,8 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
@@ -447,7 +449,7 @@ jobs:
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
-      - name: 🧱 Verify PostgreSQL claim, snapshot, budget, stale-recovery, Backstage canon atomicity, and terminal retention
+      - name: 🧱 Verify PostgreSQL fencing, Backstage atomicity, partition storage, and retention
         run: npm run test:postgres-fencing
 
   runtime-redis-admission:
