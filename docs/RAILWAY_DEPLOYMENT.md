@@ -324,6 +324,15 @@ to `NEVER` with zero retries: the fresh-database preflights deliberately make
 this proof non-restartable. Only the web service receives an HTTP domain. PostgreSQL,
 Redis, and the worker receive neither an HTTP domain nor a TCP proxy.
 
+Configure the worker pre-deploy command as
+`node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty` and the
+web pre-deploy command as
+`node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema`. These
+sealed checks run from the application images, which contain Node and the exact
+tracked source. They bind the mode to the Railway role and revision, use only
+the exact private PostgreSQL reference, and emit fixed nonsecret sentinels.
+They do not run inside the PostgreSQL template container or initialize schema.
+
 Both application roles require the exact marker
 `ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET=dedicated-backstage-heavy-preview-v1`,
 one shared bounded `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID`, exact Postgres and
@@ -343,13 +352,17 @@ The authorized run order is:
 
 1. Before application deployment, attest the exact project, environment,
    four-service/two-volume topology, private data hosts, absence of public data
-   exposure, exact source revision, one replica per app, and empty fresh
-   Postgres. Do not run an initializer or migration command.
-2. Deploy the worker at the exact revision first. Its read-only preflight
-   requires `public.job_data` and `public.job_events` to be absent; normal
-   worker bootstrap may create them only after the integrity wrapper passes.
-3. After worker readiness, deploy the web at the same revision. Its read-only
-   preflight requires both job tables to exist and both to contain zero rows.
+   exposure, exact source revision, one replica per app, and fresh disposable
+   data-service ownership. Do not run an initializer or migration command;
+   database emptiness is established by the worker pre-deploy check in step 2.
+2. Deploy the worker at the exact revision first. Its sealed pre-deploy check
+   requires exactly zero non-system PostgreSQL tables, and the supervisor's
+   read-only startup preflight then requires `public.job_data` and
+   `public.job_events` to be absent. Normal worker bootstrap may create them
+   only after the integrity wrapper passes.
+3. After worker readiness, deploy the web at the same revision. Its sealed
+   pre-deploy check and supervisor startup preflight both require the two job
+   tables to exist and both to contain zero rows.
 4. Run `scripts/railway-backstage-heavy-e2e-probe.mjs` only with both
    `--execute` and `--allow-network`. The dry-run default makes no network
    request. The executable re-attests the Railway control plane before the two

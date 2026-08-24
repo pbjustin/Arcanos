@@ -38,6 +38,10 @@ const REDIS_URL =
 const TEST_PROOF_WEB_CREDENTIAL = 'test-proof-web-credential-value-0001';
 const JOB_READ_SECRET = 'proof-only-fictional-job-read-secret-0001';
 const PAYLOAD_KEY = `${'A'.repeat(43)}=`;
+const WORKER_PREDEPLOY_COMMAND =
+  'node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty';
+const WEB_PREDEPLOY_COMMAND =
+  'node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema';
 
 function configArgs(execute = false) {
   return [
@@ -62,7 +66,7 @@ function configArgs(execute = false) {
   ];
 }
 
-function deployment(id, dataService = false) {
+function deployment(id, processKind = null) {
   return {
     id,
     status: 'SUCCESS',
@@ -75,11 +79,14 @@ function deployment(id, dataService = false) {
           numReplicas: 1,
           restartPolicyMaxRetries: 0,
           restartPolicyType: 'NEVER',
-          ...(dataService
+          ...(processKind === null
             ? {}
             : {
                 startCommand:
                   'node scripts/railway-backstage-heavy-proof-supervisor.mjs',
+                preDeployCommand: processKind === 'worker'
+                  ? WORKER_PREDEPLOY_COMMAND
+                  : WEB_PREDEPLOY_COMMAND,
               }),
         },
       },
@@ -87,8 +94,14 @@ function deployment(id, dataService = false) {
   };
 }
 
-function appService(serviceId, serviceName, deploymentId, domains = []) {
-  const latestDeployment = deployment(deploymentId);
+function appService(
+  serviceId,
+  serviceName,
+  deploymentId,
+  processKind,
+  domains = []
+) {
+  const latestDeployment = deployment(deploymentId, processKind);
   return {
     serviceId,
     serviceName,
@@ -99,7 +112,7 @@ function appService(serviceId, serviceName, deploymentId, domains = []) {
 }
 
 function dataService(serviceId, serviceName, deploymentId) {
-  const latestDeployment = deployment(deploymentId, true);
+  const latestDeployment = deployment(deploymentId);
   return {
     serviceId,
     serviceName,
@@ -167,12 +180,14 @@ function controlPlanePayloads(config) {
     config.webServiceId,
     config.webServiceName,
     config.webDeploymentId,
+    'web',
     [{ domain: WEB_DOMAIN }]
   );
   const worker = appService(
     config.workerServiceId,
     config.workerServiceName,
-    config.workerDeploymentId
+    config.workerDeploymentId,
+    'worker'
   );
   const postgres = dataService(
     config.postgresServiceId,
@@ -243,8 +258,8 @@ function controlPlanePayloads(config) {
     redisDomains: { domains: [] },
     postgresTcpProxies: { proxies: [] },
     redisTcpProxies: { proxies: [] },
-    webDeployments: [deployment(config.webDeploymentId)],
-    workerDeployments: [deployment(config.workerDeploymentId)],
+    webDeployments: [deployment(config.webDeploymentId, 'web')],
+    workerDeployments: [deployment(config.workerDeploymentId, 'worker')],
     webVariables: variables(
       config,
       config.webServiceId,
@@ -519,6 +534,74 @@ describe('Backstage heavy network proof', () => {
       restartable,
       config
     )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+  });
+
+  it('attests exact role-specific pre-deploy commands in every app manifest', () => {
+    const config = resolveBackstageHeavyProbeConfig(configArgs(true));
+    const payloads = controlPlanePayloads(config);
+    const statusDeployment = (candidatePayloads, serviceId) => (
+      candidatePayloads.status.environments.edges[0].node
+        .serviceInstances.edges.find(
+          edge => edge.node.serviceId === serviceId
+        ).node.latestDeployment
+    );
+    const manifestCases = [
+      {
+        expected: WEB_PREDEPLOY_COMMAND,
+        failure: 'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH',
+        opposite: WORKER_PREDEPLOY_COMMAND,
+        readDeployment: candidatePayloads => statusDeployment(
+          candidatePayloads,
+          config.webServiceId
+        ),
+      },
+      {
+        expected: WORKER_PREDEPLOY_COMMAND,
+        failure: 'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH',
+        opposite: WEB_PREDEPLOY_COMMAND,
+        readDeployment: candidatePayloads => statusDeployment(
+          candidatePayloads,
+          config.workerServiceId
+        ),
+      },
+      {
+        expected: WEB_PREDEPLOY_COMMAND,
+        failure: 'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_MISMATCH',
+        opposite: WORKER_PREDEPLOY_COMMAND,
+        readDeployment: candidatePayloads => candidatePayloads.webDeployments[0],
+      },
+      {
+        expected: WORKER_PREDEPLOY_COMMAND,
+        failure: 'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_MISMATCH',
+        opposite: WEB_PREDEPLOY_COMMAND,
+        readDeployment: candidatePayloads => candidatePayloads.workerDeployments[0],
+      },
+    ];
+
+    expect(attestBackstageHeavyRailwayControlPlane(
+      payloads,
+      config
+    )).toMatchObject({ projectId: ID.project });
+    for (const manifestCase of manifestCases) {
+      expect(
+        manifestCase.readDeployment(payloads)
+          .meta.serviceManifest.deploy.preDeployCommand
+      ).toBe(manifestCase.expected);
+      for (const invalidCommand of [undefined, manifestCase.opposite]) {
+        const invalidPayloads = structuredClone(payloads);
+        const deploy = manifestCase.readDeployment(invalidPayloads)
+          .meta.serviceManifest.deploy;
+        if (invalidCommand === undefined) {
+          delete deploy.preDeployCommand;
+        } else {
+          deploy.preDeployCommand = invalidCommand;
+        }
+        expect(() => attestBackstageHeavyRailwayControlPlane(
+          invalidPayloads,
+          config
+        )).toThrow(manifestCase.failure);
+      }
+    }
   });
 
   it('executes the concurrent derived-dedupe submission and protected result path', async () => {

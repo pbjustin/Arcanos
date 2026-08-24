@@ -54,6 +54,10 @@ const RAILWAY_COMMAND_TIMEOUT_MS = 15_000;
 const RAILWAY_COMMAND_MAX_BYTES = 2 * 1024 * 1024;
 const RAILWAY_START_COMMAND =
   'node scripts/railway-backstage-heavy-proof-supervisor.mjs';
+const RAILWAY_WORKER_PREDEPLOY_COMMAND =
+  'node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty';
+const RAILWAY_WEB_PREDEPLOY_COMMAND =
+  'node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema';
 const RAILWAY_CLI_ENV_ALLOWLIST = new Set([
   'APPDATA',
   'COMSPEC',
@@ -540,7 +544,12 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_SERVICE_TOPOLOGY_MISMATCH');
   }
-  const attestService = (serviceId, serviceName, deploymentId) => {
+  const attestService = (
+    serviceId,
+    serviceName,
+    deploymentId,
+    expectedPreDeployCommand
+  ) => {
     const service = services.find(
       candidate => candidate.serviceId?.toLowerCase() === serviceId
     );
@@ -564,6 +573,8 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
       || deployment.instances.some(instance => instance?.status !== 'RUNNING')
       || deployment?.meta?.serviceManifest?.deploy?.numReplicas !== 1
       || effectiveStartCommand !== RAILWAY_START_COMMAND
+      || effectiveDeployConfig?.preDeployCommand
+        !== expectedPreDeployCommand
       || effectiveDeployConfig?.restartPolicyType !== 'NEVER'
       || effectiveDeployConfig?.restartPolicyMaxRetries !== 0
       || readDeploymentSourceSha(deployment) !== config.sourceSha
@@ -582,12 +593,14 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
   const web = attestService(
     config.webServiceId,
     config.webServiceName,
-    config.webDeploymentId
+    config.webDeploymentId,
+    RAILWAY_WEB_PREDEPLOY_COMMAND
   );
   const worker = attestService(
     config.workerServiceId,
     config.workerServiceName,
-    config.workerDeploymentId
+    config.workerDeploymentId,
+    RAILWAY_WORKER_PREDEPLOY_COMMAND
   );
   const attestDataService = (serviceId, serviceName) => {
     const service = services.find(
@@ -634,7 +647,13 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
   };
 }
 
-function attestDeploymentList(payload, serviceId, deploymentId, sourceSha) {
+function attestDeploymentList(
+  payload,
+  serviceId,
+  deploymentId,
+  sourceSha,
+  expectedPreDeployCommand
+) {
   if (!Array.isArray(payload)) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_INVALID');
   }
@@ -647,6 +666,8 @@ function attestDeploymentList(payload, serviceId, deploymentId, sourceSha) {
     || readDeploymentSourceSha(deployment) !== sourceSha
     || deployment.meta?.serviceManifest?.deploy?.startCommand
       !== RAILWAY_START_COMMAND
+    || deployment.meta?.serviceManifest?.deploy?.preDeployCommand
+      !== expectedPreDeployCommand
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_MISMATCH');
   }
@@ -921,13 +942,15 @@ export function attestBackstageHeavyRailwayControlPlane(
     payloads.webDeployments,
     config.webServiceId,
     config.webDeploymentId,
-    config.sourceSha
+    config.sourceSha,
+    RAILWAY_WEB_PREDEPLOY_COMMAND
   );
   attestDeploymentList(
     payloads.workerDeployments,
     config.workerServiceId,
     config.workerDeploymentId,
-    config.sourceSha
+    config.sourceSha,
+    RAILWAY_WORKER_PREDEPLOY_COMMAND
   );
   attestDataPlaneVariables(payloads, config);
   return status;
