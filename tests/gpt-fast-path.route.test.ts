@@ -2388,10 +2388,20 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('does not enable protected Booker queueing for a permissive boolean-like flag value', async () => {
+  it.each([
+    'yes',
+    'TRUE',
+    ' true ',
+    'FALSE',
+    ' false ',
+    '1',
+    '0',
+    'no',
+    '',
+  ])('does not enable protected Booker queueing for non-exact flag value %j', async (flagValue) => {
     const accessToken = `backstage-${'s'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
-    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'yes';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = flagValue;
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x57).toString('base64');
     mockResolveGptRouting.mockResolvedValueOnce(

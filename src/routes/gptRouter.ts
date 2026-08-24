@@ -599,11 +599,11 @@ function readBooleanEnv(name: string, fallbackValue: boolean): boolean {
 }
 
 function readStrictBooleanEnv(name: string, fallbackValue: boolean): boolean {
-  const normalizedValue = (process.env[name] ?? '').trim().toLowerCase();
-  if (normalizedValue === 'true') {
+  const rawValue = process.env[name];
+  if (rawValue === 'true') {
     return true;
   }
-  if (normalizedValue === 'false') {
+  if (rawValue === 'false') {
     return false;
   }
   return fallbackValue;
