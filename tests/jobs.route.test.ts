@@ -58,6 +58,8 @@ const BRIDGE_JOB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const STORYLINE_JOB_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const JOB_READ_SECRET = 'jobs-route-read-capability-secret-1234567890';
 const BRIDGE_SECRET = 'bridge-cancellation-actor-secret';
+const GPT_ROLLOUT_CANCELLATION_MESSAGE =
+  'GPT job cancellation requested during rollout compatibility.';
 const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 const originalPreviousJobReadSecret =
   process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
@@ -944,6 +946,7 @@ describe('/jobs routes', () => {
   });
 
   it('cancels queued jobs immediately for the matching authenticated owner despite session input', async () => {
+    const privateCancellationSentinel = 'PRIVATE_PENDING_CANCELLATION_SENTINEL';
     getJobByIdMock.mockResolvedValue({
       id: QUEUED_JOB_ID,
       job_type: 'gpt',
@@ -957,7 +960,7 @@ describe('/jobs routes', () => {
       cancel_requested_at: null,
       cancel_reason: null
     });
-    requestJobCancellationMock.mockResolvedValue({
+    requestJobCancellationMock.mockImplementation(async (_jobId, reason) => ({
       outcome: 'cancelled',
       job: {
         id: QUEUED_JOB_ID,
@@ -967,12 +970,15 @@ describe('/jobs routes', () => {
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
-        error_message: 'Job cancellation requested by client.',
+        error_message: reason,
         output: null,
+        autonomy_state: {
+          cancellation: { reason },
+        },
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: 'Stop this job'
+        cancel_reason: reason,
       }
-    });
+    }));
 
     const response = await postWithJobReadToken(
       `/jobs/${QUEUED_JOB_ID}/cancel`,
@@ -981,7 +987,7 @@ describe('/jobs routes', () => {
     )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'caller-selected-session')
-      .send({ reason: 'Stop this job' });
+      .send({ reason: privateCancellationSentinel });
 
     expect(response.status).toBe(200);
     expectNoStore(response);
@@ -993,6 +999,11 @@ describe('/jobs routes', () => {
       lifecycle_status: 'cancelled',
       cancellationRequested: false
     });
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      QUEUED_JOB_ID,
+      GPT_ROLLOUT_CANCELLATION_MESSAGE
+    );
+    expect(JSON.stringify(response.body)).not.toContain(privateCancellationSentinel);
   });
 
   it('validates the action-secret carrier and ignores unrelated auth/session input for bridge cancellation', async () => {
@@ -1035,10 +1046,10 @@ describe('/jobs routes', () => {
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
-        error_message: 'Job cancellation requested by client.',
+        error_message: GPT_ROLLOUT_CANCELLATION_MESSAGE,
         output: null,
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: 'Stop this bridge job',
+        cancel_reason: GPT_ROLLOUT_CANCELLATION_MESSAGE,
       },
     });
 
@@ -1060,11 +1071,12 @@ describe('/jobs routes', () => {
     });
     expect(requestJobCancellationMock).toHaveBeenCalledWith(
       BRIDGE_JOB_ID,
-      'Stop this bridge job'
+      GPT_ROLLOUT_CANCELLATION_MESSAGE
     );
   });
 
   it('returns 202 when cancellation is requested for a running job', async () => {
+    const privateCancellationSentinel = 'PRIVATE_RUNNING_CANCELLATION_SENTINEL';
     getJobByIdMock.mockResolvedValue({
       id: CANCEL_REQUEST_JOB_ID,
       job_type: 'gpt',
@@ -1078,7 +1090,7 @@ describe('/jobs routes', () => {
       cancel_requested_at: null,
       cancel_reason: null
     });
-    requestJobCancellationMock.mockResolvedValue({
+    requestJobCancellationMock.mockImplementation(async (_jobId, reason) => ({
       outcome: 'cancellation_requested',
       job: {
         id: CANCEL_REQUEST_JOB_ID,
@@ -1090,10 +1102,13 @@ describe('/jobs routes', () => {
         completed_at: null,
         error_message: null,
         output: null,
+        autonomy_state: {
+          cancellation: { reason },
+        },
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: 'Stop this job'
+        cancel_reason: reason,
       }
-    });
+    }));
 
     const response = await postWithJobReadToken(
       `/jobs/${CANCEL_REQUEST_JOB_ID}/cancel`,
@@ -1101,7 +1116,7 @@ describe('/jobs routes', () => {
       2
     )
       .set('x-confirmed', 'yes')
-      .send({ reason: 'Stop this job' });
+      .send({ reason: privateCancellationSentinel });
 
     expect(response.status).toBe(202);
     expectNoStore(response);
@@ -1113,6 +1128,11 @@ describe('/jobs routes', () => {
       lifecycle_status: 'running',
       cancellationRequested: true
     });
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      CANCEL_REQUEST_JOB_ID,
+      GPT_ROLLOUT_CANCELLATION_MESSAGE
+    );
+    expect(JSON.stringify(response.body)).not.toContain(privateCancellationSentinel);
   });
 
   it('preserves terminal cancellation conflicts for the owning caller', async () => {
