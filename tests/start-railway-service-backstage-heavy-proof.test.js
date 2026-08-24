@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 import { PassThrough } from 'node:stream';
 
@@ -175,6 +176,24 @@ afterEach(() => {
 });
 
 describe('one-shot Backstage heavy Railway proof supervisor', () => {
+  it('pins an isolated config-as-code file without overriding role pre-deploy checks', () => {
+    const config = JSON.parse(readFileSync(
+      new URL('../railway.backstage-heavy-proof.json', import.meta.url),
+      'utf8'
+    ));
+
+    expect(config).toEqual({
+      $schema: 'https://railway.app/railway.schema.json',
+      deploy: {
+        startCommand:
+          'node scripts/railway-backstage-heavy-proof-supervisor.mjs',
+      },
+    });
+    expect(config).not.toHaveProperty('environments');
+    expect(config).not.toHaveProperty('variables');
+    expect(config.deploy).not.toHaveProperty('preDeployCommand');
+  });
+
   it('binds both roles to exact fresh private data services and accepts Redis database /', () => {
     const worker = resolveBackstageHeavyProofTargetOrThrow(
       'worker',

@@ -318,11 +318,16 @@ isolated environment named `backstage-heavy-pr-<PR>-e2e`, exactly the services
 `Postgres`, `Redis`, `arcanos-worker-pr<PR>-heavy`, and
 `arcanos-web-pr<PR>-heavy`, and exactly two READY volumes mounted at
 `/var/lib/postgresql/data` and `/data`. Both application services use one
-replica and the exact start command
-`node scripts/railway-backstage-heavy-proof-supervisor.mjs`. Set restart policy
-to `NEVER` with zero retries: the fresh-database preflights deliberately make
-this proof non-restartable. Only the web service receives an HTTP domain. PostgreSQL,
-Redis, and the worker receive neither an HTTP domain nor a TCP proxy.
+replica and pin the absolute custom config-as-code path
+`/railway.backstage-heavy-proof.json`. That file intentionally defines only the
+exact start command
+`node scripts/railway-backstage-heavy-proof-supervisor.mjs`; do not let the
+repository's native ephemeral-PR config override the proof supervisor or the
+role-specific pre-deploy checks below. Set a 60-second drain interval and
+restart policy to `NEVER` with zero retries: the fresh-database preflights
+deliberately make this proof non-restartable. Only the web service receives an
+HTTP domain. PostgreSQL, Redis, and the worker receive neither an HTTP domain
+nor a TCP proxy.
 
 Configure each Railway `preDeployCommand` as an exact one-element array. The
 worker value is
