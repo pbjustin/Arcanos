@@ -87,6 +87,11 @@ export interface BackstageNotionPreparedRagPage {
   chunks: readonly BackstageNotionRagChunk[];
 }
 
+export type BackstageNotionInspectedRagPage = Omit<
+  BackstageNotionPreparedRagPage,
+  'chunks'
+>;
+
 export interface BackstageNotionRagChunkingOptions {
   maximumCodePoints?: number;
 }
@@ -1188,11 +1193,10 @@ function normalizeSourcePage(input: BackstageNotionRagSourcePage): Omit<
   };
 }
 
-/** Discover, sanitize, categorize, hash, and chunk one hierarchy page. */
-export function prepareBackstageNotionRagPage(
-  input: BackstageNotionRagSourcePage,
-  options: BackstageNotionRagChunkingOptions = {}
-): BackstageNotionPreparedRagPage {
+/** Discover, sanitize, categorize, and hash one hierarchy page without chunking it. */
+export function inspectBackstageNotionRagPage(
+  input: BackstageNotionRagSourcePage
+): BackstageNotionInspectedRagPage {
   const source = normalizeSourcePage(input);
   const parsed = parseBackstageNotionPageMarkdown(input.markdown);
   const category = categorizeBackstageNotionRagContent({
@@ -1209,42 +1213,6 @@ export function prepareBackstageNotionRagPage(
     path: source.path,
     markdown: parsed.sanitizedMarkdown,
   }));
-  const maximum = normalizeChunkMaximum(options.maximumCodePoints);
-  const chunks = buildChunkContents(parsed.sanitizedMarkdown, maximum)
-    .map(({
-      content,
-      headingPath,
-      headingOccurrencePath,
-    }, ordinal): BackstageNotionRagChunk => {
-      const contentHash = hashDeterministically(content);
-      const chunkId = hashDeterministically(JSON.stringify({
-        format: BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
-        pageId: source.pageId,
-        ordinal,
-        contentHash,
-      }));
-      return Object.freeze({
-        chunkId,
-        universeId: source.universeId,
-        pageId: source.pageId,
-        parentPageId: source.parentPageId,
-        title: source.title,
-        path: source.path,
-        headingPath: Object.freeze([...headingPath]),
-        headingOccurrencePath: Object.freeze([...headingOccurrencePath]),
-        category: categorizeBackstageNotionRagContent({
-          title: source.title,
-          path: [...source.path, ...headingPath],
-          content,
-        }),
-        ordinal,
-        content,
-        codePoints: codePointLength(content),
-        contentHash,
-        sourceHash,
-        sourceLastEditedAt: source.sourceLastEditedAt,
-      });
-    });
 
   return Object.freeze({
     ...source,
@@ -1254,8 +1222,66 @@ export function prepareBackstageNotionRagPage(
     childPages: parsed.childPages,
     childPageTagCount: parsed.childPageTagCount,
     invalidChildPageTagCount: parsed.invalidChildPageTagCount,
+  });
+}
+
+/** Chunk one already-inspected page without repeating provider-content parsing. */
+export function chunkBackstageNotionInspectedPage(
+  inspected: BackstageNotionInspectedRagPage,
+  options: BackstageNotionRagChunkingOptions = {}
+): BackstageNotionPreparedRagPage {
+  const maximum = normalizeChunkMaximum(options.maximumCodePoints);
+  const chunks = buildChunkContents(inspected.sanitizedMarkdown, maximum)
+    .map(({
+      content,
+      headingPath,
+      headingOccurrencePath,
+    }, ordinal): BackstageNotionRagChunk => {
+      const contentHash = hashDeterministically(content);
+      const chunkId = hashDeterministically(JSON.stringify({
+        format: BACKSTAGE_NOTION_RAG_CHUNK_FORMAT,
+        pageId: inspected.pageId,
+        ordinal,
+        contentHash,
+      }));
+      return Object.freeze({
+        chunkId,
+        universeId: inspected.universeId,
+        pageId: inspected.pageId,
+        parentPageId: inspected.parentPageId,
+        title: inspected.title,
+        path: inspected.path,
+        headingPath: Object.freeze([...headingPath]),
+        headingOccurrencePath: Object.freeze([...headingOccurrencePath]),
+        category: categorizeBackstageNotionRagContent({
+          title: inspected.title,
+          path: [...inspected.path, ...headingPath],
+          content,
+        }),
+        ordinal,
+        content,
+        codePoints: codePointLength(content),
+        contentHash,
+        sourceHash: inspected.sourceHash,
+        sourceLastEditedAt: inspected.sourceLastEditedAt,
+      });
+    });
+
+  return Object.freeze({
+    ...inspected,
     chunks: Object.freeze(chunks),
   });
+}
+
+/** Discover, sanitize, categorize, hash, and chunk one hierarchy page. */
+export function prepareBackstageNotionRagPage(
+  input: BackstageNotionRagSourcePage,
+  options: BackstageNotionRagChunkingOptions = {}
+): BackstageNotionPreparedRagPage {
+  return chunkBackstageNotionInspectedPage(
+    inspectBackstageNotionRagPage(input),
+    options
+  );
 }
 
 function quoteRetrievedContent(value: string): string {

@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildBackstageNotionRagUntrustedContextPrompt,
   categorizeBackstageNotionRagContent,
+  chunkBackstageNotionInspectedPage,
+  inspectBackstageNotionRagPage,
   parseBackstageNotionPageMarkdown,
   prepareBackstageNotionRagPage,
   sanitizeBackstageNotionRagMarkdown,
@@ -25,6 +27,31 @@ function prepare(markdown: string, maximumCodePoints = 256) {
 }
 
 describe('Backstage Notion hierarchy RAG core', () => {
+  it('keeps the split inspect/chunk pipeline byte-compatible with fixed v1 identities', () => {
+    const input = {
+      universeId,
+      pageId: rootPageId,
+      parentPageId: null,
+      title: 'Monday Night Raw',
+      path: ['WWE Universe', 'Monday Night Raw'],
+      markdown: '# Raw\n\nBecky wins.',
+      sourceLastEditedAt: '2026-08-18T12:00:00.000Z',
+    } as const;
+    const inspected = inspectBackstageNotionRagPage(input);
+    const split = chunkBackstageNotionInspectedPage(inspected);
+    const prepared = prepareBackstageNotionRagPage(input);
+
+    expect(Object.hasOwn(inspected, 'chunks')).toBe(false);
+    expect(JSON.stringify(split)).toBe(JSON.stringify(prepared));
+    expect(split.sourceHash).toBe(
+      'e75726fffcf4faf92689f607a9cf1c63861edd703ca450adb53d0087ce6ddb00'
+    );
+    expect(split.chunks).toHaveLength(1);
+    expect(split.chunks[0]?.chunkId).toBe(
+      'ac6c42e795401f5c1b365f39b437c1ab145ee8b05d0f16979e68e099363edefb'
+    );
+  });
+
   it('discovers ordered child IDs before sanitizing page tags and links', () => {
     const markdown = [
       '# Universe',

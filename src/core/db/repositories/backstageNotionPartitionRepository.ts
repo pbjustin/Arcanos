@@ -22,6 +22,7 @@ import { getPool } from '../client.js';
 export const BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_PARTITION_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_PROVIDER_DELAY_MAX_MS = 60_000;
+export const BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS = 128;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -210,6 +211,51 @@ export interface StoreBackstageNotionPageVersionInput {
 export interface BackstageNotionStoredPageVersion {
   readonly id: string;
   readonly reused: boolean;
+}
+
+export interface FindBackstageNotionReusablePageMaterialInput {
+  readonly universeId: string;
+  readonly pageId: string;
+  readonly contentHash: string;
+  readonly pageFormatVersion: number;
+  readonly chunkerVersion: number;
+  readonly embeddingModel: string;
+  readonly embeddingVersion: number;
+  readonly embeddingDimension: number;
+}
+
+export interface FindBackstageNotionReusableChunkMaterialsInput {
+  readonly universeId: string;
+  readonly contentHashes: readonly string[];
+  readonly chunkerVersion: number;
+  readonly embeddingModel: string;
+  readonly embeddingVersion: number;
+  readonly embeddingDimension: number;
+}
+
+export interface BackstageNotionReusableChunkMaterial {
+  readonly chunkVersionId: string;
+  readonly contentHash: string;
+  readonly content: string;
+  readonly contentCodePoints: number;
+  readonly embeddingAvailable: boolean;
+}
+
+export interface BackstageNotionReusablePageChunkMaterial
+  extends BackstageNotionReusableChunkMaterial {
+  readonly ordinal: number;
+  readonly headingPath: readonly string[];
+  readonly scopeHeadingPathKey: readonly string[];
+  readonly headingOccurrencePath: readonly number[];
+}
+
+export interface BackstageNotionReusablePageMaterial {
+  readonly pageVersionId: string;
+  readonly pageId: string;
+  readonly contentHash: string;
+  readonly pageFormatVersion: number;
+  readonly chunkerVersion: number;
+  readonly chunks: readonly BackstageNotionReusablePageChunkMaterial[];
 }
 
 export interface BackstageNotionShardSnapshotPageInput {
@@ -419,6 +465,32 @@ interface PageVersionChunkRow {
   heading_path: unknown;
   scope_heading_path_key: unknown;
   heading_occurrence_path: unknown;
+}
+
+interface ReusablePageMaterialRow {
+  page_version_id: string;
+  page_id: string;
+  page_content_hash: string;
+  page_format_version: number | string;
+  chunker_version: number | string;
+  chunk_count: number | string;
+  ordinal: number | string | null;
+  chunk_version_id: string | null;
+  chunk_content_hash: string | null;
+  chunk_content: string | null;
+  chunk_content_code_points: number | string | null;
+  heading_path: unknown;
+  scope_heading_path_key: unknown;
+  heading_occurrence_path: unknown;
+  embedding_available: boolean;
+}
+
+interface ReusableChunkMaterialRow {
+  chunk_version_id: string;
+  content_hash: string;
+  content: string;
+  content_code_points: number | string;
+  embedding_available: boolean;
 }
 
 interface SnapshotPageMaterialRow {
@@ -1710,6 +1782,310 @@ export class PostgresBackstageNotionPartitionRepository {
         }))),
       });
     });
+  }
+
+  async findReusablePageMaterial(
+    input: FindBackstageNotionReusablePageMaterialInput
+  ): Promise<BackstageNotionReusablePageMaterial | null> {
+    const universeId = normalizeUniverseId(input.universeId);
+    const pageId = normalizeUuid(input.pageId, 'pageId');
+    const contentHash = normalizeSha256(input.contentHash, 'contentHash');
+    const pageFormatVersion = normalizeInteger(
+      input.pageFormatVersion,
+      'pageFormatVersion',
+      1,
+      2_147_483_647
+    );
+    const chunkerVersion = normalizeInteger(
+      input.chunkerVersion,
+      'chunkerVersion',
+      1,
+      2_147_483_647
+    );
+    const embeddingModel = normalizeRequiredText(
+      input.embeddingModel,
+      'embeddingModel',
+      200
+    );
+    const embeddingVersion = normalizeInteger(
+      input.embeddingVersion,
+      'embeddingVersion',
+      1,
+      2_147_483_647
+    );
+    const embeddingDimension = normalizeInteger(
+      input.embeddingDimension,
+      'embeddingDimension',
+      1,
+      4_096
+    );
+    const result = await this.pool.query<ReusablePageMaterialRow>(
+      `SELECT
+         page.id AS page_version_id,
+         page.page_id,
+         page.content_hash AS page_content_hash,
+         page.page_format_version,
+         page.chunker_version,
+         page.chunk_count,
+         page_chunk.ordinal,
+         page_chunk.chunk_version_id,
+         chunk.content_hash AS chunk_content_hash,
+         chunk.content AS chunk_content,
+         chunk.content_code_points AS chunk_content_code_points,
+         page_chunk.heading_path,
+         page_chunk.scope_heading_path_key,
+         page_chunk.heading_occurrence_path,
+         (embedding.chunk_version_id IS NOT NULL) AS embedding_available
+       FROM public.backstage_notion_page_versions AS page
+       LEFT JOIN public.backstage_notion_page_version_chunks AS page_chunk
+         ON page_chunk.universe_id = page.universe_id
+        AND page_chunk.page_version_id = page.id
+       LEFT JOIN public.backstage_notion_chunk_versions AS chunk
+         ON chunk.universe_id = page_chunk.universe_id
+        AND chunk.id = page_chunk.chunk_version_id
+       LEFT JOIN public.backstage_notion_chunk_embeddings AS embedding
+         ON embedding.universe_id = page_chunk.universe_id
+        AND embedding.chunk_version_id = page_chunk.chunk_version_id
+        AND embedding.embedding_model = $6
+        AND embedding.embedding_version = $7
+        AND embedding.embedding_dimension = $8
+       WHERE page.universe_id = $1
+         AND page.page_id = $2::UUID
+         AND page.content_hash = $3
+         AND page.page_format_version = $4
+         AND page.chunker_version = $5
+         AND page.state = 'sealed'
+       ORDER BY page_chunk.ordinal NULLS FIRST
+       LIMIT 2049`,
+      [
+        universeId,
+        pageId,
+        contentHash,
+        pageFormatVersion,
+        chunkerVersion,
+        embeddingModel,
+        embeddingVersion,
+        embeddingDimension,
+      ]
+    );
+    const first = result.rows[0];
+    if (!first) {
+      return null;
+    }
+    const pageVersionId = normalizeUuid(first.page_version_id, 'page_version_id');
+    if (
+      normalizeUuid(first.page_id, 'page_id') !== pageId
+      || normalizeSha256(first.page_content_hash, 'page_content_hash') !== contentHash
+      || normalizeDatabaseInteger(first.page_format_version, 'page_format_version', 1)
+        !== pageFormatVersion
+      || normalizeDatabaseInteger(first.chunker_version, 'chunker_version', 1)
+        !== chunkerVersion
+    ) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+    }
+    const chunkCount = normalizeDatabaseInteger(first.chunk_count, 'chunk_count');
+    if (chunkCount > BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+    }
+    if (chunkCount === 0) {
+      if (
+        result.rows.length !== 1
+        || first.ordinal !== null
+        || first.chunk_version_id !== null
+        || first.chunk_content_hash !== null
+        || first.chunk_content !== null
+        || first.chunk_content_code_points !== null
+      ) {
+        throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+      }
+      return Object.freeze({
+        pageVersionId,
+        pageId,
+        contentHash,
+        pageFormatVersion,
+        chunkerVersion,
+        chunks: Object.freeze([]),
+      });
+    }
+    if (result.rows.length !== chunkCount) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+    }
+    const chunks = result.rows.map((row, index) => {
+      if (
+        normalizeUuid(row.page_version_id, 'page_version_id') !== pageVersionId
+        || row.ordinal === null
+        || row.chunk_version_id === null
+        || row.chunk_content_hash === null
+        || row.chunk_content === null
+        || row.chunk_content_code_points === null
+        || typeof row.embedding_available !== 'boolean'
+      ) {
+        throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+      }
+      const ordinal = normalizeDatabaseInteger(row.ordinal, 'ordinal');
+      const chunkContentHash = normalizeSha256(
+        row.chunk_content_hash,
+        'chunk_content_hash'
+      );
+      const contentCodePoints = normalizeDatabaseInteger(
+        row.chunk_content_code_points,
+        'chunk_content_code_points',
+        1
+      );
+      const headingPath = normalizeStringArray(
+        parseJsonStringArray(row.heading_path),
+        `storedChunks[${index}].headingPath`,
+        32,
+        500
+      );
+      const scopeHeadingPathKey = normalizeScopeKeyArray(
+        parseJsonStringArray(row.scope_heading_path_key),
+        `storedChunks[${index}].scopeHeadingPathKey`,
+        headingPath.length
+      );
+      const headingOccurrencePath = normalizeHeadingOccurrencePath(
+        parseJsonIntegerArray(row.heading_occurrence_path),
+        `storedChunks[${index}].headingOccurrencePath`,
+        headingPath.length
+      );
+      if (
+        ordinal !== index
+        || chunkContentHash !== sha256(row.chunk_content)
+        || contentCodePoints !== codePointLength(row.chunk_content)
+        || !arraysEqual(
+          scopeHeadingPathKey,
+          normalizeBackstageNotionScopePath(headingPath)
+        )
+      ) {
+        throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+      }
+      return Object.freeze({
+        ordinal,
+        chunkVersionId: normalizeUuid(row.chunk_version_id, 'chunk_version_id'),
+        contentHash: chunkContentHash,
+        content: row.chunk_content,
+        contentCodePoints,
+        headingPath,
+        scopeHeadingPathKey,
+        headingOccurrencePath,
+        embeddingAvailable: row.embedding_available,
+      });
+    });
+    return Object.freeze({
+      pageVersionId,
+      pageId,
+      contentHash,
+      pageFormatVersion,
+      chunkerVersion,
+      chunks: Object.freeze(chunks),
+    });
+  }
+
+  async findReusableChunkMaterials(
+    input: FindBackstageNotionReusableChunkMaterialsInput
+  ): Promise<readonly BackstageNotionReusableChunkMaterial[]> {
+    const universeId = normalizeUniverseId(input.universeId);
+    if (
+      !Array.isArray(input.contentHashes)
+      || input.contentHashes.length > BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS
+    ) {
+      throw new Error('contentHashes is outside its supported range.');
+    }
+    const contentHashes = input.contentHashes.map((hash, index) =>
+      normalizeSha256(hash, `contentHashes[${index}]`)
+    );
+    if (new Set(contentHashes).size !== contentHashes.length) {
+      throw new Error('contentHashes must be unique.');
+    }
+    const chunkerVersion = normalizeInteger(
+      input.chunkerVersion,
+      'chunkerVersion',
+      1,
+      2_147_483_647
+    );
+    const embeddingModel = normalizeRequiredText(
+      input.embeddingModel,
+      'embeddingModel',
+      200
+    );
+    const embeddingVersion = normalizeInteger(
+      input.embeddingVersion,
+      'embeddingVersion',
+      1,
+      2_147_483_647
+    );
+    const embeddingDimension = normalizeInteger(
+      input.embeddingDimension,
+      'embeddingDimension',
+      1,
+      4_096
+    );
+    if (contentHashes.length === 0) {
+      return Object.freeze([]);
+    }
+    const result = await this.pool.query<ReusableChunkMaterialRow>(
+      `SELECT
+         chunk.id AS chunk_version_id,
+         chunk.content_hash,
+         chunk.content,
+         chunk.content_code_points,
+         (embedding.chunk_version_id IS NOT NULL) AS embedding_available
+       FROM public.backstage_notion_chunk_versions AS chunk
+       LEFT JOIN public.backstage_notion_chunk_embeddings AS embedding
+         ON embedding.universe_id = chunk.universe_id
+        AND embedding.chunk_version_id = chunk.id
+        AND embedding.embedding_model = $3
+        AND embedding.embedding_version = $4
+        AND embedding.embedding_dimension = $6
+       WHERE chunk.universe_id = $1
+         AND chunk.chunker_version = $2
+         AND chunk.content_hash = ANY($5::TEXT[])
+       ORDER BY pg_catalog.array_position($5::TEXT[], chunk.content_hash)
+       LIMIT 129`,
+      [
+        universeId,
+        chunkerVersion,
+        embeddingModel,
+        embeddingVersion,
+        contentHashes,
+        embeddingDimension,
+      ]
+    );
+    if (result.rows.length > contentHashes.length) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+    }
+    const requested = new Set(contentHashes);
+    const seen = new Set<string>();
+    const byHash = new Map<string, BackstageNotionReusableChunkMaterial>();
+    for (const row of result.rows) {
+      const hash = normalizeSha256(row.content_hash, 'content_hash');
+      const contentCodePoints = normalizeDatabaseInteger(
+        row.content_code_points,
+        'content_code_points',
+        1
+      );
+      if (
+        !requested.has(hash)
+        || seen.has(hash)
+        || hash !== sha256(row.content)
+        || contentCodePoints !== codePointLength(row.content)
+        || typeof row.embedding_available !== 'boolean'
+      ) {
+        throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+      }
+      seen.add(hash);
+      byHash.set(hash, Object.freeze({
+        chunkVersionId: normalizeUuid(row.chunk_version_id, 'chunk_version_id'),
+        contentHash: hash,
+        content: row.content,
+        contentCodePoints,
+        embeddingAvailable: row.embedding_available,
+      }));
+    }
+    return Object.freeze(contentHashes.flatMap(hash => {
+      const material = byHash.get(hash);
+      return material ? [material] : [];
+    }));
   }
 
   async storeChunkVersion(
