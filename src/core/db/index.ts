@@ -117,6 +117,40 @@ export {
 } from './repositories/backstageNotionRagRepository.js';
 
 export {
+  BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS,
+  BACKSTAGE_NOTION_PARTITION_LEASE_MAX_MS,
+  BACKSTAGE_NOTION_PROVIDER_DELAY_MAX_MS,
+  BackstageNotionPartitionRepositoryError,
+  BackstageNotionPartitionRepositoryUnavailableError,
+  PostgresBackstageNotionPartitionRepository,
+  getBackstageNotionPartitionRepository,
+  type ActivateBackstageNotionShardSnapshotInput,
+  type ActivateBackstageNotionUniverseManifestInput,
+  type ActivatedBackstageNotionShardSnapshot,
+  type ActivatedBackstageNotionUniverseManifest,
+  type BackstageNotionManifestMemberInput,
+  type BackstageNotionManifestOmissionInput,
+  type BackstageNotionPageChunkReference,
+  type BackstageNotionPartitionHeadExpectation,
+  type BackstageNotionPartitionLease,
+  type BackstageNotionPartitionLeaseFence,
+  type BackstageNotionPartitionRepositoryErrorCode,
+  type BackstageNotionProviderLease,
+  type BackstageNotionShardSnapshotOccurrenceInput,
+  type BackstageNotionShardSnapshotPageInput,
+  type BackstageNotionShardVerificationInput,
+  type BackstageNotionStoredChunkVersion,
+  type BackstageNotionStoredEmbedding,
+  type BackstageNotionStoredPageVersion,
+  type BackstageNotionUniverseHeadExpectation,
+  type RegisterBackstageNotionPartitionConfigurationInput,
+  type RegisteredBackstageNotionPartitionConfiguration,
+  type StoreBackstageNotionChunkVersionInput,
+  type StoreBackstageNotionEmbeddingInput,
+  type StoreBackstageNotionPageVersionInput,
+} from './repositories/backstageNotionPartitionRepository.js';
+
+export {
   applyBackstageRosterMutation,
   type BackstageRosterMutationResult
 } from './repositories/backstageRosterRepository.js';

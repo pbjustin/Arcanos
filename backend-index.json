@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T17:58:53.330Z",
+  "generatedAt": "2026-08-24T19:44:19.132Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -447,6 +447,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/backstageBookerRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageNotionPartitionRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageNotionRagRepository.ts"
@@ -3365,6 +3368,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-partition-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-repository.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"
