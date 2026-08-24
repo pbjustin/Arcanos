@@ -4,8 +4,9 @@
  *
  * The supervisor fails closed before application startup, performs only the
  * role-ordered read-only database preflight, and then launches the unchanged
- * integrity wrapper. The worker alone receives the fictional loopback OpenAI
- * fixture key and deterministic job-runner controls.
+ * integrity wrapper. Both application children receive the fictional OpenAI
+ * SDK key; only the worker receives the live loopback fixture and deterministic
+ * job-runner controls, while the web child remains pinned to a dead loopback.
  */
 
 import { spawn } from 'node:child_process';
@@ -469,10 +470,13 @@ export function buildBackstageHeavyApplicationChildEnvironment(
     // URL to the exact private host, port, database, and credentials before
     // this proof-child-only transport override is derived.
     DATABASE_URL: `${proofTarget.databaseUrl}?sslmode=no-verify`,
+    // Readiness requires an initialized adapter. This fixed nonsecret value is
+    // derived only after the parent has rejected ambient provider credentials;
+    // the web child retains its validated dead-loopback provider base.
+    OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+    OPENAI_MAX_RETRIES: '0',
     ...(proofTarget.processKind === 'worker'
       ? {
-          OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
-          OPENAI_MAX_RETRIES: '0',
           GPT5_MODEL: 'gpt-5.1',
           GPT51_MODEL: 'gpt-5.1',
           OPENAI_MODEL: 'gpt-5.1',

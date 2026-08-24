@@ -308,8 +308,10 @@ not the canonical Railway start command and must never be configured on the
 canonical project. The supervisor validates the disposable target, performs a
 role-ordered read-only database preflight, then starts the unchanged
 `scripts/start-railway-service-with-integrity.mjs` wrapper. The worker also
-starts the credential-free loopback OpenAI fixture; the fixed fictional SDK
-key exists only in the supervised worker child. After the parent binds the
+starts the credential-free loopback OpenAI fixture. A fixed fictional SDK key
+exists only in the supervised application children: the worker points to that
+fixture, while the web child remains pinned to a dead loopback. After the
+parent binds the
 PostgreSQL URL to the exact private host, port, database, credentials, and an
 empty query string, it derives `sslmode=no-verify` only for the application
 child because the disposable Railway PostgreSQL template uses a self-signed
@@ -362,14 +364,17 @@ Redis service ID/name/private-host markers, the exact lowercase revision in
 `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`, `ARCANOS_PREVIEW_ISOLATION=true`,
 `FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true`, and
 `OPENAI_API_KEY_REQUIRED=false`. They share one fresh payload-protection key
-and have no previous key. The worker alone receives
+and have no previous key. Neither role's service configuration or supervisor
+parent contains a provider key. Each validated application child derives the
+same fixed fictional SDK key so the adapter can initialize for readiness. The
+worker alone receives
 `ARCANOS_PREVIEW_OPENAI_FIXTURE=backstage-heavy-compact-retry-v1` and the
 loopback base URL; it has no Booker access token or job-read secret. The web
 alone receives the dedicated Booker access token, a distinct job-read secret,
 `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, and the dead
-loopback base URL. Do not configure any real provider key, alternate provider
-base, database/Redis alias, proxy/preload option, or external Notion variable
-on either role.
+loopback base URL, so any unexpected provider call fails closed. Do not
+configure any real provider key, alternate provider base, database/Redis alias,
+proxy/preload option, or external Notion variable on either role.
 
 The proof source marker is required because the authorized runner removes
 automatic GitHub triggers and deploys an explicit commit through Railway's

@@ -341,6 +341,28 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
     });
   });
 
+  it('initializes web readiness only inside the dead-loopback application child', () => {
+    const environment = buildEnvironment('web');
+    const target = resolveBackstageHeavyProofTargetOrThrow('web', environment);
+    const child = buildBackstageHeavyApplicationChildEnvironment(
+      target,
+      environment
+    );
+
+    expect(child).toMatchObject({
+      OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+      OPENAI_BASE_URL: 'http://127.0.0.1:9/v1',
+      OPENAI_MAX_RETRIES: '0',
+    });
+    expect(child).not.toHaveProperty('ARCANOS_PREVIEW_OPENAI_FIXTURE');
+    expect(environment).not.toHaveProperty('OPENAI_API_KEY');
+    expect(environment.OPENAI_BASE_URL).toBe('http://127.0.0.1:9/v1');
+    expect(() => resolveBackstageHeavyProofTargetOrThrow('web', {
+      ...environment,
+      OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+    })).toThrow(/BACKSTAGE_HEAVY_/u);
+  });
+
   it('derives the TLS compatibility mode only for validated application children', () => {
     for (const processKind of ['worker', 'web']) {
       const environment = buildEnvironment(processKind);
