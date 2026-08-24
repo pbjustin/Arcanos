@@ -369,6 +369,44 @@ export interface ActivatedBackstageNotionUniverseManifest {
   readonly manifestGeneration: string;
 }
 
+export interface BackstageNotionPartitionSynchronizationActiveSnapshot {
+  readonly snapshotId: string;
+  readonly partitionVersionId: string;
+  readonly sourceManifestHash: string;
+  readonly embeddingModel: string;
+  readonly embeddingVersion: number;
+  readonly embeddingDimension: number;
+  readonly indexFormatVersion: number;
+  readonly verifiedAt: Date;
+}
+
+export interface BackstageNotionPartitionSynchronizationShardState {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly rootPageId: string;
+  readonly expectedHead: BackstageNotionPartitionHeadExpectation;
+  readonly activeSnapshot: BackstageNotionPartitionSynchronizationActiveSnapshot | null;
+}
+
+export interface BackstageNotionPartitionSynchronizationState {
+  readonly universeId: string;
+  readonly configurationVersionId: string;
+  readonly configurationGeneration: string;
+  readonly configurationHash: string;
+  readonly expectedUniverseHead: BackstageNotionUniverseHeadExpectation;
+  readonly shards: readonly BackstageNotionPartitionSynchronizationShardState[];
+}
+
+export interface BackstageNotionPartitionShardPageInventoryItem {
+  readonly pageId: string;
+  readonly pageVersionId: string;
+  readonly contentHash: string;
+  readonly parentPageId: string | null;
+  readonly title: string;
+  readonly path: readonly string[];
+  readonly scopePath: readonly string[];
+}
+
 type TimestampValue = Date | string;
 
 interface ConfigurationRow {
@@ -413,6 +451,25 @@ interface ShardHeadRow {
   active_snapshot_id: string | null;
   head_generation: number | string;
   snapshot_generation: number | string;
+}
+
+interface SynchronizationShardRow extends ShardHeadRow {
+  desired_configuration_version_id: string;
+  desired_configuration_generation: string;
+  desired_configuration_hash: string;
+  active_manifest_id: string | null;
+  universe_head_generation: number | string;
+  manifest_generation: number | string;
+  configured_shard_count: number | string;
+  partition_version_id: string;
+  configured_root_page_id: string;
+  snapshot_partition_version_id: string | null;
+  source_manifest_hash: string | null;
+  embedding_model: string | null;
+  embedding_version: number | string | null;
+  embedding_dimension: number | string | null;
+  index_format_version: number | string | null;
+  last_verified_at: TimestampValue | null;
 }
 
 interface ShardLeaseRow {
@@ -513,6 +570,11 @@ interface ManifestSnapshotRow {
   index_format_version: number | string;
   state: string;
   latest_verified_at: TimestampValue | null;
+}
+
+interface ManifestOwnershipConflictRow {
+  left_shard_key: string;
+  right_shard_key: string;
 }
 
 interface SnapshotEmbeddingCoverageRow {
@@ -1382,6 +1444,326 @@ function latestRequiredVerification(
 export class PostgresBackstageNotionPartitionRepository {
   constructor(private readonly pool: Pool) {}
 
+  async loadUniverseHead(
+    universeId: string
+  ): Promise<BackstageNotionUniverseHeadExpectation | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const result = await this.pool.query<PartitionedUniverseHeadRow>(
+      `SELECT
+         desired_configuration_version_id,
+         desired_configuration_generation,
+         desired_configuration_hash,
+         active_manifest_id,
+         active_configuration_version_id,
+         head_generation,
+         manifest_generation
+       FROM public.backstage_notion_partitioned_universe_heads
+       WHERE universe_id = $1`,
+      [normalizedUniverseId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    return Object.freeze({
+      headGeneration: mapGeneration(row.head_generation, 'head_generation'),
+      manifestGeneration: mapGeneration(
+        row.manifest_generation,
+        'manifest_generation'
+      ),
+      desiredConfigurationVersionId: normalizeUuid(
+        row.desired_configuration_version_id,
+        'desired_configuration_version_id'
+      ),
+      activeManifestId: row.active_manifest_id === null
+        ? null
+        : normalizeUuid(row.active_manifest_id, 'active_manifest_id'),
+    });
+  }
+
+  async loadUniverseSynchronizationState(
+    universeId: string,
+    configurationVersionId: string
+  ): Promise<BackstageNotionPartitionSynchronizationState | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedConfigurationVersionId = normalizeUuid(
+      configurationVersionId,
+      'configurationVersionId'
+    );
+    const result = await this.pool.query<SynchronizationShardRow>(
+      `SELECT
+         universe_head.desired_configuration_version_id,
+         universe_head.desired_configuration_generation,
+         universe_head.desired_configuration_hash,
+         universe_head.active_manifest_id,
+         universe_head.head_generation AS universe_head_generation,
+         universe_head.manifest_generation,
+         configuration.shard_count AS configured_shard_count,
+         member.shard_key,
+         member.partition_version_id,
+         member.root_page_id AS configured_root_page_id,
+         shard_head.current_partition_version_id,
+         shard_head.root_page_id,
+         shard_head.active_snapshot_id,
+         shard_head.head_generation,
+         shard_head.snapshot_generation,
+         snapshot.partition_version_id AS snapshot_partition_version_id,
+         snapshot.source_manifest_hash,
+         snapshot.embedding_model,
+         snapshot.embedding_version,
+         snapshot.embedding_dimension,
+         snapshot.index_format_version,
+         shard_head.last_verified_at
+       FROM public.backstage_notion_partitioned_universe_heads AS universe_head
+       JOIN public.backstage_notion_partition_configuration_versions AS configuration
+         ON configuration.universe_id = universe_head.universe_id
+        AND configuration.id = universe_head.desired_configuration_version_id
+        AND configuration.state = 'sealed'
+       JOIN public.backstage_notion_partition_configuration_members AS member
+         ON member.universe_id = configuration.universe_id
+        AND member.partition_configuration_version_id = configuration.id
+       JOIN public.backstage_notion_shard_heads AS shard_head
+         ON shard_head.universe_id = member.universe_id
+        AND shard_head.shard_key = member.shard_key
+       LEFT JOIN public.backstage_notion_shard_snapshots AS snapshot
+         ON snapshot.universe_id = shard_head.universe_id
+        AND snapshot.shard_key = shard_head.shard_key
+        AND snapshot.id = shard_head.active_snapshot_id
+        AND snapshot.state = 'sealed'
+       WHERE universe_head.universe_id = $1
+         AND universe_head.desired_configuration_version_id = $2::UUID
+       ORDER BY member.shard_key
+       LIMIT $3`,
+      [
+        normalizedUniverseId,
+        normalizedConfigurationVersionId,
+        BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+      ]
+    );
+    const first = result.rows[0];
+    if (!first) {
+      return null;
+    }
+    const desiredConfigurationVersionId = normalizeUuid(
+      first.desired_configuration_version_id,
+      'desired_configuration_version_id'
+    );
+    if (desiredConfigurationVersionId !== normalizedConfigurationVersionId) {
+      return null;
+    }
+    const configuredShardCount = normalizeDatabaseInteger(
+      first.configured_shard_count,
+      'configured_shard_count',
+      1
+    );
+    if (
+      configuredShardCount > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+      || result.rows.length !== configuredShardCount
+    ) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_CONFIGURATION');
+    }
+    const expectedUniverseHead = Object.freeze({
+      headGeneration: mapGeneration(
+        first.universe_head_generation,
+        'universe_head_generation'
+      ),
+      manifestGeneration: mapGeneration(
+        first.manifest_generation,
+        'manifest_generation'
+      ),
+      desiredConfigurationVersionId,
+      activeManifestId: first.active_manifest_id === null
+        ? null
+        : normalizeUuid(first.active_manifest_id, 'active_manifest_id'),
+    });
+    const shards = result.rows.map(row => {
+      if (
+        normalizeUuid(
+          row.desired_configuration_version_id,
+          'desired_configuration_version_id'
+        ) !== desiredConfigurationVersionId
+        || row.desired_configuration_generation
+          !== first.desired_configuration_generation
+        || normalizeSha256(
+          row.desired_configuration_hash,
+          'desired_configuration_hash'
+        ) !== normalizeSha256(
+          first.desired_configuration_hash,
+          'desired_configuration_hash'
+        )
+        || mapGeneration(row.universe_head_generation, 'universe_head_generation')
+          !== expectedUniverseHead.headGeneration
+        || mapGeneration(row.manifest_generation, 'manifest_generation')
+          !== expectedUniverseHead.manifestGeneration
+        || normalizeDatabaseInteger(
+          row.configured_shard_count,
+          'configured_shard_count',
+          1
+        ) !== configuredShardCount
+      ) {
+        throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_CONFIGURATION');
+      }
+      const partitionVersionId = normalizeUuid(
+        row.partition_version_id,
+        'partition_version_id'
+      );
+      const currentPartitionVersionId = normalizeUuid(
+        row.current_partition_version_id,
+        'current_partition_version_id'
+      );
+      const rootPageId = normalizeUuid(
+        row.configured_root_page_id,
+        'configured_root_page_id'
+      );
+      const activeSnapshotId = row.active_snapshot_id === null
+        ? null
+        : normalizeUuid(row.active_snapshot_id, 'active_snapshot_id');
+      const activeSnapshot = activeSnapshotId === null
+        ? null
+        : (() => {
+            if (
+              row.snapshot_partition_version_id === null
+              || row.source_manifest_hash === null
+              || row.embedding_model === null
+              || row.embedding_version === null
+              || row.embedding_dimension === null
+              || row.index_format_version === null
+              || row.last_verified_at === null
+            ) {
+              throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_HEAD');
+            }
+            const snapshotPartitionVersionId = normalizeUuid(
+              row.snapshot_partition_version_id,
+              'snapshot_partition_version_id'
+            );
+            if (snapshotPartitionVersionId !== currentPartitionVersionId) {
+              throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_HEAD');
+            }
+            return Object.freeze({
+              snapshotId: activeSnapshotId,
+              partitionVersionId: snapshotPartitionVersionId,
+              sourceManifestHash: normalizeSha256(
+                row.source_manifest_hash,
+                'source_manifest_hash'
+              ),
+              embeddingModel: normalizeRequiredText(
+                row.embedding_model,
+                'embedding_model',
+                200
+              ),
+              embeddingVersion: normalizeDatabaseInteger(
+                row.embedding_version,
+                'embedding_version',
+                1
+              ),
+              embeddingDimension: normalizeDatabaseInteger(
+                row.embedding_dimension,
+                'embedding_dimension',
+                1
+              ),
+              indexFormatVersion: normalizeDatabaseInteger(
+                row.index_format_version,
+                'index_format_version',
+                1
+              ),
+              verifiedAt: parseDate(row.last_verified_at, 'last_verified_at'),
+            });
+          })();
+      return Object.freeze({
+        shardKey: normalizeShardKey(row.shard_key),
+        partitionVersionId,
+        rootPageId,
+        expectedHead: Object.freeze({
+          headGeneration: mapGeneration(row.head_generation, 'head_generation'),
+          snapshotGeneration: mapGeneration(
+            row.snapshot_generation,
+            'snapshot_generation'
+          ),
+          currentPartitionVersionId,
+          activeSnapshotId,
+        }),
+        activeSnapshot,
+      });
+    });
+    return Object.freeze({
+      universeId: normalizedUniverseId,
+      configurationVersionId: desiredConfigurationVersionId,
+      configurationGeneration: normalizePattern(
+        first.desired_configuration_generation,
+        'desired_configuration_generation',
+        GENERATION_PATTERN
+      ),
+      configurationHash: normalizeSha256(
+        first.desired_configuration_hash,
+        'desired_configuration_hash'
+      ),
+      expectedUniverseHead,
+      shards: Object.freeze(shards),
+    });
+  }
+
+  async loadShardPageInventory(
+    universeId: string,
+    shardKey: string,
+    snapshotId: string,
+    maximumPages: number
+  ): Promise<readonly BackstageNotionPartitionShardPageInventoryItem[]> {
+    const normalizedMaximumPages = normalizeInteger(
+      maximumPages,
+      'maximumPages',
+      1,
+      BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+    );
+    const result = await this.pool.query<{
+      page_id: string;
+      page_version_id: string;
+      content_hash: string;
+      parent_page_id: string | null;
+      title: string;
+      path: unknown;
+      scope_path: unknown;
+    }>(
+      `SELECT
+         page.page_id,
+         page.page_version_id,
+         version.content_hash,
+         page.parent_page_id,
+         page.title,
+         page.path,
+         page.scope_path
+       FROM public.backstage_notion_shard_snapshot_pages AS page
+       JOIN public.backstage_notion_page_versions AS version
+         ON version.universe_id = page.universe_id
+        AND version.id = page.page_version_id
+        AND version.state = 'sealed'
+       WHERE page.universe_id = $1
+         AND page.shard_key = $2
+         AND page.shard_snapshot_id = $3::UUID
+       ORDER BY page.depth, page.page_id
+       LIMIT $4`,
+      [
+        normalizeUniverseId(universeId),
+        normalizeShardKey(shardKey),
+        normalizeUuid(snapshotId, 'snapshotId'),
+        normalizedMaximumPages + 1,
+      ]
+    );
+    if (result.rows.length > normalizedMaximumPages) {
+      throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
+    }
+    return Object.freeze(result.rows.map(row => Object.freeze({
+      pageId: normalizeUuid(row.page_id, 'page_id'),
+      pageVersionId: normalizeUuid(row.page_version_id, 'page_version_id'),
+      contentHash: normalizeSha256(row.content_hash, 'content_hash'),
+      parentPageId: row.parent_page_id === null
+        ? null
+        : normalizeUuid(row.parent_page_id, 'parent_page_id'),
+      title: normalizeRequiredText(row.title, 'title', 2_000),
+      path: Object.freeze(parseJsonStringArray(row.path)),
+      scopePath: Object.freeze(parseJsonStringArray(row.scope_path)),
+    })));
+  }
+
   async registerConfiguration(
     input: RegisterBackstageNotionPartitionConfigurationInput
   ): Promise<RegisteredBackstageNotionPartitionConfiguration> {
@@ -1694,6 +2076,54 @@ export class PostgresBackstageNotionPartitionRepository {
         [universeId, configurationId]
       );
 
+      const previousConfigurationId = existingHead === null
+        ? configurationId
+        : normalizeUuid(
+            existingHead.desired_configuration_version_id,
+            'desired_configuration_version_id'
+          );
+      let definitionChangedShardKeys: string[] = [];
+      if (previousConfigurationId !== configurationId) {
+        const definitionChangedShards = await client.query<{ shard_key: string }>(
+          `WITH previous_members AS (
+             SELECT shard_key, partition_version_id, root_page_id
+             FROM public.backstage_notion_partition_configuration_members
+             WHERE universe_id = $1
+               AND partition_configuration_version_id = $3::UUID
+           ), desired_members AS (
+             SELECT shard_key, partition_version_id, root_page_id
+             FROM public.backstage_notion_partition_configuration_members
+             WHERE universe_id = $1
+               AND partition_configuration_version_id = $2::UUID
+           )
+           SELECT COALESCE(previous.shard_key, desired.shard_key) AS shard_key
+           FROM previous_members AS previous
+           FULL OUTER JOIN desired_members AS desired
+             ON desired.shard_key = previous.shard_key
+           WHERE previous.shard_key IS NULL
+              OR desired.shard_key IS NULL
+              OR previous.partition_version_id IS DISTINCT FROM desired.partition_version_id
+              OR previous.root_page_id IS DISTINCT FROM desired.root_page_id
+           ORDER BY shard_key
+           LIMIT $4`,
+          [
+            universeId,
+            configurationId,
+            previousConfigurationId,
+            BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE * 2 + 1,
+          ]
+        );
+        if (
+          definitionChangedShards.rows.length
+            > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE * 2
+        ) {
+          throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_CONFIGURATION');
+        }
+        definitionChangedShardKeys = definitionChangedShards.rows.map(row =>
+          normalizeShardKey(row.shard_key)
+        );
+      }
+
       let universeHeadGeneration: string;
       if (!existingHead) {
         if (expectedHead !== null) {
@@ -1766,6 +2196,22 @@ export class PostgresBackstageNotionPartitionRepository {
           throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_CONFIGURATION');
         }
         universeHeadGeneration = mapGeneration(row.head_generation, 'head_generation');
+      }
+
+      if (definitionChangedShardKeys.length > 0) {
+        await client.query(
+          `UPDATE public.backstage_notion_shard_sync_leases
+           SET
+             lease_generation = lease_generation + 1,
+             expires_at = GREATEST(
+               acquired_at + INTERVAL '1 microsecond',
+               statement_timestamp()
+             )
+           WHERE universe_id = $1
+             AND shard_key = ANY($2::TEXT[])
+             AND expires_at > statement_timestamp()`,
+          [universeId, definitionChangedShardKeys]
+        );
       }
 
       return Object.freeze({
@@ -2476,17 +2922,11 @@ export class PostgresBackstageNotionPartitionRepository {
          ON CONFLICT (universe_id, shard_key) DO UPDATE
          SET
            holder_id = EXCLUDED.holder_id,
-           lease_token = CASE
-             WHEN backstage_notion_shard_sync_leases.holder_id = EXCLUDED.holder_id
-              AND backstage_notion_shard_sync_leases.expires_at > statement_timestamp()
-             THEN backstage_notion_shard_sync_leases.lease_token
-             ELSE EXCLUDED.lease_token
-           END,
+           lease_token = EXCLUDED.lease_token,
            lease_generation = backstage_notion_shard_sync_leases.lease_generation + 1,
            acquired_at = EXCLUDED.acquired_at,
            expires_at = EXCLUDED.expires_at
          WHERE backstage_notion_shard_sync_leases.expires_at <= statement_timestamp()
-            OR backstage_notion_shard_sync_leases.holder_id = EXCLUDED.holder_id
          RETURNING
            universe_id,
            shard_key,
@@ -2638,13 +3078,7 @@ export class PostgresBackstageNotionPartitionRepository {
          ON CONFLICT (provider_key, model_key) DO UPDATE
          SET
            holder_id = EXCLUDED.holder_id,
-           lease_token = CASE
-             WHEN backstage_notion_provider_coordinator_leases.holder_id = EXCLUDED.holder_id
-              AND backstage_notion_provider_coordinator_leases.expires_at
-                > statement_timestamp()
-             THEN backstage_notion_provider_coordinator_leases.lease_token
-             ELSE EXCLUDED.lease_token
-           END,
+           lease_token = EXCLUDED.lease_token,
            lease_generation = backstage_notion_provider_coordinator_leases.lease_generation + 1,
            acquired_at = EXCLUDED.acquired_at,
            expires_at = EXCLUDED.expires_at,
@@ -2652,17 +3086,10 @@ export class PostgresBackstageNotionPartitionRepository {
              backstage_notion_provider_coordinator_leases.next_request_at,
              EXCLUDED.next_request_at
            )
-         WHERE (
-             backstage_notion_provider_coordinator_leases.expires_at
-               <= statement_timestamp()
+         WHERE backstage_notion_provider_coordinator_leases.expires_at
+                 <= statement_timestamp()
            AND backstage_notion_provider_coordinator_leases.next_request_at
-               <= statement_timestamp()
-           )
-            OR (
-              backstage_notion_provider_coordinator_leases.holder_id = EXCLUDED.holder_id
-              AND backstage_notion_provider_coordinator_leases.expires_at
-                > statement_timestamp()
-            )
+                 <= statement_timestamp()
          RETURNING
            provider_key,
            model_key,
@@ -3618,11 +4045,6 @@ export class PostgresBackstageNotionPartitionRepository {
           normalizeUuid(row.id, 'snapshot_id'),
           row,
         ]));
-        let pageCount = 0;
-        let chunkCount = 0;
-        let manifestEmbeddingModel: string | null = null;
-        let manifestEmbeddingVersion: number | null = null;
-        let manifestEmbeddingDimension: number | null = null;
         for (const member of members) {
           const snapshot = snapshotById.get(member.snapshotId);
           const latestVerifiedAt = snapshot?.latest_verified_at === null
@@ -3661,13 +4083,110 @@ export class PostgresBackstageNotionPartitionRepository {
               'index_format_version',
               1
             ) !== indexFormatVersion
-            || (manifestEmbeddingModel !== null
+            || snapshotEmbeddingModel === null
+            || snapshotEmbeddingVersion === null
+            || snapshotEmbeddingDimension === null
+            || latestVerifiedAt?.getTime() !== member.verifiedAt.getTime()
+          ) {
+            throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_HEAD');
+          }
+        }
+
+        const ownershipConflicts = await client.query<ManifestOwnershipConflictRow>(
+          `WITH candidate_members AS (
+             SELECT
+               candidate.shard_key,
+               candidate.shard_snapshot_id::UUID AS shard_snapshot_id
+             FROM pg_catalog.jsonb_to_recordset($2::JSONB) AS candidate(
+               shard_key TEXT,
+               shard_snapshot_id TEXT
+             )
+           ), candidate_pages AS (
+             SELECT candidate.shard_key, page.page_id
+             FROM candidate_members AS candidate
+             JOIN public.backstage_notion_shard_snapshot_pages AS page
+               ON page.universe_id = $1
+              AND page.shard_key = candidate.shard_key
+              AND page.shard_snapshot_id = candidate.shard_snapshot_id
+           )
+           SELECT
+             left_page.shard_key AS left_shard_key,
+             right_page.shard_key AS right_shard_key
+           FROM candidate_pages AS left_page
+           JOIN candidate_pages AS right_page
+             ON right_page.page_id = left_page.page_id
+            AND right_page.shard_key > left_page.shard_key
+           GROUP BY left_page.shard_key, right_page.shard_key
+           ORDER BY left_page.shard_key, right_page.shard_key`,
+          [
+            universeId,
+            JSON.stringify(members.map(member => ({
+              shard_key: member.shardKey,
+              shard_snapshot_id: member.snapshotId,
+            }))),
+          ]
+        );
+        const ownershipExcludedShardKeys = new Set<string>();
+        for (const conflict of ownershipConflicts.rows) {
+          const left = definitionByShard.get(conflict.left_shard_key);
+          const right = definitionByShard.get(conflict.right_shard_key);
+          if (!left || !right || (left.required && right.required)) {
+            throw repositoryError('BACKSTAGE_NOTION_PARTITION_OWNERSHIP_CONFLICT');
+          }
+          if (!left.required) {
+            ownershipExcludedShardKeys.add(conflict.left_shard_key);
+          }
+          if (!right.required) {
+            ownershipExcludedShardKeys.add(conflict.right_shard_key);
+          }
+        }
+        const effectiveMembers = Object.freeze(members.filter(member =>
+          !ownershipExcludedShardKeys.has(member.shardKey)
+        ));
+        if (effectiveMembers.length < 1) {
+          throw repositoryError('BACKSTAGE_NOTION_PARTITION_OWNERSHIP_CONFLICT');
+        }
+        const effectiveOmissions = Object.freeze([
+          ...omissions,
+          ...members.filter(member => ownershipExcludedShardKeys.has(member.shardKey))
+            .map(member => Object.freeze({
+              shardKey: member.shardKey,
+              partitionVersionId: member.partitionVersionId,
+              decision: 'optional_unavailable' as const,
+              safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+              expectedHead: member.expectedHead,
+            })),
+        ].sort((left, right) => compareText(left.shardKey, right.shardKey)));
+
+        let pageCount = 0;
+        let chunkCount = 0;
+        let manifestEmbeddingModel: string | null = null;
+        let manifestEmbeddingVersion: number | null = null;
+        let manifestEmbeddingDimension: number | null = null;
+        for (const member of effectiveMembers) {
+          const snapshot = snapshotById.get(member.snapshotId)!;
+          const snapshotEmbeddingModel = normalizeRequiredText(
+            snapshot.embedding_model,
+            'snapshot.embedding_model',
+            200
+          );
+          const snapshotEmbeddingVersion = normalizeDatabaseInteger(
+            snapshot.embedding_version,
+            'snapshot.embedding_version',
+            1
+          );
+          const snapshotEmbeddingDimension = normalizeDatabaseInteger(
+            snapshot.embedding_dimension,
+            'snapshot.embedding_dimension',
+            1
+          );
+          if (
+            (manifestEmbeddingModel !== null
               && snapshotEmbeddingModel !== manifestEmbeddingModel)
             || (manifestEmbeddingVersion !== null
               && snapshotEmbeddingVersion !== manifestEmbeddingVersion)
             || (manifestEmbeddingDimension !== null
               && snapshotEmbeddingDimension !== manifestEmbeddingDimension)
-            || latestVerifiedAt?.getTime() !== member.verifiedAt.getTime()
           ) {
             throw repositoryError('BACKSTAGE_NOTION_PARTITION_STALE_HEAD');
           }
@@ -3714,8 +4233,8 @@ export class PostgresBackstageNotionPartitionRepository {
             manifestEmbeddingVersion,
             manifestEmbeddingDimension,
             indexFormatVersion,
-            members.length,
-            omissions.length,
+            effectiveMembers.length,
+            effectiveOmissions.length,
             pageCount,
             chunkCount,
           ]
@@ -3760,7 +4279,7 @@ export class PostgresBackstageNotionPartitionRepository {
           [
             universeId,
             manifestId,
-            JSON.stringify(members.map(member => ({
+            JSON.stringify(effectiveMembers.map(member => ({
               shard_key: member.shardKey,
               partition_version_id: member.partitionVersionId,
               shard_snapshot_id: member.snapshotId,
@@ -3770,7 +4289,7 @@ export class PostgresBackstageNotionPartitionRepository {
             configurationVersionId,
           ]
         );
-        if (omissions.length > 0) {
+        if (effectiveOmissions.length > 0) {
           await client.query(
             `INSERT INTO public.backstage_notion_universe_manifest_omissions (
                universe_id,
@@ -3797,7 +4316,7 @@ export class PostgresBackstageNotionPartitionRepository {
             [
               universeId,
               manifestId,
-              JSON.stringify(omissions.map(omission => ({
+              JSON.stringify(effectiveOmissions.map(omission => ({
                 shard_key: omission.shardKey,
                 partition_version_id: omission.partitionVersionId,
                 decision: omission.decision,
@@ -3859,7 +4378,7 @@ export class PostgresBackstageNotionPartitionRepository {
           expectedUniverseHead.manifestGeneration,
           'expectedUniverseHead.manifestGeneration'
         );
-        const oldestVerification = new Date(Math.min(...members.map(member =>
+        const oldestVerification = new Date(Math.min(...effectiveMembers.map(member =>
           member.verifiedAt.getTime()
         )));
         const activated = await client.query<{
@@ -3905,8 +4424,8 @@ export class PostgresBackstageNotionPartitionRepository {
           manifestId,
           universeId,
           configurationVersionId,
-          memberCount: members.length,
-          omissionCount: omissions.length,
+          memberCount: effectiveMembers.length,
+          omissionCount: effectiveOmissions.length,
           pageCount,
           chunkCount,
           headGeneration: mapGeneration(activatedRow.head_generation, 'head_generation'),

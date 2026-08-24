@@ -33,6 +33,13 @@ export const BACKSTAGE_NOTION_PARTITION_CHUNK_CODE_POINTS =
   BACKSTAGE_NOTION_RAG_CHUNK_CODE_POINTS;
 export const BACKSTAGE_NOTION_PARTITION_EMBEDDING_BATCH_SIZE = 32;
 
+export class BackstageNotionPartitionMaterialCapacityError extends Error {
+  constructor() {
+    super('The page material exceeds the remaining shard chunk capacity.');
+    this.name = 'BackstageNotionPartitionMaterialCapacityError';
+  }
+}
+
 export interface BackstageNotionPartitionMaterialRepository {
   findReusablePageMaterial(
     input: FindBackstageNotionReusablePageMaterialInput
@@ -56,6 +63,8 @@ export interface ResolveBackstageNotionPartitionPageMaterialInput {
   readonly embeddingModel: string;
   readonly embeddingVersion: number;
   readonly embeddingDimension: number;
+  /** Reject before writing or embedding when the page exceeds this remaining budget. */
+  readonly maximumChunkCount?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -313,6 +322,12 @@ export async function resolveBackstageNotionPartitionPageMaterial(
   dependencies: BackstageNotionPartitionMaterialDependencies
 ): Promise<BackstageNotionResolvedPartitionPageMaterial> {
   normalizeEmbeddingConfiguration(input);
+  if (
+    input.maximumChunkCount !== undefined
+    && (!Number.isSafeInteger(input.maximumChunkCount) || input.maximumChunkCount < 0)
+  ) {
+    throw new TypeError('maximumChunkCount is invalid.');
+  }
   throwIfAborted(input.signal);
   const contentHash = hashBackstageNotionPageMaterial(input.page.sanitizedMarkdown);
   const lookupBase = {
@@ -330,6 +345,12 @@ export async function resolveBackstageNotionPartitionPageMaterial(
   });
   throwIfAborted(input.signal);
   if (reusablePage) {
+    if (
+      input.maximumChunkCount !== undefined
+      && reusablePage.chunks.length > input.maximumChunkCount
+    ) {
+      throw new BackstageNotionPartitionMaterialCapacityError();
+    }
     const normalizedChunks = reusablePage.chunks.map(chunk => ({
       chunkVersionId: chunk.chunkVersionId,
       contentHash: chunk.contentHash,
@@ -362,6 +383,12 @@ export async function resolveBackstageNotionPartitionPageMaterial(
     input.page,
     { maximumCodePoints: BACKSTAGE_NOTION_PARTITION_CHUNK_CODE_POINTS }
   );
+  if (
+    input.maximumChunkCount !== undefined
+    && prepared.chunks.length > input.maximumChunkCount
+  ) {
+    throw new BackstageNotionPartitionMaterialCapacityError();
+  }
   const uniqueChunks = new Map<string, (typeof prepared.chunks)[number]>();
   prepared.chunks.forEach(chunk => {
     const existing = uniqueChunks.get(chunk.contentHash);

@@ -189,18 +189,24 @@ describe('Backstage Notion partition configuration core', () => {
         },
       ],
     }),
-    envelope([shard()], {
-      universes: [
-        { universeId, shards: [shard()] },
-        {
-          universeId: 'other-universe',
-          shards: [shard({ shardKey: 'shared', displayName: 'Duplicate root' })],
-        },
-      ],
-    }),
   ])('rejects duplicate shard, tag, universe, or root identities %#', value => {
     expect(parseBackstageNotionPartitionConfiguration(JSON.stringify(value)))
       .toMatchObject({ status: 'invalid', reason: 'invalid_shape' });
+  });
+
+  it('scopes root identity uniqueness to each universe namespace', () => {
+    expect(parseBackstageNotionPartitionConfiguration(JSON.stringify(envelope(
+      [shard()],
+      {
+        universes: [
+          { universeId, shards: [shard()] },
+          {
+            universeId: 'other-universe',
+            shards: [shard({ shardKey: 'shared', displayName: 'Shared root' })],
+          },
+        ],
+      }
+    )))).toMatchObject({ status: 'valid' });
   });
 
   it.each([

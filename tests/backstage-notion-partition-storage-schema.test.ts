@@ -102,6 +102,17 @@ describe('Backstage Notion partition storage database contract', () => {
     expect(sql).toContain(
       'UNIQUE (universe_id, partition_configuration_version_id, root_page_id)'
     );
+    const shardHeadDefinition = sql.slice(
+      sql.indexOf('CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_heads'),
+      sql.indexOf('CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_sync_leases')
+    );
+    expect(shardHeadDefinition).not.toContain('UNIQUE (universe_id, root_page_id)');
+    expect(shardHeadDefinition).toContain(
+      'DROP CONSTRAINT IF EXISTS backstage_notion_shard_heads_universe_id_root_page_id_key'
+    );
+    expect(shardHeadDefinition).toContain(
+      'CREATE INDEX IF NOT EXISTS backstage_notion_shard_heads_root_page_idx'
+    );
   });
 
   it.each([
@@ -289,6 +300,14 @@ describe('Backstage Notion partition storage database contract', () => {
     expect(sql).toContain('shard head pointers require active Notion authority');
     expect(sql).toContain('universe manifests require active Notion authority');
     expect(sql).toContain('backstage_notion_guard_lease_fencing');
+    expect(sql).toContain('IF TG_TABLE_NAME NOT IN (');
+    expect(sql).toContain(
+      "IF TG_TABLE_NAME = 'backstage_notion_shard_sync_leases' THEN"
+    );
+    expect(sql).toContain(
+      "'backstage_notion_provider_coordinator_leases'"
+    );
+    expect(sql).toContain('lease fencing trigger attached to an unsupported table');
     expect(sql).toContain('backstage_notion_partition_reject_immutable_mutation');
     expect(sql).not.toContain(
       'CREATE OR REPLACE FUNCTION public.backstage_notion_reject_immutable_mutation()'

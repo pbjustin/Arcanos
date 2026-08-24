@@ -212,7 +212,10 @@ export interface OpenAIAdapter {
    * Create embeddings
    */
   embeddings: {
-    create: (params: EmbeddingCreateParams) => Promise<CreateEmbeddingResponse>;
+    create: (
+      params: EmbeddingCreateParams,
+      options?: OpenAIAdapterRequestOptions
+    ) => Promise<CreateEmbeddingResponse>;
   };
 
   /**
@@ -613,7 +616,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       }
     },
     embeddings: {
-      create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
+      create: async (
+        params: EmbeddingCreateParams,
+        options?: OpenAIAdapterRequestOptions
+      ): Promise<CreateEmbeddingResponse> => {
         const requestedModel =
           typeof params.model === 'string' && params.model.trim().length > 0
             ? params.model.trim()
@@ -621,7 +627,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         return instrumentOpenAIOperation({
           operation: 'embeddings_create',
           model: requestedModel,
-          callback: () => originalEmbeddingsCreate(params),
+          callback: () => originalEmbeddingsCreate(params, options),
           extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
         });
       }

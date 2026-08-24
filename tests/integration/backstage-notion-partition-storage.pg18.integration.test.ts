@@ -3,9 +3,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from '@jest/globals';
-import { Client } from 'pg';
+import { Client, type Pool, type PoolClient } from 'pg';
 
 import { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from '../../src/core/db/backstageNotionPartitionStorageSchema.js';
+import { PostgresBackstageNotionPartitionRepository } from '../../src/core/db/repositories/backstageNotionPartitionRepository.js';
+import { syncBackstageNotionPartitionConfiguration } from '../../src/services/backstageNotionPartitionSync.js';
+import { parseBackstageNotionPartitionConfiguration } from '../../src/shared/backstage/backstageNotionPartitionCore.js';
+import { inspectBackstageNotionRagPage } from '../../src/shared/backstage/backstageNotionRagCore.js';
 import { normalizeBackstageNotionScopeKey } from '../../src/shared/backstage/backstageNotionScopeIndex.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
@@ -79,6 +83,54 @@ function errorCode(error: unknown): string | undefined {
   }
   const code = (error as { code?: unknown }).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Run the repository's bounded transactions on the suite's single connection
+ * without allowing an inner COMMIT to escape the test-level rollback.
+ */
+function createSavepointRepositoryPool(client: Client): Pool {
+  let sequence = 0;
+  let activeSavepoint: string | null = null;
+  const query = async (
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<Awaited<ReturnType<Client['query']>>> => {
+    const transactionCommand = text.trim().toUpperCase();
+    if (transactionCommand === 'BEGIN') {
+      if (activeSavepoint !== null) {
+        throw new Error('Repository transaction nesting is unsupported in this test adapter.');
+      }
+      activeSavepoint = `partition_repository_${sequence += 1}`;
+      return client.query(`SAVEPOINT ${activeSavepoint}`);
+    }
+    if (transactionCommand === 'COMMIT') {
+      if (activeSavepoint === null) {
+        throw new Error('Repository COMMIT has no active test savepoint.');
+      }
+      const savepoint = activeSavepoint;
+      activeSavepoint = null;
+      return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    }
+    if (transactionCommand === 'ROLLBACK') {
+      if (activeSavepoint === null) {
+        throw new Error('Repository ROLLBACK has no active test savepoint.');
+      }
+      const savepoint = activeSavepoint;
+      await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      activeSavepoint = null;
+      return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    }
+    return client.query(text, [...values]);
+  };
+  const repositoryClient = {
+    query,
+    release: (): void => undefined,
+  } as unknown as PoolClient;
+  return {
+    query,
+    connect: async (): Promise<PoolClient> => repositoryClient,
+  } as unknown as Pool;
 }
 
 async function expectSqlStateAtSavepoint(
@@ -715,6 +767,218 @@ async function insertSealedFixture(
     manifestId,
     verifiedAt,
   };
+}
+
+async function insertOptionalOverlapSnapshot(
+  client: Client,
+  fixture: SealedFixture,
+  optionalPartition: OptionalFixturePartition
+): Promise<string> {
+  const snapshotId = randomUUID();
+  const rootPageVersionId = randomUUID();
+  const sourceEditedAt = '2026-08-24T12:00:00.000Z';
+  const driftVerifiedAt = '2026-08-24T12:01:00.000Z';
+
+  await client.query(
+    `INSERT INTO public.backstage_notion_page_versions (
+       id,
+       universe_id,
+       page_id,
+       content_hash,
+       page_format_version,
+       chunker_version,
+       markdown,
+       content_code_points,
+       chunk_count
+     ) VALUES ($1::UUID, $2, $3::UUID, $4, 1, 1, 'archive', 7, 1)`,
+    [
+      rootPageVersionId,
+      fixture.universeId,
+      optionalPartition.rootPageId,
+      fingerprint('page:optional-overlap-root'),
+    ]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_page_version_chunks (
+       universe_id,
+       page_version_id,
+       ordinal,
+       chunk_version_id,
+       heading_path,
+       scope_heading_path_key,
+       heading_occurrence_path
+     ) VALUES (
+       $1, $2::UUID, 0, $3::UUID,
+       '["Archive Lane"]'::JSONB, $4::JSONB, '[0]'::JSONB
+     )`,
+    [
+      fixture.universeId,
+      rootPageVersionId,
+      fixture.chunkVersionId,
+      JSON.stringify([scopeKey('Archive Lane')]),
+    ]
+  );
+  await client.query(
+    `UPDATE public.backstage_notion_page_versions
+     SET state = 'sealed', sealed_at = clock_timestamp()
+     WHERE universe_id = $1 AND id = $2::UUID`,
+    [fixture.universeId, rootPageVersionId]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_shard_snapshots (
+       id,
+       universe_id,
+       shard_key,
+       partition_version_id,
+       root_page_id,
+       source_manifest_hash,
+       embedding_model,
+       embedding_version,
+       embedding_dimension,
+       index_format_version,
+       page_count,
+       chunk_count,
+       content_code_points,
+       max_depth,
+       source_max_last_edited_at,
+       verification_count
+     ) VALUES (
+       $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
+       'pg18-test-model', 1, 2, 1, 2, 2, 12, 1, $7::TIMESTAMPTZ, 2
+     )`,
+    [
+      snapshotId,
+      fixture.universeId,
+      optionalPartition.shardKey,
+      optionalPartition.partitionVersionId,
+      optionalPartition.rootPageId,
+      fingerprint('snapshot:optional-overlap'),
+      sourceEditedAt,
+    ]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_shard_snapshot_pages (
+       universe_id,
+       shard_key,
+       shard_snapshot_id,
+       page_id,
+       page_version_id,
+       parent_page_id,
+       title,
+       canonical_url,
+       source_last_edited_at,
+       depth,
+       path,
+       scope_path,
+       scope_title_key,
+       scope_path_key
+     ) VALUES
+       (
+         $1, $2, $3::UUID, $4::UUID, $5::UUID, NULL,
+         'Archive Lane', $6, $7::TIMESTAMPTZ, 0,
+         $8::JSONB, '["Archive Lane"]'::JSONB, $9, $10::JSONB
+       ),
+       (
+         $1, $2, $3::UUID, $11::UUID, $12::UUID, $4::UUID,
+         'Shared Canon', $13, $7::TIMESTAMPTZ, 1,
+         $14::JSONB, '["Archive Lane", "Shared Canon"]'::JSONB, $15, $16::JSONB
+       )`,
+    [
+      fixture.universeId,
+      optionalPartition.shardKey,
+      snapshotId,
+      optionalPartition.rootPageId,
+      rootPageVersionId,
+      `https://www.notion.so/${optionalPartition.rootPageId.replaceAll('-', '')}`,
+      sourceEditedAt,
+      JSON.stringify([optionalPartition.rootPageId]),
+      scopeKey('Archive Lane'),
+      JSON.stringify([scopeKey('Archive Lane')]),
+      fixture.rootPageId,
+      fixture.pageVersionId,
+      `https://www.notion.so/${fixture.rootPageId.replaceAll('-', '')}`,
+      JSON.stringify([optionalPartition.rootPageId, fixture.rootPageId]),
+      scopeKey('Shared Canon'),
+      JSON.stringify([scopeKey('Archive Lane'), scopeKey('Shared Canon')]),
+    ]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_shard_snapshot_chunk_occurrences (
+       universe_id,
+       shard_key,
+       shard_snapshot_id,
+       page_id,
+       page_version_id,
+       ordinal,
+       chunk_version_id,
+       embedding_model,
+       embedding_version,
+       category
+     ) VALUES
+       ($1, $2, $3::UUID, $4::UUID, $5::UUID, 0, $6::UUID,
+        'pg18-test-model', 1, 'general'),
+       ($1, $2, $3::UUID, $7::UUID, $8::UUID, 0, $6::UUID,
+        'pg18-test-model', 1, 'general')`,
+    [
+      fixture.universeId,
+      optionalPartition.shardKey,
+      snapshotId,
+      optionalPartition.rootPageId,
+      rootPageVersionId,
+      fixture.chunkVersionId,
+      fixture.rootPageId,
+      fixture.pageVersionId,
+    ]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_shard_snapshot_verifications (
+       universe_id,
+       shard_key,
+       shard_snapshot_id,
+       ordinal,
+       verification_kind,
+       result_hash,
+       verified_at
+     ) VALUES
+       ($1, $2, $3::UUID, 0, 'source_drift', $4, $5::TIMESTAMPTZ),
+       ($1, $2, $3::UUID, 1, 'completeness', $6, $7::TIMESTAMPTZ)`,
+    [
+      fixture.universeId,
+      optionalPartition.shardKey,
+      snapshotId,
+      fingerprint('drift:optional-overlap'),
+      driftVerifiedAt,
+      fingerprint('complete:optional-overlap'),
+      fixture.verifiedAt,
+    ]
+  );
+  await client.query(
+    `UPDATE public.backstage_notion_shard_snapshots
+     SET state = 'sealed', sealed_at = clock_timestamp()
+     WHERE universe_id = $1 AND shard_key = $2 AND id = $3::UUID`,
+    [fixture.universeId, optionalPartition.shardKey, snapshotId]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_shard_heads (
+       universe_id,
+       shard_key,
+       current_partition_version_id,
+       root_page_id,
+       active_snapshot_id,
+       head_generation,
+       snapshot_generation,
+       last_verified_at
+     ) VALUES ($1, $2, $3::UUID, $4::UUID, $5::UUID, 1, 1, $6::TIMESTAMPTZ)`,
+    [
+      fixture.universeId,
+      optionalPartition.shardKey,
+      optionalPartition.partitionVersionId,
+      optionalPartition.rootPageId,
+      snapshotId,
+      fixture.verifiedAt,
+    ]
+  );
+  return snapshotId;
 }
 
 describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () => {
@@ -1563,6 +1827,843 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       fixture.verifiedAt
     );
   });
+
+  test('rotates an active shard atomically and reassigns roots without deleting LKG history', async () => {
+    await client.query('BEGIN');
+    const fixture = await insertSealedFixture(client, 'atomic-rotation');
+    const configurationId = randomUUID();
+    const configurationGeneration = 'generation-atomic-rotation-b';
+    const configurationHash = fingerprint('configuration:atomic-rotation-b');
+    const partitionVersionId = randomUUID();
+    const rootPageId = randomUUID();
+    const pageVersionId = randomUUID();
+    const snapshotId = randomUUID();
+    const sourceEditedAt = '2026-08-24T13:00:00.000Z';
+    const driftVerifiedAt = '2026-08-24T13:01:00.000Z';
+    const verifiedAt = '2026-08-24T13:02:00.000Z';
+
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_configuration_versions (
+         id, universe_id, configuration_generation, configuration_hash, shard_count
+       ) VALUES ($1::UUID, $2, $3, $4, 1)`,
+      [
+        configurationId,
+        fixture.universeId,
+        configurationGeneration,
+        configurationHash,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_versions (
+         id,
+         universe_id,
+         shard_key,
+         root_page_id,
+         display_name,
+         retrieval_tier,
+         is_required,
+         scope_tags,
+         category_tags,
+         max_pages,
+         max_chunks,
+         max_depth,
+         max_content_code_points,
+         semantic_hash
+       ) VALUES (
+         $1::UUID, $2, $3, $4::UUID,
+         'Rotated Canon', 'hot', TRUE,
+         '["current"]'::JSONB, '["canon"]'::JSONB,
+         8, 16, 4, 10000, $5
+       )`,
+      [
+        partitionVersionId,
+        fixture.universeId,
+        fixture.shardKey,
+        rootPageId,
+        fingerprint('partition:atomic-rotation-b'),
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_configuration_members (
+         universe_id,
+         partition_configuration_version_id,
+         configuration_generation,
+         shard_key,
+         partition_version_id,
+         root_page_id
+       ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $6::UUID)`,
+      [
+        fixture.universeId,
+        configurationId,
+        configurationGeneration,
+        fixture.shardKey,
+        partitionVersionId,
+        rootPageId,
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_partition_configuration_versions
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND id = $2::UUID`,
+      [fixture.universeId, configurationId]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_partitioned_universe_heads
+       SET
+         desired_configuration_version_id = $2::UUID,
+         desired_configuration_generation = $3,
+         desired_configuration_hash = $4,
+         head_generation = head_generation + 1
+       WHERE universe_id = $1`,
+      [
+        fixture.universeId,
+        configurationId,
+        configurationGeneration,
+        configurationHash,
+      ]
+    );
+
+    const beforeRotation = await client.query<{
+      active_snapshot_id: string;
+      active_manifest_id: string;
+    }>(
+      `SELECT
+         shard_head.active_snapshot_id::TEXT,
+         universe_head.active_manifest_id::TEXT
+       FROM public.backstage_notion_shard_heads AS shard_head
+       JOIN public.backstage_notion_partitioned_universe_heads AS universe_head
+         ON universe_head.universe_id = shard_head.universe_id
+       WHERE shard_head.universe_id = $1 AND shard_head.shard_key = $2`,
+      [fixture.universeId, fixture.shardKey]
+    );
+    expect(beforeRotation.rows).toEqual([{
+      active_snapshot_id: fixture.snapshotId,
+      active_manifest_id: fixture.manifestId,
+    }]);
+    await expectSqlStateAtSavepoint(client, 'atomic_rotation_clear_lkg', '55000', () =>
+      client.query(
+        `UPDATE public.backstage_notion_shard_heads
+         SET
+           current_partition_version_id = $3::UUID,
+           root_page_id = $4::UUID,
+           active_snapshot_id = NULL,
+           head_generation = head_generation + 1,
+           snapshot_generation = snapshot_generation + 1
+         WHERE universe_id = $1 AND shard_key = $2`,
+        [fixture.universeId, fixture.shardKey, partitionVersionId, rootPageId]
+      )
+    );
+
+    await client.query(
+      `INSERT INTO public.backstage_notion_page_versions (
+         id,
+         universe_id,
+         page_id,
+         content_hash,
+         page_format_version,
+         chunker_version,
+         markdown,
+         content_code_points,
+         chunk_count
+       ) VALUES ($1::UUID, $2, $3::UUID, $4, 1, 1, 'canon', 5, 1)`,
+      [pageVersionId, fixture.universeId, rootPageId, fingerprint('page:atomic-rotation-b')]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_page_version_chunks (
+         universe_id,
+         page_version_id,
+         ordinal,
+         chunk_version_id,
+         heading_path,
+         scope_heading_path_key,
+         heading_occurrence_path
+       ) VALUES (
+         $1, $2::UUID, 0, $3::UUID,
+         '["Canon"]'::JSONB, $4::JSONB, '[0]'::JSONB
+       )`,
+      [
+        fixture.universeId,
+        pageVersionId,
+        fixture.chunkVersionId,
+        JSON.stringify([scopeKey('Canon')]),
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_page_versions
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND id = $2::UUID`,
+      [fixture.universeId, pageVersionId]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshots (
+         id,
+         universe_id,
+         shard_key,
+         partition_version_id,
+         root_page_id,
+         source_manifest_hash,
+         embedding_model,
+         embedding_version,
+         embedding_dimension,
+         index_format_version,
+         page_count,
+         chunk_count,
+         content_code_points,
+         max_depth,
+         source_max_last_edited_at,
+         verification_count
+       ) VALUES (
+         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
+         'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $7::TIMESTAMPTZ, 2
+       )`,
+      [
+        snapshotId,
+        fixture.universeId,
+        fixture.shardKey,
+        partitionVersionId,
+        rootPageId,
+        fingerprint('snapshot:atomic-rotation-b'),
+        sourceEditedAt,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_pages (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         page_id,
+         page_version_id,
+         parent_page_id,
+         title,
+         canonical_url,
+         source_last_edited_at,
+         depth,
+         path,
+         scope_path,
+         scope_title_key,
+         scope_path_key
+       ) VALUES (
+         $1, $2, $3::UUID, $4::UUID, $5::UUID, NULL,
+         'Rotated Canon', 'https://www.notion.so/rotated-canon',
+         $6::TIMESTAMPTZ, 0, $7::JSONB, '["Rotated Canon"]'::JSONB, $8, $9::JSONB
+       )`,
+      [
+        fixture.universeId,
+        fixture.shardKey,
+        snapshotId,
+        rootPageId,
+        pageVersionId,
+        sourceEditedAt,
+        JSON.stringify([rootPageId]),
+        scopeKey('Rotated Canon'),
+        JSON.stringify([scopeKey('Rotated Canon')]),
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_chunk_occurrences (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         page_id,
+         page_version_id,
+         ordinal,
+         chunk_version_id,
+         embedding_model,
+         embedding_version,
+         category
+       ) VALUES (
+         $1, $2, $3::UUID, $4::UUID, $5::UUID, 0, $6::UUID,
+         'pg18-test-model', 1, 'general'
+       )`,
+      [
+        fixture.universeId,
+        fixture.shardKey,
+        snapshotId,
+        rootPageId,
+        pageVersionId,
+        fixture.chunkVersionId,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_verifications (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         ordinal,
+         verification_kind,
+         result_hash,
+         verified_at
+       ) VALUES
+         ($1, $2, $3::UUID, 0, 'source_drift', $4, $5::TIMESTAMPTZ),
+         ($1, $2, $3::UUID, 1, 'completeness', $6, $7::TIMESTAMPTZ)`,
+      [
+        fixture.universeId,
+        fixture.shardKey,
+        snapshotId,
+        fingerprint('drift:atomic-rotation-b'),
+        driftVerifiedAt,
+        fingerprint('complete:atomic-rotation-b'),
+        verifiedAt,
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_shard_snapshots
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND shard_key = $2 AND id = $3::UUID`,
+      [fixture.universeId, fixture.shardKey, snapshotId]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_shard_heads
+       SET
+         current_partition_version_id = $3::UUID,
+         root_page_id = $4::UUID,
+         active_snapshot_id = $5::UUID,
+         head_generation = head_generation + 1,
+         snapshot_generation = snapshot_generation + 1,
+         last_verified_at = $6::TIMESTAMPTZ
+       WHERE universe_id = $1 AND shard_key = $2`,
+      [
+        fixture.universeId,
+        fixture.shardKey,
+        partitionVersionId,
+        rootPageId,
+        snapshotId,
+        verifiedAt,
+      ]
+    );
+
+    const reassignedShardKey = 'hot/atomic-rotation-reassigned';
+    const reassignedPartitionVersionId = randomUUID();
+    const reassignedConfigurationId = randomUUID();
+    const reassignedGeneration = 'generation-atomic-rotation-c';
+    const reassignedHash = fingerprint('configuration:atomic-rotation-c');
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_configuration_versions (
+         id, universe_id, configuration_generation, configuration_hash, shard_count
+       ) VALUES ($1::UUID, $2, $3, $4, 1)`,
+      [
+        reassignedConfigurationId,
+        fixture.universeId,
+        reassignedGeneration,
+        reassignedHash,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_identities (universe_id, shard_key)
+       VALUES ($1, $2)`,
+      [fixture.universeId, reassignedShardKey]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_versions (
+         id,
+         universe_id,
+         shard_key,
+         root_page_id,
+         display_name,
+         retrieval_tier,
+         is_required,
+         scope_tags,
+         category_tags,
+         max_pages,
+         max_chunks,
+         max_depth,
+         max_content_code_points,
+         semantic_hash
+       ) VALUES (
+         $1::UUID, $2, $3, $4::UUID,
+         'Reassigned Canon', 'hot', TRUE,
+         '["current"]'::JSONB, '["canon"]'::JSONB,
+         8, 16, 4, 10000, $5
+       )`,
+      [
+        reassignedPartitionVersionId,
+        fixture.universeId,
+        reassignedShardKey,
+        rootPageId,
+        fingerprint('partition:atomic-rotation-c'),
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_configuration_members (
+         universe_id,
+         partition_configuration_version_id,
+         configuration_generation,
+         shard_key,
+         partition_version_id,
+         root_page_id
+       ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $6::UUID)`,
+      [
+        fixture.universeId,
+        reassignedConfigurationId,
+        reassignedGeneration,
+        reassignedShardKey,
+        reassignedPartitionVersionId,
+        rootPageId,
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_partition_configuration_versions
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND id = $2::UUID`,
+      [fixture.universeId, reassignedConfigurationId]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_partitioned_universe_heads
+       SET
+         desired_configuration_version_id = $2::UUID,
+         desired_configuration_generation = $3,
+         desired_configuration_hash = $4,
+         head_generation = head_generation + 1
+       WHERE universe_id = $1`,
+      [
+        fixture.universeId,
+        reassignedConfigurationId,
+        reassignedGeneration,
+        reassignedHash,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_heads (
+         universe_id, shard_key, current_partition_version_id, root_page_id
+       ) VALUES ($1, $2, $3::UUID, $4::UUID)`,
+      [
+        fixture.universeId,
+        reassignedShardKey,
+        reassignedPartitionVersionId,
+        rootPageId,
+      ]
+    );
+
+    const retained = await client.query<{
+      active_manifest_id: string;
+      old_snapshot_state: string;
+      new_snapshot_state: string;
+      duplicate_historical_root_heads: string;
+    }>(
+      `SELECT
+         universe_head.active_manifest_id::TEXT,
+         old_snapshot.state AS old_snapshot_state,
+         new_snapshot.state AS new_snapshot_state,
+         (
+           SELECT pg_catalog.count(*)::TEXT
+           FROM public.backstage_notion_shard_heads AS retained_head
+           WHERE retained_head.universe_id = universe_head.universe_id
+             AND retained_head.root_page_id = $4::UUID
+         ) AS duplicate_historical_root_heads
+       FROM public.backstage_notion_partitioned_universe_heads AS universe_head
+       JOIN public.backstage_notion_shard_snapshots AS old_snapshot
+         ON old_snapshot.universe_id = universe_head.universe_id
+        AND old_snapshot.id = $2::UUID
+       JOIN public.backstage_notion_shard_snapshots AS new_snapshot
+         ON new_snapshot.universe_id = universe_head.universe_id
+        AND new_snapshot.id = $3::UUID
+       WHERE universe_head.universe_id = $1`,
+      [fixture.universeId, fixture.snapshotId, snapshotId, rootPageId]
+    );
+    expect(retained.rows).toEqual([{
+      active_manifest_id: fixture.manifestId,
+      old_snapshot_state: 'sealed',
+      new_snapshot_state: 'sealed',
+      duplicate_historical_root_heads: '2',
+    }]);
+  });
+
+  test('runs repository registration, leases, shard activation, and manifest publication as one real cycle', async () => {
+    await client.query('BEGIN');
+    const fixture = await insertSealedFixture(client, 'repository-cycle');
+    const rootPageId = randomUUID();
+    const parsed = parseBackstageNotionPartitionConfiguration(JSON.stringify({
+      version: 1,
+      generation: 'generation-repository-cycle-b',
+      universes: [{
+        universeId: fixture.universeId,
+        shards: [{
+          shardKey: fixture.shardKey,
+          rootPageId,
+          displayName: 'Repository Rotated Canon',
+          retrievalTier: 'hot',
+          required: true,
+          scopeTags: ['current'],
+          categoryTags: ['canon'],
+          capacity: {
+            maxPages: 8,
+            maxChunks: 16,
+            maxDepth: 4,
+            maxContentCodePoints: 10_000,
+          },
+        }],
+      }],
+    }));
+    if (parsed.status !== 'valid') {
+      throw new Error('Repository-cycle partition configuration is invalid.');
+    }
+    const universe = parsed.universes[0]!;
+    const definition = universe.shards[0]!;
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const previousHead = await repository.loadUniverseHead(fixture.universeId);
+    expect(previousHead).not.toBeNull();
+    const registration = await repository.registerConfiguration({
+      configurationGeneration: parsed.generation,
+      configurationHash: parsed.semanticDigest,
+      universe,
+      expectedUniverseHead: previousHead,
+    });
+    const registeredState = await repository.loadUniverseSynchronizationState(
+      fixture.universeId,
+      registration.configurationVersionId
+    );
+    expect(registeredState?.shards[0]).toMatchObject({
+      partitionVersionId: registration.definitions[0]?.partitionVersionId,
+      rootPageId,
+      expectedHead: {
+        currentPartitionVersionId: fixture.partitionVersionId,
+        activeSnapshotId: fixture.snapshotId,
+      },
+      activeSnapshot: {
+        snapshotId: fixture.snapshotId,
+        partitionVersionId: fixture.partitionVersionId,
+      },
+    });
+
+    const shardLease = await repository.acquireShardLease(
+      fixture.universeId,
+      fixture.shardKey,
+      'repository-cycle-holder',
+      5_000
+    );
+    expect(shardLease).not.toBeNull();
+    await expect(repository.acquireShardLease(
+      fixture.universeId,
+      fixture.shardKey,
+      'repository-cycle-holder',
+      5_000
+    )).resolves.toBeNull();
+    await expect(repository.releaseShardLease(
+      fixture.universeId,
+      fixture.shardKey,
+      shardLease!
+    )).resolves.toBe(true);
+
+    const providerLease = await repository.acquireProviderLease(
+      'notion',
+      'repository-cycle',
+      'repository-cycle-holder',
+      5_000,
+      0
+    );
+    expect(providerLease).not.toBeNull();
+    await expect(repository.acquireProviderLease(
+      'notion',
+      'repository-cycle',
+      'repository-cycle-holder',
+      5_000,
+      0
+    )).resolves.toBeNull();
+    await expect(repository.releaseProviderLease(
+      'notion',
+      'repository-cycle',
+      providerLease!
+    )).resolves.toBe(true);
+
+    const sourceLastEditedAt = '2026-08-24T14:00:00.000Z';
+    const page = inspectBackstageNotionRagPage({
+      universeId: fixture.universeId,
+      pageId: rootPageId,
+      parentPageId: null,
+      title: definition.displayName,
+      path: [definition.displayName],
+      markdown: '# Repository Rotated Canon\n\nCurrent canon.',
+      sourceLastEditedAt,
+    });
+    const metadata = Object.freeze({
+      pageId: rootPageId,
+      parentPageId: null,
+      inTrash: false,
+      lastEditedAt: new Date(sourceLastEditedAt),
+    });
+    const capture = Object.freeze({
+      captureMode: 'full_hierarchy_content_scan' as const,
+      pages: Object.freeze([Object.freeze({ page, metadata })]),
+      completeness: Object.freeze({
+        truncatedPageCount: 0,
+        unsupportedBlockCount: 0,
+        ambiguousChildReferenceCount: 0,
+      }),
+      capturedAt: new Date('2026-08-24T14:01:00.000Z'),
+    });
+    const syncResult = await syncBackstageNotionPartitionConfiguration(parsed, {
+      repository,
+      embeddingModel: 'pg18-repository-cycle-model',
+      embeddingDimension: 2,
+      embedBatch: async (inputs, signal) => {
+        if (signal.aborted) {
+          throw signal.reason;
+        }
+        return inputs.map(() => Object.freeze([3, 4]));
+      },
+      captureFullHierarchy: async () => capture,
+      verifyFullHierarchy: async () => Object.freeze({
+        verificationMode: 'full_metadata_second_pass' as const,
+        pages: Object.freeze([metadata]),
+        verifiedAt: new Date('2026-08-24T14:02:00.000Z'),
+      }),
+      holderId: 'repository-cycle-sync',
+      concurrency: 1,
+      shardLeaseTtlMs: 5_000,
+      providerLeaseTtlMs: 5_000,
+      providerPollMs: 1,
+      notionRequestDelayMs: 0,
+      embeddingRequestDelayMs: 0,
+    });
+    expect(syncResult.universes[0]).toMatchObject({
+      universeId: fixture.universeId,
+      configurationVersionId: registration.configurationVersionId,
+      manifestStatus: 'published',
+      memberCount: 1,
+      omissionCount: 0,
+      shardResults: [{
+        status: 'fresh',
+        leaseReleaseVerified: true,
+        shardKey: fixture.shardKey,
+        pageCount: 1,
+      }],
+    });
+
+    const published = await client.query<{
+      active_manifest_id: string;
+      active_snapshot_id: string;
+      current_partition_version_id: string;
+      old_manifest_state: string;
+      old_snapshot_state: string;
+      new_manifest_state: string;
+      new_snapshot_state: string;
+    }>(
+      `SELECT
+         universe_head.active_manifest_id::TEXT,
+         shard_head.active_snapshot_id::TEXT,
+         shard_head.current_partition_version_id::TEXT,
+         old_manifest.state AS old_manifest_state,
+         old_snapshot.state AS old_snapshot_state,
+         new_manifest.state AS new_manifest_state,
+         new_snapshot.state AS new_snapshot_state
+       FROM public.backstage_notion_partitioned_universe_heads AS universe_head
+       JOIN public.backstage_notion_shard_heads AS shard_head
+         ON shard_head.universe_id = universe_head.universe_id
+        AND shard_head.shard_key = $2
+       JOIN public.backstage_notion_universe_manifests AS old_manifest
+         ON old_manifest.universe_id = universe_head.universe_id
+        AND old_manifest.id = $3::UUID
+       JOIN public.backstage_notion_shard_snapshots AS old_snapshot
+         ON old_snapshot.universe_id = universe_head.universe_id
+        AND old_snapshot.shard_key = shard_head.shard_key
+        AND old_snapshot.id = $4::UUID
+       JOIN public.backstage_notion_universe_manifests AS new_manifest
+         ON new_manifest.universe_id = universe_head.universe_id
+        AND new_manifest.id = universe_head.active_manifest_id
+       JOIN public.backstage_notion_shard_snapshots AS new_snapshot
+         ON new_snapshot.universe_id = shard_head.universe_id
+        AND new_snapshot.shard_key = shard_head.shard_key
+        AND new_snapshot.id = shard_head.active_snapshot_id
+       WHERE universe_head.universe_id = $1`,
+      [
+        fixture.universeId,
+        fixture.shardKey,
+        fixture.manifestId,
+        fixture.snapshotId,
+      ]
+    );
+    expect(published.rows[0]).toMatchObject({
+      active_manifest_id: syncResult.universes[0]?.manifestId,
+      current_partition_version_id: registration.definitions[0]?.partitionVersionId,
+      old_manifest_state: 'sealed',
+      old_snapshot_state: 'sealed',
+      new_manifest_state: 'sealed',
+      new_snapshot_state: 'sealed',
+    });
+    expect(published.rows[0]?.active_snapshot_id).not.toBe(fixture.snapshotId);
+
+    const reassigned = parseBackstageNotionPartitionConfiguration(JSON.stringify({
+      version: 1,
+      generation: 'generation-repository-cycle-c',
+      universes: [{
+        universeId: fixture.universeId,
+        shards: [{
+          shardKey: 'hot/repository-cycle-reassigned',
+          rootPageId,
+          displayName: 'Reassigned Repository Canon',
+          retrievalTier: 'hot',
+          required: true,
+          scopeTags: ['current'],
+          categoryTags: ['canon'],
+          capacity: {
+            maxPages: 8,
+            maxChunks: 16,
+            maxDepth: 4,
+            maxContentCodePoints: 10_000,
+          },
+        }],
+      }],
+    }));
+    if (reassigned.status !== 'valid') {
+      throw new Error('Repository-cycle reassignment configuration is invalid.');
+    }
+    const currentHead = await repository.loadUniverseHead(fixture.universeId);
+    expect(currentHead).not.toBeNull();
+    await expect(repository.registerConfiguration({
+      configurationGeneration: reassigned.generation,
+      configurationHash: reassigned.semanticDigest,
+      universe: reassigned.universes[0]!,
+      expectedUniverseHead: currentHead,
+    })).resolves.toMatchObject({ reused: false });
+    const historicalRootOwners = await client.query<{ count: string }>(
+      `SELECT pg_catalog.count(*)::TEXT AS count
+       FROM public.backstage_notion_shard_heads
+       WHERE universe_id = $1 AND root_page_id = $2::UUID`,
+      [fixture.universeId, rootPageId]
+    );
+    expect(historicalRootOwners.rows).toEqual([{ count: '2' }]);
+  }, 60_000);
+
+  test('publishes required canon while atomically omitting an overlapping optional archive', async () => {
+    await client.query('BEGIN');
+    const optionalPartition: OptionalFixturePartition = {
+      shardKey: 'archive/ownership-isolation',
+      partitionVersionId: randomUUID(),
+      rootPageId: randomUUID(),
+      semanticHash: fingerprint('partition:ownership-isolation-archive'),
+    };
+    const fixture = await insertSealedFixture(
+      client,
+      'ownership-isolation',
+      optionalPartition
+    );
+    const optionalSnapshotId = await insertOptionalOverlapSnapshot(
+      client,
+      fixture,
+      optionalPartition
+    );
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const universeHead = await repository.loadUniverseHead(fixture.universeId);
+    if (!universeHead) {
+      throw new Error('Ownership-isolation universe head is unavailable.');
+    }
+    const manifestId = randomUUID();
+    const activated = await repository.activateUniverseManifest({
+      manifestId,
+      universeId: fixture.universeId,
+      configurationVersionId: fixture.configurationId,
+      configurationGeneration: fixture.configurationGeneration,
+      configurationHash: fixture.configurationHash,
+      indexFormatVersion: 1,
+      expectedUniverseHead: universeHead,
+      members: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        snapshotId: fixture.snapshotId,
+        decision: 'fresh',
+        verifiedAt: new Date(fixture.verifiedAt),
+        expectedHead: {
+          headGeneration: '1',
+          snapshotGeneration: '1',
+          currentPartitionVersionId: fixture.partitionVersionId,
+          activeSnapshotId: fixture.snapshotId,
+        },
+      }, {
+        shardKey: optionalPartition.shardKey,
+        partitionVersionId: optionalPartition.partitionVersionId,
+        snapshotId: optionalSnapshotId,
+        decision: 'fresh',
+        verifiedAt: new Date(fixture.verifiedAt),
+        expectedHead: {
+          headGeneration: '1',
+          snapshotGeneration: '1',
+          currentPartitionVersionId: optionalPartition.partitionVersionId,
+          activeSnapshotId: optionalSnapshotId,
+        },
+      }],
+      omissions: [],
+    });
+
+    expect(activated).toMatchObject({
+      manifestId,
+      memberCount: 1,
+      omissionCount: 1,
+      pageCount: 1,
+      chunkCount: 1,
+    });
+    const manifest = await client.query<{
+      active_manifest_id: string;
+      member_count: string;
+      omission_count: string;
+      page_count: string;
+      chunk_count: string;
+      member_shards: string[];
+      omitted_shards: string[];
+      omission_reason: string;
+      ownership_count: string;
+      old_manifest_state: string;
+    }>(
+      `SELECT
+         head.active_manifest_id::TEXT,
+         manifest.member_count::TEXT,
+         manifest.omission_count::TEXT,
+         manifest.page_count::TEXT,
+         manifest.chunk_count::TEXT,
+         ARRAY(
+           SELECT member.shard_key
+           FROM public.backstage_notion_universe_manifest_shards AS member
+           WHERE member.universe_id = manifest.universe_id
+             AND member.manifest_id = manifest.id
+           ORDER BY member.shard_key
+         ) AS member_shards,
+         ARRAY(
+           SELECT omission.shard_key
+           FROM public.backstage_notion_universe_manifest_omissions AS omission
+           WHERE omission.universe_id = manifest.universe_id
+             AND omission.manifest_id = manifest.id
+           ORDER BY omission.shard_key
+         ) AS omitted_shards,
+         (
+           SELECT omission.safe_reason_code
+           FROM public.backstage_notion_universe_manifest_omissions AS omission
+           WHERE omission.universe_id = manifest.universe_id
+             AND omission.manifest_id = manifest.id
+           LIMIT 1
+         ) AS omission_reason,
+         (
+           SELECT pg_catalog.count(*)::TEXT
+           FROM public.backstage_notion_manifest_page_ownership AS ownership
+           WHERE ownership.universe_id = manifest.universe_id
+             AND ownership.manifest_id = manifest.id
+         ) AS ownership_count,
+         old_manifest.state AS old_manifest_state
+       FROM public.backstage_notion_partitioned_universe_heads AS head
+       JOIN public.backstage_notion_universe_manifests AS manifest
+         ON manifest.universe_id = head.universe_id
+        AND manifest.id = head.active_manifest_id
+       JOIN public.backstage_notion_universe_manifests AS old_manifest
+         ON old_manifest.universe_id = head.universe_id
+        AND old_manifest.id = $3::UUID
+       WHERE head.universe_id = $1 AND manifest.id = $2::UUID`,
+      [fixture.universeId, manifestId, fixture.manifestId]
+    );
+    expect(manifest.rows).toEqual([{
+      active_manifest_id: manifestId,
+      member_count: '1',
+      omission_count: '1',
+      page_count: '1',
+      chunk_count: '1',
+      member_shards: [fixture.shardKey],
+      omitted_shards: [optionalPartition.shardKey],
+      omission_reason: 'SHARD_OWNERSHIP_CONFLICT',
+      ownership_count: '1',
+      old_manifest_state: 'sealed',
+    }]);
+  }, 60_000);
 
   test('omits a changed optional definition without moving its historical last-known-good head', async () => {
     await client.query('BEGIN');

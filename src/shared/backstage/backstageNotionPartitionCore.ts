@@ -329,7 +329,6 @@ export function parseBackstageNotionPartitionConfiguration(
 
   const universes: BackstageNotionPartitionUniverse[] = [];
   const seenUniverseIds = new Set<string>();
-  const seenRootPageIds = new Set<string>();
   let totalShards = 0;
 
   for (const rawUniverse of parsed.universes) {
@@ -355,6 +354,7 @@ export function parseBackstageNotionPartitionConfiguration(
 
     const shards: BackstageNotionPartitionDefinition[] = [];
     const seenShardKeys = new Set<string>();
+    const seenRootPageIds = new Set<string>();
     for (const rawShard of rawUniverse.shards) {
       if (
         !isPlainObject(rawShard)

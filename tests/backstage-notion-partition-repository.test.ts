@@ -22,15 +22,19 @@ import {
 const UNIVERSE_ID = 'my-universe-2k26';
 const SHARD_KEY = 'raw/2026';
 const OPTIONAL_SHARD_KEY = 'archive/raw/2025';
+const SECOND_OPTIONAL_SHARD_KEY = 'archive/smackdown/2025';
 const ROOT_PAGE_ID = '11111111-1111-4111-8111-111111111111';
 const OPTIONAL_ROOT_PAGE_ID = '22222222-2222-4222-8222-222222222222';
+const SECOND_OPTIONAL_ROOT_PAGE_ID = '23232323-2323-4232-8232-232323232323';
 const PAGE_VERSION_ID = '33333333-3333-4333-8333-333333333333';
 const CHUNK_VERSION_ID = '44444444-4444-4444-8444-444444444444';
 const PARTITION_VERSION_ID = '55555555-5555-4555-8555-555555555555';
 const OPTIONAL_PARTITION_VERSION_A = '66666666-6666-4666-8666-666666666666';
 const OPTIONAL_PARTITION_VERSION_B = '77777777-7777-4777-8777-777777777777';
+const SECOND_OPTIONAL_PARTITION_VERSION = '78787878-7878-4787-8787-787878787878';
 const SNAPSHOT_ID = '88888888-8888-4888-8888-888888888888';
 const OPTIONAL_SNAPSHOT_ID = '99999999-9999-4999-8999-999999999999';
+const SECOND_OPTIONAL_SNAPSHOT_ID = '98989898-9898-4989-8989-989898989898';
 const CONFIGURATION_VERSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const MANIFEST_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const LEASE_TOKEN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -247,7 +251,10 @@ function leaseRow() {
   };
 }
 
-function createSnapshotHarness(options: { terminalLeasePresent: boolean }) {
+function createSnapshotHarness(options: {
+  terminalLeasePresent: boolean;
+  head?: ReturnType<typeof shardHead>;
+}) {
   let leaseReads = 0;
   return new PartitionRepositoryHarness((sql) => {
     if (sql.includes('FROM public.backstage_notion_universe_heads')) {
@@ -271,7 +278,7 @@ function createSnapshotHarness(options: { terminalLeasePresent: boolean }) {
         : result();
     }
     if (sql.includes('FROM public.backstage_notion_shard_heads')) {
-      return result([shardHead()]);
+      return result([options.head ?? shardHead()]);
     }
     if (sql.includes('JOIN public.backstage_notion_partition_versions AS definition')) {
       return result([{
@@ -357,8 +364,56 @@ function manifestInput(): ActivateBackstageNotionUniverseManifestInput {
   };
 }
 
+function manifestInputWithOptionalMember(): ActivateBackstageNotionUniverseManifestInput {
+  const input = manifestInput();
+  return {
+    ...input,
+    members: [...input.members, {
+      shardKey: OPTIONAL_SHARD_KEY,
+      partitionVersionId: OPTIONAL_PARTITION_VERSION_B,
+      snapshotId: OPTIONAL_SNAPSHOT_ID,
+      decision: 'fresh',
+      verifiedAt: VERIFIED_AT,
+      expectedHead: {
+        headGeneration: '7',
+        snapshotGeneration: '5',
+        currentPartitionVersionId: OPTIONAL_PARTITION_VERSION_B,
+        activeSnapshotId: OPTIONAL_SNAPSHOT_ID,
+      },
+    }],
+    omissions: [],
+  };
+}
+
+function manifestInputWithTwoOptionalMembers(): ActivateBackstageNotionUniverseManifestInput {
+  const input = manifestInputWithOptionalMember();
+  return {
+    ...input,
+    members: [...input.members, {
+      shardKey: SECOND_OPTIONAL_SHARD_KEY,
+      partitionVersionId: SECOND_OPTIONAL_PARTITION_VERSION,
+      snapshotId: SECOND_OPTIONAL_SNAPSHOT_ID,
+      decision: 'fresh',
+      verifiedAt: VERIFIED_AT,
+      expectedHead: {
+        headGeneration: '3',
+        snapshotGeneration: '2',
+        currentPartitionVersionId: SECOND_OPTIONAL_PARTITION_VERSION,
+        activeSnapshotId: SECOND_OPTIONAL_SNAPSHOT_ID,
+      },
+    }],
+  };
+}
+
 function createManifestHarness(options: {
   readonly ownershipError?: unknown;
+  readonly ownershipConflicts?: readonly Readonly<{
+    left_shard_key: string;
+    right_shard_key: string;
+  }>[];
+  readonly optionalMember?: boolean;
+  readonly optionalRequired?: boolean;
+  readonly secondOptionalMember?: boolean;
 } = {}) {
   return new PartitionRepositoryHarness((sql) => {
     if (sql.includes('FROM public.backstage_notion_universe_heads')) {
@@ -380,7 +435,7 @@ function createManifestHarness(options: {
         id: CONFIGURATION_VERSION_ID,
         configuration_generation: CONFIGURATION_GENERATION,
         configuration_hash: CONFIGURATION_HASH,
-        shard_count: '2',
+        shard_count: options.secondOptionalMember ? '3' : '2',
         state: 'sealed',
       }]);
     }
@@ -389,12 +444,22 @@ function createManifestHarness(options: {
         shardHead(PARTITION_VERSION_ID, SNAPSHOT_ID),
         {
           shard_key: OPTIONAL_SHARD_KEY,
-          current_partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+          current_partition_version_id: options.optionalMember
+            ? OPTIONAL_PARTITION_VERSION_B
+            : OPTIONAL_PARTITION_VERSION_A,
           root_page_id: OPTIONAL_ROOT_PAGE_ID,
           active_snapshot_id: OPTIONAL_SNAPSHOT_ID,
           head_generation: '7',
           snapshot_generation: '5',
         },
+        ...(options.secondOptionalMember ? [{
+          shard_key: SECOND_OPTIONAL_SHARD_KEY,
+          current_partition_version_id: SECOND_OPTIONAL_PARTITION_VERSION,
+          root_page_id: SECOND_OPTIONAL_ROOT_PAGE_ID,
+          active_snapshot_id: SECOND_OPTIONAL_SNAPSHOT_ID,
+          head_generation: '3',
+          snapshot_generation: '2',
+        }] : []),
       ]);
     }
     if (
@@ -402,7 +467,16 @@ function createManifestHarness(options: {
       && sql.includes('partition_configuration_version_id')
     ) {
       return result([
-        { id: OPTIONAL_PARTITION_VERSION_B, shard_key: OPTIONAL_SHARD_KEY, is_required: false },
+        {
+          id: OPTIONAL_PARTITION_VERSION_B,
+          shard_key: OPTIONAL_SHARD_KEY,
+          is_required: options.optionalRequired ?? false,
+        },
+        ...(options.secondOptionalMember ? [{
+          id: SECOND_OPTIONAL_PARTITION_VERSION,
+          shard_key: SECOND_OPTIONAL_SHARD_KEY,
+          is_required: false,
+        }] : []),
         { id: PARTITION_VERSION_ID, shard_key: SHARD_KEY, is_required: true },
       ]);
     }
@@ -419,7 +493,34 @@ function createManifestHarness(options: {
         index_format_version: '1',
         state: 'sealed',
         latest_verified_at: VERIFIED_AT.toISOString(),
-      }]);
+      }, ...(options.optionalMember ? [{
+        id: OPTIONAL_SNAPSHOT_ID,
+        shard_key: OPTIONAL_SHARD_KEY,
+        partition_version_id: OPTIONAL_PARTITION_VERSION_B,
+        page_count: '1',
+        chunk_count: '1',
+        embedding_model: 'text-embedding-test',
+        embedding_version: '1',
+        embedding_dimension: '2',
+        index_format_version: '1',
+        state: 'sealed',
+        latest_verified_at: VERIFIED_AT.toISOString(),
+      }] : []), ...(options.secondOptionalMember ? [{
+        id: SECOND_OPTIONAL_SNAPSHOT_ID,
+        shard_key: SECOND_OPTIONAL_SHARD_KEY,
+        partition_version_id: SECOND_OPTIONAL_PARTITION_VERSION,
+        page_count: '1',
+        chunk_count: '1',
+        embedding_model: 'text-embedding-test',
+        embedding_version: '1',
+        embedding_dimension: '2',
+        index_format_version: '1',
+        state: 'sealed',
+        latest_verified_at: VERIFIED_AT.toISOString(),
+      }] : [])]);
+    }
+    if (sql.startsWith('WITH candidate_members AS')) {
+      return result([...(options.ownershipConflicts ?? [])]);
     }
     if (sql.startsWith('UPDATE public.backstage_notion_universe_manifests')) {
       return result([{}]);
@@ -444,6 +545,83 @@ function createManifestHarness(options: {
 }
 
 describe('PostgresBackstageNotionPartitionRepository', () => {
+  test('loads bounded synchronization metadata without projecting Markdown or embeddings', async () => {
+    const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+      const normalized = normalizeSql(sql);
+      if (normalized.includes('FROM public.backstage_notion_partitioned_universe_heads')) {
+        expect(normalized).not.toMatch(/\bmarkdown\b|embedding\.embedding\b/iu);
+        return result([{
+          desired_configuration_version_id: CONFIGURATION_VERSION_ID,
+          desired_configuration_generation: CONFIGURATION_GENERATION,
+          desired_configuration_hash: CONFIGURATION_HASH,
+          active_manifest_id: null,
+          universe_head_generation: '4',
+          manifest_generation: '2',
+          configured_shard_count: '1',
+          shard_key: SHARD_KEY,
+          partition_version_id: OPTIONAL_PARTITION_VERSION_B,
+          configured_root_page_id: ROOT_PAGE_ID,
+          current_partition_version_id: PARTITION_VERSION_ID,
+          root_page_id: ROOT_PAGE_ID,
+          active_snapshot_id: SNAPSHOT_ID,
+          head_generation: '3',
+          snapshot_generation: '1',
+          snapshot_partition_version_id: PARTITION_VERSION_ID,
+          source_manifest_hash: SOURCE_MANIFEST_HASH,
+          embedding_model: 'text-embedding-test',
+          embedding_version: '1',
+          embedding_dimension: '2',
+          index_format_version: '1',
+          last_verified_at: VERIFIED_AT,
+        }]);
+      }
+      expect(normalized).toContain('LIMIT $4');
+      expect(normalized).not.toMatch(/markdown|embedding/iu);
+      expect(values[3]).toBe(101);
+      return result([{
+        page_id: ROOT_PAGE_ID,
+        page_version_id: PAGE_VERSION_ID,
+        content_hash: hash('page'),
+        parent_page_id: null,
+        title: ROOT_TITLE,
+        path: [ROOT_PAGE_ID],
+        scope_path: [ROOT_TITLE],
+      }]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository({
+      query,
+    } as unknown as Pool);
+
+    await expect(repository.loadUniverseSynchronizationState(
+      UNIVERSE_ID,
+      CONFIGURATION_VERSION_ID
+    )).resolves.toMatchObject({
+      expectedUniverseHead: { headGeneration: '4', manifestGeneration: '2' },
+      shards: [{
+        shardKey: SHARD_KEY,
+        partitionVersionId: OPTIONAL_PARTITION_VERSION_B,
+        expectedHead: { currentPartitionVersionId: PARTITION_VERSION_ID },
+        activeSnapshot: {
+          snapshotId: SNAPSHOT_ID,
+          partitionVersionId: PARTITION_VERSION_ID,
+          embeddingModel: 'text-embedding-test',
+          embeddingVersion: 1,
+          embeddingDimension: 2,
+          indexFormatVersion: 1,
+        },
+      }],
+    });
+    await expect(repository.loadShardPageInventory(
+      UNIVERSE_ID,
+      SHARD_KEY,
+      SNAPSHOT_ID,
+      100
+    )).resolves.toEqual([expect.objectContaining({
+      pageId: ROOT_PAGE_ID,
+      pageVersionId: PAGE_VERSION_ID,
+    })]);
+  });
+
   test('rejects malformed inputs before obtaining a database connection', async () => {
     const connect = jest.fn(async () => {
       throw new Error('SENTINEL_CONNECT');
@@ -620,6 +798,126 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     });
     expect(harness.queries.some(query => query.sql === 'COMMIT')).toBe(true);
     expect(harness.release).toHaveBeenCalledWith(false);
+    expect(harness.queries.every(query =>
+      !query.sql.startsWith('UPDATE public.backstage_notion_shard_heads')
+    )).toBe(true);
+    expect(harness.queries.every(query =>
+      !query.sql.startsWith('DELETE FROM public.backstage_notion_universe_manifests')
+    )).toBe(true);
+    expect(harness.queries.every(query =>
+      !query.sql.startsWith('UPDATE public.backstage_notion_shard_sync_leases')
+    )).toBe(true);
+  });
+
+  test('fences only bounded changed configuration members after the desired-head CAS', async () => {
+    const desired = definition({ displayName: 'Raw renamed' });
+    let candidateConfigurationId = '';
+    const harness = new PartitionRepositoryHarness((sql, values) => {
+      if (sql.startsWith('SELECT pg_catalog.pg_advisory_xact_lock')) {
+        return result();
+      }
+      if (sql.startsWith('INSERT INTO public.backstage_notion_universe_heads')) {
+        return result();
+      }
+      if (sql.includes('FROM public.backstage_notion_partitioned_universe_heads')) {
+        return result([{
+          desired_configuration_version_id: CONFIGURATION_VERSION_ID,
+          desired_configuration_generation: CONFIGURATION_GENERATION,
+          desired_configuration_hash: CONFIGURATION_HASH,
+          active_manifest_id: MANIFEST_ID,
+          active_configuration_version_id: CONFIGURATION_VERSION_ID,
+          head_generation: '9',
+          manifest_generation: '4',
+        }]);
+      }
+      if (sql.startsWith(
+        'INSERT INTO public.backstage_notion_partition_configuration_versions'
+      )) {
+        candidateConfigurationId = String(values[0]);
+        return result([{ id: candidateConfigurationId }]);
+      }
+      if (
+        sql.startsWith('INSERT INTO public.backstage_notion_partition_identities')
+        || sql.startsWith('INSERT INTO public.backstage_notion_partition_versions')
+        || sql.startsWith('INSERT INTO public.backstage_notion_partition_configuration_members')
+        || sql.startsWith('INSERT INTO public.backstage_notion_shard_heads')
+      ) {
+        return result();
+      }
+      if (
+        sql.includes('FROM public.backstage_notion_partition_versions AS definition')
+        && sql.includes('JOIN pg_catalog.jsonb_to_recordset')
+      ) {
+        return result([{
+          id: OPTIONAL_PARTITION_VERSION_B,
+          shard_key: SHARD_KEY,
+          root_page_id: ROOT_PAGE_ID,
+          configuration_version: '1',
+          display_name: desired.displayName,
+          retrieval_tier: desired.retrievalTier,
+          is_required: desired.required,
+          scope_tags: desired.scopeTags,
+          category_tags: desired.categoryTags,
+          max_pages: String(desired.capacity.maxPages),
+          max_chunks: String(desired.capacity.maxChunks),
+          max_depth: String(desired.capacity.maxDepth),
+          max_content_code_points: String(desired.capacity.maxContentCodePoints),
+          semantic_hash: partitionSemanticHash(desired),
+        }]);
+      }
+      if (sql.startsWith(
+        'UPDATE public.backstage_notion_partition_configuration_versions'
+      )) {
+        return result([{}]);
+      }
+      if (sql.startsWith('WITH previous_members AS')) {
+        expect(values).toEqual([
+          UNIVERSE_ID,
+          candidateConfigurationId,
+          CONFIGURATION_VERSION_ID,
+          257,
+        ]);
+        return result([{ shard_key: SHARD_KEY }, { shard_key: OPTIONAL_SHARD_KEY }]);
+      }
+      if (sql.startsWith('UPDATE public.backstage_notion_partitioned_universe_heads')) {
+        return result([{ head_generation: '10' }]);
+      }
+      if (sql.startsWith('UPDATE public.backstage_notion_shard_sync_leases')) {
+        return result();
+      }
+      throw new Error(`Unexpected rotated configuration query: ${sql}`);
+    });
+
+    await new PostgresBackstageNotionPartitionRepository(harness.pool)
+      .registerConfiguration(registerInput({
+        configurationGeneration: 'partition-generation-2',
+        configurationHash: 'a'.repeat(64),
+        universe: universe([desired]),
+        expectedUniverseHead: {
+          headGeneration: '9',
+          manifestGeneration: '4',
+          desiredConfigurationVersionId: CONFIGURATION_VERSION_ID,
+          activeManifestId: MANIFEST_ID,
+        },
+      }));
+
+    const desiredHeadCas = harness.queries.findIndex(query =>
+      query.sql.startsWith('UPDATE public.backstage_notion_partitioned_universe_heads')
+    );
+    const leaseFenceIndex = harness.queries.findIndex(query =>
+      query.sql.startsWith('UPDATE public.backstage_notion_shard_sync_leases')
+    );
+    expect(desiredHeadCas).toBeGreaterThanOrEqual(0);
+    expect(leaseFenceIndex).toBeGreaterThan(desiredHeadCas);
+    const leaseFence = harness.queries[leaseFenceIndex];
+    expect(leaseFence?.values).toEqual([
+      UNIVERSE_ID,
+      [SHARD_KEY, OPTIONAL_SHARD_KEY],
+    ]);
+    expect(leaseFence?.sql).toContain('expires_at > statement_timestamp()');
+    expect(harness.queries.every(query =>
+      !query.sql.startsWith('UPDATE public.backstage_notion_shard_heads')
+    )).toBe(true);
   });
 
   test('reuses an exact semantic partition version in a new configuration generation', async () => {
@@ -962,27 +1260,15 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       }, 5_000)).resolves.toBeNull();
   });
 
-  test('preserves same-holder lease tokens and the distributed provider rate fence', async () => {
+  test('keeps unexpired leases busy even for the same holder and preserves the rate fence', async () => {
     const harness = new PartitionRepositoryHarness((sql) => {
       if (sql.startsWith('INSERT INTO public.backstage_notion_shard_sync_leases')) {
-        return result([{
-          ...leaseRow(),
-          lease_generation: '4',
-        }]);
+        return result();
       }
       if (sql.startsWith(
         'INSERT INTO public.backstage_notion_provider_coordinator_leases'
       )) {
-        return result([{
-          provider_key: 'notion',
-          model_key: 'text-embedding-test',
-          holder_id: 'partition-worker-1',
-          lease_token: LEASE_TOKEN,
-          lease_generation: '4',
-          acquired_at: '2026-08-24T11:59:00.000Z',
-          expires_at: '2026-08-24T12:10:00.000Z',
-          next_request_at: '2026-08-24T12:00:01.000Z',
-        }]);
+        return result();
       }
       throw new Error(`Unexpected lease query: ${sql}`);
     });
@@ -993,27 +1279,20 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       SHARD_KEY,
       'partition-worker-1',
       5_000
-    )).resolves.toMatchObject({
-      leaseToken: LEASE_TOKEN,
-      leaseGeneration: '4',
-    });
+    )).resolves.toBeNull();
     await expect(repository.acquireProviderLease(
       'notion',
       'text-embedding-test',
       'partition-worker-1',
       5_000,
       1_000
-    )).resolves.toMatchObject({
-      leaseToken: LEASE_TOKEN,
-      leaseGeneration: '4',
-    });
+    )).resolves.toBeNull();
 
     const shardAcquire = harness.queries.find(query =>
       query.sql.startsWith('INSERT INTO public.backstage_notion_shard_sync_leases')
     );
-    expect(shardAcquire?.sql).toContain(
-      'THEN backstage_notion_shard_sync_leases.lease_token'
-    );
+    expect(shardAcquire?.sql).toContain('lease_token = EXCLUDED.lease_token');
+    expect(shardAcquire?.sql).not.toContain('holder_id = EXCLUDED.holder_id\n            OR');
     expect(shardAcquire?.sql).toContain(
       'lease_generation = backstage_notion_shard_sync_leases.lease_generation + 1'
     );
@@ -1021,6 +1300,9 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       'INSERT INTO public.backstage_notion_provider_coordinator_leases'
     ));
     expect(providerAcquire?.sql).toContain('next_request_at = GREATEST');
+    expect(providerAcquire?.sql).not.toContain(
+      'backstage_notion_provider_coordinator_leases.holder_id = EXCLUDED.holder_id'
+    );
     expect(providerAcquire?.sql).toContain(
       'backstage_notion_provider_coordinator_leases.next_request_at <= statement_timestamp()'
     );
@@ -1086,6 +1368,48 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     ]);
   });
 
+  test('atomically rotates a definition and non-null LKG snapshot under one head CAS', async () => {
+    const harness = createSnapshotHarness({
+      terminalLeasePresent: true,
+      head: {
+        ...shardHead(PARTITION_VERSION_ID, SNAPSHOT_ID),
+        head_generation: '4',
+        snapshot_generation: '3',
+      },
+    });
+    await new PostgresBackstageNotionPartitionRepository(harness.pool)
+      .activateShardSnapshot(snapshotInput({
+        snapshotId: OPTIONAL_SNAPSHOT_ID,
+        partitionVersionId: OPTIONAL_PARTITION_VERSION_B,
+        expectedHead: {
+          headGeneration: '4',
+          snapshotGeneration: '3',
+          currentPartitionVersionId: PARTITION_VERSION_ID,
+          activeSnapshotId: SNAPSHOT_ID,
+        },
+      }));
+
+    const activation = harness.queries.find(query =>
+      query.sql.startsWith('UPDATE public.backstage_notion_shard_heads')
+    );
+    expect(activation?.sql).toContain('active_snapshot_id = $5::UUID');
+    expect(activation?.sql).not.toContain('active_snapshot_id = NULL');
+    expect(activation?.values).toEqual([
+      UNIVERSE_ID,
+      SHARD_KEY,
+      OPTIONAL_PARTITION_VERSION_B,
+      ROOT_PAGE_ID,
+      OPTIONAL_SNAPSHOT_ID,
+      '5',
+      '4',
+      VERIFIED_AT.toISOString(),
+      '4',
+      '3',
+      PARTITION_VERSION_ID,
+      SNAPSHOT_ID,
+    ]);
+  });
+
   test('rolls back a sealed snapshot candidate when the terminal lease fence is lost', async () => {
     const harness = createSnapshotHarness({ terminalLeasePresent: false });
 
@@ -1143,6 +1467,107 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       safe_reason_code: 'SOURCE_UNAVAILABLE',
     }]);
     expect(harness.queries.some(query => query.sql === 'COMMIT')).toBe(true);
+  });
+
+  test('atomically omits an optional snapshot that overlaps required page ownership', async () => {
+    const harness = createManifestHarness({
+      optionalMember: true,
+      ownershipConflicts: [{
+        left_shard_key: OPTIONAL_SHARD_KEY,
+        right_shard_key: SHARD_KEY,
+      }],
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+
+    await expect(repository.activateUniverseManifest(
+      manifestInputWithOptionalMember()
+    )).resolves.toMatchObject({
+      memberCount: 1,
+      omissionCount: 1,
+      pageCount: 1,
+      chunkCount: 1,
+    });
+
+    const manifestInsert = harness.queries.find(query => query.sql.startsWith(
+      'INSERT INTO public.backstage_notion_universe_manifests'
+    ));
+    expect(manifestInsert?.values.slice(9, 13)).toEqual([1, 1, 1, 1]);
+    const memberInsert = harness.queries.find(query => query.sql.startsWith(
+      'INSERT INTO public.backstage_notion_universe_manifest_shards'
+    ));
+    expect(JSON.parse(String(memberInsert?.values[2]))).toEqual([
+      expect.objectContaining({ shard_key: SHARD_KEY }),
+    ]);
+    const omissionInsert = harness.queries.find(query => query.sql.startsWith(
+      'INSERT INTO public.backstage_notion_universe_manifest_omissions'
+    ));
+    expect(JSON.parse(String(omissionInsert?.values[2]))).toEqual([{
+      shard_key: OPTIONAL_SHARD_KEY,
+      partition_version_id: OPTIONAL_PARTITION_VERSION_B,
+      decision: 'optional_unavailable',
+      safe_reason_code: 'SHARD_OWNERSHIP_CONFLICT',
+    }]);
+    expect(harness.queries.some(query => query.sql === 'COMMIT')).toBe(true);
+  });
+
+  test('blocks a required-to-required ownership overlap without moving the head', async () => {
+    const harness = createManifestHarness({
+      optionalMember: true,
+      optionalRequired: true,
+      ownershipConflicts: [{
+        left_shard_key: OPTIONAL_SHARD_KEY,
+        right_shard_key: SHARD_KEY,
+      }],
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+
+    await expect(repository.activateUniverseManifest(
+      manifestInputWithOptionalMember()
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_PARTITION_OWNERSHIP_CONFLICT',
+    });
+    expect(harness.queries.some(query => query.sql.startsWith(
+      'INSERT INTO public.backstage_notion_universe_manifests'
+    ))).toBe(false);
+    expect(harness.queries.some(query => query.sql.startsWith(
+      'UPDATE public.backstage_notion_partitioned_universe_heads'
+    ))).toBe(false);
+    expect(harness.queries.some(query => query.sql === 'ROLLBACK')).toBe(true);
+  });
+
+  test('omits both optional shards in an optional-to-optional ownership ambiguity', async () => {
+    const harness = createManifestHarness({
+      optionalMember: true,
+      secondOptionalMember: true,
+      ownershipConflicts: [{
+        left_shard_key: OPTIONAL_SHARD_KEY,
+        right_shard_key: SECOND_OPTIONAL_SHARD_KEY,
+      }],
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+
+    await expect(repository.activateUniverseManifest(
+      manifestInputWithTwoOptionalMembers()
+    )).resolves.toMatchObject({
+      memberCount: 1,
+      omissionCount: 2,
+      pageCount: 1,
+      chunkCount: 1,
+    });
+    const omissionInsert = harness.queries.find(query => query.sql.startsWith(
+      'INSERT INTO public.backstage_notion_universe_manifest_omissions'
+    ));
+    expect(JSON.parse(String(omissionInsert?.values[2]))).toEqual([{
+      shard_key: OPTIONAL_SHARD_KEY,
+      partition_version_id: OPTIONAL_PARTITION_VERSION_B,
+      decision: 'optional_unavailable',
+      safe_reason_code: 'SHARD_OWNERSHIP_CONFLICT',
+    }, {
+      shard_key: SECOND_OPTIONAL_SHARD_KEY,
+      partition_version_id: SECOND_OPTIONAL_PARTITION_VERSION,
+      decision: 'optional_unavailable',
+      safe_reason_code: 'SHARD_OWNERSHIP_CONFLICT',
+    }]);
   });
 
   test('maps only the manifest page-ownership unique constraint', async () => {

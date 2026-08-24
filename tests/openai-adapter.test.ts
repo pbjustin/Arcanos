@@ -9,6 +9,7 @@ const transcriptionsCreateMock = jest.fn();
 const openAIConstructorMock = jest.fn();
 
 let createOpenAIAdapter: typeof import('../src/core/adapters/openai.adapter.js').createOpenAIAdapter;
+let createEmbeddings: typeof import('../src/services/openai/embeddings.js').createEmbeddings;
 
 beforeEach(async () => {
   jest.resetModules();
@@ -48,6 +49,7 @@ beforeEach(async () => {
   }));
 
   ({ createOpenAIAdapter } = await import('../src/core/adapters/openai.adapter.js'));
+  ({ createEmbeddings } = await import('../src/services/openai/embeddings.js'));
 });
 
 describe('openai adapter', () => {
@@ -149,6 +151,22 @@ describe('openai adapter', () => {
     expect(imagesGenerateMock).toHaveBeenCalledTimes(1);
     expect(imagesGenerateMock.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'draw a lighthouse' }));
     expect(imagesGenerateMock.mock.calls[0][1]).toEqual({ headers });
+  });
+
+  it('forwards embedding abort signals to the SDK request', async () => {
+    embeddingsCreateMock.mockResolvedValue({
+      data: [{ index: 0, embedding: [1] }],
+      model: 'text-embedding-3-small',
+      object: 'list',
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const signal = new AbortController().signal;
+
+    await createEmbeddings(['canon'], adapter, { signal });
+
+    expect(embeddingsCreateMock).toHaveBeenCalledTimes(1);
+    expect(embeddingsCreateMock.mock.calls[0][1]).toEqual({ signal });
   });
 
   it('patches the raw SDK client parse helper onto explicit JSON parsing', async () => {

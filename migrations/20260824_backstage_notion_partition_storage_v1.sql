@@ -630,7 +630,6 @@ CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_heads (
   last_verified_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (universe_id, shard_key),
-  UNIQUE (universe_id, root_page_id),
   FOREIGN KEY (universe_id, shard_key)
     REFERENCES public.backstage_notion_partition_identities(universe_id, shard_key)
     ON UPDATE RESTRICT
@@ -658,6 +657,16 @@ CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_heads (
   CHECK (last_verified_at IS NULL OR pg_catalog.isfinite(last_verified_at)),
   CHECK (pg_catalog.isfinite(updated_at))
 );
+
+-- Shard heads retain immutable last-known-good pointers after a shard leaves a
+-- configuration. Active root ownership is unique in each sealed configuration,
+-- not across these historical heads; keeping a global unique key here would
+-- make safe root reassignment and two-key root swaps impossible.
+ALTER TABLE public.backstage_notion_shard_heads
+  DROP CONSTRAINT IF EXISTS backstage_notion_shard_heads_universe_id_root_page_id_key;
+
+CREATE INDEX IF NOT EXISTS backstage_notion_shard_heads_root_page_idx
+  ON public.backstage_notion_shard_heads (universe_id, root_page_id);
 
 CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_sync_leases (
   universe_id TEXT NOT NULL,
@@ -1881,6 +1890,13 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $function$
 BEGIN
+  IF TG_TABLE_NAME NOT IN (
+    'backstage_notion_shard_sync_leases',
+    'backstage_notion_provider_coordinator_leases'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'lease fencing trigger attached to an unsupported table';
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     IF OLD.expires_at > pg_catalog.statement_timestamp() THEN
       RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'an unexpired synchronization lease cannot be deleted';
@@ -1892,20 +1908,16 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF TG_TABLE_NAME = 'backstage_notion_shard_sync_leases'
-     AND (
-       NEW.universe_id IS DISTINCT FROM OLD.universe_id
-       OR NEW.shard_key IS DISTINCT FROM OLD.shard_key
-     ) THEN
-    RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'shard lease identity is immutable';
-  END IF;
-
-  IF TG_TABLE_NAME = 'backstage_notion_provider_coordinator_leases'
-     AND (
-       NEW.provider_key IS DISTINCT FROM OLD.provider_key
-       OR NEW.model_key IS DISTINCT FROM OLD.model_key
-     ) THEN
-    RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'provider lease identity is immutable';
+  IF TG_TABLE_NAME = 'backstage_notion_shard_sync_leases' THEN
+    IF NEW.universe_id IS DISTINCT FROM OLD.universe_id
+       OR NEW.shard_key IS DISTINCT FROM OLD.shard_key THEN
+      RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'shard lease identity is immutable';
+    END IF;
+  ELSE
+    IF NEW.provider_key IS DISTINCT FROM OLD.provider_key
+       OR NEW.model_key IS DISTINCT FROM OLD.model_key THEN
+      RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'provider lease identity is immutable';
+    END IF;
   END IF;
 
   IF NEW.lease_generation <> OLD.lease_generation + 1 THEN
