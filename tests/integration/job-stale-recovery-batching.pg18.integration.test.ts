@@ -240,6 +240,7 @@ describeWithDatabase('bounded stale recovery on PostgreSQL 18', () => {
          worker_id TEXT NOT NULL,
          job_type TEXT NOT NULL,
          status TEXT NOT NULL,
+         input JSONB NOT NULL DEFAULT '{}'::jsonb,
          retry_count INTEGER NOT NULL DEFAULT 0,
          max_retries INTEGER,
          next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
