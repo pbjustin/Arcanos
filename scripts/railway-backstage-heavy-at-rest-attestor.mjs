@@ -272,8 +272,42 @@ SELECT
   events.*
 FROM events`;
 
+const KNOWN_AT_REST_ERRORS = new Set([
+  'BACKSTAGE_HEAVY_AT_REST_ARGUMENT_DUPLICATE',
+  'BACKSTAGE_HEAVY_AT_REST_ARGUMENT_INVALID',
+  'BACKSTAGE_HEAVY_AT_REST_ARGUMENT_REQUIRED',
+  'BACKSTAGE_HEAVY_AT_REST_ARGUMENT_UNKNOWN',
+  'BACKSTAGE_HEAVY_AT_REST_DATA_IDENTITY_INVALID',
+  'BACKSTAGE_HEAVY_AT_REST_DATABASE_CLIENT_UNAVAILABLE',
+  'BACKSTAGE_HEAVY_AT_REST_DATABASE_EVIDENCE_INCOMPLETE',
+  'BACKSTAGE_HEAVY_AT_REST_DATABASE_GATES_REQUIRED',
+  'BACKSTAGE_HEAVY_AT_REST_DATABASE_NOT_READ_ONLY',
+  'BACKSTAGE_HEAVY_AT_REST_DATABASE_READ_FAILED',
+  'BACKSTAGE_HEAVY_AT_REST_FIXTURE_EVIDENCE_INCOMPLETE',
+  'BACKSTAGE_HEAVY_AT_REST_FIXTURE_READ_FAILED',
+  'BACKSTAGE_HEAVY_AT_REST_FIXTURE_RESPONSE_INVALID',
+  'BACKSTAGE_HEAVY_AT_REST_FIXTURE_RESPONSE_TOO_LARGE',
+  'BACKSTAGE_HEAVY_AT_REST_IDENTITY_INVALID',
+  'BACKSTAGE_HEAVY_AT_REST_RUNTIME_IDENTITY_MISMATCH',
+  'BACKSTAGE_HEAVY_AT_REST_TARGET_ID_INVALID',
+  'BACKSTAGE_HEAVY_AT_REST_TARGET_INVALID',
+]);
+
+class BackstageHeavyAtRestError extends Error {}
+
+function atRestError(code) {
+  return KNOWN_AT_REST_ERRORS.has(code)
+    ? new BackstageHeavyAtRestError(code)
+    : new Error('BACKSTAGE_HEAVY_AT_REST_FAILED');
+}
+
 function fail(code) {
-  throw new Error(code);
+  throw atRestError(code);
+}
+
+function isKnownAtRestError(error) {
+  return error instanceof BackstageHeavyAtRestError
+    && KNOWN_AT_REST_ERRORS.has(error.message);
 }
 
 function digest(value) {
@@ -436,7 +470,12 @@ export function resolveBackstageHeavyAtRestConfig(args) {
 }
 
 function attestRuntimeIdentity(config, env) {
-  const proofTarget = resolveBackstageHeavyProofTargetOrThrow('worker', env);
+  let proofTarget;
+  try {
+    proofTarget = resolveBackstageHeavyProofTargetOrThrow('worker', env);
+  } catch {
+    fail('BACKSTAGE_HEAVY_AT_REST_RUNTIME_IDENTITY_MISMATCH');
+  }
   if (
     !proofTarget.enabled
     || proofTarget.projectId !== config.projectId
@@ -556,10 +595,7 @@ async function readDatabaseEvidence(
     } while (true);
     fail('BACKSTAGE_HEAVY_AT_REST_DATABASE_EVIDENCE_INCOMPLETE');
   } catch (error) {
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_AT_REST_')
-    ) {
+    if (isKnownAtRestError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_AT_REST_DATABASE_READ_FAILED');
@@ -593,10 +629,7 @@ async function readBoundedJsonResponse(response) {
     }
     return parsed;
   } catch (error) {
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_AT_REST_')
-    ) {
+    if (isKnownAtRestError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_AT_REST_FIXTURE_RESPONSE_INVALID');
@@ -646,10 +679,7 @@ async function readFixtureEvidence(fetchImpl) {
     }
     return body;
   } catch (error) {
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_AT_REST_')
-    ) {
+    if (isKnownAtRestError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_AT_REST_FIXTURE_READ_FAILED');
@@ -718,12 +748,10 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
-    const code = error instanceof Error
+    const code = isKnownAtRestError(error)
       ? error.message
       : 'BACKSTAGE_HEAVY_AT_REST_FAILED';
-    process.stderr.write(`${code.startsWith('BACKSTAGE_HEAVY_AT_REST_')
-      ? code
-      : 'BACKSTAGE_HEAVY_AT_REST_FAILED'}\n`);
+    process.stderr.write(`${code}\n`);
     process.exitCode = 1;
   });
 }

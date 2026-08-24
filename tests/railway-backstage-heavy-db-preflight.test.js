@@ -30,6 +30,7 @@ function buildEnvironment(processKind = 'worker', overrides = {}) {
     ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET:
       'dedicated-backstage-heavy-preview-v1',
     ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'proof-run-1460',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: SOURCE_SHA,
     ARCANOS_PROCESS_KIND: processKind,
     ARCANOS_PREVIEW_ISOLATION: 'true',
     FORCE_MOCK: 'true',
@@ -184,6 +185,13 @@ describe('sealed Backstage heavy database preflight', () => {
       resolveBackstageHeavyDbPreflightConfig(['--mode', 'schema']),
       buildEnvironment('web')
     )).toMatchObject({ processKind: 'web', serviceId: IDS.web });
+
+    const withoutRailwayGitSha = buildEnvironment('worker');
+    delete withoutRailwayGitSha.RAILWAY_GIT_COMMIT_SHA;
+    expect(attestBackstageHeavyDbPreflightRuntime(
+      resolveBackstageHeavyDbPreflightConfig(['--mode', 'empty']),
+      withoutRailwayGitSha
+    )).toMatchObject({ sourceCommit: SOURCE_SHA });
 
     expect(() => attestBackstageHeavyDbPreflightRuntime(
       resolveBackstageHeavyDbPreflightConfig(['--mode', 'empty']),
@@ -356,10 +364,120 @@ describe('sealed Backstage heavy database preflight', () => {
     })).resolves.toBe(1);
     expect(failureOut.write).not.toHaveBeenCalled();
     expect(failureErr.write).toHaveBeenCalledWith(
-      `${BACKSTAGE_HEAVY_DB_PREFLIGHT_ERROR}\n`
+      'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_FAILED\n'
     );
     expect(failureErr.write.mock.calls.flat().join('')).not.toContain(
       'secret-password'
+    );
+  });
+
+  it('emits exact known failures but rejects prefixed attacker-controlled text', async () => {
+    const knownOut = { write: jest.fn() };
+    const knownErr = { write: jest.fn() };
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness({ userTableCount: 1 }).Client,
+      env: buildEnvironment('worker'),
+      stdout: knownOut,
+      stderr: knownErr,
+    })).resolves.toBe(1);
+    expect(knownOut.write).not.toHaveBeenCalled();
+    expect(knownErr.write).toHaveBeenCalledWith(
+      'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_NOT_EMPTY\n'
+    );
+
+    const identityOut = { write: jest.fn() };
+    const identityErr = { write: jest.fn() };
+    const missingSourceEnvironment = buildEnvironment('worker');
+    delete missingSourceEnvironment.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA;
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness().Client,
+      env: missingSourceEnvironment,
+      stdout: identityOut,
+      stderr: identityErr,
+    })).resolves.toBe(1);
+    expect(identityOut.write).not.toHaveBeenCalled();
+    expect(identityErr.write).toHaveBeenCalledWith(
+      'BACKSTAGE_HEAVY_DB_PREFLIGHT_RUNTIME_IDENTITY_MISMATCH\n'
+    );
+
+    const sensitiveMarker = 'credential-sentinel-should-not-escape';
+    const attackerOut = { write: jest.fn() };
+    const attackerErr = { write: jest.fn() };
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness({
+        connectError: new Error(
+          `BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_FAILED:${sensitiveMarker}`
+        ),
+      }).Client,
+      env: buildEnvironment('worker'),
+      stdout: attackerOut,
+      stderr: attackerErr,
+    })).resolves.toBe(1);
+    expect(attackerOut.write).not.toHaveBeenCalled();
+    expect(attackerErr.write).toHaveBeenCalledWith(
+      'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_FAILED\n'
+    );
+    expect(attackerErr.write.mock.calls.flat().join('')).not.toContain(
+      sensitiveMarker
+    );
+
+    const forgedOut = { write: jest.fn() };
+    const forgedErr = { write: jest.fn() };
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness({
+        connectError: new Error(
+          'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_NOT_EMPTY'
+        ),
+      }).Client,
+      env: buildEnvironment('worker'),
+      stdout: forgedOut,
+      stderr: forgedErr,
+    })).resolves.toBe(1);
+    expect(forgedOut.write).not.toHaveBeenCalled();
+    expect(forgedErr.write).toHaveBeenCalledWith(
+      'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_FAILED\n'
+    );
+
+    const unknownOut = {
+      write: jest.fn(() => {
+        throw new Error('unexpected-stream-failure');
+      }),
+    };
+    const unknownErr = { write: jest.fn() };
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness().Client,
+      env: buildEnvironment('worker'),
+      stdout: unknownOut,
+      stderr: unknownErr,
+    })).resolves.toBe(1);
+    expect(unknownOut.write).toHaveBeenCalledWith(
+      `${BACKSTAGE_HEAVY_DB_PREFLIGHT_EMPTY_SUCCESS}\n`
+    );
+    expect(unknownErr.write).toHaveBeenCalledWith(
+      `${BACKSTAGE_HEAVY_DB_PREFLIGHT_ERROR}\n`
+    );
+
+    const forgedSinkErr = { write: jest.fn() };
+    await expect(main({
+      args: ['--mode', 'empty'],
+      Client: buildClientHarness().Client,
+      env: buildEnvironment('worker'),
+      stdout: {
+        write: jest.fn(() => {
+          throw new Error(
+            'BACKSTAGE_HEAVY_DB_PREFLIGHT_DATABASE_NOT_EMPTY'
+          );
+        }),
+      },
+      stderr: forgedSinkErr,
+    })).resolves.toBe(1);
+    expect(forgedSinkErr.write).toHaveBeenCalledWith(
+      `${BACKSTAGE_HEAVY_DB_PREFLIGHT_ERROR}\n`
     );
   });
 

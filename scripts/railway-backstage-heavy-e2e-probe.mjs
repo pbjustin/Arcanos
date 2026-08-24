@@ -109,8 +109,73 @@ const FORBIDDEN_DATA_ALIAS_NAMES = new Set([
 ]);
 const execFileAsync = promisify(execFile);
 
+const KNOWN_PROBE_ERRORS = new Set([
+  'BACKSTAGE_HEAVY_PROBE_ACK_CORRELATION_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_ARGUMENT_DUPLICATE',
+  'BACKSTAGE_HEAVY_PROBE_ARGUMENT_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_ARGUMENT_REQUIRED',
+  'BACKSTAGE_HEAVY_PROBE_ARGUMENT_UNKNOWN',
+  'BACKSTAGE_HEAVY_PROBE_BASE_URL_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_BEARER_TARGET_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_BEARER_UNAVAILABLE',
+  'BACKSTAGE_HEAVY_PROBE_DATA_ALIAS_FORBIDDEN',
+  'BACKSTAGE_HEAVY_PROBE_DATA_HOST_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_DATA_SERVICE_NAME_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_DATA_URL_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_DATA_URL_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_DEDUPE_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_ENVIRONMENT_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_NETWORK_GATES_REQUIRED',
+  'BACKSTAGE_HEAVY_PROBE_PENDING_OR_TERMINAL_MISSING',
+  'BACKSTAGE_HEAVY_PROBE_POLL_STATUS_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_PROMPT_TOO_SHORT',
+  'BACKSTAGE_HEAVY_PROBE_PROOF_ENV_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_PROVIDER_ENV_FORBIDDEN',
+  'BACKSTAGE_HEAVY_PROBE_PROVIDER_ENV_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_PURPOSE_CREDENTIAL_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DATA_SERVICE_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DOMAIN_LIST_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_DOMAIN_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_ENVIRONMENT_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_INVOCATION_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_PROJECT_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_PROJECT_NAME_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_SERVICE_TOPOLOGY_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_STATUS_UNAVAILABLE',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_TCP_PROXY_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_VARIABLE_IDENTITY_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RAILWAY_VOLUME_TOPOLOGY_MISMATCH',
+  'BACKSTAGE_HEAVY_PROBE_RESPONSE_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_RESPONSE_TOO_LARGE',
+  'BACKSTAGE_HEAVY_PROBE_RESULT_CAPABILITY_GATE_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_RUN_ID_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_SERVICE_IDENTITY_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_SOURCE_SHA_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_SUBMISSION_STATUS_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_TARGET_ID_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_TARGET_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_TERMINAL_RESULT_INVALID',
+  'BACKSTAGE_HEAVY_PROBE_TERMINAL_RESULT_LEAKED',
+]);
+
+class BackstageHeavyProbeError extends Error {}
+
+function probeError(code) {
+  return KNOWN_PROBE_ERRORS.has(code)
+    ? new BackstageHeavyProbeError(code)
+    : new Error('BACKSTAGE_HEAVY_PROBE_FAILED');
+}
+
 function fail(code) {
-  throw new Error(code);
+  throw probeError(code);
+}
+
+function isKnownProbeError(error) {
+  return error instanceof BackstageHeavyProbeError
+    && KNOWN_PROBE_ERRORS.has(error.message);
 }
 
 function digest(value) {
@@ -407,7 +472,7 @@ async function readBoundedJson(response) {
     }
     return parsed;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('BACKSTAGE_')) {
+    if (isKnownProbeError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_PROBE_RESPONSE_INVALID');
@@ -425,6 +490,11 @@ async function boundedJsonFetch(fetchImpl, url, options) {
     });
     const body = await readBoundedJson(response);
     return { response, body };
+  } catch (error) {
+    if (isKnownProbeError(error)) {
+      throw error;
+    }
+    fail('BACKSTAGE_HEAVY_PROBE_RESPONSE_INVALID');
   } finally {
     clearTimeout(timeout);
     controller.abort();
@@ -784,15 +854,22 @@ function attestDataPlaneVariables(payloads, config) {
     config.redisServiceId,
     config.redisServiceName
   );
+  const appVariables = [payloads.webVariables, payloads.workerVariables];
   if (
     payloads.postgresVariables.RAILWAY_PRIVATE_DOMAIN?.toLowerCase()
       !== config.postgresInternalHost
     || payloads.redisVariables.RAILWAY_PRIVATE_DOMAIN?.toLowerCase()
       !== config.redisInternalHost
-    || payloads.webVariables.RAILWAY_GIT_COMMIT_SHA?.toLowerCase()
-      !== config.sourceSha
-    || payloads.workerVariables.RAILWAY_GIT_COMMIT_SHA?.toLowerCase()
-      !== config.sourceSha
+    || appVariables.some(variables => (
+      variables.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA !== config.sourceSha
+      || (
+        Object.prototype.hasOwnProperty.call(
+          variables,
+          'RAILWAY_GIT_COMMIT_SHA'
+        )
+        && variables.RAILWAY_GIT_COMMIT_SHA !== config.sourceSha
+      )
+    ))
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_VARIABLE_IDENTITY_MISMATCH');
   }
@@ -857,6 +934,7 @@ function attestDataPlaneVariables(payloads, config) {
   const exactCommonVariables = [
     ['ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET', 'dedicated-backstage-heavy-preview-v1'],
     ['ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID', config.runId],
+    ['ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA', config.sourceSha],
     ['ARCANOS_PREVIEW_ISOLATION', 'true'],
     ['FORCE_MOCK', 'true'],
     ['ALLOW_MOCK_OPENAI', 'true'],
@@ -868,7 +946,7 @@ function attestDataPlaneVariables(payloads, config) {
     ['ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_NAME', config.redisServiceName],
     ['ARCANOS_BACKSTAGE_HEAVY_REDIS_INTERNAL_HOST', config.redisInternalHost],
   ];
-  for (const variables of [payloads.webVariables, payloads.workerVariables]) {
+  for (const variables of appVariables) {
     if (exactCommonVariables.some(([name, value]) => variables[name] !== value)) {
       fail('BACKSTAGE_HEAVY_PROBE_PROOF_ENV_MISMATCH');
     }
@@ -982,10 +1060,7 @@ async function readRailwayJson(command, args, env, invocation) {
     );
     return JSON.parse(result.stdout);
   } catch (error) {
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_PROBE_')
-    ) {
+    if (isKnownProbeError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_STATUS_UNAVAILABLE');
@@ -1369,10 +1444,10 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
-    const code = error instanceof Error
+    const code = isKnownProbeError(error)
       ? error.message
       : 'BACKSTAGE_HEAVY_PROBE_FAILED';
-    process.stderr.write(`${code.startsWith('BACKSTAGE_HEAVY_PROBE_') ? code : 'BACKSTAGE_HEAVY_PROBE_FAILED'}\n`);
+    process.stderr.write(`${code}\n`);
     process.exitCode = 1;
   });
 }

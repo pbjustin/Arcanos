@@ -29,6 +29,8 @@ export const BACKSTAGE_HEAVY_PROOF_TARGET =
   'dedicated-backstage-heavy-preview-v1';
 export const BACKSTAGE_HEAVY_PROOF_RUN_ID_ENV =
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_RUN_ID_ENV;
+export const BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV =
+  'ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA';
 export const BACKSTAGE_HEAVY_PROOF_START_COMMAND =
   'node scripts/railway-backstage-heavy-proof-supervisor.mjs';
 
@@ -39,7 +41,7 @@ const FIXTURE_SCRIPT = 'scripts/railway-backstage-heavy-openai-fixture.mjs';
 const FIXTURE_MARKER_ENV = 'ARCANOS_PREVIEW_OPENAI_FIXTURE';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
+const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{7,63}$/u;
 const ENVIRONMENT_PATTERN =
   /^backstage-heavy-pr-([1-9]\d*)-e2e(?:-[a-z0-9]{1,16})?$/u;
@@ -100,8 +102,50 @@ const PROVIDER_BASE_NAMES = new Set([
   'OPENAI_BASEURL',
 ]);
 
+const KNOWN_PROOF_ERRORS = new Set([
+  'BACKSTAGE_HEAVY_PROOF_ARGUMENT_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_CHILD_START_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_CHILD_TEARDOWN_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_CHILD_TEARDOWN_TIMEOUT',
+  'BACKSTAGE_HEAVY_PROOF_DATA_IDENTITY_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_DATA_URL_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_CLIENT_UNAVAILABLE',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_NOT_EMPTY',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_NOT_FRESH',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_NOT_READ_ONLY',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_PREFLIGHT_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_DATABASE_SCHEMA_MISSING',
+  'BACKSTAGE_HEAVY_PROOF_ENV_FORBIDDEN',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_EXITED_BEFORE_READY',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_TIMEOUT',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_START_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_FIXTURE_STDOUT_REQUIRED',
+  'BACKSTAGE_HEAVY_PROOF_ISOLATION_REQUIRED',
+  'BACKSTAGE_HEAVY_PROOF_PROVIDER_ENV_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_PURPOSE_CREDENTIAL_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_SERVICE_IDENTITY_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_SUPERVISOR_FAILED',
+  'BACKSTAGE_HEAVY_PROOF_TARGET_ID_INVALID',
+  'BACKSTAGE_HEAVY_PROOF_TARGET_INVALID',
+]);
+
+class BackstageHeavyProofError extends Error {}
+
+function proofError(code) {
+  return KNOWN_PROOF_ERRORS.has(code)
+    ? new BackstageHeavyProofError(code)
+    : new Error('BACKSTAGE_HEAVY_PROOF_FAILED');
+}
+
 function fail(code) {
-  throw new Error(code);
+  throw proofError(code);
+}
+
+function isKnownProofError(error) {
+  return error instanceof BackstageHeavyProofError
+    && KNOWN_PROOF_ERRORS.has(error.message);
 }
 
 function validateUuid(rawValue) {
@@ -191,10 +235,21 @@ export function resolveBackstageHeavyProofTargetOrThrow(
   const redisServiceId = validateUuid(
     env.ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID
   );
-  const sourceCommit = env.RAILWAY_GIT_COMMIT_SHA?.trim().toLowerCase() || '';
+  const sourceCommit = env[BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV];
+  const railwayGitCommitPresent = hasOwn(env, 'RAILWAY_GIT_COMMIT_SHA');
+  const railwayGitCommit = env.RAILWAY_GIT_COMMIT_SHA;
   const runId = env[BACKSTAGE_HEAVY_PROOF_RUN_ID_ENV]?.trim().toLowerCase() || '';
   if (
-    !SHA_PATTERN.test(sourceCommit)
+    typeof sourceCommit !== 'string'
+    || !SHA_PATTERN.test(sourceCommit)
+    || (
+      railwayGitCommitPresent
+      && (
+        typeof railwayGitCommit !== 'string'
+        || !SHA_PATTERN.test(railwayGitCommit)
+        || railwayGitCommit !== sourceCommit
+      )
+    )
     || !RUN_ID_PATTERN.test(runId)
     || new Set([serviceId, postgresServiceId, redisServiceId]).size !== 3
   ) {
@@ -378,10 +433,7 @@ export async function preflightBackstageHeavyProofDatabase(
         : 'empty-worker-created-job-tables',
     };
   } catch (error) {
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_PROOF_')
-    ) {
+    if (isKnownProofError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_PROOF_DATABASE_PREFLIGHT_FAILED');
@@ -443,7 +495,7 @@ function waitForExit(child) {
     };
     child.once('error', () => finish(
       reject,
-      new Error('BACKSTAGE_HEAVY_PROOF_CHILD_START_FAILED')
+      proofError('BACKSTAGE_HEAVY_PROOF_CHILD_START_FAILED')
     ));
     child.once('close', (code, signal) => finish(resolve, { code, signal }));
   });
@@ -452,7 +504,7 @@ function waitForExit(child) {
 function waitForFixtureReady(child, timeoutMs = START_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     if (!child.stdout) {
-      reject(new Error('BACKSTAGE_HEAVY_PROOF_FIXTURE_STDOUT_REQUIRED'));
+      reject(proofError('BACKSTAGE_HEAVY_PROOF_FIXTURE_STDOUT_REQUIRED'));
       return;
     }
     let buffer = '';
@@ -470,14 +522,14 @@ function waitForFixtureReady(child, timeoutMs = START_TIMEOUT_MS) {
     };
     const onError = () => finish(
       reject,
-      new Error('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_FAILED')
+      proofError('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_FAILED')
     );
     const onData = chunk => {
       buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
       if (buffer.length > BACKSTAGE_HEAVY_OPENAI_FIXTURE_READY_SENTINEL.length + 2) {
         finish(
           reject,
-          new Error('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_INVALID')
+          proofError('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_INVALID')
         );
         return;
       }
@@ -487,7 +539,7 @@ function waitForFixtureReady(child, timeoutMs = START_TIMEOUT_MS) {
       if (line !== BACKSTAGE_HEAVY_OPENAI_FIXTURE_READY_SENTINEL) {
         finish(
           reject,
-          new Error('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_INVALID')
+          proofError('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_INVALID')
         );
         return;
       }
@@ -495,7 +547,7 @@ function waitForFixtureReady(child, timeoutMs = START_TIMEOUT_MS) {
     };
     const timeout = setTimeout(() => finish(
       reject,
-      new Error('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_TIMEOUT')
+      proofError('BACKSTAGE_HEAVY_PROOF_FIXTURE_HANDSHAKE_TIMEOUT')
     ), timeoutMs);
     timeout.unref?.();
     child.stdout.on('data', onData);
@@ -658,10 +710,7 @@ export async function runBackstageHeavyProofSupervisor(
     if (shutdownRequested) {
       return 0;
     }
-    if (
-      error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_PROOF_')
-    ) {
+    if (isKnownProofError(error)) {
       throw error;
     }
     fail('BACKSTAGE_HEAVY_PROOF_SUPERVISOR_FAILED');
@@ -700,8 +749,7 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
-    const code = error instanceof Error
-      && error.message.startsWith('BACKSTAGE_HEAVY_PROOF_')
+    const code = isKnownProofError(error)
       ? error.message
       : 'BACKSTAGE_HEAVY_PROOF_FAILED';
     process.stderr.write(`${code}\n`);

@@ -131,7 +131,12 @@ function variables(config, serviceId, serviceName, processKind) {
     RAILWAY_ENVIRONMENT_NAME: config.environmentName,
     RAILWAY_SERVICE_ID: serviceId,
     RAILWAY_SERVICE_NAME: serviceName,
-    ...(processKind ? { RAILWAY_GIT_COMMIT_SHA: config.sourceSha } : {}),
+    ...(processKind
+      ? {
+          ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: config.sourceSha,
+          RAILWAY_GIT_COMMIT_SHA: config.sourceSha,
+        }
+      : {}),
     ...(serviceName === 'Postgres'
       ? { RAILWAY_PRIVATE_DOMAIN: config.postgresInternalHost }
       : {}),
@@ -428,6 +433,57 @@ describe('Backstage heavy network proof', () => {
       projectId: ID.project,
       environmentId: ID.environment,
     });
+    const withoutRailwayGitSha = structuredClone(payloads);
+    delete withoutRailwayGitSha.webVariables.RAILWAY_GIT_COMMIT_SHA;
+    delete withoutRailwayGitSha.workerVariables.RAILWAY_GIT_COMMIT_SHA;
+    expect(attestBackstageHeavyRailwayControlPlane(
+      withoutRailwayGitSha,
+      config
+    )).toMatchObject({ projectId: ID.project });
+    const wrongMarkerWithoutRailwayGit = structuredClone(
+      withoutRailwayGitSha
+    );
+    wrongMarkerWithoutRailwayGit.workerVariables
+      .ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA = 'b'.repeat(40);
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      wrongMarkerWithoutRailwayGit,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_VARIABLE_IDENTITY_MISMATCH');
+
+    const wrongManifestWithoutRailwayGit = structuredClone(
+      withoutRailwayGitSha
+    );
+    wrongManifestWithoutRailwayGit.status.environments.edges[0].node
+      .serviceInstances.edges.find(
+        edge => edge.node.serviceId === config.workerServiceId
+      ).node.latestDeployment.meta.commitHash = 'b'.repeat(40);
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      wrongManifestWithoutRailwayGit,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+    const missingProofSource = structuredClone(payloads);
+    delete missingProofSource.workerVariables
+      .ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA;
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      missingProofSource,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_VARIABLE_IDENTITY_MISMATCH');
+    for (const [name, value] of [
+      ['ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA', 'b'.repeat(40)],
+      ['ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA', 'A'.repeat(40)],
+      ['ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA', ` ${'a'.repeat(40)}`],
+      ['RAILWAY_GIT_COMMIT_SHA', 'b'.repeat(40)],
+      ['RAILWAY_GIT_COMMIT_SHA', ''],
+      ['RAILWAY_GIT_COMMIT_SHA', 'A'.repeat(40)],
+      ['RAILWAY_GIT_COMMIT_SHA', `${'a'.repeat(40)} `],
+    ]) {
+      const mismatchedSource = structuredClone(payloads);
+      mismatchedSource.workerVariables[name] = value;
+      expect(() => attestBackstageHeavyRailwayControlPlane(
+        mismatchedSource,
+        config
+      )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_VARIABLE_IDENTITY_MISMATCH');
+    }
     const maxProjectSuffix = structuredClone(payloads);
     maxProjectSuffix.status.name = `arc-pr1460-heavy-${'a'.repeat(14)}`;
     expect(attestBackstageHeavyRailwayControlPlane(
@@ -671,6 +727,34 @@ describe('Backstage heavy network proof', () => {
     })).rejects.toThrow('BACKSTAGE_HEAVY_PROBE_SUBMISSION_STATUS_INVALID');
   });
 
+  it('coarsens secret-bearing response and transport error prefixes', async () => {
+    const config = resolveBackstageHeavyProbeConfig(configArgs(true));
+    const sensitiveMarker = 'probe-response-secret-must-not-reflect';
+    for (const fetchImpl of [
+      async () => new Response(
+        `BACKSTAGE_HEAVY_PROBE_TERMINAL_RESULT_INVALID:${sensitiveMarker}`
+      ),
+      async () => {
+        throw new Error(
+          `BACKSTAGE_HEAVY_PROBE_RESPONSE_TOO_LARGE:${sensitiveMarker}`
+        );
+      },
+    ]) {
+      const error = await runBackstageHeavyProbe(config, {
+        env: {
+          ARCANOS_BACKSTAGE_HEAVY_PROBE_BEARER:
+            TEST_PROOF_WEB_CREDENTIAL,
+        },
+        fetchImpl,
+        railwayPayloads: controlPlanePayloads(config),
+      }).catch(caught => caught);
+      expect(error).toEqual(
+        new Error('BACKSTAGE_HEAVY_PROBE_RESPONSE_INVALID')
+      );
+      expect(error.message).not.toContain(sensitiveMarker);
+    }
+  });
+
   it('uses a shell-free Windows CLI invocation, bounded array JSON, and a credential-minimal child env', async () => {
     expect(railwayInvocationForBackstageHeavyProbe(
       'win32',
@@ -734,5 +818,24 @@ describe('Backstage heavy network proof', () => {
     expect(payloads.workerDeployments).toEqual([]);
     expect(payloads).toHaveProperty('postgresVariables');
     expect(payloads).toHaveProperty('redisVariables');
+
+    const railwaySecret = 'railway-cli-secret-must-not-reflect';
+    for (const injectedMessage of [
+      'BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH',
+      `BACKSTAGE_HEAVY_PROBE_RAILWAY_STATUS_UNAVAILABLE:${railwaySecret}`,
+    ]) {
+      const error = await readRailwayControlPlaneAttestation(
+        config,
+        async () => {
+          throw new Error(injectedMessage);
+        },
+        { PATH: 'safe-path', APPDATA: 'safe-appdata' },
+        { executable: 'C:\\node.exe', argsPrefix: ['railway.js'] }
+      ).catch(caught => caught);
+      expect(error).toEqual(
+        new Error('BACKSTAGE_HEAVY_PROBE_RAILWAY_STATUS_UNAVAILABLE')
+      );
+      expect(error.message).not.toContain(railwaySecret);
+    }
   });
 });

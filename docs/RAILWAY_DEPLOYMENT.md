@@ -331,13 +331,16 @@ web value is
 `["node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema"]`.
 These sealed checks run from the application images, which contain Node and the
 exact tracked source. They bind the mode to the Railway role and revision, use
-only the exact private PostgreSQL reference, and emit fixed nonsecret sentinels.
-They do not run inside the PostgreSQL template container or initialize schema.
+only the exact private PostgreSQL reference, and emit a fixed success sentinel,
+an exact allowlisted nonsecret failure code, or one generic error sentinel for
+every unclassified failure. They do not run inside the PostgreSQL template
+container or initialize schema.
 
 Both application roles require the exact marker
 `ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET=dedicated-backstage-heavy-preview-v1`,
 one shared bounded `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID`, exact Postgres and
-Redis service ID/name/private-host markers, `ARCANOS_PREVIEW_ISOLATION=true`,
+Redis service ID/name/private-host markers, the exact lowercase revision in
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`, `ARCANOS_PREVIEW_ISOLATION=true`,
 `FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true`, and
 `OPENAI_API_KEY_REQUIRED=false`. They share one fresh payload-protection key
 and have no previous key. The worker alone receives
@@ -348,6 +351,14 @@ alone receives the dedicated Booker access token, a distinct job-read secret,
 loopback base URL. Do not configure any real provider key, alternate provider
 base, database/Redis alias, proxy/preload option, or external Notion variable
 on either role.
+
+The proof source marker is required because the authorized runner removes
+automatic GitHub triggers and deploys an explicit commit through Railway's
+control plane. `RAILWAY_GIT_COMMIT_SHA` is therefore optional; if Railway
+provides it, it must exactly match the proof marker. The runner separately
+supplies the same revision in the deploy request and verifies it in each
+deployment manifest, so the application variable is not the sole provenance
+authority.
 
 The authorized run order is:
 

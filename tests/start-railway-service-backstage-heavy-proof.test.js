@@ -20,6 +20,7 @@ import {
 import {
   BACKSTAGE_HEAVY_PROOF_TARGET,
   BACKSTAGE_HEAVY_PROOF_TARGET_ENV,
+  BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV,
   buildBackstageHeavyApplicationChildEnvironment,
   buildBackstageHeavyFixtureChildEnvironment,
   preflightBackstageHeavyProofDatabase,
@@ -53,6 +54,7 @@ function buildEnvironment(processKind = 'worker') {
     OPENAI_API_KEY_REQUIRED: 'false',
     NODE_ENV: 'production',
     ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'proof-run-1460',
+    [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'a'.repeat(40),
     ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY: `${'A'.repeat(43)}=`,
     OPENAI_BASE_URL: processKind === 'worker'
       ? 'http://127.0.0.1:8766/v1'
@@ -195,6 +197,46 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
       REDIS_URL:
         'redis://default:proof-password@redis.railway.internal:6379/',
     })).toMatchObject({ enabled: true, processKind: 'worker' });
+
+    const withoutRailwayGitSha = buildEnvironment('worker');
+    delete withoutRailwayGitSha.RAILWAY_GIT_COMMIT_SHA;
+    expect(resolveBackstageHeavyProofTargetOrThrow(
+      'worker',
+      withoutRailwayGitSha
+    )).toMatchObject({ sourceCommit: 'a'.repeat(40) });
+
+    for (const sourceEnvironment of [
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: undefined,
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'A'.repeat(40),
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: ` ${'a'.repeat(40)}`,
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'b'.repeat(40),
+        RAILWAY_GIT_COMMIT_SHA: 'a'.repeat(40),
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'a'.repeat(40),
+        RAILWAY_GIT_COMMIT_SHA: '',
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'a'.repeat(40),
+        RAILWAY_GIT_COMMIT_SHA: 'A'.repeat(40),
+      },
+      {
+        [BACKSTAGE_HEAVY_PROOF_SOURCE_SHA_ENV]: 'a'.repeat(40),
+        RAILWAY_GIT_COMMIT_SHA: `${'a'.repeat(40)} `,
+      },
+    ]) {
+      expect(() => resolveBackstageHeavyProofTargetOrThrow('worker', {
+        ...buildEnvironment('worker'),
+        ...sourceEnvironment,
+      })).toThrow('BACKSTAGE_HEAVY_PROOF_TARGET_ID_INVALID');
+    }
   });
 
   it('enforces the bounded short disposable Railway project name', () => {
@@ -309,6 +351,38 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
     await expect(preflightBackstageHeavyProofDatabase(web, {
       Client: PreflightClient,
     })).rejects.toThrow('BACKSTAGE_HEAVY_PROOF_DATABASE_NOT_EMPTY');
+  });
+
+  it('coarsens forged database error codes and secret-bearing prefixes', async () => {
+    const worker = resolveBackstageHeavyProofTargetOrThrow(
+      'worker',
+      buildEnvironment('worker')
+    );
+    const sensitiveMarker = 'database-secret-must-not-reflect';
+    for (const injectedMessage of [
+      'BACKSTAGE_HEAVY_PROOF_DATABASE_NOT_FRESH',
+      `BACKSTAGE_HEAVY_PROOF_DATABASE_PREFLIGHT_FAILED:${sensitiveMarker}`,
+    ]) {
+      class FailingClient {
+        async connect() {
+          throw new Error(injectedMessage);
+        }
+
+        async end() {}
+      }
+      let observed;
+      try {
+        await preflightBackstageHeavyProofDatabase(worker, {
+          Client: FailingClient,
+        });
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toEqual(
+        new Error('BACKSTAGE_HEAVY_PROOF_DATABASE_PREFLIGHT_FAILED')
+      );
+      expect(observed.message).not.toContain(sensitiveMarker);
+    }
   });
 
   it('waits for the worker fixture handshake before spawning the exact integrity wrapper environment', async () => {

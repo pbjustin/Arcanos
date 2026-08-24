@@ -66,6 +66,7 @@ function buildRuntimeEnvironment(overrides = {}) {
     ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET:
       'dedicated-backstage-heavy-preview-v1',
     ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: RUN_ID,
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: SOURCE_SHA,
     ARCANOS_PREVIEW_OPENAI_FIXTURE:
       'backstage-heavy-compact-retry-v1',
     ARCANOS_PROCESS_KIND: 'worker',
@@ -260,6 +261,38 @@ describe('Backstage heavy at-rest attestor', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('accepts a manually deployed exact source without a Railway Git variable', async () => {
+    const environment = buildRuntimeEnvironment();
+    delete environment.RAILWAY_GIT_COMMIT_SHA;
+    const harness = createSuccessfulClientHarness();
+    const fetchImpl = jest.fn(async () => jsonResponse(
+      completeFixtureEvidence()
+    ));
+
+    await expect(runBackstageHeavyAtRestAttestor(
+      resolveBackstageHeavyAtRestConfig(buildArguments({ execute: true })),
+      { Client: harness.Client, env: environment, fetchImpl }
+    )).resolves.toMatchObject({ mode: 'attested', sourceSha: SOURCE_SHA });
+  });
+
+  it('rejects a mismatched proof source marker before database or HTTP work', async () => {
+    const Client = jest.fn();
+    const fetchImpl = jest.fn();
+    await expect(runBackstageHeavyAtRestAttestor(
+      resolveBackstageHeavyAtRestConfig(buildArguments({ execute: true })),
+      {
+        Client,
+        env: buildRuntimeEnvironment({
+          ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'b'.repeat(40),
+          RAILWAY_GIT_COMMIT_SHA: 'b'.repeat(40),
+        }),
+        fetchImpl,
+      }
+    )).rejects.toThrow('BACKSTAGE_HEAVY_AT_REST_RUNTIME_IDENTITY_MISMATCH');
+    expect(Client).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('attests one complete row through an exact read-only transaction and fixture read', async () => {
     const config = resolveBackstageHeavyAtRestConfig(
       buildArguments({ execute: true })
@@ -381,7 +414,9 @@ describe('Backstage heavy at-rest attestor', () => {
         return { rows: [{ transaction_read_only: 'on' }] };
       }
       if (sql.includes('WITH target AS')) {
-        throw new Error(`query failed with ${databaseFailureMarker}`);
+        throw new Error(
+          `BACKSTAGE_HEAVY_AT_REST_DATABASE_EVIDENCE_INCOMPLETE:${databaseFailureMarker}`
+        );
       }
       return { rows: [] };
     });
@@ -402,6 +437,29 @@ describe('Backstage heavy at-rest attestor', () => {
     expect(client.ended).toBe(1);
   });
 
+  it('does not trust an external exact at-rest error code', async () => {
+    const config = resolveBackstageHeavyAtRestConfig(
+      buildArguments({ execute: true })
+    );
+    const harness = createClientHarness(async (sql) => {
+      if (sql === 'SHOW transaction_read_only') {
+        return { rows: [{ transaction_read_only: 'on' }] };
+      }
+      if (sql.includes('WITH target AS')) {
+        throw new Error(
+          'BACKSTAGE_HEAVY_AT_REST_DATABASE_EVIDENCE_INCOMPLETE'
+        );
+      }
+      return { rows: [] };
+    });
+
+    await expect(runBackstageHeavyAtRestAttestor(config, {
+      Client: harness.Client,
+      env: buildRuntimeEnvironment(),
+      fetchImpl: jest.fn(),
+    })).rejects.toThrow('BACKSTAGE_HEAVY_AT_REST_DATABASE_READ_FAILED');
+  });
+
   it('maps fixture transport errors to a stable redacted failure', async () => {
     const config = resolveBackstageHeavyAtRestConfig(
       buildArguments({ execute: true })
@@ -409,7 +467,9 @@ describe('Backstage heavy at-rest attestor', () => {
     const harness = createSuccessfulClientHarness();
     const fixtureFailureMarker = 'test-fixture-value-that-must-not-escape';
     const fetchImpl = jest.fn(async () => {
-      throw new Error(`loopback failed with ${fixtureFailureMarker}`);
+      throw new Error(
+        `BACKSTAGE_HEAVY_AT_REST_FIXTURE_EVIDENCE_INCOMPLETE:${fixtureFailureMarker}`
+      );
     });
 
     const error = await runBackstageHeavyAtRestAttestor(config, {
