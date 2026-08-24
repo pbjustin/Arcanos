@@ -70,7 +70,7 @@ const BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN =
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
   '(?:angles?|alternatives?|beats?|bouts?|bullets?|cards?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
-  '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
+  '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
 
 export function parseBackstageDirectAnswerOutputContract(prompt: string): BackstageDirectAnswerOutputContract {
   const normalizedPrompt = prompt.trim();
@@ -541,7 +541,7 @@ function collectBackstageCompactRetryDirectiveCounts(
   embeddedContentState: BackstageCompactRetryEmbeddedContentState
 ): BackstageCompactRetryDirectiveCount[] {
   const matches = prompt.matchAll(
-    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
+    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|items?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
   );
   const directiveCounts: BackstageCompactRetryDirectiveCount[] = [];
 
@@ -1025,7 +1025,8 @@ function countWhitespaceDelimitedWords(text: string): number {
  * cause-free terminal error and never starts a third provider attempt.
  */
 export async function runBackstageBookerCompactOutputAttempts<T>(
-  runAttempt: (compactOutputRetry: boolean) => Promise<T>
+  runAttempt: (compactOutputRetry: boolean) => Promise<T>,
+  canRetry: () => boolean = () => true
 ): Promise<BackstageCompactOutputAttemptResult<T>> {
   try {
     return {
@@ -1036,6 +1037,10 @@ export async function runBackstageBookerCompactOutputAttempts<T>(
     if (!isBackstageProviderOutputLengthExhaustionError(error)) {
       throw error;
     }
+  }
+
+  if (!canRetry()) {
+    throw new BackstageBookerOutputIncompleteError();
   }
 
   try {

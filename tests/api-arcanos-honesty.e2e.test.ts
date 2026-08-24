@@ -112,7 +112,66 @@ const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos.js')).default;
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
-const { createRuntimeBudget } = await import('@platform/resilience/runtimeBudget.js');
+const { createRuntimeBudget, createRuntimeBudgetWithLimit } = await import(
+  '@platform/resilience/runtimeBudget.js'
+);
+const {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+} = await import('../src/services/openai/aiExecutionContext.js');
+const { logger: structuredLogger } = await import(
+  '../src/platform/logging/structuredLogging.js'
+);
+
+function buildIntegrityRepairOptions(expectedNumberedItemCount?: number) {
+  return {
+    maxAttempts: 1 as const,
+    timeoutMs: 10_000,
+    tokenLimit: 96,
+    totalOutputTokenCap: 2_400,
+    minimumOutputTokens: 96,
+    minimumRuntimeRemainingMs: 10_000,
+    minimumRequestRemainingMs: 10_000,
+    ...(expectedNumberedItemCount
+      ? { expectedNumberedItemCount }
+      : {}),
+  };
+}
+
+function buildIntegrityCompletion(input: {
+  content: string;
+  id: string;
+  completionTokens?: number;
+  providerMetadata?: Record<string, unknown>;
+}) {
+  const completionTokens = input.completionTokens ?? 120;
+  return {
+    choices: [{
+      finish_reason: 'stop',
+      message: { content: input.content },
+    }],
+    provider_metadata: {
+      finish_reason: 'stop',
+      status: 'completed',
+      incomplete_details: { reason: 'none' },
+      incomplete: false,
+      empty_output: input.content.length === 0,
+      truncated: false,
+      length_truncated: false,
+      content_filtered: false,
+      ...(input.providerMetadata ?? {}),
+    },
+    activeModel: 'gpt-4.1',
+    fallbackFlag: false,
+    usage: {
+      prompt_tokens: 80,
+      completion_tokens: completionTokens,
+      total_tokens: 80 + completionTokens,
+    },
+    id: input.id,
+    created: 1773339300250,
+  };
+}
 
 function buildApp() {
   const app = express();
@@ -497,6 +556,363 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(capturedError).not.toHaveProperty('output');
     expect(capturedError).not.toHaveProperty('partialOutput');
     expect(JSON.stringify(capturedError)).not.toContain('The tank should');
+  });
+
+  it('repairs broken numbering deterministically without another provider call', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback.mockResolvedValueOnce(
+      buildIntegrityCompletion({
+        content: [
+          '1. Cody Rhodes retains cleanly.',
+          '3. Rhea Ripley confronts Iyo Sky.',
+          '5. CM Punk closes the show.',
+        ].join('\n'),
+        id: 'integrity-renumber-primary',
+      })
+    );
+
+    const result = await runThroughBrain(
+      {} as Parameters<typeof runThroughBrain>[0],
+      'Answer directly with these booking notes.',
+      undefined,
+      undefined,
+      {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        sourceEndpoint: 'test.backstage-integrity-renumber',
+        directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+      },
+      createRuntimeBudgetWithLimit(60_000, 0)
+    );
+
+    expect(result.result).toBe([
+      '1. Cody Rhodes retains cleanly.',
+      '2. Rhea Ripley confronts Iyo Sky.',
+      '3. CM Punk closes the show.',
+    ].join('\n'));
+    expect(result.meta.integrityRecovery).toEqual({
+      attempted: true,
+      method: 'deterministic_renumber',
+      originalIssues: ['broken_numbering'],
+      repairedIssues: [],
+      outcome: 'repaired',
+    });
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues an abrupt ending once, preserves the original facts, and logs only safe classifications', async () => {
+    const privateDraft =
+      'Cody Rhodes defeats Seth Rollins. PRIVATE-DRAFT-SENTINEL. The closing angle should';
+    const privateContinuation =
+      'end with Roman Reigns watching from the stage. PRIVATE-CONTINUATION-SENTINEL.';
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: privateDraft,
+        id: 'integrity-abrupt-primary',
+      }))
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: privateContinuation,
+        id: 'integrity-abrupt-repair',
+        completionTokens: 40,
+      }));
+    const infoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+    const warnSpy = jest
+      .spyOn(structuredLogger, 'warn')
+      .mockImplementation(() => undefined);
+    const executionContext = createAiExecutionContext({
+      sourceType: 'job',
+      sourceName: 'backstage-booker.generateBooking',
+      requestId: 'request-integrity-1',
+      traceId: 'trace-integrity-1',
+      jobId: 'job-integrity-1',
+    });
+
+    try {
+      const result = await runWithAiExecutionContext(
+        executionContext,
+        () => runThroughBrain(
+          {} as Parameters<typeof runThroughBrain>[0],
+          [
+            'Answer directly with one complete booking ending.',
+            `Use this established ending exactly: The closing angle should ${privateContinuation}`,
+          ].join('\n'),
+          undefined,
+          undefined,
+          {
+            answerMode: 'direct',
+            strictUserVisibleOutput: true,
+            sourceEndpoint: 'backstage-booker.generateBooking',
+            redactAuditContent: true,
+            directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+          },
+          createRuntimeBudgetWithLimit(60_000, 0)
+        )
+      );
+
+      expect(result.result).toContain('Cody Rhodes defeats Seth Rollins.');
+      expect(result.result).toContain('PRIVATE-DRAFT-SENTINEL');
+      expect(result.result).toContain('The closing angle should');
+      expect(result.result).toContain(
+        'end with Roman Reigns watching from the stage.'
+      );
+      expect(result.result).toContain('PRIVATE-CONTINUATION-SENTINEL');
+      expect(result.meta.integrityRecovery).toMatchObject({
+        attempted: true,
+        method: 'bounded_continuation',
+        originalIssues: ['abrupt_mid_sentence_ending'],
+        repairedIssues: [],
+        outcome: 'repaired',
+      });
+      expect(result.tierInfo?.invocationsUsed).toBe(2);
+      expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
+
+      const integrityLogs = [...infoSpy.mock.calls, ...warnSpy.mock.calls]
+        .filter(([event]) => String(event).includes('integrity_'));
+      const serializedLogs = JSON.stringify(integrityLogs);
+      expect(serializedLogs).toContain('trace-integrity-1');
+      expect(serializedLogs).toContain('abrupt_mid_sentence_ending');
+      expect(serializedLogs).not.toContain('PRIVATE-DRAFT-SENTINEL');
+      expect(serializedLogs).not.toContain('PRIVATE-CONTINUATION-SENTINEL');
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('appends a missing exact final item without changing established items', async () => {
+    const establishedItems = [
+      '1. Cody Rhodes retains against Seth Rollins.',
+      '2. Rhea Ripley confronts Iyo Sky.',
+    ].join('\n');
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: establishedItems,
+        id: 'integrity-final-section-primary',
+      }))
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: '3. CM Punk closes the show with a staredown.',
+        id: 'integrity-final-section-repair',
+        completionTokens: 24,
+      }));
+
+    const result = await runThroughBrain(
+      {} as Parameters<typeof runThroughBrain>[0],
+      [
+        'Answer directly with exactly three booking items.',
+        'The established final sequence is: 2. Rhea Ripley confronts Iyo Sky. 3. CM Punk closes the show with a staredown.',
+      ].join('\n'),
+      undefined,
+      undefined,
+      {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        sourceEndpoint: 'test.backstage-integrity-final-section',
+        directAnswerIntegrityRepair: buildIntegrityRepairOptions(3),
+      },
+      createRuntimeBudgetWithLimit(60_000, 0)
+    );
+
+    expect(result.result).toContain('1. Cody Rhodes retains against Seth Rollins.');
+    expect(result.result).toContain('2. Rhea Ripley confronts Iyo Sky.');
+    expect(result.result).toContain('3. CM Punk closes the show with a staredown.');
+    expect(result.meta.integrityRecovery?.originalIssues).toContain(
+      'incomplete_final_section'
+    );
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
+  });
+
+  it('revalidates a repair once and returns a safe terminal failure when it is still abrupt', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: 'The closing angle should',
+        id: 'integrity-invalid-primary',
+      }))
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: 'continue and',
+        id: 'integrity-invalid-repair',
+        completionTokens: 12,
+      }));
+
+    let capturedError: unknown;
+    try {
+      await runThroughBrain(
+        {} as Parameters<typeof runThroughBrain>[0],
+        'Answer directly with this established ending: The closing angle should continue and',
+        undefined,
+        undefined,
+        {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          sourceEndpoint: 'test.backstage-integrity-invalid-repair',
+          redactAuditContent: true,
+          directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+        },
+        createRuntimeBudgetWithLimit(60_000, 0)
+      );
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
+    expect(capturedError).toMatchObject({
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      repairAttempted: true,
+      repairFailureReason: 'revalidation_failed',
+      originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+      repairedIntegrityIssues: ['abrupt_mid_sentence_ending'],
+    });
+    expect(JSON.stringify(capturedError)).not.toContain('The closing angle should');
+    expect(JSON.stringify(capturedError)).not.toContain('continue and');
+  });
+
+  it.each([
+    [
+      'content-filtered',
+      buildIntegrityCompletion({
+        content: 'end cleanly without changing the booking.',
+        id: 'integrity-repair-content-filtered',
+        providerMetadata: {
+          finish_reason: 'content_filter',
+          incomplete_details: { reason: 'content_filter' },
+          incomplete: true,
+          content_filtered: true,
+        },
+      }),
+      'content_filtered',
+    ],
+    [
+      'provider-incomplete',
+      buildIntegrityCompletion({
+        content: 'end cleanly without changing the booking.',
+        id: 'integrity-repair-incomplete',
+        providerMetadata: {
+          finish_reason: 'length',
+          incomplete_details: { reason: 'max_output_tokens' },
+          incomplete: true,
+          truncated: true,
+          length_truncated: true,
+        },
+      }),
+      'provider_incomplete',
+    ],
+    [
+      'empty',
+      buildIntegrityCompletion({
+        content: '',
+        id: 'integrity-repair-empty',
+      }),
+      'empty_output',
+    ],
+  ])('rejects a %s repair result after exactly one attempt', async (
+    _label,
+    repairCompletion,
+    expectedReason
+  ) => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: 'The closing angle should',
+        id: 'integrity-repair-blocked-primary',
+      }))
+      .mockResolvedValueOnce(repairCompletion);
+
+    let capturedError: unknown;
+    try {
+      await runThroughBrain(
+        {} as Parameters<typeof runThroughBrain>[0],
+        'Answer directly with one complete booking ending.',
+        undefined,
+        undefined,
+        {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          sourceEndpoint: 'test.backstage-integrity-repair-provider-blocker',
+          redactAuditContent: true,
+          directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+        },
+        createRuntimeBudgetWithLimit(60_000, 0)
+      );
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
+    expect(capturedError).toMatchObject({
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      repairAttempted: true,
+      repairFailureReason: expectedReason,
+      originalIntegrityIssues: ['abrupt_mid_sentence_ending'],
+      repairedIntegrityIssues: [],
+    });
+  });
+
+  it.each([
+    [
+      'content-filtered output',
+      buildIntegrityCompletion({
+        content: 'The closing angle should',
+        id: 'integrity-content-filtered',
+        providerMetadata: {
+          finish_reason: 'content_filter',
+          incomplete_details: { reason: 'content_filter' },
+          incomplete: true,
+          content_filtered: true,
+        },
+      }),
+      'content_filtered',
+    ],
+    [
+      'empty output',
+      buildIntegrityCompletion({
+        content: '',
+        id: 'integrity-empty',
+      }),
+      'empty_output',
+    ],
+    [
+      'insufficient remaining tokens',
+      buildIntegrityCompletion({
+        content: 'The closing angle should',
+        id: 'integrity-no-token-budget',
+        completionTokens: 2_305,
+      }),
+      'insufficient_tokens',
+    ],
+  ])('never repairs %s', async (_label, completion, expectedReason) => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback.mockResolvedValueOnce(completion);
+
+    let capturedError: unknown;
+    try {
+      await runThroughBrain(
+        {} as Parameters<typeof runThroughBrain>[0],
+        'Answer directly with one complete booking ending.',
+        undefined,
+        undefined,
+        {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          sourceEndpoint: 'test.backstage-integrity-no-repair',
+          redactAuditContent: true,
+          directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+        },
+        createRuntimeBudgetWithLimit(60_000, 0)
+      );
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(1);
+    expect(capturedError).toMatchObject({
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      repairAttempted: false,
+      repairFailureReason: expectedReason,
+    });
   });
 
   it('normalizes duplicate limitations and scope drift at the route boundary', async () => {

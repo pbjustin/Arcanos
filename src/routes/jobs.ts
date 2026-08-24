@@ -15,12 +15,16 @@ import { sleep } from '@shared/sleep.js';
 import {
   validateCustomGptBridgeCredential,
 } from '@shared/security/customGptBridgeCredential.js';
+import {
+  optionalBackstageBookerAccessActorMiddleware,
+} from '@services/backstageBookerAccessAuth.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 
 import { createGenericJobsRouter } from './genericJobsRouter.js';
 
 const router = createGenericJobsRouter({
   confirmCancellation: confirmGate,
+  establishCancellationActor: optionalBackstageBookerAccessActorMiddleware,
   getJobById,
   getRequestActorKey,
   getRequestEstablishedActorKey,

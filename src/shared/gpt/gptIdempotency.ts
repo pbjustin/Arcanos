@@ -160,6 +160,7 @@ export interface GptRequestFingerprintInput {
   gptId: string;
   action?: string | null;
   body: unknown;
+  fingerprintDomain?: string | null;
 }
 
 export interface GptIdempotencyDescriptor {
@@ -280,7 +281,11 @@ export function summarizeFingerprintHash(hash: string | null | undefined): strin
 
 export function buildGptRequestFingerprintHash(input: GptRequestFingerprintInput): string {
   const normalizedBody = normalizeGptRequestBody(input.body);
+  const fingerprintDomain = typeof input.fingerprintDomain === 'string'
+    ? input.fingerprintDomain.trim().toLowerCase()
+    : '';
   const normalizedFingerprintPayload = {
+    ...(fingerprintDomain.length > 0 ? { fingerprintDomain } : {}),
     gptId: input.gptId.trim().toLowerCase(),
     action: typeof input.action === 'string' && input.action.trim().length > 0
       ? input.action.trim().toLowerCase()
@@ -295,6 +300,7 @@ export function buildGptIdempotencyDescriptor(input: {
   gptId: string;
   action?: string | null;
   body: unknown;
+  fingerprintDomain?: string | null;
   surface: GptJobCreationSurface;
   actorKey: string;
   explicitIdempotencyKey?: string | null;
@@ -303,7 +309,8 @@ export function buildGptIdempotencyDescriptor(input: {
   const fingerprintHash = buildGptRequestFingerprintHash({
     gptId: input.gptId,
     action: input.action,
-    body: input.body
+    body: input.body,
+    fingerprintDomain: input.fingerprintDomain,
   });
   const scopeHash = buildGptIdempotencyScopeHash({
     surface: input.surface,

@@ -28,7 +28,38 @@ import {
   buildCompletedQueuedAskOutput,
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
-import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  isQueuedGptJobCancellationPrivacySensitive,
+  parseQueuedGptJobInput,
+  resolveProtectedBackstageQueuedGptJobAction,
+  type QueuedGptJobInput,
+} from '@shared/gpt/asyncGptJob.js';
+import {
+  extractGptDispatchPromptText,
+  resolveRequestedGptAction,
+} from '@shared/gpt/gptRequestAction.js';
+import { resolveGptModuleRequestedActionAlias } from '@shared/gpt/gptModuleAction.js';
+import { resolveGptModuleMapEntry } from '@shared/gpt/gptModuleMapResolution.js';
+import {
+  BACKSTAGE_ACTIONS,
+  BACKSTAGE_MODULE_NAME,
+  isBackstageGptRoute,
+} from '@shared/backstage/backstageActionPolicy.js';
+import {
+  PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE,
+  protectBackstageQueuedGptJobOutput,
+} from '@shared/backstage/backstageQueuedJobResultProtection.js';
+import {
+  resolveBackstageProviderDeferralDelayMs,
+  resolveBackstageExecutionBudgetPolicy,
+  resolveBackstageWorkerOperationDeadlineAt,
+  type BackstageExecutionBudgetPolicy,
+} from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  isCooperativeDeadlineExceededError,
+  runWithCooperativeAbortDrain,
+} from '@shared/async/cooperativeAbortDrain.js';
+import { resolveJobLeaseHeartbeatIntervalMs } from '@shared/jobs/jobLeaseTiming.js';
 import { BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE } from '@shared/backstage/backstageRoster.js';
 import {
   BACKSTAGE_CANON_COMMIT_UNKNOWN_JOB_REUSE_REASON,
@@ -87,8 +118,9 @@ import {
 } from '@services/openai/aiExecutionContext.js';
 import {
   createAbortError,
+  getRequestAbortSignal,
   isAbortError,
-  runWithRequestAbortContext
+  runWithRequestAbortContext,
 } from '@arcanos/runtime';
 import {
   buildNonReusableGptResultAutonomyState,
@@ -101,6 +133,12 @@ import {
   syncOpenAIProviderRuntime
 } from '@services/openai/serviceHealth.js';
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
+import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
+import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
+import {
+  runWithBackstageLegacyQueuedExecution,
+  runWithBackstageProtectedQueuedExecution,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 import { initializeModuleRegistry } from '@services/moduleRegistry.js';
@@ -133,6 +171,150 @@ interface JobExecutionOutcome {
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+const LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE =
+  'Legacy Backstage generation cancellation requested during compatibility drain.';
+const LEGACY_BACKSTAGE_DRAIN_ERROR_CODE = 'BACKSTAGE_LEGACY_DRAIN_FAILED';
+const LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE =
+  'Legacy Backstage generation failed during compatibility drain.';
+
+function isQueuedGptDispatchFailureRetryable(error: {
+  code: string;
+  details?: unknown;
+}): boolean {
+  return error.code === 'MODULE_TIMEOUT'
+    || error.code === 'MODULE_ERROR'
+    || (
+      (
+        error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+        || error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+        || error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+        || error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
+      )
+      && typeof error.details === 'object'
+      && error.details !== null
+      && (error.details as { retryable?: unknown }).retryable === true
+    );
+}
+
+interface QueuedBackstageExecutionClassification {
+  canonicalQueuedAction: string | undefined;
+  isUnprotectedBackstageGeneration: boolean;
+  legacyBackstageQueuedExecution: boolean;
+  legacyQueueDrainContextCandidate: boolean;
+  requestedBackstageAction: string | null;
+}
+
+type QueuedGptCancellationPrivacy = 'protected' | 'legacy';
+
+interface QueuedGptExecutionPrivacyState {
+  cancellationPrivacy: QueuedGptCancellationPrivacy | null;
+}
+
+async function classifyQueuedBackstageExecution(
+  input: QueuedGptJobInput
+): Promise<QueuedBackstageExecutionClassification> {
+  const protectedBackstageQueuedExecution = input.protectedBackstage !== undefined;
+  let queuedModuleName: string | null = null;
+  if (!protectedBackstageQueuedExecution) {
+    try {
+      const gptModuleMap = await getGptModuleMap();
+      queuedModuleName = resolveGptModuleMapEntry(
+        input.gptId,
+        gptModuleMap
+      )?.entry.module ?? null;
+    } catch {
+      // Normal routing retains ownership of unavailable-map diagnostics below.
+    }
+  }
+  const queuedTargetsBackstage =
+    queuedModuleName === BACKSTAGE_MODULE_NAME
+    || isBackstageGptRoute(input.gptId);
+  const requestedQueuedAction = resolveRequestedGptAction({ body: input.body });
+  const queuedAvailableActions: readonly string[] = queuedTargetsBackstage
+    ? BACKSTAGE_ACTIONS
+    : queuedModuleName === 'ARCANOS:CORE'
+      ? ['query']
+      : [];
+  const canonicalQueuedAction = resolveGptModuleRequestedActionAlias(
+    requestedQueuedAction ?? undefined,
+    queuedAvailableActions,
+  );
+  const requestedBackstageAction = queuedTargetsBackstage
+    ? canonicalQueuedAction ?? null
+    : null;
+  const automaticBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && input.bypassIntentRouting !== true
+    && (
+      queuedModuleName === BACKSTAGE_MODULE_NAME
+      || queuedModuleName === 'ARCANOS:CORE'
+    )
+    && (
+      canonicalQueuedAction === undefined
+      || canonicalQueuedAction === 'query'
+    )
+    && detectBackstageBookerIntent(
+      extractGptDispatchPromptText(input.body) ?? input.prompt ?? null
+    ) !== null;
+  const isUnprotectedBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && (
+      (
+        queuedTargetsBackstage
+        && (
+          requestedBackstageAction === null
+          || requestedBackstageAction === 'generateBooking'
+          || requestedBackstageAction === 'generateBookingWithHRC'
+        )
+      )
+      || automaticBackstageGeneration
+    );
+  const legacyQueuedProducerExecution =
+    !protectedBackstageQueuedExecution
+    && input.producerContract === undefined;
+  const legacyBackstageQueuedExecution =
+    isUnprotectedBackstageGeneration
+    && legacyQueuedProducerExecution;
+
+  return {
+    canonicalQueuedAction,
+    isUnprotectedBackstageGeneration,
+    legacyBackstageQueuedExecution,
+    legacyQueueDrainContextCandidate: legacyQueuedProducerExecution,
+    requestedBackstageAction,
+  };
+}
+
+function hasProtectedBackstageQueuedGptMarker(rawInput: unknown): boolean {
+  return (
+    typeof rawInput === 'object'
+    && rawInput !== null
+    && !Array.isArray(rawInput)
+    && Object.prototype.hasOwnProperty.call(rawInput, 'protectedBackstage')
+  );
+}
+
+function setQueuedGptExecutionPrivacy(
+  state: QueuedGptExecutionPrivacyState | undefined,
+  cancellationPrivacy: QueuedGptCancellationPrivacy
+): void {
+  if (state) {
+    state.cancellationPrivacy = cancellationPrivacy;
+  }
+}
+
+async function resolvePreExecutionQueuedGptCancellationPrivacy(
+  rawInput: unknown
+): Promise<QueuedGptCancellationPrivacy | null> {
+  if (
+    hasProtectedBackstageQueuedGptMarker(rawInput)
+  ) {
+    return 'protected';
+  }
+  return isQueuedGptJobCancellationPrivacySensitive(rawInput)
+    ? 'legacy'
+    : null;
+}
 
 interface WorkerHeartbeatLoopHandle {
   stop(): void;
@@ -218,6 +400,31 @@ function initOpenAIClient() {
 
   const adapter = getOpenAIAdapter(adapterConfig);
   return adapter.getClient();
+}
+
+function readOptionalPositiveIntegerEnv(name: string): number | undefined {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+}
+
+function resolveProtectedBackstageWorkerBudget(
+  action: 'generateBooking' | 'generateBookingWithHRC'
+): BackstageExecutionBudgetPolicy {
+  return resolveBackstageExecutionBudgetPolicy({
+    profile: 'queued_generation',
+    action,
+    configuration: {
+      workerJobTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_WORKER_JOB_TIMEOUT_MS'
+      ),
+      workerGenerationStageTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS'
+      ),
+      workerRecoveryStageTimeoutMs: readOptionalPositiveIntegerEnv(
+        'BOOKER_REPAIR_STAGE_TIMEOUT_MS'
+      ),
+    },
+  });
 }
 
 function initializeWorkerOpenAIAdapterIfConfigured(): void {
@@ -704,7 +911,14 @@ export async function executeQueuedGptRequest(params: {
   jobId: string;
   rawInput: unknown;
   cancellationSignal?: AbortSignal;
+  startedAt?: Date | string | number;
+  executionPrivacyState?: QueuedGptExecutionPrivacyState;
 }): Promise<JobExecutionOutcome> {
+  if (hasProtectedBackstageQueuedGptMarker(params.rawInput)) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'protected');
+  } else if (isQueuedGptJobCancellationPrivacySensitive(params.rawInput)) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+  }
   const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
 
   if (!parsedGptJobInput.ok) {
@@ -716,6 +930,19 @@ export async function executeQueuedGptRequest(params: {
     };
   }
 
+  const protectedBackstageQueuedExecution =
+    parsedGptJobInput.value.protectedBackstage !== undefined;
+  const protectedExecutionBudget = parsedGptJobInput.value.protectedBackstage
+    ? resolveProtectedBackstageWorkerBudget(
+        parsedGptJobInput.value.protectedBackstage.action
+      )
+    : null;
+  const protectedOperationDeadlineAt = protectedExecutionBudget
+    ? resolveBackstageWorkerOperationDeadlineAt(
+        params.startedAt,
+        protectedExecutionBudget
+      )
+    : null;
   const routeStartedAtMs = Date.now();
   const {
     gptId,
@@ -729,8 +956,31 @@ export async function executeQueuedGptRequest(params: {
     routeHint,
     backstageMutationAdmission,
   } = parsedGptJobInput.value;
+  const {
+    canonicalQueuedAction,
+    isUnprotectedBackstageGeneration,
+    legacyBackstageQueuedExecution,
+    legacyQueueDrainContextCandidate,
+    requestedBackstageAction,
+  } = await classifyQueuedBackstageExecution(parsedGptJobInput.value);
+  if (legacyQueueDrainContextCandidate) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+  }
+  if (isUnprotectedBackstageGeneration && !legacyBackstageQueuedExecution) {
+    return {
+      status: 'failed',
+      output: null,
+      errorMessage: 'Protected Backstage generation job payload is required.',
+      retryable: false,
+    };
+  }
+  const privateQueuedExecution =
+    protectedBackstageQueuedExecution || legacyQueueDrainContextCandidate;
+  const canonicalQueuedBody = canonicalQueuedAction
+    ? { ...body, action: canonicalQueuedAction }
+    : body;
   const hydratedBody = attachQueuedGptExecutionMetadata(
-    hydrateQueuedGptBodyPrompt(body, prompt),
+    hydrateQueuedGptBodyPrompt(canonicalQueuedBody, prompt),
     {
       requestPath,
       executionModeReason,
@@ -742,6 +992,12 @@ export async function executeQueuedGptRequest(params: {
     fallbackMessage: string,
     error?: unknown
   ): Promise<string> => {
+    if (privateQueuedExecution) {
+      return protectedBackstageQueuedExecution
+        ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+        : LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
+    }
+
     try {
       const refreshedJob = await getJobById(params.jobId);
       return (
@@ -762,10 +1018,17 @@ export async function executeQueuedGptRequest(params: {
     }
   };
   if (latestJob?.cancel_requested_at) {
+    if (legacyBackstageQueuedExecution) {
+      setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+    }
     return {
       status: 'cancelled',
       output: null,
-      errorMessage: latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
+      errorMessage: privateQueuedExecution
+        ? protectedBackstageQueuedExecution
+          ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+          : LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+        : latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
       retryable: false
     };
   }
@@ -834,6 +1097,27 @@ export async function executeQueuedGptRequest(params: {
     executionModeReason: parsedGptJobInput.value.executionModeReason ?? null,
     promptLength: parsedGptJobInput.value.prompt?.length ?? null
   });
+  if (protectedExecutionBudget) {
+    routeLogger.info('gpt.job.backstage_timeout_plan', {
+      action: protectedExecutionBudget.action,
+      profile: protectedExecutionBudget.profile,
+      totalTimeoutMs: protectedExecutionBudget.totalTimeoutMs,
+      operationTimeoutMs: protectedExecutionBudget.operationTimeoutMs,
+      modelStageTimeoutMs: protectedExecutionBudget.modelStageTimeoutMs,
+      recoveryStageTimeoutMs: protectedExecutionBudget.recoveryStageTimeoutMs,
+      orchestrationReserveMs: protectedExecutionBudget.orchestrationReserveMs,
+      finalizationReserveMs: protectedExecutionBudget.finalizationReserveMs,
+      remainingOperationMs: protectedOperationDeadlineAt === null
+        ? null
+        : Math.max(0, protectedOperationDeadlineAt - Date.now()),
+    });
+  }
+  if (legacyBackstageQueuedExecution) {
+    routeLogger.warn('gpt.job.backstage_legacy_queue_drain', {
+      action: requestedBackstageAction ?? canonicalQueuedAction ?? 'automatic',
+      producerContract: 'marker_absent',
+    });
+  }
 
   if (isQueuedBridgeSmokeJobInput(parsedGptJobInput.value)) {
     const output = buildBridgeSmokeCompletedOutput();
@@ -851,18 +1135,48 @@ export async function executeQueuedGptRequest(params: {
 
   let envelope;
   try {
-    envelope = await routeGptRequest({
-      gptId,
-      body: hydratedBody,
-      requestId,
-      traceId: traceId ?? requestId ?? null,
-      logger: routeLogger,
-      bypassIntentRouting,
-      runtimeExecutionMode: 'background',
-      parentAbortSignal: params.cancellationSignal,
-      enforceQueuedBackstageMutationAdmission: true,
-      queuedBackstageMutationAdmission: backstageMutationAdmission,
+    const dispatch = () => routeGptRequest({
+        gptId,
+        body: hydratedBody,
+        requestId,
+        traceId: traceId ?? requestId ?? null,
+        logger: routeLogger,
+        bypassIntentRouting,
+        runtimeExecutionMode: 'background',
+        parentAbortSignal: getRequestAbortSignal() ?? params.cancellationSignal,
+        enforceQueuedBackstageMutationAdmission: true,
+        queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
+    const dispatchWithQueuedAuthorization = () =>
+      parsedGptJobInput.value.protectedBackstage
+        ? runWithBackstageProtectedQueuedExecution(
+            parsedGptJobInput.value.protectedBackstage.notionEnrichmentAuthorized,
+            dispatch
+          )
+        : legacyQueueDrainContextCandidate
+          ? runWithBackstageLegacyQueuedExecution(dispatch)
+          : dispatch();
+    envelope = protectedExecutionBudget && protectedOperationDeadlineAt !== null
+      ? await runWithCooperativeAbortDrain(
+          {
+            timeoutMs: protectedExecutionBudget.operationTimeoutMs,
+            deadlineAt: protectedOperationDeadlineAt,
+            requestId,
+            parentSignal: params.cancellationSignal,
+            abortMessage: 'Protected Backstage worker execution deadline exceeded.',
+            scope: 'backstage_worker',
+            maxDrainMs: protectedExecutionBudget.abortDrainTimeoutMs,
+            onDeadline: () => {
+              routeLogger.warn('gpt.job.backstage_deadline_exhausted', {
+                action: protectedExecutionBudget.action,
+                operationTimeoutMs: protectedExecutionBudget.operationTimeoutMs,
+                finalizationReserveMs: protectedExecutionBudget.finalizationReserveMs,
+              });
+            },
+          },
+          dispatchWithQueuedAuthorization
+        )
+      : await dispatchWithQueuedAuthorization();
   } catch (error: unknown) {
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
       return {
@@ -876,7 +1190,90 @@ export async function executeQueuedGptRequest(params: {
       };
     }
 
+    if (parsedGptJobInput.value.protectedBackstage) {
+      const deadlineExceeded = isCooperativeDeadlineExceededError(
+        error,
+        'backstage_worker'
+      );
+      const output = {
+        ok: false,
+        error: {
+          code: deadlineExceeded
+            ? 'BACKSTAGE_ASYNC_TIMEOUT'
+            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+          message: deadlineExceeded
+            ? 'Protected Backstage generation reached its worker deadline.'
+            : 'Protected Backstage generation failed in the worker.',
+        },
+        _route: {
+          gptId,
+          action: parsedGptJobInput.value.protectedBackstage.action,
+          route: 'worker',
+          ...(requestId ? { requestId } : {}),
+          ...(traceId ? { traceId } : {}),
+        },
+      };
+      try {
+        return {
+          status: 'failed',
+          output: protectBackstageQueuedGptJobOutput({
+            jobId: params.jobId,
+            rawInput: params.rawInput,
+            output,
+          }),
+          errorMessage: deadlineExceeded
+            ? 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.'
+            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
+          retryable: false,
+        };
+      } catch {
+        return {
+          status: 'failed',
+          output: null,
+          errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+          retryable: false,
+        };
+      }
+    }
+
+    if (legacyBackstageQueuedExecution) {
+      const retryable = classifyWorkerExecutionError(error).retryable;
+      return {
+        status: 'failed',
+        output: {
+          ok: false,
+          error: {
+            code: LEGACY_BACKSTAGE_DRAIN_ERROR_CODE,
+            message: LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE,
+          },
+        },
+        errorMessage:
+          `${LEGACY_BACKSTAGE_DRAIN_ERROR_CODE}: ${LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE}`,
+        retryable,
+      };
+    }
+
     throw error;
+  }
+
+  const resolvedLegacyBackstageQueuedExecution =
+    legacyQueueDrainContextCandidate
+    && envelope._route.module === BACKSTAGE_MODULE_NAME
+    && (
+      envelope._route.action === 'generateBooking'
+      || envelope._route.action === 'generateBookingWithHRC'
+    );
+  if (resolvedLegacyBackstageQueuedExecution) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+  }
+  if (
+    resolvedLegacyBackstageQueuedExecution
+    && !legacyBackstageQueuedExecution
+  ) {
+    routeLogger.warn('gpt.job.backstage_legacy_queue_drain', {
+      action: envelope._route.action,
+      producerContract: 'marker_absent',
+    });
   }
 
   if (!envelope.ok) {
@@ -895,27 +1292,56 @@ export async function executeQueuedGptRequest(params: {
       gptId,
       requestId,
       durationMs: Date.now() - routeStartedAtMs,
-      errorCode: envelope.error.code,
-      errorMessage: envelope.error.message
+      errorCode: resolvedLegacyBackstageQueuedExecution
+        ? LEGACY_BACKSTAGE_DRAIN_ERROR_CODE
+        : envelope.error.code,
+      errorMessage: protectedBackstageQueuedExecution || resolvedLegacyBackstageQueuedExecution
+        ? protectedBackstageQueuedExecution
+          ? 'Protected Backstage generation failed.'
+          : LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE
+        : envelope.error.message
     });
+    if (resolvedLegacyBackstageQueuedExecution) {
+      return {
+        status: 'failed',
+        output: {
+          ok: false,
+          error: {
+            code: LEGACY_BACKSTAGE_DRAIN_ERROR_CODE,
+            message: LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE,
+          },
+        },
+        errorMessage:
+          `${LEGACY_BACKSTAGE_DRAIN_ERROR_CODE}: ${LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE}`,
+        retryable: isQueuedGptDispatchFailureRetryable(envelope.error),
+      };
+    }
+    let failureOutput: unknown = envelope;
+    if (parsedGptJobInput.value.protectedBackstage) {
+      try {
+        failureOutput = protectBackstageQueuedGptJobOutput({
+          jobId: params.jobId,
+          rawInput: params.rawInput,
+          output: envelope,
+        });
+      } catch {
+        return {
+          status: 'failed',
+          output: null,
+          errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+          retryable: false,
+        };
+      }
+    }
     return {
       status: 'failed',
-      output: envelope,
-      errorMessage: `${envelope.error.code}: ${envelope.error.message}`,
-      retryable:
-        envelope.error.code === 'MODULE_TIMEOUT'
-        || envelope.error.code === 'MODULE_ERROR'
-        || (
-          (
-            envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
-          )
-          && typeof envelope.error.details === 'object'
-          && envelope.error.details !== null
-          && (envelope.error.details as { retryable?: unknown }).retryable === true
-        )
+      output: failureOutput,
+      errorMessage: parsedGptJobInput.value.protectedBackstage
+        ? `${envelope.error.code}: Protected Backstage generation failed.`
+        : `${envelope.error.code}: ${envelope.error.message}`,
+      retryable: parsedGptJobInput.value.protectedBackstage
+        ? false
+        : isQueuedGptDispatchFailureRetryable(envelope.error)
     };
   }
 
@@ -931,9 +1357,26 @@ export async function executeQueuedGptRequest(params: {
     backstageMutationAdmission?.action,
     envelope.result
   );
+  let completedOutput: unknown = envelope;
+  if (parsedGptJobInput.value.protectedBackstage) {
+    try {
+      completedOutput = protectBackstageQueuedGptJobOutput({
+        jobId: params.jobId,
+        rawInput: params.rawInput,
+        output: envelope,
+      });
+    } catch {
+      return {
+        status: 'failed',
+        output: null,
+        errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+        retryable: false,
+      };
+    }
+  }
   return {
     status: 'completed',
-    output: envelope,
+    output: completedOutput,
     ...(
       backstageMutationAdmission?.action === 'upsertStoryline'
       || backstageMutationAdmission?.action === 'appendCanonBeat'
@@ -950,17 +1393,29 @@ export async function executeQueuedGptRequest(params: {
   };
 }
 
-interface JobHeartbeatLoopHandle {
+export interface JobHeartbeatLoopHandle {
   stop: () => void;
 }
 
-function startHeartbeatLoop(
+export function startHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
   job: Pick<JobData, 'id' | 'claim_generation'>,
   workerId: string,
-  onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void
+  onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void,
+  onHeartbeatError?: (error: unknown) => void
 ): JobHeartbeatLoopHandle {
   let stopped = false;
+  let intervalHandle: ReturnType<typeof setInterval> | null = null;
+  const stop = (): void => {
+    if (stopped) {
+      return;
+    }
+
+    stopped = true;
+    if (intervalHandle !== null) {
+      clearInterval(intervalHandle);
+    }
+  };
   const runHeartbeat = createNonOverlappingTaskRunner(
     async () => {
       if (stopped) {
@@ -972,6 +1427,9 @@ function startHeartbeatLoop(
         shouldApplyResult: () => !stopped
       });
       if (!stopped) {
+        if (!heartbeatJob) {
+          stop();
+        }
         onHeartbeat?.(heartbeatJob);
       }
     },
@@ -981,12 +1439,16 @@ function startHeartbeatLoop(
     }
   );
 
-  const intervalHandle = setInterval(() => {
+  intervalHandle = setInterval(() => {
     if (stopped) {
       return;
     }
 
     void runHeartbeat().catch((error: unknown) => {
+      if (!stopped) {
+        stop();
+        onHeartbeatError?.(error);
+      }
       logger.warn(
         'worker.job_heartbeat.failed',
         { module: 'job-runner', workerId, jobId: job.id },
@@ -994,23 +1456,16 @@ function startHeartbeatLoop(
         error instanceof Error ? error : undefined
       );
     });
-  }, autonomyService.getClaimOptions().leaseMs
-    ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3))
-    : 10_000);
+  }, resolveJobLeaseHeartbeatIntervalMs(
+    autonomyService.getClaimOptions().leaseMs ?? 15_000
+  ));
 
   if (typeof intervalHandle.unref === 'function') {
     intervalHandle.unref();
   }
 
   return {
-    stop: () => {
-      if (stopped) {
-        return;
-      }
-
-      stopped = true;
-      clearInterval(intervalHandle);
-    }
+    stop
   };
 }
 
@@ -1036,6 +1491,8 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
   fence: ClaimedJobFence;
   autonomyService: WorkerAutonomyService;
   jobStartedAtMs: number;
+  queuedGptCancellationPrivacy?: QueuedGptCancellationPrivacy | null;
+  allowPreExecutionInputFallback?: boolean;
 }): Promise<boolean> {
   const currentJob = await getJobById(params.job.id);
   if (
@@ -1052,6 +1509,7 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
   return persistClaimedJobCancellation({
     ...params,
     cancellationReason,
+    cancellationRequestedAt: currentJob.cancel_requested_at,
     output: null
   });
 }
@@ -1107,21 +1565,55 @@ async function persistClaimedJobCancellation(params: {
   autonomyService: WorkerAutonomyService;
   jobStartedAtMs: number;
   cancellationReason: string;
+  cancellationRequestedAt?: Date | string | null;
   output: unknown;
+  queuedGptCancellationPrivacy?: QueuedGptCancellationPrivacy | null;
+  allowPreExecutionInputFallback?: boolean;
 }): Promise<boolean> {
+  const queuedGptCancellationPrivacy = params.queuedGptCancellationPrivacy
+    ?? (
+      params.job.job_type === 'gpt' && params.allowPreExecutionInputFallback === true
+        ? await resolvePreExecutionQueuedGptCancellationPrivacy(params.job.input)
+        : null
+    );
+  const cancellationReason = queuedGptCancellationPrivacy === 'protected'
+    ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+    : queuedGptCancellationPrivacy === 'legacy'
+      ? LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+      : params.cancellationReason;
+  const cancellationRequestedAt = (() => {
+    const persistedRequestedAt =
+      params.cancellationRequestedAt ?? params.job.cancel_requested_at;
+    if (persistedRequestedAt) {
+      const parsedRequestedAt = new Date(persistedRequestedAt);
+      if (Number.isFinite(parsedRequestedAt.getTime())) {
+        return parsedRequestedAt.toISOString();
+      }
+    }
+    return new Date().toISOString();
+  })();
   const terminalJob = await updateClaimedJobTerminal(
     params.job.id,
     'cancelled',
     {
       fence: params.fence,
       output: params.output,
-      errorMessage: params.cancellationReason,
+      errorMessage: cancellationReason,
+      autonomyState: queuedGptCancellationPrivacy
+        ? {
+            cancellation: {
+              requested: true,
+              requestedAt: cancellationRequestedAt,
+              reason: cancellationReason,
+            },
+          }
+        : undefined,
       metadata: {
         ...(params.job.job_type === 'gpt'
           ? computeGptJobLifecycleDeadlines('cancelled')
           : { idempotencyUntil: null, retentionUntil: null }),
         cancelRequestedAt: new Date().toISOString(),
-        cancelReason: params.cancellationReason
+        cancelReason: cancellationReason
       }
     }
   );
@@ -1129,7 +1621,10 @@ async function persistClaimedJobCancellation(params: {
     return false;
   }
 
-  await recordCancelledJobCompletion(params);
+  await recordCancelledJobCompletion({
+    ...params,
+    cancellationReason
+  });
   return true;
 }
 
@@ -1410,6 +1905,38 @@ export async function runWorkerConsumerSlot(
         retryCount: job.retry_count ?? 0,
         maxRetries: job.max_retries ?? null
       });
+      let initialHeartbeatJob: Awaited<
+        ReturnType<WorkerAutonomyService['recordHeartbeat']>
+      >;
+      try {
+        initialHeartbeatJob = await autonomyService.recordHeartbeat(job, {
+          source: 'job-start-heartbeat',
+          shouldApplyResult: () => false
+        });
+      } catch (error: unknown) {
+        logger.warn(
+          'worker.job_initial_heartbeat.failed',
+          {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            jobId: job.id
+          },
+          { errorMessage: resolveErrorMessage(error) },
+          error instanceof Error ? error : undefined
+        );
+        await autonomyService.markJobLeaseLost(
+          job.id,
+          'Initial heartbeat failed before provider initialization.'
+        );
+        continue;
+      }
+      if (!initialHeartbeatJob) {
+        await autonomyService.markJobLeaseLost(
+          job.id,
+          'Initial heartbeat fence was lost before provider initialization.'
+        );
+        continue;
+      }
       await autonomyService.markJobStarted(job);
       void recordJobEvent({
         jobId: job.id,
@@ -1450,6 +1977,10 @@ export async function runWorkerConsumerSlot(
       let heartbeatHandle: JobHeartbeatLoopHandle | null = null;
       const jobStartedAtMs = Date.now();
       let jobLeaseLost = false;
+      let jobExecutionStarted = false;
+      const queuedGptExecutionPrivacyState: QueuedGptExecutionPrivacyState = {
+        cancellationPrivacy: null,
+      };
 
       try {
         if (workerProcessShutdownController.signal.aborted) {
@@ -1461,10 +1992,12 @@ export async function runWorkerConsumerSlot(
             { once: true }
           );
         }
-        if (job.cancel_requested_at) {
+        if (job.cancel_requested_at || initialHeartbeatJob.cancel_requested_at) {
           abortClaimedJob(
             'durable_cancellation',
-            job.cancel_reason ?? 'Queue job cancellation requested before execution.'
+            initialHeartbeatJob.cancel_reason
+              ?? job.cancel_reason
+              ?? 'Queue job cancellation requested before execution.'
           );
         }
         heartbeatHandle = startHeartbeatLoop(
@@ -1487,6 +2020,13 @@ export async function runWorkerConsumerSlot(
                 updatedJob.cancel_reason ?? 'Queue job cancellation requested.'
               );
             }
+          },
+          () => {
+            jobLeaseLost = true;
+            abortClaimedJob(
+              'lease_lost',
+              'Queue job lease renewal failed; local execution stopped for recovery.'
+            );
           }
         );
         if (jobLeaseLost) {
@@ -1515,7 +2055,8 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            allowPreExecutionInputFallback: true,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1539,6 +2080,19 @@ export async function runWorkerConsumerSlot(
             source: 'job-runner'
           });
         }
+
+        const protectedBackstageAction = job.job_type === 'gpt'
+          ? resolveProtectedBackstageQueuedGptJobAction(job.input ?? {})
+          : null;
+        const protectedBackstageBudget = protectedBackstageAction
+          ? resolveProtectedBackstageWorkerBudget(protectedBackstageAction)
+          : null;
+        const protectedBackstageOperationDeadlineAt = protectedBackstageBudget
+          ? resolveBackstageWorkerOperationDeadlineAt(
+              job.started_at ?? job.created_at,
+              protectedBackstageBudget
+            )
+          : null;
 
         if (jobLeaseLost) {
           await autonomyService.markJobLeaseLost(
@@ -1566,7 +2120,8 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            allowPreExecutionInputFallback: true,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1581,36 +2136,55 @@ export async function runWorkerConsumerSlot(
             ensuredClientState.pausedUntil,
             runtimeSettings.idleBackoffMs
           );
-          const nowMs = Date.now();
-          if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-            logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+          const deadlineBoundedDelayMs =
+            protectedBackstageOperationDeadlineAt === null
+              ? delayMs
+              : resolveBackstageProviderDeferralDelayMs({
+                  deadlineAt: protectedBackstageOperationDeadlineAt,
+                  requestedDelayMs: delayMs,
+                });
+          if (deadlineBoundedDelayMs === null) {
+            logger.warn('gpt.job.backstage_deadline_prevents_provider_deferral', {
               module: 'job-runner',
               workerId: slotDefinition.workerId,
               jobId: job.id,
-              jobType: job.job_type,
-              nextRetryAt: ensuredClientState.pausedUntil ?? null,
-              providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
-              delayMs,
-              pollingContinues: true
+              action: protectedBackstageAction,
             });
-            lastProviderPauseLogAtMs = nowMs;
-          }
-          const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
-            delayMs,
-            errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
-            providerNextRetryAt: ensuredClientState.pausedUntil,
-            providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
-          });
-          if (deferralResult.action === 'lease_lost') {
-            await finalizeCancellationAfterTerminalCasMiss({
-              job,
-              fence: claimFence,
-              autonomyService,
-              jobStartedAtMs
+          } else {
+            const nowMs = Date.now();
+            if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+              logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+                module: 'job-runner',
+                workerId: slotDefinition.workerId,
+                jobId: job.id,
+                jobType: job.job_type,
+                nextRetryAt: ensuredClientState.pausedUntil ?? null,
+                providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
+                delayMs: deadlineBoundedDelayMs,
+                deadlineGuarded:
+                  protectedBackstageOperationDeadlineAt !== null,
+                pollingContinues: true
+              });
+              lastProviderPauseLogAtMs = nowMs;
+            }
+            const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
+              delayMs: deadlineBoundedDelayMs,
+              errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+              providerNextRetryAt: ensuredClientState.pausedUntil,
+              providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
             });
+            if (deferralResult.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job,
+                fence: claimFence,
+                autonomyService,
+                jobStartedAtMs,
+                allowPreExecutionInputFallback: true,
+              });
+            }
+            await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+            continue;
           }
-          await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
-          continue;
         }
         const queueWaitMs = Math.max(
           0,
@@ -1645,6 +2219,19 @@ export async function runWorkerConsumerSlot(
             },
             async () => {
               //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+              if (
+                job.job_type === 'gpt'
+                && protectedBackstageOperationDeadlineAt !== null
+              ) {
+                jobExecutionStarted = true;
+                return executeQueuedGptRequest({
+                  jobId: job.id,
+                  rawInput: job.input ?? {},
+                  cancellationSignal: jobCancellationController.signal,
+                  startedAt: job.started_at ?? job.created_at,
+                  executionPrivacyState: queuedGptExecutionPrivacyState,
+                });
+              }
               if (!openai) {
                 return {
                   status: 'failed',
@@ -1664,10 +2251,13 @@ export async function runWorkerConsumerSlot(
                 );
               }
               if (job.job_type === 'gpt') {
+                jobExecutionStarted = true;
                 return executeQueuedGptRequest({
                   jobId: job.id,
                   rawInput: job.input ?? {},
-                  cancellationSignal: jobCancellationController.signal
+                  cancellationSignal: jobCancellationController.signal,
+                  startedAt: job.started_at ?? job.created_at,
+                  executionPrivacyState: queuedGptExecutionPrivacyState,
                 });
               }
               return {
@@ -1689,8 +2279,6 @@ export async function runWorkerConsumerSlot(
           }, { aiUsage: aiUsageSummary });
         }
 
-        heartbeatHandle?.stop();
-        heartbeatHandle = null;
         if (jobLeaseLost) {
           logger.warn('worker.job_lease_lost.local_stop', {
             module: 'job-runner',
@@ -1782,7 +2370,9 @@ export async function runWorkerConsumerSlot(
               job,
               fence: claimFence,
               autonomyService,
-              jobStartedAtMs
+              jobStartedAtMs,
+              queuedGptCancellationPrivacy:
+                queuedGptExecutionPrivacyState.cancellationPrivacy,
             })
           ) {
             continue;
@@ -1844,7 +2434,10 @@ export async function runWorkerConsumerSlot(
           autonomyService,
           jobStartedAtMs,
           cancellationReason,
-          output: outcome.output
+          cancellationRequestedAt: latestJobBeforeTerminal.cancel_requested_at,
+          output: outcome.output,
+          queuedGptCancellationPrivacy:
+            queuedGptExecutionPrivacyState.cancellationPrivacy,
         })) {
           await autonomyService.markJobLeaseLost(
             job.id,
@@ -1864,7 +2457,9 @@ export async function runWorkerConsumerSlot(
             job,
             fence: claimFence,
             autonomyService,
-            jobStartedAtMs
+            jobStartedAtMs,
+            queuedGptCancellationPrivacy:
+              queuedGptExecutionPrivacyState.cancellationPrivacy,
           });
           continue;
         }
@@ -1904,8 +2499,6 @@ export async function runWorkerConsumerSlot(
         }
         }
       } catch (error: unknown) {
-        heartbeatHandle?.stop();
-        heartbeatHandle = null;
         if (jobLeaseLost) {
           logger.warn('worker.job_lease_lost.local_stop', {
             module: 'job-runner',
@@ -1948,7 +2541,10 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            queuedGptCancellationPrivacy:
+              queuedGptExecutionPrivacyState.cancellationPrivacy,
+            allowPreExecutionInputFallback: !jobExecutionStarted,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1983,7 +2579,10 @@ export async function runWorkerConsumerSlot(
           job,
           fence: claimFence,
           autonomyService,
-          jobStartedAtMs
+          jobStartedAtMs,
+          queuedGptCancellationPrivacy:
+            queuedGptExecutionPrivacyState.cancellationPrivacy,
+          allowPreExecutionInputFallback: !jobExecutionStarted,
         });
         continue;
       }

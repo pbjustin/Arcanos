@@ -65,20 +65,25 @@ describe('openai adapter', () => {
     const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
     const signal = new AbortController().signal;
     const headers = { 'x-request-id': 'req_1' };
+    const timeout = 42_000;
 
     await adapter.responses.create(
       {
         model: 'gpt-4.1-mini',
         messages: [{ role: 'user', content: 'hello' }],
       } as any,
-      { signal, headers }
+      { signal, headers, timeout }
     );
 
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
     expect(responsesCreateMock.mock.calls[0][0]).toEqual(
       expect.objectContaining({ model: 'gpt-4.1-mini' })
     );
-    expect(responsesCreateMock.mock.calls[0][1]).toEqual({ signal, headers });
+    expect(responsesCreateMock.mock.calls[0][1]).toEqual({
+      signal,
+      headers,
+      timeout,
+    });
   });
 
   it('preserves Responses incomplete metadata when converting adapter chat results', async () => {

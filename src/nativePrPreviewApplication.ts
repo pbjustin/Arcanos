@@ -2239,6 +2239,7 @@ async function runBackstageRouteBudgetFixture(
     model: 'native-pr-preview-synthetic',
     tokenLimit: 512,
     userIntentPrompt: 'sealed synthetic provider delay',
+    watchdogTimeoutMs: routeTimeoutMs,
     modelStageTimeoutMs: generationStageTimeoutMs,
   });
   if (
@@ -2252,6 +2253,7 @@ async function runBackstageRouteBudgetFixture(
       !== BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX
     || trinityRunOptions.directAnswerUserIntentPrompt
       !== 'sealed synthetic provider delay'
+    || trinityRunOptions.watchdogModelTimeoutMs !== routeTimeoutMs
     || trinityRunOptions.modelStageTimeoutMs !== generationStageTimeoutMs
   ) {
     throw new Error('PREVIEW_BACKSTAGE_TRINITY_RUN_OPTIONS_INVALID');
@@ -3009,6 +3011,7 @@ function runBackstageContinuityQueryFixture(
     model: 'native-pr-preview-synthetic',
     tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
     userIntentPrompt: query,
+    watchdogTimeoutMs: BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
     modelStageTimeoutMs: BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   });
   const cursor = 'eyJ2IjoyLCJmaXh0dXJlIjoic2VhbGVkLXByZXZpZXcifQ';

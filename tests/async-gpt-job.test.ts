@@ -1,15 +1,33 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterAll, describe, expect, it } from '@jest/globals';
 import {
+  buildProtectedBackstageQueuedGptJobInput,
   buildQueuedGptBackstageMutationAdmission,
   buildQueuedGptJobInput,
-  parseQueuedGptJobInput
+  isQueuedGptJobCancellationPrivacySensitive,
+  parseQueuedGptJobInput,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
 } from '../src/shared/gpt/asyncGptJob.js';
+import {
+  protectBackstageQueuedGptJobOutput,
+  unprotectBackstageQueuedGptJobOutput,
+} from '../src/shared/backstage/backstageQueuedJobResultProtection.js';
 import {
   GPT_HEALTH_ECHO_ACTION,
   isQueuedBridgeSmokeJobInput
 } from '../src/shared/gpt/bridgeSmoke.js';
 
 describe('async GPT job payload helpers', () => {
+  const originalPayloadKey = process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+
+  afterAll(() => {
+    if (originalPayloadKey === undefined) {
+      delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+    } else {
+      process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = originalPayloadKey;
+    }
+  });
+
   it('bounds route metadata to the worker parser contract', () => {
     const longValue = 'x'.repeat(129);
 
@@ -27,6 +45,99 @@ describe('async GPT job payload helpers', () => {
     expect(payload.traceId).toHaveLength(128);
     expect(payload.correlationId).toHaveLength(128);
     expect(parseQueuedGptJobInput(payload).ok).toBe(true);
+  });
+
+  it('marks current producers without upgrading marker-absent legacy rows', () => {
+    const current = buildQueuedGptJobInput({
+      gptId: 'backstage-booker',
+      body: { action: 'generateBooking' },
+    });
+    expect(current.producerContract).toEqual({
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    });
+    expect(parseQueuedGptJobInput(current)).toMatchObject({
+      ok: true,
+      value: { producerContract: current.producerContract },
+    });
+
+    const parsedLegacy = parseQueuedGptJobInput({
+      gptId: 'backstage-booker',
+      body: { action: 'generateBooking' },
+    });
+    expect(parsedLegacy).toMatchObject({ ok: true });
+    if (parsedLegacy.ok) {
+      expect(parsedLegacy.value.producerContract).toBeUndefined();
+    }
+  });
+
+  it('rejects malformed or unsupported producer contracts before legacy fallback', () => {
+    for (const producerContract of [
+      { version: 2, source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE },
+      { version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION, source: 'caller' },
+      { version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION },
+      {
+        version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+        source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+        extra: true,
+      },
+      null,
+      'queued-gpt-runtime',
+    ]) {
+      expect(parseQueuedGptJobInput({
+        gptId: 'backstage-booker',
+        body: { action: 'generateBooking' },
+        producerContract,
+      })).toMatchObject({ ok: false });
+    }
+  });
+
+  it('fails stale-cancellation privacy classification closed except for the exact current producer marker', () => {
+    const currentProducerContract = {
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    };
+
+    expect(isQueuedGptJobCancellationPrivacySensitive({
+      producerContract: currentProducerContract,
+    })).toBe(false);
+    expect(isQueuedGptJobCancellationPrivacySensitive({
+      producerContract: currentProducerContract,
+      protectedBackstage: undefined,
+    })).toBe(true);
+
+    for (const rawInput of [
+      undefined,
+      null,
+      'queued-gpt-runtime',
+      1,
+      [],
+      {},
+      { producerContract: null },
+      { producerContract: currentProducerContract, protectedBackstage: {} },
+      {
+        producerContract: {
+          ...currentProducerContract,
+          extra: true,
+        },
+      },
+    ]) {
+      expect(isQueuedGptJobCancellationPrivacySensitive(rawInput)).toBe(true);
+    }
+
+    const inheritedProducerContract = Object.create({
+      producerContract: currentProducerContract,
+    }) as Record<string, unknown>;
+    expect(isQueuedGptJobCancellationPrivacySensitive(inheritedProducerContract)).toBe(true);
+
+    const throwingProducerContract = {} as Record<string, unknown>;
+    Object.defineProperty(throwingProducerContract, 'producerContract', {
+      enumerable: true,
+      get: () => {
+        throw new Error('untrusted producer marker getter');
+      },
+    });
+    expect(isQueuedGptJobCancellationPrivacySensitive(throwingProducerContract)).toBe(true);
   });
 
   it('recognizes only queued jobs with a supported bridge smoke action', () => {
@@ -84,4 +195,263 @@ describe('async GPT job payload helpers', () => {
       },
     });
   });
+
+  it('persists private Booker input and output only as authenticated ciphertext', () => {
+    const privatePrompt = 'private-booking-prompt-sentinel';
+    const privateResult = 'private-booking-result-sentinel';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x42).toString('base64');
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-protected-booker',
+      traceId: 'trace-protected-booker',
+      correlationId: 'trace-protected-booker',
+      executionModeReason: 'backstage_notion_authority_context',
+    });
+
+    expect(JSON.stringify(queuedInput)).not.toContain(privatePrompt);
+    expect(queuedInput).not.toHaveProperty('body');
+    expect(queuedInput).not.toHaveProperty('prompt');
+    expect(queuedInput).not.toHaveProperty('producerContract');
+    expect(parseQueuedGptJobInput(queuedInput)).toMatchObject({
+      ok: true,
+      value: {
+        body: {
+          action: 'generateBooking',
+          payload: { universeId: 'my-universe-2k26', prompt: privatePrompt },
+        },
+        prompt: privatePrompt,
+        requestId: 'request-protected-booker',
+        traceId: 'trace-protected-booker',
+        protectedBackstage: {
+          action: 'generateBooking',
+          universeId: 'my-universe-2k26',
+          notionEnrichmentAuthorized: true,
+        },
+      },
+    });
+
+    const protectedOutput = protectBackstageQueuedGptJobOutput({
+      jobId: '11111111-1111-4111-8111-111111111111',
+      rawInput: queuedInput,
+      output: { ok: true, result: privateResult },
+    });
+    expect(JSON.stringify(protectedOutput)).not.toContain(privateResult);
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '11111111-1111-4111-8111-111111111111',
+      rawInput: queuedInput,
+      output: protectedOutput,
+    })).toEqual({ ok: true, result: privateResult });
+  });
+
+  it('fails a tampered protected Booker input without reflecting ciphertext', () => {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x43).toString('base64');
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: { action: 'generateBooking', payload: { prompt: 'private-input' } },
+      prompt: 'private-input',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    const serialized = JSON.parse(JSON.stringify(queuedInput)) as typeof queuedInput;
+    serialized.protectedBackstage.sealedPayload.ciphertext =
+      `${serialized.protectedBackstage.sealedPayload.ciphertext.slice(0, -4)}AAAA`;
+
+    const parsed = parseQueuedGptJobInput(serialized);
+    expect(parsed).toMatchObject({ ok: false });
+    expect(JSON.stringify(parsed)).not.toContain(
+      serialized.protectedBackstage.sealedPayload.ciphertext
+    );
+  });
+
+  it('binds the protected descriptor to the executed action and universe', () => {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x44).toString('base64');
+
+    expect(() => buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBookingWithHRC',
+        payload: { universeId: 'my-universe-2k26' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    })).toThrow('Backstage job payload identity is invalid.');
+    expect(() => buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'other-universe' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    })).toThrow('Backstage job payload identity is invalid.');
+    expect(() => buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: { action: 'generateBooking', payload: {} },
+      universeId: '../my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    })).toThrow('Backstage job payload identity is invalid.');
+
+    const queuedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: { action: 'generateBooking', payload: { prompt: 'private-input' } },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    expect(parseQueuedGptJobInput(queuedInput)).toMatchObject({
+      ok: true,
+      value: {
+        body: {
+          action: 'generateBooking',
+          payload: {
+            prompt: 'private-input',
+            universeId: 'my-universe-2k26',
+          },
+        },
+        protectedBackstage: {
+          action: 'generateBooking',
+          universeId: 'my-universe-2k26',
+        },
+      },
+    });
+
+    const defaultedActionInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: { payload: { prompt: 'private-defaulted-input' } },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+    });
+    expect(parseQueuedGptJobInput(defaultedActionInput)).toMatchObject({
+      ok: true,
+      value: {
+        body: {
+          action: 'generateBooking',
+          payload: {
+            prompt: 'private-defaulted-input',
+            universeId: 'my-universe-2k26',
+          },
+        },
+        protectedBackstage: {
+          action: 'generateBooking',
+          universeId: 'my-universe-2k26',
+          notionEnrichmentAuthorized: false,
+        },
+      },
+    });
+
+    const canonicalizedActionInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: ' GENERATEBOOKING ',
+        payload: { prompt: 'private-canonicalized-input' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    expect(parseQueuedGptJobInput(canonicalizedActionInput)).toMatchObject({
+      ok: true,
+      value: {
+        body: { action: 'generateBooking' },
+        protectedBackstage: { action: 'generateBooking' },
+      },
+    });
+
+    const nestedActionInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: [null, ['', ['generateBooking']]],
+        payload: { prompt: 'private-nested-action-input' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+    });
+    expect(parseQueuedGptJobInput(nestedActionInput)).toMatchObject({
+      ok: true,
+      value: {
+        body: { action: 'generateBooking' },
+        protectedBackstage: {
+          action: 'generateBooking',
+          notionEnrichmentAuthorized: false,
+        },
+      },
+    });
+
+    const payloadAliasInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: null,
+        payload: {
+          action: ['', ['generateBooking']],
+          prompt: 'private-payload-action-input',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+    });
+    expect(parseQueuedGptJobInput(payloadAliasInput)).toMatchObject({
+      ok: true,
+      value: { body: { action: 'generateBooking' } },
+    });
+
+    expect(() => buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          action: 'generateBookingWithHRC',
+          prompt: 'private-conflicting-action-input',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: false,
+    })).toThrow(expect.objectContaining({
+      code: 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID',
+    }));
+  });
+
+  it.each([false, true])(
+    'never downgrades a malformed protected marker to the plaintext job schema (producer marker: %s)',
+    (includeProducerContract) => {
+    const privatePrompt = 'private-malformed-protected-fallback-sentinel';
+    const parsed = parseQueuedGptJobInput({
+      gptId: 'backstage-booker',
+      protectedBackstage: {
+        version: 99,
+        source: 'backstage-booker-http',
+        ciphertext: 'private-ciphertext-sentinel',
+      },
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: privatePrompt },
+      },
+      ...(includeProducerContract
+        ? {
+            producerContract: {
+              version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+              source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+            },
+          }
+        : {}),
+    });
+
+    expect(parsed).toEqual({
+      ok: false,
+      error: 'Protected Backstage job payload is invalid.',
+    });
+    expect(JSON.stringify(parsed)).not.toContain(privatePrompt);
+    expect(JSON.stringify(parsed)).not.toContain('private-ciphertext-sentinel');
+    }
+  );
 });

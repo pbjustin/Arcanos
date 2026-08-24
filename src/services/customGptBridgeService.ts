@@ -49,6 +49,11 @@ import {
   isResearchRequestValidationError,
   normalizeResearchModulePayload,
 } from '@shared/researchRequest.js';
+import {
+  BACKSTAGE_MODULE_NAME,
+  isBackstageGptRoute,
+} from '@shared/backstage/backstageActionPolicy.js';
+import { detectBackstageBookerIntent } from './backstageBookerRouteShortcut.js';
 
 export type BridgeErrorSource = 'routing' | 'queue' | 'worker' | 'provider' | 'timeout' | 'auth';
 
@@ -773,6 +778,39 @@ export async function executeCustomGptBridgeRequest(
           source: 'routing',
           status: 'invalid_request',
           message: error.message,
+          requestId: input.requestId,
+        }),
+      };
+    }
+  }
+
+  if (!isGptBridgeSmokeAction(input.request.action)) {
+    let targetModule: string | null = isBackstageGptRoute(input.request.gptId)
+      ? BACKSTAGE_MODULE_NAME
+      : input.request.gptId.trim().toLowerCase() === 'arcanos-core'
+        ? 'ARCANOS:CORE'
+        : null;
+    try {
+      const { getGptModuleMap } = await import('@platform/runtime/gptRouterConfig.js');
+      const gptModuleMap = await getGptModuleMap();
+      targetModule = (
+        gptModuleMap[input.request.gptId]
+        ?? gptModuleMap[input.request.gptId.trim().toLowerCase()]
+      )?.module ?? targetModule;
+    } catch {
+      // The normal queue path retains its established routing error handling.
+    }
+    if (
+      (targetModule === BACKSTAGE_MODULE_NAME || targetModule === 'ARCANOS:CORE')
+      && detectBackstageBookerIntent(input.request.rawPrompt ?? input.request.prompt) !== null
+    ) {
+      return {
+        statusCode: 400,
+        errorSource: 'routing',
+        body: buildBridgeErrorPayload({
+          source: 'routing',
+          status: 'invalid_request',
+          message: 'Job-backed booking generation requires the canonical Backstage Booker route.',
           requestId: input.requestId,
         }),
       };

@@ -44,12 +44,14 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-Builder schema `1.4.0` declares this credential on `runBackstageBooker` as well
+Builder schema `1.5.0` declares this credential on `runBackstageBooker` as well
 as the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
-`POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
-trailing-slash aliases. Both reads are non-consequential and expose no list or
+`POST /gpt-access/capabilities/v1/backstage-booker/run` write, and the existing
+capability-protected `GET /jobs/{jobId}/result` read used after an accepted
+heavy generation, with no trailing-slash aliases. The three reads are
+non-consequential and expose no list or
 display-name lookup. They return a bounded PostgreSQL snapshot with explicit
 truncation metadata or a fixed 4,000-code-point, version-fenced full-summary
 page; neither falls back to process memory. An ID with no stored rows returns
@@ -66,13 +68,14 @@ authority-mode queries and generation fail closed without verified provenance.
 
 The legacy supplement requires separate outbound
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values
-on the web service. It reads at most three fixed Notion page UUIDs, fails open
+on each service that executes generation: web for synchronous rollback and the
+dedicated worker for queued heavy generation. It reads at most three fixed
+Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
-send it inbound. In this legacy supplement mode it stays on web and never goes
-to a worker. The operation count is unchanged, but schema `1.4.0` must be
-re-imported because it declares the bearer, materializes nested public payload
-fields, and advertises authority-specific errors.
+send it inbound. Schema `1.5.0` has five operations and must be re-imported
+because it adds the protected async-result read while retaining the bearer,
+nested public payload fields, and authority-specific errors.
 
 Notion-authority mode is separate. Configure the exact closed
 `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` value on web and worker and put
@@ -100,7 +103,7 @@ bound to the exact request, scope kind, and active snapshot. Invalid, stale, or
 differently bound cursors return nonretryable
 `409 BACKSTAGE_NOTION_CURSOR_INVALID` and must be replaced by restarting the
 scoped read without a cursor. Version-2 cursors are invalid after the 1.4.0
-rollout. Deploy the backend before re-importing schema 1.4.0 into the existing
+rollout. Deploy the backend before re-importing schema 1.5.0 into the existing
 Builder Action. Snapshots that
 predate the current heading index also fail closed until the worker rebuilds
 and activates a compatible snapshot.

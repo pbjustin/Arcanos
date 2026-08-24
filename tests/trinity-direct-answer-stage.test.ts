@@ -144,6 +144,39 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
+  it('preserves cooperative worker abort provenance at the provider boundary', async () => {
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete queued booking.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete queued wrestling show.',
+      undefined,
+      createRuntimeBudgetWithLimit(120_000, 0),
+      'trinity_req_cooperative_worker',
+      'gpt-5.1',
+      1_200,
+      80_000,
+      false,
+      1_200,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    const providerParams = createSingleChatCompletionMock.mock.calls[0]?.[1] as
+      Record<string, unknown>;
+    expect(providerParams.preserveAggregateAbortContext).toBe(true);
+    expect(providerParams.signal).toBeInstanceOf(AbortSignal);
+    expect(providerParams).not.toHaveProperty('timeoutMs');
+  });
+
   it('keeps ordinary direct-answer requests under Trinity\'s 1,200-token cap', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit
@@ -175,7 +208,7 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
-  it('honors a trusted direct-answer cap exception without exceeding 2,400 tokens', async () => {
+  it('honors a trusted workload-selected direct-answer cap above 2,400 tokens', async () => {
     getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
       max_completion_tokens: tokenLimit
     }));
@@ -193,18 +226,52 @@ describe('runDirectAnswerStage', () => {
       undefined,
       'trinity_req_extended_cap',
       'gpt-5.1',
-      5_000,
+      6_000,
       undefined,
       false,
-      5_000
+      6_000
     );
 
-    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 2_400);
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 6_000);
     expect(loggerInfoMock).toHaveBeenCalledWith(
       'trinity.direct_answer.execution_plan',
       expect.objectContaining({
-        tokenLimit: 2_400,
-        tokenCapApplied: 2_400
+        tokenLimit: 6_000,
+        tokenCapApplied: 6_000
+      })
+    );
+  });
+
+  it('never lets a trusted direct-answer exception exceed 8,000 tokens', async () => {
+    getTokenParameterMock.mockImplementation((_model: string, tokenLimit: number) => ({
+      max_completion_tokens: tokenLimit
+    }));
+    createSingleChatCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Complete bounded booking output.' }, finish_reason: 'stop' }],
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false
+    });
+
+    await runDirectAnswerStage(
+      {} as never,
+      'No relevant memory context is available.',
+      'Build a complete extended wrestling show.',
+      undefined,
+      undefined,
+      'trinity_req_global_cap',
+      'gpt-5.1',
+      99_999,
+      undefined,
+      false,
+      99_999
+    );
+
+    expect(getTokenParameterMock).toHaveBeenCalledWith('gpt-5.1', 8_000);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.direct_answer.execution_plan',
+      expect.objectContaining({
+        tokenLimit: 8_000,
+        tokenCapApplied: 8_000
       })
     );
   });

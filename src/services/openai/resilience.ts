@@ -32,6 +32,15 @@ export interface ResilienceExecutionOptions {
   redactErrorDetails?: boolean;
 }
 
+/** Record caller cancellation that is rejected before breaker admission. */
+export function recordOpenAICancellationBeforeAdmission(): void {
+  markOperation('openai.cancelled');
+  recordTraceEvent('openai.resilience.cancelled', {
+    state: circuitBreaker.getState(),
+    phase: 'pre_admission',
+  });
+}
+
 export async function executeWithResilience<T>(
   operation: () => Promise<T>,
   executionOptions: ResilienceExecutionOptions = {}
@@ -49,13 +58,26 @@ export async function executeWithResilience<T>(
       });
       return result;
     } catch (error: unknown) {
-      markOperation('openai.failure');
-      recordTraceEvent('openai.resilience.failure', {
-        state: circuitBreaker.getState(),
-        error: executionOptions.redactErrorDetails
-          ? 'Sensitive-context provider request failed.'
-          : resolveErrorMessage(error, 'unknown')
-      });
+      let shouldCountFailure = true;
+      try {
+        shouldCountFailure = executionOptions.shouldCountFailure?.(error) ?? true;
+      } catch {
+        // Classification failures remain provider failures, matching the breaker.
+      }
+      if (shouldCountFailure) {
+        markOperation('openai.failure');
+        recordTraceEvent('openai.resilience.failure', {
+          state: circuitBreaker.getState(),
+          error: executionOptions.redactErrorDetails
+            ? 'Sensitive-context provider request failed.'
+            : resolveErrorMessage(error, 'unknown')
+        });
+      } else {
+        markOperation('openai.cancelled');
+        recordTraceEvent('openai.resilience.cancelled', {
+          state: circuitBreaker.getState(),
+        });
+      }
       throw error;
     }
   }, executionOptions);

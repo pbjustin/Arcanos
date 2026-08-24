@@ -2,6 +2,50 @@ import type { JobData } from '@core/db/schema.js';
 
 const GPT_RESULT_REUSE_AUTONOMY_KEY = 'gptResultReuse';
 
+export const QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION = 1;
+export const QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE = 'queued-gpt-runtime';
+
+/**
+ * Fail closed when cancellation handling cannot prove that a GPT row came
+ * from the current server-owned queue producer.
+ */
+export function isQueuedGptJobCancellationPrivacySensitive(rawInput: unknown): boolean {
+  try {
+    if (
+      typeof rawInput !== 'object'
+      || rawInput === null
+      || Array.isArray(rawInput)
+    ) {
+      return true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(rawInput, 'protectedBackstage')) {
+      return true;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rawInput, 'producerContract')) {
+      return true;
+    }
+
+    const producerContract = (rawInput as Record<string, unknown>).producerContract;
+    if (
+      typeof producerContract !== 'object'
+      || producerContract === null
+      || Array.isArray(producerContract)
+      || Object.keys(producerContract).length !== 2
+      || !Object.prototype.hasOwnProperty.call(producerContract, 'version')
+      || !Object.prototype.hasOwnProperty.call(producerContract, 'source')
+    ) {
+      return true;
+    }
+
+    const producerContractRecord = producerContract as Record<string, unknown>;
+    return producerContractRecord.version !== QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION
+      || producerContractRecord.source !== QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE;
+  } catch {
+    return true;
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

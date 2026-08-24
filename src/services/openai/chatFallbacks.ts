@@ -8,7 +8,10 @@ import {
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
-import { executeWithResilience } from './resilience.js';
+import {
+  executeWithResilience,
+  recordOpenAICancellationBeforeAdmission,
+} from './resilience.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
@@ -45,12 +48,10 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   redactErrorDetails?: boolean;
 };
 
-function resolvePreservedAggregateSignal(
+function resolveCompletionCancellationSignal(
   params: Pick<ChatCompletionParams, 'preserveAggregateAbortContext' | 'signal'>
 ): AbortSignal | undefined {
-  return params.preserveAggregateAbortContext
-    ? params.signal ?? getRequestAbortSignal()
-    : undefined;
+  return params.signal ?? getRequestAbortSignal();
 }
 
 function shouldCountCompletionFailure(
@@ -97,10 +98,10 @@ function resolveChatAbortReason(signal: AbortSignal): Error {
   return normalizedReason;
 }
 
-async function createResponsesWithBoundary(
+function createResponsesWithBoundary(
   clientOrAdapter: OpenAI | OpenAIAdapter,
   requestPayload: ReturnType<typeof buildResponsesRequest>,
-  options: { signal?: AbortSignal }
+  options: { signal?: AbortSignal; timeout?: number }
 ): Promise<any> {
   if (isOpenAIAdapter(clientOrAdapter)) {
     return clientOrAdapter.responses.create(requestPayload, options);
@@ -111,6 +112,42 @@ async function createResponsesWithBoundary(
     normalizeResponsesCreateParams(requestPayload as ResponseCreateParamsNonStreaming),
     options
   );
+}
+
+function awaitResponsesWithAbortProvenance<T>(
+  createProviderRequest: () => Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => queueMicrotask(() => {
+      settle(() => reject(resolveChatAbortReason(signal)));
+    });
+
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      createProviderRequest().then(
+        response => settle(() => resolve(response)),
+        error => settle(() => reject(error))
+      );
+    } catch (error: unknown) {
+      settle(() => reject(error));
+    }
+  });
 }
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
@@ -330,25 +367,18 @@ const executeChatCompletionRequest = async (
       : Math.max(1, Math.min(configuredTimeoutMs, remainingRequestMs));
 
   if (payload.preserveAggregateAbortContext && requestSignal) {
-    try {
-      if (requestSignal?.aborted) {
-        throw resolveChatAbortReason(requestSignal);
-      }
-      const response = await createResponsesWithBoundary(
-        clientOrAdapter,
-        requestPayload,
-        { signal: requestSignal }
-      );
-      if (requestSignal?.aborted) {
-        throw resolveChatAbortReason(requestSignal);
-      }
-      return convertResponseToLegacyChatCompletion(response, payload.model);
-    } catch (error: unknown) {
-      if (requestSignal?.aborted) {
-        throw resolveChatAbortReason(requestSignal);
-      }
-      throw error;
+    if (requestSignal.aborted) {
+      throw resolveChatAbortReason(requestSignal);
     }
+    const response = await awaitResponsesWithAbortProvenance(
+      () => createResponsesWithBoundary(
+          clientOrAdapter,
+          requestPayload,
+          { signal: requestSignal }
+        ),
+      requestSignal
+    );
+    return convertResponseToLegacyChatCompletion(response, payload.model);
   }
 
   const requestScope = createLinkedAbortController({
@@ -358,7 +388,13 @@ const executeChatCompletionRequest = async (
   });
   try {
     //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: enforce adapter validation before any raw-client fallback.
-    const response = await createResponsesWithBoundary(clientOrAdapter, requestPayload, { signal: requestScope.signal });
+    const response = await awaitResponsesWithAbortProvenance(
+      () => createResponsesWithBoundary(clientOrAdapter, requestPayload, {
+          signal: requestScope.signal,
+          timeout: requestTimeoutMs,
+        }),
+      requestScope.signal,
+    );
 
     return convertResponseToLegacyChatCompletion(response, payload.model);
   } finally {
@@ -373,7 +409,11 @@ async function attemptModelCall(
   logPrefix: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
   const startedAt = Date.now();
-  const aggregateSignal = resolvePreservedAggregateSignal(params);
+  const aggregateSignal = resolveCompletionCancellationSignal(params);
+  if (aggregateSignal?.aborted) {
+    recordOpenAICancellationBeforeAdmission();
+    throw resolveChatAbortReason(aggregateSignal);
+  }
   aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
   const response = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, {
@@ -410,7 +450,11 @@ async function attemptGPT5Call(
     model: gpt5Model,
     ...tokenParams,
   }) as ChatCompletionParams & { model: string };
-  const aggregateSignal = resolvePreservedAggregateSignal(gpt5Payload);
+  const aggregateSignal = resolveCompletionCancellationSignal(gpt5Payload);
+  if (aggregateSignal?.aborted) {
+    recordOpenAICancellationBeforeAdmission();
+    throw resolveChatAbortReason(aggregateSignal);
+  }
 
   const response = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, gpt5Payload),

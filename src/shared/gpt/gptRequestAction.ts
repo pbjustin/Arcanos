@@ -6,6 +6,7 @@ import {
 } from '@shared/gpt/messageContentText.js';
 import { extractDiagnosticTextInput } from '@shared/http/diagnosticRequest.js';
 import { isRecord } from '@shared/typeGuards.js';
+import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import {
   GPT_GET_RESULT_ACTION,
   GPT_GET_STATUS_ACTION,
@@ -24,6 +25,108 @@ const DISPATCH_PROMPT_ALIAS_KEYS = [
   'query',
   'messages',
 ] as const;
+const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
+  ...DISPATCH_PROMPT_ALIAS_KEYS,
+  'sessionId',
+  'mode',
+  'game',
+  'url',
+  'urls',
+  'guideUrl',
+  'guideUrls',
+  'audit',
+  'enableAudit',
+  'hrc',
+  'enableHrc',
+  'overrideAuditSafe',
+  'answerMode',
+  'maxWords',
+  'max_words',
+  '__arcanosExecutionMode',
+  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
+] as const;
+const DISPATCH_PROMPT_ALIAS_KEY_SET = new Set<string>(DISPATCH_PROMPT_ALIAS_KEYS);
+
+export interface GptDispatchPayloadProvenanceAdapter {
+  markExplicitPayload(
+    payload: Record<string, unknown>,
+    explicitFields: readonly string[]
+  ): void;
+  markFlattenedPayload(payload: Record<string, unknown>): void;
+}
+
+function mergeForwardedTopLevelPayloadFields(
+  body: Record<string, unknown>,
+  explicitPayload: Record<string, unknown>
+): Record<string, unknown> {
+  const mergedPayload = { ...explicitPayload };
+  const explicitPayloadHasPromptAlias = DISPATCH_PROMPT_ALIAS_KEYS.some(
+    (key) => Object.prototype.hasOwnProperty.call(explicitPayload, key)
+  );
+
+  for (const key of FORWARDED_TOP_LEVEL_PAYLOAD_KEYS) {
+    if (explicitPayloadHasPromptAlias && DISPATCH_PROMPT_ALIAS_KEY_SET.has(key)) {
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mergedPayload, key)) {
+      continue;
+    }
+
+    const forwardedValue = body[key];
+    if (forwardedValue !== undefined) {
+      mergedPayload[key] = forwardedValue;
+    }
+  }
+
+  return mergedPayload;
+}
+
+/** Build the exact payload consumed by GPT module action adapters. */
+export function buildGptDispatchPayload(
+  body: unknown,
+  promptOverride?: { promptText: string | null },
+  provenanceAdapter?: GptDispatchPayloadProvenanceAdapter
+): unknown {
+  if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, 'payload')) {
+    const explicitPayload = body.payload;
+    if (isRecord(explicitPayload)) {
+      const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
+      delete sanitizedPayload.gptId;
+      if (provenanceAdapter) {
+        if (
+          !Object.prototype.hasOwnProperty.call(sanitizedPayload, 'universeId')
+          && body.universeId !== undefined
+        ) {
+          sanitizedPayload.universeId = body.universeId;
+        }
+        provenanceAdapter.markExplicitPayload(sanitizedPayload, Object.keys(explicitPayload));
+      }
+      return sanitizedPayload;
+    }
+    return explicitPayload;
+  }
+
+  const prompt = promptOverride
+    ? promptOverride.promptText
+    : extractDispatcherPromptText(body);
+
+  if (isRecord(body)) {
+    const normalizedPayload = { ...body };
+    delete normalizedPayload.gptId;
+    if (prompt) {
+      normalizedPayload.prompt = prompt;
+    }
+    provenanceAdapter?.markFlattenedPayload(normalizedPayload);
+    return normalizedPayload;
+  }
+
+  if (typeof prompt === 'string' && prompt.length > 0) {
+    return { prompt };
+  }
+
+  return body;
+}
 
 function readFirstNonEmptyString(value: unknown): string | null {
   const frames: Array<{ values: unknown[]; nextIndex: number; depth: number }> = [];
@@ -200,29 +303,10 @@ export function extractGptDispatchPromptText(body: unknown): string | null {
     return null;
   }
 
-  let dispatchPayload: unknown = normalizedBody;
-  if (Object.prototype.hasOwnProperty.call(normalizedBody, 'payload')) {
-    const explicitPayload = normalizedBody.payload;
-    if (isRecord(explicitPayload)) {
-      const mergedPayload: Record<string, unknown> = { ...explicitPayload };
-      const explicitPayloadHasPromptAlias = DISPATCH_PROMPT_ALIAS_KEYS.some(
-        (key) => Object.prototype.hasOwnProperty.call(explicitPayload, key)
-      );
-      if (!explicitPayloadHasPromptAlias) {
-        for (const key of DISPATCH_PROMPT_ALIAS_KEYS) {
-          const forwardedValue = normalizedBody[key];
-          if (forwardedValue !== undefined) {
-            mergedPayload[key] = forwardedValue;
-          }
-        }
-      }
-      dispatchPayload = mergedPayload;
-    } else {
-      dispatchPayload = explicitPayload;
-    }
-  }
-
-  return extractPreparedGptDispatchPromptText(normalizedBody, dispatchPayload);
+  return extractPreparedGptDispatchPromptText(
+    normalizedBody,
+    buildGptDispatchPayload(normalizedBody)
+  );
 }
 
 export function extractGptPromptTextFromRequest(req: Request): string | null {

@@ -20,6 +20,11 @@ class MockJobRepositoryUnavailableError extends Error {}
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
+  claimNextPendingJob: jest.fn(),
+  createClaimedJobFence: jest.fn(),
+  createJob: jest.fn(),
+  deferJobForProviderRecovery: jest.fn(),
+  failPendingJobIfUnclaimed: jest.fn(),
   findOrCreateGptJob: async (...args: unknown[]) => {
     const result = await findOrCreateGptJobMock(...args);
     if (!result?.job) {
@@ -47,7 +52,16 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
         }
       : job;
   },
+  getJobExecutionStatsSince: jest.fn(),
+  getLatestJob: jest.fn(),
+  getJobQueueSummary: jest.fn(),
+  normalizeJobClaimGeneration: jest.fn(),
+  recordJobHeartbeat: jest.fn(),
+  recoverStaleJobs: jest.fn(),
   requestJobCancellation: requestJobCancellationMock,
+  scheduleJobRetry: jest.fn(),
+  updateClaimedJobTerminal: jest.fn(),
+  updateJob: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({

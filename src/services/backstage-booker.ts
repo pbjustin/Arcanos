@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { createAbortError, getRequestRemainingMs } from '@arcanos/runtime';
 import {
   DEFAULT_BACKSTAGE_UNIVERSE_ID,
   assertValidBackstageBookerActionData,
@@ -23,6 +24,8 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
+import { detectTier } from '@core/logic/trinityTier.js';
 import { getGPT5Model } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
@@ -65,7 +68,11 @@ import {
   buildBackstageNotionUntrustedContextPrompt,
 } from '@shared/backstage/backstageNotionContextCore.js';
 import { loadBackstageNotionPromptContext } from './backstageNotionContext.js';
-import { wasBackstageNotionEnrichmentUsed } from './backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageLegacyQueuedExecution,
+  isBackstageProtectedQueuedExecution,
+  wasBackstageNotionEnrichmentUsed,
+} from './backstageNotionEnrichmentAuthorization.js';
 import {
   isBackstageNotionAuthorityDatabaseError,
   isBackstageNotionAuthorityEnforced,
@@ -73,11 +80,15 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
   BackstageNotionIndexUnavailableError,
-  retrieveBackstageNotionRagContext,
+  retrieveBackstageNotionBookingRagContext,
 } from './backstageNotionRag.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import {
+  createRuntimeBudgetWithLimit,
+  getSafeRemainingMs,
+} from '@platform/resilience/runtimeBudget.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
@@ -85,9 +96,21 @@ import {
   BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
   BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
   buildBackstageBookerTrinityRunOptions,
-  resolveBackstageGenerationStageTimeoutMs,
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  hasBackstageRecoveryBudget,
+  resolveBackstageExecutionBudgetPolicy,
+  type BackstageGenerationAction,
+} from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+  BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS,
+  buildBackstageOutputBudgetCompletionInstruction,
+  buildBackstageOutputBudgetTelemetry,
+  resolveBackstageOutputBudget,
+  type BackstageOutputFormat,
+} from '@shared/backstage/backstageOutputBudget.js';
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
@@ -116,6 +139,7 @@ import {
 } from '@shared/backstage/backstageRoster.js';
 import {
   isBackstageBookerOutputIncompleteError,
+  toBackstageBookerIntegrityFailedError,
 } from '@shared/backstage/backstageGenerationError.js';
 import {
   BACKSTAGE_STORYLINE_PROMPT_BEATS,
@@ -1310,7 +1334,7 @@ async function buildStructuredBookingPrompt(
 ): Promise<StructuredBookingPrompt> {
   if (await isBackstageNotionAuthorityEnforced(universeId)) {
     //audit Assumption: a configured Notion-authoritative universe must never observe quarantined legacy canon; failure risk: a missing/stale index silently falls back and presents obsolete PostgreSQL or process state as current; expected invariant: retrieval uses one verified immutable snapshot or fails closed before model generation; handling strategy: resolve bounded RAG context first and propagate an unavailable error without entering either legacy context branch.
-    const notionRag = await retrieveBackstageNotionRagContext(
+    const notionRag = await retrieveBackstageNotionBookingRagContext(
       universeId,
       basePrompt
     );
@@ -1383,14 +1407,6 @@ function resolveBackstageBookerModel(): string {
   return !resolvedModel || resolvedModel.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
     ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
     : resolvedModel;
-}
-
-function resolveBackstageBookerGenerationStageTimeoutMs(): number {
-  const configuredTimeoutMs = getEnvNumber(
-    'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
-    BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
-  );
-  return resolveBackstageGenerationStageTimeoutMs(configuredTimeoutMs);
 }
 
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
@@ -2367,7 +2383,8 @@ export async function trackStoryline(
  */
 export async function generateBooking(
   prompt: string,
-  universeId?: string
+  universeId?: string,
+  executionAction: BackstageGenerationAction = 'generateBooking'
 ): Promise<string> {
   const structuredScope = universeId !== undefined;
   const input = normalizeBackstageBookerActionPayload('generateBooking', {
@@ -2390,11 +2407,46 @@ export async function generateBooking(
     BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
   );
   const defaultTokenLimit = resolveBackstageGenerationTokenLimit(configuredTokenLimit);
-  const tokenLimit = resolveBackstageBookerPromptTokenLimit(
+  const requestedTokenLimit = resolveBackstageBookerPromptTokenLimit(
     input.prompt,
     defaultTokenLimit
   );
-  const generationStageTimeoutMs = resolveBackstageBookerGenerationStageTimeoutMs();
+  const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
+  const privateQueuedExecution =
+    protectedQueuedExecution || isBackstageLegacyQueuedExecution();
+  const executionBudget = resolveBackstageExecutionBudgetPolicy({
+    profile: protectedQueuedExecution
+      ? 'queued_generation'
+      : 'bounded_sync_generation',
+    action: executionAction,
+    configuration: {
+      generationStageTimeoutMs: getEnvNumber(
+        'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+        BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
+      ),
+      workerJobTimeoutMs: getEnvNumber(
+        'BOOKER_WORKER_JOB_TIMEOUT_MS',
+        Number.NaN
+      ),
+      workerGenerationStageTimeoutMs: getEnvNumber(
+        'BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS',
+        Number.NaN
+      ),
+      workerRecoveryStageTimeoutMs: getEnvNumber(
+        'BOOKER_REPAIR_STAGE_TIMEOUT_MS',
+        Number.NaN
+      ),
+    },
+  });
+  logger.info('backstage.generation.timeout_plan', {
+    action: executionAction,
+    profile: executionBudget.profile,
+    totalTimeoutMs: executionBudget.totalTimeoutMs,
+    operationTimeoutMs: executionBudget.operationTimeoutMs,
+    modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+    recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
+    finalizationReserveMs: executionBudget.finalizationReserveMs,
+  });
   const structuredPrompt: StructuredBookingPrompt = structuredScope
       ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
       : {
@@ -2403,6 +2455,78 @@ export async function generateBooking(
           trustedPolicyPrompt: input.prompt,
         };
   const instructions = structuredPrompt.instructions;
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(input.prompt);
+  const directAnswerMode = shouldPreferDirectAnswerMode(input.prompt);
+  const requestedFormat: BackstageOutputFormat = boundedReviewMode
+    ? 'bounded_review'
+    : directAnswerMode
+      ? 'compact_direct'
+      : 'structured_booking';
+  const preliminaryCompactOutputContract = resolveBackstageCompactOutputContract(
+    input.prompt,
+    requestedTokenLimit
+  );
+  const requestRemainingMs = getRequestRemainingMs();
+  const trinityTierPolicyPrompt = structuredPrompt.includesNotion
+    ? structuredPrompt.trustedPolicyPrompt
+    : instructions;
+  const trinityTierSoftCapMs = computeTierSoftCap(
+    detectTier(trinityTierPolicyPrompt)
+  );
+  const trinityStageCeilingMs = Math.max(
+    1,
+    trinityTierSoftCapMs - BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS
+  );
+  const requestPostModelReserveMs =
+    BACKSTAGE_TRINITY_WATCHDOG_HEADROOM_MS
+    + executionBudget.hrcStageReserveMs
+    + (executionBudget.profile === 'queued_generation'
+      ? 0
+      : executionBudget.finalizationReserveMs);
+  if (
+    requestRemainingMs !== null
+    && requestRemainingMs <= requestPostModelReserveMs
+  ) {
+    throw createAbortError(
+      'Backstage generation has insufficient remaining request budget before provider dispatch.'
+    );
+  }
+  const requestStageCeilingMs = requestRemainingMs === null
+    ? Number.POSITIVE_INFINITY
+    : Math.max(
+        1,
+        requestRemainingMs - requestPostModelReserveMs
+      );
+  const effectiveModelStageBudgetMs = requestRemainingMs === null
+    ? Math.min(executionBudget.modelStageTimeoutMs, trinityStageCeilingMs)
+    : Math.min(
+        executionBudget.modelStageTimeoutMs,
+        trinityStageCeilingMs,
+        requestStageCeilingMs
+      );
+  const outputBudget = resolveBackstageOutputBudget({
+    action: executionAction,
+    profile: executionBudget.profile,
+    requestedFormat,
+    requestedTokenLimit,
+    configuredWorkerTokenLimit: getEnvNumber(
+      'BOOKER_WORKER_TOKEN_LIMIT',
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    ),
+    promptCodeUnits: input.prompt.length,
+    retrievedContextCodeUnits:
+      structuredPrompt.directAnswerUntrustedContextPrompt?.length
+      ?? Math.max(0, instructions.length - input.prompt.length),
+    expectedOutputWords:
+      preliminaryCompactOutputContract.wordBounds.totalWordLimit,
+    model,
+    modelStageTimeoutMs: effectiveModelStageBudgetMs,
+  });
+  const tokenLimit = outputBudget.tokenLimit;
+  logger.info(
+    'backstage.generation.output_budget',
+    buildBackstageOutputBudgetTelemetry(outputBudget)
+  );
   const compactOutputContract = resolveBackstageCompactOutputContract(
     input.prompt,
     tokenLimit
@@ -2415,21 +2539,54 @@ export async function generateBooking(
   const compactOutputRetryInstruction =
     buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
-  const directAnswerSystemPolicyPrompt =
+  const directAnswerSystemPolicyPrompt = [
     buildBackstageBookerDirectAnswerSystemPolicy(
       structuredPrompt.directAnswerSystemPolicyPrompt
-    );
+    ),
+    buildBackstageOutputBudgetCompletionInstruction(outputBudget),
+  ].join('\n\n');
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
       tokenLimit,
+      tokenCap: outputBudget.tokenCap,
       userIntentPrompt: input.prompt,
-      modelStageTimeoutMs: generationStageTimeoutMs,
+      watchdogTimeoutMs: executionBudget.operationTimeoutMs,
+      modelStageTimeoutMs: effectiveModelStageBudgetMs,
+      cooperativeModelStageTimeout:
+        executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
-    ...(structuredPrompt.includesNotion
+    directAnswerIntegrityRepair: {
+      maxAttempts: 1 as const,
+      timeoutMs: executionBudget.recoveryStageTimeoutMs,
+      tokenLimit: executionBudget.recoveryOutputTokenReserve,
+      totalOutputTokenCap: outputBudget.tokenCap,
+      minimumOutputTokens: executionBudget.recoveryOutputTokenReserve,
+      minimumRuntimeRemainingMs:
+        executionBudget.recoveryStageTimeoutMs
+        + executionBudget.hrcStageReserveMs,
+      minimumRequestRemainingMs:
+        executionBudget.recoveryStageTimeoutMs
+        + executionBudget.hrcStageReserveMs
+        + (executionBudget.profile === 'queued_generation'
+          ? 0
+          : executionBudget.finalizationReserveMs),
+      ...(compactOutputContract.itemPolicy.mode === 'exact'
+        ? {
+            expectedNumberedItemCount:
+              compactOutputContract.itemPolicy.count,
+          }
+        : {}),
+    },
+    ...(privateQueuedExecution || structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
+          redactAuditContent: true as const,
+        }
+      : {}),
+    ...(structuredPrompt.includesNotion
+      ? {
           trustedPolicyPrompt: requestedOutputShapeInstruction
             ? [
                 structuredPrompt.trustedPolicyPrompt,
@@ -2438,7 +2595,6 @@ export async function generateBooking(
             : structuredPrompt.trustedPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
-          redactAuditContent: true as const,
         }
       : {}),
   };
@@ -2447,7 +2603,10 @@ export async function generateBooking(
     if (!client) {
       throw new Error('OpenAI client unavailable for backstage booking.');
     }
-    const runtimeBudget = createRuntimeBudget();
+    const runtimeBudget = createRuntimeBudgetWithLimit(
+      executionBudget.operationTimeoutMs,
+      0
+    );
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
         ? `${instructions}\n\n${compactOutputRetryInstruction}`
@@ -2457,6 +2616,8 @@ export async function generateBooking(
       const attemptRunOptions = compactOutputRetry
         ? {
             ...trinityRunOptions,
+            directAnswerIntegrityRepair: undefined,
+            modelStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
             trustedPolicyPrompt: [
               structuredPrompt.trustedPolicyPrompt,
               compactOutputRetryInstruction,
@@ -2469,7 +2630,7 @@ export async function generateBooking(
           prompt: attemptInstructions,
           moduleId: 'BACKSTAGE:BOOKER',
           sourceEndpoint: 'backstage-booker.generateBooking',
-          requestedAction: 'generateBooking',
+          requestedAction: executionAction,
           body: {
             prompt: input.prompt,
             ...(structuredScope ? { universeId: resolvedUniverseId } : {}),
@@ -2491,7 +2652,16 @@ export async function generateBooking(
     const {
       result: trinityResult,
       usedCompactOutputRetry,
-    } = await runBackstageBookerCompactOutputAttempts(runGenerationAttempt);
+    } = await runBackstageBookerCompactOutputAttempts(
+      runGenerationAttempt,
+      () => hasBackstageRecoveryBudget({
+        policy: executionBudget,
+        runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
+        requestRemainingMs: getRequestRemainingMs(),
+        remainingOutputTokens: tokenLimit,
+        recoveryAttempted: false,
+      })
+    );
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
@@ -2502,9 +2672,9 @@ export async function generateBooking(
       )
       ? compactOutputContract.itemPolicy.count
       : undefined;
-    const normalizedOutput = shouldUseBoundedBackstageReviewMode(input.prompt)
+    const normalizedOutput = boundedReviewMode
       ? applyBackstageReviewOutputContract(clean)
-      : shouldPreferDirectAnswerMode(input.prompt)
+      : directAnswerMode
         ? applyBackstageDirectAnswerOutputContract(
             clean,
             input.prompt,
@@ -2525,7 +2695,11 @@ export async function generateBooking(
     if (isBackstageBookerOutputIncompleteError(error)) {
       throw error;
     }
-    if (structuredPrompt.includesNotion) {
+    const integrityFailure = toBackstageBookerIntegrityFailedError(error);
+    if (integrityFailure) {
+      throw integrityFailure;
+    }
+    if (privateQueuedExecution || structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');
       throw new Error('Booking generation failed');
     }
@@ -3054,14 +3228,21 @@ export const BackstageBookerModule = {
         payload
       );
       const universeId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
-      const storyline = await BackstageBooker.generateBooking(input.prompt, universeId);
-      const enrichedWithNotion = wasBackstageNotionEnrichmentUsed();
+      const storyline = await BackstageBooker.generateBooking(
+        input.prompt,
+        universeId,
+        'generateBookingWithHRC'
+      );
+      const sensitiveContext =
+        wasBackstageNotionEnrichmentUsed()
+        || isBackstageProtectedQueuedExecution()
+        || isBackstageLegacyQueuedExecution();
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
         hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
           timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
-          ...(enrichedWithNotion ? { sensitiveContext: true } : {})
+          ...(sensitiveContext ? { sensitiveContext: true } : {})
         }))
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);

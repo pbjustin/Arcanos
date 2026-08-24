@@ -24,6 +24,7 @@ import {
   BackstageNotionCursorInvalidError,
   BackstageNotionIndexUnavailableError,
   BackstageNotionScopeResolutionError,
+  retrieveBackstageNotionBookingRagContext,
   retrieveBackstageNotionRagContext,
   type BackstageNotionRagQuery,
   type BackstageNotionRagRetrievalDependencies,
@@ -394,6 +395,27 @@ function retrieveAuthorized(
     true,
     () => retrieveBackstageNotionRagContext(UNIVERSE_ID, query, dependencies)
   );
+}
+
+function retrieveBookingAuthorized(
+  dependencies: BackstageNotionRagRetrievalDependencies,
+  query: string
+) {
+  return runWithBackstageNotionEnrichmentAuthorization(
+    true,
+    () => retrieveBackstageNotionBookingRagContext(
+      UNIVERSE_ID,
+      query,
+      dependencies
+    )
+  );
+}
+
+function latestRetrievedLog(): Record<string, unknown> {
+  const call = jest.mocked(logger.info).mock.calls
+    .filter(([event]) => event === 'backstage.notion_rag.retrieved')
+    .at(-1);
+  return (call?.[1] ?? {}) as Record<string, unknown>;
 }
 
 function decodeTestCursor(cursor: string): Record<string, unknown> {
@@ -2295,6 +2317,352 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(second.citations[0]?.chunkId).toBe(
       first.citations.at(-1)?.chunkId
     );
+  });
+
+  it('scopes booking retrieval to Raw hierarchy while leaving generic continuity retrieval unchanged', async () => {
+    const privateMarker = 'PRIVATE-NOTION-CONTINUITY-MARKER';
+    const chunks = [
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'World Heavyweight Championship',
+        pagePath: ['WWE Universe Mode', 'Raw', 'Championships'],
+        category: 'championships',
+        content: `${privateMarker} Raw title continuity.`,
+      }),
+      chunk({
+        pageIndex: 2,
+        pageTitle: 'Shared roster',
+        pagePath: ['WWE Universe Mode', 'Shared roster'],
+        category: 'roster',
+        content: 'Neutral roster continuity.',
+      }),
+      chunk({
+        pageIndex: 3,
+        pageTitle: 'SmackDown weekly show',
+        pagePath: ['WWE Universe Mode', 'SmackDown'],
+        content: 'SmackDown continuity.',
+      }),
+      chunk({
+        pageIndex: 4,
+        pageTitle: 'NXT weekly show',
+        pagePath: ['WWE Universe Mode', 'NXT'],
+        content: 'NXT continuity.',
+      }),
+    ];
+    const state = harness(activeSnapshot(chunks));
+
+    const booking = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    );
+    const bookingTitles = booking.citations.map(citation => citation.pageTitle);
+
+    expect(bookingTitles).toEqual([
+      'World Heavyweight Championship',
+      'Shared roster',
+    ]);
+    expect(booking.prompt).not.toContain('SmackDown continuity.');
+    expect(booking.prompt).not.toContain('NXT continuity.');
+    const bookingLog = latestRetrievedLog();
+    expect(bookingLog).toMatchObject({
+      candidateChunks: 4,
+      scopedCandidateChunks: 2,
+      scopeExcludedChunks: 2,
+      retrievedChunks: 2,
+      retrievalProfile: 'booking',
+      scoped: true,
+      scopeKind: 'brand',
+      scopeStrategy: 'brand',
+      detectedBrands: ['raw'],
+      allowedBrands: ['raw'],
+      corpusOmitted: true,
+      scopeOmitted: true,
+      promptTruncated: false,
+    });
+    expect(JSON.stringify(bookingLog)).not.toContain(privateMarker);
+    expect(JSON.stringify(bookingLog)).not.toContain(chunks[0]?.pageTitle ?? '');
+    expect(JSON.stringify(bookingLog)).not.toContain(chunks[0]?.contentHash ?? '');
+
+    const continuity = await retrieveAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    );
+    expect(continuity.citations.map(citation => citation.pageTitle)).toEqual(
+      expect.arrayContaining([
+        'World Heavyweight Championship',
+        'Shared roster',
+        'SmackDown weekly show',
+        'NXT weekly show',
+      ])
+    );
+  });
+
+  it('reserves named cross-brand coverage and excludes an unmentioned third brand', async () => {
+    const rawChunks = Array.from({ length: 13 }, (_unused, index) => chunk({
+      pageIndex: index + 1,
+      pageTitle: `Raw continuity ${index}`,
+      pagePath: ['WWE Universe Mode', 'Raw', `Week ${index}`],
+      content: `Raw high relevance continuity ${index}.`,
+      embedding: [1, 0],
+    }));
+    const state = harness(activeSnapshot([
+      ...rawChunks,
+      chunk({
+        pageIndex: 20,
+        pageTitle: 'SmackDown crossover continuity',
+        pagePath: ['WWE Universe Mode', 'SmackDown'],
+        content: 'Lower-scored SmackDown crossover fact.',
+        embedding: [0.4, 0.6],
+      }),
+      chunk({
+        pageIndex: 21,
+        pageTitle: 'NXT crossover continuity',
+        pagePath: ['WWE Universe Mode', 'NXT'],
+        content: 'NXT fact that was not requested.',
+        embedding: [1, 0],
+      }),
+    ]));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book a Raw vs SmackDown cross-brand storyline.'
+    );
+    const titles = result.citations.map(citation => citation.pageTitle);
+
+    expect(titles.some(title => title.startsWith('Raw continuity'))).toBe(true);
+    expect(titles).toContain('SmackDown crossover continuity');
+    expect(titles).not.toContain('NXT crossover continuity');
+    expect(latestRetrievedLog()).toMatchObject({
+      scopeStrategy: 'cross_brand',
+      detectedBrands: ['raw', 'smackdown'],
+      allowedBrands: ['raw', 'smackdown'],
+      scopeExcludedChunks: 1,
+    });
+  });
+
+  it('admits the closed brand union for an explicit generic cross-brand booking', async () => {
+    const state = harness(activeSnapshot([
+      ...Array.from({ length: 13 }, (_unused, index) => chunk({
+        pageIndex: index + 1,
+        pageTitle: `Raw show ${index}`,
+        pagePath: ['Universe', 'Raw', `${index}`],
+        content: `High-relevance Raw fact ${index}.`,
+        embedding: [1, 0],
+      })),
+      chunk({
+        pageIndex: 20,
+        pageTitle: 'SmackDown show',
+        pagePath: ['Universe', 'SmackDown'],
+        content: 'Lower-relevance SmackDown fact.',
+        embedding: [0.4, 0.6],
+      }),
+      chunk({
+        pageIndex: 21,
+        pageTitle: 'NXT show',
+        pagePath: ['Universe', 'NXT'],
+        content: 'Lower-relevance NXT fact.',
+        embedding: [0.4, 0.6],
+      }),
+    ]));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Create a cross-brand supershow.'
+    );
+
+    const titles = result.citations.map(citation => citation.pageTitle);
+    expect(result.citations).toHaveLength(12);
+    expect(titles.some(title => title.startsWith('Raw show'))).toBe(true);
+    expect(titles).toEqual(expect.arrayContaining(['SmackDown show', 'NXT show']));
+    expect(latestRetrievedLog()).toMatchObject({
+      scopeStrategy: 'cross_brand',
+      explicitCrossBrand: true,
+      allowedBrands: ['raw', 'smackdown', 'nxt'],
+    });
+  });
+
+  it('bounds neutral booking continuity without crowding out the requested brand', async () => {
+    const state = harness(activeSnapshot([
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'Raw weekly show',
+        pagePath: ['Universe', 'Raw'],
+        content: 'Requested Raw continuity.',
+      }),
+      ...Array.from({ length: 5 }, (_unused, index) => chunk({
+        pageIndex: index + 2,
+        pageTitle: `Shared continuity ${index}`,
+        pagePath: ['Universe', 'Shared', `${index}`],
+        content: `Neutral relationship continuity ${index}.`,
+      })),
+    ]));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    );
+
+    expect(result.citations[0]?.pageTitle).toBe('Raw weekly show');
+    expect(result.citations).toHaveLength(3);
+    expect(result.citations.filter(citation => (
+      citation.pageTitle.startsWith('Shared continuity')
+    ))).toHaveLength(2);
+  });
+
+  it('deduplicates equal booking content by hash and reports only safe counts', async () => {
+    const duplicateContent = 'Identical Raw championship continuity.';
+    const state = harness(activeSnapshot([
+      chunk({
+        pageIndex: 2,
+        pageTitle: 'Raw next week primary continuity',
+        pagePath: ['Universe', 'Raw'],
+        content: duplicateContent,
+      }),
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'Raw duplicate continuity',
+        pagePath: ['Universe', 'Raw'],
+        content: duplicateContent,
+      }),
+      chunk({
+        pageIndex: 3,
+        pageTitle: 'Raw unique continuity',
+        pagePath: ['Universe', 'Raw'],
+        content: 'Unique Raw continuity.',
+      }),
+    ]));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    );
+
+    expect(result.citations).toHaveLength(2);
+    expect(result.citations[0]?.pageTitle).toBe('Raw next week primary continuity');
+    expect(latestRetrievedLog()).toMatchObject({
+      candidateChunks: 3,
+      uniqueCandidateChunks: 2,
+      duplicatesRemoved: 1,
+      retrievedChunks: 2,
+    });
+  });
+
+  it('packs production-sized booking context as complete excerpts within deterministic budgets', async () => {
+    const chunks = Array.from({ length: 12 }, (_unused, index) => chunk({
+      pageIndex: index + 1,
+      pageTitle: `Raw week ${index}`,
+      pagePath: ['WWE Universe Mode', 'Raw', `Week ${index}`],
+      content: `Raw continuity ${index}: ${'x'.repeat(1_400)}`,
+    }));
+    const state = harness(activeSnapshot(chunks));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    );
+    const starts = result.prompt.match(/\[Retrieved Notion excerpt /gu) ?? [];
+    const ends = result.prompt.match(/\[End retrieved Notion excerpt\]/gu) ?? [];
+
+    expect(result.chunkCount).toBeGreaterThan(0);
+    expect(result.chunkCount).toBeLessThan(12);
+    expect(starts).toHaveLength(result.chunkCount);
+    expect(ends).toHaveLength(result.chunkCount);
+    expect(Array.from(result.prompt).length).toBeLessThanOrEqual(
+      BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS
+    );
+    expect(result.truncated).toBe(true);
+    expect(result.coverage).toMatchObject({
+      status: 'sampled',
+      selectedChunks: result.chunkCount,
+      omittedChunks: 12 - result.chunkCount,
+      promptTruncated: false,
+    });
+    expect(latestRetrievedLog()).toMatchObject({
+      candidateChunks: 12,
+      corpusOmitted: true,
+      promptTruncated: false,
+    });
+  });
+
+  it('uses an all-context fallback only for underspecified booking scope', async () => {
+    const allBrands = activeSnapshot([
+      chunk({ pageIndex: 1, pageTitle: 'Raw show', pagePath: ['Universe', 'Raw'], content: 'Raw fallback fact.' }),
+      chunk({ pageIndex: 2, pageTitle: 'SmackDown show', pagePath: ['Universe', 'SmackDown'], content: 'SmackDown fallback fact.' }),
+      chunk({ pageIndex: 3, pageTitle: 'NXT show', pagePath: ['Universe', 'NXT'], content: 'NXT fallback fact.' }),
+    ]);
+    const underspecifiedState = harness(allBrands);
+
+    const underspecified = await retrieveBookingAuthorized(
+      underspecifiedState.dependencies,
+      'Book next week using active storylines.'
+    );
+
+    expect(underspecified.citations).toHaveLength(3);
+    expect(latestRetrievedLog()).toMatchObject({
+      scoped: false,
+      scopeKind: 'all',
+      scopeStrategy: 'fallback_all',
+      fallbackReason: 'underspecified_query',
+      allowedBrands: ['raw', 'smackdown', 'nxt'],
+    });
+
+    jest.mocked(logger.info).mockClear();
+    const unmatchedState = harness(activeSnapshot([
+      chunk({ pageIndex: 4, pageTitle: 'SmackDown show', pagePath: ['Universe', 'SmackDown'], content: 'SmackDown unmatched fact.' }),
+      chunk({ pageIndex: 5, pageTitle: 'NXT show', pagePath: ['Universe', 'NXT'], content: 'NXT unmatched fact.' }),
+      chunk({ pageIndex: 6, pageTitle: 'Shared title history', pagePath: ['Universe', 'Shared'], content: 'Shared unmatched fact.' }),
+    ]));
+    const unmatched = await retrieveBookingAuthorized(
+      unmatchedState.dependencies,
+      'Book Raw next week.'
+    );
+
+    expect(unmatched.citations.map(citation => citation.pageTitle)).toEqual([
+      'Shared title history',
+    ]);
+    expect(latestRetrievedLog()).toMatchObject({
+      scoped: true,
+      scopeKind: 'brand',
+      scopeStrategy: 'brand',
+      fallbackReason: 'no_matching_brand_context',
+      allowedBrands: ['raw'],
+      scopeExcludedChunks: 2,
+    });
+  });
+
+  it('fails closed when requested-brand and neutral booking context are both absent', async () => {
+    const state = harness(activeSnapshot([
+      chunk({
+        pageIndex: 1,
+        pageTitle: 'SmackDown show',
+        pagePath: ['Universe', 'SmackDown'],
+        content: 'SmackDown-only continuity.',
+      }),
+      chunk({
+        pageIndex: 2,
+        pageTitle: 'NXT show',
+        pagePath: ['Universe', 'NXT'],
+        content: 'NXT-only continuity.',
+      }),
+    ]));
+
+    await expect(retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw next week.'
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+  });
+
+  it('preserves universe isolation for booking-only retrieval', async () => {
+    const state = harness(activeSnapshot());
+
+    await expect(runWithBackstageNotionEnrichmentAuthorization(
+      true,
+      () => retrieveBackstageNotionBookingRagContext(
+        'another-universe',
+        'Book Raw next week.',
+        state.dependencies
+      )
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
   });
 
   it('diversifies retrieval with a hard per-page cap', async () => {

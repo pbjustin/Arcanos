@@ -6,7 +6,15 @@ import {
   issueJobReadCapability,
 } from '../src/shared/jobs/jobReadCapability.js';
 import { buildGptIdempotencyScopeHash } from '../src/shared/gpt/gptIdempotency.js';
-import { buildQueuedGptBackstageMutationAdmission } from '../src/shared/gpt/asyncGptJob.js';
+import {
+  buildProtectedBackstageQueuedGptJobInput,
+  buildQueuedGptBackstageMutationAdmission,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
+import {
+  protectBackstageQueuedGptJobOutput,
+} from '../src/shared/backstage/backstageQueuedJobResultProtection.js';
 import { BACKSTAGE_STORYLINE_MAX_BYTES } from '../src/shared/backstage/backstageStoryline.js';
 import { buildAuthenticatedCredentialActorKey } from '../src/shared/security/opaqueSecret.js';
 
@@ -29,6 +37,10 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
           input: {
             requestPath: '/gpt/arcanos-core',
             executionModeReason: 'test_public_gpt',
+            producerContract: {
+              version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+              source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+            },
           },
         }
       : job;
@@ -56,16 +68,30 @@ const DAG_NODE_JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const GPT_ACCESS_JOB_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const BRIDGE_JOB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const STORYLINE_JOB_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const PROTECTED_BOOKER_JOB_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const INTERNAL_JOB_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const LEGACY_BOOKER_PENDING_JOB_ID = '12121212-1212-4212-8212-121212121212';
+const LEGACY_BOOKER_RUNNING_JOB_ID = '13131313-1313-4313-8313-131313131313';
+const MALFORMED_PROTECTED_BOOKER_JOB_ID = '14141414-1414-4414-8414-141414141414';
+const MALFORMED_PRODUCER_BOOKER_JOB_ID = '15151515-1515-4515-8515-151515151515';
 const JOB_READ_SECRET = 'jobs-route-read-capability-secret-1234567890';
 const BRIDGE_SECRET = 'bridge-cancellation-actor-secret';
-const GPT_ROLLOUT_CANCELLATION_MESSAGE =
-  'GPT job cancellation requested during rollout compatibility.';
+const BACKSTAGE_ACCESS_TOKEN = 'booker-cancellation-access-secret';
 const originalJobReadSecret = process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 const originalPreviousJobReadSecret =
   process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
 const originalBridgeSecret = process.env.OPENAI_ACTION_SHARED_SECRET;
+const originalBackstageAccessToken =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
+const originalBackstagePayloadKey =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+const originalBackstagePreviousPayloadKey =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY;
 
-function buildApp(options: { authenticatedUserId?: number } = {}) {
+function buildApp(options: {
+  authenticatedUserId?: number;
+  operatorActor?: string;
+} = {}) {
   const app = express();
   app.use(express.json());
   if (options.authenticatedUserId !== undefined) {
@@ -78,6 +104,12 @@ function buildApp(options: { authenticatedUserId?: number } = {}) {
         profileId: null,
         source: 'session',
       };
+      next();
+    });
+  }
+  if (options.operatorActor !== undefined) {
+    app.use((req, _res, next) => {
+      req.operatorActor = options.operatorActor;
       next();
     });
   }
@@ -139,7 +171,12 @@ describe('/jobs routes', () => {
     sleepMock.mockResolvedValue(undefined);
     process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.OPENAI_ACTION_SHARED_SECRET = BRIDGE_SECRET;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+      BACKSTAGE_ACCESS_TOKEN;
     delete process.env.ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x62).toString('base64');
+    delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY;
   });
 
   afterAll(() => {
@@ -158,6 +195,24 @@ describe('/jobs routes', () => {
       delete process.env.OPENAI_ACTION_SHARED_SECRET;
     } else {
       process.env.OPENAI_ACTION_SHARED_SECRET = originalBridgeSecret;
+    }
+    if (originalBackstageAccessToken === undefined) {
+      delete process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN =
+        originalBackstageAccessToken;
+    }
+    if (originalBackstagePayloadKey === undefined) {
+      delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+    } else {
+      process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+        originalBackstagePayloadKey;
+    }
+    if (originalBackstagePreviousPayloadKey === undefined) {
+      delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY;
+    } else {
+      process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY =
+        originalBackstagePreviousPayloadKey;
     }
     if (originalAllowAllGpts === undefined) {
       delete process.env.ALLOW_ALL_GPTS;
@@ -223,6 +278,117 @@ describe('/jobs routes', () => {
       },
       error: null
     });
+  });
+
+  it('decrypts a protected Booker result only after the existing job-read capability succeeds', async () => {
+    const privatePrompt = 'private-job-route-prompt-sentinel';
+    const privateResult = 'private-job-route-result-sentinel';
+    const input = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: privatePrompt },
+      },
+      prompt: privatePrompt,
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-protected-result',
+      traceId: 'trace-protected-result',
+    });
+    const output = protectBackstageQueuedGptJobOutput({
+      jobId: PROTECTED_BOOKER_JOB_ID,
+      rawInput: input,
+      output: {
+        ok: true,
+        result: privateResult,
+        _route: {
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage-booker',
+        },
+      },
+    });
+    getJobByIdMock.mockResolvedValue({
+      id: PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-08-23T10:00:00.000Z',
+      updated_at: '2026-08-23T10:01:00.000Z',
+      completed_at: '2026-08-23T10:01:00.000Z',
+      retention_until: '2026-08-24T10:01:00.000Z',
+      idempotency_until: '2026-08-24T10:01:00.000Z',
+      expires_at: null,
+      error_message: null,
+      input,
+      output,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+
+    const response = await getWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/result`,
+      PROTECTED_BOOKER_JOB_ID
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      jobId: PROTECTED_BOOKER_JOB_ID,
+      status: 'completed',
+      result: {
+        ok: true,
+        result: privateResult,
+        _route: { action: 'generateBooking' },
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain(
+      (output as { sealedPayload: { ciphertext: string } }).sealedPayload.ciphertext
+    );
+  });
+
+  it('does not attempt protected-result decryption before job-read authorization', async () => {
+    const input = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: 'private prompt' },
+      },
+      prompt: 'private prompt',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    const output = protectBackstageQueuedGptJobOutput({
+      jobId: PROTECTED_BOOKER_JOB_ID,
+      rawInput: input,
+      output: { ok: true, result: 'private result' },
+    });
+    getJobByIdMock.mockResolvedValue({
+      id: PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'completed',
+      input,
+      output,
+    });
+    delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+
+    const unauthorized = await request(buildApp())
+      .get(`/jobs/${PROTECTED_BOOKER_JOB_ID}/result`);
+    const authorized = await getWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/result`,
+      PROTECTED_BOOKER_JOB_ID
+    );
+
+    expect(unauthorized.status).toBe(200);
+    expect(unauthorized.body).toMatchObject({ status: 'not_found', result: null });
+    expect(getJobByIdMock).toHaveBeenCalledTimes(1);
+    expect(authorized.status).toBe(503);
+    expect(authorized.body).toEqual({
+      error: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+      message: 'Protected Backstage generation result is unavailable.',
+    });
+    expect(JSON.stringify(authorized.body)).not.toContain(
+      (output as { sealedPayload: { ciphertext: string } }).sealedPayload.ciphertext
+    );
   });
 
   it('preserves a valid large queued Backstage storyline result admitted before execution', async () => {
@@ -946,7 +1112,8 @@ describe('/jobs routes', () => {
   });
 
   it('cancels queued jobs immediately for the matching authenticated owner despite session input', async () => {
-    const privateCancellationSentinel = 'PRIVATE_PENDING_CANCELLATION_SENTINEL';
+    const currentProducerCancellationReason =
+      'CURRENT_PRODUCER_PENDING_CANCELLATION_REASON';
     getJobByIdMock.mockResolvedValue({
       id: QUEUED_JOB_ID,
       job_type: 'gpt',
@@ -987,7 +1154,7 @@ describe('/jobs routes', () => {
     )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'caller-selected-session')
-      .send({ reason: privateCancellationSentinel });
+      .send({ reason: currentProducerCancellationReason });
 
     expect(response.status).toBe(200);
     expectNoStore(response);
@@ -1001,9 +1168,351 @@ describe('/jobs routes', () => {
     });
     expect(requestJobCancellationMock).toHaveBeenCalledWith(
       QUEUED_JOB_ID,
-      GPT_ROLLOUT_CANCELLATION_MESSAGE
+      currentProducerCancellationReason
     );
-    expect(JSON.stringify(response.body)).not.toContain(privateCancellationSentinel);
+  });
+
+  it('preserves internal-actor cancellation for unscoped public jobs', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: INTERNAL_JOB_ID,
+      job_type: 'gpt',
+      status: 'pending',
+      idempotency_scope_hash: null,
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+    requestJobCancellationMock.mockResolvedValue({
+      outcome: 'cancelled',
+      job: {
+        id: INTERNAL_JOB_ID,
+        job_type: 'gpt',
+        status: 'cancelled',
+        idempotency_scope_hash: null,
+        created_at: '2026-04-06T10:00:00.000Z',
+        updated_at: '2026-04-06T10:01:00.000Z',
+        completed_at: '2026-04-06T10:01:00.000Z',
+        error_message: 'Job cancellation requested by client.',
+        output: null,
+        cancel_requested_at: '2026-04-06T10:01:00.000Z',
+        cancel_reason: 'Stop this job',
+      },
+    });
+
+    const response = await request(buildApp({ operatorActor: 'job-maintenance' }))
+      .post(`/jobs/${INTERNAL_JOB_ID}/cancel`)
+      .set(
+        JOB_READ_CAPABILITY_HEADER_NAME,
+        issueJobReadCapability(INTERNAL_JOB_ID, JOB_READ_SECRET)
+      )
+      .set('x-confirmed', 'yes')
+      .send({ reason: 'Stop this job' });
+
+    expect(response.status).toBe(200);
+    expectNoStore(response);
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      INTERNAL_JOB_ID,
+      'Stop this job'
+    );
+  });
+
+  it('authenticates the dedicated Booker bearer as the protected job owner before cancelling it', async () => {
+    const privateCancellationReason = 'private-job-cancel-reason-sentinel';
+    const backstageActorKey = buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      BACKSTAGE_ACCESS_TOKEN
+    );
+    const protectedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: 'private prompt' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    const protectedJob = {
+      id: PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'pending',
+      idempotency_scope_hash: hashActorKey(backstageActorKey),
+      input: protectedInput,
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    };
+    getJobByIdMock.mockResolvedValue(protectedJob);
+    requestJobCancellationMock.mockResolvedValue({
+      outcome: 'cancelled',
+      job: {
+        ...protectedJob,
+        status: 'cancelled',
+        completed_at: '2026-04-06T10:01:00.000Z',
+        cancel_requested_at: '2026-04-06T10:01:00.000Z',
+        cancel_reason: 'Protected Backstage generation cancellation requested.',
+      },
+    });
+
+    const response = await postWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
+      PROTECTED_BOOKER_JOB_ID
+    )
+      .set('Authorization', `Bearer ${BACKSTAGE_ACCESS_TOKEN}`)
+      .set('x-confirmed', 'yes')
+      .send({ reason: privateCancellationReason });
+
+    expect(response.status).toBe(200);
+    expect(requestJobCancellationMock).toHaveBeenCalledWith(
+      PROTECTED_BOOKER_JOB_ID,
+      'Protected Backstage generation cancellation requested.'
+    );
+    expect(JSON.stringify(requestJobCancellationMock.mock.calls))
+      .not.toContain(privateCancellationReason);
+  });
+
+  it('fails closed without persisting a caller reason for any raw protected marker', async () => {
+    const privateCancellationReason =
+      'private-malformed-protected-cancellation-reason-sentinel';
+    getJobByIdMock.mockResolvedValue({
+      id: MALFORMED_PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'pending',
+      idempotency_scope_hash: hashActorKey('user:14'),
+      input: {
+        gptId: 'backstage-booker',
+        requestPath: '/gpt/backstage-booker',
+        executionModeReason: 'explicit_async',
+        producerContract: {
+          version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+          source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+        },
+        protectedBackstage: {
+          version: 999,
+          source: 'malformed-protected-marker',
+        },
+      },
+      created_at: '2026-08-23T10:00:00.000Z',
+      updated_at: '2026-08-23T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+
+    const response = await postWithJobReadToken(
+      `/jobs/${MALFORMED_PROTECTED_BOOKER_JOB_ID}/cancel`,
+      MALFORMED_PROTECTED_BOOKER_JOB_ID,
+      14
+    )
+      .set('x-confirmed', 'yes')
+      .send({ reason: privateCancellationReason });
+
+    expect(response.status).toBe(503);
+    expectNoStore(response);
+    expect(response.body).toEqual({
+      error: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+      message: 'Protected Backstage generation result is unavailable.',
+    });
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(response.body)).not.toContain(privateCancellationReason);
+  });
+
+  it.each([
+    {
+      jobId: LEGACY_BOOKER_PENDING_JOB_ID,
+      status: 'pending',
+      outcome: 'cancelled',
+      responseStatus: 200,
+      gptId: 'backstage-booker',
+      producerContract: undefined,
+      producerMarkerState: 'marker-absent',
+    },
+    {
+      jobId: LEGACY_BOOKER_RUNNING_JOB_ID,
+      status: 'running',
+      outcome: 'cancellation_requested',
+      responseStatus: 202,
+      gptId: 'configured-booker-alias-from-old-web',
+      producerContract: undefined,
+      producerMarkerState: 'marker-absent',
+    },
+    {
+      jobId: MALFORMED_PRODUCER_BOOKER_JOB_ID,
+      status: 'pending',
+      outcome: 'cancelled',
+      responseStatus: 200,
+      gptId: 'backstage-booker',
+      producerContract: {
+        version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+        source: 'untrusted-queued-gpt-producer',
+      },
+      producerMarkerState: 'malformed-present',
+    },
+  ] as const)(
+    'redacts $producerMarkerState legacy GPT cancellation before repository persistence ($status)',
+    async ({
+      jobId,
+      status,
+      outcome,
+      responseStatus,
+      gptId,
+      producerContract,
+    }) => {
+      const privateCancellationReason =
+        `private-${status}-legacy-cancellation-reason-sentinel`;
+      const fixedCancellationReason =
+        'Legacy queued GPT cancellation requested during compatibility drain.';
+      const legacyJob = {
+        id: jobId,
+        job_type: 'gpt',
+        status,
+        idempotency_scope_hash: hashActorKey('user:12'),
+        input: {
+          gptId,
+          requestPath: `/gpt/${gptId}`,
+          executionModeReason: 'explicit_async',
+          ...(producerContract === undefined ? {} : { producerContract }),
+          body: {
+            action: 'generateBooking',
+            payload: {
+              universeId: 'my-universe-2k26',
+              prompt: 'Private legacy booking prompt.',
+            },
+          },
+        },
+        created_at: '2026-08-23T10:00:00.000Z',
+        updated_at: '2026-08-23T10:00:00.000Z',
+        completed_at: null,
+        error_message: null,
+        output: null,
+        cancel_requested_at: null,
+        cancel_reason: null,
+        autonomy_state: {},
+      };
+      getJobByIdMock.mockResolvedValue(legacyJob);
+      requestJobCancellationMock.mockResolvedValue({
+        outcome,
+        job: {
+          ...legacyJob,
+          status: outcome === 'cancelled' ? 'cancelled' : 'running',
+          completed_at: outcome === 'cancelled'
+            ? '2026-08-23T10:01:00.000Z'
+            : null,
+          cancel_requested_at: '2026-08-23T10:01:00.000Z',
+          cancel_reason: fixedCancellationReason,
+          error_message: outcome === 'cancelled' ? fixedCancellationReason : null,
+          autonomy_state: {
+            cancellation: {
+              requestedAt: '2026-08-23T10:01:00.000Z',
+              reason: fixedCancellationReason,
+            },
+          },
+        },
+      });
+
+      const response = await postWithJobReadToken(
+        `/jobs/${jobId}/cancel`,
+        jobId,
+        12
+      )
+        .set('x-confirmed', 'yes')
+        .send({ reason: privateCancellationReason });
+
+      expect(response.status).toBe(responseStatus);
+      expectNoStore(response);
+      expect(requestJobCancellationMock).toHaveBeenCalledWith(
+        jobId,
+        fixedCancellationReason
+      );
+      expect(JSON.stringify(requestJobCancellationMock.mock.calls))
+        .not.toContain(privateCancellationReason);
+      expect(JSON.stringify(response.body)).not.toContain(privateCancellationReason);
+    }
+  );
+
+  it('does not trust an unverified Booker Authorization header for protected cancellation ownership', async () => {
+    const backstageActorKey = buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      BACKSTAGE_ACCESS_TOKEN
+    );
+    const protectedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: 'private prompt' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    getJobByIdMock.mockResolvedValue({
+      id: PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'pending',
+      idempotency_scope_hash: hashActorKey(backstageActorKey),
+      input: protectedInput,
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    });
+
+    const forgedAuthorization = ['Bearer', 'attacker-selected-value'].join(' ');
+    const response = await postWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
+      PROTECTED_BOOKER_JOB_ID
+    )
+      .set('Authorization', forgedAuthorization)
+      .set('x-confirmed', 'yes')
+      .send({ reason: 'Stop this job' });
+
+    expect(response.status).toBe(401);
+    expectNoStore(response);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'JOB_CANCELLATION_AUTH_REQUIRED',
+        message: 'Job cancellation requires an established authenticated principal or internal actor.'
+      }
+    });
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dedicated Booker bearer behind job-read capability and confirmation', async () => {
+    const missingCapabilityResponse = await request(buildApp())
+      .post(`/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`)
+      .set('Authorization', `Bearer ${BACKSTAGE_ACCESS_TOKEN}`)
+      .set('x-confirmed', 'yes')
+      .send({ reason: 'Stop this job' });
+
+    expect(missingCapabilityResponse.status).toBe(404);
+    expectNoStore(missingCapabilityResponse);
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+
+    const missingConfirmationResponse = await postWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
+      PROTECTED_BOOKER_JOB_ID
+    )
+      .set('Authorization', `Bearer ${BACKSTAGE_ACCESS_TOKEN}`)
+      .send({ reason: 'Stop this job' });
+
+    expect(missingConfirmationResponse.status).toBe(403);
+    expectNoStore(missingConfirmationResponse);
+    expect(missingConfirmationResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
   it('validates the action-secret carrier and ignores unrelated auth/session input for bridge cancellation', async () => {
@@ -1014,6 +1523,10 @@ describe('/jobs routes', () => {
     const bridgeInput = {
       requestPath: '/api/bridge/gpt',
       executionModeReason: 'bridge_query',
+      producerContract: {
+        version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+        source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+      },
     };
     getJobByIdMock.mockResolvedValue({
       id: BRIDGE_JOB_ID,
@@ -1046,10 +1559,10 @@ describe('/jobs routes', () => {
         created_at: '2026-04-06T10:00:00.000Z',
         updated_at: '2026-04-06T10:01:00.000Z',
         completed_at: '2026-04-06T10:01:00.000Z',
-        error_message: GPT_ROLLOUT_CANCELLATION_MESSAGE,
+        error_message: 'Job cancellation requested by client.',
         output: null,
         cancel_requested_at: '2026-04-06T10:01:00.000Z',
-        cancel_reason: GPT_ROLLOUT_CANCELLATION_MESSAGE,
+        cancel_reason: 'Stop this bridge job',
       },
     });
 
@@ -1071,12 +1584,13 @@ describe('/jobs routes', () => {
     });
     expect(requestJobCancellationMock).toHaveBeenCalledWith(
       BRIDGE_JOB_ID,
-      GPT_ROLLOUT_CANCELLATION_MESSAGE
+      'Stop this bridge job'
     );
   });
 
   it('returns 202 when cancellation is requested for a running job', async () => {
-    const privateCancellationSentinel = 'PRIVATE_RUNNING_CANCELLATION_SENTINEL';
+    const currentProducerCancellationReason =
+      'CURRENT_PRODUCER_RUNNING_CANCELLATION_REASON';
     getJobByIdMock.mockResolvedValue({
       id: CANCEL_REQUEST_JOB_ID,
       job_type: 'gpt',
@@ -1116,7 +1630,7 @@ describe('/jobs routes', () => {
       2
     )
       .set('x-confirmed', 'yes')
-      .send({ reason: privateCancellationSentinel });
+      .send({ reason: currentProducerCancellationReason });
 
     expect(response.status).toBe(202);
     expectNoStore(response);
@@ -1130,9 +1644,8 @@ describe('/jobs routes', () => {
     });
     expect(requestJobCancellationMock).toHaveBeenCalledWith(
       CANCEL_REQUEST_JOB_ID,
-      GPT_ROLLOUT_CANCELLATION_MESSAGE
+      currentProducerCancellationReason
     );
-    expect(JSON.stringify(response.body)).not.toContain(privateCancellationSentinel);
   });
 
   it('preserves terminal cancellation conflicts for the owning caller', async () => {

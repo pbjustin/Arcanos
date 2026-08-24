@@ -70,6 +70,7 @@ import {
   buildTrinityDirectAnswerMessages,
   resolveTrinityDirectAnswerTokenLimit
 } from './trinityDirectAnswerMode.js';
+import { runWithCooperativeAbortDrain } from '@shared/async/cooperativeAbortDrain.js';
 
 export { buildTrinityDirectAnswerMessages } from './trinityDirectAnswerMode.js';
 
@@ -623,7 +624,8 @@ export async function runDirectAnswerStage(
   redactSensitiveDiagnostics = false,
   trustedPolicyPrompt?: string,
   directAnswerSystemPolicyPrompt?: string,
-  directAnswerUntrustedContextPrompt?: string
+  directAnswerUntrustedContextPrompt?: string,
+  cooperativeModelStageTimeout = false
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -682,8 +684,11 @@ export async function runDirectAnswerStage(
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),
-        ...(useAggregateAbortContext ? {} : { timeoutMs: stageTimeoutMs }),
-        preserveAggregateAbortContext: useAggregateAbortContext,
+        ...(useAggregateAbortContext || cooperativeModelStageTimeout
+          ? {}
+          : { timeoutMs: stageTimeoutMs }),
+        preserveAggregateAbortContext:
+          useAggregateAbortContext || cooperativeModelStageTimeout,
         redactErrorDetails: redactSensitiveDiagnostics,
         ...(directAnswerReasoningEffort
           ? { reasoning_effort: directAnswerReasoningEffort }
@@ -693,15 +698,26 @@ export async function runDirectAnswerStage(
 
     directAnswerResponse = useAggregateAbortContext
       ? await executeDirectAnswer()
-      : await runWithRequestAbortTimeout(
-          {
-            timeoutMs: stageTimeoutMs,
-            requestId,
-            parentSignal: getRequestAbortSignal(),
-            abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
-          },
-          executeDirectAnswer
-        );
+      : cooperativeModelStageTimeout
+        ? await runWithCooperativeAbortDrain(
+            {
+              timeoutMs: stageTimeoutMs,
+              requestId,
+              parentSignal: getRequestAbortSignal(),
+              abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`,
+              scope: 'trinity_direct_answer',
+            },
+            executeDirectAnswer
+          )
+        : await runWithRequestAbortTimeout(
+            {
+              timeoutMs: stageTimeoutMs,
+              requestId,
+              parentSignal: getRequestAbortSignal(),
+              abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
+            },
+            executeDirectAnswer
+          );
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     const diagnosticError = redactSensitiveDiagnostics

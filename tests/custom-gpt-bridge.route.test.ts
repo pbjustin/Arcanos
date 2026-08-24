@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
 
 const findOrCreateGptJobMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -11,6 +15,8 @@ const getDatabaseStatusMock = jest.fn();
 const getWorkerControlHealthMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
 const isRegisteredResearchGptIdMock = jest.fn();
+const getGptModuleMapMock = jest.fn();
+const detectBackstageBookerIntentMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -47,6 +53,14 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 
 jest.unstable_mockModule('../src/services/researchGptRouting.js', () => ({
   isRegisteredResearchGptId: isRegisteredResearchGptIdMock,
+}));
+
+jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
+  getGptModuleMap: getGptModuleMapMock,
+}));
+
+jest.unstable_mockModule('../src/services/backstageBookerRouteShortcut.js', () => ({
+  detectBackstageBookerIntent: detectBackstageBookerIntentMock,
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -97,6 +111,15 @@ describe('Custom GPT bridge route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     isRegisteredResearchGptIdMock.mockResolvedValue(false);
+    getGptModuleMapMock.mockResolvedValue({
+      'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+      'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+    });
+    detectBackstageBookerIntentMock.mockImplementation((prompt: unknown) => (
+      typeof prompt === 'string' && /\bbook\b.*\b(?:raw|wwe)\b/iu.test(prompt)
+        ? { score: 4, reason: 'booking_verb+wrestling_brand' }
+        : null
+    ));
     process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET = JOB_READ_SECRET;
     process.env.OPENAI_ACTION_SHARED_SECRET = 'test-bridge-secret';
     process.env.DEFAULT_GPT_ID = 'arcanos-core';
@@ -459,6 +482,34 @@ describe('Custom GPT bridge route', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('rejects a core-to-Booker bridge handoff before queue persistence', async () => {
+    const privatePrompt =
+      'private-bridge-booking-handoff-sentinel: book six Raw matches for WWE.';
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        action: 'query',
+        prompt: privatePrompt,
+        metadata: {},
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'invalid_request',
+      error: {
+        source: 'routing',
+        message: 'Job-backed booking generation requires the canonical Backstage Booker route.',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain(privatePrompt);
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('fails closed before bridge planning and persistence when job-read capability configuration is unavailable', async () => {
     delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
 
@@ -659,6 +710,10 @@ describe('Custom GPT bridge route', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           prompt: 'Analyze this deployment',
+          producerContract: {
+            version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+            source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+          },
           body: expect.objectContaining({
             prompt: 'Analyze this deployment',
           }),

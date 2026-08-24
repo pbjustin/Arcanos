@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import express from "express";
+import { DEFAULT_BACKSTAGE_UNIVERSE_ID } from '@arcanos/protocol';
 import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
 import { publicProviderGptAdmission } from '@transport/http/middleware/publicProviderAdmission.js';
 import { canonicalGptIdentifierBoundary } from '@transport/http/middleware/canonicalGptIdentifierBoundary.js';
@@ -8,7 +9,13 @@ import {
   resolveBackstageMutationHttpOperation,
 } from '@services/controlPlane/backstageMutationHttpBoundary.js';
 import { backstageMutationConfirmationGate } from '@transport/http/middleware/backstageMutationConfirmationGate.js';
-import { optionalBackstageNotionEnrichmentAuth } from '@services/backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageNotionEnrichmentAuthorized,
+  optionalBackstageNotionEnrichmentAuth,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
+import { resolveBackstageNotionAuthorityRoot } from '@services/backstageNotionAuthority.js';
+import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
+import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
 import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
@@ -59,8 +66,18 @@ import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import {
   buildQueuedGptBackstageMutationAdmission,
   buildQueuedGptJobInput,
-  buildQueuedGptPendingResponse
+  buildProtectedBackstageQueuedGptJobInput,
+  buildQueuedGptPendingResponse,
+  protectedBackstageQueuedGptJobMatchesIdentity,
+  PROTECTED_BACKSTAGE_JOB_FINGERPRINT_DOMAIN,
 } from '@shared/gpt/asyncGptJob.js';
+import {
+  unprotectBackstageQueuedGptJobOutput,
+} from '@shared/backstage/backstageQueuedJobResultProtection.js';
+import {
+  BackstageJobPayloadProtectionError,
+  resolveBackstageJobPayloadProtectionConfig,
+} from '@shared/backstage/backstageJobPayloadProtection.js';
 import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_MESSAGE,
@@ -75,14 +92,24 @@ import {
 } from '@shared/backstage/backstageStoryline.js';
 import {
   BACKSTAGE_MODULE_NAME,
+  BACKSTAGE_MODULE_ROUTE,
   BACKSTAGE_ROUTE_TIMEOUT_MINIMUM_MS,
+  BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
+  classifyBackstageBookerWorkload,
   isBackstageGptRoute,
+  resolveBackstageGptAction,
+  type BackstageBookerWorkloadDecision,
 } from '@shared/backstage/backstageActionPolicy.js';
+import { resolveBackstageCompactOutputContract } from '@shared/backstage/backstageCompactOutputContract.js';
+import { BACKSTAGE_RESULT_POLL_WAIT_MS } from '@shared/backstage/backstageExecutionBudget.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
   BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE,
   BackstageBookerContractError,
+  extractBackstageBookerCanonicalGenerationPrompt,
+  markBackstageBookerExplicitPayload,
+  markBackstageBookerFlattenedPayload,
   normalizeBackstageBookerIngressMutationPayload
 } from '@services/backstageBookerContracts.js';
 import {
@@ -151,7 +178,9 @@ import {
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import {
+  buildGptDispatchPayload,
   extractGptPromptText,
+  extractGptDispatchPromptText,
   extractGptPromptTextFromRecord,
   extractGptPromptTextFromRequest,
   resolveRequestedGptActionFromRequest,
@@ -218,7 +247,6 @@ const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
-const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS = 40_000;
 const QUERY_AND_WAIT_DIRECT_ACTION_REASON = 'query_and_wait_direct_action';
@@ -229,6 +257,13 @@ const DIRECT_RETURN_WAIT_KEYS = [
   'timeout_ms'
 ];
 const DIRECT_RETURN_POLL_KEYS = ['pollIntervalMs', 'poll_interval_ms'];
+const BACKSTAGE_BOOKER_ASYNC_GENERATION_FLAG =
+  'ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED';
+const BACKSTAGE_UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER = Object.freeze({
+  markExplicitPayload: markBackstageBookerExplicitPayload,
+  markFlattenedPayload: markBackstageBookerFlattenedPayload,
+});
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -423,6 +458,54 @@ function readPayloadRecord(
     : null;
 }
 
+function readBackstageUniverseId(body: unknown): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  const payload = readPayloadRecord(normalizedBody);
+  const candidate = payload?.universeId ?? normalizedBody?.universeId;
+  return typeof candidate === 'string'
+    && candidate === candidate.trim()
+    && BACKSTAGE_UNIVERSE_ID_PATTERN.test(candidate)
+      ? candidate
+      : null;
+}
+
+function classifyBackstageRouteWorkload(params: {
+  body: unknown;
+  moduleName: string;
+  action: string | null | undefined;
+  promptText: string | null;
+  requestedExecutionMode: GptExecutionMode | null;
+}): BackstageBookerWorkloadDecision | null {
+  if (params.moduleName !== BACKSTAGE_MODULE_NAME) {
+    return null;
+  }
+
+  const action = resolveBackstageGptAction(params.action);
+  const prompt = params.promptText ?? '';
+  const outputContract = resolveBackstageCompactOutputContract(
+    prompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const universeId = readBackstageUniverseId(params.body);
+  const authorizationEstablished = isBackstageNotionEnrichmentAuthorized();
+  const notionAuthorityContext = authorizationEstablished
+    && universeId !== null
+    && resolveBackstageNotionAuthorityRoot(universeId) !== null;
+
+  return classifyBackstageBookerWorkload({
+    action,
+    authorizationEstablished,
+    requestedExecutionMode: params.requestedExecutionMode,
+    promptCodeUnits: prompt.length,
+    contextCodeUnits: 0,
+    expectedItemCount: outputContract.itemPolicy.budgetItemCount,
+    expectedOutputWords: outputContract.wordBounds.totalWordLimit,
+    notionAuthorityContext,
+    providerInvocationRequired:
+      !prompt || tryExtractExactLiteralPromptShortcut(prompt) === null,
+  });
+}
+
 function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
   if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
     return false;
@@ -513,6 +596,17 @@ function readBooleanEnv(name: string, fallbackValue: boolean): boolean {
   }
 
   return normalizedValue !== 'false' && normalizedValue !== '0' && normalizedValue !== 'no';
+}
+
+function readStrictBooleanEnv(name: string, fallbackValue: boolean): boolean {
+  const rawValue = process.env[name];
+  if (rawValue === 'true') {
+    return true;
+  }
+  if (rawValue === 'false') {
+    return false;
+  }
+  return fallbackValue;
 }
 
 function parseBooleanLike(value: unknown): boolean | null {
@@ -1859,11 +1953,69 @@ router.post(
             )
           : undefined;
         const researchAction = requestedResearchAction ?? routingValidation.plan.action;
+        const resolvedModuleAction = requestedModuleAction ?? researchAction;
+        if (
+          effectiveBodyRecord
+          && resolvedModuleAction
+          && !queryAndWaitRequested
+          && (
+            requestedModuleAction
+            || routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+          )
+        ) {
+          // Bind the action selected from every supported transport alias into
+          // the canonical body consumed by both inline dispatch and workers.
+          // This prevents an array, payload, query, or header alias from being
+          // reinterpreted as the module default after crossing the queue.
+          effectiveBody = {
+            ...effectiveBodyRecord,
+            action: resolvedModuleAction,
+          };
+        }
+        const canonicalEffectiveBodyRecord = effectiveBody
+          && typeof effectiveBody === 'object'
+          && !Array.isArray(effectiveBody)
+          ? effectiveBody as Record<string, unknown>
+          : null;
+        const resolvedBackstageAction = resolvedModuleAction;
+        const protectedBackstageGenerationAction =
+          routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+          && (
+            resolvedBackstageAction === 'generateBooking'
+            || resolvedBackstageAction === 'generateBookingWithHRC'
+          )
+            ? resolvedBackstageAction
+            : null;
         const backstageContinuityQuerySyncOnly =
           routingValidation.plan.module === BACKSTAGE_MODULE_NAME
-          && (requestedModuleAction ?? researchAction) === 'queryContinuity';
+          && resolvedBackstageAction === 'queryContinuity';
+        const requestedExecutionMode = resolveRequestedExecutionMode(req, effectiveBody);
+        const modulePromptText = protectedBackstageGenerationAction
+          ? extractBackstageBookerCanonicalGenerationPrompt(
+              protectedBackstageGenerationAction,
+              buildGptDispatchPayload(
+                effectiveBody,
+                undefined,
+                BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+              )
+            )
+          : routingValidation.plan.module === BACKSTAGE_MODULE_NAME
+            ? extractGptDispatchPromptText(effectiveBody)
+            : promptText;
+        const automaticBackstageGenerationWouldCrossQueueBoundary =
+          routingValidation.plan.module === 'ARCANOS:CORE'
+          && bypassIntentRouting !== true
+          && resolvedModuleAction === GPT_QUERY_ACTION
+          && detectBackstageBookerIntent(modulePromptText) !== null;
+        const backstageWorkloadDecision = classifyBackstageRouteWorkload({
+          body: effectiveBody,
+          moduleName: routingValidation.plan.module,
+          action: requestedModuleAction ?? researchAction,
+          promptText: modulePromptText,
+          requestedExecutionMode,
+        });
         const researchDiagnosticRequest = isDiagnosticRequest(
-          effectiveBodyRecord ?? undefined,
+          canonicalEffectiveBodyRecord ?? undefined,
           promptText,
         );
         if (
@@ -2331,6 +2483,9 @@ router.post(
         const publicGptIdempotencyActorKey =
           establishedPublicGptActorKey
           ?? `anonymous-request:${crypto.randomUUID()}`;
+        const idempotencyGptId = protectedBackstageGenerationAction
+          ? BACKSTAGE_MODULE_ROUTE
+          : incomingGptId;
         if (explicitIdempotencyKey) {
           requestLogger?.info?.('gpt.request.idempotency_key_present', {
             endpoint: req.originalUrl,
@@ -2338,9 +2493,12 @@ router.post(
             requestId,
             idempotencyKeyHash: summarizeFingerprintHash(
               buildGptIdempotencyDescriptor({
-                gptId: incomingGptId,
-                action: effectiveRequestedAction,
+                gptId: idempotencyGptId,
+                action: resolvedModuleAction,
                 body: effectiveBody,
+                fingerprintDomain: protectedBackstageGenerationAction
+                  ? PROTECTED_BACKSTAGE_JOB_FINGERPRINT_DOMAIN
+                  : undefined,
                 surface: 'public-gpt',
                 actorKey: publicGptIdempotencyActorKey,
                 explicitIdempotencyKey
@@ -2520,6 +2678,14 @@ router.post(
           }
         }
 
+        const protectedBackstageRequestLocalOnly = Boolean(
+          protectedBackstageGenerationAction
+          && backstageWorkloadDecision?.forceSynchronous
+        );
+        const protectedBackstageQueueRequired = Boolean(
+          backstageWorkloadDecision?.queueRequired
+          && readStrictBooleanEnv(BACKSTAGE_BOOKER_ASYNC_GENERATION_FLAG, false)
+        );
         const classifiedFastPathDecision = classifyGptFastPathRequest({
           gptId: incomingGptId,
           body: effectiveBody,
@@ -2536,6 +2702,14 @@ router.post(
               eligible: false,
               reason: 'memory_dispatch_intercept',
               queueBypassed: true,
+            }
+          : protectedBackstageRequestLocalOnly || protectedBackstageQueueRequired
+          ? {
+              ...classifiedFastPathDecision,
+              path: 'orchestrated_path',
+              eligible: false,
+              reason: `backstage_${backstageWorkloadDecision!.reason}`,
+              queueBypassed: protectedBackstageRequestLocalOnly,
             }
           : classifiedFastPathDecision;
         applyGptRouteDecisionHeaders(res, fastPathDecision);
@@ -2683,6 +2857,20 @@ router.post(
               reason: 'memory_dispatch_intercept',
               heavyPrompt: false,
             }
+          : protectedBackstageRequestLocalOnly
+          ? {
+              ...classifiedExecutionPlan,
+              mode: 'sync',
+              reason: `backstage_${backstageWorkloadDecision!.reason}`,
+              heavyPrompt: false,
+            }
+          : protectedBackstageQueueRequired
+          ? {
+              ...classifiedExecutionPlan,
+              mode: 'async',
+              reason: `backstage_${backstageWorkloadDecision!.reason}`,
+              heavyPrompt: true,
+            }
           : classifiedExecutionPlan;
         const priorityJobBackedExecutionRequested =
           !backstageContinuityQuerySyncOnly
@@ -2694,7 +2882,9 @@ router.post(
             || Boolean(explicitIdempotencyKey)
           );
         const priorityQueueActive =
-          priorityQueueConfigured && priorityJobBackedExecutionRequested;
+          protectedBackstageGenerationAction === null
+          && priorityQueueConfigured
+          && priorityJobBackedExecutionRequested;
         const priorityDirectReturnRequested = priorityQueueActive;
         const directReturnRequested =
           queryAndWaitRequested ||
@@ -2716,10 +2906,12 @@ router.post(
           if (queryAndWaitRequested) {
             requestedAsyncWaitForResultMs = resolveGptWaitTimeoutMs();
           } else if (executionPlan.heavyPrompt) {
-            requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
-              'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
-              DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS
-            );
+            requestedAsyncWaitForResultMs = protectedBackstageQueueRequired
+              ? BACKSTAGE_RESULT_POLL_WAIT_MS
+              : readPositiveIntegerEnv(
+                  'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
+                  BACKSTAGE_RESULT_POLL_WAIT_MS
+                );
           }
         }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(
@@ -2746,7 +2938,23 @@ router.post(
           asyncWaitForResultMs,
           asyncPollIntervalMs,
           priorityGpt,
-          priorityQueueActive
+          priorityQueueActive,
+          ...(backstageWorkloadDecision
+            ? {
+                backstageWorkloadClass: backstageWorkloadDecision.workloadClass,
+                backstageWorkloadReason: backstageWorkloadDecision.reason,
+                backstageQueueRequired: backstageWorkloadDecision.queueRequired,
+                backstageForceSynchronous: backstageWorkloadDecision.forceSynchronous,
+                backstagePromptCodeUnits: backstageWorkloadDecision.promptCodeUnits,
+                backstageContextCodeUnits: backstageWorkloadDecision.contextCodeUnits,
+                backstageExpectedItemCount: backstageWorkloadDecision.expectedItemCount,
+                backstageExpectedOutputWords: backstageWorkloadDecision.expectedOutputWords,
+                backstageNotionAuthorityContext:
+                  backstageWorkloadDecision.notionAuthorityContext,
+                backstageProviderInvocationRequired:
+                  backstageWorkloadDecision.providerInvocationRequired,
+              }
+            : {})
         });
         if (explicitAsyncWaitForResultMs !== undefined && !directReturnRequested) {
           requestLogger?.info?.('gpt.request.direct_return_ignored', {
@@ -2774,6 +2982,7 @@ router.post(
 
         const shouldUseJobBackedExecution =
           !backstageContinuityQuerySyncOnly
+          && !protectedBackstageRequestLocalOnly
           && memoryPlaneAuthorized !== true
           && (
             (queryAndWaitRequested && executionPlan.mode === 'async')
@@ -2781,9 +2990,66 @@ router.post(
             || fastPathFallbackToOrchestrated
             || Boolean(explicitIdempotencyKey)
           );
+        const protectedBackstageJobExecution =
+          protectedBackstageGenerationAction !== null
+          && shouldUseJobBackedExecution;
+        const protectedBackstageUniverseId = protectedBackstageGenerationAction
+          ? readBackstageUniverseId(effectiveBody) ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
+          : null;
 
         if (shouldUseJobBackedExecution) {
           res.setHeader('Cache-Control', 'no-store');
+          if (
+            automaticBackstageGenerationWouldCrossQueueBoundary
+            && !protectedBackstageJobExecution
+          ) {
+            requestLogger?.warn?.('gpt.request.backstage_async_canonical_route_required', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+            });
+            return sendGuardedGptJsonResponse(req, res, {
+              ok: false,
+              error: {
+                code: 'BACKSTAGE_ASYNC_CANONICAL_ROUTE_REQUIRED',
+                message: 'Job-backed booking generation requires the canonical Backstage Booker route.',
+              },
+              _route: {
+                requestId,
+                traceId,
+                gptId: idempotencyGptId,
+                timestamp: new Date().toISOString(),
+              },
+            }, 'gpt.response.backstage_async_canonical_route_required', 400);
+          }
+          if (protectedBackstageJobExecution) {
+            try {
+              resolveBackstageJobPayloadProtectionConfig();
+            } catch (error: unknown) {
+              const errorCode = error instanceof BackstageJobPayloadProtectionError
+                ? error.code
+                : 'BACKSTAGE_JOB_PAYLOAD_CONFIG_INVALID';
+              requestLogger?.error?.('gpt.request.backstage_async_protection_unavailable', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                errorCode,
+              });
+              return sendGuardedGptJsonResponse(req, res, {
+                ok: false,
+                error: {
+                  code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+                  message: 'Protected Backstage generation is temporarily unavailable.',
+                },
+                _route: {
+                  requestId,
+                  traceId,
+                  gptId: incomingGptId,
+                  timestamp: new Date().toISOString(),
+                },
+              }, 'gpt.response.backstage_async_protection_unavailable', 503);
+            }
+          }
           if (!resolveConfiguredJobReadCapabilitySecret()) {
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
@@ -2805,7 +3071,7 @@ router.post(
             queueBypassed: false
           });
           if (!normalizedBody) {
-            if (explicitIdempotencyKey) {
+            if (explicitIdempotencyKey || protectedBackstageJobExecution) {
               requestLogger?.warn?.('gpt.request.idempotency_invalid_body', {
                 endpoint: req.originalUrl,
                 gptId: incomingGptId,
@@ -2816,7 +3082,9 @@ router.post(
                 ok: false,
                 error: {
                   code: 'BAD_REQUEST',
-                  message: 'Idempotent GPT requests require a JSON object request body.'
+                  message: protectedBackstageJobExecution
+                    ? 'Protected Backstage generation requires a JSON object request body.'
+                    : 'Idempotent GPT requests require a JSON object request body.'
                 },
                 idempotencyKey: explicitIdempotencyKey,
                 _route: {
@@ -2829,16 +3097,19 @@ router.post(
 
             requestLogger?.warn?.('gpt.request.async_invalid_body_sync_fallback', {
               endpoint: req.originalUrl,
-              gptId: incomingGptId,
+              gptId: idempotencyGptId,
               requestId,
               bodyType: typeof req.body,
               executionReason: executionPlan.reason
             });
           } else {
             const idempotencyDescriptor = buildGptIdempotencyDescriptor({
-              gptId: incomingGptId,
-              action: effectiveRequestedAction,
+              gptId: idempotencyGptId,
+              action: resolvedModuleAction,
               body: effectiveBody,
+              fingerprintDomain: protectedBackstageGenerationAction
+                ? PROTECTED_BACKSTAGE_JOB_FINGERPRINT_DOMAIN
+                : undefined,
               surface: 'public-gpt',
               actorKey: publicGptIdempotencyActorKey,
               explicitIdempotencyKey
@@ -2887,19 +3158,78 @@ router.post(
                   principalId: backstageMutationPrincipalId!,
                 })
               : undefined;
-            const queuedGptJobInput = buildQueuedGptJobInput({
-              gptId: incomingGptId,
-              body: effectiveBody as Record<string, unknown>,
-              prompt: promptText,
-              bypassIntentRouting,
-              requestId,
-              traceId,
-              correlationId: traceId,
-              routeHint: effectiveRequestedAction ?? 'query',
-              requestPath: `/gpt/${encodeURIComponent(incomingGptId)}`,
-              executionModeReason: executionPlan.reason,
-              backstageMutationAdmission,
-            });
+            let queuedGptJobInput:
+              | ReturnType<typeof buildQueuedGptJobInput>
+              | ReturnType<typeof buildProtectedBackstageQueuedGptJobInput>;
+            try {
+              queuedGptJobInput = protectedBackstageJobExecution
+                ? buildProtectedBackstageQueuedGptJobInput({
+                    body: effectiveBody as Record<string, unknown>,
+                    prompt: modulePromptText,
+                    action: protectedBackstageGenerationAction!,
+                    universeId: protectedBackstageUniverseId!,
+                    notionEnrichmentAuthorized:
+                      isBackstageNotionEnrichmentAuthorized(),
+                    bypassIntentRouting,
+                    requestId,
+                    traceId,
+                    correlationId: traceId,
+                    executionModeReason: executionPlan.reason,
+                  })
+                : buildQueuedGptJobInput({
+                    gptId: incomingGptId,
+                    body: effectiveBody as Record<string, unknown>,
+                    prompt: promptText,
+                    bypassIntentRouting,
+                    requestId,
+                    traceId,
+                    correlationId: traceId,
+                    routeHint: resolvedModuleAction ?? 'query',
+                    requestPath: `/gpt/${encodeURIComponent(incomingGptId)}`,
+                    executionModeReason: executionPlan.reason,
+                    backstageMutationAdmission,
+                  });
+            } catch (error: unknown) {
+              if (
+                protectedBackstageJobExecution
+                && error instanceof BackstageJobPayloadProtectionError
+              ) {
+                const clientIdentityError =
+                  error.code === 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID'
+                  || error.code === 'BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED';
+                const payloadTooLarge = error.code === 'BACKSTAGE_JOB_PAYLOAD_TOO_LARGE';
+                requestLogger?.warn?.('gpt.request.backstage_async_payload_rejected', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  errorCode: error.code,
+                });
+                return sendGuardedGptJsonResponse(req, res, {
+                  ok: false,
+                  error: payloadTooLarge
+                    ? {
+                        code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
+                        message: 'Protected Backstage generation request exceeds the queue payload size limit.',
+                      }
+                    : clientIdentityError
+                    ? {
+                        code: 'BAD_REQUEST',
+                        message: 'Protected Backstage generation request identity is invalid.',
+                      }
+                    : {
+                        code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+                        message: 'Protected Backstage generation is temporarily unavailable.',
+                      },
+                  _route: {
+                    requestId,
+                    traceId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString(),
+                  },
+                }, 'gpt.response.backstage_async_payload_rejected', payloadTooLarge ? 413 : clientIdentityError ? 400 : 503);
+              }
+              throw error;
+            }
             const priorityDirectWorkerId = `${process.env.WORKER_ID || 'api'}:priority-gpt-direct`;
             let priorityDirectSlot: PriorityGptDirectExecutionSlot | null = priorityQueueActive
               ? tryAcquirePriorityGptDirectExecutionSlot()
@@ -2975,21 +3305,32 @@ router.post(
               }
 
               if (error instanceof JobRepositoryUnavailableError) {
-                if (explicitIdempotencyKey || queryAndWaitRequested || queryRequested) {
+                if (
+                  protectedBackstageJobExecution
+                  || explicitIdempotencyKey
+                  || queryAndWaitRequested
+                  || queryRequested
+                ) {
                   requestLogger?.error?.('gpt.request.idempotency_unavailable', {
                     endpoint: req.originalUrl,
                     gptId: incomingGptId,
                     requestId,
-                    error: error.message
+                    error: protectedBackstageJobExecution
+                      ? 'Protected Backstage job persistence is unavailable.'
+                      : error.message
                   });
                   return sendGuardedGptJsonResponse(req, res, {
                     ok: false,
                     action: asyncBridgeAction,
                     error: {
-                      code: (queryAndWaitRequested || queryRequested)
-                        ? 'ASYNC_GPT_JOBS_UNAVAILABLE'
-                        : 'IDEMPOTENCY_UNAVAILABLE',
-                      message: queryAndWaitRequested
+                      code: protectedBackstageJobExecution
+                        ? 'BACKSTAGE_ASYNC_UNAVAILABLE'
+                        : (queryAndWaitRequested || queryRequested)
+                          ? 'ASYNC_GPT_JOBS_UNAVAILABLE'
+                          : 'IDEMPOTENCY_UNAVAILABLE',
+                      message: protectedBackstageJobExecution
+                        ? 'Protected Backstage generation requires durable GPT job persistence, but the jobs backend is unavailable.'
+                        : queryAndWaitRequested
                         ? 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
                         : queryRequested
                         ? 'query requires durable GPT job persistence, but the jobs backend is unavailable.'
@@ -3017,6 +3358,37 @@ router.post(
             }
             if (createResult) {
               const job = createResult.job;
+              if (
+                protectedBackstageJobExecution
+                && !protectedBackstageQueuedGptJobMatchesIdentity(job.input, {
+                  action: protectedBackstageGenerationAction!,
+                  universeId: protectedBackstageUniverseId!,
+                })
+              ) {
+                releasePriorityDirectSlot();
+                requestLogger?.error?.('gpt.request.backstage_async_identity_mismatch', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  jobId: job.id,
+                  created: createResult.created,
+                  deduped: createResult.deduped,
+                  errorCode: 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID',
+                });
+                return sendGuardedGptJsonResponse(req, res, {
+                  ok: false,
+                  error: {
+                    code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+                    message: 'Protected Backstage generation is temporarily unavailable.',
+                  },
+                  _route: {
+                    requestId,
+                    traceId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString(),
+                  },
+                }, 'gpt.response.backstage_async_identity_mismatch', 503);
+              }
               if (!isGenericJobCapabilityEligible(job)) {
                 releasePriorityDirectSlot();
                 requestLogger?.error?.('gpt.request.job_provenance_unavailable', {
@@ -3190,7 +3562,31 @@ router.post(
               }
 
               if (waitedJob.state === 'completed') {
-                const completedEnvelope = normalizeCompletedAsyncGptResponse(waitedJob.job.output);
+                let completedJobOutput: unknown;
+                try {
+                  completedJobOutput = unprotectBackstageQueuedGptJobOutput({
+                    jobId: waitedJob.job.id,
+                    rawInput: waitedJob.job.input,
+                    output: waitedJob.job.output,
+                  });
+                } catch {
+                  requestLogger?.error?.('gpt.request.backstage_async_result_unavailable', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    jobId: job.id,
+                  });
+                  return sendGuardedGptJsonResponse(req, res, {
+                    ok: false,
+                    error: {
+                      code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+                      message: 'Protected Backstage generation result is unavailable.',
+                    },
+                    jobId: job.id,
+                    poll: `/jobs/${job.id}/result`,
+                    ...buildJobReadCapabilityResponseFields(job.id),
+                  }, 'gpt.response.backstage_async_result_unavailable', 503);
+                }
+                const completedEnvelope = normalizeCompletedAsyncGptResponse(completedJobOutput);
                 if (!completedEnvelope) {
                   requestLogger?.error?.('gpt.request.async_completed_invalid', {
                     endpoint: req.originalUrl,

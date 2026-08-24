@@ -94,7 +94,7 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, deploy and re-import schema `1.4.0`, verify the operation declares
+  `runBackstageBooker`, deploy and re-import schema `1.5.0`, verify the operation declares
   `bearerAuth`, and resave the Action. Do not weaken the backend gate.
 - Backstage Booker `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`: for an authoritative
   universe this is deliberately fail-closed. Verify the identical authority
@@ -146,7 +146,7 @@ If failing, inspect Railway build/deploy logs first.
   another request. Cursor version 2 is deliberately invalid after the 1.4.0
   rollout and requires the same cursor-free restart. `queryContinuity` is
   request-local and synchronous-only, so do not enqueue it or look for a worker
-  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.4.0
+  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.5.0
   first, re-import it into the existing Action, and preserve the saved bearer.
 - Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the original attempt
   exhausted the provider output limit, and the backend's one compact retry

@@ -3,6 +3,10 @@ import type { JobData } from '@core/db/schema.js';
 import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
 import type { GptBridgeSmokeAction } from './bridgeSmoke.js';
+import {
+  hasProtectedBackstageQueuedGptJobMarker,
+  isProtectedBackstageQueuedGptJobResultMaterialized,
+} from '@shared/backstage/backstageQueuedJobResultProtection.js';
 
 export const GPT_QUERY_ACTION = 'query';
 export const GPT_GET_STATUS_ACTION = 'get_status';
@@ -101,6 +105,16 @@ function serializeJobTimestamp(value: string | Date | null | undefined): string 
   return null;
 }
 
+function projectPublicJobOutput(job: Pick<JobData, 'input' | 'output'>): unknown | null {
+  if (
+    hasProtectedBackstageQueuedGptJobMarker(job.input)
+    && !isProtectedBackstageQueuedGptJobResultMaterialized(job)
+  ) {
+    return null;
+  }
+  return job.output ?? null;
+}
+
 function buildJobFailurePayload(
   code: string,
   message: string,
@@ -146,7 +160,7 @@ function buildCompletedJobLookupPayload(job: JobData): GptJobResultLookupPayload
     expiresAt: serializeJobTimestamp(job.expires_at),
     poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
-    result: job.output ?? null,
+    result: projectPublicJobOutput(job),
     error: null
   };
 }
@@ -169,7 +183,7 @@ function buildFailedJobLookupPayload(
     expiresAt: serializeJobTimestamp(job.expires_at),
     poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
-    result: job.output ?? null,
+    result: projectPublicJobOutput(job),
     error: buildJobFailurePayload(
       code,
       job.error_message ?? defaultMessage,
@@ -196,7 +210,7 @@ function buildExpiredJobLookupPayload(job: JobData): GptJobResultLookupPayload {
     expiresAt: serializeJobTimestamp(job.expires_at),
     poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
-    result: job.output ?? null,
+    result: projectPublicJobOutput(job),
     error: buildJobFailurePayload(
       'JOB_EXPIRED',
       job.error_message ?? 'Async GPT job expired after its retention window.',
@@ -263,8 +277,8 @@ export function buildStoredJobStatusPayload(job: JobData) {
     poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     error_message: job.error_message ?? null,
-    output: job.output ?? null,
-    result: job.output ?? null
+    output: projectPublicJobOutput(job),
+    result: projectPublicJobOutput(job)
   };
 }
 

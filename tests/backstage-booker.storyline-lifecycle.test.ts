@@ -72,6 +72,7 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
+  getEnvBoolean: jest.fn((_key: string, fallback: boolean) => fallback),
   getEnvNumber: mockGetEnvNumber
 }));
 

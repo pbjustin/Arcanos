@@ -165,12 +165,15 @@ async function instrumentOpenAIOperation<T>(input: {
 export interface OpenAIAdapterRequestOptions {
   /** AbortSignal for request cancellation */
   signal?: AbortSignal;
+  /** Per-request SDK timeout in milliseconds. */
+  timeout?: number;
   /** Extra request headers */
   headers?: Record<string, string>;
 }
 
 export interface OpenAIResponsesRequestOptions {
   signal?: AbortSignal;
+  timeout?: number;
   headers?: Record<string, string>;
 }
 

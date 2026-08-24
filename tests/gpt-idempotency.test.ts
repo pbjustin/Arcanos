@@ -129,6 +129,36 @@ describe('gpt idempotency fingerprinting', () => {
     expect(new Set(scopeHashes).size).toBe(surfaces.length);
   });
 
+  it('domain-separates protected Booker fingerprints without changing actor scope', () => {
+    const base = {
+      gptId: 'backstage-booker',
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Book a bounded Raw card.',
+        },
+      },
+      surface: 'public-gpt' as const,
+      actorKey: 'auth:booker-user',
+    };
+    const legacy = buildGptIdempotencyDescriptor(base);
+    const protectedDescriptor = buildGptIdempotencyDescriptor({
+      ...base,
+      fingerprintDomain: 'protected-backstage-job:v1',
+    });
+    const repeatedProtectedDescriptor = buildGptIdempotencyDescriptor({
+      ...base,
+      fingerprintDomain: ' PROTECTED-BACKSTAGE-JOB:V1 ',
+    });
+
+    expect(protectedDescriptor.scopeHash).toBe(legacy.scopeHash);
+    expect(protectedDescriptor.fingerprintHash).not.toBe(legacy.fingerprintHash);
+    expect(repeatedProtectedDescriptor.fingerprintHash)
+      .toBe(protectedDescriptor.fingerprintHash);
+  });
+
   it('classifies only server-owned public GPT provenance as public', () => {
     expect(resolveGptJobCreationSurface({
       requestPath: '/gpt/arcanos-core?mode=async',

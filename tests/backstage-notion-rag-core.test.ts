@@ -475,4 +475,30 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(complete.contentTruncated).toBe(false);
     expect(complete.partialChunk).toBe(false);
   });
+
+  it('can omit an oversized booking excerpt instead of partially slicing it', () => {
+    const prepared = prepare([
+      '# Booking continuity',
+      'Complete first fact.',
+      'x'.repeat(2_000),
+    ].join('\n\n'), 1_000);
+    const context = buildBackstageNotionRagUntrustedContextPrompt(
+      prepared.chunks,
+      {
+        maximumCodePoints: 1_300,
+        maximumChunks: 4,
+        allowPartialChunk: false,
+      }
+    );
+
+    expect(context.chunkCount).toBeGreaterThanOrEqual(1);
+    expect(context.truncated).toBe(true);
+    expect(context.partialChunk).toBe(false);
+    expect(context.prompt.match(/\[Retrieved Notion excerpt /gu)).toHaveLength(
+      context.chunkCount
+    );
+    expect(context.prompt.match(/\[End retrieved Notion excerpt\]/gu)).toHaveLength(
+      context.chunkCount
+    );
+  });
 });

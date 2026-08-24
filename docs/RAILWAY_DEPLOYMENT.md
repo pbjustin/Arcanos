@@ -246,8 +246,16 @@ Environment variables:
 | `PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP` | Optional; default `false` | Set exact `true` only after verifying public-edge-only provenance for provider routes. Even then, the app accepts `X-Real-IP` only with a valid Railway edge marker and an immediate peer in `100.0.0.0/8`; direct/private traffic remains socket-cohorted. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Required for generic protected `/gpt-access/*` routes | Strong generic gateway bearer token stored only in Railway Variables and authorized generic GPT Access client authentication. `/gpt-access/openapi.json` is public. The generic token remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but do not configure it in the dedicated Backstage Booker Custom GPT; use `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` there. It cannot authorize the exact Backstage universe or storyline-summary reads and is not accepted by Gaming source lifecycle routes. |
 | `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | Optional; required for protected Backstage Booker Custom GPT operations and private Notion-derived generation on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the existing Backstage Booker Custom GPT Action's API Key/Bearer field; do not copy it to a worker, schema, GPT instructions, chat, source, or logs. Legacy supplement remains optional, but mapped Notion-authority generation requires the credential and fails closed when it is missing or invalid. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | Optional; configure on web for legacy supplement or worker for authority sync | Outbound 16–4096-character visible-ASCII token for a dedicated read-content-only Notion integration. Authority-only rollout moves it off web and onto worker. It must differ from every ARCANOS application credential and never appears in Builder. |
-| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | Optional; configure with the Notion token on the web service only | Sensitive JSON mapping from at most 32 exact universe IDs to one to three unique raw Notion page UUIDs each. URLs and partial/invalid configuration disable enrichment before provider work. Selected excerpts enter the existing OpenAI generation request. |
+| `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` | Optional web automatic-routing flag; defaults false | Only exact `true` promotes workload-classified heavy generation, and malformed values fail to the false routing default. Explicit async and idempotent generation remain protected queue jobs under either setting. Enable automatic promotion only after the current payload-protection key is present on both web and worker. Enabled heavy generation fails closed rather than executing in web if the queue or protection boundary is unavailable. Set exact `false` for automatic-routing rollback. |
+| `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Required on both web and worker for any job-backed Booker generation | Canonical base64 for exactly 32 random bytes, distinct from all other credentials. It seals private queue input and output; never put it in Builder, requests, logs, or source. Rotate in worker-first deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
+| `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | Optional on web and worker during key rotation | Decryption-only previous 32-byte base64 key. Retain through the maximum protected-job retention window, then remove. |
+| `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` | Optional; defaults 20000 | Lightweight synchronous continuity provider stage, clamped to 1000-25000 ms. |
+| `BOOKER_WORKER_TOKEN_LIMIT` | Optional on worker; defaults 6000 | Protected queued structured-generation output budget, clamped to 4000-8000 and further constrained by the compatible GPT-5.1/GPT-5.6 request contract and remaining finite primary-stage tier. Compact, review, continuity, unsupported-model, and synchronous rollback calls retain smaller caps. |
+| `BOOKER_WORKER_JOB_TIMEOUT_MS` | Optional on worker; defaults 180000 | Finite protected-generation deadline anchored to durable first execution start, clamped to 120000-180000 ms, with 30000 ms orchestration headroom and 10000 ms reserved for terminal result persistence, including a finite 2000 ms cooperative abort drain. |
+| `BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS` | Optional on worker; defaults 80000 | Protected-generation primary provider stage, clamped to 45000-90000 ms and shortened to fit the job plan. |
+| `BOOKER_REPAIR_STAGE_TIMEOUT_MS` | Optional on worker; defaults 45000 | One bounded protected-generation recovery stage, clamped to 10000-45000 ms and skipped when time or output budget is insufficient. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | Optional; configure where the selected Notion mode executes | Outbound 16–4096-character visible-ASCII token for a dedicated read-content-only Notion integration. Synchronous legacy supplement uses web; authority sync and queued legacy generation use worker. It must differ from every ARCANOS application credential and never appears in Builder. |
+| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | Optional; configure with the Notion token on every service that can execute legacy supplement generation | Sensitive JSON mapping from at most 32 exact universe IDs to one to three unique raw Notion page UUIDs each. Before enabling queued heavy generation for a legacy-supplement universe, copy the identical mapping to worker through the approved secret workflow. URLs and partial/invalid configuration disable enrichment before provider work. Selected excerpts enter the existing OpenAI generation request. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | Optional; identical closed mapping on web and worker | Selects exact Notion-authoritative universes and their fixed recursive roots. Web uses it to block/quarantine legacy state and require RAG; worker uses it to build full immutable snapshots. A malformed present value fails writes closed. After first activation, the PostgreSQL authority head is a durable one-way latch: deleting this variable does not restore legacy authority, and an unreadable/conflicting authority state fails closed with `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | Optional; worker only | Full-hierarchy sync cadence; default 900,000 ms, clamped to 60,000–86,400,000 ms. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | Optional; web only | Maximum last-complete-verification age; default 86,400,000 ms, clamped to 300,000–604,800,000 ms. |
@@ -291,6 +299,129 @@ Environment separation:
 - `GPT_ACCESS_*` natural-language dispatch variables do not change or recycle the worker service. Worker recycle/recover dispatch uses registered privileged actions, requires explicit `workers.recover` scope plus confirmation, and reclaims stale queue jobs through the approved recovery runner.
 - Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
 - Confirm each service role through an approved control plane against the exact project, environment, and service. Do not reproduce raw variable output in reports.
+
+### Disposable Backstage durable heavy-flow proof
+
+`scripts/railway-backstage-heavy-proof-supervisor.mjs` is a non-production,
+one-shot start command for proving the Backstage durable queue boundary. It is
+not the canonical Railway start command and must never be configured on the
+canonical project. The supervisor validates the disposable target, performs a
+role-ordered read-only database preflight, then starts the unchanged
+`scripts/start-railway-service-with-integrity.mjs` wrapper. The worker also
+starts the credential-free loopback OpenAI fixture. A fixed fictional SDK key
+exists only in the supervised application children: the worker points to that
+fixture, while the web child remains pinned to a dead loopback. After the
+parent binds the
+PostgreSQL URL to the exact private host, port, database, credentials, and an
+empty query string, it derives `sslmode=no-verify` only for the application
+child because the disposable Railway PostgreSQL template uses a self-signed
+TLS chain. That child connection is encrypted without authenticating the
+server certificate; the parent preflight and later attestor retain the raw
+query-free private-network URL. This is a disposable compatibility measure,
+not authenticated-TLS proof, and it never sets a process-wide TLS bypass.
+
+The approved target is a new disposable project in the approved workspace,
+named `arc-pr<PR>-heavy-<suffix>` with a 1-14 character lowercase
+alphanumeric/hyphen suffix and no more than 32 total characters, with one
+isolated environment named `backstage-heavy-pr-<PR>-e2e`, exactly the services
+`Postgres`, `Redis`, `arcanos-worker-pr<PR>-heavy`, and
+`arcanos-web-pr<PR>-heavy`, and exactly two READY volumes mounted at
+`/var/lib/postgresql/data` and `/data`. Both application services use one
+replica and pin the absolute custom config-as-code path
+`/railway.backstage-heavy-proof.json`. That file intentionally defines only the
+exact start command
+`node scripts/railway-backstage-heavy-proof-supervisor.mjs`; do not let the
+repository's native ephemeral-PR config override the proof supervisor or the
+role-specific pre-deploy checks below. Set a 60-second drain interval and
+restart policy to `NEVER` with zero retries: the fresh-database preflights
+deliberately make this proof non-restartable. Only the web service receives an
+HTTP domain. PostgreSQL, Redis, and the worker receive neither an HTTP domain
+nor a TCP proxy.
+
+Configure each Railway `preDeployCommand` as an exact one-element array. The
+worker value is
+`["node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty"]`; the
+web value is
+`["node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema"]`.
+Railway runs that command in a separate container, so deployment instance
+history may temporarily retain one `EXITED` or cleaned `REMOVED` historical
+record beside the one `RUNNING` application instance. The proof validates
+exactly one running instance, at most one such terminal record, matching
+latest/active instance identity, and the independent one-replica manifest and
+region settings; it does not use the id/status-only historical record to claim
+per-container attribution or equate history length with replica count.
+These sealed checks run from the application images, which contain Node and the
+exact tracked source. They bind the mode to the Railway role and revision, use
+only the exact private PostgreSQL reference, and emit a fixed success sentinel,
+an exact allowlisted nonsecret failure code, or one generic error sentinel for
+every unclassified failure. They do not run inside the PostgreSQL template
+container or initialize schema.
+
+Both application roles require the exact marker
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET=dedicated-backstage-heavy-preview-v1`,
+one shared bounded `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID`, exact Postgres and
+Redis service ID/name/private-host markers, the exact lowercase revision in
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`, `ARCANOS_PREVIEW_ISOLATION=true`,
+`FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true`, and
+`OPENAI_API_KEY_REQUIRED=false`. They share one fresh payload-protection key
+and have no previous key. Neither role's service configuration or supervisor
+parent contains a provider key. Each validated application child derives the
+same fixed fictional SDK key so the adapter can initialize for readiness. The
+worker alone receives
+`ARCANOS_PREVIEW_OPENAI_FIXTURE=backstage-heavy-compact-retry-v1` and the
+loopback base URL; it has no Booker access token or job-read secret. The web
+alone receives the dedicated Booker access token, a distinct job-read secret,
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, and the dead
+loopback base URL, so any unexpected provider call fails closed. Do not
+configure any real provider key, alternate provider base, database/Redis alias,
+proxy/preload option, or external Notion variable on either role.
+
+The proof source marker is required because the authorized runner removes
+automatic GitHub triggers and deploys an explicit commit through Railway's
+control plane. `RAILWAY_GIT_COMMIT_SHA` is therefore optional; if Railway
+provides it, it must exactly match the proof marker. The runner separately
+supplies the same revision in the deploy request and verifies it in each
+deployment manifest, so the application variable is not the sole provenance
+authority.
+
+The authorized run order is:
+
+1. Before application deployment, attest the exact project, environment,
+   four-service/two-volume topology, private data hosts, absence of public data
+   exposure, exact source revision, one replica per app, and fresh disposable
+   data-service ownership. Do not run an initializer or migration command;
+   database emptiness is established by the worker pre-deploy check in step 2.
+2. Deploy the worker at the exact revision first. Its sealed pre-deploy check
+   requires exactly zero non-system PostgreSQL tables, and the supervisor's
+   read-only startup preflight then requires `public.job_data` and
+   `public.job_events` to be absent. Normal worker bootstrap may create them
+   only after the integrity wrapper passes.
+3. After worker readiness, deploy the web at the same revision. Its sealed
+   pre-deploy check and supervisor startup preflight both require the two job
+   tables to exist and both to contain zero rows.
+4. Run `scripts/railway-backstage-heavy-e2e-probe.mjs` only with both
+   `--execute` and `--allow-network`. The dry-run default makes no network
+   request. The executable re-attests the Railway control plane before the two
+   identical authenticated submissions and never supplies an explicit
+   idempotency key.
+5. Run `scripts/railway-backstage-heavy-at-rest-attestor.mjs` inside the exact
+   worker only with both `--execute` and `--allow-database-read`. It uses a
+   read-only transaction and bounded loopback attestation; it neither decrypts
+   payloads nor changes database state.
+6. Preserve only bounded, secret-free output, then delete the whole disposable
+   project. Verify the project and web domain are gone and separately confirm
+   the canonical services/deployments were unchanged.
+
+A passing run proves the authenticated route selected the heavy queued policy,
+two actor-and-semantic-identical requests produced one derived-idempotency job,
+the worker renewed its lease, the fixture observed exactly one provider-health
+model-list check, an incomplete 6,000-token Responses attempt, and one
+fresh compact retry, and the capability-protected terminal read returned the
+encrypted-at-rest result. It is proof-supervised normal application/worker
+evidence, not canonical top-level start-command parity, a real OpenAI or Notion
+credential test, model-quality evidence, a production deployment, or rollback
+proof. A local operator orchestration file under `.codex-local/` may coordinate
+the disposable run, but it remains untracked and is never release evidence.
 
 ## Run locally
 
@@ -381,7 +512,7 @@ revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
 Custom GPT. The web service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
-`1.4.0` declares that credential for continuity queries, generation, and
+`1.5.0` declares that credential for continuity queries, generation, and
 simulation as well as the exact
 universe and storyline-summary reads, which are
 non-consequential, and return a bounded repeatable-read PostgreSQL projection
@@ -394,6 +525,115 @@ server-side `MCP_ALLOW_MODULE_ACTIONS` allowlist must still include
 `BACKSTAGE:BOOKER:upsertStoryline` and
 `BACKSTAGE:BOOKER:appendCanonBeat`. Every other action fails closed on the
 dedicated credential.
+
+Heavy-generation rollout additionally requires the same distinct
+`ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` on web and worker before enabling
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` on web. The existing
+PostgreSQL queue remains the only job system: web encrypts private input,
+deduplicates by its authenticated actor and semantic fingerprint, and returns
+the existing job-read capability; worker decrypts, dispatches, encrypts the
+terminal result, and never receives the Action bearer. Payload/protection or
+queue unavailability fails closed while enabled. Setting the flag to `false`
+restores the previous synchronous routing policy. For payload-key rotation,
+first configure both roles with K1 current/K2 previous, deploy the worker with
+K2 current/K1 previous, and only then deploy the web role with K2 current/K1
+previous. Keep K1 configured as previous until every K1-sealed retained job
+has drained.
+
+Before the first worker-first promotion of the Phase-A compatibility release,
+deploy a producer-neutral cancellation-sanitizer precursor through the same
+exact-SHA paired workflow. Its web boundary must replace the reason for every
+publicly cancellable `job_type = 'gpt'` row with the reviewed server literal
+`GPT job cancellation requested during rollout compatibility.` independently
+of input shape, alias, or producer marker. Do not begin the Phase-A worker
+upload until the exact precursor web is active and ready on every replica and
+alias, every older web deployment is terminated rather than merely
+superseded, no restart source can revive the older SHA, and the later of the
+tracked 60-second replica drain and the bounded cancellation-route/database
+transaction window has elapsed. Then run a read-only, all-status GPT inventory
+that proves zero non-fixed values in `cancel_reason`,
+`autonomy_state.cancellation.reason`, and `error_message` for cancelled rows,
+plus zero nonterminal raw cancellation requests and zero unexpected
+`producerContract` or `protectedBackstage` rows. Repeat that inventory after
+another quiet window covering route completion, commit visibility, and worker
+cancellation/recovery. Preserve the query digest, timestamps, counts, exact
+target, and deployment IDs as rollout evidence.
+
+Those repeated inventories establish that no unsafe retained cancellation
+data exists at the Phase-A cutover; they do not prove that an older running web
+request never wrote a transient value that was sanitized between snapshots.
+If the acceptance criterion is zero new plaintext ever, hold
+`/jobs/:id/cancel` at the edge while the old web drains. If either the endpoint
+hold or the retained-state cutover evidence required by the chosen criterion
+is unavailable, do not promote this release. Setting
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=false` is not an ingress
+hold because explicit async, query-and-wait, fallback, and idempotent GPT paths
+can still enqueue work.
+
+This release uses a temporary Phase-A compatibility drain for the
+worker-first/web-second overlap. Standard unprotected GPT queue inputs emitted
+by the current producers carry the exact internal marker
+`producerContract: { version: 1, source: "queued-gpt-runtime" }`; current
+protected Booker inputs remain separately identified by their sealed
+`protectedBackstage` envelope. A new worker may treat only a marker-absent
+pre-contract row that resolves to `generateBooking` or
+`generateBookingWithHRC` as a legacy Booker generation. It runs that row in a
+worker-only compatibility context with Notion authorization fixed false and
+with optional enrichment, prompt-debug logging, transcript persistence,
+content-bearing audit persistence, and cache persistence suppressed. A
+marker-absent row is not sufficient by itself to authorize another module or
+action, and an unprotected row carrying the current producer marker is rejected
+rather than grandfathered.
+
+The compatibility worker persists a bounded plaintext terminal envelope for a
+legacy row because the old web revision that submitted it cannot decrypt the
+new sealed result format. This is a deliberate, finite interoperability
+exception: it does not retroactively encrypt the already-persisted legacy input
+and it must not be represented as encrypted-at-rest proof. Remove the Phase-A
+lane in a reviewed Phase-B follow-up only after every web replica runs the new
+producer revision, no older web replica can restart, the tracked 60-second
+replica-drain window has elapsed, and a conservative database inventory shows
+zero rows matching `job_type = 'gpt'`, `status IN ('pending', 'running')`, and
+neither an input `producerContract` nor `protectedBackstage` key. Counting all
+nonterminal marker-absent GPT rows is intentional because configured aliases
+and automatic intent routing cannot be reproduced safely by a standalone JSON
+predicate. Until Phase B, every forward deployment must retain a worker
+revision that can consume both the sealed current format and the bounded legacy
+format. Phase B removes only marker-absent legacy admission; it does not make a
+pre-protection worker capable of consuming sealed `protectedBackstage` rows.
+After any sealed-producing web revision has been active, do not deploy or
+redeploy a pre-protection worker directly and do not run the normal
+worker-first workflow against an old-code revert. A raw code downgrade first
+requires an enforced edge hold on every GPT write path (including Core and
+configured aliases that can resolve to Booker), while leaving job-result reads
+available; setting the automatic-routing flag false or removing the optional
+Booker bearer is not an ingress hold. If an edge hold is unavailable, stop or
+scale web to zero and accept the approved downtime. Keep the sealed-capable web
+and worker plus payload key in place, wait the tracked 60-second replica-drain
+window, prove no pre-hold replica can restart, and let the current worker drain.
+Before downgrading the worker, the database must contain zero rows matching
+`job_type = 'gpt'`, `status IN ('pending', 'running')`, and an input
+`protectedBackstage` key. Before downgrading the web while preserving result
+compatibility, conservatively require zero retained GPT rows with an input
+`protectedBackstage` key across every status: the old web cannot unseal a
+terminal result and the queue has no durable client-consumed marker. After
+those gates, restore and verify every web replica and alias on the exact old
+producer revision first, wait its 60-second drain/no-restart window, then
+restore the matching old worker. Release ingress only after the old pair is
+exact and healthy. If either inventory or replica proof is unavailable, retain
+or forward-fix the sealed-capable revision; an emergency raw rollback cannot
+claim result compatibility. Terminal legacy rows remain plaintext until normal
+retention removes them, so at-rest evidence must continue to qualify those
+grandfathered rows even after Phase B removes new legacy admission.
+
+Queued structured generation selects a finite workload-aware output allowance
+from `BOOKER_WORKER_TOKEN_LIMIT` (default `6000`, clamped to `4000`-`8000`),
+then reduces it when the compatible provider-stage budget is shorter. Compact,
+review, continuity, unsupported-model, and synchronous rollback paths do not
+receive the extended cap. Provider `incomplete` or `max_output_tokens` output
+never becomes a successful job result. The exact routing rollback remains
+`ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=false`; no worker token value
+re-enables the unsafe synchronous heavy path.
 
 In ChatGPT Builder configure that value as API Key/Bearer authentication, not
 OAuth or a user password. Both imported read operations are non-consequential;
@@ -410,18 +650,19 @@ workaround. See
 [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the full
 Builder and security contract.
 
-Optional Notion enrichment is a web-only configuration rollout and does not
-add a Builder operation. Schema `1.4.0` must still be re-imported because it
-declares bearer provenance and materializes the nested public payload. Create a dedicated Notion integration
+Optional Notion enrichment is configured wherever generation executes: web for
+synchronous rollback and worker for queued heavy generation. Schema `1.5.0`
+must be re-imported because it adds the protected result operation while retaining
+bearer provenance and the nested public payload. Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
-`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on the web service. Never reuse
-an ARCANOS bearer or copy the Notion token to Builder/worker configuration.
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on each executing service. Never reuse
+an ARCANOS bearer or copy the Notion token to Builder configuration.
 Deploy the backend first. Then call `generateBooking` for a mapped disposable
 scope through the existing private GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
 bearer and verify generation stays available but no Notion event/request occurs.
-After importing `1.4.0`, verify Builder attaches its saved API-key
+After importing `1.5.0`, verify Builder attaches its saved API-key
 authentication to `runBackstageBooker`. If it does not, enrichment must remain
 disabled; do not remove the server-side gate.
 
@@ -495,7 +736,7 @@ retry over the same retrieval and budget, and a second exhaustion returns the
 sanitized incomplete-output error. Confirm each response used one snapshot, no
 Notion request originated from web, no legacy repository/fallback was called,
 and OpenAI storage/transcript/cache suppression remained active.
-Only after the backend serves schema `1.4.0`, re-import that contract into the
+Only after the backend serves schema `1.5.0`, re-import that contract into the
 existing Builder Action, preserve its saved bearer and visibility, and repeat
 one page and one subtree request through the GPT. Then remove any
 authority-only Notion token left on web. A failed new crawl
@@ -645,9 +886,18 @@ Rollback:
    restore the worker's captured baseline. Confirm schema compatibility and any
    coordinated-writer hold before either action; do not guess from `HEAD^` or
    use a generic latest-deployment redeploy as a substitute.
-3. In each confirmed target's deployment history, identify the exact approved
+3. If a sealed-producing Backstage web revision has become active, the generic
+   worker-baseline option is unsafe until the heavy-generation rollback gate
+   above is satisfied. Enforce the approved GPT-write ingress hold, keep the
+   sealed-capable web/worker and payload key through the drain and inventory,
+   require zero retained protected rows before a result-compatible web
+   downgrade, then restore web first and worker second with both replica-drain
+   checks. Do not use the normal worker-first workflow for that old-code revert.
+   If the gate cannot be proved, forward-complete or retain the sealed-capable
+   revision.
+4. In each confirmed target's deployment history, identify the exact approved
    deployment for that recovery decision.
-4. Redeploy only those approved versions, then repeat exact web/worker role,
+5. Redeploy only those approved versions, then repeat exact web/worker role,
    readiness, active-deployment, and shared-revision verification.
 
 ## Troubleshooting

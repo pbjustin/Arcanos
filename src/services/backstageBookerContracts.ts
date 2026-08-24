@@ -435,6 +435,15 @@ function resolveSchemaDrivenPayloadCandidate(
     : stripInternalFields(record);
 }
 
+/** Read the prompt the generation adapter will execute without changing validation timing. */
+export function extractBackstageBookerCanonicalGenerationPrompt(
+  action: 'generateBooking' | 'generateBookingWithHRC',
+  payload: unknown
+): string | null {
+  const candidate = asRecord(resolveSchemaDrivenPayloadCandidate(action, payload));
+  return typeof candidate?.prompt === 'string' ? candidate.prompt : null;
+}
+
 function resolveUniverseId(record: Record<string, unknown> | null): unknown {
   return record && Object.prototype.hasOwnProperty.call(record, 'universeId')
     ? record.universeId

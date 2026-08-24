@@ -2,15 +2,27 @@ import {
   assertValidBackstageBookerActionData,
   type BackstageQueryContinuityResponse,
 } from '@arcanos/protocol';
-import { isAbortError } from '@arcanos/runtime';
+import {
+  createAbortError,
+  getRequestRemainingMs,
+  isAbortError,
+} from '@arcanos/runtime';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
-  BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   buildBackstageBookerTrinityRunOptions,
-  resolveBackstageGenerationStageTimeoutMs,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  BACKSTAGE_CONTINUITY_MODEL_STAGE_TIMEOUT_DEFAULT_MS,
+  hasBackstageRecoveryBudget,
+  resolveBackstageExecutionBudgetPolicy,
+} from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  buildBackstageOutputBudgetCompletionInstruction,
+  buildBackstageOutputBudgetTelemetry,
+  resolveBackstageOutputBudget,
+} from '@shared/backstage/backstageOutputBudget.js';
 import {
   buildBackstageContinuityPolicyPrompt,
   buildBackstageContinuityResponse,
@@ -22,7 +34,10 @@ import {
   isBackstageBookerOutputIncompleteError,
   isBackstageProviderOutputLengthExhaustionError,
 } from '@shared/backstage/backstageGenerationError.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import {
+  createRuntimeBudgetWithLimit,
+  getSafeRemainingMs,
+} from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { getGPT5Model } from '@services/openai.js';
@@ -41,6 +56,38 @@ function resolveContinuityQueryModel(): string {
     : configured;
 }
 
+function resolveContinuityAttemptTimeoutMs(input: {
+  executionBudget: ReturnType<typeof resolveBackstageExecutionBudgetPolicy>;
+  runtimeBudget: Parameters<typeof getSafeRemainingMs>[0];
+  compactRetry: boolean;
+}): number {
+  const recoveryReserveMs = input.compactRetry
+    ? 0
+    : input.executionBudget.recoveryStageTimeoutMs;
+  const runtimeAvailableMs = getSafeRemainingMs(input.runtimeBudget)
+    - recoveryReserveMs;
+  const requestRemainingMs = getRequestRemainingMs();
+  const requestAvailableMs = requestRemainingMs === null
+    ? Number.POSITIVE_INFINITY
+    : requestRemainingMs
+      - input.executionBudget.finalizationReserveMs
+      - recoveryReserveMs;
+  const configuredStageTimeoutMs = input.compactRetry
+    ? input.executionBudget.recoveryStageTimeoutMs
+    : input.executionBudget.modelStageTimeoutMs;
+  const effectiveStageTimeoutMs = Math.trunc(Math.min(
+    configuredStageTimeoutMs,
+    runtimeAvailableMs,
+    requestAvailableMs
+  ));
+  if (!Number.isFinite(effectiveStageTimeoutMs) || effectiveStageTimeoutMs < 1_000) {
+    throw createAbortError(
+      'Backstage continuity has insufficient remaining request budget before provider dispatch.'
+    );
+  }
+  return effectiveStageTimeoutMs;
+}
+
 /**
  * Answer one bounded, read-only continuity question from an immutable Notion
  * authority snapshot. Raw excerpts remain server-side; callers receive only a
@@ -53,6 +100,21 @@ export async function queryBackstageContinuity(
     throw new BackstageNotionCursorInvalidError();
   }
   const input = normalizeBackstageBookerActionPayload('queryContinuity', payload);
+  const executionBudget = resolveBackstageExecutionBudgetPolicy({
+    profile: 'continuity_sync',
+    configuration: {
+      continuityStageTimeoutMs: getEnvNumber(
+        'BOOKER_CONTINUITY_STAGE_TIMEOUT_MS',
+        BACKSTAGE_CONTINUITY_MODEL_STAGE_TIMEOUT_DEFAULT_MS
+      ),
+    },
+  });
+  // Start the operation budget before retrieval so slow Notion reads cannot
+  // silently hand a fresh full provider window to the model stage.
+  const runtimeBudget = createRuntimeBudgetWithLimit(
+    executionBudget.operationTimeoutMs,
+    0
+  );
   const retrieval = await retrieveBackstageNotionRagContext(input.universeId, {
     query: input.query,
     ...(input.retrievalScope ? { retrievalScope: input.retrievalScope } : {}),
@@ -66,12 +128,40 @@ export async function queryBackstageContinuity(
     }
 
     const model = resolveContinuityQueryModel();
-    const stageTimeoutMs = resolveBackstageGenerationStageTimeoutMs(getEnvNumber(
-      'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
-      BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS
-    ));
-    const runtimeBudget = createRuntimeBudget();
+    logger.info('backstage.continuity_query.timeout_plan', {
+      profile: executionBudget.profile,
+      totalTimeoutMs: executionBudget.totalTimeoutMs,
+      operationTimeoutMs: executionBudget.operationTimeoutMs,
+      modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+      recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
+      finalizationReserveMs: executionBudget.finalizationReserveMs,
+    });
+    const outputBudget = resolveBackstageOutputBudget({
+      action: 'queryContinuity',
+      profile: executionBudget.profile,
+      requestedFormat: 'continuity',
+      requestedTokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+      promptCodeUnits: input.query.length,
+      retrievedContextCodeUnits: retrieval.prompt.length,
+      expectedOutputWords: 0,
+      model,
+      modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
+    });
+    logger.info(
+      'backstage.continuity_query.output_budget',
+      buildBackstageOutputBudgetTelemetry(outputBudget)
+    );
     const runAttempt = (compactRetry: boolean) => {
+      const effectiveStageTimeoutMs = resolveContinuityAttemptTimeoutMs({
+        executionBudget,
+        runtimeBudget,
+        compactRetry,
+      });
+      logger.info('backstage.continuity_query.attempt_timeout', {
+        profile: executionBudget.profile,
+        compactRetry,
+        modelStageTimeoutMs: effectiveStageTimeoutMs,
+      });
       const policyPrompt = buildBackstageContinuityPolicyPrompt(
         input,
         retrieval,
@@ -90,9 +180,9 @@ export async function queryBackstageContinuity(
             retrievalMode: input.retrievalMode ?? 'relevant',
             ...(input.cursor ? { cursor: input.cursor } : {}),
             model,
-            tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+            tokenLimit: outputBudget.tokenLimit,
           },
-          tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+          tokenLimit: outputBudget.tokenLimit,
           executionMode: 'request',
         },
         context: {
@@ -101,13 +191,18 @@ export async function queryBackstageContinuity(
           runOptions: {
             ...buildBackstageBookerTrinityRunOptions({
               model,
-              tokenLimit: BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
+              tokenLimit: outputBudget.tokenLimit,
+              tokenCap: outputBudget.tokenCap,
               userIntentPrompt: input.query,
-              modelStageTimeoutMs: stageTimeoutMs,
+              watchdogTimeoutMs: executionBudget.operationTimeoutMs,
+              modelStageTimeoutMs: effectiveStageTimeoutMs,
             }),
             disableOptionalSideEffects: true,
             trustedPolicyPrompt: policyPrompt,
-            directAnswerSystemPolicyPrompt: BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
+            directAnswerSystemPolicyPrompt: [
+              BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
+              buildBackstageOutputBudgetCompletionInstruction(outputBudget),
+            ].join('\n\n'),
             directAnswerUntrustedContextPrompt: retrieval.prompt,
             redactAuditContent: true,
           },
@@ -121,6 +216,15 @@ export async function queryBackstageContinuity(
     } catch (error) {
       if (!isBackstageProviderOutputLengthExhaustionError(error)) {
         throw error;
+      }
+      if (!hasBackstageRecoveryBudget({
+        policy: executionBudget,
+        runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
+        requestRemainingMs: getRequestRemainingMs(),
+        remainingOutputTokens: outputBudget.tokenLimit,
+        recoveryAttempted: false,
+      })) {
+        throw new BackstageBookerOutputIncompleteError();
       }
       try {
         result = await runAttempt(true);

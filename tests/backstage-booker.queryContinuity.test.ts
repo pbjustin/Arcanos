@@ -16,6 +16,10 @@ const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockRetrieveBackstageNotionRagContext = jest.fn();
 const mockLoggerError = jest.fn();
+const mockLoggerInfo = jest.fn();
+const mockGetSafeRemainingMs = jest.fn();
+const mockRuntimeBudget = { id: 'continuity-test-budget' };
+const mockCreateRuntimeBudgetWithLimit = jest.fn(() => mockRuntimeBudget);
 
 class MockBackstageNotionCursorInvalidError extends Error {
   readonly code = 'BACKSTAGE_NOTION_CURSOR_INVALID';
@@ -45,7 +49,12 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
-  logger: { error: mockLoggerError },
+  logger: { error: mockLoggerError, info: mockLoggerInfo },
+}));
+
+jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
+  createRuntimeBudgetWithLimit: mockCreateRuntimeBudgetWithLimit,
+  getSafeRemainingMs: mockGetSafeRemainingMs,
 }));
 
 jest.unstable_mockModule('@services/backstageNotionRag.js', () => ({
@@ -269,6 +278,7 @@ describe('Backstage Booker queryContinuity', () => {
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
     mockGetEnvNumber.mockImplementation((_name: string, fallback: number) => fallback);
+    mockGetSafeRemainingMs.mockReturnValue(40_000);
     mockRetrieveBackstageNotionRagContext.mockResolvedValue(retrieval);
     mockRunTrinityWritingPipeline.mockResolvedValue({ result: '- CM Punk is champion.' });
   });
@@ -311,12 +321,57 @@ describe('Backstage Booker queryContinuity', () => {
         runOptions: expect.objectContaining({
           directAnswerTokenLimitOverride: 900,
           directAnswerTokenCapOverride: 2400,
+          watchdogModelTimeoutMs: 40_000,
+          modelStageTimeoutMs: 20_000,
+          directAnswerSystemPolicyPrompt: expect.stringContaining(
+            'Complete every requested section within 900 output tokens.'
+          ),
           directAnswerUntrustedContextPrompt: retrieval.prompt,
           redactAuditContent: true,
           disableOptionalSideEffects: true,
         }),
       }),
     }));
+  });
+
+  it('charges slow retrieval against the continuity provider window and preserves recovery headroom', async () => {
+    mockRetrieveBackstageNotionRagContext.mockImplementationOnce(async () => {
+      expect(mockCreateRuntimeBudgetWithLimit).toHaveBeenCalledWith(40_000, 0);
+      mockGetSafeRemainingMs.mockReturnValue(22_000);
+      return retrieval;
+    });
+
+    await queryBackstageContinuity(request);
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            modelStageTimeoutMs: 7_000,
+          }),
+        }),
+      })
+    );
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      'backstage.continuity_query.attempt_timeout',
+      {
+        profile: 'continuity_sync',
+        compactRetry: false,
+        modelStageTimeoutMs: 7_000,
+      }
+    );
+  });
+
+  it('fails before provider dispatch when retrieval consumes the continuity reserve', async () => {
+    mockRetrieveBackstageNotionRagContext.mockImplementationOnce(async () => {
+      mockGetSafeRemainingMs.mockReturnValue(15_500);
+      return retrieval;
+    });
+
+    const failure = await queryBackstageContinuity(request).catch(error => error);
+
+    expect(failure).toMatchObject({ name: 'AbortError' });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('passes an explicit subtree scope through retrieval and returns page coverage', async () => {
@@ -537,6 +592,25 @@ describe('Backstage Booker queryContinuity', () => {
     expect((failure as Error & { cause?: unknown }).cause).toBeUndefined();
     expect(JSON.stringify(failure)).not.toContain('PRIVATE');
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips compact recovery when the reserved runtime budget is unavailable', async () => {
+    mockGetSafeRemainingMs
+      .mockReturnValueOnce(40_000)
+      .mockReturnValueOnce(1_000);
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('PRIVATE PARTIAL OUTPUT'),
+      {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        incompleteReason: 'max_output_tokens',
+      }
+    ));
+
+    await expect(queryBackstageContinuity(request)).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
   });
 
   it('masks a non-length failure from the compact retry without a third attempt', async () => {

@@ -94,6 +94,8 @@ export interface BackstageNotionRagChunkingOptions {
 export interface BackstageNotionRagPromptOptions {
   maximumCodePoints?: number;
   maximumChunks?: number;
+  /** When false, omit a chunk instead of slicing its content. */
+  allowPartialChunk?: boolean;
 }
 
 export interface BackstageNotionRagPromptContext {
@@ -1346,6 +1348,13 @@ export function buildBackstageNotionRagUntrustedContextPrompt(
     const quotedContent = quoteRetrievedContent(
       sanitizeBackstageNotionRagMarkdown(chunk.content)
     );
+    if (
+      options.allowPartialChunk === false
+      && codePointLength(quotedContent) > availableContentCodePoints
+    ) {
+      contentTruncated = true;
+      break;
+    }
     const projectedContent = truncateCodePoints(
       quotedContent,
       availableContentCodePoints

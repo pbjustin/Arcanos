@@ -53,6 +53,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageJobPayloadProtection.ts',
+  'src/shared/backstage/backstageQueuedJobResultProtection.ts',
   'src/shared/backstage/backstageCompactOutputContract.ts',
   'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageGenerationError.ts',
@@ -160,6 +162,21 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  [
+    'src/shared/backstage/backstageJobPayloadProtection.ts',
+    new Map([
+      [
+        'node:crypto',
+        new Set([
+          'createCipheriv:createCipheriv',
+          'createDecipheriv:createDecipheriv',
+          'createHash:createHash',
+          'randomBytes:randomBytes',
+          'timingSafeEqual:timingSafeEqual',
+        ]),
+      ],
+    ]),
+  ],
   [
     'packages/arcanos-runtime/src/requestAbort.ts',
     new Map([
@@ -638,11 +655,19 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageActionPolicy.ts',
-    '5609ace9e84dacfbca8b0e29be0d8b8f9269cd0d1cc2ed0b4987449a13de548c',
+    '37b2f80a28eb4354ee734849c62cff310427899cbf15029a2e2fef84f1187323',
+  ],
+  [
+    'src/shared/backstage/backstageJobPayloadProtection.ts',
+    '98164fec89091c5281a129c252d97ca42b9b9c68a5e8b3159377599ca6531383',
+  ],
+  [
+    'src/shared/backstage/backstageQueuedJobResultProtection.ts',
+    '290eff6f6d00d047583ba10a109e8498605f4165f35f38311bd7a503669214b2',
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',
-    '49befcaa52e8ea1671090c8f1df620fc7d00bd1153fb8bf2505fdf29c17d0498',
+    '7e3caa4f864d86e12faaf49a08a6c55db1c4f8dc6e3eb85eb34b3efc1dc55801',
   ],
   [
     'src/shared/backstage/backstageContinuityQueryCore.ts',
@@ -650,7 +675,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageGenerationError.ts',
-    'b6b991068df34e28238d88c6b90fe764192abfe06deb27538366380b09b60b60',
+    '523566c7108e4e51fd1d9b0e371d9d8178de85a42c9ec43a1171b3a81baa759b',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
@@ -662,7 +687,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
-    '6112fbb4d5ee38c5ec3059342d0fe134333b74494a312faa68512ebfbea76e9b',
+    '56007dffcfbbde8f6e3b2a8b812a876d5940544ee088e1b08f3b03a605e53631',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

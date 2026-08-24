@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T17:51:07.863Z",
+  "generatedAt": "2026-08-23T09:43:01.927Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -564,6 +564,9 @@
         },
         {
           "relativePath": "src/core/logic/trinityHonestyTypes.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityIntegrityRecovery.ts"
         },
         {
           "relativePath": "src/core/logic/trinityJudgedFeedback.ts"
@@ -2402,6 +2405,9 @@
           "relativePath": "src/shared/ask/trinityResponseSerializer.ts"
         },
         {
+          "relativePath": "src/shared/async/cooperativeAbortDrain.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
@@ -2414,10 +2420,19 @@
           "relativePath": "src/shared/backstage/backstageEvent.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageExecutionBudget.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageGenerationError.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageJobPayloadProtection.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionAuthorityCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionBookingScope.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
@@ -2430,6 +2445,12 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionScopeIndex.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageOutputBudget.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageQueuedJobResultProtection.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageReviewContract.ts"
@@ -2601,6 +2622,9 @@
         },
         {
           "relativePath": "src/shared/idGenerator.ts"
+        },
+        {
+          "relativePath": "src/shared/jobs/jobLeaseTiming.ts"
         },
         {
           "relativePath": "src/shared/jobs/jobLinks.ts"
@@ -3310,13 +3334,22 @@
           "relativePath": "tests/backstage-booker.storyline-lifecycle.test.ts"
         },
         {
+          "relativePath": "tests/backstage-execution-budget.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-generation-error.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-job-payload-protection.test.ts"
         },
         {
           "relativePath": "tests/backstage-mutation-http-boundary.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-authority-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-booking-scope.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-context.test.ts"
@@ -3344,6 +3377,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-sync.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-output-budget.test.ts"
         },
         {
           "relativePath": "tests/backstage-storyline-schema.test.ts"
@@ -4622,6 +4658,9 @@
         },
         {
           "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-integrity-recovery.test.ts"
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"

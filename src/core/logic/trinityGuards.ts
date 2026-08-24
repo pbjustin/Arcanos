@@ -241,6 +241,7 @@ export function computeTierSoftCap(tier: Tier): number {
 export interface TrinityWatchdog {
   watchdog: Watchdog;
   tierSoftCap: number;
+  recoveryReserveMs: number;
   remainingBudgetMs: number;
   modelCapMs: number;
   effectiveLimit: number;
@@ -255,11 +256,17 @@ export function createTrinityWatchdog(
   tier: Tier,
   runtimeBudget: RuntimeBudget,
   model = 'gpt-5',
-  modelTimeoutOverrideMs?: number
+  modelTimeoutOverrideMs?: number,
+  recoveryReserveMs = 0
 ): TrinityWatchdog {
   assertBudgetAvailable(runtimeBudget);
 
-  const tierSoftCap = computeTierSoftCap(tier);
+  const normalizedRecoveryReserveMs = Number.isFinite(recoveryReserveMs)
+    && recoveryReserveMs > 0
+    ? Math.min(45_000, Math.trunc(recoveryReserveMs))
+    : 0;
+  const tierSoftCap = computeTierSoftCap(tier)
+    + normalizedRecoveryReserveMs;
   const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
   //audit Assumption: worker-originated Trinity calls may need a larger per-stage ceiling than request-path defaults; failure risk: long-running DAG nodes are clipped by the generic model timeout even when the worker budget is higher; expected invariant: explicit positive overrides win, otherwise model-specific defaults still apply; handling strategy: sanitize the override and clamp it again when computing the final effective limit.
   const modelCapMs =
@@ -274,6 +281,7 @@ export function createTrinityWatchdog(
     logger.info('Trinity watchdog computed', {
       tier,
       tierSoftCap,
+      recoveryReserveMs: normalizedRecoveryReserveMs,
       remainingBudgetMs,
       modelCapMs,
       effectiveLimitMs: effectiveLimit
@@ -283,6 +291,7 @@ export function createTrinityWatchdog(
   return {
     watchdog: new Watchdog(effectiveLimit),
     tierSoftCap,
+    recoveryReserveMs: normalizedRecoveryReserveMs,
     remainingBudgetMs,
     modelCapMs,
     effectiveLimit

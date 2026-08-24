@@ -26,6 +26,16 @@ import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
+import {
+  BACKSTAGE_NOTION_BOOKING_BRANDS,
+  BACKSTAGE_NOTION_BOOKING_NEUTRAL_CHUNK_RESERVE,
+  BACKSTAGE_NOTION_BOOKING_SCOPE_SCORE_BOOST,
+  classifyBackstageNotionBookingCandidateScope,
+  deduplicateBackstageNotionBookingCandidates,
+  resolveBackstageNotionBookingScopePlan,
+  type BackstageNotionBookingCandidateScope,
+  type BackstageNotionBookingScopePlan,
+} from '@shared/backstage/backstageNotionBookingScope.js';
 import { cosineSimilarity } from '@shared/vectorUtils.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import {
@@ -309,6 +319,8 @@ interface SelectedChunk extends ScopeCandidate {
 interface RankedChunk extends SelectedChunk {
   active: BackstageNotionActiveChunk;
 }
+
+type BackstageNotionRagRetrievalProfile = 'booking' | 'continuity';
 
 function resolveMaximumStalenessMs(value: number | undefined): number {
   const candidate = value ?? getEnvNumber(
@@ -1040,6 +1052,88 @@ function selectDiversifiedChunks(ranked: readonly RankedChunk[]): RankedChunk[] 
   return selected;
 }
 
+function extendDiversifiedChunks(
+  ranked: readonly RankedChunk[],
+  initial: readonly RankedChunk[],
+  maximumChunks: number
+): RankedChunk[] {
+  const selected = [...initial];
+  const selectedIds = new Set(selected.map(candidate => candidate.active.id));
+  const pageCounts = new Map<string, number>();
+  for (const candidate of selected) {
+    pageCounts.set(
+      candidate.active.pageId,
+      (pageCounts.get(candidate.active.pageId) ?? 0) + 1
+    );
+  }
+  for (const candidate of ranked) {
+    if (selected.length >= maximumChunks) {
+      break;
+    }
+    if (selectedIds.has(candidate.active.id)) {
+      continue;
+    }
+    const pageCount = pageCounts.get(candidate.active.pageId) ?? 0;
+    if (pageCount >= BACKSTAGE_NOTION_RAG_MAX_CHUNKS_PER_PAGE) {
+      continue;
+    }
+    selected.push(candidate);
+    selectedIds.add(candidate.active.id);
+    pageCounts.set(candidate.active.pageId, pageCount + 1);
+  }
+  return selected;
+}
+
+function selectDiversifiedBookingChunks(
+  ranked: readonly RankedChunk[],
+  candidateScopes: ReadonlyMap<string, BackstageNotionBookingCandidateScope>,
+  scopePlan: BackstageNotionBookingScopePlan
+): RankedChunk[] {
+  const preferred = ranked.filter(candidate => (
+    candidateScopes.get(candidate.active.id)?.disposition === 'preferred'
+  ));
+  const neutral = ranked.filter(candidate => (
+    candidateScopes.get(candidate.active.id)?.disposition === 'neutral'
+  ));
+  let selected: RankedChunk[] = [];
+  const seedBrands = scopePlan.explicitCrossBrand
+    && scopePlan.allowedBrands.length === BACKSTAGE_NOTION_BOOKING_BRANDS.length
+    ? scopePlan.allowedBrands
+    : scopePlan.detectedBrands;
+  for (const brand of seedBrands) {
+    const seed = preferred.find(candidate => (
+      candidateScopes.get(candidate.active.id)?.brands.includes(brand)
+    ));
+    if (seed) {
+      selected = extendDiversifiedChunks(
+        [seed],
+        selected,
+        selected.length + 1
+      );
+    }
+  }
+  const preferredTarget = Math.max(
+    0,
+    BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS
+      - BACKSTAGE_NOTION_BOOKING_NEUTRAL_CHUNK_RESERVE
+  );
+  selected = extendDiversifiedChunks(preferred, selected, preferredTarget);
+  selected = extendDiversifiedChunks(
+    neutral,
+    selected,
+    Math.min(
+      BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS,
+      selected.length + BACKSTAGE_NOTION_BOOKING_NEUTRAL_CHUNK_RESERVE
+    )
+  );
+  selected = extendDiversifiedChunks(
+    preferred,
+    selected,
+    BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS
+  );
+  return selected;
+}
+
 function sortByPageOrdinal<T extends ScopeCandidate>(chunks: readonly T[]): T[] {
   return [...chunks].sort((left, right) => (
     compareDeterministicPath(left.active.pagePath, right.active.pagePath)
@@ -1109,7 +1203,8 @@ function validateActiveSnapshotProjection<T extends BackstageNotionActiveSnapsho
 async function retrieveBackstageNotionRagContextUnsafe(
   universeId: string,
   query: BackstageNotionRagQuery,
-  dependencies: BackstageNotionRagRetrievalDependencies = {}
+  dependencies: BackstageNotionRagRetrievalDependencies = {},
+  retrievalProfile: BackstageNotionRagRetrievalProfile = 'continuity'
 ): Promise<BackstageNotionRagRetrieval> {
   const request = normalizeQueryRequest(query);
   if (
@@ -1163,6 +1258,25 @@ async function retrieveBackstageNotionRagContextUnsafe(
   let resolvedScope: BackstageNotionRagResolvedScope | null = null;
   let completeScopeSelector: BackstageNotionSnapshotChunkPageSelector | null = null;
   let completeScopeKind: 'all' | BackstageNotionRagScopeKind = 'all';
+  const bookingScopePlan: BackstageNotionBookingScopePlan | null =
+    retrievalProfile === 'booking'
+    && request.retrievalMode === 'relevant'
+    && request.retrievalScope === undefined
+      ? resolveBackstageNotionBookingScopePlan(request.query)
+      : null;
+  const bookingCandidateScopes = new Map<
+    string,
+    BackstageNotionBookingCandidateScope
+  >();
+  let bookingScopedCandidateChunks = 0;
+  let bookingScopeExcludedChunks = 0;
+  let bookingUniqueCandidateChunks = 0;
+  let bookingDuplicatesRemoved = 0;
+  const bookingEffectiveScopeStrategy = bookingScopePlan?.strategy ?? null;
+  let bookingFallbackReason:
+    | 'underspecified_query'
+    | 'no_matching_brand_context'
+    | null = bookingScopePlan?.fallbackReason ?? null;
   const binding = requestBinding(request);
   const cursorSigningKey = buildCursorSigningKey({
     universeId,
@@ -1344,6 +1458,50 @@ async function retrieveBackstageNotionRagContextUnsafe(
       scopeChunks = scopeCandidates.length;
       scopePages = 1;
     }
+    if (bookingScopePlan) {
+      for (const candidate of validatedChunks) {
+        bookingCandidateScopes.set(
+          candidate.active.id,
+          classifyBackstageNotionBookingCandidateScope(
+            bookingScopePlan,
+            {
+              pageTitle: candidate.active.pageTitle,
+              pagePath: candidate.active.pagePath,
+              headingPath: candidate.active.headingPath,
+              category: candidate.category,
+            }
+          )
+        );
+      }
+      if (bookingEffectiveScopeStrategy !== 'fallback_all') {
+        const scopedCandidates = scopeCandidates.filter(candidate => (
+          bookingCandidateScopes.get(candidate.active.id)?.disposition
+            !== 'excluded'
+        ));
+        const hasPreferredCandidate = scopedCandidates.some(candidate => (
+          bookingCandidateScopes.get(candidate.active.id)?.disposition
+            === 'preferred'
+        ));
+        if (hasPreferredCandidate) {
+          scopeCandidates = scopedCandidates;
+          bookingScopeExcludedChunks =
+            validatedChunks.length - scopedCandidates.length;
+        } else {
+          const neutralCandidates = scopedCandidates.filter(candidate => (
+            bookingCandidateScopes.get(candidate.active.id)?.disposition
+              === 'neutral'
+          ));
+          if (neutralCandidates.length < 1) {
+            throw new BackstageNotionIndexUnavailableError();
+          }
+          scopeCandidates = neutralCandidates;
+          bookingFallbackReason = 'no_matching_brand_context';
+          bookingScopeExcludedChunks =
+            validatedChunks.length - neutralCandidates.length;
+        }
+      }
+      bookingScopedCandidateChunks = scopeCandidates.length;
+    }
     scopeChunks = scopeCandidates.length;
     const queryEmbedding = await (dependencies.embedQuery ?? createEmbedding)(request.query);
     if (
@@ -1353,9 +1511,16 @@ async function retrieveBackstageNotionRagContextUnsafe(
       throw new BackstageNotionIndexUnavailableError();
     }
     const queryTokens = tokenize(request.query);
-    const ranked = scopeCandidates.map((candidate): RankedChunk => {
+    const rankedWithDuplicates = scopeCandidates.map((candidate): RankedChunk => {
+      const bookingScope = bookingCandidateScopes.get(candidate.active.id);
       const score = cosineSimilarity(queryEmbedding, candidate.active.embedding)
-        + lexicalBoost(queryTokens, candidate.active);
+        + lexicalBoost(queryTokens, candidate.active)
+        + (
+          bookingEffectiveScopeStrategy !== 'fallback_all'
+          && bookingScope?.disposition === 'preferred'
+            ? BACKSTAGE_NOTION_BOOKING_SCOPE_SCORE_BOOST
+            : 0
+        );
       if (!Number.isFinite(score)) {
         throw new BackstageNotionIndexUnavailableError();
       }
@@ -1366,16 +1531,48 @@ async function retrieveBackstageNotionRagContextUnsafe(
       || left.active.ordinal - right.active.ordinal
       || compareDeterministicText(left.active.id, right.active.id)
     ));
+    let ranked = rankedWithDuplicates;
+    if (bookingScopePlan) {
+      const deduplicated = deduplicateBackstageNotionBookingCandidates(
+        rankedWithDuplicates
+      );
+      ranked = deduplicated.candidates;
+      bookingDuplicatesRemoved = deduplicated.duplicatesRemoved;
+      bookingUniqueCandidateChunks = ranked.length;
+      scopeChunks = ranked.length;
+    }
     selected = request.retrievalScope?.scopeKind === 'subtree'
       ? selectDiversifiedChunks(ranked)
       : resolved
         ? ranked.slice(0, BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS)
+        : bookingScopePlan
+          && bookingEffectiveScopeStrategy !== 'fallback_all'
+          ? selectDiversifiedBookingChunks(
+              ranked,
+              bookingCandidateScopes,
+              bookingScopePlan
+            )
         : selectDiversifiedChunks(ranked);
   }
-  const promptContext = buildBackstageNotionRagUntrustedContextPrompt(
+  const promptOptions = {
+    maximumChunks: BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS,
+    ...(bookingScopePlan ? { allowPartialChunk: false } : {}),
+  };
+  let promptContext = buildBackstageNotionRagUntrustedContextPrompt(
     selected.map(candidate => candidate.chunk),
-    { maximumChunks: BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS }
+    promptOptions
   );
+  if (
+    bookingScopePlan
+    && promptContext.chunkCount > 0
+    && promptContext.truncated
+  ) {
+    selected = selected.slice(0, promptContext.chunkCount);
+    promptContext = buildBackstageNotionRagUntrustedContextPrompt(
+      selected.map(candidate => candidate.chunk),
+      promptOptions
+    );
+  }
   if (promptContext.chunkCount < 1) {
     throw new BackstageNotionIndexUnavailableError();
   }
@@ -1452,8 +1649,35 @@ async function retrieveBackstageNotionRagContextUnsafe(
       scopeChunks,
       retrievedChunks: promptContext.chunkCount,
       retrievalMode: request.retrievalMode,
-      scoped: resolvedScope !== null,
-      scopeKind: resolvedScope?.scopeKind ?? (resolvedScope ? 'page' : 'all'),
+      retrievalProfile,
+      scoped: resolvedScope !== null
+        || (
+          bookingScopePlan !== null
+          && bookingEffectiveScopeStrategy !== 'fallback_all'
+        ),
+      scopeKind: resolvedScope?.scopeKind
+        ?? (resolvedScope
+          ? 'page'
+          : bookingEffectiveScopeStrategy === 'fallback_all'
+            ? 'all'
+            : bookingEffectiveScopeStrategy ?? 'all'),
+      ...(bookingScopePlan
+        ? {
+            scopeStrategy: bookingEffectiveScopeStrategy,
+            detectedBrands: bookingScopePlan.detectedBrands,
+            allowedBrands: bookingEffectiveScopeStrategy === 'fallback_all'
+              ? BACKSTAGE_NOTION_BOOKING_BRANDS
+              : bookingScopePlan.allowedBrands,
+            explicitCrossBrand: bookingScopePlan.explicitCrossBrand,
+            ...(bookingFallbackReason
+              ? { fallbackReason: bookingFallbackReason }
+              : {}),
+            scopedCandidateChunks: bookingScopedCandidateChunks,
+            scopeExcludedChunks: bookingScopeExcludedChunks,
+            uniqueCandidateChunks: bookingUniqueCandidateChunks,
+            duplicatesRemoved: bookingDuplicatesRemoved,
+          }
+        : {}),
       ...(isSubtreeScope
         ? {
             scopePages,
@@ -1461,8 +1685,14 @@ async function retrieveBackstageNotionRagContextUnsafe(
             omittedPages: scopePages - selectedPages,
           }
         : {}),
-      corpusOmitted: omittedChunks > 0,
+      corpusOmitted: bookingScopePlan
+        ? active.snapshot.chunkCount > promptContext.chunkCount
+        : omittedChunks > 0,
+      ...(bookingScopePlan
+        ? { scopeOmitted: bookingScopeExcludedChunks > 0 }
+        : {}),
       promptTruncated: promptContext.truncated,
+      contextCodePoints: promptContext.codePoints,
       hasMore,
     });
   } catch {
@@ -1514,6 +1744,34 @@ export async function retrieveBackstageNotionRagContext(
       || isBackstageNotionCursorInvalidError(error)
       || isBackstageNotionIndexUnavailableError(error)
       || isBackstageNotionScopeResolutionError(error)
+    ) {
+      throw error;
+    }
+    throw new BackstageNotionIndexUnavailableError();
+  }
+}
+
+/**
+ * Booking-only relevant retrieval. Brand/show scope is derived from the
+ * bounded request while exact page/subtree continuity contracts stay on the
+ * generic retrieval entrypoint above.
+ */
+export async function retrieveBackstageNotionBookingRagContext(
+  universeId: string,
+  query: string,
+  dependencies: BackstageNotionRagRetrievalDependencies = {}
+): Promise<BackstageNotionRagRetrieval> {
+  try {
+    return await retrieveBackstageNotionRagContextUnsafe(
+      universeId,
+      query,
+      dependencies,
+      'booking'
+    );
+  } catch (error) {
+    if (
+      isAbortError(error)
+      || isBackstageNotionIndexUnavailableError(error)
     ) {
       throw error;
     }

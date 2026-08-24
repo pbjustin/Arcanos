@@ -91,7 +91,7 @@ Every response exposes chunk coverage; only subtree responses additionally set
 `resolvedScope.scopeKind: "subtree"` and expose `scopePages`, `selectedPages`,
 and `omittedPages`; these count only pages with indexed chunks, not an empty
 anchor. Sanitized opaque source hashes never expose raw excerpts or
-Notion page IDs. Deploy the backend before re-importing schema `1.4.0` into
+Notion page IDs. Deploy the backend before re-importing schema `1.5.0` into
 Builder. For configured universes, continuity
 queries and generation use the derived snapshot while the existing PostgreSQL
 read and canon-write operations return typed quarantine/read-only errors; keep

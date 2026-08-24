@@ -11,7 +11,11 @@ import {
 } from "@services/moduleRegistry.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
-import { wasBackstageNotionEnrichmentUsed } from '@services/backstageNotionEnrichmentAuthorization.js';
+import {
+  isBackstageLegacyQueuedExecution,
+  isBackstageProtectedQueuedExecution,
+  wasBackstageNotionEnrichmentUsed,
+} from '@services/backstageNotionEnrichmentAuthorization.js';
 import {
   BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE,
   BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_MESSAGE,
@@ -25,9 +29,12 @@ import {
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
   isBackstageBookerOutputIncompleteError,
+  isBackstageBookerIntegrityFailedError,
   isBackstageContinuityQueryFailedError,
 } from '@shared/backstage/backstageGenerationError.js';
 import {
@@ -70,6 +77,10 @@ import {
   runWithRequestAbortTimeout
 } from "@arcanos/runtime";
 import {
+  isCooperativeDeadlineExceededError,
+  runWithCooperativeAbortDrain,
+} from '@shared/async/cooperativeAbortDrain.js';
+import {
   recordDispatcherFallback,
   recordDispatcherMisroute,
   recordDispatcherRoute,
@@ -92,6 +103,7 @@ import {
 import { validateGptIdentifier } from '@shared/gpt/gptIdentifier.js';
 import { extractGptPromptText } from "@shared/gpt/messageContentText.js";
 import {
+  buildGptDispatchPayload,
   extractGptDispatchPromptText,
   extractPreparedGptDispatchPromptText,
 } from '@shared/gpt/gptRequestAction.js';
@@ -223,125 +235,10 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
   };
 }
 
-const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
-  'message',
-  'prompt',
-  'userInput',
-  'content',
-  'text',
-  'query',
-  'messages',
-  'sessionId',
-  'mode',
-  'game',
-  'url',
-  'urls',
-  'guideUrl',
-  'guideUrls',
-  'audit',
-  'enableAudit',
-  'hrc',
-  'enableHrc',
-  'overrideAuditSafe',
-  'answerMode',
-  'maxWords',
-  'max_words',
-  '__arcanosExecutionMode',
-  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
-] as const;
-
-const FORWARDED_PROMPT_ALIAS_KEYS = new Set<string>([
-  'message',
-  'prompt',
-  'userInput',
-  'content',
-  'text',
-  'query',
-  'messages',
-]);
-
-function mergeForwardedTopLevelPayloadFields(
-  body: Record<string, unknown>,
-  explicitPayload: Record<string, unknown>
-): Record<string, unknown> {
-  const mergedPayload = { ...explicitPayload };
-  const explicitPayloadHasPromptAlias = Array.from(FORWARDED_PROMPT_ALIAS_KEYS)
-    .some((key) => Object.prototype.hasOwnProperty.call(explicitPayload, key));
-
-  for (const key of FORWARDED_TOP_LEVEL_PAYLOAD_KEYS) {
-    if (explicitPayloadHasPromptAlias && FORWARDED_PROMPT_ALIAS_KEYS.has(key)) {
-      continue;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(mergedPayload, key)) {
-      continue;
-    }
-
-    const forwardedValue = body[key];
-    if (forwardedValue !== undefined) {
-      mergedPayload[key] = forwardedValue;
-    }
-  }
-
-  return mergedPayload;
-}
-
-/**
- * Build module action payload while preserving explicit caller payloads.
- * Inputs: raw request body and resolved module action.
- * Output: payload object passed to module action handlers.
- * Edge cases: when body.payload exists, it is forwarded verbatim for strict action contracts.
- */
-function buildDispatchPayload(
-  body: unknown,
-  promptOverride?: { promptText: string | null },
-  annotateBackstageOrigin = false,
-): unknown {
-  //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
-  if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
-    const explicitPayload = body.payload;
-    if (isRecord(explicitPayload)) {
-      const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
-      delete sanitizedPayload.gptId;
-      if (annotateBackstageOrigin) {
-        if (
-          !Object.prototype.hasOwnProperty.call(sanitizedPayload, 'universeId')
-          && body.universeId !== undefined
-        ) {
-          sanitizedPayload.universeId = body.universeId;
-        }
-        markBackstageBookerExplicitPayload(sanitizedPayload, Object.keys(explicitPayload));
-      }
-      return sanitizedPayload;
-    }
-    return explicitPayload;
-  }
-
-  const prompt = promptOverride
-    ? promptOverride.promptText
-    : extractGptPromptText(body);
-
-  //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
-  if (isRecord(body)) {
-    const normalizedPayload = { ...body };
-    delete normalizedPayload.gptId;
-    if (prompt) {
-      normalizedPayload.prompt = prompt;
-    }
-    if (annotateBackstageOrigin) {
-      markBackstageBookerFlattenedPayload(normalizedPayload);
-    }
-    return normalizedPayload;
-  }
-
-  //audit Assumption: scalar request bodies should still map to text prompt payloads; failure risk: scalar body dropped by module handlers; expected invariant: string input remains routable as prompt; handling strategy: wrap scalar input in object payload.
-  if (typeof prompt === "string" && prompt.length > 0) {
-    return { prompt };
-  }
-
-  //audit Assumption: legacy callers send top-level fields instead of payload wrappers; failure risk: module breakage for compatibility clients; expected invariant: top-level body remains supported; handling strategy: forward raw body fallback.
-  return body;
-}
+const BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER = Object.freeze({
+  markExplicitPayload: markBackstageBookerExplicitPayload,
+  markFlattenedPayload: markBackstageBookerFlattenedPayload,
+});
 
 function applyRuntimeExecutionModeOverride(
   payload: unknown,
@@ -475,6 +372,25 @@ function isDispatchTimeoutError(err: unknown, timeoutMs?: number): boolean {
   return DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) => normalizedMessage.includes(marker));
 }
 
+function isProtectedBackstageDispatchTimeoutError(
+  err: unknown,
+  timeoutMs?: number
+): boolean {
+  if (isCooperativeDeadlineExceededError(err)) {
+    return true;
+  }
+
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  if (isAbortError(err)) {
+    return normalizedMessage.includes('timed out after')
+      || DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) =>
+        normalizedMessage.includes(marker)
+      );
+  }
+
+  return isDispatchTimeoutError(err, timeoutMs);
+}
+
 function isDispatchCancellationError(err: unknown): boolean {
   if (!isAbortError(err)) {
     return false;
@@ -548,6 +464,22 @@ function buildDispatchErrorDetails(
     && isBackstageBookerOutputIncompleteError(error)
   ) {
     return { retryable: error.retryable };
+  }
+
+  if (
+    moduleName === BACKSTAGE_MODULE_NAME
+    && isBackstageBookerIntegrityFailedError(error)
+  ) {
+    return {
+      retryable: error.retryable,
+      integrityIssues: error.integrityIssues,
+      originalIntegrityIssues: error.originalIntegrityIssues,
+      repairedIntegrityIssues: error.repairedIntegrityIssues,
+      repairAttempted: error.repairAttempted,
+      ...(error.repairFailureReason
+        ? { repairFailureReason: error.repairFailureReason }
+        : {}),
+    };
   }
 
   if (
@@ -1125,17 +1057,24 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       ? { promptText: boundedPromptCandidate }
       : undefined;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
-    buildDispatchPayload(
+    buildGptDispatchPayload(
       body,
       boundedPromptOverride,
       resolved?.entry.module === BACKSTAGE_MODULE_NAME
+        ? BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+        : undefined
     ),
     runtimeExecutionMode
   );
   const suppressTimeoutFallback =
     suppressTimeoutFallbackInput === true ||
     readSuppressTimeoutFallbackFlag(preDispatchPayload);
-  const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload);
+  const protectedBackstageQueuedExecution = isBackstageProtectedQueuedExecution();
+  const legacyBackstageQueuedExecution = isBackstageLegacyQueuedExecution();
+  const privateBackstageQueuedExecution =
+    protectedBackstageQueuedExecution || legacyBackstageQueuedExecution;
+  const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload)
+    || privateBackstageQueuedExecution;
   const diagnosticTextInput = boundedPromptOverride
     ? boundedPromptOverride.promptText
     : extractPreparedGptDispatchPromptText(body, preDispatchPayload);
@@ -1392,6 +1331,45 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   };
+  const rejectUnprotectedBackstageBackgroundGeneration = (params: {
+    action: string | null;
+    availableActions: string[];
+    moduleName: string;
+    moduleVersion: string | null;
+    route: string;
+  }): AskEnvelope | null => {
+    if (
+      runtimeExecutionMode !== 'background'
+      || params.moduleName !== BACKSTAGE_MODULE_NAME
+      || (params.action !== 'generateBooking' && params.action !== 'generateBookingWithHRC')
+      || privateBackstageQueuedExecution
+    ) {
+      return null;
+    }
+
+    logger?.warn?.('gpt.dispatch.backstage_background_protection_required', {
+      requestId,
+      gptId: trimmedGptId,
+      module: params.moduleName,
+      action: params.action,
+    });
+    return {
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED',
+        message: 'Background Backstage generation requires a protected queued execution context.',
+      },
+      _route: {
+        ...baseRoute,
+        module: params.moduleName,
+        action: params.action,
+        matchMethod,
+        route: params.route,
+        availableActions: params.availableActions,
+        moduleVersion: params.moduleVersion,
+      },
+    };
+  };
   logger?.info?.("gpt.dispatch.lookup.resolved", {
     requestId,
     gptId: trimmedGptId,
@@ -1431,6 +1409,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const initialActionCandidate = requestedAction
     ? pickGptModuleAction(availableActions, requestedAction)
     : fallbackActionCandidate;
+  const initialBackgroundGenerationDenial =
+    rejectUnprotectedBackstageBackgroundGeneration({
+      action: initialActionCandidate,
+      availableActions,
+      moduleName: activeEntry.module,
+      moduleVersion: (moduleMetadata as any)?.version ?? null,
+      route: activeEntry.route,
+    });
+  if (initialBackgroundGenerationDenial) {
+    return initialBackgroundGenerationDenial;
+  }
   const initialAdmissionDenial = rejectQueuedBackstageMutationAdmission({
     action: initialActionCandidate,
     availableActions,
@@ -1643,7 +1632,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     availableActions = moduleMetadata?.actions ?? [];
     requestedAction = resolveGptModuleRequestedActionAlias(rawRequestedAction, availableActions);
     const autoRoutedPreDispatchPayload = applyRuntimeExecutionModeOverride(
-      buildDispatchPayload(body, boundedPromptOverride, true),
+      buildGptDispatchPayload(
+        body,
+        boundedPromptOverride,
+        BACKSTAGE_PAYLOAD_PROVENANCE_ADAPTER
+      ),
       runtimeExecutionMode
     );
     payload = enrichWritingDispatchPayload(autoRoutedPreDispatchPayload, {
@@ -1821,6 +1814,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
+  const finalBackgroundGenerationDenial =
+    rejectUnprotectedBackstageBackgroundGeneration({
+      action,
+      availableActions,
+      moduleName: activeEntry.module,
+      moduleVersion: (moduleMetadata as any)?.version ?? null,
+      route: activeEntry.route,
+    });
+  if (finalBackgroundGenerationDenial) {
+    return finalBackgroundGenerationDenial;
+  }
+
   const finalAdmissionDenial = rejectQueuedBackstageMutationAdmission({
     action,
     availableActions,
@@ -1915,14 +1920,26 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     const executeModuleAction = () =>
       dispatchModuleAction(activeEntry.module, action, payload);
+    const isPrivateBackstageQueuedGeneration =
+      privateBackstageQueuedExecution
+      && activeEntry.module === BACKSTAGE_MODULE_NAME
+      && (action === 'generateBooking' || action === 'generateBookingWithHRC');
     const result = isResearchRun
       ? await runResearchWithAbortDrain(abortOptions, executeModuleAction)
-      : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
+      : isPrivateBackstageQueuedGeneration
+        ? await runWithCooperativeAbortDrain(
+            {
+              ...abortOptions,
+              scope: 'backstage_module_dispatch',
+            },
+            executeModuleAction
+          )
+        : await runWithRequestAbortTimeout(abortOptions, executeModuleAction);
     const notionEnrichmentUsed = wasBackstageNotionEnrichmentUsed();
 
     // Research owns and fences its persistence inside its aggregate workflow.
     // Starting generic transcript writes here would escape that deadline/signal.
-    if (!isResearchRun && !notionEnrichmentUsed) {
+    if (!isResearchRun && !notionEnrichmentUsed && !isPrivateBackstageQueuedGeneration) {
       const resolvedSessionId = resolveSessionId(body, payload);
       await persistModuleConversation({
         moduleName: activeEntry.module,
@@ -1988,7 +2005,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   } catch (err: any) {
       const errorMessage = String(err?.message ?? err);
       const isDispatchCancellation = isDispatchCancellationError(err);
-      const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
+      const isPrivateBackstageQueuedGenerationFailure =
+        privateBackstageQueuedExecution
+        && activeEntry.module === BACKSTAGE_MODULE_NAME
+        && (action === 'generateBooking' || action === 'generateBookingWithHRC');
+      const isDispatchTimeout = !isDispatchCancellation && (
+        isPrivateBackstageQueuedGenerationFailure
+          ? isProtectedBackstageDispatchTimeoutError(err, timeoutMs)
+          : isDispatchTimeoutError(err, timeoutMs)
+      );
       const isRosterValidationFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'updateRoster' || action === 'simulateMatch')
@@ -2034,6 +2059,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isBackstageOutputIncompleteFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && isBackstageBookerOutputIncompleteError(err);
+      const isBackstageIntegrityFailure =
+        activeEntry.module === BACKSTAGE_MODULE_NAME
+        && isBackstageBookerIntegrityFailedError(err);
       const isBackstageContinuityQueryFailure =
         activeEntry.module === BACKSTAGE_MODULE_NAME
         && action === 'queryContinuity'
@@ -2047,12 +2075,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         && !isNotionIndexUnavailableFailure
         && !isNotionAuthorityUnavailableFailure
         && !isNotionAuthorityReadOnlyFailure
-        && !isBackstageOutputIncompleteFailure;
+        && !isBackstageOutputIncompleteFailure
+        && !isBackstageIntegrityFailure;
       const isResearchValidationFailure =
         activeEntry.module === RESEARCH_MODULE_NAME
         && action === RESEARCH_ACTION_NAME
         && isResearchRequestValidationError(err);
       const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
+      const queuedBackstageGenerationFailureMessage = protectedBackstageQueuedExecution
+        ? 'Protected Backstage generation failed.'
+        : 'Legacy Backstage generation failed during compatibility drain.';
       const dispatchErrorMessage = isDispatchTimeout
         ? buildDispatchTimeoutMessage(timeoutMs)
         : isDispatchCancellation
@@ -2071,8 +2103,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE
         : isBackstageOutputIncompleteFailure
         ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
+        : isBackstageIntegrityFailure
+        ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE
         : isBackstageContinuityQueryFailure
         ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE
+        : isPrivateBackstageQueuedGenerationFailure
+        ? queuedBackstageGenerationFailureMessage
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -2081,7 +2117,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       module: activeEntry.module,
       action,
       matchMethod,
-      error: errorMessage,
+      error: isPrivateBackstageQueuedGenerationFailure
+        ? dispatchErrorMessage
+        : errorMessage,
       timeoutMs,
       timeoutSource,
       durationMs: Date.now() - dispatchStartedAt,
@@ -2093,7 +2131,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         module: activeEntry.module,
         action,
         matchMethod,
-        error: errorMessage,
+        error: isPrivateBackstageQueuedGenerationFailure
+          ? dispatchErrorMessage
+          : errorMessage,
         timeoutMs,
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,
@@ -2276,6 +2316,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
               || isNotionAuthorityUnavailableFailure
               || isNotionAuthorityReadOnlyFailure
               || isBackstageOutputIncompleteFailure
+              || isBackstageIntegrityFailure
               || isBackstageContinuityQueryFailure
             )
             ? (
@@ -2291,6 +2332,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
                   ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE
                   : isBackstageOutputIncompleteFailure
                   ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+                  : isBackstageIntegrityFailure
+                  ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE
                   : isBackstageContinuityQueryFailure
                   ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
                   : err.code
