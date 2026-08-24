@@ -42,6 +42,8 @@ cp .env.example .env
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on web; authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on the web service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical value on web and worker for authority mode | none | Closed mapping from each exact universe ID to `{rootPageId,displayName,initialMinimumPageCount?}`. It makes the entire recursively discovered hierarchy authoritative, blocks all six backend mutations, quarantines legacy PostgreSQL reads, and selects one immutable active RAG snapshot. A present malformed value fails mutation checks closed. `initialMinimumPageCount` is 1–512 and applies only before the first activation. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a unique root UUID, `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits. Unknown fields, duplicate universe/shard/tag/root identities, malformed values, or excessive cardinality invalidate the complete envelope. Its canonical semantic SHA-256 digest is separate from the operator generation. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical value on web and worker | `monolith` | Exact rollout mode: `monolith`, `shadow`, or `partitioned`. Absent, padded, differently cased, or unknown values resolve to `monolith` with non-sensitive validity metadata. Keep `monolith` during initial shadow validation; this flag does not weaken the durable authority latch. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Full-manifest synchronization cadence, clamped to 60,000–86,400,000 ms. The worker fetches the fixed configured root and descendants, never a caller URL; unchanged manifests only refresh verification time. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Maximum age of the last complete snapshot verification, clamped to 300,000–604,800,000 ms. Missing, stale, truncated, wrong-root, or wrong-model snapshots fail authoritative generation closed; they never reopen legacy fallback. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; only for Gaming source lifecycle Actions on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for only `POST /gpt-access/gaming/sources/ingestions`, `POST /gpt-access/gaming/sources/refreshes`, and `GET /gpt-access/gaming/sources/ingestions/{ingestionId}`. It must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and in the Arcanos Gaming Custom GPT Action only; do not set it on workers. It never authenticates generic GPT Access routes, and the generic GPT Access token is rejected on these source routes. |
@@ -513,6 +515,31 @@ sync root. Configure `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` on the worker only
 for an authority-only deployment. Do not also map that universe through
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON`.
 
+The additive `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` contract does not
+replace that monolithic authority mapping. Its version-1 envelope contains an
+operator-owned `generation` plus an array of exact universes and their shards.
+Shard identity is the `(universeId, shardKey)` pair; renaming `displayName`
+therefore does not create a new identity. `shardKey` and scope/category tags are
+lowercase bounded identifiers. Root UUIDs are globally unique in one envelope,
+and duplicate universe IDs, shard keys, or tags are rejected rather than
+silently merged. Ancestor/descendant overlap still requires source-hierarchy
+ownership validation during synchronization.
+
+Every shard declares `retrievalTier` (`hot`, `cold`, or `archive`), `required`,
+and a complete `capacity` object. Capacity permits 1–512 pages, 1–2,048 chunks,
+depth 0–16, and 1–4,000,000 total content code points. The parser sorts
+universes, shards, and tags before deriving a semantic SHA-256 digest. That
+digest intentionally excludes the separately auditable operator generation, so
+reordering fields or publishing identical semantics under a new generation does
+not fabricate a content change.
+
+`ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` accepts only exact lowercase
+`monolith`, `shadow`, or `partitioned`. Absent and invalid values both select
+`monolith`; the parser returns only bounded validity status, never the raw value,
+so operators can warn safely. Keep `monolith` through initial shadow validation.
+Neither the partition envelope nor this read-index mode downgrades the durable
+one-way Notion authority latch or restores legacy reads and writes.
+
 The worker recursively discovers direct child `<page>` links, fetches every
 page separately from fixed `api.notion.com` endpoints, verifies parent IDs and
 last-edited timestamps twice, sanitizes only after child discovery, chunks
@@ -939,6 +966,8 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; one Notion mode | none | Outbound read-content token: web for synchronous legacy supplement; worker for authority sync and queued legacy supplement generation. Never place it in Builder or reuse an application credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; optional authenticated Backstage generation on each executing service | none | Sensitive exact-universe-to-page-UUID mapping. Configure the identical value on worker before queued legacy supplement generation is enabled. One to three unique raw page UUIDs per universe; URLs and partial/invalid configuration are rejected before provider work. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical on web and worker | none | Exact universe-to-root authority mapping. Blocks/quarantines legacy state and selects recursive immutable RAG snapshots. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical on web and worker for partition shadow/cutover | none | Closed bounded version-1 universe/shard envelope with stable shard keys, retrieval tiers, required policy, scope/category tags, per-shard capacity, operator generation, and a separate canonical semantic digest. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical on web and worker | `monolith` | Exact `monolith`, `shadow`, or `partitioned`; absent or invalid values remain monolithic. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Bounded full-hierarchy sync cadence. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Bounded maximum age of a successful complete-snapshot verification. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; web service source lifecycle only | none | Dedicated purpose-bound Bearer credential for exactly the three `/gpt-access/gaming/sources/*` lifecycle routes. It must be 32–4096 visible ASCII characters with no whitespace or placeholder form, and distinct from every other application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action. Generic GPT Access routes reject it. |

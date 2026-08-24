@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T09:43:01.927Z",
+  "generatedAt": "2026-08-24T17:27:22.230Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2438,6 +2438,9 @@
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionPreviewCanary.ts"
         },
         {
@@ -3356,6 +3359,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-core.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-rag-core.test.ts"
