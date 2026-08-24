@@ -62,7 +62,9 @@ const FORBIDDEN_ENV_NAMES = new Set([
   'ALL_PROXY',
   'HTTP_PROXY',
   'HTTPS_PROXY',
+  'NODE_EXTRA_CA_CERTS',
   'NODE_OPTIONS',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
   'NODE_USE_ENV_PROXY',
   'DATABASE_PRIVATE_URL',
   'DATABASE_PUBLIC_URL',
@@ -71,6 +73,7 @@ const FORBIDDEN_ENV_NAMES = new Set([
   'PGHOST',
   'PGPASSWORD',
   'PGPORT',
+  'PGSSLMODE',
   'PGUSER',
   'POSTGRES_PASSWORD',
   'POSTGRES_USER',
@@ -461,6 +464,11 @@ export function buildBackstageHeavyApplicationChildEnvironment(
 ) {
   return {
     ...env,
+    // The disposable Railway Postgres template uses a self-signed TLS chain.
+    // The parent preflight has already rejected query parameters and bound the
+    // URL to the exact private host, port, database, and credentials before
+    // this proof-child-only transport override is derived.
+    DATABASE_URL: `${proofTarget.databaseUrl}?sslmode=no-verify`,
     ...(proofTarget.processKind === 'worker'
       ? {
           OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,

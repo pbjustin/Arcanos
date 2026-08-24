@@ -292,7 +292,10 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
     ['AZURE_OPENAI_API_KEY', 'provider-secret-must-never-inherit'],
     ['openai_api_key', 'case-insensitive-secret'],
     ['HTTP_PROXY', 'http://hostile.invalid'],
+    ['NODE_EXTRA_CA_CERTS', './hostile-root.pem'],
     ['NODE_OPTIONS', '--import=./hostile.mjs'],
+    ['NODE_TLS_REJECT_UNAUTHORIZED', '0'],
+    ['PGSSLMODE', 'disable'],
     ['ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN', 'notion-secret'],
     ['ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON', '{}'],
   ])('rejects conflicting alias or external-effect variable %s', (name, value) => {
@@ -313,6 +316,8 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
       environment
     );
     expect(child).toMatchObject({
+      DATABASE_URL:
+        'postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway?sslmode=no-verify',
       OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
       OPENAI_MAX_RETRIES: '0',
       GPT5_MODEL: 'gpt-5.1',
@@ -325,12 +330,42 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
       JOB_WORKER_ID: 'backstage-heavy-proof-worker-v1',
       JOB_WORKER_STATS_ID: 'backstage-heavy-proof-worker-v1',
     });
+    expect(environment.DATABASE_URL).toBe(
+      'postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway'
+    );
     expect(buildBackstageHeavyFixtureChildEnvironment(target)).toEqual({
       ARCANOS_BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD: 'v1',
       ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'proof-run-1460',
       NODE_ENV: 'production',
       TZ: 'UTC',
     });
+  });
+
+  it('derives the TLS compatibility mode only for validated application children', () => {
+    for (const processKind of ['worker', 'web']) {
+      const environment = buildEnvironment(processKind);
+      const target = resolveBackstageHeavyProofTargetOrThrow(
+        processKind,
+        environment
+      );
+      expect(buildBackstageHeavyApplicationChildEnvironment(
+        target,
+        environment
+      ).DATABASE_URL).toBe(
+        'postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway?sslmode=no-verify'
+      );
+      expect(environment.DATABASE_URL).toBe(
+        'postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway'
+      );
+    }
+
+    for (const query of ['?sslmode=no-verify', '?x=1']) {
+      expect(() => resolveBackstageHeavyProofTargetOrThrow('worker', {
+        ...buildEnvironment('worker'),
+        DATABASE_URL:
+          `postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway${query}`,
+      })).toThrow('BACKSTAGE_HEAVY_PROOF_DATA_URL_INVALID');
+    }
   });
 
   it('uses read-only, role-ordered database preflights without initializing schema', async () => {

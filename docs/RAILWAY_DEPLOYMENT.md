@@ -309,7 +309,14 @@ canonical project. The supervisor validates the disposable target, performs a
 role-ordered read-only database preflight, then starts the unchanged
 `scripts/start-railway-service-with-integrity.mjs` wrapper. The worker also
 starts the credential-free loopback OpenAI fixture; the fixed fictional SDK
-key exists only in the supervised worker child.
+key exists only in the supervised worker child. After the parent binds the
+PostgreSQL URL to the exact private host, port, database, credentials, and an
+empty query string, it derives `sslmode=no-verify` only for the application
+child because the disposable Railway PostgreSQL template uses a self-signed
+TLS chain. That child connection is encrypted without authenticating the
+server certificate; the parent preflight and later attestor retain the raw
+query-free private-network URL. This is a disposable compatibility measure,
+not authenticated-TLS proof, and it never sets a process-wide TLS bypass.
 
 The approved target is a new disposable project in the approved workspace,
 named `arc-pr<PR>-heavy-<suffix>` with a 1-14 character lowercase
