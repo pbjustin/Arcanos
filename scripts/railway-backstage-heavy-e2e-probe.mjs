@@ -186,6 +186,37 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function readSingleRunningApplicationInstanceId(instances) {
+  if (
+    !Array.isArray(instances)
+    || instances.length < 1
+    || instances.length > 2
+  ) {
+    return null;
+  }
+  const normalized = instances.map(instance => ({
+    id: typeof instance?.id === 'string'
+      ? instance.id.toLowerCase()
+      : '',
+    status: instance?.status,
+  }));
+  if (
+    normalized.some(instance => !UUID_PATTERN.test(instance.id))
+    || new Set(normalized.map(instance => instance.id)).size
+      !== normalized.length
+  ) {
+    return null;
+  }
+  const running = normalized.filter(instance => instance.status === 'RUNNING');
+  const retainedTerminal = normalized.filter(
+    instance => instance.status === 'EXITED' || instance.status === 'REMOVED'
+  );
+  return running.length === 1
+    && running.length + retainedTerminal.length === normalized.length
+    ? running[0].id
+    : null;
+}
+
 export function railwayInvocationForBackstageHeavyProbe(
   platform = process.platform,
   appData = process.env.APPDATA,
@@ -640,14 +671,19 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
           active => active?.deploymentStopped !== true
         )
       : null;
+    const latestRunningInstanceId =
+      readSingleRunningApplicationInstanceId(deployment?.instances);
+    const activeRunningInstanceId =
+      readSingleRunningApplicationInstanceId(
+        activeDeployments?.[0]?.instances
+      );
     if (
       !service
       || service.serviceName !== serviceName
       || deployment?.id?.toLowerCase() !== deploymentId
       || deployment.status !== 'SUCCESS'
-      || !Array.isArray(deployment.instances)
-      || deployment.instances.length !== 1
-      || deployment.instances.some(instance => instance?.status !== 'RUNNING')
+      || deployment.deploymentStopped !== false
+      || latestRunningInstanceId === null
       || deployment?.meta?.serviceManifest?.deploy?.numReplicas !== 1
       || effectiveStartCommand !== RAILWAY_START_COMMAND
       || !hasExactPreDeployCommand(
@@ -661,9 +697,8 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
       || activeDeployments.length !== 1
       || activeDeployments[0]?.id?.toLowerCase() !== deploymentId
       || activeDeployments[0]?.status !== 'SUCCESS'
-      || !Array.isArray(activeDeployments[0]?.instances)
-      || activeDeployments[0].instances.length !== 1
-      || activeDeployments[0].instances[0]?.status !== 'RUNNING'
+      || activeDeployments[0]?.deploymentStopped !== false
+      || activeRunningInstanceId !== latestRunningInstanceId
     ) {
       fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
     }

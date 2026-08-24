@@ -341,6 +341,13 @@ worker value is
 `["node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty"]`; the
 web value is
 `["node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema"]`.
+Railway runs that command in a separate container, so deployment instance
+history may temporarily retain one `EXITED` or cleaned `REMOVED` historical
+record beside the one `RUNNING` application instance. The proof validates
+exactly one running instance, at most one such terminal record, matching
+latest/active instance identity, and the independent one-replica manifest and
+region settings; it does not use the id/status-only historical record to claim
+per-container attribution or equate history length with replica count.
 These sealed checks run from the application images, which contain Node and the
 exact tracked source. They bind the mode to the Railway role and revision, use
 only the exact private PostgreSQL reference, and emit a fixed success sentinel,

@@ -28,6 +28,10 @@ const ID = {
   postgres: '77777777-7777-4777-8777-777777777777',
   redis: '88888888-8888-4888-8888-888888888888',
   webDomain: '99999999-9999-4999-8999-999999999998',
+  webPreDeployInstance: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  webRuntimeInstance: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+  workerPreDeployInstance: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
+  workerRuntimeInstance: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
 };
 const SOURCE_SHA = 'a'.repeat(40);
 const WEB_DOMAIN = 'arcanos-web-pr1460-heavy.up.railway.app';
@@ -67,11 +71,19 @@ function configArgs(execute = false) {
 }
 
 function deployment(id, processKind = null) {
+  const applicationInstanceIds = processKind === 'web'
+    ? [ID.webPreDeployInstance, ID.webRuntimeInstance]
+    : [ID.workerPreDeployInstance, ID.workerRuntimeInstance];
   return {
     id,
     status: 'SUCCESS',
     deploymentStopped: false,
-    instances: [{ status: 'RUNNING' }],
+    instances: processKind === null
+      ? [{ id, status: 'RUNNING' }]
+      : [
+          { id: applicationInstanceIds[0], status: 'EXITED' },
+          { id: applicationInstanceIds[1], status: 'RUNNING' },
+        ],
     meta: {
       commitHash: SOURCE_SHA,
       serviceManifest: {
@@ -590,6 +602,108 @@ describe('Backstage heavy network proof', () => {
         'ON_FAILURE';
     expect(() => attestBackstageHeavyRailwayControlPlane(
       restartable,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+  });
+
+  it('counts one running app replica independently of pre-deploy history', () => {
+    const config = resolveBackstageHeavyProbeConfig(configArgs(true));
+    const readApp = (payloads, serviceId) => (
+      payloads.status.environments.edges[0].node.serviceInstances.edges
+        .find(edge => edge.node.serviceId === serviceId).node
+    );
+    const setInstances = (service, latestInstances, activeInstances) => {
+      service.latestDeployment.instances = latestInstances;
+      service.activeDeployments[0].instances =
+        activeInstances ?? structuredClone(latestInstances);
+    };
+
+    const compacted = controlPlanePayloads(config);
+    for (const serviceId of [config.webServiceId, config.workerServiceId]) {
+      const service = readApp(compacted, serviceId);
+      const running = service.latestDeployment.instances.find(
+        instance => instance.status === 'RUNNING'
+      );
+      setInstances(service, [running]);
+    }
+    expect(attestBackstageHeavyRailwayControlPlane(
+      compacted,
+      config
+    )).toMatchObject({ projectId: ID.project });
+
+    const removedTerminalHistory = controlPlanePayloads(config);
+    for (const serviceId of [config.webServiceId, config.workerServiceId]) {
+      const service = readApp(removedTerminalHistory, serviceId);
+      const instances = structuredClone(service.latestDeployment.instances);
+      instances[0].status = 'REMOVED';
+      setInstances(service, instances.reverse());
+    }
+    expect(attestBackstageHeavyRailwayControlPlane(
+      removedTerminalHistory,
+      config
+    )).toMatchObject({ projectId: ID.project });
+
+    for (const status of [
+      'RUNNING',
+      'CREATED',
+      'INITIALIZING',
+      'RESTARTING',
+      'CRASHED',
+      'STOPPED',
+      'SKIPPED',
+    ]) {
+      const invalid = controlPlanePayloads(config);
+      const service = readApp(invalid, config.workerServiceId);
+      const instances = structuredClone(service.latestDeployment.instances);
+      instances[0].status = status;
+      setInstances(service, instances);
+      expect(() => attestBackstageHeavyRailwayControlPlane(
+        invalid,
+        config
+      )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+    }
+
+    const duplicateId = controlPlanePayloads(config);
+    const duplicateService = readApp(duplicateId, config.workerServiceId);
+    const duplicateInstances = structuredClone(
+      duplicateService.latestDeployment.instances
+    );
+    duplicateInstances[0].id = duplicateInstances[1].id;
+    setInstances(duplicateService, duplicateInstances);
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      duplicateId,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+
+    const noRunning = controlPlanePayloads(config);
+    const stoppedService = readApp(noRunning, config.workerServiceId);
+    const stoppedInstances = structuredClone(
+      stoppedService.latestDeployment.instances
+    );
+    stoppedInstances[1].status = 'REMOVED';
+    setInstances(stoppedService, stoppedInstances);
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      noRunning,
+      config
+    )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+
+    const mismatchedView = controlPlanePayloads(config);
+    const mismatchedService = readApp(
+      mismatchedView,
+      config.workerServiceId
+    );
+    const activeInstances = structuredClone(
+      mismatchedService.activeDeployments[0].instances
+    );
+    activeInstances.find(instance => instance.status === 'RUNNING').id =
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    setInstances(
+      mismatchedService,
+      mismatchedService.latestDeployment.instances,
+      activeInstances
+    );
+    expect(() => attestBackstageHeavyRailwayControlPlane(
+      mismatchedView,
       config
     )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
   });
