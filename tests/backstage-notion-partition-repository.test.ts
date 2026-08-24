@@ -622,6 +622,134 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     })]);
   });
 
+  test.each([
+    ['neither generation', {
+      monolith_snapshot_id: null,
+      partition_manifest_id: null,
+      partition_configuration_hash: null,
+      monolith_page_count: 0,
+      monolith_chunk_count: 0,
+      partition_page_count: 0,
+      partition_chunk_count: 0,
+      shared_page_count: '0',
+      monolith_only_page_count: '0',
+      partition_only_page_count: '0',
+      monolith_only_page_ids: [],
+      partition_only_page_ids: [],
+    }, { monolithSnapshotId: null, partitionManifestId: null }],
+    ['exact page parity', {
+      monolith_snapshot_id: SNAPSHOT_ID,
+      partition_manifest_id: MANIFEST_ID,
+      partition_configuration_hash: CONFIGURATION_HASH,
+      monolith_page_count: 1,
+      monolith_chunk_count: 2,
+      partition_page_count: 1,
+      partition_chunk_count: 3,
+      shared_page_count: '1',
+      monolith_only_page_count: '0',
+      partition_only_page_count: '0',
+      monolith_only_page_ids: [],
+      partition_only_page_ids: [],
+    }, {
+      partitionConfigurationHash: CONFIGURATION_HASH,
+      sharedPageCount: 1,
+      monolithOnlyPageCount: 0,
+      partitionOnlyPageCount: 0,
+    }],
+    ['monolith only', {
+      monolith_snapshot_id: SNAPSHOT_ID,
+      partition_manifest_id: null,
+      partition_configuration_hash: null,
+      monolith_page_count: 1,
+      monolith_chunk_count: 2,
+      partition_page_count: 0,
+      partition_chunk_count: 0,
+      shared_page_count: '0',
+      monolith_only_page_count: '1',
+      partition_only_page_count: '0',
+      monolith_only_page_ids: [ROOT_PAGE_ID],
+      partition_only_page_ids: [],
+    }, { monolithOnlyPageIds: [ROOT_PAGE_ID], partitionManifestId: null }],
+    ['partition only', {
+      monolith_snapshot_id: null,
+      partition_manifest_id: MANIFEST_ID,
+      partition_configuration_hash: CONFIGURATION_HASH,
+      monolith_page_count: 0,
+      monolith_chunk_count: 0,
+      partition_page_count: 1,
+      partition_chunk_count: 3,
+      shared_page_count: '0',
+      monolith_only_page_count: '0',
+      partition_only_page_count: '1',
+      monolith_only_page_ids: [],
+      partition_only_page_ids: [OPTIONAL_ROOT_PAGE_ID],
+    }, { monolithSnapshotId: null, partitionOnlyPageIds: [OPTIONAL_ROOT_PAGE_ID] }],
+    ['no overlap', {
+      monolith_snapshot_id: SNAPSHOT_ID,
+      partition_manifest_id: MANIFEST_ID,
+      partition_configuration_hash: CONFIGURATION_HASH,
+      monolith_page_count: 1,
+      monolith_chunk_count: 2,
+      partition_page_count: 1,
+      partition_chunk_count: 3,
+      shared_page_count: '0',
+      monolith_only_page_count: '1',
+      partition_only_page_count: '1',
+      monolith_only_page_ids: [ROOT_PAGE_ID],
+      partition_only_page_ids: [OPTIONAL_ROOT_PAGE_ID],
+    }, { sharedPageCount: 0, monolithOnlyPageCount: 1, partitionOnlyPageCount: 1 }],
+  ] as const)(
+    'loads one statement-pinned, bounded shadow coverage row for %s',
+    async (_name, row, expected) => {
+      const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+        const normalized = normalizeSql(sql);
+        expect(normalized).toContain('WITH selected_heads AS MATERIALIZED');
+        expect(normalized.match(/LIMIT \$2/gu)).toHaveLength(2);
+        expect(normalized).not.toMatch(
+          /\b(?:markdown|content|embedding|metadata|title|path)\b/iu
+        );
+        expect(normalized).not.toMatch(
+          /backstage_notion_(?:page_versions|chunk_versions|chunk_embeddings)/iu
+        );
+        expect(values).toEqual([UNIVERSE_ID, 8]);
+        return result([{ ...row }]);
+      });
+      const repository = new PostgresBackstageNotionPartitionRepository({
+        query,
+      } as unknown as Pool);
+
+      await expect(repository.loadShadowCoverage(UNIVERSE_ID)).resolves
+        .toEqual(expect.objectContaining({ universeId: UNIVERSE_ID, ...expected }));
+      expect(query).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('rejects unbounded shadow samples and inconsistent repository output', async () => {
+    const query = jest.fn(async () => result([{
+      monolith_snapshot_id: SNAPSHOT_ID,
+      partition_manifest_id: null,
+      partition_configuration_hash: null,
+      monolith_page_count: 1,
+      monolith_chunk_count: 1,
+      partition_page_count: 0,
+      partition_chunk_count: 0,
+      shared_page_count: '0',
+      monolith_only_page_count: '1',
+      partition_only_page_count: '0',
+      monolith_only_page_ids: [ROOT_PAGE_ID, OPTIONAL_ROOT_PAGE_ID],
+      partition_only_page_ids: [],
+    }]));
+    const repository = new PostgresBackstageNotionPartitionRepository({
+      query,
+    } as unknown as Pool);
+
+    await expect(repository.loadShadowCoverage(UNIVERSE_ID, 17))
+      .rejects.toThrow('samplePageIdLimit is outside its supported range');
+    expect(query).not.toHaveBeenCalled();
+    await expect(repository.loadShadowCoverage(UNIVERSE_ID, 1))
+      .rejects.toThrow('monolith_only_page_ids exceeds its bounded sample contract');
+  });
+
   test('rejects malformed inputs before obtaining a database connection', async () => {
     const connect = jest.fn(async () => {
       throw new Error('SENTINEL_CONNECT');

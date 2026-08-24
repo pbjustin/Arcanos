@@ -3444,6 +3444,100 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     }]);
   });
 
+  test('compares active monolith and partition heads with bounded identity-only samples', async () => {
+    await client.query('BEGIN');
+    await client.query(
+      `ALTER TABLE public.backstage_notion_universe_heads
+       ADD COLUMN active_snapshot_id UUID`
+    );
+    await client.query(
+      `CREATE TABLE public.backstage_notion_snapshots (
+         id UUID PRIMARY KEY,
+         universe_id TEXT NOT NULL,
+         page_count INTEGER NOT NULL,
+         chunk_count INTEGER NOT NULL
+       )`
+    );
+    await client.query(
+      `CREATE TABLE public.backstage_notion_snapshot_pages (
+         universe_id TEXT NOT NULL,
+         snapshot_id UUID NOT NULL,
+         page_id TEXT NOT NULL,
+         PRIMARY KEY (snapshot_id, page_id)
+       )`
+    );
+    const fixture = await insertSealedFixture(client, 'shadow-coverage');
+    const firstLegacySnapshotId = randomUUID();
+    const secondLegacySnapshotId = randomUUID();
+    const monolithOnlyPageId = randomUUID();
+    const secondMonolithOnlyPageId = randomUUID();
+    await client.query(
+      `INSERT INTO public.backstage_notion_snapshots (
+         id, universe_id, page_count, chunk_count
+       ) VALUES
+         ($1::UUID, $3, 2, 4),
+         ($2::UUID, $3, 1, 2)`,
+      [firstLegacySnapshotId, secondLegacySnapshotId, fixture.universeId]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_snapshot_pages (
+         universe_id, snapshot_id, page_id
+       ) VALUES
+         ($1, $2::UUID, $3),
+         ($1, $2::UUID, $4),
+         ($1, $5::UUID, $6)`,
+      [
+        fixture.universeId,
+        firstLegacySnapshotId,
+        fixture.rootPageId,
+        monolithOnlyPageId,
+        secondLegacySnapshotId,
+        secondMonolithOnlyPageId,
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_universe_heads
+       SET active_snapshot_id = $2::UUID
+       WHERE universe_id = $1`,
+      [fixture.universeId, firstLegacySnapshotId]
+    );
+
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    await expect(repository.loadShadowCoverage(fixture.universeId, 1)).resolves
+      .toMatchObject({
+        monolithSnapshotId: firstLegacySnapshotId,
+        partitionManifestId: fixture.manifestId,
+        monolithPageCount: 2,
+        monolithChunkCount: 4,
+        partitionPageCount: 1,
+        partitionChunkCount: 1,
+        sharedPageCount: 1,
+        monolithOnlyPageCount: 1,
+        partitionOnlyPageCount: 0,
+        monolithOnlyPageIds: [monolithOnlyPageId],
+        partitionOnlyPageIds: [],
+      });
+
+    await client.query(
+      `UPDATE public.backstage_notion_universe_heads
+       SET active_snapshot_id = $2::UUID
+       WHERE universe_id = $1`,
+      [fixture.universeId, secondLegacySnapshotId]
+    );
+    await expect(repository.loadShadowCoverage(fixture.universeId, 0)).resolves
+      .toMatchObject({
+        monolithSnapshotId: secondLegacySnapshotId,
+        partitionManifestId: fixture.manifestId,
+        sharedPageCount: 0,
+        monolithOnlyPageCount: 1,
+        partitionOnlyPageCount: 1,
+        monolithOnlyPageIds: [],
+        partitionOnlyPageIds: [],
+      });
+  });
+
   test('preserves repeated heading occurrences and resolves manifest scope without content loads', async () => {
     await client.query('BEGIN');
     const fixture = await insertSealedFixture(client, 'scope-retrieval');

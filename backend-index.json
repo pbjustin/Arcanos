@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T21:39:09.979Z",
+  "generatedAt": "2026-08-24T22:21:30.462Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2972,6 +2972,9 @@
           "relativePath": "src/workers/autoscalingTypes.ts"
         },
         {
+          "relativePath": "src/workers/backstageNotionPartitionShadowLoop.ts"
+        },
+        {
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
         },
         {
@@ -3392,6 +3395,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-partition-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-shadow-loop.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"

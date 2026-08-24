@@ -23,6 +23,8 @@ export const BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_PARTITION_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_PROVIDER_DELAY_MAX_MS = 60_000;
 export const BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS = 128;
+export const BACKSTAGE_NOTION_SHADOW_COVERAGE_DEFAULT_SAMPLE_PAGE_IDS = 8;
+export const BACKSTAGE_NOTION_SHADOW_COVERAGE_MAX_SAMPLE_PAGE_IDS = 16;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -405,6 +407,27 @@ export interface BackstageNotionPartitionShardPageInventoryItem {
   readonly title: string;
   readonly path: readonly string[];
   readonly scopePath: readonly string[];
+}
+
+/**
+ * Bounded identity-only comparison of the two active authority generations.
+ * Page samples are retained for future protected diagnostics and must never be
+ * written to ordinary worker logs.
+ */
+export interface BackstageNotionPartitionShadowCoverage {
+  readonly universeId: string;
+  readonly monolithSnapshotId: string | null;
+  readonly partitionManifestId: string | null;
+  readonly partitionConfigurationHash: string | null;
+  readonly monolithPageCount: number;
+  readonly monolithChunkCount: number;
+  readonly partitionPageCount: number;
+  readonly partitionChunkCount: number;
+  readonly sharedPageCount: number;
+  readonly monolithOnlyPageCount: number;
+  readonly partitionOnlyPageCount: number;
+  readonly monolithOnlyPageIds: readonly string[];
+  readonly partitionOnlyPageIds: readonly string[];
 }
 
 type TimestampValue = Date | string;
@@ -1049,6 +1072,21 @@ interface PreparedPageChunkReference {
   readonly heading_occurrence_path: readonly number[];
 }
 
+interface ShadowCoverageRow {
+  monolith_snapshot_id: string | null;
+  partition_manifest_id: string | null;
+  partition_configuration_hash: string | null;
+  monolith_page_count: number | string;
+  monolith_chunk_count: number | string;
+  partition_page_count: number | string;
+  partition_chunk_count: number | string;
+  shared_page_count: number | string;
+  monolith_only_page_count: number | string;
+  partition_only_page_count: number | string;
+  monolith_only_page_ids: unknown;
+  partition_only_page_ids: unknown;
+}
+
 interface PreparedSnapshotPage {
   readonly page_id: string;
   readonly page_version_id: string;
@@ -1199,6 +1237,22 @@ function parseJsonStringArray(value: unknown): readonly string[] {
     throw repositoryError('BACKSTAGE_NOTION_PARTITION_MATERIAL_COLLISION');
   }
   return parsed;
+}
+
+function normalizeShadowCoveragePageIds(
+  value: unknown,
+  label: string,
+  maximum: number
+): readonly string[] {
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new Error(`${label} exceeds its bounded sample contract.`);
+  }
+  return Object.freeze(value.map((pageId, index) => {
+    if (typeof pageId !== 'string') {
+      throw new Error(`${label}[${index}] is not a page UUID.`);
+    }
+    return normalizeUuid(pageId, `${label}[${index}]`);
+  }));
 }
 
 function parseJsonIntegerArray(value: unknown): readonly number[] {
@@ -1478,6 +1532,209 @@ export class PostgresBackstageNotionPartitionRepository {
       activeManifestId: row.active_manifest_id === null
         ? null
         : normalizeUuid(row.active_manifest_id, 'active_manifest_id'),
+    });
+  }
+
+  async loadShadowCoverage(
+    universeId: string,
+    samplePageIdLimit = BACKSTAGE_NOTION_SHADOW_COVERAGE_DEFAULT_SAMPLE_PAGE_IDS
+  ): Promise<BackstageNotionPartitionShadowCoverage> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const normalizedSampleLimit = normalizeInteger(
+      samplePageIdLimit,
+      'samplePageIdLimit',
+      0,
+      BACKSTAGE_NOTION_SHADOW_COVERAGE_MAX_SAMPLE_PAGE_IDS
+    );
+    const result = await this.pool.query<ShadowCoverageRow>(
+      `WITH selected_heads AS MATERIALIZED (
+         SELECT
+           requested.universe_id,
+           CASE
+             WHEN legacy_head.authority = 'notion'
+             THEN legacy_head.active_snapshot_id
+             ELSE NULL
+           END AS monolith_snapshot_id,
+           partition_head.active_manifest_id AS partition_manifest_id
+         FROM (VALUES ($1::TEXT)) AS requested(universe_id)
+         LEFT JOIN public.backstage_notion_universe_heads AS legacy_head
+           ON legacy_head.universe_id = requested.universe_id
+         LEFT JOIN public.backstage_notion_partitioned_universe_heads AS partition_head
+           ON partition_head.universe_id = requested.universe_id
+       ),
+       monolith_generation AS MATERIALIZED (
+         SELECT snapshot.id, snapshot.page_count, snapshot.chunk_count
+         FROM selected_heads AS head
+         JOIN public.backstage_notion_snapshots AS snapshot
+           ON snapshot.universe_id = head.universe_id
+          AND snapshot.id = head.monolith_snapshot_id
+       ),
+       partition_generation AS MATERIALIZED (
+         SELECT
+           manifest.id,
+           manifest.configuration_hash,
+           manifest.page_count,
+           manifest.chunk_count
+         FROM selected_heads AS head
+         JOIN public.backstage_notion_universe_manifests AS manifest
+           ON manifest.universe_id = head.universe_id
+          AND manifest.id = head.partition_manifest_id
+          AND manifest.state = 'sealed'
+       ),
+       monolith_pages AS MATERIALIZED (
+         SELECT page.page_id
+         FROM selected_heads AS head
+         JOIN public.backstage_notion_snapshot_pages AS page
+           ON page.universe_id = head.universe_id
+          AND page.snapshot_id = head.monolith_snapshot_id
+       ),
+       partition_pages AS MATERIALIZED (
+         SELECT ownership.page_id::TEXT AS page_id
+         FROM selected_heads AS head
+         JOIN public.backstage_notion_manifest_page_ownership AS ownership
+           ON ownership.universe_id = head.universe_id
+          AND ownership.manifest_id = head.partition_manifest_id
+       )
+       SELECT
+         (SELECT id::TEXT FROM monolith_generation) AS monolith_snapshot_id,
+         (SELECT id::TEXT FROM partition_generation) AS partition_manifest_id,
+         (SELECT configuration_hash FROM partition_generation)
+           AS partition_configuration_hash,
+         COALESCE((SELECT page_count FROM monolith_generation), 0)
+           AS monolith_page_count,
+         COALESCE((SELECT chunk_count FROM monolith_generation), 0)
+           AS monolith_chunk_count,
+         COALESCE((SELECT page_count FROM partition_generation), 0)
+           AS partition_page_count,
+         COALESCE((SELECT chunk_count FROM partition_generation), 0)
+           AS partition_chunk_count,
+         (SELECT COUNT(*)
+            FROM monolith_pages AS monolith_page
+            JOIN partition_pages AS partition_page USING (page_id))
+           AS shared_page_count,
+         (SELECT COUNT(*)
+            FROM monolith_pages AS monolith_page
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM partition_pages AS partition_page
+              WHERE partition_page.page_id = monolith_page.page_id
+            )) AS monolith_only_page_count,
+         (SELECT COUNT(*)
+            FROM partition_pages AS partition_page
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM monolith_pages AS monolith_page
+              WHERE monolith_page.page_id = partition_page.page_id
+            )) AS partition_only_page_count,
+         ARRAY(
+           SELECT monolith_page.page_id
+           FROM monolith_pages AS monolith_page
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM partition_pages AS partition_page
+             WHERE partition_page.page_id = monolith_page.page_id
+           )
+           ORDER BY monolith_page.page_id
+           LIMIT $2
+         ) AS monolith_only_page_ids,
+         ARRAY(
+           SELECT partition_page.page_id
+           FROM partition_pages AS partition_page
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM monolith_pages AS monolith_page
+             WHERE monolith_page.page_id = partition_page.page_id
+           )
+           ORDER BY partition_page.page_id
+           LIMIT $2
+         ) AS partition_only_page_ids`,
+      [normalizedUniverseId, normalizedSampleLimit]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error('Shadow coverage query returned no result.');
+    }
+    const monolithSnapshotId = row.monolith_snapshot_id === null
+      ? null
+      : normalizeUuid(row.monolith_snapshot_id, 'monolith_snapshot_id');
+    const partitionManifestId = row.partition_manifest_id === null
+      ? null
+      : normalizeUuid(row.partition_manifest_id, 'partition_manifest_id');
+    const partitionConfigurationHash = row.partition_configuration_hash === null
+      ? null
+      : normalizeSha256(
+          row.partition_configuration_hash,
+          'partition_configuration_hash'
+        );
+    const monolithPageCount = normalizeDatabaseInteger(
+      row.monolith_page_count,
+      'monolith_page_count'
+    );
+    const monolithChunkCount = normalizeDatabaseInteger(
+      row.monolith_chunk_count,
+      'monolith_chunk_count'
+    );
+    const partitionPageCount = normalizeDatabaseInteger(
+      row.partition_page_count,
+      'partition_page_count'
+    );
+    const partitionChunkCount = normalizeDatabaseInteger(
+      row.partition_chunk_count,
+      'partition_chunk_count'
+    );
+    const sharedPageCount = normalizeDatabaseInteger(
+      row.shared_page_count,
+      'shared_page_count'
+    );
+    const monolithOnlyPageCount = normalizeDatabaseInteger(
+      row.monolith_only_page_count,
+      'monolith_only_page_count'
+    );
+    const partitionOnlyPageCount = normalizeDatabaseInteger(
+      row.partition_only_page_count,
+      'partition_only_page_count'
+    );
+    const monolithOnlyPageIds = normalizeShadowCoveragePageIds(
+      row.monolith_only_page_ids,
+      'monolith_only_page_ids',
+      normalizedSampleLimit
+    );
+    const partitionOnlyPageIds = normalizeShadowCoveragePageIds(
+      row.partition_only_page_ids,
+      'partition_only_page_ids',
+      normalizedSampleLimit
+    );
+    if (
+      (monolithSnapshotId === null
+        && (monolithPageCount !== 0 || monolithChunkCount !== 0))
+      || (partitionManifestId === null
+        && (
+          partitionConfigurationHash !== null
+          || partitionPageCount !== 0
+          || partitionChunkCount !== 0
+        ))
+      || (partitionManifestId !== null && partitionConfigurationHash === null)
+      || monolithPageCount !== sharedPageCount + monolithOnlyPageCount
+      || partitionPageCount !== sharedPageCount + partitionOnlyPageCount
+      || monolithOnlyPageIds.length > monolithOnlyPageCount
+      || partitionOnlyPageIds.length > partitionOnlyPageCount
+    ) {
+      throw new Error('Shadow coverage result is internally inconsistent.');
+    }
+    return Object.freeze({
+      universeId: normalizedUniverseId,
+      monolithSnapshotId,
+      partitionManifestId,
+      partitionConfigurationHash,
+      monolithPageCount,
+      monolithChunkCount,
+      partitionPageCount,
+      partitionChunkCount,
+      sharedPageCount,
+      monolithOnlyPageCount,
+      partitionOnlyPageCount,
+      monolithOnlyPageIds,
+      partitionOnlyPageIds,
     });
   }
 

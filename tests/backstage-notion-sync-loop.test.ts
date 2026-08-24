@@ -408,12 +408,13 @@ describe('Backstage Notion synchronization loop', () => {
     expect(loggerWarn).not.toHaveBeenCalled();
   });
 
-  it('stop aborts active work and is idempotent', async () => {
+  it('stop-and-drain aborts active work, waits for cleanup, and is idempotent', async () => {
     let cycleSignal: AbortSignal | undefined;
+    let releaseCleanup!: () => void;
     const sync = jest.fn(({ signal }: { signal?: AbortSignal }) => {
       cycleSignal = signal;
-      return new Promise<readonly []>((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      return new Promise<readonly []>((resolve) => {
+        releaseCleanup = () => resolve([]);
       });
     });
     const handle = startBackstageNotionSyncLoop({
@@ -423,11 +424,21 @@ describe('Backstage Notion synchronization loop', () => {
     });
 
     await jest.advanceTimersByTimeAsync(0);
-    handle.stop();
-    handle.stop();
-    await jest.advanceTimersByTimeAsync(0);
-
+    let drained = false;
+    const firstDrain = handle.stopAndDrain();
+    const second = handle.stopAndDrain();
+    expect(second).toBe(firstDrain);
+    const first = firstDrain.then(() => { drained = true; });
     expect(cycleSignal?.aborted).toBe(true);
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    releaseCleanup();
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(drained).toBe(true);
+    expect(loggerInfo).not.toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_cycle_completed',
+      expect.anything()
+    );
     await jest.advanceTimersByTimeAsync(BACKSTAGE_NOTION_SYNC_INTERVAL_MAX_MS);
     expect(sync).toHaveBeenCalledTimes(1);
   });
@@ -444,7 +455,7 @@ describe('Backstage Notion synchronization loop', () => {
       .toBe(BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS);
   });
 
-  it('gates readiness before the signal, then starts and stops the recurring loop', () => {
+  it('gates readiness before the signal, then starts coordinated recurring loops', () => {
     const source = fs
       .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
       .replace(/\r\n/gu, '\n');
@@ -467,16 +478,28 @@ describe('Backstage Notion synchronization loop', () => {
       'emitWorkerBootstrapReadySignal()',
       readinessBarrierIndex
     );
+    const coordinatorIndex = source.indexOf(
+      'createBackstageNotionSynchronizationCoordinator()',
+      readinessSignalIndex
+    );
     const syncStartIndex = source.indexOf(
       'backstageNotionSyncHandle = startBackstageNotionSyncLoop({',
-      readinessSignalIndex
+      coordinatorIndex
+    );
+    const shadowStartIndex = source.indexOf(
+      'backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({',
+      syncStartIndex
     );
     const runtimeBarrierIndex = source.indexOf(
       'await Promise.all(slotRuntimePromises)',
-      syncStartIndex
+      shadowStartIndex
     );
-    const syncStopIndex = source.indexOf(
-      'backstageNotionSyncHandle?.stop()',
+    const syncDrainIndex = source.indexOf(
+      'backstageNotionSyncHandle?.stopAndDrain()',
+      runtimeBarrierIndex
+    );
+    const shadowDrainIndex = source.indexOf(
+      'backstageNotionPartitionShadowHandle?.stopAndDrain()',
       runtimeBarrierIndex
     );
 
@@ -486,18 +509,27 @@ describe('Backstage Notion synchronization loop', () => {
       notionReadinessIndex,
       readinessBarrierIndex,
       readinessSignalIndex,
+      coordinatorIndex,
       syncStartIndex,
+      shadowStartIndex,
       runtimeBarrierIndex,
-      syncStopIndex,
+      syncDrainIndex,
+      shadowDrainIndex,
     ]).not.toContain(-1);
     expect(databaseBootstrapIndex).toBeLessThan(adapterInitializationIndex);
     expect(adapterInitializationIndex).toBeLessThan(notionReadinessIndex);
     expect(notionReadinessIndex).toBeLessThan(readinessBarrierIndex);
     expect(readinessBarrierIndex).toBeLessThan(readinessSignalIndex);
-    expect(readinessSignalIndex).toBeLessThan(syncStartIndex);
-    expect(syncStartIndex).toBeLessThan(runtimeBarrierIndex);
-    expect(runtimeBarrierIndex).toBeLessThan(syncStopIndex);
+    expect(readinessSignalIndex).toBeLessThan(coordinatorIndex);
+    expect(coordinatorIndex).toBeLessThan(syncStartIndex);
+    expect(syncStartIndex).toBeLessThan(shadowStartIndex);
+    expect(shadowStartIndex).toBeLessThan(runtimeBarrierIndex);
+    expect(runtimeBarrierIndex).toBeLessThan(syncDrainIndex);
+    expect(runtimeBarrierIndex).toBeLessThan(shadowDrainIndex);
+    expect(source.indexOf('await Promise.all([', runtimeBarrierIndex))
+      .toBeLessThan(syncDrainIndex);
     expect(source).not.toContain('await startBackstageNotionSyncLoop(');
+    expect(source).not.toContain('await startBackstageNotionPartitionShadowLoop(');
   });
 
   it('does not require an OpenAI adapter for a keyless worker startup', () => {

@@ -729,9 +729,13 @@ describe('jobRunnerRuntime', () => {
       'emitWorkerBootstrapReadySignal()',
       readinessLogIndex
     );
+    const partitionShadowStartIndex = source.indexOf(
+      'backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({',
+      readinessProtocolIndex
+    );
     const consumerRuntimeBarrierIndex = source.indexOf(
       'await Promise.all(slotRuntimePromises)',
-      readinessProtocolIndex
+      partitionShadowStartIndex
     );
 
     expect([
@@ -749,6 +753,7 @@ describe('jobRunnerRuntime', () => {
       consumerReadinessBarrierIndex,
       readinessLogIndex,
       readinessProtocolIndex,
+      partitionShadowStartIndex,
       consumerRuntimeBarrierIndex
     ]).not.toContain(-1);
     expect(runtimeSettingsIndex).toBeLessThan(operatorDispatchProviderIndex);
@@ -764,7 +769,8 @@ describe('jobRunnerRuntime', () => {
     expect(consumerStartIndex).toBeLessThan(consumerReadinessBarrierIndex);
     expect(consumerReadinessBarrierIndex).toBeLessThan(readinessLogIndex);
     expect(readinessLogIndex).toBeLessThan(readinessProtocolIndex);
-    expect(readinessProtocolIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(readinessProtocolIndex).toBeLessThan(partitionShadowStartIndex);
+    expect(partitionShadowStartIndex).toBeLessThan(consumerRuntimeBarrierIndex);
     expect(source).not.toContain('slotRuntimePromise.catch(rejectSlotReadiness)');
   });
 

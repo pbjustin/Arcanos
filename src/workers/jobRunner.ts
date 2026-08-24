@@ -154,10 +154,15 @@ import {
   parseQueuedGamingSourceIngestionBody
 } from '@services/gamingSourceIngestion.js';
 import {
+  createBackstageNotionSynchronizationCoordinator,
   ensureBackstageNotionWorkerReadiness,
   startBackstageNotionSyncLoop,
   type BackstageNotionSyncLoopHandle,
 } from './backstageNotionSyncLoop.js';
+import {
+  startBackstageNotionPartitionShadowLoop,
+  type BackstageNotionPartitionShadowLoopHandle,
+} from './backstageNotionPartitionShadowLoop.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -2769,6 +2774,8 @@ async function run(): Promise<void> {
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
   let backstageNotionSyncHandle: BackstageNotionSyncLoopHandle | null = null;
+  let backstageNotionPartitionShadowHandle:
+    BackstageNotionPartitionShadowLoopHandle | null = null;
 
   try {
     const slotReadinessPromises: Promise<void>[] = [];
@@ -2835,13 +2842,23 @@ async function run(): Promise<void> {
       return;
     }
 
+    const backstageNotionSynchronizationCoordinator =
+      createBackstageNotionSynchronizationCoordinator();
     backstageNotionSyncHandle = startBackstageNotionSyncLoop({
       signal: workerProcessShutdownController.signal,
+      coordinator: backstageNotionSynchronizationCoordinator,
+    });
+    backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({
+      signal: workerProcessShutdownController.signal,
+      coordinator: backstageNotionSynchronizationCoordinator,
     });
 
     await Promise.all(slotRuntimePromises);
   } finally {
-    backstageNotionSyncHandle?.stop();
+    await Promise.all([
+      backstageNotionSyncHandle?.stopAndDrain(),
+      backstageNotionPartitionShadowHandle?.stopAndDrain(),
+    ]);
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
     await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');

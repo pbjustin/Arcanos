@@ -10,6 +10,7 @@ export interface CreateEmbeddingRequestOptions {
 }
 
 export const DEFAULT_OPENAI_EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL;
+export const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1_536;
 
 export async function createEmbedding(
   input: string,
@@ -21,7 +22,9 @@ export async function createEmbedding(
   if (clientOrAdapter) {
     //audit Assumption: backward compatibility path may pass a raw OpenAI client; risk: abrupt runtime breakage; invariant: embeddings remain callable for legacy callers; handling: use direct embeddings surface when adapter type not available.
     const embeddingClient = clientOrAdapter as OpenAI;
-    const embeddingRes = await embeddingClient.embeddings.create(requestParams, options);
+    const embeddingRes = options.signal === undefined
+      ? await embeddingClient.embeddings.create(requestParams)
+      : await embeddingClient.embeddings.create(requestParams, options);
     return embeddingRes.data[0]?.embedding || [];
   }
 
@@ -30,7 +33,9 @@ export async function createEmbedding(
     throw new Error('OpenAI adapter not initialized');
   }
 
-  const embeddingRes = await adapter.embeddings.create(requestParams, options);
+  const embeddingRes = options.signal === undefined
+    ? await adapter.embeddings.create(requestParams)
+    : await adapter.embeddings.create(requestParams, options);
 
   // embeddingRes is CreateEmbeddingResponse which has a data array
   return embeddingRes.data[0]?.embedding || [];
@@ -61,13 +66,17 @@ export async function createEmbeddings(
   });
 
   const response = clientOrAdapter
-    ? await (clientOrAdapter as OpenAI).embeddings.create(requestParams, options)
+    ? options.signal === undefined
+      ? await (clientOrAdapter as OpenAI).embeddings.create(requestParams)
+      : await (clientOrAdapter as OpenAI).embeddings.create(requestParams, options)
     : await (async () => {
         const { adapter } = getOpenAIClientOrAdapter();
         if (!adapter) {
           throw new Error('OpenAI adapter not initialized');
         }
-        return adapter.embeddings.create(requestParams, options);
+        return options.signal === undefined
+          ? adapter.embeddings.create(requestParams)
+          : adapter.embeddings.create(requestParams, options);
       })();
 
   const ordered = [...response.data].sort((left, right) => left.index - right.index);

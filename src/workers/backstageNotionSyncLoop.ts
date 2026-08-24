@@ -62,6 +62,11 @@ export interface BackstageNotionWorkerReadinessDependencies {
 
 export interface BackstageNotionSyncLoopHandle {
   stop(): void;
+  stopAndDrain(): Promise<void>;
+}
+
+export interface BackstageNotionSynchronizationCoordinator {
+  runExclusive<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 export interface BackstageNotionSyncLoopDependencies {
@@ -69,6 +74,28 @@ export interface BackstageNotionSyncLoopDependencies {
   intervalMs?: number;
   sync?: typeof syncConfiguredBackstageNotionAuthorities;
   logger?: Pick<typeof logger, 'info' | 'warn'>;
+  coordinator?: BackstageNotionSynchronizationCoordinator;
+}
+
+/** Serialize legacy and partition crawls owned by one worker process. */
+export function createBackstageNotionSynchronizationCoordinator():
+BackstageNotionSynchronizationCoordinator {
+  let tail: Promise<void> = Promise.resolve();
+  return Object.freeze({
+    async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+      let release!: () => void;
+      const previous = tail;
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    },
+  });
 }
 
 function throwIfReadinessAborted(signal: AbortSignal | undefined): void {
@@ -238,6 +265,8 @@ export function startBackstageNotionSyncLoop(
   let stopped = false;
   let running = false;
   let timeoutHandle: NodeJS.Timeout | null = null;
+  let inFlight: Promise<void> | null = null;
+  let drainPromise: Promise<void> | null = null;
 
   const schedule = (delayMs: number): void => {
     if (stopped || loopAbortController.signal.aborted) {
@@ -245,7 +274,13 @@ export function startBackstageNotionSyncLoop(
     }
     timeoutHandle = setTimeout(() => {
       timeoutHandle = null;
-      void runOnce();
+      const cycle = runOnce();
+      inFlight = cycle;
+      void cycle.finally(() => {
+        if (inFlight === cycle) {
+          inFlight = null;
+        }
+      });
     }, delayMs);
     timeoutHandle.unref?.();
   };
@@ -264,9 +299,20 @@ export function startBackstageNotionSyncLoop(
     running = true;
     const startedAt = Date.now();
     try {
-      const results = await sync({
-        signal: loopAbortController.signal,
-      });
+      const synchronize = (): Promise<readonly BackstageNotionSyncResult[]> => {
+        if (loopAbortController.signal.aborted) {
+          throw loopAbortController.signal.reason
+            ?? new DOMException('The operation was aborted.', 'AbortError');
+        }
+        return sync({ signal: loopAbortController.signal });
+      };
+      const results = dependencies.coordinator
+        ? await dependencies.coordinator.runExclusive(synchronize)
+        : await synchronize();
+      if (loopAbortController.signal.aborted) {
+        throw loopAbortController.signal.reason
+          ?? new DOMException('The operation was aborted.', 'AbortError');
+      }
       const failed = results.filter(result => result.status === 'failed').length;
       const metadata = {
         module: 'backstage-notion-sync',
@@ -315,6 +361,17 @@ export function startBackstageNotionSyncLoop(
     }
     dependencies.signal?.removeEventListener('abort', stop);
   };
+  const stopAndDrain = (): Promise<void> => {
+    if (drainPromise) {
+      return drainPromise;
+    }
+    stop();
+    const activeCycle = inFlight;
+    drainPromise = (async () => {
+      await activeCycle;
+    })();
+    return drainPromise;
+  };
   if (dependencies.signal?.aborted) {
     stop();
   } else {
@@ -322,5 +379,5 @@ export function startBackstageNotionSyncLoop(
   }
   schedule(0);
 
-  return { stop };
+  return { stop, stopAndDrain };
 }
