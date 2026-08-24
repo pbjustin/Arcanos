@@ -324,13 +324,14 @@ to `NEVER` with zero retries: the fresh-database preflights deliberately make
 this proof non-restartable. Only the web service receives an HTTP domain. PostgreSQL,
 Redis, and the worker receive neither an HTTP domain nor a TCP proxy.
 
-Configure the worker pre-deploy command as
-`node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty` and the
-web pre-deploy command as
-`node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema`. These
-sealed checks run from the application images, which contain Node and the exact
-tracked source. They bind the mode to the Railway role and revision, use only
-the exact private PostgreSQL reference, and emit fixed nonsecret sentinels.
+Configure each Railway `preDeployCommand` as an exact one-element array. The
+worker value is
+`["node scripts/railway-backstage-heavy-db-preflight.mjs --mode empty"]`; the
+web value is
+`["node scripts/railway-backstage-heavy-db-preflight.mjs --mode schema"]`.
+These sealed checks run from the application images, which contain Node and the
+exact tracked source. They bind the mode to the Railway role and revision, use
+only the exact private PostgreSQL reference, and emit fixed nonsecret sentinels.
 They do not run inside the PostgreSQL template container or initialize schema.
 
 Both application roles require the exact marker

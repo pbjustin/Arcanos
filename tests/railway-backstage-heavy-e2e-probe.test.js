@@ -84,9 +84,11 @@ function deployment(id, processKind = null) {
             : {
                 startCommand:
                   'node scripts/railway-backstage-heavy-proof-supervisor.mjs',
-                preDeployCommand: processKind === 'worker'
-                  ? WORKER_PREDEPLOY_COMMAND
-                  : WEB_PREDEPLOY_COMMAND,
+                preDeployCommand: [
+                  processKind === 'worker'
+                    ? WORKER_PREDEPLOY_COMMAND
+                    : WEB_PREDEPLOY_COMMAND,
+                ],
               }),
         },
       },
@@ -586,8 +588,17 @@ describe('Backstage heavy network proof', () => {
       expect(
         manifestCase.readDeployment(payloads)
           .meta.serviceManifest.deploy.preDeployCommand
-      ).toBe(manifestCase.expected);
-      for (const invalidCommand of [undefined, manifestCase.opposite]) {
+      ).toEqual([manifestCase.expected]);
+      for (const invalidCommand of [
+        undefined,
+        null,
+        manifestCase.expected,
+        [],
+        [null],
+        [42],
+        [manifestCase.expected, manifestCase.opposite],
+        [manifestCase.opposite],
+      ]) {
         const invalidPayloads = structuredClone(payloads);
         const deploy = manifestCase.readDeployment(invalidPayloads)
           .meta.serviceManifest.deploy;

@@ -75,6 +75,13 @@ const RAILWAY_CLI_ENV_ALLOWLIST = new Set([
   'WINDIR',
   'XDG_CONFIG_HOME',
 ]);
+
+function hasExactPreDeployCommand(value, expectedCommand) {
+  return Array.isArray(value)
+    && value.length === 1
+    && value[0] === expectedCommand;
+}
+
 const FORBIDDEN_DATA_ALIAS_NAMES = new Set([
   'DATABASE_PRIVATE_URL',
   'DATABASE_PUBLIC_URL',
@@ -573,8 +580,10 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
       || deployment.instances.some(instance => instance?.status !== 'RUNNING')
       || deployment?.meta?.serviceManifest?.deploy?.numReplicas !== 1
       || effectiveStartCommand !== RAILWAY_START_COMMAND
-      || effectiveDeployConfig?.preDeployCommand
-        !== expectedPreDeployCommand
+      || !hasExactPreDeployCommand(
+        effectiveDeployConfig?.preDeployCommand,
+        expectedPreDeployCommand
+      )
       || effectiveDeployConfig?.restartPolicyType !== 'NEVER'
       || effectiveDeployConfig?.restartPolicyMaxRetries !== 0
       || readDeploymentSourceSha(deployment) !== config.sourceSha
@@ -666,8 +675,10 @@ function attestDeploymentList(
     || readDeploymentSourceSha(deployment) !== sourceSha
     || deployment.meta?.serviceManifest?.deploy?.startCommand
       !== RAILWAY_START_COMMAND
-    || deployment.meta?.serviceManifest?.deploy?.preDeployCommand
-      !== expectedPreDeployCommand
+    || !hasExactPreDeployCommand(
+      deployment.meta?.serviceManifest?.deploy?.preDeployCommand,
+      expectedPreDeployCommand
+    )
   ) {
     fail('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_LIST_MISMATCH');
   }
