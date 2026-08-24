@@ -69,6 +69,7 @@ import {
 } from '@shared/backstage/backstageNotionContextCore.js';
 import { loadBackstageNotionPromptContext } from './backstageNotionContext.js';
 import {
+  isBackstageLegacyQueuedExecution,
   isBackstageProtectedQueuedExecution,
   wasBackstageNotionEnrichmentUsed,
 } from './backstageNotionEnrichmentAuthorization.js';
@@ -2411,6 +2412,8 @@ export async function generateBooking(
     defaultTokenLimit
   );
   const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
+  const privateQueuedExecution =
+    protectedQueuedExecution || isBackstageLegacyQueuedExecution();
   const executionBudget = resolveBackstageExecutionBudgetPolicy({
     profile: protectedQueuedExecution
       ? 'queued_generation'
@@ -2576,7 +2579,7 @@ export async function generateBooking(
           }
         : {}),
     },
-    ...(protectedQueuedExecution || structuredPrompt.includesNotion
+    ...(privateQueuedExecution || structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
           redactAuditContent: true as const,
@@ -2696,7 +2699,7 @@ export async function generateBooking(
     if (integrityFailure) {
       throw integrityFailure;
     }
-    if (protectedQueuedExecution || structuredPrompt.includesNotion) {
+    if (privateQueuedExecution || structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');
       throw new Error('Booking generation failed');
     }
@@ -3231,7 +3234,9 @@ export const BackstageBookerModule = {
         'generateBookingWithHRC'
       );
       const sensitiveContext =
-        wasBackstageNotionEnrichmentUsed() || isBackstageProtectedQueuedExecution();
+        wasBackstageNotionEnrichmentUsed()
+        || isBackstageProtectedQueuedExecution()
+        || isBackstageLegacyQueuedExecution();
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,

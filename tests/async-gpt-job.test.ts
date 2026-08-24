@@ -3,7 +3,10 @@ import {
   buildProtectedBackstageQueuedGptJobInput,
   buildQueuedGptBackstageMutationAdmission,
   buildQueuedGptJobInput,
-  parseQueuedGptJobInput
+  isQueuedGptJobCancellationPrivacySensitive,
+  parseQueuedGptJobInput,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
 } from '../src/shared/gpt/asyncGptJob.js';
 import {
   protectBackstageQueuedGptJobOutput,
@@ -42,6 +45,99 @@ describe('async GPT job payload helpers', () => {
     expect(payload.traceId).toHaveLength(128);
     expect(payload.correlationId).toHaveLength(128);
     expect(parseQueuedGptJobInput(payload).ok).toBe(true);
+  });
+
+  it('marks current producers without upgrading marker-absent legacy rows', () => {
+    const current = buildQueuedGptJobInput({
+      gptId: 'backstage-booker',
+      body: { action: 'generateBooking' },
+    });
+    expect(current.producerContract).toEqual({
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    });
+    expect(parseQueuedGptJobInput(current)).toMatchObject({
+      ok: true,
+      value: { producerContract: current.producerContract },
+    });
+
+    const parsedLegacy = parseQueuedGptJobInput({
+      gptId: 'backstage-booker',
+      body: { action: 'generateBooking' },
+    });
+    expect(parsedLegacy).toMatchObject({ ok: true });
+    if (parsedLegacy.ok) {
+      expect(parsedLegacy.value.producerContract).toBeUndefined();
+    }
+  });
+
+  it('rejects malformed or unsupported producer contracts before legacy fallback', () => {
+    for (const producerContract of [
+      { version: 2, source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE },
+      { version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION, source: 'caller' },
+      { version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION },
+      {
+        version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+        source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+        extra: true,
+      },
+      null,
+      'queued-gpt-runtime',
+    ]) {
+      expect(parseQueuedGptJobInput({
+        gptId: 'backstage-booker',
+        body: { action: 'generateBooking' },
+        producerContract,
+      })).toMatchObject({ ok: false });
+    }
+  });
+
+  it('fails stale-cancellation privacy classification closed except for the exact current producer marker', () => {
+    const currentProducerContract = {
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    };
+
+    expect(isQueuedGptJobCancellationPrivacySensitive({
+      producerContract: currentProducerContract,
+    })).toBe(false);
+    expect(isQueuedGptJobCancellationPrivacySensitive({
+      producerContract: currentProducerContract,
+      protectedBackstage: undefined,
+    })).toBe(true);
+
+    for (const rawInput of [
+      undefined,
+      null,
+      'queued-gpt-runtime',
+      1,
+      [],
+      {},
+      { producerContract: null },
+      { producerContract: currentProducerContract, protectedBackstage: {} },
+      {
+        producerContract: {
+          ...currentProducerContract,
+          extra: true,
+        },
+      },
+    ]) {
+      expect(isQueuedGptJobCancellationPrivacySensitive(rawInput)).toBe(true);
+    }
+
+    const inheritedProducerContract = Object.create({
+      producerContract: currentProducerContract,
+    }) as Record<string, unknown>;
+    expect(isQueuedGptJobCancellationPrivacySensitive(inheritedProducerContract)).toBe(true);
+
+    const throwingProducerContract = {} as Record<string, unknown>;
+    Object.defineProperty(throwingProducerContract, 'producerContract', {
+      enumerable: true,
+      get: () => {
+        throw new Error('untrusted producer marker getter');
+      },
+    });
+    expect(isQueuedGptJobCancellationPrivacySensitive(throwingProducerContract)).toBe(true);
   });
 
   it('recognizes only queued jobs with a supported bridge smoke action', () => {
@@ -126,6 +222,7 @@ describe('async GPT job payload helpers', () => {
     expect(JSON.stringify(queuedInput)).not.toContain(privatePrompt);
     expect(queuedInput).not.toHaveProperty('body');
     expect(queuedInput).not.toHaveProperty('prompt');
+    expect(queuedInput).not.toHaveProperty('producerContract');
     expect(parseQueuedGptJobInput(queuedInput)).toMatchObject({
       ok: true,
       value: {
@@ -324,7 +421,9 @@ describe('async GPT job payload helpers', () => {
     }));
   });
 
-  it('never downgrades a malformed protected marker to the plaintext job schema', () => {
+  it.each([false, true])(
+    'never downgrades a malformed protected marker to the plaintext job schema (producer marker: %s)',
+    (includeProducerContract) => {
     const privatePrompt = 'private-malformed-protected-fallback-sentinel';
     const parsed = parseQueuedGptJobInput({
       gptId: 'backstage-booker',
@@ -337,6 +436,14 @@ describe('async GPT job payload helpers', () => {
         action: 'generateBooking',
         payload: { universeId: 'my-universe-2k26', prompt: privatePrompt },
       },
+      ...(includeProducerContract
+        ? {
+            producerContract: {
+              version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+              source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+            },
+          }
+        : {}),
     });
 
     expect(parsed).toEqual({
@@ -345,5 +452,6 @@ describe('async GPT job payload helpers', () => {
     });
     expect(JSON.stringify(parsed)).not.toContain(privatePrompt);
     expect(JSON.stringify(parsed)).not.toContain('private-ciphertext-sentinel');
-  });
+    }
+  );
 });

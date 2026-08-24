@@ -17,6 +17,9 @@ import {
   BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
   BackstageNotionIndexUnavailableError,
 } from '../src/services/backstageNotionRag.js';
+import {
+  BackstageBookerOutputIncompleteError,
+} from '../src/shared/backstage/backstageGenerationError.js';
 
 const mockGetJobById = jest.fn(async (_jobId: string) => null);
 const mockGetGptModuleMap = jest.fn();
@@ -32,6 +35,7 @@ const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockDetectBackstageBookerIntent = jest.fn();
+const mockClassifyWorkerExecutionError = jest.fn();
 
 class MockJobRepositoryUnavailableError extends Error {}
 
@@ -58,7 +62,7 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   WorkerAutonomyService: class {},
-  classifyWorkerExecutionError: jest.fn(),
+  classifyWorkerExecutionError: mockClassifyWorkerExecutionError,
   getWorkerAutonomySettings: jest.fn(),
 }));
 
@@ -138,6 +142,7 @@ const { createAbortError, getRequestAbortSignal } = await import('@arcanos/runti
 const {
   buildProtectedBackstageQueuedGptJobInput,
   buildQueuedGptBackstageMutationAdmission,
+  buildQueuedGptJobInput,
 } = await import(
   '../src/shared/gpt/asyncGptJob.js'
 );
@@ -145,10 +150,14 @@ const { unprotectBackstageQueuedGptJobOutput } = await import(
   '../src/shared/backstage/backstageQueuedJobResultProtection.js'
 );
 const {
+  isBackstageLegacyQueuedExecution,
   isBackstageNotionEnrichmentAuthorized,
   isBackstageProtectedQueuedExecution,
 } = await import(
   '../src/services/backstageNotionEnrichmentAuthorization.js'
+);
+const { getLatestPromptDebugTrace } = await import(
+  '../src/services/promptDebugTraceService.js'
 );
 
 const originalBackstagePayloadKey =
@@ -238,6 +247,13 @@ describe('normal worker queued Backstage mutation admission', () => {
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
     mockDetectBackstageBookerIntent.mockReturnValue(null);
+    mockClassifyWorkerExecutionError.mockImplementation((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        message,
+        retryable: /temporary|timeout|network|openai/iu.test(message),
+      };
+    });
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x61).toString('base64');
     delete process.env.BOOKER_WORKER_JOB_TIMEOUT_MS;
@@ -388,11 +404,11 @@ describe('normal worker queued Backstage mutation admission', () => {
       { payload: { action: [null, ['', ['generateBookingWithHRC']]] } },
     ],
     ['legacy-route default generation', 'backstage', {}],
-  ])('rejects legacy plaintext %s before worker dispatch', async (_label, gptId, body) => {
+  ])('rejects current unprotected %s before worker dispatch', async (_label, gptId, body) => {
     const privatePrompt = 'private-legacy-worker-generation-sentinel';
     const outcome = await executeQueuedGptRequest({
       jobId: '77777777-7777-4777-8777-777777777777',
-      rawInput: {
+      rawInput: buildQueuedGptJobInput({
         gptId,
         body: {
           ...body,
@@ -402,7 +418,7 @@ describe('normal worker queued Backstage mutation admission', () => {
             prompt: privatePrompt,
           },
         },
-      },
+      }),
     });
 
     expect(outcome).toEqual({
@@ -415,7 +431,161 @@ describe('normal worker queued Backstage mutation admission', () => {
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
-  it('rejects a configured Backstage GPT alias plaintext generation before dispatch', async () => {
+  it.each(['generateBooking', 'generateBookingWithHRC'] as const)(
+    'drains marker-absent legacy %s with private effects disabled and plaintext compatibility output',
+    async (action) => {
+      const privateResult = `private-legacy-${action}-result-sentinel`;
+      let legacyQueueInsideDispatch = false;
+      let protectedQueueInsideDispatch = true;
+      let notionAuthorizedInsideDispatch = true;
+      mockDispatchModuleAction.mockImplementationOnce(async () => {
+        legacyQueueInsideDispatch = isBackstageLegacyQueuedExecution();
+        protectedQueueInsideDispatch = isBackstageProtectedQueuedExecution();
+        notionAuthorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
+        return privateResult;
+      });
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: action === 'generateBooking'
+          ? '71717171-7171-4171-8171-717171717171'
+          : '72727272-7272-4272-8272-727272727272',
+        rawInput: {
+          gptId: 'backstage-booker',
+          body: {
+            action,
+            payload: {
+              universeId: 'my-universe-2k26',
+              prompt: 'Book a complete private card.',
+            },
+          },
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'completed',
+        output: {
+          ok: true,
+          result: privateResult,
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action,
+          },
+        },
+      });
+      expect(legacyQueueInsideDispatch).toBe(true);
+      expect(protectedQueueInsideDispatch).toBe(false);
+      expect(notionAuthorizedInsideDispatch).toBe(false);
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+      expect(JSON.stringify(outcome.output)).toContain(privateResult);
+      expect(isBackstageLegacyQueuedExecution()).toBe(false);
+    }
+  );
+
+  it('drains a marker-absent automatic Core-to-Booker generation row', async () => {
+    mockDetectBackstageBookerIntent.mockReturnValue({
+      score: 6,
+      reason: 'booking_verb+wrestling_brand',
+    });
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+      return 'Legacy automatic booking result.';
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '73737373-7373-4373-8373-737373737373',
+      rawInput: {
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Book six Raw matches for the next WWE show.',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'completed',
+      output: {
+        ok: true,
+        result: 'Legacy automatic booking result.',
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+        },
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('collapses a transient legacy generation failure while preserving retryability', async () => {
+    const privateFailure = 'private-legacy-provider-failure-sentinel';
+    mockDispatchModuleAction.mockRejectedValueOnce(new Error(privateFailure));
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '74747474-7474-4474-8474-747474747474',
+      rawInput: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'Book the private show.',
+          },
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      output: {
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_LEGACY_DRAIN_FAILED',
+          message: 'Legacy Backstage generation failed during compatibility drain.',
+        },
+      },
+      errorMessage:
+        'BACKSTAGE_LEGACY_DRAIN_FAILED: Legacy Backstage generation failed during compatibility drain.',
+      retryable: true,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateFailure);
+  });
+
+  it('keeps a deterministic legacy generation failure private and nonretryable', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerOutputIncompleteError()
+    );
+    const outcome = await executeQueuedGptRequest({
+      jobId: '79797979-7979-4979-8979-797979797979',
+      rawInput: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'Book the private deterministic show.',
+          },
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      output: {
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_LEGACY_DRAIN_FAILED',
+          message: 'Legacy Backstage generation failed during compatibility drain.',
+        },
+      },
+      errorMessage:
+        'BACKSTAGE_LEGACY_DRAIN_FAILED: Legacy Backstage generation failed during compatibility drain.',
+      retryable: false,
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a current unprotected configured Backstage GPT alias before dispatch', async () => {
     mockGetGptModuleMap.mockResolvedValueOnce({
       'booker-configured-alias': {
         route: 'backstage-booker',
@@ -425,7 +595,7 @@ describe('normal worker queued Backstage mutation admission', () => {
 
     const outcome = await executeQueuedGptRequest({
       jobId: '45454545-4545-4454-8454-454545454545',
-      rawInput: {
+      rawInput: buildQueuedGptJobInput({
         gptId: 'booker-configured-alias',
         body: {
           action: 'generateBooking',
@@ -434,7 +604,7 @@ describe('normal worker queued Backstage mutation admission', () => {
             prompt: 'private-configured-alias-booking-sentinel',
           },
         },
-      },
+      }),
     });
 
     expect(outcome).toMatchObject({
@@ -448,7 +618,7 @@ describe('normal worker queued Backstage mutation admission', () => {
   it.each([
     ['core query handoff', 'arcanos-core'],
     ['Backstage query upgrade', 'backstage-booker'],
-  ])('rejects legacy plaintext automatic Booker generation from %s', async (_label, gptId) => {
+  ])('rejects current unprotected automatic Booker generation from %s', async (_label, gptId) => {
     mockDetectBackstageBookerIntent.mockReturnValueOnce({
       score: 6,
       reason: 'booking_verb+wrestling_brand',
@@ -456,13 +626,13 @@ describe('normal worker queued Backstage mutation admission', () => {
 
     const outcome = await executeQueuedGptRequest({
       jobId: '46464646-4646-4464-8464-464646464646',
-      rawInput: {
+      rawInput: buildQueuedGptJobInput({
         gptId,
         body: {
           action: 'query',
           prompt: 'Book six Raw matches for the next WWE show.',
         },
-      },
+      }),
     });
 
     expect(outcome).toMatchObject({
@@ -474,7 +644,10 @@ describe('normal worker queued Backstage mutation admission', () => {
   });
 
   it('preserves a non-booking queued core query', async () => {
-    mockDispatchModuleAction.mockResolvedValueOnce('Core query result.');
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      return 'Core query result.';
+    });
 
     const outcome = await executeQueuedGptRequest({
       jobId: '47474747-4747-4474-8474-474747474747',
@@ -489,6 +662,7 @@ describe('normal worker queued Backstage mutation admission', () => {
 
     expect(outcome.status).toBe('completed');
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+    expect(mockPersistModuleConversation).toHaveBeenCalledTimes(1);
   });
 
   it('preserves explicit queued CORE intent routing despite booking language', async () => {
@@ -528,14 +702,14 @@ describe('normal worker queued Backstage mutation admission', () => {
 
       const outcome = await executeQueuedGptRequest({
         jobId: '49494949-4949-4494-8494-494949494949',
-        rawInput: {
+        rawInput: buildQueuedGptJobInput({
           gptId: 'arcanos-core',
           body: {
             ...actionFields,
             prompt: 'Book six Raw matches as a hypothetical classification example.',
           },
           bypassIntentRouting: true,
-        },
+        }),
       });
 
       expect(outcome.status).toBe('completed');
@@ -557,13 +731,13 @@ describe('normal worker queued Backstage mutation admission', () => {
 
       const outcome = await executeQueuedGptRequest({
         jobId: '50505050-5050-4050-8050-505050505050',
-        rawInput: {
+        rawInput: buildQueuedGptJobInput({
           gptId: 'arcanos-core',
           body: {
             action,
             prompt: 'Book six Raw matches for the next WWE show.',
           },
-        },
+        }),
       });
 
       expect(outcome).toMatchObject({
@@ -576,7 +750,10 @@ describe('normal worker queued Backstage mutation admission', () => {
   );
 
   it('continues to execute a legacy plaintext non-generation Backstage action', async () => {
-    mockDispatchModuleAction.mockResolvedValueOnce({ answer: 'continuity answer' });
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      return { answer: 'continuity answer' };
+    });
 
     const outcome = await executeQueuedGptRequest({
       jobId: '66666666-6666-4666-8666-666666666666',
@@ -594,6 +771,7 @@ describe('normal worker queued Backstage mutation admission', () => {
 
     expect(outcome.status).toBe('completed');
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+    expect(mockPersistModuleConversation).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -628,7 +806,7 @@ describe('normal worker queued Backstage mutation admission', () => {
     }
   );
 
-  it('fails closed at dispatch when registry recovery reveals plaintext background generation', async () => {
+  it('fails closed when registry recovery reveals current unprotected background generation', async () => {
     mockGetGptModuleMap
       .mockRejectedValueOnce(new Error('transient registry lookup failure'))
       .mockResolvedValueOnce({
@@ -640,13 +818,13 @@ describe('normal worker queued Backstage mutation admission', () => {
 
     const outcome = await executeQueuedGptRequest({
       jobId: '52525252-5252-4252-8252-525252525252',
-      rawInput: {
+      rawInput: buildQueuedGptJobInput({
         gptId: 'booker-recovered-alias',
         body: {
           action: 'generateBooking',
           prompt: 'private-recovered-alias-generation-sentinel',
         },
-      },
+      }),
     });
 
     expect(outcome).toMatchObject({
@@ -658,6 +836,334 @@ describe('normal worker queued Backstage mutation admission', () => {
         error: { code: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED' },
       },
     });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('drains a marker-absent configured alias when dispatch recovers a transient registry lookup', async () => {
+    mockGetGptModuleMap
+      .mockRejectedValueOnce(new Error('transient registry lookup failure'))
+      .mockResolvedValueOnce({
+        'booker-recovered-legacy-alias': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      });
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      return 'Recovered legacy alias result.';
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '75757575-7575-4575-8575-757575757575',
+      rawInput: {
+        gptId: 'booker-recovered-legacy-alias',
+        body: {
+          action: 'generateBooking',
+          prompt: 'Book the recovered legacy show.',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'completed',
+      output: {
+        ok: true,
+        result: 'Recovered legacy alias result.',
+        _route: {
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+        },
+      },
+    });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['substring', 'client-backstage-booker-alias'],
+    ['token-subset', 'backstage extra booker'],
+    ['fuzzy', 'backstage-bookr'],
+  ] as const)(
+    'drains a marker-absent Booker row resolved by the dispatcher %s matcher',
+    async (matchMethod, gptId) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        'backstage-booker': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      });
+      mockDispatchModuleAction.mockImplementationOnce(async () => {
+        expect(isBackstageLegacyQueuedExecution()).toBe(true);
+        expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+        return `Legacy ${matchMethod} Booker result.`;
+      });
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: `legacy-booker-${matchMethod}`,
+        rawInput: {
+          gptId,
+          body: {
+            action: 'generateBooking',
+            payload: {
+              universeId: 'my-universe-2k26',
+              prompt: `Private ${matchMethod} Booker prompt.`,
+            },
+          },
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'completed',
+        output: {
+          ok: true,
+          result: `Legacy ${matchMethod} Booker result.`,
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action: 'generateBooking',
+            matchMethod,
+          },
+        },
+      });
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['substring', 'client-backstage-booker-alias'],
+    ['token-subset', 'backstage extra booker'],
+    ['fuzzy', 'backstage-bookr'],
+  ] as const)(
+    'rejects a current unprotected Booker row resolved by the dispatcher %s matcher',
+    async (_matchMethod, gptId) => {
+      mockGetGptModuleMap.mockResolvedValue({
+        'backstage-booker': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      });
+
+      const outcome = await executeQueuedGptRequest({
+        jobId: `current-booker-${_matchMethod}`,
+        rawInput: buildQueuedGptJobInput({
+          gptId,
+          body: {
+            action: 'generateBooking',
+            payload: {
+              universeId: 'my-universe-2k26',
+              prompt: `Private current ${_matchMethod} Booker prompt.`,
+            },
+          },
+        }),
+      });
+
+      expect(outcome).toEqual({
+        status: 'failed',
+        output: null,
+        errorMessage: 'Protected Backstage generation job payload is required.',
+        retryable: false,
+      });
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('redacts a marker-absent fuzzy Booker cancellation before dispatch', async () => {
+    const privateCancellationReason = 'private fuzzy Booker cancellation sentinel';
+    mockGetGptModuleMap.mockResolvedValue({
+      'backstage-booker': {
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+      },
+    });
+    mockGetJobById.mockResolvedValueOnce({
+      cancel_requested_at: new Date('2026-08-24T12:00:00.000Z'),
+      cancel_reason: privateCancellationReason,
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'legacy-fuzzy-booker-pre-dispatch-cancellation',
+      rawInput: {
+        gptId: 'backstage-bookr',
+        body: {
+          action: 'generateBooking',
+          prompt: 'Private fuzzy Booker prompt.',
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      output: null,
+      errorMessage:
+        'Legacy Backstage generation cancellation requested during compatibility drain.',
+      retryable: false,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('drains a marker-absent row when the module map changes from non-Booker to Booker', async () => {
+    const originalPromptDebugTraceMode = process.env.PROMPT_DEBUG_TRACE_MODE;
+    process.env.PROMPT_DEBUG_TRACE_MODE = 'full';
+    const privatePrompt = 'Private routing-drift Booker prompt sentinel.';
+    mockGetGptModuleMap
+      .mockResolvedValueOnce({
+        'routing-drift-alias': {
+          route: 'core',
+          module: 'ARCANOS:CORE',
+        },
+      })
+      .mockResolvedValueOnce({
+        'routing-drift-alias': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      });
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+      return 'Booker result after routing drift.';
+    });
+
+    try {
+      const outcome = await executeQueuedGptRequest({
+        jobId: 'legacy-non-booker-to-booker-drift',
+        rawInput: {
+          gptId: 'routing-drift-alias',
+          body: {
+            action: 'generateBooking',
+            prompt: privatePrompt,
+          },
+          requestId: 'req-legacy-non-booker-to-booker-drift',
+        },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'completed',
+        output: {
+          ok: true,
+          result: 'Booker result after routing drift.',
+          _route: {
+            module: 'BACKSTAGE:BOOKER',
+            action: 'generateBooking',
+          },
+        },
+      });
+      expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+      const promptDebugTrace = await getLatestPromptDebugTrace(
+        'req-legacy-non-booker-to-booker-drift'
+      );
+      expect(promptDebugTrace).toMatchObject({
+        rawPrompt: '[REDACTED_GPT_ACCESS_PROMPT]',
+        normalizedPrompt: '[REDACTED_GPT_ACCESS_PROMPT]',
+        responseReturned: null,
+      });
+      expect(JSON.stringify(promptDebugTrace)).not.toContain(privatePrompt);
+    } finally {
+      if (originalPromptDebugTraceMode === undefined) {
+        delete process.env.PROMPT_DEBUG_TRACE_MODE;
+      } else {
+        process.env.PROMPT_DEBUG_TRACE_MODE = originalPromptDebugTraceMode;
+      }
+    }
+  });
+
+  it('keeps final non-Booker routing isolated when the module map changes away from Booker', async () => {
+    mockGetGptModuleMap
+      .mockResolvedValueOnce({
+        'routing-drift-alias': {
+          route: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+        },
+      })
+      .mockResolvedValueOnce({
+        'routing-drift-alias': {
+          route: 'core',
+          module: 'ARCANOS:CORE',
+        },
+      });
+    mockDispatchModuleAction.mockImplementationOnce(async (moduleName, action) => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      expect(moduleName).toBe('ARCANOS:CORE');
+      expect(action).toBe('query');
+      return 'Core result after routing drift.';
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: 'legacy-booker-to-non-booker-drift',
+      rawInput: {
+        gptId: 'routing-drift-alias',
+        body: {
+          prompt: 'Ordinary core query after routing drift.',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'completed',
+      output: {
+        ok: true,
+        result: 'Core result after routing drift.',
+        _route: {
+          module: 'ARCANOS:CORE',
+          action: 'query',
+        },
+      },
+    });
+    expect(mockPersistModuleConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not downgrade a marker-absent non-Booker row when both registry lookups fail', async () => {
+    const initialRegistryFailure = new Error('initial registry lookup failed');
+    const dispatchRegistryFailure = new Error('dispatch registry lookup failed');
+    mockGetGptModuleMap
+      .mockRejectedValueOnce(initialRegistryFailure)
+      .mockRejectedValueOnce(dispatchRegistryFailure);
+
+    await expect(executeQueuedGptRequest({
+      jobId: '78787878-7878-4878-8878-787878787878',
+      rawInput: {
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Explain deterministic finite automata.',
+        },
+      },
+    })).rejects.toBe(dispatchRegistryFailure);
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a positively classified legacy pre-envelope transient failure private and retryable', async () => {
+    const privateRegistryFailure =
+      new Error('temporary private legacy registry failure sentinel');
+    mockGetGptModuleMap
+      .mockRejectedValueOnce(new Error('initial registry lookup failed'))
+      .mockRejectedValueOnce(privateRegistryFailure);
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '80808080-8080-4080-8080-808080808080',
+      rawInput: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'generateBooking',
+          prompt: 'Book the private legacy show.',
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      output: {
+        ok: false,
+        error: {
+          code: 'BACKSTAGE_LEGACY_DRAIN_FAILED',
+          message: 'Legacy Backstage generation failed during compatibility drain.',
+        },
+      },
+      errorMessage:
+        'BACKSTAGE_LEGACY_DRAIN_FAILED: Legacy Backstage generation failed during compatibility drain.',
+      retryable: true,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateRegistryFailure.message);
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
@@ -1009,6 +1515,61 @@ describe('normal worker queued Backstage mutation admission', () => {
     });
   });
 
+  it('redacts active cancellation for a marker-absent configured Booker alias', async () => {
+    const parentController = new AbortController();
+    let activeProviderSignal: AbortSignal | undefined;
+    let providerStarted!: () => void;
+    const providerStartedPromise = new Promise<void>(resolve => {
+      providerStarted = resolve;
+    });
+    mockGetGptModuleMap.mockResolvedValue({
+      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' },
+      'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      'configured-active-legacy-alias': {
+        route: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+      },
+      'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+    });
+    mockDispatchModuleAction.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      expect(isBackstageLegacyQueuedExecution()).toBe(true);
+      activeProviderSignal = getRequestAbortSignal();
+      providerStarted();
+      activeProviderSignal?.addEventListener('abort', () => {
+        reject(activeProviderSignal?.reason ?? createAbortError());
+      }, { once: true });
+    }));
+
+    const outcomePromise = executeQueuedGptRequest({
+      jobId: '81818181-8181-4181-8181-818181818181',
+      rawInput: {
+        gptId: 'configured-active-legacy-alias',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'Book the private active-cancellation show.',
+          },
+        },
+      },
+      cancellationSignal: parentController.signal,
+    });
+    await providerStartedPromise;
+    const privateCancellationReason = 'private active legacy cancellation sentinel';
+    parentController.abort(createAbortError(privateCancellationReason));
+    const outcome = await outcomePromise;
+
+    expect(activeProviderSignal?.aborted).toBe(true);
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      output: null,
+      errorMessage:
+        'Legacy Backstage generation cancellation requested during compatibility drain.',
+      retryable: false,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
+  });
+
   it('does not reflect a protected cancellation reason across the worker boundary', async () => {
     const privateCancellationReason = 'private-protected-cancellation-sentinel';
     mockGetJobById.mockResolvedValueOnce({
@@ -1039,6 +1600,38 @@ describe('normal worker queued Backstage mutation admission', () => {
       status: 'cancelled',
       output: null,
       errorMessage: 'Protected Backstage generation cancellation requested.',
+      retryable: false,
+    });
+    expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('does not reflect a legacy cancellation reason across the worker boundary', async () => {
+    const privateCancellationReason = 'private-legacy-cancellation-sentinel';
+    mockGetJobById.mockResolvedValueOnce({
+      cancel_requested_at: new Date('2026-08-23T12:00:00.000Z'),
+      cancel_reason: privateCancellationReason,
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '76767676-7676-4676-8676-767676767676',
+      rawInput: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'Return exactly six private matches.',
+          },
+        },
+      },
+    });
+
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      output: null,
+      errorMessage:
+        'Legacy Backstage generation cancellation requested during compatibility drain.',
       retryable: false,
     });
     expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
@@ -1404,13 +1997,13 @@ describe('normal worker queued Backstage mutation admission', () => {
       () => new BackstageNotionAuthorityUnavailableError('phase-two'),
     ],
   ] as const)(
-    'rejects legacy plaintext generation before a transient %s outage can dispatch',
+    'rejects current unprotected generation before a transient %s outage can dispatch',
     async (errorCode, buildError) => {
       mockDispatchModuleAction.mockRejectedValueOnce(buildError());
 
       const outcome = await executeQueuedGptRequest({
         jobId: `job-${errorCode.toLowerCase()}`,
-        rawInput: {
+        rawInput: buildQueuedGptJobInput({
           gptId: 'backstage',
           body: {
             action: 'generateBooking',
@@ -1420,7 +2013,7 @@ describe('normal worker queued Backstage mutation admission', () => {
             },
           },
           requestId: `req-${errorCode.toLowerCase()}`,
-        },
+        }),
       });
 
       expect(outcome).toMatchObject({

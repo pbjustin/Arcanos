@@ -11,6 +11,7 @@ interface BackstageNotionEnrichmentAuthorizationContext {
   authorized: boolean;
   enrichmentUsed: boolean;
   protectedQueuedExecution: boolean;
+  legacyQueuedExecution: boolean;
 }
 
 const backstageNotionEnrichmentAuthorizationStorage =
@@ -47,13 +48,24 @@ export function isBackstageProtectedQueuedExecution(): boolean {
     ?.protectedQueuedExecution === true;
 }
 
+/** Identify the temporary worker-only lane used to drain pre-contract rows. */
+export function isBackstageLegacyQueuedExecution(): boolean {
+  return backstageNotionEnrichmentAuthorizationStorage.getStore()
+    ?.legacyQueuedExecution === true;
+}
+
 /** Run trusted local work inside an explicit enrichment-authorization context. */
 export function runWithBackstageNotionEnrichmentAuthorization<T>(
   authorized: boolean,
   operation: () => T
 ): T {
   return backstageNotionEnrichmentAuthorizationStorage.run(
-    { authorized, enrichmentUsed: false, protectedQueuedExecution: false },
+    {
+      authorized,
+      enrichmentUsed: false,
+      protectedQueuedExecution: false,
+      legacyQueuedExecution: false,
+    },
     operation
   );
 }
@@ -68,6 +80,26 @@ export function runWithBackstageProtectedQueuedExecution<T>(
       authorized: notionEnrichmentAuthorized,
       enrichmentUsed: false,
       protectedQueuedExecution: true,
+      legacyQueuedExecution: false,
+    },
+    operation
+  );
+}
+
+/**
+ * Drain one marker-absent queue row created by the pre-contract web release.
+ * The lane never grants private Notion access and remains distinct from the
+ * authenticated protected-payload context.
+ */
+export function runWithBackstageLegacyQueuedExecution<T>(
+  operation: () => T
+): T {
+  return backstageNotionEnrichmentAuthorizationStorage.run(
+    {
+      authorized: false,
+      enrichmentUsed: false,
+      protectedQueuedExecution: false,
+      legacyQueuedExecution: true,
     },
     operation
   );

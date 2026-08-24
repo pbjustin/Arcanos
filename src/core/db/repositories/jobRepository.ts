@@ -9,6 +9,7 @@ import type { JobData } from '@core/db/schema.js';
 import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
+import { isQueuedGptJobCancellationPrivacySensitive } from '@shared/gpt/gptJobLifecycle.js';
 import {
   computeGptJobLifecycleDeadlines,
   isGptJobResultReusable,
@@ -33,6 +34,9 @@ import {
 import type { QueueLane, SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { dbLogger } from '@platform/logging/structuredLogging.js';
 import { recordJobEvent, type JobEventType } from './jobEventRepository.js';
+
+const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
+  'Legacy queued GPT cancellation requested during compatibility drain.';
 
 interface JobEventSource {
   id: string;
@@ -2151,7 +2155,7 @@ export async function recoverStaleJobs(
     await client.query('BEGIN');
 
     const staleResult = await client.query(
-      `SELECT id, worker_id, last_worker_id, claim_generation, correlation_id, job_type, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
+      `SELECT id, worker_id, last_worker_id, claim_generation, correlation_id, job_type, input, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
        FROM job_data
        WHERE status = 'running'
          AND job_type <> 'local-agent'
@@ -2178,6 +2182,7 @@ export async function recoverStaleJobs(
       claim_generation: string;
       correlation_id: string | null;
       job_type: string;
+      input: unknown;
       status: string;
       retry_count: number;
       max_retries: number;
@@ -2193,6 +2198,23 @@ export async function recoverStaleJobs(
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
 
       if (row.cancel_requested_at) {
+        const privacySensitiveCancellation =
+          row.job_type === 'gpt'
+          && isQueuedGptJobCancellationPrivacySensitive(row.input);
+        const cancelMessage = privacySensitiveCancellation
+          ? LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE
+          : row.cancel_reason ?? 'Job cancellation was requested before stale recovery.';
+        const cancelledAutonomyState = privacySensitiveCancellation
+          ? {
+              ...normalizedAutonomyState,
+              cancellation: {
+                requested: true,
+                requestedAt: normalizeNullableDate(row.cancel_requested_at)
+                  ?? new Date().toISOString(),
+                reason: cancelMessage,
+              },
+            }
+          : normalizedAutonomyState;
         const lifecycleWriteValues = computeTerminalLifecycleWriteValues(
           row.job_type,
           'cancelled'
@@ -2201,29 +2223,36 @@ export async function recoverStaleJobs(
           `UPDATE job_data
            SET
              status = 'cancelled',
-             error_message = COALESCE(error_message, $1),
+             error_message = CASE
+                WHEN $3::boolean THEN $1
+                ELSE COALESCE(error_message, $1)
+              END,
              updated_at = NOW(),
              completed_at = COALESCE(completed_at, NOW()),
              last_heartbeat_at = NULL,
              lease_expires_at = NULL,
-             cancel_reason = COALESCE(cancel_reason, $2),
-             autonomy_state = $3::jsonb,
-             idempotency_until = COALESCE($4::timestamptz, idempotency_until),
+             cancel_reason = CASE
+                WHEN $3::boolean THEN $2
+                ELSE COALESCE(cancel_reason, $2)
+              END,
+             autonomy_state = $4::jsonb,
+             idempotency_until = COALESCE($5::timestamptz, idempotency_until),
              retention_until = COALESCE(
-               $5::timestamptz,
-               retention_until,
-               CASE
-                 WHEN $6::bigint > 0
-                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
-                 ELSE NULL
-               END
-             )
-           WHERE id = $7`,
+                $6::timestamptz,
+                retention_until,
+                CASE
+                  WHEN $7::bigint > 0
+                    THEN NOW() + ($7::bigint * INTERVAL '1 millisecond')
+                  ELSE NULL
+                END
+              )
+            WHERE id = $8`,
           [
-            row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
-            row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
+            cancelMessage,
+            cancelMessage,
+            privacySensitiveCancellation,
             normalizeJsonbInput(
-              normalizedAutonomyState,
+              cancelledAutonomyState,
               'jobRepository.recoverStaleJobs.cancelledAutonomyState'
             ),
             lifecycleWriteValues.idempotencyOverride,
@@ -2381,6 +2410,7 @@ export async function recoverStalledJobsForWorkers(
          id,
          worker_id,
          job_type,
+         input,
          status,
          retry_count,
          max_retries,
@@ -2416,6 +2446,7 @@ export async function recoverStalledJobsForWorkers(
       id: string;
       worker_id: string;
       job_type: string;
+      input: unknown;
       status: string;
       retry_count: number;
       max_retries: number;
@@ -2447,42 +2478,64 @@ export async function recoverStalledJobsForWorkers(
       });
 
       if (row.cancel_requested_at) {
+        const privacySensitiveCancellation =
+          row.job_type === 'gpt'
+          && isQueuedGptJobCancellationPrivacySensitive(row.input);
         const lifecycleWriteValues = computeTerminalLifecycleWriteValues(
           row.job_type,
           'cancelled'
         );
-        const cancelMessage =
-          row.cancel_reason ?? 'Job cancellation was requested before stalled worker recovery.';
+        const cancelMessage = privacySensitiveCancellation
+          ? LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE
+          : row.cancel_reason ?? 'Job cancellation was requested before stalled worker recovery.';
+        const cancelledAutonomyState = {
+          ...baseAutonomyState,
+          ...(privacySensitiveCancellation
+            ? {
+                cancellation: {
+                  requested: true,
+                  requestedAt: normalizeNullableDate(row.cancel_requested_at)
+                    ?? detectedAt,
+                  reason: cancelMessage,
+                },
+              }
+            : {}),
+          lastRecoveryAction: 'cancelled'
+        };
         await client.query(
           `UPDATE job_data
            SET
              status = 'cancelled',
-             error_message = COALESCE(error_message, $1),
+             error_message = CASE
+                WHEN $3::boolean THEN $1
+                ELSE COALESCE(error_message, $1)
+              END,
              updated_at = NOW(),
              completed_at = COALESCE(completed_at, NOW()),
              last_heartbeat_at = NULL,
              lease_expires_at = NULL,
-             cancel_reason = COALESCE(cancel_reason, $2),
-             autonomy_state = $3::jsonb,
-             idempotency_until = COALESCE($4::timestamptz, idempotency_until),
+             cancel_reason = CASE
+                WHEN $3::boolean THEN $2
+                ELSE COALESCE(cancel_reason, $2)
+              END,
+             autonomy_state = $4::jsonb,
+             idempotency_until = COALESCE($5::timestamptz, idempotency_until),
              retention_until = COALESCE(
-               $5::timestamptz,
-               retention_until,
-               CASE
-                 WHEN $6::bigint > 0
-                   THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')
-                 ELSE NULL
-               END
-             )
-           WHERE id = $7`,
+                $6::timestamptz,
+                retention_until,
+                CASE
+                  WHEN $7::bigint > 0
+                    THEN NOW() + ($7::bigint * INTERVAL '1 millisecond')
+                  ELSE NULL
+                END
+              )
+            WHERE id = $8`,
           [
             cancelMessage,
             cancelMessage,
+            privacySensitiveCancellation,
             normalizeJsonbInput(
-              {
-                ...baseAutonomyState,
-                lastRecoveryAction: 'cancelled'
-              },
+              cancelledAutonomyState,
               'jobRepository.recoverStalledJobsForWorkers.cancelledAutonomyState'
             ),
             lifecycleWriteValues.idempotencyOverride,

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
 
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -268,8 +272,15 @@ describe('gaming source ingestion', () => {
       })
     ]);
     const queuedInput = findOrCreateGptJobMock.mock.calls[0][0] as {
-      input: { body: { sources: Array<{ canonicalUrl: string }> } };
+      input: {
+        body: { sources: Array<{ canonicalUrl: string }> };
+        producerContract: { version: number; source: string };
+      };
     };
+    expect(queuedInput.input.producerContract).toEqual({
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    });
     expect(queuedInput.input.body.sources).toHaveLength(1);
     expect(queuedInput.input.body.sources[0].canonicalUrl).toBe(
       'https://mobalytics.gg/borderlands-4/builds'

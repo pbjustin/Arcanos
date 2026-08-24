@@ -464,6 +464,19 @@ worker ciphertext limit returns bounded `413 BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE`
 before job planning or persistence. Lightweight `queryContinuity` and
 `simulateMatch` stay synchronous. Disabling the flag restores the prior routing
 policy without changing endpoint or action authorization.
+
+The encryption guarantee above applies to current protected Booker jobs. During
+the temporary Phase-A mixed-version rollout only, a worker can finish a
+marker-absent pre-contract Booker generation row and retain a bounded plaintext
+terminal envelope so the old web revision can read its result. That worker-only
+lane grants no Notion authorization and suppresses optional enrichment,
+prompt-debug logging, transcript persistence, content-bearing audit persistence,
+and cache persistence. It does not admit current unprotected rows, which carry
+the standard queue producer marker and fail closed. The deployment guide defines
+the conservative drain evidence required before removing this compatibility
+exception. Grandfathered terminal rows remain plaintext until normal retention
+removes them and stay outside the current-job encryption claim for that period.
+
 `getBackstageUniverse`
 calls exactly
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`. It
@@ -507,9 +520,10 @@ This legacy supplement adds no endpoint or module action. It runs only on
 canonical Backstage generation when the request carries the valid dedicated Backstage
 bearer and both `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` are valid on the executing
-service. For queued work, the worker receives only encrypted private input and a
-server-owned authorization attestation; it never receives or persists the
-Action bearer.
+service. For current protected queued work, the worker receives only encrypted
+private input and a server-owned authorization attestation; it never receives
+or persists the Action bearer. The temporary marker-absent compatibility rows
+described above have no such attestation and cannot authorize Notion access.
 Missing/invalid authentication, incomplete configuration, an unmapped universe,
 or a PostgreSQL-context failure preserves the existing database/process-memory
 behavior and makes no Notion request. Exact-literal responses and match

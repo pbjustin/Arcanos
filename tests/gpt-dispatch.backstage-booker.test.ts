@@ -49,6 +49,7 @@ const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockDetectBackstageBookerIntent = jest.fn();
 const mockWasBackstageNotionEnrichmentUsed = jest.fn();
+const mockIsBackstageLegacyQueuedExecution = jest.fn();
 const mockIsBackstageProtectedQueuedExecution = jest.fn();
 const mockRecordPromptDebugTrace = jest.fn();
 const mockSuppressPromptDebugTraceContent = jest.fn((patch: Record<string, unknown>) => ({
@@ -91,6 +92,7 @@ jest.unstable_mockModule('../src/services/backstageBookerRouteShortcut.js', () =
 
 jest.unstable_mockModule('../src/services/backstageNotionEnrichmentAuthorization.js', () => ({
   isBackstageNotionEnrichmentAuthorized: jest.fn(() => true),
+  isBackstageLegacyQueuedExecution: mockIsBackstageLegacyQueuedExecution,
   isBackstageProtectedQueuedExecution: mockIsBackstageProtectedQueuedExecution,
   markBackstageNotionEnrichmentUsed: jest.fn(),
   wasBackstageNotionEnrichmentUsed: mockWasBackstageNotionEnrichmentUsed,
@@ -187,6 +189,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       reason: 'booking_verb+storyline_request+wrestling_brand'
     });
     mockWasBackstageNotionEnrichmentUsed.mockReturnValue(false);
+    mockIsBackstageLegacyQueuedExecution.mockReturnValue(false);
     mockIsBackstageProtectedQueuedExecution.mockReturnValue(false);
     mockDispatchModuleAction.mockResolvedValue('Generated rivalry matrix');
   });
@@ -1448,6 +1451,99 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       },
       requestId: 'req-protected-queued-booker-success',
       traceId: 'trace-protected-queued-booker-success',
+      runtimeExecutionMode: 'background',
+    });
+
+    expect(envelope).toMatchObject({ ok: true, result: privateResult });
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    expect(mockSuppressPromptDebugTraceContent).toHaveBeenCalled();
+    expect(JSON.stringify(mockRecordPromptDebugTrace.mock.calls)).not.toContain(privatePrompt);
+    expect(JSON.stringify(mockRecordPromptDebugTrace.mock.calls)).not.toContain(privateResult);
+  });
+
+  it('rejects background generation without a protected or legacy worker context', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Book the next Raw card.',
+        },
+      },
+      requestId: 'req-unprotected-background-booker',
+      runtimeExecutionMode: 'background',
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_PROTECTED_JOB_REQUIRED' },
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('redacts prompt traces and failures for legacy queued generation', async () => {
+    const privatePrompt = 'private-legacy-queue-prompt-sentinel';
+    const privateFailure = 'private-legacy-queue-failure-sentinel';
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    mockIsBackstageLegacyQueuedExecution.mockReturnValue(true);
+    mockDispatchModuleAction.mockRejectedValueOnce(new Error(privateFailure));
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      requestId: 'req-legacy-queued-booker-failure',
+      runtimeExecutionMode: 'background',
+      logger,
+    });
+
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: 'Legacy Backstage generation failed during compatibility drain.',
+      },
+    });
+    expect(mockSuppressPromptDebugTraceContent).toHaveBeenCalled();
+    expect(JSON.stringify(mockRecordPromptDebugTrace.mock.calls)).not.toContain(privatePrompt);
+    expect(JSON.stringify(mockRecordPromptDebugTrace.mock.calls)).not.toContain(privateFailure);
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(privatePrompt);
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(privateFailure);
+    expect(logger.error).toHaveBeenCalledWith(
+      'gpt.dispatch.error',
+      expect.objectContaining({
+        requestId: 'req-legacy-queued-booker-failure',
+        error: 'Legacy Backstage generation failed during compatibility drain.',
+      })
+    );
+  });
+
+  it('keeps successful legacy queued generation out of generic transcript persistence', async () => {
+    const privatePrompt = 'private-legacy-success-prompt-sentinel';
+    const privateResult = 'private-legacy-success-result-sentinel';
+    mockIsBackstageLegacyQueuedExecution.mockReturnValue(true);
+    mockDispatchModuleAction.mockResolvedValueOnce(privateResult);
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage-booker',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: privatePrompt,
+        },
+      },
+      requestId: 'req-legacy-queued-booker-success',
       runtimeExecutionMode: 'background',
     });
 

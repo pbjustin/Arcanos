@@ -15,6 +15,10 @@ import {
   RESEARCH_TOPIC_MAX_LENGTH,
   RESEARCH_URL_MAX_ITEMS,
 } from '../src/shared/researchRequest.js';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
 
 const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
 const originalPublicProviderClientRateLimitMax =
@@ -1925,6 +1929,10 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
       input: {
         gptId: 'backstage-booker',
+        producerContract: {
+          version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+          source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+        },
         body: {
           prompt: 'Generate a Seth Rollins promo prompt',
           executionMode: 'async'

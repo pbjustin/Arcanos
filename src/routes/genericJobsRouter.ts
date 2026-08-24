@@ -5,7 +5,8 @@ import { asyncHandler } from '@transport/http/asyncHandler.js';
 import { sendNotFound } from '@shared/http/errors.js';
 import { validateParams } from '@shared/http/validation.js';
 import {
-  isGptJobTerminalStatus
+  isGptJobTerminalStatus,
+  isQueuedGptJobCancellationPrivacySensitive,
 } from '@shared/gpt/gptJobLifecycle.js';
 import { buildGptIdempotencyScopeHash } from '@shared/gpt/gptIdempotency.js';
 import {
@@ -15,7 +16,6 @@ import {
 import {
   PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE,
   hasProtectedBackstageQueuedGptJobMarker,
-  isProtectedBackstageQueuedGptJobEnvelope,
   markProtectedBackstageQueuedGptJobResultMaterialized,
   unprotectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
@@ -45,6 +45,9 @@ export interface GenericJobCancellationResult {
   outcome: 'cancelled' | 'cancellation_requested' | 'already_terminal' | 'not_found';
   job: GenericJobData | null;
 }
+
+const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
+  'Legacy queued GPT cancellation requested during compatibility drain.';
 
 export interface GenericJobsRouterDependencies {
   establishCancellationActor?: express.RequestHandler;
@@ -251,6 +254,11 @@ function materializeProtectedJobOutput(job: GenericJobData): GenericJobData {
   return markProtectedBackstageQueuedGptJobResultMaterialized(
     output === job.output ? job : { ...job, output }
   );
+}
+
+function isCancellationPrivacySensitiveQueuedGptJob(job: GenericJobData): boolean {
+  return job.job_type === 'gpt'
+    && isQueuedGptJobCancellationPrivacySensitive(job.input);
 }
 
 function sendProtectedJobResultUnavailable(
@@ -560,8 +568,16 @@ router.post(
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
     }
-    if (isProtectedBackstageQueuedGptJobEnvelope(job.input)) {
+    if (hasProtectedBackstageQueuedGptJobMarker(job.input)) {
       reason = PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
+    } else if (isCancellationPrivacySensitiveQueuedGptJob(job)) {
+      // Phase-A compatibility rows either predate or cannot prove the exact
+      // server-owned producer marker.
+      // Redact conservatively before the repository can persist the reason in
+      // error_message, cancel_reason, or autonomy_state. Routing configuration
+      // is mutable, so cancellation privacy must not depend on resolving an
+      // old Booker alias at request time.
+      reason = LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE;
     }
     try {
       job = materializeProtectedJobOutput(job);

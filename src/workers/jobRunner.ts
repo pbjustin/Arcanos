@@ -29,15 +29,17 @@ import {
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
 import {
-  isProtectedBackstageQueuedGptJobInput,
+  isQueuedGptJobCancellationPrivacySensitive,
   parseQueuedGptJobInput,
   resolveProtectedBackstageQueuedGptJobAction,
+  type QueuedGptJobInput,
 } from '@shared/gpt/asyncGptJob.js';
 import {
   extractGptDispatchPromptText,
   resolveRequestedGptAction,
 } from '@shared/gpt/gptRequestAction.js';
 import { resolveGptModuleRequestedActionAlias } from '@shared/gpt/gptModuleAction.js';
+import { resolveGptModuleMapEntry } from '@shared/gpt/gptModuleMapResolution.js';
 import {
   BACKSTAGE_ACTIONS,
   BACKSTAGE_MODULE_NAME,
@@ -134,6 +136,7 @@ import { routeGptRequest } from '@routes/_core/gptDispatch.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
 import {
+  runWithBackstageLegacyQueuedExecution,
   runWithBackstageProtectedQueuedExecution,
 } from '@services/backstageNotionEnrichmentAuthorization.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -168,6 +171,150 @@ interface JobExecutionOutcome {
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+const LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE =
+  'Legacy Backstage generation cancellation requested during compatibility drain.';
+const LEGACY_BACKSTAGE_DRAIN_ERROR_CODE = 'BACKSTAGE_LEGACY_DRAIN_FAILED';
+const LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE =
+  'Legacy Backstage generation failed during compatibility drain.';
+
+function isQueuedGptDispatchFailureRetryable(error: {
+  code: string;
+  details?: unknown;
+}): boolean {
+  return error.code === 'MODULE_TIMEOUT'
+    || error.code === 'MODULE_ERROR'
+    || (
+      (
+        error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
+        || error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
+        || error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
+        || error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
+      )
+      && typeof error.details === 'object'
+      && error.details !== null
+      && (error.details as { retryable?: unknown }).retryable === true
+    );
+}
+
+interface QueuedBackstageExecutionClassification {
+  canonicalQueuedAction: string | undefined;
+  isUnprotectedBackstageGeneration: boolean;
+  legacyBackstageQueuedExecution: boolean;
+  legacyQueueDrainContextCandidate: boolean;
+  requestedBackstageAction: string | null;
+}
+
+type QueuedGptCancellationPrivacy = 'protected' | 'legacy';
+
+interface QueuedGptExecutionPrivacyState {
+  cancellationPrivacy: QueuedGptCancellationPrivacy | null;
+}
+
+async function classifyQueuedBackstageExecution(
+  input: QueuedGptJobInput
+): Promise<QueuedBackstageExecutionClassification> {
+  const protectedBackstageQueuedExecution = input.protectedBackstage !== undefined;
+  let queuedModuleName: string | null = null;
+  if (!protectedBackstageQueuedExecution) {
+    try {
+      const gptModuleMap = await getGptModuleMap();
+      queuedModuleName = resolveGptModuleMapEntry(
+        input.gptId,
+        gptModuleMap
+      )?.entry.module ?? null;
+    } catch {
+      // Normal routing retains ownership of unavailable-map diagnostics below.
+    }
+  }
+  const queuedTargetsBackstage =
+    queuedModuleName === BACKSTAGE_MODULE_NAME
+    || isBackstageGptRoute(input.gptId);
+  const requestedQueuedAction = resolveRequestedGptAction({ body: input.body });
+  const queuedAvailableActions: readonly string[] = queuedTargetsBackstage
+    ? BACKSTAGE_ACTIONS
+    : queuedModuleName === 'ARCANOS:CORE'
+      ? ['query']
+      : [];
+  const canonicalQueuedAction = resolveGptModuleRequestedActionAlias(
+    requestedQueuedAction ?? undefined,
+    queuedAvailableActions,
+  );
+  const requestedBackstageAction = queuedTargetsBackstage
+    ? canonicalQueuedAction ?? null
+    : null;
+  const automaticBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && input.bypassIntentRouting !== true
+    && (
+      queuedModuleName === BACKSTAGE_MODULE_NAME
+      || queuedModuleName === 'ARCANOS:CORE'
+    )
+    && (
+      canonicalQueuedAction === undefined
+      || canonicalQueuedAction === 'query'
+    )
+    && detectBackstageBookerIntent(
+      extractGptDispatchPromptText(input.body) ?? input.prompt ?? null
+    ) !== null;
+  const isUnprotectedBackstageGeneration =
+    !protectedBackstageQueuedExecution
+    && (
+      (
+        queuedTargetsBackstage
+        && (
+          requestedBackstageAction === null
+          || requestedBackstageAction === 'generateBooking'
+          || requestedBackstageAction === 'generateBookingWithHRC'
+        )
+      )
+      || automaticBackstageGeneration
+    );
+  const legacyQueuedProducerExecution =
+    !protectedBackstageQueuedExecution
+    && input.producerContract === undefined;
+  const legacyBackstageQueuedExecution =
+    isUnprotectedBackstageGeneration
+    && legacyQueuedProducerExecution;
+
+  return {
+    canonicalQueuedAction,
+    isUnprotectedBackstageGeneration,
+    legacyBackstageQueuedExecution,
+    legacyQueueDrainContextCandidate: legacyQueuedProducerExecution,
+    requestedBackstageAction,
+  };
+}
+
+function hasProtectedBackstageQueuedGptMarker(rawInput: unknown): boolean {
+  return (
+    typeof rawInput === 'object'
+    && rawInput !== null
+    && !Array.isArray(rawInput)
+    && Object.prototype.hasOwnProperty.call(rawInput, 'protectedBackstage')
+  );
+}
+
+function setQueuedGptExecutionPrivacy(
+  state: QueuedGptExecutionPrivacyState | undefined,
+  cancellationPrivacy: QueuedGptCancellationPrivacy
+): void {
+  if (state) {
+    state.cancellationPrivacy = cancellationPrivacy;
+  }
+}
+
+async function resolvePreExecutionQueuedGptCancellationPrivacy(
+  rawInput: unknown
+): Promise<QueuedGptCancellationPrivacy | null> {
+  if (
+    hasProtectedBackstageQueuedGptMarker(rawInput)
+  ) {
+    return 'protected';
+  }
+  return isQueuedGptJobCancellationPrivacySensitive(rawInput)
+    ? 'legacy'
+    : null;
+}
 
 interface WorkerHeartbeatLoopHandle {
   stop(): void;
@@ -765,7 +912,13 @@ export async function executeQueuedGptRequest(params: {
   rawInput: unknown;
   cancellationSignal?: AbortSignal;
   startedAt?: Date | string | number;
+  executionPrivacyState?: QueuedGptExecutionPrivacyState;
 }): Promise<JobExecutionOutcome> {
+  if (hasProtectedBackstageQueuedGptMarker(params.rawInput)) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'protected');
+  } else if (isQueuedGptJobCancellationPrivacySensitive(params.rawInput)) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+  }
   const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
 
   if (!parsedGptJobInput.ok) {
@@ -803,62 +956,17 @@ export async function executeQueuedGptRequest(params: {
     routeHint,
     backstageMutationAdmission,
   } = parsedGptJobInput.value;
-  let queuedModuleName: string | null = null;
-  if (!protectedBackstageQueuedExecution) {
-    try {
-      const gptModuleMap = await getGptModuleMap();
-      queuedModuleName = (
-        gptModuleMap[gptId]
-        ?? gptModuleMap[gptId.trim().toLowerCase()]
-      )?.module ?? null;
-    } catch {
-      // Normal routing retains ownership of unavailable-map diagnostics below.
-    }
+  const {
+    canonicalQueuedAction,
+    isUnprotectedBackstageGeneration,
+    legacyBackstageQueuedExecution,
+    legacyQueueDrainContextCandidate,
+    requestedBackstageAction,
+  } = await classifyQueuedBackstageExecution(parsedGptJobInput.value);
+  if (legacyQueueDrainContextCandidate) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
   }
-  const queuedTargetsBackstage =
-    queuedModuleName === BACKSTAGE_MODULE_NAME
-    || isBackstageGptRoute(gptId);
-  const requestedQueuedAction = resolveRequestedGptAction({ body });
-  const queuedAvailableActions: readonly string[] = queuedTargetsBackstage
-    ? BACKSTAGE_ACTIONS
-    : queuedModuleName === 'ARCANOS:CORE'
-      ? ['query']
-      : [];
-  const canonicalQueuedAction = resolveGptModuleRequestedActionAlias(
-    requestedQueuedAction ?? undefined,
-    queuedAvailableActions,
-  );
-  const requestedBackstageAction = queuedTargetsBackstage
-    ? canonicalQueuedAction ?? null
-    : null;
-  const automaticBackstageGeneration =
-    !protectedBackstageQueuedExecution
-    && bypassIntentRouting !== true
-    && (
-      queuedModuleName === BACKSTAGE_MODULE_NAME
-      || queuedModuleName === 'ARCANOS:CORE'
-    )
-    && (
-      canonicalQueuedAction === undefined
-      || canonicalQueuedAction === 'query'
-    )
-    && detectBackstageBookerIntent(
-      extractGptDispatchPromptText(body) ?? prompt ?? null
-    ) !== null;
-  const isUnprotectedBackstageGeneration =
-    !protectedBackstageQueuedExecution
-    && (
-      (
-        queuedTargetsBackstage
-        && (
-          requestedBackstageAction === null
-          || requestedBackstageAction === 'generateBooking'
-          || requestedBackstageAction === 'generateBookingWithHRC'
-        )
-      )
-      || automaticBackstageGeneration
-    );
-  if (isUnprotectedBackstageGeneration) {
+  if (isUnprotectedBackstageGeneration && !legacyBackstageQueuedExecution) {
     return {
       status: 'failed',
       output: null,
@@ -866,6 +974,8 @@ export async function executeQueuedGptRequest(params: {
       retryable: false,
     };
   }
+  const privateQueuedExecution =
+    protectedBackstageQueuedExecution || legacyQueueDrainContextCandidate;
   const canonicalQueuedBody = canonicalQueuedAction
     ? { ...body, action: canonicalQueuedAction }
     : body;
@@ -882,8 +992,10 @@ export async function executeQueuedGptRequest(params: {
     fallbackMessage: string,
     error?: unknown
   ): Promise<string> => {
-    if (protectedBackstageQueuedExecution) {
-      return PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
+    if (privateQueuedExecution) {
+      return protectedBackstageQueuedExecution
+        ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+        : LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE;
     }
 
     try {
@@ -906,11 +1018,16 @@ export async function executeQueuedGptRequest(params: {
     }
   };
   if (latestJob?.cancel_requested_at) {
+    if (legacyBackstageQueuedExecution) {
+      setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+    }
     return {
       status: 'cancelled',
       output: null,
-      errorMessage: protectedBackstageQueuedExecution
-        ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+      errorMessage: privateQueuedExecution
+        ? protectedBackstageQueuedExecution
+          ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+          : LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
         : latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
       retryable: false
     };
@@ -995,6 +1112,12 @@ export async function executeQueuedGptRequest(params: {
         : Math.max(0, protectedOperationDeadlineAt - Date.now()),
     });
   }
+  if (legacyBackstageQueuedExecution) {
+    routeLogger.warn('gpt.job.backstage_legacy_queue_drain', {
+      action: requestedBackstageAction ?? canonicalQueuedAction ?? 'automatic',
+      producerContract: 'marker_absent',
+    });
+  }
 
   if (isQueuedBridgeSmokeJobInput(parsedGptJobInput.value)) {
     const output = buildBridgeSmokeCompletedOutput();
@@ -1024,13 +1147,15 @@ export async function executeQueuedGptRequest(params: {
         enforceQueuedBackstageMutationAdmission: true,
         queuedBackstageMutationAdmission: backstageMutationAdmission,
     });
-    const dispatchWithProtectedAuthorization = () =>
+    const dispatchWithQueuedAuthorization = () =>
       parsedGptJobInput.value.protectedBackstage
         ? runWithBackstageProtectedQueuedExecution(
             parsedGptJobInput.value.protectedBackstage.notionEnrichmentAuthorized,
             dispatch
           )
-        : dispatch();
+        : legacyQueueDrainContextCandidate
+          ? runWithBackstageLegacyQueuedExecution(dispatch)
+          : dispatch();
     envelope = protectedExecutionBudget && protectedOperationDeadlineAt !== null
       ? await runWithCooperativeAbortDrain(
           {
@@ -1049,9 +1174,9 @@ export async function executeQueuedGptRequest(params: {
               });
             },
           },
-          dispatchWithProtectedAuthorization
+          dispatchWithQueuedAuthorization
         )
-      : await dispatch();
+      : await dispatchWithQueuedAuthorization();
   } catch (error: unknown) {
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
       return {
@@ -1111,7 +1236,44 @@ export async function executeQueuedGptRequest(params: {
       }
     }
 
+    if (legacyBackstageQueuedExecution) {
+      const retryable = classifyWorkerExecutionError(error).retryable;
+      return {
+        status: 'failed',
+        output: {
+          ok: false,
+          error: {
+            code: LEGACY_BACKSTAGE_DRAIN_ERROR_CODE,
+            message: LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE,
+          },
+        },
+        errorMessage:
+          `${LEGACY_BACKSTAGE_DRAIN_ERROR_CODE}: ${LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE}`,
+        retryable,
+      };
+    }
+
     throw error;
+  }
+
+  const resolvedLegacyBackstageQueuedExecution =
+    legacyQueueDrainContextCandidate
+    && envelope._route.module === BACKSTAGE_MODULE_NAME
+    && (
+      envelope._route.action === 'generateBooking'
+      || envelope._route.action === 'generateBookingWithHRC'
+    );
+  if (resolvedLegacyBackstageQueuedExecution) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+  }
+  if (
+    resolvedLegacyBackstageQueuedExecution
+    && !legacyBackstageQueuedExecution
+  ) {
+    routeLogger.warn('gpt.job.backstage_legacy_queue_drain', {
+      action: envelope._route.action,
+      producerContract: 'marker_absent',
+    });
   }
 
   if (!envelope.ok) {
@@ -1130,11 +1292,30 @@ export async function executeQueuedGptRequest(params: {
       gptId,
       requestId,
       durationMs: Date.now() - routeStartedAtMs,
-      errorCode: envelope.error.code,
-      errorMessage: parsedGptJobInput.value.protectedBackstage
-        ? 'Protected Backstage generation failed.'
+      errorCode: resolvedLegacyBackstageQueuedExecution
+        ? LEGACY_BACKSTAGE_DRAIN_ERROR_CODE
+        : envelope.error.code,
+      errorMessage: protectedBackstageQueuedExecution || resolvedLegacyBackstageQueuedExecution
+        ? protectedBackstageQueuedExecution
+          ? 'Protected Backstage generation failed.'
+          : LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE
         : envelope.error.message
     });
+    if (resolvedLegacyBackstageQueuedExecution) {
+      return {
+        status: 'failed',
+        output: {
+          ok: false,
+          error: {
+            code: LEGACY_BACKSTAGE_DRAIN_ERROR_CODE,
+            message: LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE,
+          },
+        },
+        errorMessage:
+          `${LEGACY_BACKSTAGE_DRAIN_ERROR_CODE}: ${LEGACY_BACKSTAGE_DRAIN_ERROR_MESSAGE}`,
+        retryable: isQueuedGptDispatchFailureRetryable(envelope.error),
+      };
+    }
     let failureOutput: unknown = envelope;
     if (parsedGptJobInput.value.protectedBackstage) {
       try {
@@ -1160,19 +1341,7 @@ export async function executeQueuedGptRequest(params: {
         : `${envelope.error.code}: ${envelope.error.message}`,
       retryable: parsedGptJobInput.value.protectedBackstage
         ? false
-        : envelope.error.code === 'MODULE_TIMEOUT'
-        || envelope.error.code === 'MODULE_ERROR'
-        || (
-          (
-            envelope.error.code === BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_CANON_UNAVAILABLE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE
-            || envelope.error.code === BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE
-          )
-          && typeof envelope.error.details === 'object'
-          && envelope.error.details !== null
-          && (envelope.error.details as { retryable?: unknown }).retryable === true
-        )
+        : isQueuedGptDispatchFailureRetryable(envelope.error)
     };
   }
 
@@ -1322,6 +1491,8 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
   fence: ClaimedJobFence;
   autonomyService: WorkerAutonomyService;
   jobStartedAtMs: number;
+  queuedGptCancellationPrivacy?: QueuedGptCancellationPrivacy | null;
+  allowPreExecutionInputFallback?: boolean;
 }): Promise<boolean> {
   const currentJob = await getJobById(params.job.id);
   if (
@@ -1338,6 +1509,7 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
   return persistClaimedJobCancellation({
     ...params,
     cancellationReason,
+    cancellationRequestedAt: currentJob.cancel_requested_at,
     output: null
   });
 }
@@ -1393,12 +1565,33 @@ async function persistClaimedJobCancellation(params: {
   autonomyService: WorkerAutonomyService;
   jobStartedAtMs: number;
   cancellationReason: string;
+  cancellationRequestedAt?: Date | string | null;
   output: unknown;
+  queuedGptCancellationPrivacy?: QueuedGptCancellationPrivacy | null;
+  allowPreExecutionInputFallback?: boolean;
 }): Promise<boolean> {
-  const cancellationReason = params.job.job_type === 'gpt'
-    && isProtectedBackstageQueuedGptJobInput(params.job.input)
+  const queuedGptCancellationPrivacy = params.queuedGptCancellationPrivacy
+    ?? (
+      params.job.job_type === 'gpt' && params.allowPreExecutionInputFallback === true
+        ? await resolvePreExecutionQueuedGptCancellationPrivacy(params.job.input)
+        : null
+    );
+  const cancellationReason = queuedGptCancellationPrivacy === 'protected'
     ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
-    : params.cancellationReason;
+    : queuedGptCancellationPrivacy === 'legacy'
+      ? LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
+      : params.cancellationReason;
+  const cancellationRequestedAt = (() => {
+    const persistedRequestedAt =
+      params.cancellationRequestedAt ?? params.job.cancel_requested_at;
+    if (persistedRequestedAt) {
+      const parsedRequestedAt = new Date(persistedRequestedAt);
+      if (Number.isFinite(parsedRequestedAt.getTime())) {
+        return parsedRequestedAt.toISOString();
+      }
+    }
+    return new Date().toISOString();
+  })();
   const terminalJob = await updateClaimedJobTerminal(
     params.job.id,
     'cancelled',
@@ -1406,6 +1599,15 @@ async function persistClaimedJobCancellation(params: {
       fence: params.fence,
       output: params.output,
       errorMessage: cancellationReason,
+      autonomyState: queuedGptCancellationPrivacy
+        ? {
+            cancellation: {
+              requested: true,
+              requestedAt: cancellationRequestedAt,
+              reason: cancellationReason,
+            },
+          }
+        : undefined,
       metadata: {
         ...(params.job.job_type === 'gpt'
           ? computeGptJobLifecycleDeadlines('cancelled')
@@ -1775,6 +1977,10 @@ export async function runWorkerConsumerSlot(
       let heartbeatHandle: JobHeartbeatLoopHandle | null = null;
       const jobStartedAtMs = Date.now();
       let jobLeaseLost = false;
+      let jobExecutionStarted = false;
+      const queuedGptExecutionPrivacyState: QueuedGptExecutionPrivacyState = {
+        cancellationPrivacy: null,
+      };
 
       try {
         if (workerProcessShutdownController.signal.aborted) {
@@ -1849,7 +2055,8 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            allowPreExecutionInputFallback: true,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1913,7 +2120,8 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            allowPreExecutionInputFallback: true,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -1970,7 +2178,8 @@ export async function runWorkerConsumerSlot(
                 job,
                 fence: claimFence,
                 autonomyService,
-                jobStartedAtMs
+                jobStartedAtMs,
+                allowPreExecutionInputFallback: true,
               });
             }
             await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
@@ -2014,11 +2223,13 @@ export async function runWorkerConsumerSlot(
                 job.job_type === 'gpt'
                 && protectedBackstageOperationDeadlineAt !== null
               ) {
+                jobExecutionStarted = true;
                 return executeQueuedGptRequest({
                   jobId: job.id,
                   rawInput: job.input ?? {},
                   cancellationSignal: jobCancellationController.signal,
                   startedAt: job.started_at ?? job.created_at,
+                  executionPrivacyState: queuedGptExecutionPrivacyState,
                 });
               }
               if (!openai) {
@@ -2040,11 +2251,13 @@ export async function runWorkerConsumerSlot(
                 );
               }
               if (job.job_type === 'gpt') {
+                jobExecutionStarted = true;
                 return executeQueuedGptRequest({
                   jobId: job.id,
                   rawInput: job.input ?? {},
                   cancellationSignal: jobCancellationController.signal,
                   startedAt: job.started_at ?? job.created_at,
+                  executionPrivacyState: queuedGptExecutionPrivacyState,
                 });
               }
               return {
@@ -2157,7 +2370,9 @@ export async function runWorkerConsumerSlot(
               job,
               fence: claimFence,
               autonomyService,
-              jobStartedAtMs
+              jobStartedAtMs,
+              queuedGptCancellationPrivacy:
+                queuedGptExecutionPrivacyState.cancellationPrivacy,
             })
           ) {
             continue;
@@ -2219,7 +2434,10 @@ export async function runWorkerConsumerSlot(
           autonomyService,
           jobStartedAtMs,
           cancellationReason,
-          output: outcome.output
+          cancellationRequestedAt: latestJobBeforeTerminal.cancel_requested_at,
+          output: outcome.output,
+          queuedGptCancellationPrivacy:
+            queuedGptExecutionPrivacyState.cancellationPrivacy,
         })) {
           await autonomyService.markJobLeaseLost(
             job.id,
@@ -2239,7 +2457,9 @@ export async function runWorkerConsumerSlot(
             job,
             fence: claimFence,
             autonomyService,
-            jobStartedAtMs
+            jobStartedAtMs,
+            queuedGptCancellationPrivacy:
+              queuedGptExecutionPrivacyState.cancellationPrivacy,
           });
           continue;
         }
@@ -2321,7 +2541,10 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null
+            output: null,
+            queuedGptCancellationPrivacy:
+              queuedGptExecutionPrivacyState.cancellationPrivacy,
+            allowPreExecutionInputFallback: !jobExecutionStarted,
           })) {
             await autonomyService.markJobLeaseLost(
               job.id,
@@ -2356,7 +2579,10 @@ export async function runWorkerConsumerSlot(
           job,
           fence: claimFence,
           autonomyService,
-          jobStartedAtMs
+          jobStartedAtMs,
+          queuedGptCancellationPrivacy:
+            queuedGptExecutionPrivacyState.cancellationPrivacy,
+          allowPreExecutionInputFallback: !jobExecutionStarted,
         });
         continue;
       }

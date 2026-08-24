@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
 
 const findOrCreateGptJobMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -706,6 +710,10 @@ describe('Custom GPT bridge route', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           prompt: 'Analyze this deployment',
+          producerContract: {
+            version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+            source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+          },
           body: expect.objectContaining({
             prompt: 'Analyze this deployment',
           }),

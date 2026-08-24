@@ -6,6 +6,14 @@ const recordJobEventMock = jest.fn(async () => undefined);
 const claimNextMock = jest.fn();
 const runWorkerTrinityPromptMock = jest.fn();
 const routeGptRequestMock = jest.fn();
+const classifyWorkerExecutionErrorMock = jest.fn((error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+  retryable: true,
+}));
+const getGptModuleMapMock = jest.fn(async () => ({
+  'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+  'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+}));
 const fakeOpenAIClient = {};
 const stopAfterOneIteration = new Error('STOP_AFTER_ONE_WORKER_ITERATION');
 const sleepMock = jest.fn(async () => {
@@ -40,10 +48,7 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
-  getGptModuleMap: jest.fn(async () => ({
-    'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
-    'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' }
-  }))
+  getGptModuleMap: getGptModuleMapMock,
 }));
 
 jest.unstable_mockModule('@core/db/query.js', () => ({
@@ -91,7 +96,7 @@ jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   WorkerAutonomyService: class {},
-  classifyWorkerExecutionError: jest.fn(),
+  classifyWorkerExecutionError: classifyWorkerExecutionErrorMock,
   getWorkerAutonomySettings: jest.fn()
 }));
 
@@ -780,35 +785,119 @@ describe('job runner terminal persistence', () => {
     {
       label: 'completed canon receipt',
       admittedCanon: true,
+      legacyBackstage: false,
+      cancellationPath: 'late',
     },
     {
       label: 'ordinary GPT cancellation',
       admittedCanon: false,
+      legacyBackstage: false,
+      cancellationPath: 'late',
     },
-  ])(
+    {
+      label: 'redacted legacy Backstage late cancellation',
+      admittedCanon: false,
+      legacyBackstage: true,
+      cancellationPath: 'late',
+    },
+    {
+      label: 'redacted legacy Backstage completion-CAS cancellation',
+      admittedCanon: false,
+      legacyBackstage: true,
+      cancellationPath: 'cas',
+    },
+    {
+      label: 'redacted legacy Backstage caught-failure cancellation',
+      admittedCanon: false,
+      legacyBackstage: true,
+      cancellationPath: 'catch',
+    },
+    {
+      label: 'redacted markerless preliminary non-Booker late cancellation',
+      admittedCanon: false,
+      legacyBackstage: false,
+      markerlessCandidate: true,
+      cancellationPath: 'late',
+    },
+    {
+      label: 'redacted markerless preliminary non-Booker completion-CAS cancellation',
+      admittedCanon: false,
+      legacyBackstage: false,
+      markerlessCandidate: true,
+      cancellationPath: 'cas',
+    },
+    {
+      label: 'redacted malformed markerless late cancellation',
+      admittedCanon: false,
+      legacyBackstage: false,
+      malformedMarkerless: true,
+      cancellationPath: 'late',
+    },
+    {
+      label: 'redacted malformed markerless failure-CAS cancellation',
+      admittedCanon: false,
+      legacyBackstage: false,
+      malformedMarkerless: true,
+      cancellationPath: 'cas',
+    },
+    {
+      label: 'current-marker malformed generic cancellation',
+      admittedCanon: false,
+      legacyBackstage: false,
+      currentMalformed: true,
+      cancellationPath: 'late',
+    },
+  ] as const)(
     'persists a $label when cancellation arrives before terminal persistence',
-    async ({ admittedCanon }) => {
+    async ({
+      admittedCanon,
+      legacyBackstage,
+      cancellationPath,
+      markerlessCandidate = false,
+      malformedMarkerless = false,
+      currentMalformed = false,
+    }) => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date('2026-08-14T12:00:00.000Z'));
       claimNextMock.mockReset();
       queryMock.mockReset();
       runWorkerTrinityPromptMock.mockReset();
       routeGptRequestMock.mockReset();
+      getGptModuleMapMock.mockReset();
+      getGptModuleMapMock.mockResolvedValue({
+        'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+        'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+      });
 
       const mutationId = '8d64dad3-f080-4bac-88ec-994005dc7152';
+      const privateMarkerlessCancellation =
+        legacyBackstage || markerlessCandidate || malformedMarkerless;
       const jobId = admittedCanon
         ? 'gpt-canon-cancellation-race'
-        : 'gpt-ordinary-cancellation-race';
+        : privateMarkerlessCancellation
+          ? 'gpt-legacy-backstage-cancellation-race'
+          : 'gpt-ordinary-cancellation-race';
       const requestId = admittedCanon
         ? 'req-gpt-canon-cancellation-race'
-        : 'req-gpt-ordinary-cancellation-race';
+        : privateMarkerlessCancellation
+          ? 'req-gpt-legacy-backstage-cancellation-race'
+          : 'req-gpt-ordinary-cancellation-race';
       const claimedJob = {
         id: jobId,
         worker_id: 'queue',
         job_type: 'gpt',
         status: 'running',
         claim_generation: '9',
-        input: admittedCanon
+        input: malformedMarkerless
+          ? 'private-malformed-markerless-input-sentinel'
+          : currentMalformed
+            ? {
+                producerContract: {
+                  version: 1,
+                  source: 'queued-gpt-runtime',
+                },
+              }
+          : admittedCanon
           ? {
               gptId: 'backstage',
               body: {
@@ -825,13 +914,46 @@ describe('job runner terminal persistence', () => {
                 principalId: 'operator:worker-cancellation-race',
               },
             }
-          : {
+          : privateMarkerlessCancellation
+            ? {
+                gptId: markerlessCandidate
+                  ? 'retired-markerless-routing-alias'
+                  : 'configured-legacy-booker-alias',
+                body: {
+                  ...(markerlessCandidate
+                    ? { action: 'query', prompt: 'Private markerless prompt.' }
+                    : {
+                        action: 'generateBooking',
+                        payload: {
+                          universeId: 'phase-two',
+                          prompt: 'Private legacy generation prompt.',
+                        },
+                      }),
+                },
+                requestId,
+              }
+            : {
               gptId: 'arcanos-build',
               body: { prompt: 'Ordinary provider work.' },
               requestId,
+              producerContract: {
+                version: 1,
+                source: 'queued-gpt-runtime',
+              },
             },
         output: null,
         error_message: null,
+        autonomy_state: privateMarkerlessCancellation
+          ? {
+              cancellation: {
+                requested: true,
+                requestedAt: '2026-08-14T12:00:00.100Z',
+                reason: 'private-autonomy-legacy-cancellation-sentinel',
+                callerDetails: 'private-autonomy-legacy-cancellation-sentinel',
+              },
+              safeRecoveryState: { attempt: 1 },
+            }
+          : {},
         last_worker_id: 'worker-test-slot-1',
         lease_expires_at: new Date('2026-08-14T12:01:00.000Z'),
         cancel_requested_at: null,
@@ -842,7 +964,9 @@ describe('job runner terminal persistence', () => {
       };
       const cancellationReason = admittedCanon
         ? 'Cancellation arrived after the canon mutation committed'
-        : 'Cancel ordinary GPT work after provider completion';
+        : privateMarkerlessCancellation
+          ? 'private-legacy-late-cancellation-sentinel'
+          : 'Cancel ordinary GPT work after provider completion';
       const cancellationRow = {
         ...claimedJob,
         cancel_requested_at: new Date('2026-08-14T12:00:00.100Z'),
@@ -869,30 +993,98 @@ describe('job runner terminal persistence', () => {
         result,
         _route: admittedCanon
           ? { module: 'BACKSTAGE:BOOKER', route: 'backstage' }
-          : { module: 'ARCANOS:BUILD', route: 'arcanos-build' },
+          : legacyBackstage
+            ? {
+                module: 'BACKSTAGE:BOOKER',
+                action: 'generateBooking',
+                route: 'backstage-booker',
+              }
+            : markerlessCandidate
+              ? {
+                  module: 'ARCANOS:CORE',
+                  action: 'query',
+                  route: 'arcanos-core',
+                }
+              : { module: 'ARCANOS:BUILD', route: 'arcanos-build' },
       };
       let jobReadCount = 0;
+      let terminalWriteCount = 0;
       let terminalSql = '';
       let terminalParams: unknown[] = [];
+      let terminalMergedAutonomyState: Record<string, unknown> = {};
+      const parseFailure = malformedMarkerless || currentMalformed;
+      const caughtExecutionFailure = new Error(
+        'temporary legacy execution setup failure'
+      );
 
-      claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+      claimNextMock
+        .mockResolvedValueOnce({ job: claimedJob })
+        .mockResolvedValue({ job: null });
       routeGptRequestMock.mockResolvedValueOnce(routeEnvelope);
+      if (privateMarkerlessCancellation && !malformedMarkerless) {
+        getGptModuleMapMock
+          .mockReset()
+          .mockResolvedValueOnce(markerlessCandidate
+            ? {
+                'arcanos-core': {
+                  route: 'arcanos-core',
+                  module: 'ARCANOS:CORE',
+                },
+              }
+            : {
+                'configured-legacy-booker-alias': {
+                  route: 'backstage-booker',
+                  module: 'BACKSTAGE:BOOKER',
+                },
+              })
+          .mockResolvedValue({
+            'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+            'backstage-booker': {
+              route: 'backstage-booker',
+              module: 'BACKSTAGE:BOOKER',
+            },
+          });
+      }
       queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
         const normalizedSql = String(sql);
         if (normalizedSql.startsWith('SELECT * FROM job_data')) {
-          const row = jobReadCount === 0 ? claimedJob : cancellationRow;
+          if (cancellationPath === 'catch' && jobReadCount === 0) {
+            jobReadCount += 1;
+            throw caughtExecutionFailure;
+          }
+          const row = cancellationPath === 'cas'
+            ? jobReadCount < (parseFailure ? 1 : 2)
+              ? claimedJob
+              : cancellationRow
+            : cancellationPath === 'catch'
+              ? cancellationRow
+              : !parseFailure && jobReadCount === 0
+                ? claimedJob
+                : cancellationRow;
           jobReadCount += 1;
           return { rows: [row] };
         }
         if (normalizedSql.includes('UPDATE job_data')) {
+          terminalWriteCount += 1;
+          if (
+            cancellationPath === 'cas'
+            && !parseFailure
+            && terminalWriteCount === 1
+          ) {
+            return { rows: [] };
+          }
           terminalSql = normalizedSql;
           terminalParams = params;
+          terminalMergedAutonomyState = {
+            ...(cancellationRow.autonomy_state as Record<string, unknown>),
+            ...(JSON.parse(String(params[3])) as Record<string, unknown>),
+          };
           return {
             rows: [{
               ...cancellationRow,
               status: String(params[0]),
               output: JSON.parse(String(params[1])),
-              autonomy_state: JSON.parse(String(params[3])),
+              autonomy_state: terminalMergedAutonomyState,
               completed_at: new Date('2026-08-14T12:00:00.200Z'),
               lease_expires_at: null,
             }],
@@ -914,9 +1106,11 @@ describe('job runner terminal persistence', () => {
           leaseMs: 30_000,
         })),
         recordClaimResult: jest.fn(),
+        markIdle: jest.fn(async () => undefined),
         markJobStarted: jest.fn(async () => undefined),
         recordHeartbeat: jest.fn(async () => claimedJob),
         recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+        handleJobFailure: jest.fn(async () => ({ action: 'lease_lost' })),
         markJobLeaseLost: jest.fn(async () => undefined),
         markJobCompleted: jest.fn(async () => undefined),
         markJobCancelled: jest.fn(async () => undefined),
@@ -942,9 +1136,16 @@ describe('job runner terminal persistence', () => {
           autonomyService as never
         )).rejects.toBe(stopAfterOneIteration);
 
-        expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+        expect(routeGptRequestMock).toHaveBeenCalledTimes(
+          cancellationPath === 'catch' || malformedMarkerless || currentMalformed
+            ? 0
+            : 1
+        );
         expect(terminalSql).toContain("$1::varchar(50) = 'completed'::varchar(50)");
         expect(terminalSql).toContain('AND $15::boolean');
+        expect(terminalWriteCount).toBe(
+          cancellationPath === 'cas' && !parseFailure ? 2 : 1
+        );
         expect(terminalParams[0]).toBe(admittedCanon ? 'completed' : 'cancelled');
         expect(terminalParams[14]).toBe(admittedCanon);
         if (admittedCanon) {
@@ -959,10 +1160,37 @@ describe('job runner terminal persistence', () => {
           expect(autonomyService.markJobCancelled).not.toHaveBeenCalled();
         } else {
           expect(JSON.parse(String(terminalParams[1]))).toBeNull();
-          expect(terminalParams[2]).toBe(cancellationReason);
+          expect(terminalParams[2]).toBe(
+            privateMarkerlessCancellation
+              ? 'Legacy Backstage generation cancellation requested during compatibility drain.'
+              : cancellationReason
+          );
+          if (privateMarkerlessCancellation) {
+            expect(JSON.stringify(terminalParams)).not.toContain(cancellationReason);
+            expect(JSON.stringify(terminalMergedAutonomyState)).not.toContain(
+              'private-autonomy-legacy-cancellation-sentinel'
+            );
+            expect(terminalMergedAutonomyState).toMatchObject({
+              cancellation: {
+                requested: true,
+                requestedAt: '2026-08-14T12:00:00.100Z',
+                reason:
+                  'Legacy Backstage generation cancellation requested during compatibility drain.',
+              },
+              safeRecoveryState: { attempt: 1 },
+            });
+            expect(getGptModuleMapMock).toHaveBeenCalledTimes(
+              malformedMarkerless ? 0 : 1
+            );
+          }
           expect(autonomyService.markJobCancelled).toHaveBeenCalledWith(jobId);
           expect(autonomyService.markJobCompleted).not.toHaveBeenCalled();
         }
+        expect(autonomyService.handleJobFailure).toHaveBeenCalledTimes(
+          cancellationPath === 'catch' || (cancellationPath === 'cas' && parseFailure)
+            ? 1
+            : 0
+        );
         expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
       } finally {
         jest.useRealTimers();

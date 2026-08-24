@@ -21,6 +21,16 @@ import {
   unsealBackstageJobPayload,
   type BackstageJobPayloadEnvelope,
 } from '@shared/backstage/backstageJobPayloadProtection.js';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from './gptJobLifecycle.js';
+
+export {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+  isQueuedGptJobCancellationPrivacySensitive,
+} from './gptJobLifecycle.js';
 
 export const PROTECTED_BACKSTAGE_JOB_VERSION = 1;
 export const PROTECTED_BACKSTAGE_JOB_SOURCE = 'backstage-booker-http';
@@ -46,6 +56,11 @@ const queuedGptBackstageMutationAdmissionSchema = z.object({
   principalId: z.string().trim().min(1).max(128),
 }).strict();
 
+const queuedGptJobProducerContractSchema = z.object({
+  version: z.literal(QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION),
+  source: z.literal(QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE),
+}).strict();
+
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.string(),
@@ -68,6 +83,7 @@ const queuedGptJobInputSchema = z.object({
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
   executionModeReason: z.string().trim().min(1).max(128).optional(),
+  producerContract: queuedGptJobProducerContractSchema.optional(),
   backstageMutationAdmission: queuedGptBackstageMutationAdmissionSchema.optional(),
   bridgeSmoke: z.literal(true).optional(),
   bridgeAction: z.enum([GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION]).optional()
@@ -129,6 +145,10 @@ export interface QueuedGptJobInput extends QueuedBridgeSmokeInput {
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
+  producerContract?: {
+    version: typeof QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION;
+    source: typeof QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE;
+  };
   backstageMutationAdmission?: QueuedGptBackstageMutationAdmission;
   protectedBackstage?: {
     version: typeof PROTECTED_BACKSTAGE_JOB_VERSION;
@@ -234,7 +254,11 @@ export function buildQueuedGptJobInput(input: {
 }): QueuedGptJobInput {
   const normalizedJobInput: QueuedGptJobInput = {
     gptId: input.gptId.trim(),
-    body: input.body
+    body: input.body,
+    producerContract: {
+      version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+      source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+    },
   };
 
   const normalizedPrompt = normalizeOptionalString(input.prompt ?? undefined);
@@ -577,9 +601,16 @@ export function parseQueuedGptJobInput(rawInput: unknown): ParsedQueuedGptJobInp
     };
   }
 
+  const normalizedJobInput = buildQueuedGptJobInput(parsedJobInput.data);
+  if (parsedJobInput.data.producerContract === undefined) {
+    // Rows produced before the explicit producer contract was introduced must
+    // remain distinguishable during the consumer-first compatibility drain.
+    delete normalizedJobInput.producerContract;
+  }
+
   return {
     ok: true,
-    value: buildQueuedGptJobInput(parsedJobInput.data)
+    value: normalizedJobInput
   };
 }
 

@@ -26,6 +26,10 @@ import {
   RESEARCH_MODULE_NAME,
   RESEARCH_TOPIC_MAX_LENGTH,
 } from '../src/shared/researchRequest.js';
+import {
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+  QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+} from '../src/shared/gpt/asyncGptJob.js';
 
 const writePublicHealthResponseMock = jest.fn();
 const getPoolMock = jest.fn();
@@ -5528,7 +5532,11 @@ describe('/gpt-access gateway', () => {
       bypassIntentRouting: true,
       routeHint: 'query',
       requestPath: '/gpt-access/jobs/create',
-      executionModeReason: 'gpt_access_create_ai_job'
+      executionModeReason: 'gpt_access_create_ai_job',
+      producerContract: {
+        version: QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
+        source: QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
+      },
     });
     expect(queuedInput.body).toMatchObject({
       action: 'query',

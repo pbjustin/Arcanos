@@ -516,6 +516,62 @@ K2 current/K1 previous, and only then deploy the web role with K2 current/K1
 previous. Keep K1 configured as previous until every K1-sealed retained job
 has drained.
 
+This release uses a temporary Phase-A compatibility drain for the
+worker-first/web-second overlap. Standard unprotected GPT queue inputs emitted
+by the current producers carry the exact internal marker
+`producerContract: { version: 1, source: "queued-gpt-runtime" }`; current
+protected Booker inputs remain separately identified by their sealed
+`protectedBackstage` envelope. A new worker may treat only a marker-absent
+pre-contract row that resolves to `generateBooking` or
+`generateBookingWithHRC` as a legacy Booker generation. It runs that row in a
+worker-only compatibility context with Notion authorization fixed false and
+with optional enrichment, prompt-debug logging, transcript persistence,
+content-bearing audit persistence, and cache persistence suppressed. A
+marker-absent row is not sufficient by itself to authorize another module or
+action, and an unprotected row carrying the current producer marker is rejected
+rather than grandfathered.
+
+The compatibility worker persists a bounded plaintext terminal envelope for a
+legacy row because the old web revision that submitted it cannot decrypt the
+new sealed result format. This is a deliberate, finite interoperability
+exception: it does not retroactively encrypt the already-persisted legacy input
+and it must not be represented as encrypted-at-rest proof. Remove the Phase-A
+lane in a reviewed Phase-B follow-up only after every web replica runs the new
+producer revision, no older web replica can restart, the tracked 60-second
+replica-drain window has elapsed, and a conservative database inventory shows
+zero rows matching `job_type = 'gpt'`, `status IN ('pending', 'running')`, and
+neither an input `producerContract` nor `protectedBackstage` key. Counting all
+nonterminal marker-absent GPT rows is intentional because configured aliases
+and automatic intent routing cannot be reproduced safely by a standalone JSON
+predicate. Until Phase B, every forward deployment must retain a worker
+revision that can consume both the sealed current format and the bounded legacy
+format. Phase B removes only marker-absent legacy admission; it does not make a
+pre-protection worker capable of consuming sealed `protectedBackstage` rows.
+After any sealed-producing web revision has been active, do not deploy or
+redeploy a pre-protection worker directly and do not run the normal
+worker-first workflow against an old-code revert. A raw code downgrade first
+requires an enforced edge hold on every GPT write path (including Core and
+configured aliases that can resolve to Booker), while leaving job-result reads
+available; setting the automatic-routing flag false or removing the optional
+Booker bearer is not an ingress hold. If an edge hold is unavailable, stop or
+scale web to zero and accept the approved downtime. Keep the sealed-capable web
+and worker plus payload key in place, wait the tracked 60-second replica-drain
+window, prove no pre-hold replica can restart, and let the current worker drain.
+Before downgrading the worker, the database must contain zero rows matching
+`job_type = 'gpt'`, `status IN ('pending', 'running')`, and an input
+`protectedBackstage` key. Before downgrading the web while preserving result
+compatibility, conservatively require zero retained GPT rows with an input
+`protectedBackstage` key across every status: the old web cannot unseal a
+terminal result and the queue has no durable client-consumed marker. After
+those gates, restore and verify every web replica and alias on the exact old
+producer revision first, wait its 60-second drain/no-restart window, then
+restore the matching old worker. Release ingress only after the old pair is
+exact and healthy. If either inventory or replica proof is unavailable, retain
+or forward-fix the sealed-capable revision; an emergency raw rollback cannot
+claim result compatibility. Terminal legacy rows remain plaintext until normal
+retention removes them, so at-rest evidence must continue to qualify those
+grandfathered rows even after Phase B removes new legacy admission.
+
 Queued structured generation selects a finite workload-aware output allowance
 from `BOOKER_WORKER_TOKEN_LIMIT` (default `6000`, clamped to `4000`-`8000`),
 then reduces it when the compatible provider-stage budget is shorter. Compact,
@@ -776,9 +832,18 @@ Rollback:
    restore the worker's captured baseline. Confirm schema compatibility and any
    coordinated-writer hold before either action; do not guess from `HEAD^` or
    use a generic latest-deployment redeploy as a substitute.
-3. In each confirmed target's deployment history, identify the exact approved
+3. If a sealed-producing Backstage web revision has become active, the generic
+   worker-baseline option is unsafe until the heavy-generation rollback gate
+   above is satisfied. Enforce the approved GPT-write ingress hold, keep the
+   sealed-capable web/worker and payload key through the drain and inventory,
+   require zero retained protected rows before a result-compatible web
+   downgrade, then restore web first and worker second with both replica-drain
+   checks. Do not use the normal worker-first workflow for that old-code revert.
+   If the gate cannot be proved, forward-complete or retain the sealed-capable
+   revision.
+4. In each confirmed target's deployment history, identify the exact approved
    deployment for that recovery decision.
-4. Redeploy only those approved versions, then repeat exact web/worker role,
+5. Redeploy only those approved versions, then repeat exact web/worker role,
    readiness, active-deployment, and shared-revision verification.
 
 ## Troubleshooting

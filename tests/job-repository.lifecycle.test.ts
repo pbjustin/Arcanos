@@ -28,6 +28,8 @@ const {
 } = await import('../src/core/db/repositories/jobRepository.js');
 
 const originalRecoveryBatchSize = process.env.JOB_WORKER_RECOVERY_BATCH_SIZE;
+const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
+  'Legacy queued GPT cancellation requested during compatibility drain.';
 
 function mockStaleRows(rows: Array<Record<string, unknown>>): void {
   clientQueryMock.mockImplementation(async (sql: unknown) => {
@@ -114,6 +116,7 @@ describe('jobRepository lifecycle recovery', () => {
       typeof sql === 'string' && sql.includes('FROM job_data') && sql.includes('FOR UPDATE')
     );
     expect(staleSelector?.[0]).toContain('ORDER BY updated_at ASC NULLS FIRST, id ASC');
+    expect(staleSelector?.[0]).toContain('job_type, input');
     expect(staleSelector?.[0]).toContain('LIMIT $2::int');
     expect(staleSelector?.[0]).toContain('FOR UPDATE SKIP LOCKED');
     expect(staleSelector?.[1]).toEqual([60_000, 7]);
@@ -131,6 +134,7 @@ describe('jobRepository lifecycle recovery', () => {
       typeof sql === 'string' && sql.includes('last_worker_id = ANY')
     );
     expect(stalledSelector?.[0]).toContain('ORDER BY updated_at ASC NULLS FIRST, id ASC');
+    expect(stalledSelector?.[0]).toMatch(/job_type,\s+input/u);
     expect(stalledSelector?.[0]).toContain('LIMIT $3::int');
     expect(stalledSelector?.[0]).toContain('FOR UPDATE SKIP LOCKED');
     expect(stalledSelector?.[1]).toEqual([['worker-b'], 60_000, 19]);
@@ -274,9 +278,14 @@ describe('jobRepository lifecycle recovery', () => {
         job_type: 'gpt',
         retry_count: 0,
         max_retries: 0,
-        autonomy_state: {},
+        autonomy_state: {
+          cancellation: {
+            requestedAt: '2026-04-29T10:00:00.000Z',
+            reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+          },
+        },
         cancel_requested_at: new Date('2026-04-29T10:00:00.000Z'),
-        cancel_reason: 'Operator cancelled stale job'
+        cancel_reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
       }
     ]);
 
@@ -291,7 +300,284 @@ describe('jobRepository lifecycle recovery', () => {
       cancelledJobs: ['job-cancelled-stale']
     });
     expect(getJobUpdateSql()).toContain("status = 'cancelled'");
+    const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE job_data')
+    ) as [string, unknown[]] | undefined;
+    expect(updateCall?.[1]?.[0]).toBe(LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE);
+    expect(updateCall?.[1]?.[1]).toBe(LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE);
+    expect(updateCall?.[1]?.[2]).toBe(true);
+    const autonomyState = updateCall?.[1]?.[3];
+    expect(typeof autonomyState === 'string' ? JSON.parse(autonomyState) : autonomyState)
+      .toMatchObject({
+        cancellation: {
+          reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+        },
+      });
   });
+
+  it('scrubs marker-absent stale GPT cancellation fields while preserving current producer behavior', async () => {
+    const privateSentinel = 'private-stale-gpt-cancellation-sentinel';
+    const currentReason = 'current generic GPT cancellation';
+    mockStaleRows([
+      {
+        id: 'legacy-stale-private-cancel',
+        worker_id: 'queue',
+        last_worker_id: 'worker-stale-private',
+        correlation_id: null,
+        claim_generation: '1',
+        job_type: 'gpt',
+        input: {
+          gptId: 'backstage-booker',
+          body: { action: 'generateBooking' },
+        },
+        status: 'running',
+        retry_count: 0,
+        max_retries: 2,
+        error_message: privateSentinel,
+        autonomy_state: {
+          cancellation: {
+            requestedAt: '2026-08-24T10:00:00.000Z',
+            reason: privateSentinel,
+            callerDetails: privateSentinel,
+          },
+          safeSibling: { attempt: 1 },
+        },
+        cancel_requested_at: new Date('2026-08-24T10:00:00.000Z'),
+        cancel_reason: privateSentinel,
+      },
+      {
+        id: 'current-stale-generic-cancel',
+        worker_id: 'queue',
+        last_worker_id: 'worker-stale-current',
+        correlation_id: null,
+        claim_generation: '1',
+        job_type: 'gpt',
+        input: {
+          gptId: 'arcanos-core',
+          body: { action: 'query' },
+          producerContract: {
+            version: 1,
+            source: 'queued-gpt-runtime',
+          },
+        },
+        status: 'running',
+        retry_count: 0,
+        max_retries: 2,
+        autonomy_state: {
+          cancellation: {
+            requestedAt: '2026-08-24T10:00:00.000Z',
+            reason: currentReason,
+          },
+          safeSibling: { attempt: 2 },
+        },
+        cancel_requested_at: new Date('2026-08-24T10:00:00.000Z'),
+        cancel_reason: currentReason,
+      },
+    ]);
+
+    const result = await recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+    });
+
+    expect(result.cancelledJobs).toEqual([
+      'legacy-stale-private-cancel',
+      'current-stale-generic-cancel',
+    ]);
+    const updateCalls = clientQueryMock.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE job_data')
+    ) as Array<[string, unknown[]]>;
+    const privateUpdate = updateCalls.find(([, params]) =>
+      params[7] === 'legacy-stale-private-cancel'
+    );
+    const currentUpdate = updateCalls.find(([, params]) =>
+      params[7] === 'current-stale-generic-cancel'
+    );
+
+    expect(privateUpdate?.[0]).toContain('WHEN $3::boolean THEN $1');
+    expect(privateUpdate?.[0]).toContain('WHEN $3::boolean THEN $2');
+    expect(privateUpdate?.[1]?.slice(0, 3)).toEqual([
+      LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      true,
+    ]);
+    const privateAutonomyState = JSON.parse(String(privateUpdate?.[1]?.[3]));
+    expect(privateAutonomyState).toMatchObject({
+      cancellation: {
+        requested: true,
+        requestedAt: '2026-08-24T10:00:00.000Z',
+        reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      },
+      safeSibling: { attempt: 1 },
+    });
+    expect(JSON.stringify(privateUpdate)).not.toContain(privateSentinel);
+
+    expect(currentUpdate?.[1]?.slice(0, 3)).toEqual([
+      currentReason,
+      currentReason,
+      false,
+    ]);
+    expect(JSON.parse(String(currentUpdate?.[1]?.[3]))).toMatchObject({
+      cancellation: { reason: currentReason },
+      safeSibling: { attempt: 2 },
+    });
+  });
+
+  it('scrubs fail-closed stalled GPT cancellation fields while preserving current producer behavior', async () => {
+    const privateSentinel = 'private-stalled-gpt-cancellation-sentinel';
+    const currentReason = 'current stalled generic GPT cancellation';
+    mockStaleRows([
+      {
+        id: 'legacy-stalled-private-cancel',
+        worker_id: 'queue',
+        last_worker_id: 'worker-stalled-private',
+        correlation_id: null,
+        claim_generation: '1',
+        job_type: 'gpt',
+        input: null,
+        status: 'running',
+        retry_count: 0,
+        max_retries: 2,
+        error_message: privateSentinel,
+        autonomy_state: {
+          cancellation: {
+            requestedAt: '2026-08-24T11:00:00.000Z',
+            reason: privateSentinel,
+            callerDetails: privateSentinel,
+          },
+          safeSibling: { attempt: 3 },
+        },
+        cancel_requested_at: new Date('2026-08-24T11:00:00.000Z'),
+        cancel_reason: privateSentinel,
+      },
+      {
+        id: 'current-stalled-generic-cancel',
+        worker_id: 'queue',
+        last_worker_id: 'worker-stalled-current',
+        correlation_id: null,
+        claim_generation: '1',
+        job_type: 'gpt',
+        input: {
+          producerContract: {
+            version: 1,
+            source: 'queued-gpt-runtime',
+          },
+        },
+        status: 'running',
+        retry_count: 0,
+        max_retries: 2,
+        autonomy_state: {
+          cancellation: {
+            requestedAt: '2026-08-24T11:00:00.000Z',
+            reason: currentReason,
+          },
+          safeSibling: { attempt: 4 },
+        },
+        cancel_requested_at: new Date('2026-08-24T11:00:00.000Z'),
+        cancel_reason: currentReason,
+      },
+    ]);
+
+    const result = await recoverStalledJobsForWorkers({
+      workerIds: ['worker-stalled-private', 'worker-stalled-current'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+    });
+
+    expect(result.cancelledJobIds).toEqual([
+      'legacy-stalled-private-cancel',
+      'current-stalled-generic-cancel',
+    ]);
+    const updateCalls = clientQueryMock.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE job_data')
+    ) as Array<[string, unknown[]]>;
+    const privateUpdate = updateCalls.find(([, params]) =>
+      params[7] === 'legacy-stalled-private-cancel'
+    );
+    const currentUpdate = updateCalls.find(([, params]) =>
+      params[7] === 'current-stalled-generic-cancel'
+    );
+
+    expect(privateUpdate?.[0]).toContain('WHEN $3::boolean THEN $1');
+    expect(privateUpdate?.[0]).toContain('WHEN $3::boolean THEN $2');
+    expect(privateUpdate?.[1]?.slice(0, 3)).toEqual([
+      LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      true,
+    ]);
+    const privateAutonomyState = JSON.parse(String(privateUpdate?.[1]?.[3]));
+    expect(privateAutonomyState).toMatchObject({
+      cancellation: {
+        requested: true,
+        requestedAt: '2026-08-24T11:00:00.000Z',
+        reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+      },
+      safeSibling: { attempt: 3 },
+      lastRecoveryAction: 'cancelled',
+    });
+    expect(JSON.stringify(privateUpdate)).not.toContain(privateSentinel);
+
+    expect(currentUpdate?.[1]?.slice(0, 3)).toEqual([
+      currentReason,
+      currentReason,
+      false,
+    ]);
+    expect(JSON.parse(String(currentUpdate?.[1]?.[3]))).toMatchObject({
+      cancellation: { reason: currentReason },
+      safeSibling: { attempt: 4 },
+      lastRecoveryAction: 'cancelled',
+    });
+  });
+
+  it.each(['pending', 'running'] as const)(
+    'persists only the supplied bounded cancellation reason for a %s GPT job',
+    async (status) => {
+      clientQueryMock.mockImplementation(async (sql: unknown) => {
+        if (typeof sql === 'string' && sql.includes('SELECT * FROM job_data')) {
+          return {
+            rows: [{
+              id: `legacy-gpt-${status}-cancel`,
+              job_type: 'gpt',
+              status,
+            }],
+          };
+        }
+        if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
+          return {
+            rows: [{
+              id: `legacy-gpt-${status}-cancel`,
+              job_type: 'gpt',
+              status: status === 'pending' ? 'cancelled' : 'running',
+            }],
+          };
+        }
+        return { rows: [] };
+      });
+
+      await expect(requestJobCancellation(
+        `legacy-gpt-${status}-cancel`,
+        LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE
+      )).resolves.toEqual(expect.objectContaining({
+        outcome: status === 'pending' ? 'cancelled' : 'cancellation_requested',
+      }));
+
+      const updateCall = clientQueryMock.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('UPDATE job_data')
+      ) as [string, unknown[]] | undefined;
+      expect(updateCall?.[1]?.[0]).toBe(LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE);
+      if (status === 'pending') {
+        expect(updateCall?.[1]?.[1]).toBe(LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE);
+      } else {
+        const autonomyState = updateCall?.[1]?.[1];
+        expect(typeof autonomyState === 'string' ? JSON.parse(autonomyState) : autonomyState)
+          .toMatchObject({
+            cancellation: {
+              reason: LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE,
+            },
+          });
+      }
+    }
+  );
 
   it('stamps ask retention when pending cancellation becomes terminal', async () => {
     jest.useFakeTimers();
@@ -359,10 +645,10 @@ describe('jobRepository lifecycle recovery', () => {
         typeof sql === 'string' && sql.includes('UPDATE job_data')
       ) as [string, unknown[]] | undefined;
       expect(updateCall?.[0]).toContain(
-        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+        "THEN NOW() + ($7::bigint * INTERVAL '1 millisecond')"
       );
-      expect(updateCall?.[1]?.[4]).toBeNull();
-      expect(updateCall?.[1]?.[5]).toBe(24 * 60 * 60 * 1_000);
+      expect(updateCall?.[1]?.[5]).toBeNull();
+      expect(updateCall?.[1]?.[6]).toBe(24 * 60 * 60 * 1_000);
     } finally {
       jest.useRealTimers();
     }
@@ -407,10 +693,10 @@ describe('jobRepository lifecycle recovery', () => {
         typeof sql === 'string' && sql.includes('UPDATE job_data')
       ) as [string, unknown[]] | undefined;
       expect(updateCall?.[0]).toContain(
-        "THEN NOW() + ($6::bigint * INTERVAL '1 millisecond')"
+        "THEN NOW() + ($7::bigint * INTERVAL '1 millisecond')"
       );
-      expect(updateCall?.[1]?.[4]).toBeNull();
-      expect(updateCall?.[1]?.[5]).toBe(60 * 60 * 1_000);
+      expect(updateCall?.[1]?.[5]).toBeNull();
+      expect(updateCall?.[1]?.[6]).toBe(60 * 60 * 1_000);
     } finally {
       jest.useRealTimers();
     }

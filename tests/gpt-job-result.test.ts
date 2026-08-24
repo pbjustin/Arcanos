@@ -106,6 +106,37 @@ describe('gpt job result helpers', () => {
     }
   );
 
+  it('preserves a marker-absent legacy Booker result for old-web compatibility', () => {
+    const output = {
+      ok: true,
+      result: 'legacy plaintext compatibility result',
+      _route: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+      },
+    };
+    const job = {
+      id: 'job-legacy-booker-result',
+      job_type: 'gpt',
+      status: 'completed',
+      input: {
+        gptId: 'backstage-booker',
+        body: {
+          action: 'generateBooking',
+          payload: { prompt: 'legacy plaintext compatibility prompt' },
+        },
+      },
+      output,
+      error_message: null,
+      created_at: new Date('2026-08-23T10:00:00.000Z'),
+      updated_at: new Date('2026-08-23T10:00:01.000Z'),
+    } as any;
+
+    expect(buildStoredJobStatusPayload(job)).toMatchObject({ output, result: output });
+    expect(buildGptJobResultLookupPayload(job.id, job).result).toEqual(output);
+    expect(buildGptJobResultBridgePayload(job.id, job).output).toEqual(output);
+  });
+
   it('never projects a genuine stored protected Booker result descriptor', () => {
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x71).toString('base64');

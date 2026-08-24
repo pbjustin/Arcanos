@@ -4,9 +4,11 @@ import type { NextFunction, Request, Response } from 'express';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 import {
   isBackstageNotionEnrichmentAuthorized,
+  isBackstageLegacyQueuedExecution,
   isBackstageProtectedQueuedExecution,
   markBackstageNotionEnrichmentUsed,
   optionalBackstageNotionEnrichmentAuth,
+  runWithBackstageLegacyQueuedExecution,
   runWithBackstageProtectedQueuedExecution,
   wasBackstageNotionEnrichmentUsed,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
@@ -93,6 +95,26 @@ describe('optional Backstage Notion enrichment authorization', () => {
     expect(inside).toEqual({ authorized: true, protectedQueue: true });
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
     expect(isBackstageProtectedQueuedExecution()).toBe(false);
+  });
+
+  it('keeps the legacy drain lane distinct and permanently Notion-unauthorized', () => {
+    const inside = runWithBackstageLegacyQueuedExecution(() => {
+      markBackstageNotionEnrichmentUsed();
+      return {
+        authorized: isBackstageNotionEnrichmentAuthorized(),
+        legacyQueue: isBackstageLegacyQueuedExecution(),
+        protectedQueue: isBackstageProtectedQueuedExecution(),
+        enrichmentUsed: wasBackstageNotionEnrichmentUsed(),
+      };
+    });
+
+    expect(inside).toEqual({
+      authorized: false,
+      legacyQueue: true,
+      protectedQueue: false,
+      enrichmentUsed: false,
+    });
+    expect(isBackstageLegacyQueuedExecution()).toBe(false);
   });
 
   it('keeps missing and invalid credentials unauthorized for non-authority fallback policy', async () => {
