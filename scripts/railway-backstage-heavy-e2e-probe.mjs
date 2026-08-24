@@ -691,7 +691,7 @@ export function attestBackstageHeavyRailwayStatus(statusPayload, config) {
         expectedPreDeployCommand
       )
       || effectiveDeployConfig?.restartPolicyType !== 'NEVER'
-      || effectiveDeployConfig?.restartPolicyMaxRetries !== 0
+      || effectiveDeployConfig?.restartPolicyMaxRetries !== null
       || readDeploymentSourceSha(deployment) !== config.sourceSha
       || activeDeployments === null
       || activeDeployments.length !== 1

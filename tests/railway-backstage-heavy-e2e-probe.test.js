@@ -89,7 +89,7 @@ function deployment(id, processKind = null) {
       serviceManifest: {
         deploy: {
           numReplicas: 1,
-          restartPolicyMaxRetries: 0,
+          restartPolicyMaxRetries: null,
           restartPolicyType: 'NEVER',
           ...(processKind === null
             ? {}
@@ -604,6 +604,17 @@ describe('Backstage heavy network proof', () => {
       restartable,
       config
     )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+    for (const restartPolicyMaxRetries of [0, 1]) {
+      const retryCountConfigured = structuredClone(payloads);
+      retryCountConfigured.status.environments.edges[0]
+        .node.serviceInstances.edges[0].node.latestDeployment
+        .meta.serviceManifest.deploy.restartPolicyMaxRetries =
+          restartPolicyMaxRetries;
+      expect(() => attestBackstageHeavyRailwayControlPlane(
+        retryCountConfigured,
+        config
+      )).toThrow('BACKSTAGE_HEAVY_PROBE_RAILWAY_DEPLOYMENT_MISMATCH');
+    }
   });
 
   it('counts one running app replica independently of pre-deploy history', () => {
