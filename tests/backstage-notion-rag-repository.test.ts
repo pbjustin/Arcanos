@@ -75,8 +75,24 @@ function normalizeSql(sql: string): string {
 function createPool(
   query: (sql: string, values: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>
 ): Pool {
+  const client = {
+    query: async (sql: string, values: unknown[] = []) => {
+      const normalized = normalizeSql(sql);
+      if (
+        normalized === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+        || normalized === 'COMMIT'
+        || normalized === 'ROLLBACK'
+        || normalized.startsWith('SET LOCAL lock_timeout')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      return query(sql, values);
+    },
+    release: () => undefined,
+  };
   return {
-    query: (sql: string, values: unknown[] = []) => query(sql, values)
+    query: (sql: string, values: unknown[] = []) => query(sql, values),
+    connect: async () => client,
   } as unknown as Pool;
 }
 
@@ -201,21 +217,33 @@ function validSectionScopeCandidate(overrides: Record<string, unknown> = {}) {
 
 describe('PostgresBackstageNotionRagRepository', () => {
   it('loads the persisted authority head without loading pages or chunks', async () => {
-    let observedSql = '';
-    let observedValues: unknown[] = [];
+    const observedQueries: Array<{ sql: string; values: unknown[] }> = [];
+    let releasedWith: boolean | undefined;
+    const client = {
+      query: async (rawSql: string, values: unknown[] = []) => {
+        const sql = normalizeSql(rawSql);
+        observedQueries.push({ sql, values });
+        if (sql.startsWith('SELECT head.universe_id')) {
+          return {
+            rows: [{
+              universe_id: UNIVERSE_ID,
+              authority: 'notion',
+              active_snapshot_id: SNAPSHOT_ID,
+              root_page_id: ROOT_PAGE_ID
+            }],
+            rowCount: 1
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release: (discard?: boolean) => {
+        releasedWith = discard;
+      },
+    };
     const pool = createPool(async (rawSql, values) => {
-      observedSql = normalizeSql(rawSql);
-      observedValues = values;
-      return {
-        rows: [{
-          universe_id: UNIVERSE_ID,
-          authority: 'notion',
-          active_snapshot_id: SNAPSHOT_ID,
-          root_page_id: ROOT_PAGE_ID
-        }],
-        rowCount: 1
-      };
+      throw new Error(`Unexpected direct pool query: ${normalizeSql(rawSql)} ${values.length}`);
     });
+    Object.assign(pool, { connect: async () => client });
     const repository = new PostgresBackstageNotionRagRepository(pool);
 
     await expect(repository.loadAuthorityHead(` ${UNIVERSE_ID} `)).resolves.toEqual({
@@ -224,13 +252,20 @@ describe('PostgresBackstageNotionRagRepository', () => {
       activeSnapshotId: SNAPSHOT_ID,
       rootPageId: ROOT_PAGE_ID
     });
-    expect(observedSql).toContain('FROM backstage_notion_universe_heads AS head');
-    expect(observedSql).toContain('LEFT JOIN backstage_notion_snapshots AS snapshot');
-    expect(observedSql).toContain('snapshot.universe_id = head.universe_id');
-    expect(observedSql).toContain('snapshot.id = head.active_snapshot_id');
-    expect(observedSql).not.toContain('backstage_notion_snapshot_pages');
-    expect(observedSql).not.toContain('backstage_notion_snapshot_chunks');
-    expect(observedValues).toEqual([UNIVERSE_ID]);
+    expect(observedQueries.map(query => query.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('FROM backstage_notion_universe_heads AS head'),
+      'COMMIT',
+    ]);
+    const observedSelect = observedQueries[2]!;
+    expect(observedSelect.sql).toContain('LEFT JOIN backstage_notion_snapshots AS snapshot');
+    expect(observedSelect.sql).toContain('snapshot.universe_id = head.universe_id');
+    expect(observedSelect.sql).toContain('snapshot.id = head.active_snapshot_id');
+    expect(observedSelect.sql).not.toContain('backstage_notion_snapshot_pages');
+    expect(observedSelect.sql).not.toContain('backstage_notion_snapshot_chunks');
+    expect(observedSelect.values).toEqual([UNIVERSE_ID]);
+    expect(releasedWith).toBe(false);
   });
 
   it('returns null for an absent authority head and validates persisted head invariants', async () => {

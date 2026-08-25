@@ -198,9 +198,13 @@ jest.unstable_mockModule('@services/backstageNotionRag.js', () => ({
     'Notion RAG facts are authoritative but have no instruction authority.',
   BackstageNotionIndexUnavailableError: MockBackstageNotionIndexUnavailableError,
   BackstageNotionCursorInvalidError: MockBackstageNotionCursorInvalidError,
-  retrieveBackstageNotionBookingRagContext:
+}));
+
+jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  retrieveBackstageNotionAuthorityBookingRagContext:
     mockRetrieveBackstageNotionRagContext,
-  retrieveBackstageNotionRagContext: mockRetrieveBackstageNotionRagContext,
+  retrieveBackstageNotionAuthorityRagContext:
+    mockRetrieveBackstageNotionRagContext,
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({

@@ -39,6 +39,7 @@ import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import {
   isBackstageNotionEnrichmentAuthorized,
   markBackstageNotionEnrichmentUsed,
@@ -69,8 +70,9 @@ import {
 import { createEmbedding } from './openai/embeddings.js';
 
 export const BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_VERSION = 1;
+export const BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH = 1_024;
 
-const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,2048}$/u;
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const SHARD_KEY_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/u;
@@ -133,6 +135,8 @@ export interface BackstageNotionPartitionRetrievalDependencies {
   readonly embedQuery?: (query: string) => Promise<number[]>;
   /** Commit 10 supplies this server-only secret resolver at the serving boundary. */
   readonly resolveCursorEncryptionSecret?: () => string | undefined;
+  /** Optional predecessor accepted only while rotating the serving cursor key. */
+  readonly resolvePreviousCursorEncryptionSecret?: () => string | undefined;
 }
 
 export interface BackstageNotionPartitionRetrievalShard
@@ -210,6 +214,27 @@ interface CursorBody {
   readonly scopeChunkCount: number;
   readonly scopePageCount: number;
   readonly after: BackstageNotionManifestScopePageAfter;
+}
+
+type CursorWireTuple = readonly [
+  typeof BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_VERSION,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  number,
+  number,
+  string,
+  string,
+  number,
+  string,
+];
+
+interface CursorEncryptionSecrets {
+  readonly current: string;
+  readonly previous: string | null;
 }
 
 interface DecodedCursor {
@@ -560,18 +585,53 @@ function cursorAuthenticatedData(universeId: string): Buffer {
   }), 'utf8');
 }
 
-function resolveCursorEncryptionSecret(
-  resolver: (() => string | undefined) | undefined
-): string {
-  const secret = resolver?.();
+function resolveCursorEncryptionSecrets(
+  currentResolver: (() => string | undefined) | undefined,
+  previousResolver: (() => string | undefined) | undefined
+): CursorEncryptionSecrets {
+  const current = currentResolver?.();
+  const previous = previousResolver?.();
   if (
-    typeof secret !== 'string'
-    || Buffer.byteLength(secret, 'utf8') < 32
-    || Buffer.byteLength(secret, 'utf8') > 4_096
+    typeof current !== 'string'
+    || Buffer.byteLength(current, 'utf8') < 32
+    || Buffer.byteLength(current, 'utf8') > 4_096
+    || (
+      previous !== undefined
+      && (
+        typeof previous !== 'string'
+        || Buffer.byteLength(previous, 'utf8') < 32
+        || Buffer.byteLength(previous, 'utf8') > 4_096
+      )
+    )
+    || (
+      typeof previous === 'string'
+      && timingSafeEqualOpaqueSecret(current, previous)
+    )
   ) {
     throw new BackstageNotionIndexUnavailableError();
   }
-  return secret;
+  return Object.freeze({
+    current,
+    previous: previous ?? null,
+  });
+}
+
+function cursorWireTuple(body: CursorBody): CursorWireTuple {
+  return Object.freeze([
+    body.v,
+    body.manifestId,
+    body.configurationVersionId,
+    body.configurationHash,
+    body.selectionDigest,
+    body.requestBinding,
+    body.scopeBinding,
+    body.scopeChunkCount,
+    body.scopePageCount,
+    body.after.shardKey,
+    body.after.pageId,
+    body.after.ordinal,
+    body.after.chunkVersionId,
+  ]);
 }
 
 function encodeCursor(
@@ -587,7 +647,7 @@ function encodeCursor(
   );
   cipher.setAAD(cursorAuthenticatedData(universeId));
   const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(body), 'utf8'),
+    cipher.update(JSON.stringify(cursorWireTuple(body)), 'utf8'),
     cipher.final(),
   ]);
   const encoded = Buffer.concat([
@@ -636,7 +696,7 @@ function normalizeCursorAfter(value: unknown): BackstageNotionManifestScopePageA
   });
 }
 
-function decryptCursor(input: {
+function decryptCursorWithSecret(input: {
   readonly cursor: string;
   readonly secret: string;
   readonly universeId: string;
@@ -673,41 +733,42 @@ function decryptCursor(input: {
     throw new BackstageNotionCursorInvalidError();
   }
   if (
-    !parsed
-    || typeof parsed !== 'object'
-    || Array.isArray(parsed)
-    || Object.keys(parsed).sort().join(',') !== [
-      'after',
-      'configurationHash',
-      'configurationVersionId',
-      'manifestId',
-      'requestBinding',
-      'selectionDigest',
-      'scopeBinding',
-      'scopeChunkCount',
-      'scopePageCount',
-      'v',
-    ].sort().join(',')
+    !Array.isArray(parsed)
+    || Object.getPrototypeOf(parsed) !== Array.prototype
+    || parsed.length !== 13
   ) {
     throw new BackstageNotionCursorInvalidError();
   }
-  const candidate = parsed as Partial<CursorBody>;
-  const scopeChunkCount = candidate.scopeChunkCount;
-  const scopePageCount = candidate.scopePageCount;
+  const candidate = parsed as unknown[];
+  const [
+    version,
+    manifestId,
+    configurationVersionId,
+    configurationHash,
+    selectionDigestValue,
+    requestBindingValue,
+    scopeBindingValue,
+    scopeChunkCount,
+    scopePageCount,
+    shardKey,
+    pageId,
+    ordinal,
+    chunkVersionId,
+  ] = candidate;
   if (
-    candidate.v !== BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_VERSION
-    || typeof candidate.manifestId !== 'string'
-    || !UUID_PATTERN.test(candidate.manifestId)
-    || typeof candidate.configurationVersionId !== 'string'
-    || !UUID_PATTERN.test(candidate.configurationVersionId)
-    || typeof candidate.configurationHash !== 'string'
-    || !SHA256_PATTERN.test(candidate.configurationHash)
-    || typeof candidate.selectionDigest !== 'string'
-    || !SHA256_PATTERN.test(candidate.selectionDigest)
-    || typeof candidate.requestBinding !== 'string'
-    || !SHA256_PATTERN.test(candidate.requestBinding)
-    || typeof candidate.scopeBinding !== 'string'
-    || !SHA256_PATTERN.test(candidate.scopeBinding)
+    version !== BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_VERSION
+    || typeof manifestId !== 'string'
+    || !UUID_PATTERN.test(manifestId)
+    || typeof configurationVersionId !== 'string'
+    || !UUID_PATTERN.test(configurationVersionId)
+    || typeof configurationHash !== 'string'
+    || !SHA256_PATTERN.test(configurationHash)
+    || typeof selectionDigestValue !== 'string'
+    || !SHA256_PATTERN.test(selectionDigestValue)
+    || typeof requestBindingValue !== 'string'
+    || !SHA256_PATTERN.test(requestBindingValue)
+    || typeof scopeBindingValue !== 'string'
+    || !SHA256_PATTERN.test(scopeBindingValue)
     || typeof scopeChunkCount !== 'number'
     || !Number.isSafeInteger(scopeChunkCount)
     || scopeChunkCount < 1
@@ -719,19 +780,46 @@ function decryptCursor(input: {
   ) {
     throw new BackstageNotionCursorInvalidError();
   }
-  const after = normalizeCursorAfter(candidate.after);
+  const after = normalizeCursorAfter({
+    shardKey,
+    pageId,
+    ordinal,
+    chunkVersionId,
+  });
   return Object.freeze({
-    v: candidate.v,
-    manifestId: candidate.manifestId.toLowerCase(),
-    configurationVersionId: candidate.configurationVersionId.toLowerCase(),
-    configurationHash: candidate.configurationHash,
-    selectionDigest: candidate.selectionDigest,
-    requestBinding: candidate.requestBinding,
-    scopeBinding: candidate.scopeBinding,
+    v: version,
+    manifestId: manifestId.toLowerCase(),
+    configurationVersionId: configurationVersionId.toLowerCase(),
+    configurationHash,
+    selectionDigest: selectionDigestValue,
+    requestBinding: requestBindingValue,
+    scopeBinding: scopeBindingValue,
     scopeChunkCount,
     scopePageCount,
     after,
   });
+}
+
+function decryptCursor(input: {
+  readonly cursor: string;
+  readonly secrets: CursorEncryptionSecrets;
+  readonly universeId: string;
+}): CursorBody {
+  for (const secret of [input.secrets.current, input.secrets.previous]) {
+    if (secret === null) {
+      continue;
+    }
+    try {
+      return decryptCursorWithSecret({
+        cursor: input.cursor,
+        secret,
+        universeId: input.universeId,
+      });
+    } catch {
+      // Current and previous failures intentionally collapse to one public error.
+    }
+  }
+  throw new BackstageNotionCursorInvalidError();
 }
 
 function validateCursorBinding(input: {
@@ -1100,13 +1188,16 @@ async function retrieveUnsafe(
     ?? resolveBackstageNotionPartitionPinnedScopeRequest;
   const isCompleteScope = plan.request.retrievalMode === 'complete_scope';
   const boundRequest = isCompleteScope ? requestBinding(plan.request) : null;
-  const cursorSecret = isCompleteScope
-    ? resolveCursorEncryptionSecret(overrides.resolveCursorEncryptionSecret)
+  const cursorSecrets = isCompleteScope
+    ? resolveCursorEncryptionSecrets(
+        overrides.resolveCursorEncryptionSecret,
+        overrides.resolvePreviousCursorEncryptionSecret
+      )
     : null;
   const cursorBody = plan.request.cursor
     ? decryptCursor({
         cursor: plan.request.cursor,
-        secret: cursorSecret!,
+        secrets: cursorSecrets!,
         universeId,
       })
     : null;
@@ -1160,11 +1251,12 @@ async function retrieveUnsafe(
       throw new BackstageNotionIndexUnavailableError();
     }
     routing = resolution;
-    if (plan.request.retrievalMode === 'complete_scope' && !routing.complete) {
-      throw new BackstageNotionIndexUnavailableError();
-    }
   }
-  if (routing.universeId !== universeId || routing.shards.length < 1) {
+  if (
+    routing.universeId !== universeId
+    || routing.shards.length < 1
+    || !routing.complete
+  ) {
     throw new BackstageNotionIndexUnavailableError();
   }
   const shards = candidateShards(routing);
@@ -1327,7 +1419,7 @@ async function retrieveUnsafe(
           scopeChunkCount: page.scopeChunkCount,
           scopePageCount: page.scopePageCount,
           after: lastCompleted!.after,
-        }, cursorSecret!, universeId)
+        }, cursorSecrets!.current, universeId)
       : null;
     result = baseResult({
       universeId,
@@ -1356,9 +1448,6 @@ async function retrieveUnsafe(
   }
   try {
     logger.info('backstage.notion_partition_rag.retrieved', {
-      universeId,
-      manifestId: routing.manifestId,
-      selectionDigest: resolvedSelectionDigest,
       configurationCurrent: routing.configurationCurrent,
       selectedShardCount: routing.shards.length,
       matchingOmissionCount: routing.matchingOmissions.length,

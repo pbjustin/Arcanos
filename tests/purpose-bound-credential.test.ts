@@ -24,6 +24,8 @@ const expectedPurposeBoundCredentialEnvironmentNames = [
   'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
   'ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY',
   'ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY',
+  'ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET',
+  'ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET',
   'ARCANOS_GAMING_SOURCE_ACCESS_TOKEN',
   'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
   'ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN',
@@ -119,6 +121,17 @@ describe('purpose-bound credential configuration', () => {
   it('does not compare the credential variable with itself', () => {
     const credential = 'self-exclusion-purpose-token-123456';
     expect(resolve({ [ownEnvironmentName]: credential })).toBe(credential);
+  });
+
+  it('rejects reuse between current and previous partition cursor secrets', () => {
+    const credential = 'r'.repeat(32);
+    expect(resolveConfiguredPurposeBoundCredential({
+      ownEnvironmentName: 'ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET',
+      readEnvironmentValue: environmentReader({
+        ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET: credential,
+        ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET: credential,
+      }),
+    })).toBeNull();
   });
 
   it.each(

@@ -12,6 +12,7 @@ import {
   BackstageNotionIndexUnavailableError,
 } from '../src/services/backstageNotionRag.js';
 import {
+  BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH,
   retrieveBackstageNotionPartitionRagContext,
   type BackstageNotionPartitionRetrievalDependencies,
   type BackstageNotionPartitionRetrievalPlan,
@@ -26,6 +27,13 @@ import type {
   BackstageNotionPartitionRoutingIntent,
   BackstageNotionPartitionRoutingResolution,
 } from '../src/shared/backstage/backstageNotionPartitionRoutingCore.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
+  BACKSTAGE_NOTION_PARTITION_MAX_PAGES,
+  BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
+} from '../src/shared/backstage/backstageNotionPartitionCore.js';
+import { isBackstageContinuityCursorRequestValid } from
+  '../src/shared/backstage/backstageContinuityQueryCore.js';
 import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
@@ -44,6 +52,8 @@ const CONFIGURATION_HASH = '1'.repeat(64);
 const RESOLUTION_DIGEST_A = '2'.repeat(64);
 const RESOLUTION_DIGEST_B = '3'.repeat(64);
 const CURSOR_SECRET = 'partition-retrieval-test-secret-32-bytes-minimum';
+const PREVIOUS_CURSOR_SECRET =
+  'partition-retrieval-previous-test-secret-32-bytes-minimum';
 
 const RELEVANT_INTENT = Object.freeze({
   kind: 'relevant' as const,
@@ -76,7 +86,9 @@ function routing(input: {
   intent?: BackstageNotionPartitionRoutingIntent;
   complete?: boolean;
   configurationCurrent?: boolean;
+  shardKey?: string;
 } = {}): Extract<BackstageNotionPartitionRoutingResolution, { status: 'resolved' }> {
+  const shardKey = input.shardKey ?? 'raw/2026';
   return {
     routingVersion: 1,
     status: 'resolved',
@@ -95,7 +107,7 @@ function routing(input: {
     cardinality: (input.intent ?? RELEVANT_INTENT).cardinality,
     complete: input.complete ?? true,
     shards: [{
-      shardKey: 'raw/2026',
+      shardKey,
       partitionVersionId: PARTITION_VERSION_ID,
       snapshotId: SNAPSHOT_ID,
       retrievalTier: 'hot',
@@ -115,12 +127,13 @@ function material(input: {
   pagePath?: readonly string[];
   headingPath?: readonly string[];
   headingOccurrencePath?: readonly number[];
+  shardKey?: string;
 } = {}): BackstageNotionPartitionRankedCandidate {
   const index = input.index ?? 1;
   const content = input.content ?? `Current canon material ${index}.`;
   const resolvedPageId = input.pageId ?? PAGE_ID;
   return {
-    shardKey: 'raw/2026',
+    shardKey: input.shardKey ?? 'raw/2026',
     partitionVersionId: PARTITION_VERSION_ID,
     snapshotId: SNAPSHOT_ID,
     pageId: resolvedPageId,
@@ -208,6 +221,7 @@ function harness(input: {
     readonly chunks: readonly BackstageNotionManifestScopeChunk[];
   };
   secret?: string;
+  previousSecret?: string;
 } = {}) {
   const activeRouting = input.activeRouting ?? routing();
   const pinnedRouting = input.pinnedRouting ?? activeRouting;
@@ -247,6 +261,9 @@ function harness(input: {
   }));
   const embedQuery = jest.fn(async () => [1, 0]);
   const resolveCursorEncryptionSecret = jest.fn(() => input.secret ?? CURSOR_SECRET);
+  const resolvePreviousCursorEncryptionSecret = jest.fn(
+    () => input.previousSecret
+  );
   const dependencies: BackstageNotionPartitionRetrievalDependencies = {
     repository: {
       rankManifestShardCandidates,
@@ -258,6 +275,7 @@ function harness(input: {
     resolvePinnedScopeRequest,
     embedQuery,
     resolveCursorEncryptionSecret,
+    resolvePreviousCursorEncryptionSecret,
   };
   return {
     dependencies,
@@ -265,6 +283,7 @@ function harness(input: {
     loadManifestScopeChunkPage,
     rankManifestShardCandidates,
     resolveCursorEncryptionSecret,
+    resolvePreviousCursorEncryptionSecret,
     resolvePinnedRequest,
     resolvePinnedScopeRequest,
     resolveRequest,
@@ -317,6 +336,8 @@ describe('Backstage Notion partition retrieval', () => {
 
     expect(state.resolveRequest).toHaveBeenCalledWith(UNIVERSE_ID, RELEVANT_INTENT);
     expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    expect(state.resolveCursorEncryptionSecret).not.toHaveBeenCalled();
+    expect(state.resolvePreviousCursorEncryptionSecret).not.toHaveBeenCalled();
     expect(state.rankManifestShardCandidates).toHaveBeenCalledWith(
       expect.objectContaining({
         universeId: UNIVERSE_ID,
@@ -349,6 +370,40 @@ describe('Backstage Notion partition retrieval', () => {
       chunkVersionId: uuid(1),
     });
     expect(enrichmentUsed).toBe(true);
+    const logMetadata = jest.mocked(logger.info).mock.calls.at(-1)?.[1];
+    expect(logMetadata).not.toEqual(expect.objectContaining({
+      universeId: expect.anything(),
+      manifestId: expect.anything(),
+      selectionDigest: expect.anything(),
+    }));
+    expect(JSON.stringify(logMetadata)).not.toContain(UNIVERSE_ID);
+    expect(JSON.stringify(logMetadata)).not.toContain(MANIFEST_A);
+    expect(JSON.stringify(logMetadata)).not.toContain(result.selectionDigest);
+  });
+
+  test('fails relevant retrieval closed when any selected shard is omitted', async () => {
+    const incompleteRouting = {
+      ...routing({ complete: false }),
+      matchingOmissions: [{
+        shardKey: 'raw/2026',
+        partitionVersionId: 'aaaaaaaa-0000-4000-8000-000000000001',
+        retrievalTier: 'hot' as const,
+        decision: 'optional_unavailable' as const,
+        safeReasonCode: 'SHARD_SYNC_INCOMPLETE',
+      }],
+    };
+    const state = harness({ activeRouting: incompleteRouting });
+
+    await expect(retrieveAuthorized({
+      query: 'Book Raw from current canon',
+      relevantRoutingIntent: RELEVANT_INTENT,
+    }, state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(state.resolveRequest).toHaveBeenCalledTimes(1);
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankManifestShardCandidates).not.toHaveBeenCalled();
+    expect(state.loadManifestScopeChunkPage).not.toHaveBeenCalled();
   });
 
   test('resolves an exact section and pushes its immutable occurrence fence into ranking', async () => {
@@ -487,6 +542,13 @@ describe('Backstage Notion partition retrieval', () => {
       })
     );
     expect(cursor).toEqual(expect.any(String));
+    expect(cursor!.length).toBeLessThanOrEqual(
+      BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH
+    );
+    expect(isBackstageContinuityCursorRequestValid({
+      cursor,
+      retrievalMode: 'complete_scope',
+    })).toBe(true);
     const envelopeText = Buffer.from(cursor!, 'base64url').toString('latin1');
     for (const secretIdentifier of [
       MANIFEST_A,
@@ -560,6 +622,161 @@ describe('Backstage Notion partition retrieval', () => {
     expect(state.resolvePinnedRequest).not.toHaveBeenCalled();
     expect(freshAfterFlip.result.manifestId).toBe(MANIFEST_B);
     expect(freshAfterFlip.result.selectionDigest).not.toBe(firstSelectionDigest);
+  });
+
+  test('accepts a previous cursor key during rotation and resolves each key once per request', async () => {
+    const oldSecret = PREVIOUS_CURSOR_SECRET;
+    const newSecret = CURSOR_SECRET;
+    const firstChunks = Array.from({ length: 12 }, (_, index) => scopeChunk({
+      index: index + 1,
+      ordinal: index,
+    }));
+    const state = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT }),
+      secret: oldSecret,
+      page: {
+        scopeChunkCount: 13,
+        scopePageCount: 1,
+        hasMore: true,
+        chunks: firstChunks,
+      },
+    });
+    const query = {
+      query: 'Read every selected canon chunk',
+      retrievalMode: 'complete_scope' as const,
+    };
+    const first = await retrieveAuthorized({ query }, state.dependencies);
+    const cursor = first.result.nextCursor!;
+
+    state.resolveCursorEncryptionSecret.mockClear();
+    state.resolvePreviousCursorEncryptionSecret.mockClear();
+    state.resolveCursorEncryptionSecret.mockImplementation(() => newSecret);
+    state.resolvePreviousCursorEncryptionSecret.mockImplementation(() => oldSecret);
+    state.loadManifestScopeChunkPage.mockImplementationOnce(async request => ({
+      status: 'ready',
+      manifestId: request.manifestId,
+      selectedShardCount: 1,
+      scopeChunkCount: 13,
+      scopePageCount: 1,
+      hasMore: false,
+      chunks: [scopeChunk({ index: 13, ordinal: 12 })],
+    }));
+
+    const continued = await retrieveAuthorized({
+      query: { ...query, cursor },
+    }, state.dependencies);
+
+    expect(continued.result.manifestId).toBe(MANIFEST_A);
+    expect(state.resolveCursorEncryptionSecret).toHaveBeenCalledTimes(1);
+    expect(state.resolvePreviousCursorEncryptionSecret).toHaveBeenCalledTimes(1);
+    expect(state.resolvePinnedRequest).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      MANIFEST_A,
+      COMPLETE_INTENT
+    );
+  });
+
+  test('encrypts new cursors with only the current key', async () => {
+    const firstChunks = Array.from({ length: 12 }, (_, index) => scopeChunk({
+      index: index + 1,
+      ordinal: index,
+    }));
+    const state = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT }),
+      secret: CURSOR_SECRET,
+      previousSecret: PREVIOUS_CURSOR_SECRET,
+      page: {
+        scopeChunkCount: 13,
+        scopePageCount: 1,
+        hasMore: true,
+        chunks: firstChunks,
+      },
+    });
+    const query = {
+      query: 'Read every selected canon chunk',
+      retrievalMode: 'complete_scope' as const,
+    };
+    const first = await retrieveAuthorized({ query }, state.dependencies);
+    const cursor = first.result.nextCursor!;
+    state.resolveRequest.mockClear();
+    state.resolvePinnedRequest.mockClear();
+    state.loadManifestScopeChunkPage.mockClear();
+
+    const previousOnlyDependencies = {
+      ...state.dependencies,
+      resolveCursorEncryptionSecret: () => PREVIOUS_CURSOR_SECRET,
+      resolvePreviousCursorEncryptionSecret: () => undefined,
+    };
+    await expect(retrieveAuthorized({
+      query: { ...query, cursor },
+    }, previousOnlyDependencies)).rejects.toBeInstanceOf(
+      BackstageNotionCursorInvalidError
+    );
+    expect(state.resolvePinnedRequest).not.toHaveBeenCalled();
+    expect(state.loadManifestScopeChunkPage).not.toHaveBeenCalled();
+  });
+
+  test('rejects duplicate cursor keys before routing or repository effects', async () => {
+    const state = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT }),
+      secret: CURSOR_SECRET,
+      previousSecret: CURSOR_SECRET,
+    });
+
+    await expect(retrieveAuthorized({
+      query: {
+        query: 'Read every selected canon chunk',
+        retrievalMode: 'complete_scope',
+      },
+    }, state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(state.resolveCursorEncryptionSecret).toHaveBeenCalledTimes(1);
+    expect(state.resolvePreviousCursorEncryptionSecret).toHaveBeenCalledTimes(1);
+    expect(state.resolveRequest).not.toHaveBeenCalled();
+    expect(state.loadManifestScopeChunkPage).not.toHaveBeenCalled();
+  });
+
+  test('emits a preflight-safe cursor at maximum legal counts and shard-key length', async () => {
+    const shardKey = `a${'b'.repeat(127)}`;
+    const maximumScopeChunkCount =
+      BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+      * BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS;
+    const maximumScopePageCount =
+      BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+      * BACKSTAGE_NOTION_PARTITION_MAX_PAGES;
+    const chunks = Array.from({ length: 12 }, (_, index) => scopeChunk({
+      index: index + 1,
+      ordinal: BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS - 12 + index,
+      shardKey,
+    }));
+    const state = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT, shardKey }),
+      page: {
+        scopeChunkCount: maximumScopeChunkCount,
+        scopePageCount: maximumScopePageCount,
+        hasMore: true,
+        chunks,
+      },
+    });
+
+    const first = await retrieveAuthorized({
+      query: {
+        query: 'Read every selected canon chunk',
+        retrievalMode: 'complete_scope',
+      },
+    }, state.dependencies);
+    const cursor = first.result.nextCursor!;
+
+    expect(shardKey).toHaveLength(128);
+    expect(cursor.length).toBeLessThanOrEqual(
+      BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH
+    );
+    expect(cursor).toMatch(/^[A-Za-z0-9_-]{1,1024}$/u);
+    expect(isBackstageContinuityCursorRequestValid({
+      cursor,
+      retrievalMode: 'complete_scope',
+    })).toBe(true);
   });
 
   test('pins scoped continuation to manifest A and binds exact accepted scope spelling', async () => {
@@ -691,6 +908,38 @@ describe('Backstage Notion partition retrieval', () => {
       .rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
     expect(weakSecret.resolveRequest).not.toHaveBeenCalled();
     expect(weakSecret.loadManifestScopeChunkPage).not.toHaveBeenCalled();
+
+    const weakPreviousSecret = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT }),
+      previousSecret: 'too-short',
+    });
+    await expect(retrieveAuthorized({ query }, weakPreviousSecret.dependencies))
+      .rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(weakPreviousSecret.resolveRequest).not.toHaveBeenCalled();
+    expect(weakPreviousSecret.loadManifestScopeChunkPage).not.toHaveBeenCalled();
+  });
+
+  test('rejects an oversized cursor before key, routing, or repository effects', async () => {
+    const state = harness({
+      activeRouting: routing({ intent: COMPLETE_INTENT }),
+    });
+
+    await expect(retrieveAuthorized({
+      query: {
+        query: 'Read every selected canon chunk',
+        retrievalMode: 'complete_scope',
+        cursor: 'A'.repeat(
+          BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH + 1
+        ),
+      },
+    }, state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionCursorInvalidError
+    );
+    expect(state.resolveCursorEncryptionSecret).not.toHaveBeenCalled();
+    expect(state.resolvePreviousCursorEncryptionSecret).not.toHaveBeenCalled();
+    expect(state.resolveRequest).not.toHaveBeenCalled();
+    expect(state.resolvePinnedRequest).not.toHaveBeenCalled();
+    expect(state.loadManifestScopeChunkPage).not.toHaveBeenCalled();
   });
 
   test('rejects non-inert plan, query, scope, and path inputs before effects', async () => {
