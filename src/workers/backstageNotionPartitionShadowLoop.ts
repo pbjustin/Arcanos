@@ -362,6 +362,17 @@ Readonly<Record<string, unknown>> {
   const fullyScannedShards = shardResults.filter(
     shard => shard.fullSourceScan
   ).length;
+  const failedShards = Object.freeze(
+    shardResults
+      .filter(shard => shard.status === 'failed')
+      .map(shard => Object.freeze({
+        shardKey: shard.shardKey,
+        safeReasonCode: shard.safeReasonCode ?? 'SHARD_SYNC_FAILED',
+      }))
+      .sort((left, right) => (
+        left.shardKey < right.shardKey ? -1 : left.shardKey > right.shardKey ? 1 : 0
+      ))
+  );
   return Object.freeze({
     fullSourceScan:
       shardResults.length > 0 && fullyScannedShards === shardResults.length,
@@ -379,6 +390,7 @@ Readonly<Record<string, unknown>> {
     ).length,
     shardsFresh: shardResults.filter(shard => shard.status === 'fresh').length,
     shardsFailed: shardResults.filter(shard => shard.status === 'failed').length,
+    failedShards,
     shardsAborted: shardResults.filter(shard => shard.status === 'aborted').length,
     shardsLeaseBusy: shardResults.filter(shard => shard.status === 'lease-busy').length,
     pages: shardResults.reduce((total, shard) => total + shard.pageCount, 0),
