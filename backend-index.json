@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T23:28:42.421Z",
+  "generatedAt": "2026-08-25T00:20:50.666Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3386,6 +3386,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-candidate-repository.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-core.test.ts"

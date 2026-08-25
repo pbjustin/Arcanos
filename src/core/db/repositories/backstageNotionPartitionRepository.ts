@@ -28,6 +28,14 @@ export const BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS = 128;
 export const BACKSTAGE_NOTION_SHADOW_COVERAGE_DEFAULT_SAMPLE_PAGE_IDS = 8;
 export const BACKSTAGE_NOTION_SHADOW_COVERAGE_MAX_SAMPLE_PAGE_IDS = 16;
 export const BACKSTAGE_NOTION_PARTITION_SCOPE_LOOKUP_MAX_PATH_SEGMENTS = 101;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_VERSION = 1;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_QUERY_CODE_POINTS = 32_000;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_LEXICAL_TOKENS = 256;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS = 64;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_EXACT_SCAN_MAX_CHUNKS = 2_048;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_LEXICAL_POOL_SIZE = 256;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD = 32;
+export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_RESULTS = 128;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -42,6 +50,11 @@ const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 const TRANSACTION_TIMEOUT_SQL = `SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 SET LOCAL idle_in_transaction_session_timeout = '60s'`;
+const CANDIDATE_SEARCH_TIMEOUT_SQL = `SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+SET LOCAL idle_in_transaction_session_timeout = '5s';
+SET LOCAL work_mem = '8MB';
+SET LOCAL temp_file_limit = '256MB'`;
 const CONFIGURATION_ADVISORY_LOCK_NAMESPACE =
   'backstage-notion-partition-configuration-v1:';
 const MANIFEST_PAGE_OWNERSHIP_UNIQUE_CONSTRAINT =
@@ -502,6 +515,68 @@ export type BackstageNotionManifestScopeOwnerResolution =
       scopePageCount: number;
     }>;
 
+export interface BackstageNotionPartitionCandidateShard {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly snapshotId: string;
+}
+
+export interface RankBackstageNotionPartitionCandidatesInput {
+  readonly universeId: string;
+  readonly manifestId: string;
+  readonly configurationVersionId: string;
+  readonly configurationHash: string;
+  readonly embeddingModel: string;
+  readonly embeddingVersion: number;
+  readonly embeddingDimension: number;
+  readonly indexFormatVersion: number;
+  readonly shards: readonly BackstageNotionPartitionCandidateShard[];
+  readonly queryText: string;
+  readonly queryEmbedding: readonly number[];
+  readonly limit: number;
+}
+
+export type BackstageNotionPartitionCandidateSearchStrategy =
+  | 'exact_float8_hybrid_v1'
+  | 'bounded_float8_hybrid_v1';
+
+export interface BackstageNotionPartitionRankedCandidate {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly snapshotId: string;
+  readonly pageId: string;
+  readonly pageVersionId: string;
+  readonly pageTitle: string;
+  readonly pagePath: readonly string[];
+  readonly canonicalUrl: string;
+  readonly sourceLastEditedAt: Date;
+  readonly ordinal: number;
+  readonly chunkVersionId: string;
+  readonly contentHash: string;
+  readonly contentCodePoints: number;
+  readonly content: string;
+  readonly headingPath: readonly string[];
+  readonly headingOccurrencePath: readonly number[];
+  readonly category: BackstageNotionRagCategory;
+  readonly semanticScore: number;
+  readonly lexicalScore: number;
+  readonly score: number;
+}
+
+export type BackstageNotionPartitionCandidateSearchResolution =
+  | Readonly<{ status: 'invalid' }>
+  | Readonly<{
+      status: 'ready';
+      searchVersion: typeof BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_VERSION;
+      manifestId: string;
+      strategy: BackstageNotionPartitionCandidateSearchStrategy;
+      exhaustive: boolean;
+      selectedShardCount: number;
+      selectedChunkCount: number;
+      candidatePoolCount: number;
+      candidates: readonly BackstageNotionPartitionRankedCandidate[];
+    }>;
+
 type TimestampValue = Date | string;
 
 interface ConfigurationRow {
@@ -735,6 +810,38 @@ interface ManifestScopeOwnerRow {
   scope_page_count: number | string | null;
 }
 
+interface PartitionCandidateSearchRow {
+  record_kind: string;
+  manifest_id: string;
+  search_strategy: string;
+  exhaustive: boolean;
+  selected_shard_count: number | string;
+  selected_chunk_count: number | string;
+  candidate_pool_count: number | string;
+  candidate_shard_count: number | string;
+  invalid_embedding_count: number | string;
+  shard_key: string | null;
+  partition_version_id: string | null;
+  shard_snapshot_id: string | null;
+  page_id: string | null;
+  page_version_id: string | null;
+  page_title: string | null;
+  page_path: unknown | null;
+  canonical_url: string | null;
+  source_last_edited_at: TimestampValue | null;
+  ordinal: number | string | null;
+  chunk_version_id: string | null;
+  content_hash: string | null;
+  content_code_points: number | string | null;
+  content: string | null;
+  heading_path: unknown | null;
+  heading_occurrence_path: unknown | null;
+  category: string | null;
+  semantic_score: number | string | null;
+  lexical_score: number | string | null;
+  score: number | string | null;
+}
+
 function repositoryError(
   code: BackstageNotionPartitionRepositoryErrorCode
 ): BackstageNotionPartitionRepositoryError {
@@ -856,6 +963,68 @@ function codePointLength(value: string): number {
   return Array.from(value).length;
 }
 
+function normalizeCandidateQuery(value: string): string {
+  if (
+    typeof value !== 'string'
+    || value.trim().length < 1
+    || codePointLength(value) > BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_QUERY_CODE_POINTS
+    || value.includes('\u0000')
+  ) {
+    throw new Error('queryText is outside its supported range.');
+  }
+  return value;
+}
+
+function buildCandidateLexicalProjection(value: string): string {
+  const tokens = value
+    .toLocaleLowerCase('en-US')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(token => codePointLength(token) >= 3)
+    .slice(0, BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_LEXICAL_TOKENS)
+    .map(token => Array.from(token)
+      .slice(0, BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS)
+      .join(''));
+  return [...new Set(tokens)].map(token => `"${token}"`).join(' OR ');
+}
+
+function normalizeCandidateShards(
+  value: readonly BackstageNotionPartitionCandidateShard[]
+): readonly BackstageNotionPartitionCandidateShard[] {
+  if (
+    !Array.isArray(value)
+    || value.length < 1
+    || value.length > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+  ) {
+    throw new Error('shards is outside its supported range.');
+  }
+  const seenShardKeys = new Set<string>();
+  const normalized = value.map((shard, index) => {
+    const shardKey = normalizeShardKey(shard.shardKey);
+    if (seenShardKeys.has(shardKey)) {
+      throw new Error('shards contains a duplicate shardKey.');
+    }
+    seenShardKeys.add(shardKey);
+    return Object.freeze({
+      shardKey,
+      partitionVersionId: normalizeUuid(
+        shard.partitionVersionId,
+        `shards[${index}].partitionVersionId`
+      ),
+      snapshotId: normalizeUuid(shard.snapshotId, `shards[${index}].snapshotId`),
+    });
+  });
+  normalized.sort((left, right) => compareText(left.shardKey, right.shardKey));
+  return Object.freeze(normalized);
+}
+
+function parseFiniteDatabaseNumber(value: number | string, label: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} is not finite.`);
+  }
+  return parsed;
+}
+
 function normalizeStringArray(
   value: readonly string[],
   label: string,
@@ -897,6 +1066,26 @@ async function withBoundedTransaction<T>(
   try {
     await client.query('BEGIN');
     await client.query(TRANSACTION_TIMEOUT_SQL);
+    const result = await action(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    discardClient = !(await rollbackQuietly(client));
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
+}
+
+async function withCandidateSearchTransaction<T>(
+  pool: Pool,
+  action: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  let discardClient = false;
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query(CANDIDATE_SEARCH_TIMEOUT_SQL);
     const result = await action(client);
     await client.query('COMMIT');
     return result;
@@ -2427,6 +2616,913 @@ export class PostgresBackstageNotionPartitionRepository {
       chunkCount,
       members: Object.freeze(members),
       omissions: Object.freeze(omissions),
+    });
+  }
+
+  async rankManifestShardCandidates(
+    input: RankBackstageNotionPartitionCandidatesInput
+  ): Promise<BackstageNotionPartitionCandidateSearchResolution> {
+    const universeId = normalizeUniverseId(input.universeId);
+    const manifestId = normalizeUuid(input.manifestId, 'manifestId');
+    const configurationVersionId = normalizeUuid(
+      input.configurationVersionId,
+      'configurationVersionId'
+    );
+    const configurationHash = normalizeSha256(
+      input.configurationHash,
+      'configurationHash'
+    );
+    const embeddingModel = normalizeRequiredText(
+      input.embeddingModel,
+      'embeddingModel',
+      200
+    );
+    const embeddingVersion = normalizeInteger(
+      input.embeddingVersion,
+      'embeddingVersion',
+      1,
+      2_147_483_647
+    );
+    const embeddingDimension = normalizeInteger(
+      input.embeddingDimension,
+      'embeddingDimension',
+      1,
+      8_192
+    );
+    const indexFormatVersion = normalizeInteger(
+      input.indexFormatVersion,
+      'indexFormatVersion',
+      1,
+      2_147_483_647
+    );
+    const shards = normalizeCandidateShards(input.shards);
+    const queryText = normalizeCandidateQuery(input.queryText);
+    const lexicalProjection = buildCandidateLexicalProjection(queryText);
+    const normalizedEmbedding = normalizeEmbedding(input.queryEmbedding);
+    if (normalizedEmbedding.embedding.length !== embeddingDimension) {
+      throw new Error('queryEmbedding does not match embeddingDimension.');
+    }
+    const limit = normalizeInteger(
+      input.limit,
+      'limit',
+      1,
+      BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_RESULTS
+    );
+    const requestedShardsJson = JSON.stringify(shards.map(shard => ({
+      shardKey: shard.shardKey,
+      partitionVersionId: shard.partitionVersionId,
+      snapshotId: shard.snapshotId,
+    })));
+
+    const result = await withCandidateSearchTransaction(this.pool, client =>
+      client.query<PartitionCandidateSearchRow>(
+        `WITH RECURSIVE requested_shards AS MATERIALIZED (
+           SELECT
+             request.ordinality::INTEGER AS request_ordinal,
+             request.value->>'shardKey' AS shard_key,
+             (request.value->>'partitionVersionId')::UUID AS partition_version_id,
+             (request.value->>'snapshotId')::UUID AS snapshot_id
+           FROM pg_catalog.jsonb_array_elements($9::JSONB)
+             WITH ORDINALITY AS request(value, ordinality)
+         ),
+         pinned_manifest AS MATERIALIZED (
+           SELECT
+             manifest.id AS manifest_id,
+             manifest.partition_configuration_version_id AS configuration_version_id,
+             manifest.configuration_hash,
+             manifest.embedding_model,
+             manifest.embedding_version,
+             manifest.embedding_dimension,
+             manifest.index_format_version
+           FROM public.backstage_notion_universe_heads AS authority_head
+           JOIN public.backstage_notion_universe_manifests AS manifest
+             ON manifest.universe_id = authority_head.universe_id
+            AND manifest.id = $2::UUID
+            AND manifest.state = 'sealed'
+           WHERE authority_head.universe_id = $1
+             AND authority_head.authority = 'notion'
+             AND manifest.partition_configuration_version_id = $3::UUID
+             AND manifest.configuration_hash = $4
+             AND manifest.embedding_model = $5
+             AND manifest.embedding_version = $6::INTEGER
+             AND manifest.embedding_dimension = $7::INTEGER
+             AND manifest.index_format_version = $8::INTEGER
+         ),
+         authorized_shards AS MATERIALIZED (
+           SELECT
+             requested.request_ordinal,
+             requested.shard_key,
+             requested.partition_version_id,
+             requested.snapshot_id,
+             snapshot.chunk_count
+           FROM pinned_manifest AS pinned
+           JOIN requested_shards AS requested ON TRUE
+           JOIN public.backstage_notion_universe_manifest_shards AS member
+             ON member.universe_id = $1
+            AND member.manifest_id = pinned.manifest_id
+            AND member.shard_key = requested.shard_key
+            AND member.partition_version_id = requested.partition_version_id
+            AND member.shard_snapshot_id = requested.snapshot_id
+           JOIN public.backstage_notion_shard_snapshots AS snapshot
+             ON snapshot.universe_id = member.universe_id
+            AND snapshot.shard_key = member.shard_key
+            AND snapshot.id = member.shard_snapshot_id
+            AND snapshot.partition_version_id = member.partition_version_id
+            AND snapshot.state = 'sealed'
+            AND snapshot.embedding_model = pinned.embedding_model
+            AND snapshot.embedding_version = pinned.embedding_version
+            AND snapshot.embedding_dimension = pinned.embedding_dimension
+            AND snapshot.index_format_version = pinned.index_format_version
+         ),
+         selection_fence AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             requested.requested_count AS selected_shard_count,
+             authorized.authorized_count,
+             authorized.selected_chunk_count
+           FROM pinned_manifest AS pinned
+           CROSS JOIN (
+             SELECT COUNT(*)::INTEGER AS requested_count
+             FROM requested_shards
+           ) AS requested
+           CROSS JOIN (
+             SELECT
+               COUNT(*)::INTEGER AS authorized_count,
+               COALESCE(SUM(chunk_count), 0)::BIGINT AS selected_chunk_count
+             FROM authorized_shards
+           ) AS authorized
+           WHERE requested.requested_count = $17::INTEGER
+             AND authorized.authorized_count = requested.requested_count
+         ),
+         selected_embedding_integrity AS MATERIALIZED (
+           SELECT
+             COUNT(*)::INTEGER AS selected_occurrence_count,
+             COUNT(*) FILTER (WHERE
+               occurrence.embedding_model <> $5
+               OR occurrence.embedding_version <> $6::INTEGER
+               OR embedding.chunk_version_id IS NULL
+               OR embedding.embedding_dimension <> $7::INTEGER
+               OR pg_catalog.cardinality(embedding.embedding) <> $7::INTEGER
+               OR NOT public.backstage_notion_embedding_values_are_valid(
+                 embedding.embedding,
+                 embedding.embedding_dimension,
+                 embedding.embedding_norm
+               )
+             )::INTEGER AS invalid_embedding_count
+           FROM selection_fence AS fence
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = authorized.shard_key
+            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           LEFT JOIN public.backstage_notion_chunk_embeddings AS embedding
+             ON embedding.universe_id = occurrence.universe_id
+            AND embedding.chunk_version_id = occurrence.chunk_version_id
+            AND embedding.embedding_model = $5
+            AND embedding.embedding_version = $6::INTEGER
+         ),
+         lexical_query AS MATERIALIZED (
+           SELECT CASE
+             WHEN $10::TEXT = '' THEN NULL::TSQUERY
+             ELSE pg_catalog.websearch_to_tsquery(
+               'simple'::pg_catalog.regconfig,
+               $10::TEXT
+             )
+           END AS query
+         ),
+         exact_candidate_keys AS MATERIALIZED (
+           SELECT
+             occurrence.shard_key,
+             authorized.partition_version_id,
+             occurrence.shard_snapshot_id,
+             occurrence.page_id,
+             occurrence.ordinal,
+             occurrence.chunk_version_id,
+             0::DOUBLE PRECISION AS lexical_hint
+           FROM selection_fence AS fence
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = authorized.shard_key
+            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           WHERE fence.selected_chunk_count <= $13::INTEGER
+         ),
+         lexical_candidate_keys AS MATERIALIZED (
+           SELECT
+             occurrence.shard_key,
+             authorized.partition_version_id,
+             occurrence.shard_snapshot_id,
+             occurrence.page_id,
+             occurrence.ordinal,
+             occurrence.chunk_version_id,
+             pg_catalog.ts_rank_cd(
+               pg_catalog.to_tsvector(
+                 'simple'::pg_catalog.regconfig,
+                 chunk.content
+               ),
+               lexical_query.query,
+               32
+             )::DOUBLE PRECISION AS lexical_hint
+           FROM selection_fence AS fence
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = authorized.shard_key
+            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           JOIN public.backstage_notion_chunk_versions AS chunk
+             ON chunk.universe_id = occurrence.universe_id
+            AND chunk.id = occurrence.chunk_version_id
+           CROSS JOIN lexical_query
+           WHERE fence.selected_chunk_count > $13::INTEGER
+             AND lexical_query.query IS NOT NULL
+             AND pg_catalog.to_tsvector(
+               'simple'::pg_catalog.regconfig,
+               chunk.content
+             ) @@ lexical_query.query
+           ORDER BY
+             lexical_hint DESC,
+             occurrence.shard_key COLLATE "C",
+             occurrence.page_id,
+             occurrence.ordinal,
+             occurrence.chunk_version_id
+           LIMIT $14::INTEGER
+         ),
+         semantic_candidate_keys AS MATERIALIZED (
+           SELECT
+             authorized.shard_key,
+             authorized.partition_version_id,
+             authorized.snapshot_id AS shard_snapshot_id,
+             semantic.page_id,
+             semantic.ordinal,
+             semantic.chunk_version_id,
+             0::DOUBLE PRECISION AS lexical_hint
+           FROM selection_fence AS fence
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN LATERAL (
+             SELECT
+               occurrence.page_id,
+               occurrence.ordinal,
+               occurrence.chunk_version_id,
+               similarity.raw_score
+             FROM public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             JOIN public.backstage_notion_chunk_embeddings AS embedding
+               ON embedding.universe_id = occurrence.universe_id
+              AND embedding.chunk_version_id = occurrence.chunk_version_id
+              AND embedding.embedding_model = occurrence.embedding_model
+              AND embedding.embedding_version = occurrence.embedding_version
+             CROSS JOIN LATERAL (
+               SELECT COALESCE(SUM(
+                 (embedding.embedding[coordinate.ordinal] / embedding.embedding_norm)
+                 * (
+                   ($11::DOUBLE PRECISION[])[coordinate.ordinal]
+                   / $12::DOUBLE PRECISION
+                 )
+               ), 0)::DOUBLE PRECISION AS raw_score
+               FROM pg_catalog.generate_subscripts(embedding.embedding, 1)
+                 AS coordinate(ordinal)
+             ) AS similarity
+             WHERE occurrence.universe_id = $1
+               AND occurrence.shard_key = authorized.shard_key
+               AND occurrence.shard_snapshot_id = authorized.snapshot_id
+               AND fence.selected_chunk_count > $13::INTEGER
+               AND embedding.embedding_dimension = $7::INTEGER
+               AND pg_catalog.cardinality(embedding.embedding) = $7::INTEGER
+               AND public.backstage_notion_embedding_values_are_valid(
+                 embedding.embedding,
+                 embedding.embedding_dimension,
+                 embedding.embedding_norm
+               )
+             ORDER BY
+               similarity.raw_score DESC,
+               occurrence.page_id,
+               occurrence.ordinal,
+               occurrence.chunk_version_id
+             LIMIT $15::INTEGER
+           ) AS semantic ON TRUE
+           WHERE fence.selected_chunk_count > $13::INTEGER
+         ),
+         candidate_keys AS MATERIALIZED (
+           SELECT * FROM exact_candidate_keys
+           UNION ALL
+           SELECT * FROM lexical_candidate_keys
+           UNION ALL
+           SELECT * FROM semantic_candidate_keys
+         ),
+         deduplicated_candidate_keys AS MATERIALIZED (
+           SELECT
+             shard_key,
+             partition_version_id,
+             shard_snapshot_id,
+             page_id,
+             ordinal,
+             chunk_version_id,
+             MAX(lexical_hint) AS lexical_hint
+           FROM candidate_keys
+           GROUP BY
+             shard_key,
+             partition_version_id,
+             shard_snapshot_id,
+             page_id,
+             ordinal,
+             chunk_version_id
+         ),
+         candidate_material AS MATERIALIZED (
+           SELECT
+             candidate.shard_key,
+             candidate.partition_version_id,
+             candidate.shard_snapshot_id,
+             candidate.page_id,
+             occurrence.page_version_id,
+             page.title AS page_title,
+             page.scope_path AS page_path,
+             page.canonical_url,
+             page.source_last_edited_at,
+             candidate.ordinal,
+             candidate.chunk_version_id,
+             chunk.content_hash,
+             chunk.content_code_points,
+             chunk.content,
+             page_chunk.heading_path,
+             page_chunk.heading_occurrence_path,
+             occurrence.category,
+             embedding.embedding_dimension,
+             embedding.embedding_norm,
+             embedding.embedding
+           FROM deduplicated_candidate_keys AS candidate
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = candidate.shard_key
+            AND occurrence.shard_snapshot_id = candidate.shard_snapshot_id
+            AND occurrence.page_id = candidate.page_id
+            AND occurrence.ordinal = candidate.ordinal
+            AND occurrence.chunk_version_id = candidate.chunk_version_id
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = occurrence.universe_id
+            AND page.shard_key = occurrence.shard_key
+            AND page.shard_snapshot_id = occurrence.shard_snapshot_id
+            AND page.page_id = occurrence.page_id
+            AND page.page_version_id = occurrence.page_version_id
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = occurrence.universe_id
+            AND ownership.manifest_id = $2::UUID
+            AND ownership.page_id = occurrence.page_id
+            AND ownership.shard_key = occurrence.shard_key
+            AND ownership.shard_snapshot_id = occurrence.shard_snapshot_id
+           JOIN public.backstage_notion_page_version_chunks AS page_chunk
+             ON page_chunk.universe_id = occurrence.universe_id
+            AND page_chunk.page_version_id = occurrence.page_version_id
+            AND page_chunk.ordinal = occurrence.ordinal
+            AND page_chunk.chunk_version_id = occurrence.chunk_version_id
+           JOIN public.backstage_notion_chunk_versions AS chunk
+             ON chunk.universe_id = occurrence.universe_id
+            AND chunk.id = occurrence.chunk_version_id
+           JOIN public.backstage_notion_chunk_embeddings AS embedding
+             ON embedding.universe_id = occurrence.universe_id
+            AND embedding.chunk_version_id = occurrence.chunk_version_id
+            AND embedding.embedding_model = occurrence.embedding_model
+            AND embedding.embedding_version = occurrence.embedding_version
+         ),
+         candidate_integrity AS MATERIALIZED (
+           SELECT
+             COUNT(*)::INTEGER AS candidate_pool_count,
+             COUNT(DISTINCT material.shard_key)::INTEGER AS candidate_shard_count,
+             (
+               selected.invalid_embedding_count
+               + CASE
+                 WHEN selected.selected_occurrence_count <> fence.selected_chunk_count
+                   THEN 1
+                 ELSE 0
+               END
+             )::INTEGER AS invalid_embedding_count
+           FROM candidate_material AS material
+           CROSS JOIN selection_fence AS fence
+           CROSS JOIN selected_embedding_integrity AS selected
+           GROUP BY
+             selected.invalid_embedding_count,
+             selected.selected_occurrence_count,
+             fence.selected_chunk_count
+         ),
+         scored_candidates AS MATERIALIZED (
+           SELECT
+             material.shard_key,
+             material.partition_version_id,
+             material.shard_snapshot_id,
+             material.page_id,
+             material.page_version_id,
+             material.page_title,
+             material.page_path,
+             material.canonical_url,
+             material.source_last_edited_at,
+             material.ordinal,
+             material.chunk_version_id,
+             material.content_hash,
+             material.content_code_points,
+             material.content,
+             material.heading_path,
+             material.heading_occurrence_path,
+             material.category,
+             GREATEST(
+               -1::DOUBLE PRECISION,
+               LEAST(1::DOUBLE PRECISION, semantic.raw_score)
+             ) AS semantic_score,
+             CASE
+               WHEN lexical_query.query IS NULL THEN 0::DOUBLE PRECISION
+               ELSE pg_catalog.ts_rank_cd(
+                 pg_catalog.to_tsvector(
+                   'simple'::pg_catalog.regconfig,
+                   pg_catalog.concat_ws(
+                     ' ',
+                     material.content,
+                     material.page_title,
+                     material.page_path::TEXT,
+                     material.heading_path::TEXT,
+                     material.category
+                   )
+                 ),
+                 lexical_query.query,
+                 32
+               )::DOUBLE PRECISION
+             END AS lexical_score
+           FROM candidate_material AS material
+           CROSS JOIN candidate_integrity AS integrity
+           CROSS JOIN lexical_query
+           CROSS JOIN LATERAL (
+             SELECT COALESCE(SUM(
+               (material.embedding[coordinate.ordinal] / material.embedding_norm)
+               * (
+                 ($11::DOUBLE PRECISION[])[coordinate.ordinal]
+                 / $12::DOUBLE PRECISION
+               )
+             ), 0)::DOUBLE PRECISION AS raw_score
+             FROM pg_catalog.generate_subscripts(material.embedding, 1)
+               AS coordinate(ordinal)
+           ) AS semantic
+           WHERE integrity.invalid_embedding_count = 0
+         ),
+         ranked_candidates AS MATERIALIZED (
+           SELECT
+             scored.*,
+             (
+               scored.semantic_score
+               + (0.12::DOUBLE PRECISION * scored.lexical_score)
+             )::DOUBLE PRECISION AS score
+           FROM scored_candidates AS scored
+         ),
+         search_header AS MATERIALIZED (
+           SELECT
+             fence.manifest_id,
+             CASE
+               WHEN fence.selected_chunk_count <= $13::INTEGER
+                 THEN 'exact_float8_hybrid_v1'
+               ELSE 'bounded_float8_hybrid_v1'
+             END AS search_strategy,
+             fence.selected_chunk_count <= $13::INTEGER AS exhaustive,
+             fence.selected_shard_count,
+             fence.selected_chunk_count,
+             integrity.candidate_pool_count,
+             integrity.candidate_shard_count,
+             integrity.invalid_embedding_count
+           FROM selection_fence AS fence
+           CROSS JOIN candidate_integrity AS integrity
+         ),
+         limited_candidates AS MATERIALIZED (
+           SELECT ranked.*
+           FROM ranked_candidates AS ranked
+           ORDER BY
+             ranked.score DESC,
+             ranked.semantic_score DESC,
+             ranked.lexical_score DESC,
+             ranked.shard_key COLLATE "C",
+             ranked.page_id,
+             ranked.ordinal,
+             ranked.chunk_version_id
+           LIMIT $16::INTEGER
+         ),
+         search_rows AS MATERIALIZED (
+           SELECT
+             'candidate'::TEXT AS record_kind,
+             header.manifest_id,
+             header.search_strategy,
+             header.exhaustive,
+             header.selected_shard_count,
+             header.selected_chunk_count,
+             header.candidate_pool_count,
+             header.candidate_shard_count,
+             header.invalid_embedding_count,
+             candidate.shard_key,
+             candidate.partition_version_id,
+             candidate.shard_snapshot_id,
+             candidate.page_id,
+             candidate.page_version_id,
+             candidate.page_title,
+             candidate.page_path,
+             candidate.canonical_url,
+             candidate.source_last_edited_at,
+             candidate.ordinal,
+             candidate.chunk_version_id,
+             candidate.content_hash,
+             candidate.content_code_points,
+             candidate.content,
+             candidate.heading_path,
+             candidate.heading_occurrence_path,
+             candidate.category,
+             candidate.semantic_score,
+             candidate.lexical_score,
+             candidate.score
+           FROM search_header AS header
+           JOIN limited_candidates AS candidate ON TRUE
+
+           UNION ALL
+
+           SELECT
+             'header'::TEXT AS record_kind,
+             header.manifest_id,
+             header.search_strategy,
+             header.exhaustive,
+             header.selected_shard_count,
+             header.selected_chunk_count,
+             header.candidate_pool_count,
+             header.candidate_shard_count,
+             header.invalid_embedding_count,
+             NULL::TEXT AS shard_key,
+             NULL::UUID AS partition_version_id,
+             NULL::UUID AS shard_snapshot_id,
+             NULL::UUID AS page_id,
+             NULL::UUID AS page_version_id,
+             NULL::TEXT AS page_title,
+             NULL::JSONB AS page_path,
+             NULL::TEXT AS canonical_url,
+             NULL::TIMESTAMPTZ AS source_last_edited_at,
+             NULL::INTEGER AS ordinal,
+             NULL::UUID AS chunk_version_id,
+             NULL::TEXT AS content_hash,
+             NULL::INTEGER AS content_code_points,
+             NULL::TEXT AS content,
+             NULL::JSONB AS heading_path,
+             NULL::JSONB AS heading_occurrence_path,
+             NULL::TEXT AS category,
+             NULL::DOUBLE PRECISION AS semantic_score,
+             NULL::DOUBLE PRECISION AS lexical_score,
+             NULL::DOUBLE PRECISION AS score
+           FROM search_header AS header
+           WHERE NOT EXISTS (SELECT 1 FROM limited_candidates)
+         )
+         SELECT *
+         FROM search_rows
+         ORDER BY
+           record_kind,
+           score DESC NULLS LAST,
+           semantic_score DESC NULLS LAST,
+           lexical_score DESC NULLS LAST,
+           shard_key COLLATE "C" NULLS LAST,
+           page_id NULLS LAST,
+           ordinal NULLS LAST,
+           chunk_version_id NULLS LAST`,
+        [
+          universeId,
+          manifestId,
+          configurationVersionId,
+          configurationHash,
+          embeddingModel,
+          embeddingVersion,
+          embeddingDimension,
+          indexFormatVersion,
+          requestedShardsJson,
+          lexicalProjection,
+          normalizedEmbedding.embedding,
+          normalizedEmbedding.norm,
+          BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_EXACT_SCAN_MAX_CHUNKS,
+          BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_LEXICAL_POOL_SIZE,
+          BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD,
+          limit,
+          shards.length,
+        ]
+      )
+    );
+
+    if (result.rows.length === 0) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const first = result.rows[0]!;
+    const normalizedResultManifestId = normalizeUuid(first.manifest_id, 'manifest_id');
+    const strategy = first.search_strategy;
+    if (
+      normalizedResultManifestId !== manifestId
+      || (
+        strategy !== 'exact_float8_hybrid_v1'
+        && strategy !== 'bounded_float8_hybrid_v1'
+      )
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const exhaustive = first.exhaustive;
+    const selectedShardCount = normalizeDatabaseInteger(
+      first.selected_shard_count,
+      'selected_shard_count',
+      1
+    );
+    const selectedChunkCount = normalizeDatabaseInteger(
+      first.selected_chunk_count,
+      'selected_chunk_count',
+      1
+    );
+    const candidatePoolCount = normalizeDatabaseInteger(
+      first.candidate_pool_count,
+      'candidate_pool_count'
+    );
+    const candidateShardCount = normalizeDatabaseInteger(
+      first.candidate_shard_count,
+      'candidate_shard_count'
+    );
+    const invalidEmbeddingCount = normalizeDatabaseInteger(
+      first.invalid_embedding_count,
+      'invalid_embedding_count'
+    );
+    const maximumPoolCount = strategy === 'exact_float8_hybrid_v1'
+      ? BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_EXACT_SCAN_MAX_CHUNKS
+      : BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_LEXICAL_POOL_SIZE
+        + (
+          shards.length
+          * BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD
+        );
+    if (
+      typeof exhaustive !== 'boolean'
+      || selectedShardCount !== shards.length
+      || selectedChunkCount < selectedShardCount
+      || selectedChunkCount > shards.length * BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+      || candidatePoolCount > maximumPoolCount
+      || candidatePoolCount < selectedShardCount
+      || candidateShardCount !== selectedShardCount
+      || (exhaustive && candidatePoolCount !== selectedChunkCount)
+      || invalidEmbeddingCount !== 0
+      || exhaustive !== (strategy === 'exact_float8_hybrid_v1')
+      || exhaustive !== (
+        selectedChunkCount
+        <= BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_EXACT_SCAN_MAX_CHUNKS
+      )
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    for (const [index, row] of result.rows.entries()) {
+      if (
+        normalizeUuid(row.manifest_id, `rows[${index}].manifest_id`) !== manifestId
+        || row.search_strategy !== strategy
+        || row.exhaustive !== exhaustive
+        || normalizeDatabaseInteger(
+          row.selected_shard_count,
+          `rows[${index}].selected_shard_count`,
+          1
+        ) !== selectedShardCount
+        || normalizeDatabaseInteger(
+          row.selected_chunk_count,
+          `rows[${index}].selected_chunk_count`,
+          1
+        ) !== selectedChunkCount
+        || normalizeDatabaseInteger(
+          row.candidate_pool_count,
+          `rows[${index}].candidate_pool_count`
+        ) !== candidatePoolCount
+        || normalizeDatabaseInteger(
+          row.candidate_shard_count,
+          `rows[${index}].candidate_shard_count`
+        ) !== candidateShardCount
+        || normalizeDatabaseInteger(
+          row.invalid_embedding_count,
+          `rows[${index}].invalid_embedding_count`
+        ) !== 0
+      ) {
+        return Object.freeze({ status: 'invalid' as const });
+      }
+    }
+
+    const candidateRows = result.rows.filter(row => row.record_kind === 'candidate');
+    const headerRows = result.rows.filter(row => row.record_kind === 'header');
+    const expectedCandidateCount = Math.min(limit, candidatePoolCount);
+    if (
+      candidateRows.length !== expectedCandidateCount
+      || (candidateRows.length === 0 ? headerRows.length !== 1 : headerRows.length !== 0)
+      || result.rows.length !== candidateRows.length + headerRows.length
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const requestedShardByKey = new Map(shards.map(shard => [shard.shardKey, shard]));
+    const seenCandidates = new Set<string>();
+    const candidates = candidateRows.map((row, index) => {
+      if (
+        row.shard_key === null
+        || row.partition_version_id === null
+        || row.shard_snapshot_id === null
+        || row.page_id === null
+        || row.page_version_id === null
+        || row.page_title === null
+        || row.page_path === null
+        || row.canonical_url === null
+        || row.source_last_edited_at === null
+        || row.ordinal === null
+        || row.chunk_version_id === null
+        || row.content_hash === null
+        || row.content_code_points === null
+        || row.content === null
+        || row.heading_path === null
+        || row.heading_occurrence_path === null
+        || row.category === null
+        || row.semantic_score === null
+        || row.lexical_score === null
+        || row.score === null
+      ) {
+        throw new Error(`candidate row ${index} is incomplete.`);
+      }
+      const shardKey = normalizeShardKey(row.shard_key);
+      const partitionVersionId = normalizeUuid(
+        row.partition_version_id,
+        `rows[${index}].partition_version_id`
+      );
+      const snapshotId = normalizeUuid(
+        row.shard_snapshot_id,
+        `rows[${index}].shard_snapshot_id`
+      );
+      const requestedShard = requestedShardByKey.get(shardKey);
+      if (
+        !requestedShard
+        || requestedShard.partitionVersionId !== partitionVersionId
+        || requestedShard.snapshotId !== snapshotId
+      ) {
+        throw new Error(`candidate row ${index} is outside the requested shard tuples.`);
+      }
+      const pageId = normalizeUuid(row.page_id, `rows[${index}].page_id`);
+      const pageVersionId = normalizeUuid(
+        row.page_version_id,
+        `rows[${index}].page_version_id`
+      );
+      const ordinal = normalizeDatabaseInteger(
+        row.ordinal,
+        `rows[${index}].ordinal`
+      );
+      if (ordinal >= BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS) {
+        throw new Error(`candidate row ${index} has an invalid ordinal.`);
+      }
+      const chunkVersionId = normalizeUuid(
+        row.chunk_version_id,
+        `rows[${index}].chunk_version_id`
+      );
+      const identity = `${shardKey}:${snapshotId}:${pageId}:${ordinal}`;
+      if (seenCandidates.has(identity)) {
+        throw new Error('candidate result contains a duplicate occurrence.');
+      }
+      seenCandidates.add(identity);
+      const pageTitle = normalizeRequiredText(
+        row.page_title,
+        `rows[${index}].page_title`,
+        500
+      );
+      const pagePath = normalizeStringArray(
+        parseJsonStringArray(row.page_path),
+        `rows[${index}].page_path`,
+        BACKSTAGE_NOTION_PARTITION_MAX_DEPTH + 1,
+        500
+      );
+      if (pagePath.length < 1 || pagePath.at(-1) !== pageTitle) {
+        throw new Error(`candidate row ${index} has invalid page provenance.`);
+      }
+      const canonicalUrl = normalizeRequiredText(
+        row.canonical_url,
+        `rows[${index}].canonical_url`,
+        2_048
+      );
+      const content = row.content;
+      const contentCodePoints = normalizeDatabaseInteger(
+        row.content_code_points,
+        `rows[${index}].content_code_points`,
+        1
+      );
+      if (
+        codePointLength(content) !== contentCodePoints
+        || contentCodePoints > 20_000
+      ) {
+        throw new Error(`candidate row ${index} has invalid content bounds.`);
+      }
+      const contentHash = normalizeSha256(
+        row.content_hash,
+        `rows[${index}].content_hash`
+      );
+      if (contentHash !== sha256(content)) {
+        throw new Error(`candidate row ${index} has invalid content provenance.`);
+      }
+      const headingPath = normalizeStringArray(
+        parseJsonStringArray(row.heading_path),
+        `rows[${index}].heading_path`,
+        32,
+        500
+      );
+      const headingOccurrencePath = normalizeHeadingOccurrencePath(
+        parseJsonIntegerArray(row.heading_occurrence_path),
+        `rows[${index}].heading_occurrence_path`,
+        headingPath.length
+      );
+      if (!BACKSTAGE_NOTION_RAG_CATEGORIES.has(row.category as BackstageNotionRagCategory)) {
+        throw new Error(`candidate row ${index} has an invalid category.`);
+      }
+      const semanticScore = parseFiniteDatabaseNumber(
+        row.semantic_score,
+        `rows[${index}].semantic_score`
+      );
+      const lexicalScore = parseFiniteDatabaseNumber(
+        row.lexical_score,
+        `rows[${index}].lexical_score`
+      );
+      const score = parseFiniteDatabaseNumber(row.score, `rows[${index}].score`);
+      if (
+        semanticScore < -1.000_000_001
+        || semanticScore > 1.000_000_001
+        || lexicalScore < 0
+        || lexicalScore > 1.000_000_001
+        || score < -1.000_000_001
+        || score > 1.120_000_001
+        || Math.abs(score - (semanticScore + (0.12 * lexicalScore))) > 1e-9
+      ) {
+        throw new Error(`candidate row ${index} has invalid scores.`);
+      }
+      return Object.freeze({
+        shardKey,
+        partitionVersionId,
+        snapshotId,
+        pageId,
+        pageVersionId,
+        pageTitle,
+        pagePath,
+        canonicalUrl,
+        sourceLastEditedAt: parseDate(
+          row.source_last_edited_at,
+          `rows[${index}].source_last_edited_at`
+        ),
+        ordinal,
+        chunkVersionId,
+        contentHash,
+        contentCodePoints,
+        content,
+        headingPath,
+        headingOccurrencePath,
+        category: row.category as BackstageNotionRagCategory,
+        semanticScore,
+        lexicalScore,
+        score,
+      });
+    });
+    for (let index = 1; index < candidates.length; index += 1) {
+      const previous = candidates[index - 1]!;
+      const current = candidates[index]!;
+      const ordered = previous.score > current.score
+        || (
+          previous.score === current.score
+          && (
+            previous.semanticScore > current.semanticScore
+            || (
+              previous.semanticScore === current.semanticScore
+              && (
+                previous.lexicalScore > current.lexicalScore
+                || (
+                  previous.lexicalScore === current.lexicalScore
+                  && (
+                    compareText(previous.shardKey, current.shardKey) < 0
+                    || (
+                      previous.shardKey === current.shardKey
+                      && (
+                        compareText(previous.pageId, current.pageId) < 0
+                        || (
+                          previous.pageId === current.pageId
+                          && (
+                            previous.ordinal < current.ordinal
+                            || (
+                              previous.ordinal === current.ordinal
+                              && compareText(
+                                previous.chunkVersionId,
+                                current.chunkVersionId
+                              ) < 0
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        );
+      if (!ordered) {
+        throw new Error('candidate result order is not deterministic.');
+      }
+    }
+    return Object.freeze({
+      status: 'ready' as const,
+      searchVersion: BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_VERSION,
+      manifestId,
+      strategy: strategy as BackstageNotionPartitionCandidateSearchStrategy,
+      exhaustive,
+      selectedShardCount,
+      selectedChunkCount,
+      candidatePoolCount,
+      candidates: Object.freeze(candidates),
     });
   }
 
