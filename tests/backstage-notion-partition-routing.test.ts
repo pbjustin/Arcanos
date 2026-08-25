@@ -6,6 +6,8 @@ import type {
 } from '../src/core/db/repositories/backstageNotionPartitionRepository.js';
 import {
   BackstageNotionPartitionRoutingUnavailableError,
+  resolveBackstageNotionPartitionPinnedRequest,
+  resolveBackstageNotionPartitionPinnedScopeRequest,
   resolveBackstageNotionPartitionRequest,
   resolveBackstageNotionPartitionScopeRequest,
   type BackstageNotionPartitionRoutingDependencies,
@@ -15,6 +17,7 @@ import { normalizeBackstageNotionScopeKey } from
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const MANIFEST_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const NEXT_MANIFEST_ID = '99999999-9999-4999-8999-999999999999';
 const CONFIGURATION_VERSION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const RAW_PARTITION_VERSION_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const RAW_SNAPSHOT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -79,10 +82,15 @@ function routingState(
 
 function repository(
   state: BackstageNotionActiveManifestRoutingState | null,
-  owner: BackstageNotionManifestScopeOwnerResolution = { status: 'not_found' }
+  owner: BackstageNotionManifestScopeOwnerResolution = { status: 'not_found' },
+  pinnedState: BackstageNotionActiveManifestRoutingState | null = state
 ) {
   return {
     loadActiveManifestRoutingState: jest.fn(async () => state),
+    loadManifestRoutingState: jest.fn(async (
+      _universeId: string,
+      manifestId: string
+    ) => pinnedState?.manifestId === manifestId ? pinnedState : null),
     resolveManifestScopeOwner: jest.fn(async () => owner),
   };
 }
@@ -221,6 +229,82 @@ describe('Backstage Notion partition request routing', () => {
     expect(resolved.status === 'resolved' ? resolved.shards : []).toHaveLength(1);
   });
 
+  test('pins request and scoped ownership resolution to the authenticated manifest', async () => {
+    const pinnedState = routingState({
+      manifestGeneration: '5',
+      configurationCurrent: false,
+    });
+    const activeState = routingState({
+      manifestId: NEXT_MANIFEST_ID,
+      manifestGeneration: '5',
+    });
+    const owner = {
+      status: 'resolved' as const,
+      manifestId: MANIFEST_ID,
+      shardKey: 'raw/2026',
+      partitionVersionId: RAW_PARTITION_VERSION_ID,
+      snapshotId: RAW_SNAPSHOT_ID,
+      pageId: PAGE_ID,
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['Monday Night Raw'],
+      sectionPath: ['Championships'],
+      sectionOccurrencePath: [2],
+      scopeKind: 'page' as const,
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    };
+    const mockRepository = repository(activeState, owner, pinnedState);
+    const dependencies = authorizedDependencies(mockRepository, {
+      now: () => NOW,
+      maximumStalenessMs: 5 * 60 * 1_000,
+    });
+
+    const requestResolution = await resolveBackstageNotionPartitionPinnedRequest(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      rawIntent(),
+      dependencies
+    );
+    const lookup = {
+      pageTitleKey: normalizeBackstageNotionScopeKey('Monday Night Raw'),
+      pagePathKey: null,
+      sectionPathKey: [normalizeBackstageNotionScopeKey('Championships')],
+      scopeKind: 'page' as const,
+    };
+    const scopeResolution = await resolveBackstageNotionPartitionPinnedScopeRequest(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      lookup,
+      dependencies
+    );
+
+    expect(requestResolution).toMatchObject({
+      status: 'resolved',
+      manifestId: MANIFEST_ID,
+    });
+    expect(scopeResolution).toMatchObject({
+      status: 'resolved',
+      routing: { manifestId: MANIFEST_ID },
+      owner: { sectionOccurrencePath: [2] },
+    });
+    expect(mockRepository.loadManifestRoutingState).toHaveBeenNthCalledWith(
+      1,
+      UNIVERSE_ID,
+      MANIFEST_ID
+    );
+    expect(mockRepository.loadManifestRoutingState).toHaveBeenNthCalledWith(
+      2,
+      UNIVERSE_ID,
+      MANIFEST_ID
+    );
+    expect(mockRepository.loadActiveManifestRoutingState).not.toHaveBeenCalled();
+    expect(mockRepository.resolveManifestScopeOwner).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      lookup
+    );
+  });
+
   test('rejects malformed closed selectors before database work', async () => {
     const mockRepository = repository(routingState());
 
@@ -322,6 +406,8 @@ describe('Backstage Notion partition request routing', () => {
       pageId: PAGE_ID,
       pageTitle: 'Monday Night Raw',
       pagePath: ['Monday Night Raw'],
+      sectionPath: null,
+      sectionOccurrencePath: null,
       scopeKind: 'subtree' as const,
       scopeChunkCount: 1,
       scopePageCount: 1,
@@ -375,6 +461,8 @@ describe('Backstage Notion partition request routing', () => {
       pageId: PAGE_ID,
       pageTitle: 'Monday Night Raw',
       pagePath: ['Monday Night Raw'],
+      sectionPath: null,
+      sectionOccurrencePath: null,
       scopeKind: 'page' as const,
       scopeChunkCount: 1,
       scopePageCount: 1,
@@ -402,5 +490,89 @@ describe('Backstage Notion partition request routing', () => {
         snapshotId: RAW_SNAPSHOT_ID,
       }))
     )).rejects.toBeInstanceOf(BackstageNotionPartitionRoutingUnavailableError);
+  });
+
+  test('normalizes an exact section lookup without widening its owner shard', async () => {
+    const owner = {
+      status: 'resolved' as const,
+      manifestId: MANIFEST_ID,
+      shardKey: 'raw/2026',
+      partitionVersionId: RAW_PARTITION_VERSION_ID,
+      snapshotId: RAW_SNAPSHOT_ID,
+      pageId: PAGE_ID,
+      pageTitle: 'Monday Night Raw',
+      pagePath: ['Monday Night Raw'],
+      sectionPath: ['Championships'],
+      sectionOccurrencePath: [2],
+      scopeKind: 'page' as const,
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    };
+    const mockRepository = repository(routingState(), owner);
+    const lookup = {
+      pageTitleKey: normalizeBackstageNotionScopeKey('Monday Night Raw'),
+      pagePathKey: null,
+      sectionPathKey: [normalizeBackstageNotionScopeKey('Championships')],
+      scopeKind: 'page' as const,
+    };
+
+    const resolved = await resolveBackstageNotionPartitionScopeRequest(
+      UNIVERSE_ID,
+      lookup,
+      authorizedDependencies(mockRepository, {
+        now: () => NOW,
+        maximumStalenessMs: 5 * 60 * 1_000,
+      })
+    );
+
+    expect(resolved).toMatchObject({
+      status: 'resolved',
+      owner: {
+        sectionPath: ['Championships'],
+        sectionOccurrencePath: [2],
+      },
+      routing: { shards: [{ snapshotId: RAW_SNAPSHOT_ID }] },
+    });
+    expect(mockRepository.resolveManifestScopeOwner).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      lookup
+    );
+  });
+
+  test('rejects oversized, accessor-backed, or subtree section lookups before database work', async () => {
+    const mockRepository = repository(routingState());
+    const dependencies = authorizedDependencies(mockRepository);
+    const titleKey = normalizeBackstageNotionScopeKey('Monday Night Raw');
+    const invoke = (sectionPathKey: unknown, scopeKind: 'page' | 'subtree' = 'page') => (
+      resolveBackstageNotionPartitionScopeRequest(
+        UNIVERSE_ID,
+        {
+          pageTitleKey: titleKey,
+          pagePathKey: null,
+          sectionPathKey,
+          scopeKind,
+        },
+        dependencies
+      )
+    );
+
+    await expect(invoke(Array.from({ length: 33 }, () => titleKey)))
+      .rejects.toThrow(/bounded array contract/u);
+    const accessorPath = [titleKey];
+    let accessorCalls = 0;
+    Object.defineProperty(accessorPath, '0', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        accessorCalls += 1;
+        return titleKey;
+      },
+    });
+    await expect(invoke(accessorPath)).rejects.toThrow(/inert data property/u);
+    expect(accessorCalls).toBe(0);
+    await expect(invoke([titleKey], 'subtree')).rejects.toThrow(/subtree/u);
+    expect(mockRepository.loadActiveManifestRoutingState).not.toHaveBeenCalled();
+    expect(mockRepository.resolveManifestScopeOwner).not.toHaveBeenCalled();
   });
 });

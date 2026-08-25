@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, jest, test } from '@jest/globals';
 import type { Pool, PoolClient } from 'pg';
@@ -9,6 +11,7 @@ import {
   BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_RESULTS,
   BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD,
   PostgresBackstageNotionPartitionRepository,
+  type LoadBackstageNotionManifestScopeChunkPageInput,
   type RankBackstageNotionPartitionCandidatesInput,
 } from '../src/core/db/repositories/backstageNotionPartitionRepository.js';
 
@@ -29,7 +32,17 @@ const SECOND_PAGE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const SECOND_PAGE_VERSION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const SECOND_CHUNK_VERSION_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const CONTENT_HASH = createHash('sha256').update('canon', 'utf8').digest('hex');
+const PAGE_CONTENT_HASH = 'd'.repeat(64);
 const SOURCE_EDITED_AT = new Date('2026-08-24T12:00:00.000Z');
+const SCOPE_MIGRATION_ROOT = join(
+  process.cwd(),
+  'migrations',
+  '20260824_backstage_notion_partition_scope_reads_v1'
+);
+
+function readScopeMigration(relativePath: string): string {
+  return readFileSync(join(SCOPE_MIGRATION_ROOT, relativePath), 'utf8');
+}
 
 interface QueryRecord {
   readonly sql: string;
@@ -131,6 +144,8 @@ function candidateRow(
     shard_snapshot_id: SNAPSHOT_ID,
     page_id: PAGE_ID,
     page_version_id: PAGE_VERSION_ID,
+    parent_page_id: null,
+    page_content_hash: PAGE_CONTENT_HASH,
     page_title: 'Canon Root',
     page_path: ['Canon Root'],
     canonical_url: 'https://www.notion.so/canon-root',
@@ -146,6 +161,58 @@ function candidateRow(
     semantic_score: '1',
     lexical_score: '0.5',
     score: '1.06',
+    ...overrides,
+  };
+}
+
+function scopePageInput(
+  overrides: Partial<LoadBackstageNotionManifestScopeChunkPageInput> = {}
+): LoadBackstageNotionManifestScopeChunkPageInput {
+  return {
+    universeId: UNIVERSE_ID,
+    manifestId: MANIFEST_ID,
+    configurationVersionId: CONFIGURATION_VERSION_ID,
+    configurationHash: CONFIGURATION_HASH,
+    indexFormatVersion: 1,
+    shards: [{
+      shardKey: SHARD_KEY,
+      partitionVersionId: PARTITION_VERSION_ID,
+      snapshotId: SNAPSHOT_ID,
+    }],
+    after: null,
+    limit: 1,
+    ...overrides,
+  };
+}
+
+function scopeChunkRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    record_kind: 'chunk',
+    manifest_id: MANIFEST_ID,
+    selected_shard_count: '1',
+    scope_page_count: '2',
+    scope_chunk_count: '2',
+    shard_key: SHARD_KEY,
+    partition_version_id: PARTITION_VERSION_ID,
+    shard_snapshot_id: SNAPSHOT_ID,
+    page_id: PAGE_ID,
+    page_version_id: PAGE_VERSION_ID,
+    parent_page_id: null,
+    page_content_hash: PAGE_CONTENT_HASH,
+    page_title: 'Canon Root',
+    page_path: ['Canon Root'],
+    canonical_url: 'https://www.notion.so/canon-root',
+    source_last_edited_at: SOURCE_EDITED_AT,
+    ordinal: '0',
+    chunk_version_id: CHUNK_VERSION_ID,
+    content_hash: CONTENT_HASH,
+    content_code_points: '5',
+    content: 'canon',
+    heading_path: ['Canon'],
+    heading_occurrence_path: [0],
+    category: 'general',
     ...overrides,
   };
 }
@@ -172,6 +239,8 @@ describe('PostgresBackstageNotionPartitionRepository candidate search', () => {
         snapshotId: SNAPSHOT_ID,
         pageId: PAGE_ID,
         pageVersionId: PAGE_VERSION_ID,
+        parentPageId: null,
+        pageContentHash: PAGE_CONTENT_HASH,
         pageTitle: 'Canon Root',
         pagePath: ['Canon Root'],
         canonicalUrl: 'https://www.notion.so/canon-root',
@@ -245,6 +314,8 @@ describe('PostgresBackstageNotionPartitionRepository candidate search', () => {
       BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD,
       12,
       1,
+      null,
+      16,
     ]);
     expect(harness.release).toHaveBeenCalledWith(false);
     if (ranked.status === 'ready') {
@@ -318,6 +389,139 @@ describe('PostgresBackstageNotionPartitionRepository candidate search', () => {
         snapshotId: SNAPSHOT_ID,
       },
     ]);
+  });
+
+  test('fences an exact page or section before every integrity and candidate pool', async () => {
+    const harness = new CandidateSearchHarness([candidateRow()]);
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+    const scope = {
+      shardKey: SHARD_KEY,
+      partitionVersionId: PARTITION_VERSION_ID,
+      snapshotId: SNAPSHOT_ID,
+      pageId: PAGE_ID,
+      scopeKind: 'page' as const,
+      sectionOccurrencePath: [0],
+      expectedPageCount: 1,
+      expectedChunkCount: 1,
+    };
+
+    await expect(repository.rankManifestShardCandidates(searchInput({ scope })))
+      .resolves.toMatchObject({
+        status: 'ready',
+        selectedShardCount: 1,
+        selectedChunkCount: 1,
+        candidates: [{ pageId: PAGE_ID }],
+      });
+
+    const search = harness.queries[2]!;
+    expect(JSON.parse(search.values[17] as string)).toEqual(scope);
+    expect(search.values[18]).toBe(16);
+    expect(search.sql.indexOf('eligible_occurrences AS MATERIALIZED')).toBeLessThan(
+      search.sql.indexOf('selected_embedding_integrity AS MATERIALIZED')
+    );
+    for (const cte of [
+      'selected_embedding_integrity AS MATERIALIZED',
+      'exact_candidate_keys AS MATERIALIZED',
+      'lexical_candidate_keys AS MATERIALIZED',
+      'semantic_candidate_keys AS MATERIALIZED',
+    ]) {
+      const start = search.sql.indexOf(cte);
+      const end = search.sql.indexOf(' AS MATERIALIZED', start + cte.length);
+      expect(search.sql.slice(start, end < 0 ? undefined : end))
+        .toContain('eligible_occurrences');
+    }
+    expect(search.sql).toContain('page.section_occurrence_path IS NULL');
+    expect(search.sql).toContain('parent.traversal_depth < $19::INTEGER');
+    expect(search.sql).toContain('NOT child.page_id = ANY(parent.ancestry)');
+  });
+
+  test('paginates complete scope by a bounded keyset before materializing content', async () => {
+    const second = scopeChunkRow({
+      page_id: SECOND_PAGE_ID,
+      page_version_id: SECOND_PAGE_VERSION_ID,
+      page_title: 'Second Page',
+      page_path: ['Second Page'],
+      canonical_url: 'https://www.notion.so/second-page',
+      chunk_version_id: SECOND_CHUNK_VERSION_ID,
+    });
+    const harness = new CandidateSearchHarness([scopeChunkRow(), second]);
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+
+    await expect(repository.loadManifestScopeChunkPage(scopePageInput()))
+      .resolves.toEqual({
+        status: 'ready',
+        manifestId: MANIFEST_ID,
+        selectedShardCount: 1,
+        scopePageCount: 2,
+        scopeChunkCount: 2,
+        hasMore: true,
+        chunks: [{
+          shardKey: SHARD_KEY,
+          partitionVersionId: PARTITION_VERSION_ID,
+          snapshotId: SNAPSHOT_ID,
+          pageId: PAGE_ID,
+          pageVersionId: PAGE_VERSION_ID,
+          parentPageId: null,
+          pageContentHash: PAGE_CONTENT_HASH,
+          pageTitle: 'Canon Root',
+          pagePath: ['Canon Root'],
+          canonicalUrl: 'https://www.notion.so/canon-root',
+          sourceLastEditedAt: SOURCE_EDITED_AT,
+          ordinal: 0,
+          chunkVersionId: CHUNK_VERSION_ID,
+          contentHash: CONTENT_HASH,
+          contentCodePoints: 5,
+          content: 'canon',
+          headingPath: ['Canon'],
+          headingOccurrencePath: [0],
+          category: 'general',
+        }],
+      });
+
+    const query = harness.queries[2]!;
+    expect(query.values[13]).toBe(2);
+    expect(query.sql).toContain('limited_keys AS MATERIALIZED');
+    expect(query.sql).toContain('LIMIT $14::INTEGER');
+    expect(query.sql.indexOf('limited_keys AS MATERIALIZED')).toBeLessThan(
+      query.sql.indexOf('page_material AS MATERIALIZED')
+    );
+    const limitedKeys = query.sql.slice(
+      query.sql.indexOf('limited_keys AS MATERIALIZED'),
+      query.sql.indexOf('page_material AS MATERIALIZED')
+    );
+    expect(limitedKeys).not.toContain('chunk.content');
+    expect(limitedKeys).not.toContain('page_version.content_hash');
+    expect(query.sql).not.toContain('backstage_notion_chunk_embeddings');
+    expect(query.sql).toContain('ROW( eligible.shard_key COLLATE "C"');
+    expect(query.sql).toContain('cursor.matching_cursor_count = 1');
+  });
+
+  test('rejects open scope and keyset objects before obtaining a connection', async () => {
+    const harness = new CandidateSearchHarness([]);
+    const repository = new PostgresBackstageNotionPartitionRepository(harness.pool);
+    const exactScope = {
+      shardKey: SHARD_KEY,
+      partitionVersionId: PARTITION_VERSION_ID,
+      snapshotId: SNAPSHOT_ID,
+      pageId: PAGE_ID,
+      scopeKind: 'page' as const,
+      sectionOccurrencePath: null,
+      expectedPageCount: 1,
+      expectedChunkCount: 1,
+    };
+    await expect(repository.rankManifestShardCandidates(searchInput({
+      scope: { ...exactScope, unknown: true } as typeof exactScope,
+    }))).rejects.toThrow('missing or unknown fields');
+    await expect(repository.loadManifestScopeChunkPage(scopePageInput({
+      after: {
+        shardKey: SHARD_KEY,
+        pageId: PAGE_ID,
+        ordinal: 0,
+        chunkVersionId: CHUNK_VERSION_ID,
+        unknown: true,
+      } as LoadBackstageNotionManifestScopeChunkPageInput['after'],
+    }))).rejects.toThrow('missing or unknown fields');
+    expect(harness.connect).not.toHaveBeenCalled();
   });
 
   test('rejects malformed input before obtaining a database connection', async () => {
@@ -435,5 +639,38 @@ describe('PostgresBackstageNotionPartitionRepository candidate search', () => {
       .rankManifestShardCandidates(searchInput())).rejects.toBe(statementTimeout);
     expect(discarded.queries.at(-1)?.sql).toBe('ROLLBACK');
     expect(discarded.release).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('Backstage Notion scope-read index migration catalog', () => {
+  test('uses exact guarded phases around one standalone concurrent build', () => {
+    const precheck = readScopeMigration('01_precheck_parent_page_index.sql');
+    const create = readScopeMigration('02_create_parent_page_index.sql');
+    const verify = readScopeMigration('03_verify_parent_page_index.sql');
+    const recovery = readScopeMigration(
+      join('recovery', '01_drop_invalid_parent_page_index.sql')
+    );
+    const rollback = readScopeMigration(
+      join('rollback', '01_drop_parent_page_index.sql')
+    );
+
+    expect(create).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
+    expect(create).not.toMatch(/\bBEGIN\b|\bCOMMIT\b/iu);
+    for (const guard of [precheck, verify, recovery, rollback]) {
+      expect(guard).toContain('pg_catalog.pg_index');
+      expect(guard).toContain('idx_backstage_notion_shard_snapshot_pages_parent');
+      expect(guard).toContain('parent_page_id IS NOT NULL');
+      expect(guard).toContain("'universe_id', 'shard_key', 'shard_snapshot_id'");
+      expect(guard).toContain("'parent_page_id', 'page_id'");
+      expect(guard).toContain("access_method IS DISTINCT FROM 'btree'");
+    }
+    expect(precheck).toContain('index_valid IS DISTINCT FROM TRUE');
+    expect(precheck).toContain('index_ready IS DISTINCT FROM TRUE');
+    expect(verify).toContain('index_oid IS NULL');
+    expect(verify).toContain('index_valid IS DISTINCT FROM TRUE');
+    expect(recovery).toContain('index_valid IS DISTINCT FROM FALSE');
+    expect(recovery).toContain('LOCK TABLE public.backstage_notion_shard_snapshot_pages');
+    expect(rollback).toContain('IF index_oid IS NULL THEN');
+    expect(rollback).not.toContain('CASCADE');
   });
 });

@@ -36,6 +36,7 @@ export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_EXACT_SCAN_MAX_CHUNKS =
 export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_LEXICAL_POOL_SIZE = 256;
 export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD = 32;
 export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_RESULTS = 128;
+export const BACKSTAGE_NOTION_PARTITION_SCOPE_PAGE_MAX_RESULTS = 128;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -496,6 +497,7 @@ export interface BackstageNotionActiveManifestRoutingState {
 export interface BackstageNotionManifestScopeOwnerLookup {
   readonly pageTitleKey: string;
   readonly pagePathKey: readonly string[] | null;
+  readonly sectionPathKey?: readonly string[] | null;
   readonly scopeKind: 'page' | 'subtree';
 }
 
@@ -510,6 +512,8 @@ export type BackstageNotionManifestScopeOwnerResolution =
       pageId: string;
       pageTitle: string;
       pagePath: readonly string[];
+      sectionPath: readonly string[] | null;
+      sectionOccurrencePath: readonly number[] | null;
       scopeKind: 'page' | 'subtree';
       scopeChunkCount: number;
       scopePageCount: number;
@@ -519,6 +523,17 @@ export interface BackstageNotionPartitionCandidateShard {
   readonly shardKey: string;
   readonly partitionVersionId: string;
   readonly snapshotId: string;
+}
+
+export interface BackstageNotionPartitionExactScope {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly snapshotId: string;
+  readonly pageId: string;
+  readonly scopeKind: 'page' | 'subtree';
+  readonly sectionOccurrencePath: readonly number[] | null;
+  readonly expectedPageCount: number;
+  readonly expectedChunkCount: number;
 }
 
 export interface RankBackstageNotionPartitionCandidatesInput {
@@ -531,6 +546,7 @@ export interface RankBackstageNotionPartitionCandidatesInput {
   readonly embeddingDimension: number;
   readonly indexFormatVersion: number;
   readonly shards: readonly BackstageNotionPartitionCandidateShard[];
+  readonly scope?: BackstageNotionPartitionExactScope | null;
   readonly queryText: string;
   readonly queryEmbedding: readonly number[];
   readonly limit: number;
@@ -546,6 +562,8 @@ export interface BackstageNotionPartitionRankedCandidate {
   readonly snapshotId: string;
   readonly pageId: string;
   readonly pageVersionId: string;
+  readonly parentPageId: string | null;
+  readonly pageContentHash: string;
   readonly pageTitle: string;
   readonly pagePath: readonly string[];
   readonly canonicalUrl: string;
@@ -575,6 +593,59 @@ export type BackstageNotionPartitionCandidateSearchResolution =
       selectedChunkCount: number;
       candidatePoolCount: number;
       candidates: readonly BackstageNotionPartitionRankedCandidate[];
+    }>;
+
+export interface BackstageNotionManifestScopePageAfter {
+  readonly shardKey: string;
+  readonly pageId: string;
+  readonly ordinal: number;
+  readonly chunkVersionId: string;
+}
+
+export interface LoadBackstageNotionManifestScopeChunkPageInput {
+  readonly universeId: string;
+  readonly manifestId: string;
+  readonly configurationVersionId: string;
+  readonly configurationHash: string;
+  readonly indexFormatVersion: number;
+  readonly shards: readonly BackstageNotionPartitionCandidateShard[];
+  readonly scope?: BackstageNotionPartitionExactScope | null;
+  readonly after: BackstageNotionManifestScopePageAfter | null;
+  readonly limit: number;
+}
+
+export interface BackstageNotionManifestScopeChunk {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly snapshotId: string;
+  readonly pageId: string;
+  readonly pageVersionId: string;
+  readonly parentPageId: string | null;
+  readonly pageContentHash: string;
+  readonly pageTitle: string;
+  readonly pagePath: readonly string[];
+  readonly canonicalUrl: string;
+  readonly sourceLastEditedAt: Date;
+  readonly ordinal: number;
+  readonly chunkVersionId: string;
+  readonly contentHash: string;
+  readonly contentCodePoints: number;
+  readonly content: string;
+  readonly headingPath: readonly string[];
+  readonly headingOccurrencePath: readonly number[];
+  readonly category: BackstageNotionRagCategory;
+}
+
+export type BackstageNotionManifestScopeChunkPageResolution =
+  | Readonly<{ status: 'invalid' }>
+  | Readonly<{
+      status: 'ready';
+      manifestId: string;
+      selectedShardCount: number;
+      scopePageCount: number;
+      scopeChunkCount: number;
+      hasMore: boolean;
+      chunks: readonly BackstageNotionManifestScopeChunk[];
     }>;
 
 type TimestampValue = Date | string;
@@ -806,8 +877,16 @@ interface ManifestScopeOwnerRow {
   page_id: string | null;
   page_title: string | null;
   scope_path: unknown | null;
+  section_path: unknown | null;
+  section_occurrence_path: unknown | null;
   scope_chunk_count: number | string | null;
   scope_page_count: number | string | null;
+}
+
+interface ManifestSectionScopeRow {
+  section_occurrence_path: unknown;
+  section_path: unknown;
+  scope_chunk_count: number | string;
 }
 
 interface PartitionCandidateSearchRow {
@@ -825,6 +904,8 @@ interface PartitionCandidateSearchRow {
   shard_snapshot_id: string | null;
   page_id: string | null;
   page_version_id: string | null;
+  parent_page_id: string | null;
+  page_content_hash: string | null;
   page_title: string | null;
   page_path: unknown | null;
   canonical_url: string | null;
@@ -840,6 +921,33 @@ interface PartitionCandidateSearchRow {
   semantic_score: number | string | null;
   lexical_score: number | string | null;
   score: number | string | null;
+}
+
+interface ManifestScopeChunkPageRow {
+  record_kind: string;
+  manifest_id: string;
+  selected_shard_count: number | string;
+  scope_page_count: number | string;
+  scope_chunk_count: number | string;
+  shard_key: string | null;
+  partition_version_id: string | null;
+  shard_snapshot_id: string | null;
+  page_id: string | null;
+  page_version_id: string | null;
+  parent_page_id: string | null;
+  page_content_hash: string | null;
+  page_title: string | null;
+  page_path: unknown | null;
+  canonical_url: string | null;
+  source_last_edited_at: TimestampValue | null;
+  ordinal: number | string | null;
+  chunk_version_id: string | null;
+  content_hash: string | null;
+  content_code_points: number | string | null;
+  content: string | null;
+  heading_path: unknown | null;
+  heading_occurrence_path: unknown | null;
+  category: string | null;
 }
 
 function repositoryError(
@@ -1015,6 +1123,177 @@ function normalizeCandidateShards(
   });
   normalized.sort((left, right) => compareText(left.shardKey, right.shardKey));
   return Object.freeze(normalized);
+}
+
+function readClosedDataObject(
+  value: unknown,
+  label: string,
+  expectedKeys: readonly string[]
+): Readonly<Record<string, unknown>> {
+  if (
+    !value
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || (
+      Object.getPrototypeOf(value) !== Object.prototype
+      && Object.getPrototypeOf(value) !== null
+    )
+  ) {
+    throw new Error(`${label} must be a plain closed object.`);
+  }
+  const expected = new Set(expectedKeys);
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length !== expected.size
+    || actual.some(key => typeof key !== 'string' || !expected.has(key))
+  ) {
+    throw new Error(`${label} contains missing or unknown fields.`);
+  }
+  const record: Record<string, unknown> = {};
+  for (const key of expectedKeys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error(`${label}.${key} must be an inert data property.`);
+    }
+    record[key] = descriptor.value;
+  }
+  return Object.freeze(record);
+}
+
+function normalizeClosedOccurrencePath(
+  value: unknown,
+  label: string
+): readonly number[] {
+  if (
+    !Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length < 1
+    || value.length > 32
+  ) {
+    throw new Error(`${label} is invalid.`);
+  }
+  const allowedKeys = new Set<PropertyKey>(['length']);
+  const normalized: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    allowedKeys.add(String(index));
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error(`${label}[${index}] must be an inert data property.`);
+    }
+    normalized.push(normalizeInteger(
+      descriptor.value as number,
+      `${label}[${index}]`,
+      0,
+      BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+    ));
+  }
+  if (Reflect.ownKeys(value).some(key => !allowedKeys.has(key))) {
+    throw new Error(`${label} contains unknown array fields.`);
+  }
+  return Object.freeze(normalized);
+}
+
+function normalizeExactScope(
+  value: BackstageNotionPartitionExactScope | null | undefined,
+  shards: readonly BackstageNotionPartitionCandidateShard[]
+): BackstageNotionPartitionExactScope | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const record = readClosedDataObject(value, 'scope', [
+    'shardKey',
+    'partitionVersionId',
+    'snapshotId',
+    'pageId',
+    'scopeKind',
+    'sectionOccurrencePath',
+    'expectedPageCount',
+    'expectedChunkCount',
+  ]);
+  if (shards.length !== 1) {
+    throw new Error('a scoped candidate selection requires exactly one shard.');
+  }
+  const shardKey = normalizeShardKey(record.shardKey as string);
+  const partitionVersionId = normalizeUuid(
+    record.partitionVersionId as string,
+    'scope.partitionVersionId'
+  );
+  const snapshotId = normalizeUuid(record.snapshotId as string, 'scope.snapshotId');
+  const pageId = normalizeUuid(record.pageId as string, 'scope.pageId');
+  if (record.scopeKind !== 'page' && record.scopeKind !== 'subtree') {
+    throw new Error('scope.scopeKind is invalid.');
+  }
+  const sectionOccurrencePath = record.sectionOccurrencePath === null
+    ? null
+    : normalizeClosedOccurrencePath(
+        record.sectionOccurrencePath,
+        'scope.sectionOccurrencePath'
+      );
+  const expectedPageCount = normalizeInteger(
+    record.expectedPageCount as number,
+    'scope.expectedPageCount',
+    1,
+    BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+  );
+  const expectedChunkCount = normalizeInteger(
+    record.expectedChunkCount as number,
+    'scope.expectedChunkCount',
+    1,
+    BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+  );
+  const selected = shards[0]!;
+  if (
+    selected.shardKey !== shardKey
+    || selected.partitionVersionId !== partitionVersionId
+    || selected.snapshotId !== snapshotId
+    || (record.scopeKind === 'subtree' && sectionOccurrencePath !== null)
+    || (record.scopeKind === 'page' && expectedPageCount !== 1)
+  ) {
+    throw new Error('scope does not match its exact selected shard contract.');
+  }
+  return Object.freeze({
+    shardKey,
+    partitionVersionId,
+    snapshotId,
+    pageId,
+    scopeKind: record.scopeKind,
+    sectionOccurrencePath,
+    expectedPageCount,
+    expectedChunkCount,
+  });
+}
+
+function normalizeScopePageAfter(
+  value: BackstageNotionManifestScopePageAfter | null,
+  shards: readonly BackstageNotionPartitionCandidateShard[]
+): BackstageNotionManifestScopePageAfter | null {
+  if (value === null) {
+    return null;
+  }
+  const record = readClosedDataObject(value, 'after', [
+    'shardKey',
+    'pageId',
+    'ordinal',
+    'chunkVersionId',
+  ]);
+  const shardKey = normalizeShardKey(record.shardKey as string);
+  if (!shards.some(shard => shard.shardKey === shardKey)) {
+    throw new Error('after.shardKey is outside the selected shards.');
+  }
+  return Object.freeze({
+    shardKey,
+    pageId: normalizeUuid(record.pageId as string, 'after.pageId'),
+    ordinal: normalizeInteger(
+      record.ordinal as number,
+      'after.ordinal',
+      0,
+      BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS - 1
+    ),
+    chunkVersionId: normalizeUuid(
+      record.chunkVersionId as string,
+      'after.chunkVersionId'
+    ),
+  });
 }
 
 function parseFiniteDatabaseNumber(value: number | string, label: string): number {
@@ -2084,7 +2363,30 @@ export class PostgresBackstageNotionPartitionRepository {
   async loadActiveManifestRoutingState(
     universeId: string
   ): Promise<BackstageNotionActiveManifestRoutingState | null> {
+    return this.loadManifestRoutingStateSelection(universeId, null);
+  }
+
+  async loadManifestRoutingState(
+    universeId: string,
+    manifestId: string
+  ): Promise<BackstageNotionActiveManifestRoutingState | null> {
+    return this.loadManifestRoutingStateSelection(
+      universeId,
+      normalizeUuid(manifestId, 'manifestId')
+    );
+  }
+
+  private async loadManifestRoutingStateSelection(
+    universeId: string,
+    exactManifestId: string | null
+  ): Promise<BackstageNotionActiveManifestRoutingState | null> {
     const normalizedUniverseId = normalizeUniverseId(universeId);
+    const manifestIdentityFence = exactManifestId === null
+      ? `manifest.id = partition_head.active_manifest_id
+          AND manifest.partition_configuration_version_id =
+            partition_head.active_configuration_version_id`
+      : 'manifest.id = $2::UUID';
+    const routingLimitParameter = exactManifestId === null ? '$2' : '$3';
     const result = await this.pool.query<ActiveManifestRoutingRow>(
       `WITH pinned_manifest AS MATERIALIZED (
          SELECT
@@ -2115,9 +2417,7 @@ export class PostgresBackstageNotionPartitionRepository {
            ON partition_head.universe_id = authority_head.universe_id
          JOIN public.backstage_notion_universe_manifests AS manifest
            ON manifest.universe_id = partition_head.universe_id
-          AND manifest.id = partition_head.active_manifest_id
-          AND manifest.partition_configuration_version_id =
-            partition_head.active_configuration_version_id
+          AND ${manifestIdentityFence}
           AND manifest.state = 'sealed'
          JOIN public.backstage_notion_partition_configuration_versions
            AS configuration
@@ -2223,11 +2523,17 @@ export class PostgresBackstageNotionPartitionRepository {
        FROM pinned_manifest AS pinned
        JOIN manifest_records AS record ON TRUE
        ORDER BY record.shard_key, record.record_kind
-       LIMIT $2`,
-      [
-        normalizedUniverseId,
-        BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
-      ]
+       LIMIT ${routingLimitParameter}`,
+      exactManifestId === null
+        ? [
+            normalizedUniverseId,
+            BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+          ]
+        : [
+            normalizedUniverseId,
+            exactManifestId,
+            BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+          ]
     );
     if (result.rows.length === 0) {
       return null;
@@ -2238,6 +2544,9 @@ export class PostgresBackstageNotionPartitionRepository {
 
     const first = result.rows[0]!;
     const manifestId = normalizeUuid(first.manifest_id, 'manifest_id');
+    if (exactManifestId !== null && manifestId !== exactManifestId) {
+      throw new Error('Pinned manifest routing metadata crossed manifest identity.');
+    }
     const manifestGeneration = mapGeneration(
       first.manifest_generation,
       'manifest_generation'
@@ -2656,6 +2965,7 @@ export class PostgresBackstageNotionPartitionRepository {
       2_147_483_647
     );
     const shards = normalizeCandidateShards(input.shards);
+    const scope = normalizeExactScope(input.scope, shards);
     const queryText = normalizeCandidateQuery(input.queryText);
     const lexicalProjection = buildCandidateLexicalProjection(queryText);
     const normalizedEmbedding = normalizeEmbedding(input.queryEmbedding);
@@ -2673,6 +2983,16 @@ export class PostgresBackstageNotionPartitionRepository {
       partitionVersionId: shard.partitionVersionId,
       snapshotId: shard.snapshotId,
     })));
+    const requestedScopeJson = scope === null ? null : JSON.stringify({
+      shardKey: scope.shardKey,
+      partitionVersionId: scope.partitionVersionId,
+      snapshotId: scope.snapshotId,
+      pageId: scope.pageId,
+      scopeKind: scope.scopeKind,
+      sectionOccurrencePath: scope.sectionOccurrencePath,
+      expectedPageCount: scope.expectedPageCount,
+      expectedChunkCount: scope.expectedChunkCount,
+    });
 
     const result = await withCandidateSearchTransaction(this.pool, client =>
       client.query<PartitionCandidateSearchRow>(
@@ -2714,6 +3034,7 @@ export class PostgresBackstageNotionPartitionRepository {
              requested.shard_key,
              requested.partition_version_id,
              requested.snapshot_id,
+             snapshot.page_count,
              snapshot.chunk_count
            FROM pinned_manifest AS pinned
            JOIN requested_shards AS requested ON TRUE
@@ -2734,12 +3055,211 @@ export class PostgresBackstageNotionPartitionRepository {
             AND snapshot.embedding_dimension = pinned.embedding_dimension
             AND snapshot.index_format_version = pinned.index_format_version
          ),
+         requested_scope AS MATERIALIZED (
+           SELECT
+             scope.value->>'shardKey' AS shard_key,
+             (scope.value->>'partitionVersionId')::UUID AS partition_version_id,
+             (scope.value->>'snapshotId')::UUID AS snapshot_id,
+             (scope.value->>'pageId')::UUID AS page_id,
+             scope.value->>'scopeKind' AS scope_kind,
+             NULLIF(
+               scope.value->'sectionOccurrencePath',
+               'null'::JSONB
+             ) AS section_occurrence_path,
+             (scope.value->>'expectedPageCount')::INTEGER AS expected_page_count,
+             (scope.value->>'expectedChunkCount')::INTEGER AS expected_chunk_count
+           FROM (SELECT $18::JSONB AS value) AS scope
+           WHERE scope.value IS NOT NULL
+         ),
+         scope_anchor AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             authorized.shard_key,
+             authorized.partition_version_id,
+             authorized.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.depth AS page_depth,
+             scope.scope_kind,
+             scope.section_occurrence_path,
+             scope.expected_page_count,
+             scope.expected_chunk_count,
+             ARRAY[page.page_id]::UUID[] AS ancestry,
+             0 AS traversal_depth
+           FROM pinned_manifest AS pinned
+           JOIN requested_scope AS scope ON TRUE
+           JOIN authorized_shards AS authorized
+             ON authorized.shard_key = scope.shard_key
+            AND authorized.partition_version_id = scope.partition_version_id
+            AND authorized.snapshot_id = scope.snapshot_id
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = $1
+            AND ownership.manifest_id = pinned.manifest_id
+            AND ownership.page_id = scope.page_id
+            AND ownership.shard_key = authorized.shard_key
+            AND ownership.shard_snapshot_id = authorized.snapshot_id
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = ownership.universe_id
+            AND page.shard_key = ownership.shard_key
+            AND page.shard_snapshot_id = ownership.shard_snapshot_id
+            AND page.page_id = ownership.page_id
+         ),
+         unscoped_pages AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             authorized.shard_key,
+             authorized.partition_version_id,
+             authorized.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.depth AS page_depth,
+             'all'::TEXT AS scope_kind,
+             NULL::JSONB AS section_occurrence_path,
+             NULL::INTEGER AS expected_page_count,
+             NULL::INTEGER AS expected_chunk_count
+           FROM pinned_manifest AS pinned
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = $1
+            AND page.shard_key = authorized.shard_key
+            AND page.shard_snapshot_id = authorized.snapshot_id
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = page.universe_id
+            AND ownership.manifest_id = pinned.manifest_id
+            AND ownership.page_id = page.page_id
+            AND ownership.shard_key = page.shard_key
+            AND ownership.shard_snapshot_id = page.shard_snapshot_id
+           WHERE NOT EXISTS (SELECT 1 FROM requested_scope)
+         ),
+         scope_pages AS (
+           SELECT
+             anchor.manifest_id,
+             anchor.shard_key,
+             anchor.partition_version_id,
+             anchor.snapshot_id,
+             anchor.page_id,
+             anchor.page_version_id,
+             anchor.parent_page_id,
+             anchor.page_depth,
+             anchor.scope_kind,
+             anchor.section_occurrence_path,
+             anchor.expected_page_count,
+             anchor.expected_chunk_count,
+             anchor.ancestry,
+             anchor.traversal_depth
+           FROM scope_anchor AS anchor
+
+           UNION ALL
+
+           SELECT
+             parent.manifest_id,
+             parent.shard_key,
+             parent.partition_version_id,
+             parent.snapshot_id,
+             child.page_id,
+             child.page_version_id,
+             child.parent_page_id,
+             child.depth AS page_depth,
+             parent.scope_kind,
+             NULL::JSONB AS section_occurrence_path,
+             parent.expected_page_count,
+             parent.expected_chunk_count,
+             parent.ancestry || child.page_id,
+             parent.traversal_depth + 1
+           FROM scope_pages AS parent
+           JOIN public.backstage_notion_shard_snapshot_pages AS child
+             ON child.universe_id = $1
+            AND child.shard_key = parent.shard_key
+            AND child.shard_snapshot_id = parent.snapshot_id
+            AND child.parent_page_id = parent.page_id
+            AND child.depth = parent.page_depth + 1
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = child.universe_id
+            AND ownership.manifest_id = parent.manifest_id
+            AND ownership.page_id = child.page_id
+            AND ownership.shard_key = child.shard_key
+            AND ownership.shard_snapshot_id = child.shard_snapshot_id
+           WHERE parent.scope_kind = 'subtree'
+             AND parent.traversal_depth < $19::INTEGER
+             AND NOT child.page_id = ANY(parent.ancestry)
+         ),
+         eligible_pages AS MATERIALIZED (
+           SELECT
+             page.manifest_id,
+             page.shard_key,
+             page.partition_version_id,
+             page.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.section_occurrence_path
+           FROM unscoped_pages AS page
+
+           UNION ALL
+
+           SELECT
+             page.manifest_id,
+             page.shard_key,
+             page.partition_version_id,
+             page.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.section_occurrence_path
+           FROM scope_pages AS page
+         ),
+         eligible_occurrences AS MATERIALIZED (
+           SELECT
+             page.manifest_id,
+             page.shard_key,
+             page.partition_version_id,
+             page.snapshot_id,
+             occurrence.page_id,
+             occurrence.page_version_id,
+             occurrence.ordinal,
+             occurrence.chunk_version_id,
+             occurrence.embedding_model,
+             occurrence.embedding_version,
+             occurrence.category
+           FROM eligible_pages AS page
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences
+             AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = page.shard_key
+            AND occurrence.shard_snapshot_id = page.snapshot_id
+            AND occurrence.page_id = page.page_id
+            AND occurrence.page_version_id = page.page_version_id
+           JOIN public.backstage_notion_page_version_chunks AS page_chunk
+             ON page_chunk.universe_id = occurrence.universe_id
+            AND page_chunk.page_version_id = occurrence.page_version_id
+            AND page_chunk.ordinal = occurrence.ordinal
+            AND page_chunk.chunk_version_id = occurrence.chunk_version_id
+           WHERE page.section_occurrence_path IS NULL
+              OR (
+                pg_catalog.jsonb_array_length(
+                  page_chunk.heading_occurrence_path
+                ) >= pg_catalog.jsonb_array_length(
+                  page.section_occurrence_path
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.jsonb_array_elements_text(
+                    page.section_occurrence_path
+                  ) WITH ORDINALITY AS section(value, position)
+                  WHERE page_chunk.heading_occurrence_path ->>
+                    (section.position::INTEGER - 1)
+                    IS DISTINCT FROM section.value
+                )
+              )
+         ),
          selection_fence AS MATERIALIZED (
            SELECT
              pinned.manifest_id,
              requested.requested_count AS selected_shard_count,
              authorized.authorized_count,
-             authorized.selected_chunk_count
+             eligible.eligible_chunk_count AS selected_chunk_count
            FROM pinned_manifest AS pinned
            CROSS JOIN (
              SELECT COUNT(*)::INTEGER AS requested_count
@@ -2748,11 +3268,52 @@ export class PostgresBackstageNotionPartitionRepository {
            CROSS JOIN (
              SELECT
                COUNT(*)::INTEGER AS authorized_count,
+               COALESCE(SUM(page_count), 0)::BIGINT AS declared_page_count,
                COALESCE(SUM(chunk_count), 0)::BIGINT AS selected_chunk_count
              FROM authorized_shards
            ) AS authorized
+           CROSS JOIN (
+             SELECT
+               (SELECT COUNT(*)::BIGINT FROM eligible_pages)
+                 AS eligible_page_count,
+               (
+                 SELECT COUNT(DISTINCT (
+                   occurrence.shard_key,
+                   occurrence.snapshot_id,
+                   occurrence.page_id
+                 ))::BIGINT
+                 FROM eligible_occurrences AS occurrence
+               ) AS retrievable_page_count,
+               (SELECT COUNT(*)::BIGINT FROM eligible_occurrences)
+                 AS eligible_chunk_count
+           ) AS eligible
+           CROSS JOIN (
+             SELECT
+               COUNT(*)::INTEGER AS scope_count,
+               MAX(expected_page_count)::INTEGER AS expected_page_count,
+               MAX(expected_chunk_count)::INTEGER AS expected_chunk_count
+             FROM requested_scope
+           ) AS scope
+           CROSS JOIN (
+             SELECT COUNT(*)::INTEGER AS anchor_count
+             FROM scope_anchor
+           ) AS anchor
            WHERE requested.requested_count = $17::INTEGER
              AND authorized.authorized_count = requested.requested_count
+             AND eligible.eligible_chunk_count > 0
+             AND (
+               (
+                 scope.scope_count = 0
+                 AND eligible.eligible_page_count = authorized.declared_page_count
+                 AND eligible.eligible_chunk_count = authorized.selected_chunk_count
+               )
+               OR (
+                 scope.scope_count = 1
+                 AND anchor.anchor_count = 1
+                 AND eligible.retrievable_page_count = scope.expected_page_count
+                 AND eligible.eligible_chunk_count = scope.expected_chunk_count
+               )
+             )
          ),
          selected_embedding_integrity AS MATERIALIZED (
            SELECT
@@ -2770,13 +3331,9 @@ export class PostgresBackstageNotionPartitionRepository {
                )
              )::INTEGER AS invalid_embedding_count
            FROM selection_fence AS fence
-           JOIN authorized_shards AS authorized ON TRUE
-           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
-             ON occurrence.universe_id = $1
-            AND occurrence.shard_key = authorized.shard_key
-            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           JOIN eligible_occurrences AS occurrence ON TRUE
            LEFT JOIN public.backstage_notion_chunk_embeddings AS embedding
-             ON embedding.universe_id = occurrence.universe_id
+             ON embedding.universe_id = $1
             AND embedding.chunk_version_id = occurrence.chunk_version_id
             AND embedding.embedding_model = $5
             AND embedding.embedding_version = $6::INTEGER
@@ -2793,25 +3350,21 @@ export class PostgresBackstageNotionPartitionRepository {
          exact_candidate_keys AS MATERIALIZED (
            SELECT
              occurrence.shard_key,
-             authorized.partition_version_id,
-             occurrence.shard_snapshot_id,
+             occurrence.partition_version_id,
+             occurrence.snapshot_id AS shard_snapshot_id,
              occurrence.page_id,
              occurrence.ordinal,
              occurrence.chunk_version_id,
              0::DOUBLE PRECISION AS lexical_hint
            FROM selection_fence AS fence
-           JOIN authorized_shards AS authorized ON TRUE
-           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
-             ON occurrence.universe_id = $1
-            AND occurrence.shard_key = authorized.shard_key
-            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           JOIN eligible_occurrences AS occurrence ON TRUE
            WHERE fence.selected_chunk_count <= $13::INTEGER
          ),
          lexical_candidate_keys AS MATERIALIZED (
            SELECT
              occurrence.shard_key,
-             authorized.partition_version_id,
-             occurrence.shard_snapshot_id,
+             occurrence.partition_version_id,
+             occurrence.snapshot_id AS shard_snapshot_id,
              occurrence.page_id,
              occurrence.ordinal,
              occurrence.chunk_version_id,
@@ -2824,13 +3377,9 @@ export class PostgresBackstageNotionPartitionRepository {
                32
              )::DOUBLE PRECISION AS lexical_hint
            FROM selection_fence AS fence
-           JOIN authorized_shards AS authorized ON TRUE
-           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
-             ON occurrence.universe_id = $1
-            AND occurrence.shard_key = authorized.shard_key
-            AND occurrence.shard_snapshot_id = authorized.snapshot_id
+           JOIN eligible_occurrences AS occurrence ON TRUE
            JOIN public.backstage_notion_chunk_versions AS chunk
-             ON chunk.universe_id = occurrence.universe_id
+             ON chunk.universe_id = $1
             AND chunk.id = occurrence.chunk_version_id
            CROSS JOIN lexical_query
            WHERE fence.selected_chunk_count > $13::INTEGER
@@ -2864,9 +3413,9 @@ export class PostgresBackstageNotionPartitionRepository {
                occurrence.ordinal,
                occurrence.chunk_version_id,
                similarity.raw_score
-             FROM public.backstage_notion_shard_snapshot_chunk_occurrences AS occurrence
+             FROM eligible_occurrences AS occurrence
              JOIN public.backstage_notion_chunk_embeddings AS embedding
-               ON embedding.universe_id = occurrence.universe_id
+               ON embedding.universe_id = $1
               AND embedding.chunk_version_id = occurrence.chunk_version_id
               AND embedding.embedding_model = occurrence.embedding_model
               AND embedding.embedding_version = occurrence.embedding_version
@@ -2881,9 +3430,8 @@ export class PostgresBackstageNotionPartitionRepository {
                FROM pg_catalog.generate_subscripts(embedding.embedding, 1)
                  AS coordinate(ordinal)
              ) AS similarity
-             WHERE occurrence.universe_id = $1
-               AND occurrence.shard_key = authorized.shard_key
-               AND occurrence.shard_snapshot_id = authorized.snapshot_id
+             WHERE occurrence.shard_key = authorized.shard_key
+               AND occurrence.snapshot_id = authorized.snapshot_id
                AND fence.selected_chunk_count > $13::INTEGER
                AND embedding.embedding_dimension = $7::INTEGER
                AND pg_catalog.cardinality(embedding.embedding) = $7::INTEGER
@@ -2933,6 +3481,8 @@ export class PostgresBackstageNotionPartitionRepository {
              candidate.shard_snapshot_id,
              candidate.page_id,
              occurrence.page_version_id,
+             page.parent_page_id,
+             page_version.content_hash AS page_content_hash,
              page.title AS page_title,
              page.scope_path AS page_path,
              page.canonical_url,
@@ -2962,6 +3512,11 @@ export class PostgresBackstageNotionPartitionRepository {
             AND page.shard_snapshot_id = occurrence.shard_snapshot_id
             AND page.page_id = occurrence.page_id
             AND page.page_version_id = occurrence.page_version_id
+           JOIN public.backstage_notion_page_versions AS page_version
+             ON page_version.universe_id = page.universe_id
+            AND page_version.id = page.page_version_id
+            AND page_version.page_id = page.page_id
+            AND page_version.state = 'sealed'
            JOIN public.backstage_notion_manifest_page_ownership AS ownership
              ON ownership.universe_id = occurrence.universe_id
             AND ownership.manifest_id = $2::UUID
@@ -3009,6 +3564,8 @@ export class PostgresBackstageNotionPartitionRepository {
              material.shard_snapshot_id,
              material.page_id,
              material.page_version_id,
+             material.parent_page_id,
+             material.page_content_hash,
              material.page_title,
              material.page_path,
              material.canonical_url,
@@ -3114,6 +3671,8 @@ export class PostgresBackstageNotionPartitionRepository {
              candidate.shard_snapshot_id,
              candidate.page_id,
              candidate.page_version_id,
+             candidate.parent_page_id,
+             candidate.page_content_hash,
              candidate.page_title,
              candidate.page_path,
              candidate.canonical_url,
@@ -3149,6 +3708,8 @@ export class PostgresBackstageNotionPartitionRepository {
              NULL::UUID AS shard_snapshot_id,
              NULL::UUID AS page_id,
              NULL::UUID AS page_version_id,
+             NULL::UUID AS parent_page_id,
+             NULL::TEXT AS page_content_hash,
              NULL::TEXT AS page_title,
              NULL::JSONB AS page_path,
              NULL::TEXT AS canonical_url,
@@ -3196,6 +3757,8 @@ export class PostgresBackstageNotionPartitionRepository {
           BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD,
           limit,
           shards.length,
+          requestedScopeJson,
+          BACKSTAGE_NOTION_PARTITION_MAX_DEPTH,
         ]
       )
     );
@@ -3314,6 +3877,7 @@ export class PostgresBackstageNotionPartitionRepository {
         || row.shard_snapshot_id === null
         || row.page_id === null
         || row.page_version_id === null
+        || row.page_content_hash === null
         || row.page_title === null
         || row.page_path === null
         || row.canonical_url === null
@@ -3353,6 +3917,13 @@ export class PostgresBackstageNotionPartitionRepository {
       const pageVersionId = normalizeUuid(
         row.page_version_id,
         `rows[${index}].page_version_id`
+      );
+      const parentPageId = row.parent_page_id === null
+        ? null
+        : normalizeUuid(row.parent_page_id, `rows[${index}].parent_page_id`);
+      const pageContentHash = normalizeSha256(
+        row.page_content_hash,
+        `rows[${index}].page_content_hash`
       );
       const ordinal = normalizeDatabaseInteger(
         row.ordinal,
@@ -3448,6 +4019,8 @@ export class PostgresBackstageNotionPartitionRepository {
         snapshotId,
         pageId,
         pageVersionId,
+        parentPageId,
+        pageContentHash,
         pageTitle,
         pagePath,
         canonicalUrl,
@@ -3526,6 +4099,802 @@ export class PostgresBackstageNotionPartitionRepository {
     });
   }
 
+  async loadManifestScopeChunkPage(
+    input: LoadBackstageNotionManifestScopeChunkPageInput
+  ): Promise<BackstageNotionManifestScopeChunkPageResolution> {
+    const universeId = normalizeUniverseId(input.universeId);
+    const manifestId = normalizeUuid(input.manifestId, 'manifestId');
+    const configurationVersionId = normalizeUuid(
+      input.configurationVersionId,
+      'configurationVersionId'
+    );
+    const configurationHash = normalizeSha256(
+      input.configurationHash,
+      'configurationHash'
+    );
+    const indexFormatVersion = normalizeInteger(
+      input.indexFormatVersion,
+      'indexFormatVersion',
+      1,
+      2_147_483_647
+    );
+    const shards = normalizeCandidateShards(input.shards);
+    const scope = normalizeExactScope(input.scope, shards);
+    const after = normalizeScopePageAfter(input.after, shards);
+    const limit = normalizeInteger(
+      input.limit,
+      'limit',
+      1,
+      BACKSTAGE_NOTION_PARTITION_SCOPE_PAGE_MAX_RESULTS
+    );
+    const requestedShardsJson = JSON.stringify(shards.map(shard => ({
+      shardKey: shard.shardKey,
+      partitionVersionId: shard.partitionVersionId,
+      snapshotId: shard.snapshotId,
+    })));
+    const requestedScopeJson = scope === null ? null : JSON.stringify({
+      shardKey: scope.shardKey,
+      partitionVersionId: scope.partitionVersionId,
+      snapshotId: scope.snapshotId,
+      pageId: scope.pageId,
+      scopeKind: scope.scopeKind,
+      sectionOccurrencePath: scope.sectionOccurrencePath,
+      expectedPageCount: scope.expectedPageCount,
+      expectedChunkCount: scope.expectedChunkCount,
+    });
+
+    const result = await withCandidateSearchTransaction(this.pool, client =>
+      client.query<ManifestScopeChunkPageRow>(
+        `WITH RECURSIVE requested_shards AS MATERIALIZED (
+           SELECT
+             request.ordinality::INTEGER AS request_ordinal,
+             request.value->>'shardKey' AS shard_key,
+             (request.value->>'partitionVersionId')::UUID AS partition_version_id,
+             (request.value->>'snapshotId')::UUID AS snapshot_id
+           FROM pg_catalog.jsonb_array_elements($6::JSONB)
+             WITH ORDINALITY AS request(value, ordinality)
+         ),
+         pinned_manifest AS MATERIALIZED (
+           SELECT
+             manifest.id AS manifest_id,
+             manifest.embedding_model,
+             manifest.embedding_version,
+             manifest.embedding_dimension,
+             manifest.index_format_version
+           FROM public.backstage_notion_universe_heads AS authority_head
+           JOIN public.backstage_notion_universe_manifests AS manifest
+             ON manifest.universe_id = authority_head.universe_id
+            AND manifest.id = $2::UUID
+            AND manifest.state = 'sealed'
+           WHERE authority_head.universe_id = $1
+             AND authority_head.authority = 'notion'
+             AND manifest.partition_configuration_version_id = $3::UUID
+             AND manifest.configuration_hash = $4
+             AND manifest.index_format_version = $5::INTEGER
+         ),
+         authorized_shards AS MATERIALIZED (
+           SELECT
+             requested.request_ordinal,
+             requested.shard_key,
+             requested.partition_version_id,
+             requested.snapshot_id,
+             snapshot.page_count,
+             snapshot.chunk_count
+           FROM pinned_manifest AS pinned
+           JOIN requested_shards AS requested ON TRUE
+           JOIN public.backstage_notion_universe_manifest_shards AS member
+             ON member.universe_id = $1
+            AND member.manifest_id = pinned.manifest_id
+            AND member.shard_key = requested.shard_key
+            AND member.partition_version_id = requested.partition_version_id
+            AND member.shard_snapshot_id = requested.snapshot_id
+           JOIN public.backstage_notion_shard_snapshots AS snapshot
+             ON snapshot.universe_id = member.universe_id
+            AND snapshot.shard_key = member.shard_key
+            AND snapshot.partition_version_id = member.partition_version_id
+            AND snapshot.id = member.shard_snapshot_id
+            AND snapshot.state = 'sealed'
+            AND snapshot.embedding_model = pinned.embedding_model
+            AND snapshot.embedding_version = pinned.embedding_version
+            AND snapshot.embedding_dimension = pinned.embedding_dimension
+            AND snapshot.index_format_version = pinned.index_format_version
+         ),
+         requested_scope AS MATERIALIZED (
+           SELECT
+             scope.value->>'shardKey' AS shard_key,
+             (scope.value->>'partitionVersionId')::UUID AS partition_version_id,
+             (scope.value->>'snapshotId')::UUID AS snapshot_id,
+             (scope.value->>'pageId')::UUID AS page_id,
+             scope.value->>'scopeKind' AS scope_kind,
+             NULLIF(
+               scope.value->'sectionOccurrencePath',
+               'null'::JSONB
+             ) AS section_occurrence_path,
+             (scope.value->>'expectedPageCount')::INTEGER AS expected_page_count,
+             (scope.value->>'expectedChunkCount')::INTEGER AS expected_chunk_count
+           FROM (SELECT $7::JSONB AS value) AS scope
+           WHERE scope.value IS NOT NULL
+         ),
+         scope_anchor AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             authorized.shard_key,
+             authorized.partition_version_id,
+             authorized.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.depth AS page_depth,
+             scope.scope_kind,
+             scope.section_occurrence_path,
+             scope.expected_page_count,
+             scope.expected_chunk_count,
+             ARRAY[page.page_id]::UUID[] AS ancestry,
+             0 AS traversal_depth
+           FROM pinned_manifest AS pinned
+           JOIN requested_scope AS scope ON TRUE
+           JOIN authorized_shards AS authorized
+             ON authorized.shard_key = scope.shard_key
+            AND authorized.partition_version_id = scope.partition_version_id
+            AND authorized.snapshot_id = scope.snapshot_id
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = $1
+            AND ownership.manifest_id = pinned.manifest_id
+            AND ownership.page_id = scope.page_id
+            AND ownership.shard_key = authorized.shard_key
+            AND ownership.shard_snapshot_id = authorized.snapshot_id
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = ownership.universe_id
+            AND page.shard_key = ownership.shard_key
+            AND page.shard_snapshot_id = ownership.shard_snapshot_id
+            AND page.page_id = ownership.page_id
+         ),
+         unscoped_pages AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             authorized.shard_key,
+             authorized.partition_version_id,
+             authorized.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             NULL::JSONB AS section_occurrence_path
+           FROM pinned_manifest AS pinned
+           JOIN authorized_shards AS authorized ON TRUE
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = $1
+            AND page.shard_key = authorized.shard_key
+            AND page.shard_snapshot_id = authorized.snapshot_id
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = page.universe_id
+            AND ownership.manifest_id = pinned.manifest_id
+            AND ownership.page_id = page.page_id
+            AND ownership.shard_key = page.shard_key
+            AND ownership.shard_snapshot_id = page.shard_snapshot_id
+           WHERE NOT EXISTS (SELECT 1 FROM requested_scope)
+         ),
+         scope_pages AS (
+           SELECT
+             anchor.manifest_id,
+             anchor.shard_key,
+             anchor.partition_version_id,
+             anchor.snapshot_id,
+             anchor.page_id,
+             anchor.page_version_id,
+             anchor.parent_page_id,
+             anchor.page_depth,
+             anchor.scope_kind,
+             anchor.section_occurrence_path,
+             anchor.expected_page_count,
+             anchor.expected_chunk_count,
+             anchor.ancestry,
+             anchor.traversal_depth
+           FROM scope_anchor AS anchor
+
+           UNION ALL
+
+           SELECT
+             parent.manifest_id,
+             parent.shard_key,
+             parent.partition_version_id,
+             parent.snapshot_id,
+             child.page_id,
+             child.page_version_id,
+             child.parent_page_id,
+             child.depth AS page_depth,
+             parent.scope_kind,
+             NULL::JSONB AS section_occurrence_path,
+             parent.expected_page_count,
+             parent.expected_chunk_count,
+             parent.ancestry || child.page_id,
+             parent.traversal_depth + 1
+           FROM scope_pages AS parent
+           JOIN public.backstage_notion_shard_snapshot_pages AS child
+             ON child.universe_id = $1
+            AND child.shard_key = parent.shard_key
+            AND child.shard_snapshot_id = parent.snapshot_id
+            AND child.parent_page_id = parent.page_id
+            AND child.depth = parent.page_depth + 1
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = child.universe_id
+            AND ownership.manifest_id = parent.manifest_id
+            AND ownership.page_id = child.page_id
+            AND ownership.shard_key = child.shard_key
+            AND ownership.shard_snapshot_id = child.shard_snapshot_id
+           WHERE parent.scope_kind = 'subtree'
+             AND parent.traversal_depth < $9::INTEGER
+             AND NOT child.page_id = ANY(parent.ancestry)
+         ),
+         eligible_pages AS MATERIALIZED (
+           SELECT * FROM unscoped_pages
+           UNION ALL
+           SELECT
+             page.manifest_id,
+             page.shard_key,
+             page.partition_version_id,
+             page.snapshot_id,
+             page.page_id,
+             page.page_version_id,
+             page.parent_page_id,
+             page.section_occurrence_path
+           FROM scope_pages AS page
+         ),
+         eligible_occurrences AS MATERIALIZED (
+           SELECT
+             page.manifest_id,
+             page.shard_key,
+             page.partition_version_id,
+             page.snapshot_id,
+             occurrence.page_id,
+             occurrence.page_version_id,
+             occurrence.ordinal,
+             occurrence.chunk_version_id,
+             occurrence.category
+           FROM eligible_pages AS page
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences
+             AS occurrence
+             ON occurrence.universe_id = $1
+            AND occurrence.shard_key = page.shard_key
+            AND occurrence.shard_snapshot_id = page.snapshot_id
+            AND occurrence.page_id = page.page_id
+            AND occurrence.page_version_id = page.page_version_id
+           JOIN public.backstage_notion_page_version_chunks AS page_chunk
+             ON page_chunk.universe_id = occurrence.universe_id
+            AND page_chunk.page_version_id = occurrence.page_version_id
+            AND page_chunk.ordinal = occurrence.ordinal
+            AND page_chunk.chunk_version_id = occurrence.chunk_version_id
+           WHERE page.section_occurrence_path IS NULL
+              OR (
+                pg_catalog.jsonb_array_length(
+                  page_chunk.heading_occurrence_path
+                ) >= pg_catalog.jsonb_array_length(
+                  page.section_occurrence_path
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.jsonb_array_elements_text(
+                    page.section_occurrence_path
+                  ) WITH ORDINALITY AS section(value, position)
+                  WHERE page_chunk.heading_occurrence_path ->>
+                    (section.position::INTEGER - 1)
+                    IS DISTINCT FROM section.value
+                )
+              )
+         ),
+         selection_fence AS MATERIALIZED (
+           SELECT
+             pinned.manifest_id,
+             requested.requested_count AS selected_shard_count,
+             CASE
+               WHEN scope.scope_count = 0 THEN authorized.declared_page_count
+               ELSE scope.expected_page_count
+             END AS scope_page_count,
+             eligible.eligible_chunk_count AS scope_chunk_count
+           FROM pinned_manifest AS pinned
+           CROSS JOIN (
+             SELECT COUNT(*)::INTEGER AS requested_count
+             FROM requested_shards
+           ) AS requested
+           CROSS JOIN (
+             SELECT
+               COUNT(*)::INTEGER AS authorized_count,
+               COALESCE(SUM(page_count), 0)::BIGINT AS declared_page_count,
+               COALESCE(SUM(chunk_count), 0)::BIGINT AS declared_chunk_count
+             FROM authorized_shards
+           ) AS authorized
+           CROSS JOIN (
+             SELECT
+               (SELECT COUNT(*)::BIGINT FROM eligible_pages)
+                 AS eligible_page_count,
+               (
+                 SELECT COUNT(DISTINCT (
+                   occurrence.shard_key,
+                   occurrence.snapshot_id,
+                   occurrence.page_id
+                 ))::BIGINT
+                 FROM eligible_occurrences AS occurrence
+               ) AS retrievable_page_count,
+               (SELECT COUNT(*)::BIGINT FROM eligible_occurrences)
+                 AS eligible_chunk_count
+           ) AS eligible
+           CROSS JOIN (
+             SELECT
+               COUNT(*)::INTEGER AS scope_count,
+               MAX(expected_page_count)::INTEGER AS expected_page_count,
+               MAX(expected_chunk_count)::INTEGER AS expected_chunk_count
+             FROM requested_scope
+           ) AS scope
+           CROSS JOIN (
+             SELECT COUNT(*)::INTEGER AS anchor_count
+             FROM scope_anchor
+           ) AS anchor
+           WHERE requested.requested_count = $8::INTEGER
+             AND authorized.authorized_count = requested.requested_count
+             AND eligible.eligible_chunk_count > 0
+             AND (
+               (
+                 scope.scope_count = 0
+                 AND eligible.eligible_page_count = authorized.declared_page_count
+                 AND eligible.eligible_chunk_count = authorized.declared_chunk_count
+               )
+               OR (
+                 scope.scope_count = 1
+                 AND anchor.anchor_count = 1
+                 AND eligible.retrievable_page_count = scope.expected_page_count
+                 AND eligible.eligible_chunk_count = scope.expected_chunk_count
+               )
+             )
+         ),
+         cursor_fence AS MATERIALIZED (
+           SELECT COUNT(*)::INTEGER AS matching_cursor_count
+           FROM eligible_occurrences AS occurrence
+           WHERE $10::TEXT IS NOT NULL
+             AND occurrence.shard_key = $10::TEXT
+             AND occurrence.page_id = $11::UUID
+             AND occurrence.ordinal = $12::INTEGER
+             AND occurrence.chunk_version_id = $13::UUID
+         ),
+         limited_keys AS MATERIALIZED (
+           SELECT
+             eligible.shard_key,
+             eligible.partition_version_id,
+             eligible.snapshot_id AS shard_snapshot_id,
+             eligible.page_id,
+             eligible.page_version_id,
+             eligible.ordinal,
+             eligible.chunk_version_id,
+             eligible.category
+           FROM selection_fence AS fence
+           CROSS JOIN cursor_fence AS cursor
+           JOIN eligible_occurrences AS eligible ON TRUE
+           WHERE (
+             ($10::TEXT IS NULL AND cursor.matching_cursor_count = 0)
+             OR ($10::TEXT IS NOT NULL AND cursor.matching_cursor_count = 1)
+           )
+             AND (
+               $10::TEXT IS NULL
+               OR ROW(
+                 eligible.shard_key COLLATE "C",
+                 eligible.page_id,
+                 eligible.ordinal,
+                 eligible.chunk_version_id
+               ) > ROW(
+                 $10::TEXT COLLATE "C",
+                 $11::UUID,
+                 $12::INTEGER,
+                 $13::UUID
+               )
+             )
+           ORDER BY
+             eligible.shard_key COLLATE "C",
+             eligible.page_id,
+             eligible.ordinal,
+             eligible.chunk_version_id
+           LIMIT $14::INTEGER
+         ),
+         page_material AS MATERIALIZED (
+           SELECT
+             key.shard_key,
+             key.partition_version_id,
+             key.shard_snapshot_id,
+             key.page_id,
+             key.page_version_id,
+             page.parent_page_id,
+             page_version.content_hash AS page_content_hash,
+             page.title AS page_title,
+             page.scope_path AS page_path,
+             page.canonical_url,
+             page.source_last_edited_at,
+             key.ordinal,
+             key.chunk_version_id,
+             chunk.content_hash,
+             chunk.content_code_points,
+             chunk.content,
+             page_chunk.heading_path,
+             page_chunk.heading_occurrence_path,
+             key.category
+           FROM limited_keys AS key
+           JOIN public.backstage_notion_shard_snapshot_pages AS page
+             ON page.universe_id = $1
+            AND page.shard_key = key.shard_key
+            AND page.shard_snapshot_id = key.shard_snapshot_id
+            AND page.page_id = key.page_id
+            AND page.page_version_id = key.page_version_id
+           JOIN public.backstage_notion_page_versions AS page_version
+             ON page_version.universe_id = page.universe_id
+            AND page_version.id = page.page_version_id
+            AND page_version.page_id = page.page_id
+            AND page_version.state = 'sealed'
+           JOIN public.backstage_notion_page_version_chunks AS page_chunk
+             ON page_chunk.universe_id = $1
+            AND page_chunk.page_version_id = key.page_version_id
+            AND page_chunk.ordinal = key.ordinal
+            AND page_chunk.chunk_version_id = key.chunk_version_id
+           JOIN public.backstage_notion_chunk_versions AS chunk
+             ON chunk.universe_id = $1
+            AND chunk.id = key.chunk_version_id
+         ),
+         page_rows AS MATERIALIZED (
+           SELECT
+             'chunk'::TEXT AS record_kind,
+             fence.manifest_id,
+             fence.selected_shard_count,
+             fence.scope_page_count,
+             fence.scope_chunk_count,
+             chunk.shard_key,
+             chunk.partition_version_id,
+             chunk.shard_snapshot_id,
+             chunk.page_id,
+             chunk.page_version_id,
+             chunk.parent_page_id,
+             chunk.page_content_hash,
+             chunk.page_title,
+             chunk.page_path,
+             chunk.canonical_url,
+             chunk.source_last_edited_at,
+             chunk.ordinal,
+             chunk.chunk_version_id,
+             chunk.content_hash,
+             chunk.content_code_points,
+             chunk.content,
+             chunk.heading_path,
+             chunk.heading_occurrence_path,
+             chunk.category
+           FROM selection_fence AS fence
+           JOIN page_material AS chunk ON TRUE
+
+           UNION ALL
+
+           SELECT
+             'header'::TEXT AS record_kind,
+             fence.manifest_id,
+             fence.selected_shard_count,
+             fence.scope_page_count,
+             fence.scope_chunk_count,
+             NULL::TEXT AS shard_key,
+             NULL::UUID AS partition_version_id,
+             NULL::UUID AS shard_snapshot_id,
+             NULL::UUID AS page_id,
+             NULL::UUID AS page_version_id,
+             NULL::UUID AS parent_page_id,
+             NULL::TEXT AS page_content_hash,
+             NULL::TEXT AS page_title,
+             NULL::JSONB AS page_path,
+             NULL::TEXT AS canonical_url,
+             NULL::TIMESTAMPTZ AS source_last_edited_at,
+             NULL::INTEGER AS ordinal,
+             NULL::UUID AS chunk_version_id,
+             NULL::TEXT AS content_hash,
+             NULL::INTEGER AS content_code_points,
+             NULL::TEXT AS content,
+             NULL::JSONB AS heading_path,
+             NULL::JSONB AS heading_occurrence_path,
+             NULL::TEXT AS category
+           FROM selection_fence AS fence
+           CROSS JOIN cursor_fence AS cursor
+           WHERE NOT EXISTS (SELECT 1 FROM page_material)
+             AND (
+               ($10::TEXT IS NULL AND cursor.matching_cursor_count = 0)
+               OR ($10::TEXT IS NOT NULL AND cursor.matching_cursor_count = 1)
+             )
+         )
+         SELECT *
+         FROM page_rows
+         ORDER BY
+           record_kind,
+           shard_key COLLATE "C" NULLS LAST,
+           page_id NULLS LAST,
+           ordinal NULLS LAST,
+           chunk_version_id NULLS LAST`,
+        [
+          universeId,
+          manifestId,
+          configurationVersionId,
+          configurationHash,
+          indexFormatVersion,
+          requestedShardsJson,
+          requestedScopeJson,
+          shards.length,
+          BACKSTAGE_NOTION_PARTITION_MAX_DEPTH,
+          after?.shardKey ?? null,
+          after?.pageId ?? null,
+          after?.ordinal ?? null,
+          after?.chunkVersionId ?? null,
+          limit + 1,
+        ]
+      )
+    );
+
+    if (result.rows.length === 0) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const first = result.rows[0]!;
+    if (normalizeUuid(first.manifest_id, 'manifest_id') !== manifestId) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const selectedShardCount = normalizeDatabaseInteger(
+      first.selected_shard_count,
+      'selected_shard_count',
+      1
+    );
+    const scopePageCount = normalizeDatabaseInteger(
+      first.scope_page_count,
+      'scope_page_count',
+      1
+    );
+    const scopeChunkCount = normalizeDatabaseInteger(
+      first.scope_chunk_count,
+      'scope_chunk_count',
+      1
+    );
+    if (
+      selectedShardCount !== shards.length
+      || scopePageCount > shards.length * BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+      || scopeChunkCount > shards.length * BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+      || (scope !== null && (
+        scopePageCount !== scope.expectedPageCount
+        || scopeChunkCount !== scope.expectedChunkCount
+      ))
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    for (const [index, row] of result.rows.entries()) {
+      if (
+        normalizeUuid(row.manifest_id, `rows[${index}].manifest_id`) !== manifestId
+        || normalizeDatabaseInteger(
+          row.selected_shard_count,
+          `rows[${index}].selected_shard_count`,
+          1
+        ) !== selectedShardCount
+        || normalizeDatabaseInteger(
+          row.scope_page_count,
+          `rows[${index}].scope_page_count`,
+          1
+        ) !== scopePageCount
+        || normalizeDatabaseInteger(
+          row.scope_chunk_count,
+          `rows[${index}].scope_chunk_count`,
+          1
+        ) !== scopeChunkCount
+      ) {
+        return Object.freeze({ status: 'invalid' as const });
+      }
+    }
+    const chunkRows = result.rows.filter(row => row.record_kind === 'chunk');
+    const headerRows = result.rows.filter(row => row.record_kind === 'header');
+    if (
+      chunkRows.length > limit + 1
+      || (chunkRows.length === 0 ? headerRows.length !== 1 : headerRows.length !== 0)
+      || result.rows.length !== chunkRows.length + headerRows.length
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    const hasMore = chunkRows.length > limit;
+    if (
+      chunkRows.length > scopeChunkCount
+      || (
+        after === null
+        && chunkRows.length !== Math.min(scopeChunkCount, limit + 1)
+      )
+    ) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    for (const [index, header] of headerRows.entries()) {
+      if (
+        header.shard_key !== null
+        || header.partition_version_id !== null
+        || header.shard_snapshot_id !== null
+        || header.page_id !== null
+        || header.page_version_id !== null
+        || header.parent_page_id !== null
+        || header.page_content_hash !== null
+        || header.page_title !== null
+        || header.page_path !== null
+        || header.canonical_url !== null
+        || header.source_last_edited_at !== null
+        || header.ordinal !== null
+        || header.chunk_version_id !== null
+        || header.content_hash !== null
+        || header.content_code_points !== null
+        || header.content !== null
+        || header.heading_path !== null
+        || header.heading_occurrence_path !== null
+        || header.category !== null
+      ) {
+        throw new Error(`scope page header ${index} contains chunk material.`);
+      }
+    }
+    const requestedShardByKey = new Map(shards.map(shard => [shard.shardKey, shard]));
+    const seen = new Set<string>();
+    const allChunks = chunkRows.map((row, index) => {
+      if (
+        row.shard_key === null
+        || row.partition_version_id === null
+        || row.shard_snapshot_id === null
+        || row.page_id === null
+        || row.page_version_id === null
+        || row.page_content_hash === null
+        || row.page_title === null
+        || row.page_path === null
+        || row.canonical_url === null
+        || row.source_last_edited_at === null
+        || row.ordinal === null
+        || row.chunk_version_id === null
+        || row.content_hash === null
+        || row.content_code_points === null
+        || row.content === null
+        || row.heading_path === null
+        || row.heading_occurrence_path === null
+        || row.category === null
+      ) {
+        throw new Error(`scope chunk row ${index} is incomplete.`);
+      }
+      const shardKey = normalizeShardKey(row.shard_key);
+      const partitionVersionId = normalizeUuid(
+        row.partition_version_id,
+        `rows[${index}].partition_version_id`
+      );
+      const snapshotId = normalizeUuid(
+        row.shard_snapshot_id,
+        `rows[${index}].shard_snapshot_id`
+      );
+      const requestedShard = requestedShardByKey.get(shardKey);
+      if (
+        !requestedShard
+        || requestedShard.partitionVersionId !== partitionVersionId
+        || requestedShard.snapshotId !== snapshotId
+      ) {
+        throw new Error(`scope chunk row ${index} is outside the requested shards.`);
+      }
+      const pageId = normalizeUuid(row.page_id, `rows[${index}].page_id`);
+      const pageVersionId = normalizeUuid(
+        row.page_version_id,
+        `rows[${index}].page_version_id`
+      );
+      const parentPageId = row.parent_page_id === null
+        ? null
+        : normalizeUuid(row.parent_page_id, `rows[${index}].parent_page_id`);
+      const pageContentHash = normalizeSha256(
+        row.page_content_hash,
+        `rows[${index}].page_content_hash`
+      );
+      const ordinal = normalizeDatabaseInteger(row.ordinal, `rows[${index}].ordinal`);
+      if (ordinal >= BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS) {
+        throw new Error(`scope chunk row ${index} has an invalid ordinal.`);
+      }
+      const chunkVersionId = normalizeUuid(
+        row.chunk_version_id,
+        `rows[${index}].chunk_version_id`
+      );
+      const identity = `${shardKey}:${snapshotId}:${pageId}:${ordinal}`;
+      if (seen.has(identity)) {
+        throw new Error('scope chunk result contains a duplicate occurrence.');
+      }
+      seen.add(identity);
+      const pageTitle = normalizeRequiredText(
+        row.page_title,
+        `rows[${index}].page_title`,
+        500
+      );
+      const pagePath = normalizeStringArray(
+        parseJsonStringArray(row.page_path),
+        `rows[${index}].page_path`,
+        BACKSTAGE_NOTION_PARTITION_MAX_DEPTH + 1,
+        500
+      );
+      if (pagePath.length < 1 || pagePath.at(-1) !== pageTitle) {
+        throw new Error(`scope chunk row ${index} has invalid page provenance.`);
+      }
+      const content = row.content;
+      const contentCodePoints = normalizeDatabaseInteger(
+        row.content_code_points,
+        `rows[${index}].content_code_points`,
+        1
+      );
+      if (contentCodePoints > 20_000 || codePointLength(content) !== contentCodePoints) {
+        throw new Error(`scope chunk row ${index} has invalid content bounds.`);
+      }
+      const contentHash = normalizeSha256(
+        row.content_hash,
+        `rows[${index}].content_hash`
+      );
+      if (contentHash !== sha256(content)) {
+        throw new Error(`scope chunk row ${index} has invalid content provenance.`);
+      }
+      const headingPath = normalizeStringArray(
+        parseJsonStringArray(row.heading_path),
+        `rows[${index}].heading_path`,
+        32,
+        500
+      );
+      const headingOccurrencePath = normalizeHeadingOccurrencePath(
+        parseJsonIntegerArray(row.heading_occurrence_path),
+        `rows[${index}].heading_occurrence_path`,
+        headingPath.length
+      );
+      if (!BACKSTAGE_NOTION_RAG_CATEGORIES.has(row.category as BackstageNotionRagCategory)) {
+        throw new Error(`scope chunk row ${index} has an invalid category.`);
+      }
+      return Object.freeze({
+        shardKey,
+        partitionVersionId,
+        snapshotId,
+        pageId,
+        pageVersionId,
+        parentPageId,
+        pageContentHash,
+        pageTitle,
+        pagePath,
+        canonicalUrl: normalizeRequiredText(
+          row.canonical_url,
+          `rows[${index}].canonical_url`,
+          2_048
+        ),
+        sourceLastEditedAt: parseDate(
+          row.source_last_edited_at,
+          `rows[${index}].source_last_edited_at`
+        ),
+        ordinal,
+        chunkVersionId,
+        contentHash,
+        contentCodePoints,
+        content,
+        headingPath,
+        headingOccurrencePath,
+        category: row.category as BackstageNotionRagCategory,
+      });
+    });
+    const compareChunkKeys = (
+      left: Pick<BackstageNotionManifestScopeChunk, 'shardKey' | 'pageId' | 'ordinal' | 'chunkVersionId'>,
+      right: Pick<BackstageNotionManifestScopeChunk, 'shardKey' | 'pageId' | 'ordinal' | 'chunkVersionId'>
+    ): number => compareText(left.shardKey, right.shardKey)
+      || compareText(left.pageId, right.pageId)
+      || left.ordinal - right.ordinal
+      || compareText(left.chunkVersionId, right.chunkVersionId);
+    for (let index = 1; index < allChunks.length; index += 1) {
+      if (compareChunkKeys(allChunks[index - 1]!, allChunks[index]!) >= 0) {
+        throw new Error('scope chunk result order is not deterministic.');
+      }
+    }
+    if (
+      after !== null
+      && allChunks[0]
+      && compareChunkKeys(after, allChunks[0]) >= 0
+    ) {
+      throw new Error('scope chunk result did not advance beyond its keyset cursor.');
+    }
+    const chunks = hasMore ? allChunks.slice(0, limit) : allChunks;
+    return Object.freeze({
+      status: 'ready' as const,
+      manifestId,
+      selectedShardCount,
+      scopePageCount,
+      scopeChunkCount,
+      hasMore,
+      chunks: Object.freeze(chunks),
+    });
+  }
+
   async resolveManifestScopeOwner(
     universeId: string,
     manifestId: string,
@@ -3552,6 +4921,24 @@ export class PostgresBackstageNotionPartitionRepository {
         'lookup.pagePathKey',
         lookup.pagePathKey.length
       );
+    }
+    let sectionPathKey: readonly string[] | null = null;
+    if (lookup.sectionPathKey !== null && lookup.sectionPathKey !== undefined) {
+      if (
+        !Array.isArray(lookup.sectionPathKey)
+        || lookup.sectionPathKey.length < 1
+        || lookup.sectionPathKey.length > 32
+      ) {
+        throw new Error('lookup.sectionPathKey is invalid.');
+      }
+      sectionPathKey = normalizeScopeKeyArray(
+        lookup.sectionPathKey,
+        'lookup.sectionPathKey',
+        lookup.sectionPathKey.length
+      );
+    }
+    if (lookup.scopeKind === 'subtree' && sectionPathKey !== null) {
+      throw new Error('lookup.sectionPathKey is unsupported for subtree scope.');
     }
 
     const result = await this.pool.query<ManifestScopeOwnerRow>(
@@ -3688,6 +5075,8 @@ export class PostgresBackstageNotionPartitionRepository {
          resolved.page_id,
          resolved.page_title,
          resolved.scope_path,
+         NULL::JSONB AS section_path,
+         NULL::JSONB AS section_occurrence_path,
          resolved.scope_chunk_count,
          resolved.scope_page_count
        FROM resolved_candidates AS resolved
@@ -3702,6 +5091,8 @@ export class PostgresBackstageNotionPartitionRepository {
          NULL::UUID AS page_id,
          NULL::TEXT AS page_title,
          NULL::JSONB AS scope_path,
+         NULL::JSONB AS section_path,
+         NULL::JSONB AS section_occurrence_path,
          NULL::BIGINT AS scope_chunk_count,
          NULL::BIGINT AS scope_page_count
        FROM pinned_manifest AS pinned
@@ -3790,18 +5181,177 @@ export class PostgresBackstageNotionPartitionRepository {
     ) {
       return Object.freeze({ status: 'invalid' as const });
     }
+    const resolvedManifestId = normalizeUuid(row.manifest_id, 'manifest_id');
+    const shardKey = normalizeShardKey(row.shard_key);
+    const partitionVersionId = normalizeUuid(
+      row.partition_version_id,
+      'partition_version_id'
+    );
+    const snapshotId = normalizeUuid(row.shard_snapshot_id, 'shard_snapshot_id');
+    const pageId = normalizeUuid(row.page_id, 'page_id');
+    if (resolvedManifestId !== normalizedManifestId) {
+      return Object.freeze({ status: 'invalid' as const });
+    }
+    if (sectionPathKey !== null) {
+      const sectionResult = await this.pool.query<ManifestSectionScopeRow>(
+        `WITH pinned_manifest AS MATERIALIZED (
+           SELECT manifest.id AS manifest_id
+           FROM public.backstage_notion_universe_heads AS authority_head
+           JOIN public.backstage_notion_universe_manifests AS manifest
+             ON manifest.universe_id = authority_head.universe_id
+            AND manifest.id = $2::UUID
+            AND manifest.state = 'sealed'
+           WHERE authority_head.universe_id = $1
+             AND authority_head.authority = 'notion'
+         ),
+         matching_chunks AS MATERIALIZED (
+           SELECT
+             occurrence.ordinal,
+             occurrence.chunk_version_id,
+             pg_catalog.to_jsonb(ARRAY(
+               SELECT (
+                 page_chunk.heading_occurrence_path
+                   ->> requested_position.position
+               )::INTEGER
+               FROM pg_catalog.generate_series(
+                 0,
+                 pg_catalog.cardinality($7::TEXT[]) - 1
+               ) AS requested_position(position)
+               ORDER BY requested_position.position
+             )) AS section_occurrence_path,
+             pg_catalog.to_jsonb(ARRAY(
+               SELECT page_chunk.heading_path ->> requested_position.position
+               FROM pg_catalog.generate_series(
+                 0,
+                 pg_catalog.cardinality($7::TEXT[]) - 1
+               ) AS requested_position(position)
+               ORDER BY requested_position.position
+             )) AS section_path
+           FROM pinned_manifest AS pinned
+           JOIN public.backstage_notion_universe_manifest_shards AS member
+             ON member.universe_id = $1
+            AND member.manifest_id = pinned.manifest_id
+            AND member.shard_key = $3
+            AND member.partition_version_id = $4::UUID
+            AND member.shard_snapshot_id = $5::UUID
+           JOIN public.backstage_notion_manifest_page_ownership AS ownership
+             ON ownership.universe_id = member.universe_id
+            AND ownership.manifest_id = member.manifest_id
+            AND ownership.page_id = $6::UUID
+            AND ownership.shard_key = member.shard_key
+            AND ownership.shard_snapshot_id = member.shard_snapshot_id
+           JOIN public.backstage_notion_shard_snapshot_chunk_occurrences
+             AS occurrence
+             ON occurrence.universe_id = ownership.universe_id
+            AND occurrence.shard_key = ownership.shard_key
+            AND occurrence.shard_snapshot_id = ownership.shard_snapshot_id
+            AND occurrence.page_id = ownership.page_id
+           JOIN public.backstage_notion_page_version_chunks AS page_chunk
+             ON page_chunk.universe_id = occurrence.universe_id
+            AND page_chunk.page_version_id = occurrence.page_version_id
+            AND page_chunk.ordinal = occurrence.ordinal
+            AND page_chunk.chunk_version_id = occurrence.chunk_version_id
+           WHERE pg_catalog.jsonb_array_length(
+             page_chunk.scope_heading_path_key
+           ) >= pg_catalog.cardinality($7::TEXT[])
+             AND NOT EXISTS (
+               SELECT 1
+               FROM pg_catalog.unnest($7::TEXT[]) WITH ORDINALITY
+                 AS requested_scope_key(value, position)
+               WHERE (
+                 page_chunk.scope_heading_path_key
+                   ->> (requested_scope_key.position - 1)::INTEGER
+               ) COLLATE "C" IS DISTINCT FROM
+                 requested_scope_key.value COLLATE "C"
+             )
+         ),
+         ranked_matches AS MATERIALIZED (
+           SELECT
+             matching.*,
+             COUNT(*) OVER (
+               PARTITION BY matching.section_occurrence_path
+             ) AS scope_chunk_count,
+             ROW_NUMBER() OVER (
+               PARTITION BY matching.section_occurrence_path
+               ORDER BY matching.ordinal, matching.chunk_version_id
+             ) AS representative_rank
+           FROM matching_chunks AS matching
+         )
+         SELECT
+           ranked.section_occurrence_path,
+           ranked.section_path,
+           ranked.scope_chunk_count
+         FROM ranked_matches AS ranked
+         WHERE ranked.representative_rank = 1
+         ORDER BY ranked.section_occurrence_path::TEXT COLLATE "C"
+         LIMIT 2`,
+        [
+          normalizedUniverseId,
+          normalizedManifestId,
+          shardKey,
+          partitionVersionId,
+          snapshotId,
+          pageId,
+          sectionPathKey,
+        ]
+      );
+      if (sectionResult.rows.length === 0) {
+        return Object.freeze({ status: 'not_found' as const });
+      }
+      if (sectionResult.rows.length > 1) {
+        return Object.freeze({ status: 'ambiguous' as const });
+      }
+      const section = sectionResult.rows[0]!;
+      const sectionPath = normalizeStringArray(
+        parseJsonStringArray(section.section_path),
+        'section_path',
+        sectionPathKey.length,
+        500
+      );
+      const sectionOccurrencePath = normalizeHeadingOccurrencePath(
+        parseJsonIntegerArray(section.section_occurrence_path),
+        'section_occurrence_path',
+        sectionPathKey.length
+      );
+      const sectionChunkCount = normalizeDatabaseInteger(
+        section.scope_chunk_count,
+        'section_scope_chunk_count',
+        1
+      );
+      if (
+        sectionPath.length !== sectionPathKey.length
+        || !arraysEqual(normalizeBackstageNotionScopePath(sectionPath), sectionPathKey)
+        || sectionChunkCount > scopeChunkCount
+      ) {
+        return Object.freeze({ status: 'invalid' as const });
+      }
+      return Object.freeze({
+        status: 'resolved' as const,
+        manifestId: resolvedManifestId,
+        shardKey,
+        partitionVersionId,
+        snapshotId,
+        pageId,
+        pageTitle,
+        pagePath,
+        sectionPath,
+        sectionOccurrencePath,
+        scopeKind: 'page' as const,
+        scopeChunkCount: sectionChunkCount,
+        scopePageCount: 1,
+      });
+    }
     return Object.freeze({
       status: 'resolved' as const,
-      manifestId: normalizeUuid(row.manifest_id, 'manifest_id'),
-      shardKey: normalizeShardKey(row.shard_key),
-      partitionVersionId: normalizeUuid(
-        row.partition_version_id,
-        'partition_version_id'
-      ),
-      snapshotId: normalizeUuid(row.shard_snapshot_id, 'shard_snapshot_id'),
-      pageId: normalizeUuid(row.page_id, 'page_id'),
+      manifestId: resolvedManifestId,
+      shardKey,
+      partitionVersionId,
+      snapshotId,
+      pageId,
       pageTitle,
       pagePath,
+      sectionPath: null,
+      sectionOccurrencePath: null,
       scopeKind: lookup.scopeKind,
       scopeChunkCount,
       scopePageCount,

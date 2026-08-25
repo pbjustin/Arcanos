@@ -35,7 +35,9 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 type PartitionRoutingRepository = Pick<
   PostgresBackstageNotionPartitionRepository,
-  'loadActiveManifestRoutingState' | 'resolveManifestScopeOwner'
+  | 'loadActiveManifestRoutingState'
+  | 'loadManifestRoutingState'
+  | 'resolveManifestScopeOwner'
 >;
 
 export interface BackstageNotionPartitionRoutingDependencies {
@@ -105,19 +107,25 @@ function normalizeScopeLookup(
   ) {
     throw new Error('lookup must be a plain closed object.');
   }
-  const expectedKeys = new Set(['pageTitleKey', 'pagePathKey', 'scopeKind']);
+  const requiredKeys = new Set(['pageTitleKey', 'pagePathKey', 'scopeKind']);
+  const allowedKeys = new Set([...requiredKeys, 'sectionPathKey']);
   const actualKeys = Reflect.ownKeys(value);
   if (
-    actualKeys.length !== expectedKeys.size
+    actualKeys.length < requiredKeys.size
+    || actualKeys.length > allowedKeys.size
     || actualKeys.some(key => (
       typeof key !== 'string'
-      || !expectedKeys.has(key)
+      || !allowedKeys.has(key)
     ))
+    || [...requiredKeys].some(key => !actualKeys.includes(key))
   ) {
     throw new Error('lookup contains missing or unknown fields.');
   }
   const record: Record<string, unknown> = {};
-  for (const key of expectedKeys) {
+  for (const key of actualKeys) {
+    if (typeof key !== 'string') {
+      throw new Error('lookup contains missing or unknown fields.');
+    }
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
       throw new Error(`lookup.${key} must be an inert data property.`);
@@ -133,44 +141,60 @@ function normalizeScopeLookup(
   if (record.scopeKind !== 'page' && record.scopeKind !== 'subtree') {
     throw new Error('lookup.scopeKind is invalid.');
   }
-  if (record.pagePathKey === null) {
-    return Object.freeze({
-      pageTitleKey: record.pageTitleKey,
-      pagePathKey: null,
-      scopeKind: record.scopeKind,
-    });
-  }
-  if (
-    !Array.isArray(record.pagePathKey)
-    || Object.getPrototypeOf(record.pagePathKey) !== Array.prototype
-    || record.pagePathKey.length < 1
-    || record.pagePathKey.length
-      > BACKSTAGE_NOTION_PARTITION_SCOPE_LOOKUP_MAX_PATH_SEGMENTS
-  ) {
-    throw new Error('lookup.pagePathKey exceeds its bounded array contract.');
-  }
-  const allowedKeys = new Set<PropertyKey>(['length']);
-  const pagePathKey: string[] = [];
-  for (let index = 0; index < record.pagePathKey.length; index += 1) {
-    allowedKeys.add(String(index));
-    const descriptor = Object.getOwnPropertyDescriptor(
-      record.pagePathKey,
-      String(index)
-    );
-    if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
-      throw new Error(`lookup.pagePathKey[${index}] must be an inert data property.`);
+  const normalizePath = (
+    path: unknown,
+    label: 'pagePathKey' | 'sectionPathKey',
+    maximumSegments: number
+  ): readonly string[] | null => {
+    if (path === null) {
+      return null;
     }
-    if (typeof descriptor.value !== 'string' || !SHA256_PATTERN.test(descriptor.value)) {
-      throw new Error(`lookup.pagePathKey[${index}] is invalid.`);
+    if (
+      !Array.isArray(path)
+      || Object.getPrototypeOf(path) !== Array.prototype
+      || path.length < 1
+      || path.length > maximumSegments
+    ) {
+      throw new Error(`lookup.${label} exceeds its bounded array contract.`);
     }
-    pagePathKey.push(descriptor.value);
-  }
-  if (Reflect.ownKeys(record.pagePathKey).some(key => !allowedKeys.has(key))) {
-    throw new Error('lookup.pagePathKey contains unknown array fields.');
+    const arrayKeys = new Set<PropertyKey>(['length']);
+    const normalized: string[] = [];
+    for (let index = 0; index < path.length; index += 1) {
+      arrayKeys.add(String(index));
+      const descriptor = Object.getOwnPropertyDescriptor(path, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        throw new Error(`lookup.${label}[${index}] must be an inert data property.`);
+      }
+      if (
+        typeof descriptor.value !== 'string'
+        || !SHA256_PATTERN.test(descriptor.value)
+      ) {
+        throw new Error(`lookup.${label}[${index}] is invalid.`);
+      }
+      normalized.push(descriptor.value);
+    }
+    if (Reflect.ownKeys(path).some(key => !arrayKeys.has(key))) {
+      throw new Error(`lookup.${label} contains unknown array fields.`);
+    }
+    return Object.freeze(normalized);
+  };
+  const pagePathKey = normalizePath(
+    record.pagePathKey,
+    'pagePathKey',
+    BACKSTAGE_NOTION_PARTITION_SCOPE_LOOKUP_MAX_PATH_SEGMENTS
+  );
+  const sectionPathSupplied = Object.hasOwn(record, 'sectionPathKey');
+  const sectionPathKey = sectionPathSupplied
+    ? normalizePath(record.sectionPathKey, 'sectionPathKey', 32)
+    : undefined;
+  if (record.scopeKind === 'subtree' && sectionPathKey !== undefined
+    && sectionPathKey !== null) {
+    throw new Error('lookup.sectionPathKey is unsupported for subtree scope.');
   }
   return Object.freeze({
     pageTitleKey: record.pageTitleKey,
-    pagePathKey: Object.freeze(pagePathKey),
+    pagePathKey,
+    ...(sectionPathSupplied ? { sectionPathKey: sectionPathKey ?? null } : {}),
     scopeKind: record.scopeKind,
   });
 }
@@ -276,6 +300,28 @@ async function loadRoutingState(
   }
 }
 
+async function loadPinnedRoutingState(
+  universeId: string,
+  manifestId: string,
+  repository: PartitionRoutingRepository
+): Promise<BackstageNotionActiveManifestRoutingState> {
+  try {
+    const state = await repository.loadManifestRoutingState(
+      universeId,
+      manifestId
+    );
+    if (!state || state.manifestId !== manifestId) {
+      throw new BackstageNotionPartitionRoutingUnavailableError();
+    }
+    return state;
+  } catch (error) {
+    if (error instanceof BackstageNotionPartitionRoutingUnavailableError) {
+      throw error;
+    }
+    throw new BackstageNotionPartitionRoutingUnavailableError();
+  }
+}
+
 function dependencies(
   overrides: BackstageNotionPartitionRoutingDependencies
 ): {
@@ -321,6 +367,71 @@ async function requireExactAuthority(
   }
 }
 
+function resolveRequestFromState(
+  state: BackstageNotionActiveManifestRoutingState,
+  intent: BackstageNotionPartitionRoutingIntent,
+  now: Date,
+  stalenessMs: number
+): BackstageNotionPartitionRoutingResolution {
+  let resolution: BackstageNotionPartitionRoutingResolution;
+  try {
+    resolution = resolveBackstageNotionPartitionRouting(
+      routingCoreState(state),
+      intent
+    );
+  } catch {
+    throw new BackstageNotionPartitionRoutingUnavailableError();
+  }
+  validateSelectedFreshness(state, resolution, now, stalenessMs);
+  return resolution;
+}
+
+async function resolveScopeFromState(
+  universeId: string,
+  state: BackstageNotionActiveManifestRoutingState,
+  lookup: BackstageNotionManifestScopeOwnerLookup,
+  repository: PartitionRoutingRepository,
+  now: Date,
+  stalenessMs: number
+): Promise<BackstageNotionPartitionScopeRoutingResolution> {
+  let owner: BackstageNotionManifestScopeOwnerResolution;
+  try {
+    owner = await repository.resolveManifestScopeOwner(
+      universeId,
+      state.manifestId,
+      lookup
+    );
+  } catch {
+    throw new BackstageNotionPartitionRoutingUnavailableError();
+  }
+  if (owner.status === 'invalid') {
+    throw new BackstageNotionPartitionRoutingUnavailableError();
+  }
+  if (owner.status !== 'resolved') {
+    return Object.freeze({ status: owner.status });
+  }
+  const routing = resolveRequestFromState(
+    state,
+    {
+      kind: 'resolved_scope',
+      cardinality: 'exactly_one',
+      shardKey: owner.shardKey,
+    },
+    now,
+    stalenessMs
+  );
+  if (
+    routing.status !== 'resolved'
+    || owner.manifestId !== state.manifestId
+    || routing.shards.length !== 1
+    || routing.shards[0]?.partitionVersionId !== owner.partitionVersionId
+    || routing.shards[0]?.snapshotId !== owner.snapshotId
+  ) {
+    throw new BackstageNotionPartitionRoutingUnavailableError();
+  }
+  return Object.freeze({ status: 'resolved', owner, routing });
+}
+
 /**
  * Resolve one closed server-derived intent against the exact active immutable
  * manifest. Only selected members participate in freshness admission.
@@ -340,22 +451,38 @@ export async function resolveBackstageNotionPartitionRequest(
     universeId,
     resolvedDependencies.repository
   );
-  let resolution: BackstageNotionPartitionRoutingResolution;
-  try {
-    resolution = resolveBackstageNotionPartitionRouting(
-      routingCoreState(state),
-      intent
-    );
-  } catch {
-    throw new BackstageNotionPartitionRoutingUnavailableError();
-  }
-  validateSelectedFreshness(
+  return resolveRequestFromState(
     state,
-    resolution,
+    intent,
     resolvedDependencies.now,
     resolvedDependencies.maximumStalenessMs
   );
-  return resolution;
+}
+
+/** Resolve a closed intent against one exact sealed immutable manifest. */
+export async function resolveBackstageNotionPartitionPinnedRequest(
+  universeId: string,
+  manifestId: string,
+  intentInput: unknown,
+  overrides: BackstageNotionPartitionRoutingDependencies = {}
+): Promise<BackstageNotionPartitionRoutingResolution> {
+  const intent = normalizeBackstageNotionPartitionRoutingIntent(intentInput);
+  const resolvedDependencies = dependencies(overrides);
+  await requireExactAuthority(
+    universeId,
+    resolvedDependencies.resolveAuthorityRoot
+  );
+  const state = await loadPinnedRoutingState(
+    universeId,
+    manifestId,
+    resolvedDependencies.repository
+  );
+  return resolveRequestFromState(
+    state,
+    intent,
+    resolvedDependencies.now,
+    resolvedDependencies.maximumStalenessMs
+  );
 }
 
 /** Resolve an exact page/subtree owner before selecting its one manifest shard. */
@@ -374,44 +501,40 @@ export async function resolveBackstageNotionPartitionScopeRequest(
     universeId,
     resolvedDependencies.repository
   );
-  let owner: BackstageNotionManifestScopeOwnerResolution;
-  try {
-    owner = await resolvedDependencies.repository.resolveManifestScopeOwner(
-      universeId,
-      state.manifestId,
-      lookup
-    );
-  } catch {
-    throw new BackstageNotionPartitionRoutingUnavailableError();
-  }
-  if (owner.status === 'invalid') {
-    throw new BackstageNotionPartitionRoutingUnavailableError();
-  }
-  if (owner.status !== 'resolved') {
-    return Object.freeze({ status: owner.status });
-  }
-  const routing = resolveBackstageNotionPartitionRouting(
-    routingCoreState(state),
-    {
-      kind: 'resolved_scope',
-      cardinality: 'exactly_one',
-      shardKey: owner.shardKey,
-    } satisfies BackstageNotionPartitionRoutingIntent
-  );
-  if (
-    routing.status !== 'resolved'
-    || owner.manifestId !== state.manifestId
-    || routing.shards.length !== 1
-    || routing.shards[0]?.partitionVersionId !== owner.partitionVersionId
-    || routing.shards[0]?.snapshotId !== owner.snapshotId
-  ) {
-    throw new BackstageNotionPartitionRoutingUnavailableError();
-  }
-  validateSelectedFreshness(
+  return resolveScopeFromState(
+    universeId,
     state,
-    routing,
+    lookup,
+    resolvedDependencies.repository,
     resolvedDependencies.now,
     resolvedDependencies.maximumStalenessMs
   );
-  return Object.freeze({ status: 'resolved', owner, routing });
+}
+
+/** Resolve an exact scope owner against one sealed immutable manifest. */
+export async function resolveBackstageNotionPartitionPinnedScopeRequest(
+  universeId: string,
+  manifestId: string,
+  lookupInput: unknown,
+  overrides: BackstageNotionPartitionRoutingDependencies = {}
+): Promise<BackstageNotionPartitionScopeRoutingResolution> {
+  const lookup = normalizeScopeLookup(lookupInput);
+  const resolvedDependencies = dependencies(overrides);
+  await requireExactAuthority(
+    universeId,
+    resolvedDependencies.resolveAuthorityRoot
+  );
+  const state = await loadPinnedRoutingState(
+    universeId,
+    manifestId,
+    resolvedDependencies.repository
+  );
+  return resolveScopeFromState(
+    universeId,
+    state,
+    lookup,
+    resolvedDependencies.repository,
+    resolvedDependencies.now,
+    resolvedDependencies.maximumStalenessMs
+  );
 }

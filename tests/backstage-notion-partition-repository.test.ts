@@ -1010,6 +1010,8 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       pageId: ROOT_PAGE_ID,
       pageTitle: ROOT_TITLE,
       pagePath: [ROOT_TITLE],
+      sectionPath: null,
+      sectionOccurrencePath: null,
       scopeKind: 'subtree',
       scopeChunkCount: 3,
       scopePageCount: 2,
