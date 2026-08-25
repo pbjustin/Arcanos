@@ -9,6 +9,8 @@ const transcriptionsCreateMock = jest.fn();
 const openAIConstructorMock = jest.fn();
 
 let createOpenAIAdapter: typeof import('../src/core/adapters/openai.adapter.js').createOpenAIAdapter;
+let createEmbeddings: typeof import('../src/services/openai/embeddings.js').createEmbeddings;
+let defaultEmbeddingDimension: number;
 
 beforeEach(async () => {
   jest.resetModules();
@@ -48,6 +50,10 @@ beforeEach(async () => {
   }));
 
   ({ createOpenAIAdapter } = await import('../src/core/adapters/openai.adapter.js'));
+  ({
+    createEmbeddings,
+    DEFAULT_OPENAI_EMBEDDING_DIMENSION: defaultEmbeddingDimension,
+  } = await import('../src/services/openai/embeddings.js'));
 });
 
 describe('openai adapter', () => {
@@ -149,6 +155,39 @@ describe('openai adapter', () => {
     expect(imagesGenerateMock).toHaveBeenCalledTimes(1);
     expect(imagesGenerateMock.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'draw a lighthouse' }));
     expect(imagesGenerateMock.mock.calls[0][1]).toEqual({ headers });
+  });
+
+  it('forwards embedding abort signals to the SDK request', async () => {
+    embeddingsCreateMock.mockResolvedValue({
+      data: [{ index: 0, embedding: [1] }],
+      model: 'text-embedding-3-small',
+      object: 'list',
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const signal = new AbortController().signal;
+
+    await createEmbeddings(['canon'], adapter, { signal });
+
+    expect(embeddingsCreateMock).toHaveBeenCalledTimes(1);
+    expect(embeddingsCreateMock.mock.calls[0][1]).toEqual({ signal });
+    expect(defaultEmbeddingDimension).toBe(1_536);
+  });
+
+  it('preserves one-argument embedding calls without request options', async () => {
+    embeddingsCreateMock.mockResolvedValue({
+      data: [{ index: 0, embedding: [1] }],
+      model: 'text-embedding-3-small',
+      object: 'list',
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const adapterCreate = jest.spyOn(adapter.embeddings, 'create');
+
+    await createEmbeddings(['canon'], adapter);
+
+    expect(adapterCreate).toHaveBeenCalledTimes(1);
+    expect(adapterCreate.mock.calls[0]).toHaveLength(1);
   });
 
   it('patches the raw SDK client parse helper onto explicit JSON parsing', async () => {

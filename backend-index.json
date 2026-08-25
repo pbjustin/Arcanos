@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T09:43:01.927Z",
+  "generatedAt": "2026-08-24T22:21:30.462Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -431,6 +431,9 @@
           "relativePath": "src/core/db/auditStore.ts"
         },
         {
+          "relativePath": "src/core/db/backstageNotionPartitionStorageSchema.ts"
+        },
+        {
           "relativePath": "src/core/db/client.ts"
         },
         {
@@ -444,6 +447,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/backstageBookerRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageNotionPartitionRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageNotionRagRepository.ts"
@@ -1577,6 +1583,12 @@
           "relativePath": "src/services/backstageNotionEnrichmentAuthorization.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionPartitionMaterial.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionPartitionSync.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionRag.ts"
         },
         {
@@ -2438,6 +2450,15 @@
           "relativePath": "src/shared/backstage/backstageNotionContextCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionMaterialCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionSyncCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionPreviewCanary.ts"
         },
         {
@@ -2951,6 +2972,9 @@
           "relativePath": "src/workers/autoscalingTypes.ts"
         },
         {
+          "relativePath": "src/workers/backstageNotionPartitionShadowLoop.ts"
+        },
+        {
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
         },
         {
@@ -3356,6 +3380,30 @@
         },
         {
           "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-material-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-material-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-material.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-shadow-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-rag-core.test.ts"
@@ -3896,6 +3944,9 @@
         },
         {
           "relativePath": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"
