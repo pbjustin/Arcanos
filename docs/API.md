@@ -674,8 +674,9 @@ worker:
 
 - `POST /api/backstage/notion-partitions/:universeId/syncs`
 - `GET|HEAD /api/backstage/notion-partitions/:universeId/syncs/:syncId`
+- `GET|HEAD /api/backstage/notion-partitions/:universeId/diagnostics`
 
-Both routes require the purpose-bound control-plane bearer, operator role, and
+All three routes require the purpose-bound control-plane bearer, operator role, and
 the dedicated `backstage:notion-sync` scope. The POST body is exactly
 `{"version":1,"shardKey":"<stable-key>"}`, is capped at 4 KiB before the
 broad parser, and requires exactly one visible-ASCII `Idempotency-Key` of 8-240
@@ -703,6 +704,23 @@ configuration, and raw failures are never projected. All responses are
 `no-store`. The operation is available only in exact `shadow` or `partitioned`
 mode; this release does not change a deployed mode or perform production
 cutover.
+
+The bodyless and query-free diagnostics read uses the same authentication and
+scope but is not tied to one actor-owned sync ID. It reads one repeatable,
+read-only PostgreSQL snapshot. The query admits at most 128 configured shard
+rows and 16 active jobs; each internal maximum-plus-one probe fails the read
+closed on overflow rather than returning partial state or sentinel rows. The
+response contains only stable shard keys, required/tier policy, activation and
+freshness classifications, opaque manifest/snapshot audit IDs, safe manifest
+and configuration generations, manifest counts and timestamps,
+last-known-good availability, active-lease expiry, and aggregate job counts. It
+separately reports whether required shards are ready and whether the complete
+configured scope is ready. Before the first partition registration, authority
+and operational aggregates are reported as unavailable rather than fabricated
+as zero. It never returns page/chunk content, embeddings, root or page IDs,
+display names, raw configuration or configuration digests, provider errors,
+job IDs/inputs/results, or lease owner/token/generation data. Use the
+actor-scoped sync-status endpoint when exact manual-job detail is required.
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation

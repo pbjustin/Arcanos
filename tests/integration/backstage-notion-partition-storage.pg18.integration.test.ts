@@ -1815,7 +1815,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
        WHERE table_schema = 'public'
          AND table_name = ANY($1::TEXT[])
        ORDER BY table_name`,
-      [[...partitionTables, 'backstage_notion_universe_heads']]
+      [[...partitionTables, 'backstage_notion_universe_heads', 'job_data']]
     );
     if (preexisting.rows.length > 0) {
       throw new Error(
@@ -1829,6 +1829,17 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       `CREATE TABLE public.backstage_notion_universe_heads (
          universe_id TEXT PRIMARY KEY,
          authority TEXT NOT NULL DEFAULT 'notion'
+       )`
+    );
+    await client.query(
+      `CREATE TABLE public.job_data (
+         worker_id TEXT NOT NULL,
+         job_type TEXT NOT NULL,
+         status TEXT NOT NULL,
+         input JSONB NOT NULL,
+         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         started_at TIMESTAMPTZ
        )`
     );
     await client.query(
@@ -1869,6 +1880,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       await client.query('ROLLBACK');
       await client.query(scopeIndexRollback);
       await client.query(rollbackMigration);
+      await client.query('DROP TABLE IF EXISTS public.job_data');
       await client.query('DROP TABLE IF EXISTS public.backstage_notion_universe_heads');
       await client.query(
         'DROP FUNCTION IF EXISTS public.backstage_notion_reject_immutable_mutation()'
@@ -4915,6 +4927,9 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     const originalRoutingState = await repository.loadActiveManifestRoutingState(
       fixture.universeId
     );
+    const originalDiagnostics = await repository.loadUniverseDiagnosticsState(
+      fixture.universeId
+    );
     expect(originalRoutingState).toMatchObject({
         universeId: fixture.universeId,
         manifestId: fixture.manifestId,
@@ -4941,6 +4956,38 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         }],
         omissions: [],
       });
+    expect(originalDiagnostics).toMatchObject({
+      universeId: fixture.universeId,
+      manifestGeneration: '1',
+      activeManifest: {
+        manifestId: fixture.manifestId,
+        configurationVersionId: fixture.configurationId,
+        memberCount: 1,
+        omissionCount: 0,
+        pageCount: 1,
+        chunkCount: 1,
+      },
+      activeJobCount: 0,
+      shards: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        lastKnownGood: { snapshotId: fixture.snapshotId },
+        manifestRecord: {
+          kind: 'member',
+          snapshotId: fixture.snapshotId,
+        },
+        lease: null,
+        activeJobs: { total: 0, pending: 0, running: 0 },
+      }],
+    });
+    expect(originalDiagnostics).not.toBeNull();
+    expect(originalDiagnostics?.activeManifest).not.toBeNull();
+    expect(originalDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      originalDiagnostics!.activeManifest!.sealedAt.getTime()
+    );
+    expect(originalDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      originalDiagnostics!.shards[0]!.lastKnownGood!.sealedAt.getTime()
+    );
     await expect(repository.resolveManifestScopeOwner(
       fixture.universeId,
       fixture.manifestId,
@@ -4979,6 +5026,35 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
           chunkCount: 2,
         }],
       });
+    const flippedDiagnostics = await repository.loadUniverseDiagnosticsState(
+      fixture.universeId
+    );
+    expect(flippedDiagnostics).toMatchObject({
+      manifestGeneration: '2',
+      activeManifest: {
+        manifestId: hierarchy.manifestId,
+        pageCount: 5,
+        chunkCount: 2,
+      },
+      shards: [{
+        shardKey: fixture.shardKey,
+        lastKnownGood: { snapshotId: hierarchy.snapshotId },
+        manifestRecord: {
+          kind: 'member',
+          snapshotId: hierarchy.snapshotId,
+          pageCount: 5,
+          chunkCount: 2,
+        },
+      }],
+    });
+    expect(flippedDiagnostics).not.toBeNull();
+    expect(flippedDiagnostics?.activeManifest).not.toBeNull();
+    expect(flippedDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      flippedDiagnostics!.activeManifest!.sealedAt.getTime()
+    );
+    expect(flippedDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      flippedDiagnostics!.shards[0]!.lastKnownGood!.sealedAt.getTime()
+    );
 
     // A request that pinned immutable manifest A remains coherent after B wins
     // the active head; it never mixes B's snapshot into A's routing tuples.
@@ -5102,6 +5178,36 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         scopeKind: 'page',
       }
     )).resolves.toEqual({ status: 'invalid' });
+
+    await client.query(
+      `INSERT INTO public.job_data (
+         worker_id,
+         job_type,
+         status,
+         input
+       )
+       SELECT
+         'backstage-notion-partition-sync',
+         'backstage-notion-partition-sync',
+         'pending',
+         pg_catalog.jsonb_build_object(
+           'protocol', 'backstage-notion-partition-sync-job-v1',
+           'version', 1,
+           'universeId', $1::TEXT,
+           'shardKey', 'unconfigured/'
+             || pg_catalog.lpad(generated.value::TEXT, 2, '0'),
+           'configurationGeneration', $2::TEXT,
+           'configurationDigest', $3::TEXT
+         )
+       FROM pg_catalog.generate_series(1, 17) AS generated(value)`,
+      [
+        fixture.universeId,
+        fixture.configurationGeneration,
+        fixture.configurationHash,
+      ]
+    );
+    await expect(repository.loadUniverseDiagnosticsState(fixture.universeId))
+      .rejects.toThrow(/active-job metadata is invalid or unbounded/u);
   });
 
   test('empty rollback succeeds and both migration paths reinstall cleanly', async () => {

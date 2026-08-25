@@ -69,6 +69,16 @@ export interface BackstageNotionPartitionShadowPolicy {
   readonly configuration: ValidPartitionConfiguration | null;
 }
 
+export type BackstageNotionWorkerReadinessGateResult<T> =
+  | Readonly<{
+    monolithReadinessRequired: true;
+    evidence: T;
+  }>
+  | Readonly<{
+    monolithReadinessRequired: false;
+    evidence: null;
+  }>;
+
 export interface BackstageNotionPartitionShadowCycleResult {
   readonly synchronization: BackstageNotionPartitionSynchronizationResult;
   readonly coverage: readonly BackstageNotionPartitionShadowCoverage[];
@@ -217,6 +227,46 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       ? 'PARTITIONED_ENABLED'
       : 'SHADOW_ENABLED',
     configuration,
+  });
+}
+
+/**
+ * Keep the legacy monolith startup fence for every fallback policy. Only an
+ * exact, internally consistent shadow or partitioned policy may admit queue
+ * consumers without first awaiting a universe-wide monolith crawl.
+ */
+export function requiresBackstageNotionMonolithWorkerReadiness(
+  policy: BackstageNotionPartitionShadowPolicy
+): boolean {
+  const exactEnabledPartitionPolicy = policy.enabled
+    && policy.modeStatus === 'valid'
+    && policy.configurationStatus === 'valid'
+    && policy.configuration !== null
+    && policy.semanticDigest !== null
+    && (
+      (policy.requestedMode === 'shadow' && policy.reasonCode === 'SHADOW_ENABLED')
+      || (
+        policy.requestedMode === 'partitioned'
+        && policy.reasonCode === 'PARTITIONED_ENABLED'
+      )
+    );
+  return !exactEnabledPartitionPolicy;
+}
+
+/** Run the unchanged legacy readiness proof only when the resolved policy requires it. */
+export async function runBackstageNotionWorkerReadinessGate<T>(
+  policy: BackstageNotionPartitionShadowPolicy,
+  ensureReadiness: () => Promise<T>
+): Promise<BackstageNotionWorkerReadinessGateResult<T>> {
+  if (!requiresBackstageNotionMonolithWorkerReadiness(policy)) {
+    return Object.freeze({
+      monolithReadinessRequired: false,
+      evidence: null,
+    });
+  }
+  return Object.freeze({
+    monolithReadinessRequired: true,
+    evidence: await ensureReadiness(),
   });
 }
 

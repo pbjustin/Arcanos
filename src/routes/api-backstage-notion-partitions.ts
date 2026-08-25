@@ -8,6 +8,11 @@ import {
 import { getRequestAuthenticatedActorKey } from '@platform/runtime/security.js';
 import { getEnv } from '@platform/runtime/env.js';
 import {
+  getBackstageNotionPartitionDiagnostics,
+  type BackstageNotionPartitionDiagnosticsHttpResult,
+  type GetBackstageNotionPartitionDiagnosticsInput,
+} from '@services/backstageNotionPartitionDiagnostics.js';
+import {
   enqueueBackstageNotionPartitionSyncOperation,
   getBackstageNotionPartitionSyncOperationStatus,
   type BackstageNotionPartitionSyncOperationHttpResult,
@@ -40,11 +45,15 @@ type EnqueuePartitionSync = (
 type GetPartitionSyncStatus = (
   input: GetBackstageNotionPartitionSyncOperationStatusInput
 ) => Promise<BackstageNotionPartitionSyncOperationHttpResult>;
+type GetPartitionDiagnostics = (
+  input: GetBackstageNotionPartitionDiagnosticsInput
+) => Promise<BackstageNotionPartitionDiagnosticsHttpResult>;
 
 export interface ApiBackstageNotionPartitionsRouterOptions {
   readonly readEnvironment?: ReadEnvironment;
   readonly enqueueOperation?: EnqueuePartitionSync;
   readonly getOperationStatus?: GetPartitionSyncStatus;
+  readonly getDiagnostics?: GetPartitionDiagnostics;
 }
 
 interface ConfirmedConfigurationContext {
@@ -219,6 +228,8 @@ export function createApiBackstageNotionPartitionsRouter(
     ?? enqueueBackstageNotionPartitionSyncOperation;
   const getOperationStatus = options.getOperationStatus
     ?? getBackstageNotionPartitionSyncOperationStatus;
+  const getDiagnostics = options.getDiagnostics
+    ?? getBackstageNotionPartitionDiagnostics;
 
   router.use(
     backstageNotionPartitionSyncHttpBoundary,
@@ -365,6 +376,47 @@ export function createApiBackstageNotionPartitionsRouter(
         500,
         'BACKSTAGE_NOTION_PARTITION_SYNC_INTERNAL_ERROR',
         'Failed to read partition synchronization status.'
+      );
+    }
+  });
+
+  router.get('/:universeId/diagnostics', async (req, res): Promise<void> => {
+    const operation = resolveBackstageNotionPartitionSyncHttpOperation(req);
+    if (!operation || operation.kind !== 'diagnostics') {
+      sendFixedError(
+        res,
+        404,
+        'BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_NOT_FOUND',
+        'The partition diagnostics target was not found.'
+      );
+      return;
+    }
+    try {
+      const result = await getDiagnostics({
+        universeId: operation.universeId,
+        dependencies: { readEnvironment },
+      });
+      try {
+        req.logger?.info?.('backstage_notion_partition_diagnostics.read', {
+          requestId: req.requestId,
+          traceId: req.traceId,
+          universeId: operation.universeId,
+          statusCode: result.statusCode,
+        });
+      } catch {
+        // Aggregate-only audit logging must never alter the diagnostic response.
+      }
+      sendOperationResult(res, result);
+    } catch {
+      logRouteFailure(
+        req,
+        'backstage_notion_partition_diagnostics.read_failed'
+      );
+      sendFixedError(
+        res,
+        500,
+        'BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_INTERNAL_ERROR',
+        'Failed to read partition diagnostics.'
       );
     }
   });

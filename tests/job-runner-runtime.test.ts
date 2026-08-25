@@ -690,9 +690,17 @@ describe('jobRunnerRuntime', () => {
     const databaseBootstrapIndex = source.indexOf(
       "await initializeJobRunnerDatabaseWithRetry('job-runner'"
     );
-    const backstageNotionReadinessIndex = source.indexOf(
-      'await ensureBackstageNotionWorkerReadiness({',
+    const backstageNotionPartitionPolicyIndex = source.indexOf(
+      'resolveBackstageNotionPartitionShadowPolicy();',
       databaseBootstrapIndex
+    );
+    const backstageNotionReadinessGateIndex = source.indexOf(
+      'await runBackstageNotionWorkerReadinessGate(',
+      backstageNotionPartitionPolicyIndex
+    );
+    const backstageNotionReadinessIndex = source.indexOf(
+      '() => ensureBackstageNotionWorkerReadiness({',
+      backstageNotionReadinessGateIndex
     );
     const autonomyBootstrapIndex = source.indexOf(
       'await bootstrapWorkerAutonomyWithRetry(',
@@ -743,6 +751,8 @@ describe('jobRunnerRuntime', () => {
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
+      backstageNotionPartitionPolicyIndex,
+      backstageNotionReadinessGateIndex,
       backstageNotionReadinessIndex,
       autonomyBootstrapIndex,
       moduleRegistryPreloadIndex,
@@ -760,7 +770,11 @@ describe('jobRunnerRuntime', () => {
     expect(runtimeSettingsIndex).toBeLessThan(databaseBootstrapIndex);
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
-    expect(databaseBootstrapIndex).toBeLessThan(backstageNotionReadinessIndex);
+    expect(databaseBootstrapIndex).toBeLessThan(backstageNotionPartitionPolicyIndex);
+    expect(backstageNotionPartitionPolicyIndex)
+      .toBeLessThan(backstageNotionReadinessGateIndex);
+    expect(backstageNotionReadinessGateIndex)
+      .toBeLessThan(backstageNotionReadinessIndex);
     expect(backstageNotionReadinessIndex).toBeLessThan(autonomyBootstrapIndex);
     expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
     expect(dispatcherStartIndex).toBeLessThan(heartbeatSetupIndex);
