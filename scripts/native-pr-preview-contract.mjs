@@ -39,12 +39,15 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     clearPolicyVersion: 'backstage-booker-clear-generation/v1',
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1',
+    partitionFailureTelemetryProofVersion:
+      'backstage-notion-partition-failure-telemetry/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
       reviewCompletion: 'review-completion-contract',
       compactRetry: 'compact-retry-contract',
       notionAuthorityRag: 'notion-authority-rag-contract',
+      partitionFailureTelemetry: 'partition-failure-telemetry-contract',
       continuityQuery: 'continuity-query-contract',
       continuitySubtree: 'continuity-subtree-contract',
     }),
@@ -53,6 +56,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-clear-policy-version',
       partitionedAuthorityVersion:
         'x-arcanos-preview-backstage-partition-contract-version',
+      partitionFailureTelemetryVersion:
+        'x-arcanos-preview-backstage-partition-failure-telemetry-version',
     }),
   }),
   mcpBodyCap: Object.freeze({

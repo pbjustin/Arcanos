@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   getBackstageNotionPartitionRepository,
   type BackstageNotionPartitionShadowCoverage,
@@ -13,6 +11,9 @@ import {
   parseBackstageNotionPartitionedIndexMode,
   type BackstageNotionPartitionConfiguration,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
+import {
+  projectBackstageNotionPartitionFailedShardTelemetry,
+} from '@shared/backstage/backstageNotionPartitionTelemetryCore.js';
 import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
@@ -352,21 +353,6 @@ export async function runBackstageNotionPartitionSynchronizationCycle(
   );
 }
 
-const FAILED_SHARD_TELEMETRY_IDENTITY_FORMAT =
-  'backstage-notion-partition-shard-telemetry-v1';
-
-function buildFailedShardTelemetryIdentity(
-  universeId: string,
-  shardKey: string
-): string {
-  const digest = createHash('sha256').update(JSON.stringify({
-    format: FAILED_SHARD_TELEMETRY_IDENTITY_FORMAT,
-    universeId,
-    shardKey,
-  }), 'utf8').digest('base64url');
-  return `opaque-${digest}`;
-}
-
 function summarizeCycle(
   result: BackstageNotionPartitionShadowCycleResult,
   requestedSemanticDigest: string
@@ -379,24 +365,10 @@ Readonly<Record<string, unknown>> {
   const fullyScannedShards = shardResults.filter(
     shard => shard.fullSourceScan
   ).length;
-  const failedShards = Object.freeze(
-    shardResults
-      .filter(shard => shard.status === 'failed')
-      .sort((left, right) => (
-        left.universeId < right.universeId ? -1
-          : left.universeId > right.universeId ? 1
-            : left.shardKey < right.shardKey ? -1
-              : left.shardKey > right.shardKey ? 1
-                : 0
-      ))
-      .map(shard => Object.freeze({
-        shardIdentity: buildFailedShardTelemetryIdentity(
-          shard.universeId,
-          shard.shardKey
-        ),
-        safeReasonCode: shard.safeReasonCode ?? 'SHARD_SYNC_FAILED',
-      }))
-  );
+  const failedShards =
+    projectBackstageNotionPartitionFailedShardTelemetry(
+      shardResults
+    );
   return Object.freeze({
     fullSourceScan:
       shardResults.length > 0 && fullyScannedShards === shardResults.length,

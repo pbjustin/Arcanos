@@ -3,6 +3,7 @@ import {
   getRequestAbortContext,
   runWithRequestAbortTimeout,
 } from '@arcanos/runtime/requestAbort';
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -135,10 +136,16 @@ import {
 } from './shared/backstage/backstageNotionRagCore.js';
 import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
+  BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
+  BACKSTAGE_NOTION_PARTITION_MAX_TOTAL_SHARDS,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   resolveBackstageNotionPartitionUniverse,
 } from './shared/backstage/backstageNotionPartitionCore.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_FAILED_SHARD_IDENTITY_FORMAT,
+  projectBackstageNotionPartitionFailedShardTelemetry,
+} from './shared/backstage/backstageNotionPartitionTelemetryCore.js';
 import {
   classifyBackstageNotionPageMaterials,
   hashBackstageNotionPageMaterial,
@@ -4526,6 +4533,215 @@ async function assertBackstageClearGenerationPolicyFixture(): Promise<void> {
   }
 }
 
+function runBackstageNotionPartitionFailureTelemetryFixture(
+  fixture: string
+): Record<string, unknown> {
+  const rootPageIdAlias = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const duplicateShardKey = 'shared-failure';
+  const aliasConfiguration = parseBackstageNotionPartitionConfiguration(
+    JSON.stringify({
+      version: 1,
+      generation: 'preview-telemetry-generation',
+      universes: [{
+        universeId: 'preview-telemetry-alpha',
+        shards: [{
+          shardKey: rootPageIdAlias,
+          rootPageId: rootPageIdAlias,
+          displayName: 'Telemetry alias fixture',
+          retrievalTier: 'hot',
+          required: true,
+          scopeTags: ['telemetry'],
+          categoryTags: ['preview'],
+          capacity: {
+            maxPages: 512,
+            maxChunks: BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
+            maxDepth: 16,
+            maxContentCodePoints: 4_000_000,
+          },
+        }],
+      }],
+    })
+  );
+  if (aliasConfiguration.status !== 'valid') {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_NOTION_PARTITION_ALIAS_CONFIGURATION_INVALID'
+    );
+  }
+  const aliasShard = aliasConfiguration.universes[0]?.shards[0];
+  if (
+    !aliasShard
+    || aliasShard.shardKey !== rootPageIdAlias
+    || aliasShard.rootPageId !== rootPageIdAlias
+  ) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_NOTION_PARTITION_ALIAS_CONFIGURATION_INVALID'
+    );
+  }
+  const sampleInput = Object.freeze([
+    Object.freeze({
+      universeId: 'preview-telemetry-zeta',
+      shardKey: duplicateShardKey,
+      status: 'failed' as const,
+      safeReasonCode: 'SHARD_CAPTURE_INCOMPLETE',
+    }),
+    Object.freeze({
+      universeId: 'preview-telemetry-alpha',
+      shardKey: duplicateShardKey,
+      status: 'failed' as const,
+      safeReasonCode: null,
+    }),
+    Object.freeze({
+      universeId: 'preview-telemetry-alpha',
+      shardKey: aliasShard.shardKey,
+      status: 'failed' as const,
+      safeReasonCode: 'SHARD_SOURCE_DRIFT',
+    }),
+    Object.freeze({
+      universeId: 'preview-telemetry-alpha',
+      shardKey: 'healthy-shard',
+      status: 'fresh' as const,
+      safeReasonCode: null,
+    }),
+  ]);
+  const sampleFailedShards =
+    projectBackstageNotionPartitionFailedShardTelemetry(sampleInput);
+  const reversedSample =
+    projectBackstageNotionPartitionFailedShardTelemetry(
+      [...sampleInput].reverse()
+    );
+  const maximumInput = Array.from(
+    { length: BACKSTAGE_NOTION_PARTITION_MAX_TOTAL_SHARDS },
+    (_unused, index) => {
+      const universeIndex = Math.floor(
+        index / BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+      );
+      const shardIndex = index
+        % BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE;
+      return Object.freeze({
+        universeId: `preview-telemetry-universe-${universeIndex}`,
+        shardKey: `shared-failure-${String(shardIndex).padStart(3, '0')}`,
+        status: 'failed' as const,
+        safeReasonCode: 'SHARD_SYNC_FAILED',
+      });
+    }
+  );
+  const maximumFailedShards =
+    projectBackstageNotionPartitionFailedShardTelemetry(maximumInput);
+  const maximumMetadata = Object.freeze({
+    failedShards: maximumFailedShards,
+  });
+  const maximumMetadataBytes = Buffer.byteLength(
+    JSON.stringify(maximumMetadata),
+    'utf8'
+  );
+  const maximumProjectionSha256 = createHash('sha256')
+    .update(JSON.stringify(maximumMetadata), 'utf8')
+    .digest('hex');
+  const sampleJson = JSON.stringify(sampleFailedShards);
+  const maximumJson = JSON.stringify(maximumFailedShards);
+  const rawIdentifiers = [
+    rootPageIdAlias,
+    duplicateShardKey,
+    ...sampleInput.flatMap(shard => [shard.universeId, shard.shardKey]),
+    ...maximumInput.flatMap(shard => [shard.universeId, shard.shardKey]),
+  ];
+  const sampleIdentities = sampleFailedShards.map(
+    shard => shard.shardIdentity
+  );
+  const expectedSampleFailedShards = [
+    {
+      shardIdentity:
+        'opaque-70vMMJ4Z_2lvnrnjSsWlsnORGAg8hXBlhWt8xhTuX68',
+      safeReasonCode: 'SHARD_SOURCE_DRIFT',
+    },
+    {
+      shardIdentity:
+        'opaque-eVPQRBtG90baOJNEneYPq2OFyWVTFq5HYiTVW5P1NzA',
+      safeReasonCode: 'SHARD_SYNC_FAILED',
+    },
+    {
+      shardIdentity:
+        'opaque-n07d5-jiZBvYTRnB0U7j1T_7FkWsdYa6sowmW2zV-hM',
+      safeReasonCode: 'SHARD_CAPTURE_INCOMPLETE',
+    },
+  ];
+  const duplicateShardIdentities = sampleFailedShards
+    .filter(shard => shard.safeReasonCode !== 'SHARD_SOURCE_DRIFT')
+    .map(shard => shard.shardIdentity);
+  const maximumIdentities = maximumFailedShards.map(
+    shard => shard.shardIdentity
+  );
+  if (
+    JSON.stringify(sampleFailedShards) !== JSON.stringify(reversedSample)
+    || JSON.stringify(sampleFailedShards)
+      !== JSON.stringify(expectedSampleFailedShards)
+    || sampleIdentities.length !== new Set(sampleIdentities).size
+    || sampleIdentities.some(
+      identity => !/^opaque-[A-Za-z0-9_-]{43}$/u.test(identity)
+    )
+    || duplicateShardIdentities.length !== 2
+    || duplicateShardIdentities[0] === duplicateShardIdentities[1]
+    || sampleFailedShards[0]?.safeReasonCode !== 'SHARD_SOURCE_DRIFT'
+    || sampleFailedShards[1]?.safeReasonCode !== 'SHARD_SYNC_FAILED'
+    || sampleFailedShards[2]?.safeReasonCode !== 'SHARD_CAPTURE_INCOMPLETE'
+    || rawIdentifiers.some(identifier => sampleJson.includes(identifier))
+    || rawIdentifiers.some(identifier => maximumJson.includes(identifier))
+    || maximumFailedShards.length
+      !== BACKSTAGE_NOTION_PARTITION_MAX_TOTAL_SHARDS
+    || maximumIdentities.length !== new Set(maximumIdentities).size
+    || maximumIdentities.some(
+      identity => !/^opaque-[A-Za-z0-9_-]{43}$/u.test(identity)
+    )
+    || maximumFailedShards[0]?.shardIdentity
+      !== 'opaque-ISvHkzlJWy0soyLp5CWbKsaJ1QURpKE7gItiNz8POMo'
+    || maximumFailedShards.at(-1)?.shardIdentity
+      !== 'opaque-SXtGgR72kUvUwjonh2eKOP24P_CII2IS3pn0aeCaims'
+    || maximumMetadataBytes !== 55_314
+    || maximumProjectionSha256
+      !== '967a181c24119cfea50de0371f0a2dd4aa8df28759ea1878546dfbdbf49ce509'
+    || maximumMetadataBytes >= 64 * 1024
+  ) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_NOTION_PARTITION_FAILURE_TELEMETRY_INVALID'
+    );
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    failureTelemetry: {
+      componentExecuted: true,
+      deterministicOrderingVerified: true,
+      duplicateShardKeyDistinct: true,
+      fallbackReasonCodeVerified: true,
+      identityFormat:
+        BACKSTAGE_NOTION_PARTITION_FAILED_SHARD_IDENTITY_FORMAT,
+      maximum: {
+        boundedBelowBytes: 64 * 1024,
+        failedShardProjectionBytes: maximumMetadataBytes,
+        failedShardCount: maximumFailedShards.length,
+        firstShardIdentity: maximumFailedShards[0]?.shardIdentity,
+        lastShardIdentity: maximumFailedShards.at(-1)?.shardIdentity,
+        projectionSha256: maximumProjectionSha256,
+        uniqueIdentityCount: new Set(maximumIdentities).size,
+      },
+      loggerSinkExecuted: false,
+      productionSharedProjection: true,
+      rawIdentifiersAbsent: true,
+      rootPageIdAliasProtected: true,
+      sampleFailedShards,
+      validAliasConfigurationParsed: true,
+    },
+  };
+}
+
 async function runBackstageGenerationFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
@@ -4558,6 +4774,11 @@ async function runBackstageGenerationFixture(
         fixture,
         connectivityProbe
       );
+    case fixtures.partitionFailureTelemetry:
+      return {
+        payload: runBackstageNotionPartitionFailureTelemetryFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.continuityQuery:
       return {
         payload: await runBackstageContinuityQueryFixture(fixture),
@@ -6595,6 +6816,18 @@ export function createNativePrPreviewApplication(
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
                 .partitionedAuthorityVersion,
               result.partitionedAuthorityProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .partitionFailureTelemetry
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .partitionFailureTelemetryVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .partitionFailureTelemetryProofVersion
             );
           }
           return sendBoundedJsonResponse(

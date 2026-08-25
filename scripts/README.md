@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 128-request plan without network access.
+untracked worktree, limits, and the fixed 129-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -52,7 +52,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 128-request probe
+the lifecycle reports the exact preview hosts, run the current 129-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -120,7 +120,8 @@ normal protected GET route, bearer authentication, or a database reader.
 The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `review-completion-contract`, `compact-retry-contract`,
-`notion-authority-rag-contract`, `continuity-query-contract`, and
+`notion-authority-rag-contract`, `partition-failure-telemetry-contract`,
+`continuity-query-contract`, and
 `continuity-subtree-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
@@ -144,6 +145,16 @@ fixed `api.notion.com/v1/users/me` request with a hard-coded invalid non-secret
 bearer and an absolute four-second DNS/TLS/header deadline. It accepts only the
 expected JSON `401` and cancels without reading,
 parsing, or returning the provider body and does not retry or follow redirects.
+
+The partition-failure telemetry selector parses a valid server-owned
+configuration where one shard key equals its Notion root page ID, then invokes
+the same semantic-digest-pinned pure projection used by the production worker.
+It proves failed-only filtering, raw `(universeId, shardKey)` ordering before
+projection, distinct full SHA-256 identities for duplicate shard keys in
+different universes, null-reason fallback, and absence of raw identifiers. It
+also projects the maximum 512 failed shards into 55,314 UTF-8 bytes, below the
+64 KiB proof bound. The selector and verifier explicitly report that no worker,
+logger sink, database, Notion API, model provider, or protected effect ran.
 It then executes the
 production-shared Notion page/RAG core over sealed content to prove request
 shape, parsing, sanitization, chunking, citation framing, message isolation,

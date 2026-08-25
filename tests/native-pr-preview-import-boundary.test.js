@@ -90,6 +90,10 @@ const BACKSTAGE_NOTION_PARTITION_SYNC_CORE_URL = new URL(
   '../src/shared/backstage/backstageNotionPartitionSyncCore.ts',
   import.meta.url
 );
+const BACKSTAGE_NOTION_PARTITION_TELEMETRY_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
+  import.meta.url
+);
 const BACKSTAGE_NOTION_PARTITION_SYNC_JOB_URL = new URL(
   '../src/shared/jobs/backstageNotionPartitionSyncJob.ts',
   import.meta.url
@@ -760,6 +764,12 @@ describe('native PR preview import boundary', () => {
         "  'SHARD_CAPACITY_RELAXED',",
       ],
       [
+        'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
+        BACKSTAGE_NOTION_PARTITION_TELEMETRY_CORE_URL,
+        "  'backstage-notion-partition-shard-telemetry-v1';",
+        "  'backstage-notion-partition-shard-telemetry-v2';",
+      ],
+      [
         'src/shared/jobs/backstageNotionPartitionSyncJob.ts',
         BACKSTAGE_NOTION_PARTITION_SYNC_JOB_URL,
         "  'backstage-notion-partition-sync-job-v1';",
@@ -810,6 +820,10 @@ describe('native PR preview import boundary', () => {
       [
         'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
         BACKSTAGE_NOTION_PARTITION_ROUTING_CORE_URL,
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
+        BACKSTAGE_NOTION_PARTITION_TELEMETRY_CORE_URL,
       ],
     ]) {
       const sourceText = await readBackstageNotionPartitionSource(sourceUrl);
@@ -2461,7 +2475,12 @@ describe('native PR preview import boundary', () => {
     [
       'src/nativePrPreviewApplication.ts',
       "import * as crypto from 'node:crypto';",
-      'unreviewed external runtime import binding surface for "node:crypto"',
+      'forbidden runtime import binding "*:crypto"',
+    ],
+    [
+      'src/nativePrPreviewApplication.ts',
+      "import { createHash, randomBytes } from 'node:crypto';",
+      'forbidden runtime import binding "randomBytes:randomBytes"',
     ],
   ])('rejects unreviewed external runtime binding: %s', (
     filePath,

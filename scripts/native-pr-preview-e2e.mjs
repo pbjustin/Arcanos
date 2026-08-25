@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 128;
+const MAX_REQUESTS = 129;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -861,6 +861,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
       'notionAuthorityRag'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-partition-failure-telemetry',
+      'partitionFailureTelemetry'
     ),
     backstageGenerationCase(
       'backstage-generation-continuity-query',
@@ -2082,6 +2086,53 @@ function expectedBackstageGenerationContractPayload(requestCase) {
       },
     };
   }
+  if (requestCase.fixtureName === 'partitionFailureTelemetry') {
+    return {
+      ...base,
+      failureTelemetry: {
+        componentExecuted: true,
+        deterministicOrderingVerified: true,
+        duplicateShardKeyDistinct: true,
+        fallbackReasonCodeVerified: true,
+        identityFormat:
+          'backstage-notion-partition-shard-telemetry-v1',
+        maximum: {
+          boundedBelowBytes: 65_536,
+          failedShardProjectionBytes: 55_314,
+          failedShardCount: 512,
+          firstShardIdentity:
+            'opaque-ISvHkzlJWy0soyLp5CWbKsaJ1QURpKE7gItiNz8POMo',
+          lastShardIdentity:
+            'opaque-SXtGgR72kUvUwjonh2eKOP24P_CII2IS3pn0aeCaims',
+          projectionSha256:
+            '967a181c24119cfea50de0371f0a2dd4aa8df28759ea1878546dfbdbf49ce509',
+          uniqueIdentityCount: 512,
+        },
+        loggerSinkExecuted: false,
+        productionSharedProjection: true,
+        rawIdentifiersAbsent: true,
+        rootPageIdAliasProtected: true,
+        sampleFailedShards: [
+          {
+            shardIdentity:
+              'opaque-70vMMJ4Z_2lvnrnjSsWlsnORGAg8hXBlhWt8xhTuX68',
+            safeReasonCode: 'SHARD_SOURCE_DRIFT',
+          },
+          {
+            shardIdentity:
+              'opaque-eVPQRBtG90baOJNEneYPq2OFyWVTFq5HYiTVW5P1NzA',
+            safeReasonCode: 'SHARD_SYNC_FAILED',
+          },
+          {
+            shardIdentity:
+              'opaque-n07d5-jiZBvYTRnB0U7j1T_7FkWsdYa6sowmW2zV-hM',
+            safeReasonCode: 'SHARD_CAPTURE_INCOMPLETE',
+          },
+        ],
+        validAliasConfigurationParsed: true,
+      },
+    };
+  }
   if (requestCase.fixtureName === 'continuityQuery') {
     return {
       ...base,
@@ -3199,6 +3250,36 @@ function validateResponseBody(requestCase, bodyBytes, options) {
       );
     }
   }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'partitionFailureTelemetry'
+  ) {
+    const telemetry = body?.failureTelemetry;
+    const sample = Array.isArray(telemetry?.sampleFailedShards)
+      ? telemetry.sampleFailedShards
+      : [];
+    if (
+      bodyText.includes('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')
+      || bodyText.includes('preview-telemetry-alpha')
+      || bodyText.includes('preview-telemetry-zeta')
+      || bodyText.includes('shared-failure')
+      || telemetry?.loggerSinkExecuted !== false
+      || telemetry?.maximum?.failedShardCount !== 512
+      || telemetry?.maximum?.uniqueIdentityCount !== 512
+      || telemetry?.maximum?.failedShardProjectionBytes !== 55_314
+      || telemetry?.maximum?.projectionSha256
+        !== '967a181c24119cfea50de0371f0a2dd4aa8df28759ea1878546dfbdbf49ce509'
+      || sample.length !== 3
+      || sample.some((entry) => (
+        !/^opaque-[A-Za-z0-9_-]{43}$/u.test(entry?.shardIdentity ?? '')
+      ))
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_FAILURE_TELEMETRY_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
   requireExactJson(body, expectedBody, requestCase.caseId);
 }
 
@@ -3388,6 +3469,17 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      requestCase.fixtureName === 'partitionFailureTelemetry'
+      && response.headers.get(
+        contract.proofHeaders.partitionFailureTelemetryVersion
+      ) !== contract.partitionFailureTelemetryProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_FAILURE_TELEMETRY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3496,6 +3588,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'
       ? { partitionedAuthorityVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'partitionFailureTelemetry'
+      ? { failedShardTelemetryVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

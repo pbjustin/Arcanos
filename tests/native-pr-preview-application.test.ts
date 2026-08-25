@@ -1069,6 +1069,9 @@ describe('native PR contained application', () => {
     const notionAuthorityRag = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.notionAuthorityRag });
+    const partitionFailureTelemetry = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.partitionFailureTelemetry });
     const continuityQuery = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.continuityQuery });
@@ -1288,6 +1291,67 @@ describe('native PR contained application', () => {
       schemaVersion: 1,
     });
 
+    expect(partitionFailureTelemetry.status).toBe(200);
+    expect(partitionFailureTelemetry.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.partitionFailureTelemetry,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      failureTelemetry: {
+        componentExecuted: true,
+        deterministicOrderingVerified: true,
+        duplicateShardKeyDistinct: true,
+        fallbackReasonCodeVerified: true,
+        identityFormat:
+          'backstage-notion-partition-shard-telemetry-v1',
+        maximum: {
+          boundedBelowBytes: 65_536,
+          failedShardProjectionBytes: 55_314,
+          failedShardCount: 512,
+          firstShardIdentity:
+            'opaque-ISvHkzlJWy0soyLp5CWbKsaJ1QURpKE7gItiNz8POMo',
+          lastShardIdentity:
+            'opaque-SXtGgR72kUvUwjonh2eKOP24P_CII2IS3pn0aeCaims',
+          projectionSha256:
+            '967a181c24119cfea50de0371f0a2dd4aa8df28759ea1878546dfbdbf49ce509',
+          uniqueIdentityCount: 512,
+        },
+        loggerSinkExecuted: false,
+        productionSharedProjection: true,
+        rawIdentifiersAbsent: true,
+        rootPageIdAliasProtected: true,
+        sampleFailedShards: [
+          {
+            shardIdentity:
+              'opaque-70vMMJ4Z_2lvnrnjSsWlsnORGAg8hXBlhWt8xhTuX68',
+            safeReasonCode: 'SHARD_SOURCE_DRIFT',
+          },
+          {
+            shardIdentity:
+              'opaque-eVPQRBtG90baOJNEneYPq2OFyWVTFq5HYiTVW5P1NzA',
+            safeReasonCode: 'SHARD_SYNC_FAILED',
+          },
+          {
+            shardIdentity:
+              'opaque-n07d5-jiZBvYTRnB0U7j1T_7FkWsdYa6sowmW2zV-hM',
+            safeReasonCode: 'SHARD_CAPTURE_INCOMPLETE',
+          },
+        ],
+        validAliasConfigurationParsed: true,
+      },
+    });
+    expect(JSON.stringify(partitionFailureTelemetry.body)).not.toContain(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+    );
+    expect(JSON.stringify(partitionFailureTelemetry.body)).not.toContain(
+      'shared-failure'
+    );
+
     expect(continuityQuery.status).toBe(200);
     expect(continuityQuery.body).toEqual({
       accepted: true,
@@ -1491,6 +1555,7 @@ describe('native PR contained application', () => {
       reviewCompletion,
       compactRetry,
       notionAuthorityRag,
+      partitionFailureTelemetry,
       continuityQuery,
       continuitySubtree,
     ]) {
@@ -1512,17 +1577,38 @@ describe('native PR contained application', () => {
         contract.proofHeaders.partitionedAuthorityVersion
       ]
     ).toBe(contract.partitionedAuthorityProofVersion);
+    expect(
+      partitionFailureTelemetry.headers[
+        contract.proofHeaders.partitionFailureTelemetryVersion
+      ]
+    ).toBe(contract.partitionFailureTelemetryProofVersion);
     for (const response of [
       routeBudget,
       hrcRetryCache,
       reviewCompletion,
       compactRetry,
+      partitionFailureTelemetry,
       continuityQuery,
       continuitySubtree,
     ]) {
       expect(
         response.headers[
           contract.proofHeaders.partitionedAuthorityVersion
+        ]
+      ).toBeUndefined();
+    }
+    for (const response of [
+      routeBudget,
+      hrcRetryCache,
+      reviewCompletion,
+      compactRetry,
+      notionAuthorityRag,
+      continuityQuery,
+      continuitySubtree,
+    ]) {
+      expect(
+        response.headers[
+          contract.proofHeaders.partitionFailureTelemetryVersion
         ]
       ).toBeUndefined();
     }
@@ -1545,6 +1631,11 @@ describe('native PR contained application', () => {
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionedAuthorityVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.partitionFailureTelemetryVersion
+        ]
       ).toBeUndefined();
       expect(response.body).toEqual({
         error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',
