@@ -410,6 +410,18 @@ only through the dedicated PostgreSQL 18 integration suite and its explicitly
 guarded disposable loopback database; ordinary static validation must not apply
 the migration to a configured or shared database.
 
+`migrations/20260824_backstage_notion_partition_scope_reads_v1/` adds the
+partial parent-page index used by bounded recursive subtree resolution through
+an exact catalog precheck, a standalone `CREATE INDEX CONCURRENTLY`, and an
+exact post-build verifier. Its guarded recovery removes only an exact invalid
+index left by an interrupted concurrent build. Scope
+reads pin an exact sealed universe manifest and its immutable shard tuples;
+page, subtree, and positional section eligibility is established before chunk
+integrity checks or candidate generation. Complete-scope reads use deterministic
+keyset pagination and return at most 128 chunks per application page without
+projecting embedding arrays. Its guarded, idempotent rollback removes only the
+additive exact index and does not remove partition history.
+
 ### Local-agent hardening migration
 
 The additive
