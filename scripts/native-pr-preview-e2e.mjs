@@ -3377,6 +3377,17 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      requestCase.fixtureName === 'notionAuthorityRag'
+      && response.headers.get(
+        contract.proofHeaders.partitionedAuthorityVersion
+      ) !== contract.partitionedAuthorityProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3481,6 +3492,10 @@ async function executeRequestCase(
     simulatedAuth: requestCase.simulatedAuth === true,
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'notionAuthorityRag'
+      ? { partitionedAuthorityVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

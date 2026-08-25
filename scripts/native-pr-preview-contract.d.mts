@@ -37,6 +37,8 @@ export interface NativePrPreviewE2eContract {
   readonly backstageGeneration: Readonly<{
     path: '/backstage/generation-contract';
     clearPolicyVersion: 'backstage-booker-clear-generation/v1';
+    partitionedAuthorityProofVersion:
+      'backstage-notion-partitioned-authority/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -49,6 +51,8 @@ export interface NativePrPreviewE2eContract {
     proofHeaders: Readonly<{
       clearPolicyVersion:
         'x-arcanos-preview-backstage-clear-policy-version';
+      partitionedAuthorityVersion:
+        'x-arcanos-preview-backstage-partition-contract-version';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{

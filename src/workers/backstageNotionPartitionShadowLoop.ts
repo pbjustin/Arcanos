@@ -14,6 +14,7 @@ import {
 import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
+  type BackstageNotionPartitionSyncSelection,
   type BackstageNotionPartitionSynchronizationResult,
 } from '@services/backstageNotionPartitionSync.js';
 import {
@@ -46,7 +47,9 @@ export type BackstageNotionPartitionShadowReasonCode =
   | 'SHADOW_CONFIGURATION_ABSENT'
   | 'SHADOW_CONFIGURATION_INVALID'
   | 'SHADOW_ENABLED'
-  | 'CUTOVER_NOT_AVAILABLE'
+  | 'PARTITIONED_CONFIGURATION_ABSENT'
+  | 'PARTITIONED_CONFIGURATION_INVALID'
+  | 'PARTITIONED_ENABLED'
   | 'ENVIRONMENT_READ_FAILED';
 
 export interface BackstageNotionPartitionShadowPolicy {
@@ -66,10 +69,27 @@ export interface BackstageNotionPartitionShadowPolicy {
   readonly configuration: ValidPartitionConfiguration | null;
 }
 
+export type BackstageNotionWorkerReadinessGateResult<T> =
+  | Readonly<{
+    monolithReadinessRequired: true;
+    evidence: T;
+  }>
+  | Readonly<{
+    monolithReadinessRequired: false;
+    evidence: null;
+  }>;
+
 export interface BackstageNotionPartitionShadowCycleResult {
   readonly synchronization: BackstageNotionPartitionSynchronizationResult;
   readonly coverage: readonly BackstageNotionPartitionShadowCoverage[];
   readonly coverageUnavailable: number;
+}
+
+export interface BackstageNotionPartitionSynchronizationCycleInput {
+  readonly configuration: ValidPartitionConfiguration;
+  readonly signal: AbortSignal;
+  readonly readEnvironment?: (name: string) => string | undefined;
+  readonly selection?: BackstageNotionPartitionSyncSelection;
 }
 
 export interface BackstageNotionPartitionShadowLoopHandle {
@@ -122,7 +142,7 @@ function disabledPolicy(input: {
   });
 }
 
-/** Resolve PR-1 shadow policy without exposing raw environment values. */
+/** Resolve the partition writer policy without exposing raw environment values. */
 export function resolveBackstageNotionPartitionShadowPolicy(
   readEnvironment: (name: string) => string | undefined = name => getEnv(name)
 ): BackstageNotionPartitionShadowPolicy {
@@ -166,15 +186,6 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       reasonCode: 'MODE_MONOLITH',
     });
   }
-  if (mode.mode === 'partitioned') {
-    return disabledPolicy({
-      requestedMode,
-      modeStatus: mode.status,
-      configurationStatus: 'uninspected',
-      reasonCode: 'CUTOVER_NOT_AVAILABLE',
-    });
-  }
-
   let rawConfiguration: string | undefined;
   try {
     rawConfiguration = readEnvironment(BACKSTAGE_NOTION_PARTITIONS_ENV_NAME);
@@ -192,9 +203,13 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       requestedMode,
       modeStatus: mode.status,
       configurationStatus: configuration.status,
-      reasonCode: configuration.status === 'absent'
-        ? 'SHADOW_CONFIGURATION_ABSENT'
-        : 'SHADOW_CONFIGURATION_INVALID',
+      reasonCode: mode.mode === 'partitioned'
+        ? configuration.status === 'absent'
+          ? 'PARTITIONED_CONFIGURATION_ABSENT'
+          : 'PARTITIONED_CONFIGURATION_INVALID'
+        : configuration.status === 'absent'
+          ? 'SHADOW_CONFIGURATION_ABSENT'
+          : 'SHADOW_CONFIGURATION_INVALID',
     });
   }
   return Object.freeze({
@@ -208,8 +223,50 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       (total, universe) => total + universe.shards.length,
       0
     ),
-    reasonCode: 'SHADOW_ENABLED',
+    reasonCode: mode.mode === 'partitioned'
+      ? 'PARTITIONED_ENABLED'
+      : 'SHADOW_ENABLED',
     configuration,
+  });
+}
+
+/**
+ * Keep the legacy monolith startup fence for every fallback policy. Only an
+ * exact, internally consistent shadow or partitioned policy may admit queue
+ * consumers without first awaiting a universe-wide monolith crawl.
+ */
+export function requiresBackstageNotionMonolithWorkerReadiness(
+  policy: BackstageNotionPartitionShadowPolicy
+): boolean {
+  const exactEnabledPartitionPolicy = policy.enabled
+    && policy.modeStatus === 'valid'
+    && policy.configurationStatus === 'valid'
+    && policy.configuration !== null
+    && policy.semanticDigest !== null
+    && (
+      (policy.requestedMode === 'shadow' && policy.reasonCode === 'SHADOW_ENABLED')
+      || (
+        policy.requestedMode === 'partitioned'
+        && policy.reasonCode === 'PARTITIONED_ENABLED'
+      )
+    );
+  return !exactEnabledPartitionPolicy;
+}
+
+/** Run the unchanged legacy readiness proof only when the resolved policy requires it. */
+export async function runBackstageNotionWorkerReadinessGate<T>(
+  policy: BackstageNotionPartitionShadowPolicy,
+  ensureReadiness: () => Promise<T>
+): Promise<BackstageNotionWorkerReadinessGateResult<T>> {
+  if (!requiresBackstageNotionMonolithWorkerReadiness(policy)) {
+    return Object.freeze({
+      monolithReadinessRequired: false,
+      evidence: null,
+    });
+  }
+  return Object.freeze({
+    monolithReadinessRequired: true,
+    evidence: await ensureReadiness(),
   });
 }
 
@@ -228,33 +285,10 @@ async function runDefaultShadowCycle(input: {
   readonly readEnvironment: (name: string) => string | undefined;
 }): Promise<BackstageNotionPartitionShadowCycleResult> {
   throwIfAborted(input.signal);
-  const repository = getBackstageNotionPartitionRepository();
-  const capture = createBackstageNotionPartitionProviderCaptureDependencies({
-    readEnvironment: input.readEnvironment,
-    fetchImpl: fetch,
-  });
-  const synchronization = await syncBackstageNotionPartitionConfiguration(
-    input.configuration,
-    {
-      repository,
-      embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
-      embeddingDimension: DEFAULT_OPENAI_EMBEDDING_DIMENSION,
-      embedBatch: async (inputs, signal) => {
-        const embeddings = await createEmbeddings(inputs, undefined, { signal });
-        if (
-          embeddings.length !== inputs.length
-          || embeddings.some(
-            embedding => embedding.length !== DEFAULT_OPENAI_EMBEDDING_DIMENSION
-          )
-        ) {
-          throw new Error('Embedding provider returned an unexpected dimension.');
-        }
-        return embeddings;
-      },
-      ...capture,
-      signal: input.signal,
-    }
+  const synchronization = await runBackstageNotionPartitionSynchronizationCycle(
+    input
   );
+  const repository = getBackstageNotionPartitionRepository();
   const coverage: BackstageNotionPartitionShadowCoverage[] = [];
   let coverageUnavailable = 0;
   for (const universe of input.configuration.universes) {
@@ -275,6 +309,47 @@ async function runDefaultShadowCycle(input: {
   });
 }
 
+/**
+ * Run one partition reconciliation without coverage reads or coordinator
+ * ownership. Scheduled and operator-triggered callers can therefore share the
+ * exact capture, embedding, persistence, and cancellation behavior while the
+ * worker owns cross-cycle serialization.
+ */
+export async function runBackstageNotionPartitionSynchronizationCycle(
+  input: BackstageNotionPartitionSynchronizationCycleInput
+): Promise<BackstageNotionPartitionSynchronizationResult> {
+  throwIfAborted(input.signal);
+  const readEnvironment = input.readEnvironment ?? (name => getEnv(name));
+  const repository = getBackstageNotionPartitionRepository();
+  const capture = createBackstageNotionPartitionProviderCaptureDependencies({
+    readEnvironment,
+    fetchImpl: fetch,
+  });
+  return syncBackstageNotionPartitionConfiguration(
+    input.configuration,
+    {
+      repository,
+      embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      embeddingDimension: DEFAULT_OPENAI_EMBEDDING_DIMENSION,
+      embedBatch: async (inputs, signal) => {
+        const embeddings = await createEmbeddings(inputs, undefined, { signal });
+        if (
+          embeddings.length !== inputs.length
+          || embeddings.some(
+            embedding => embedding.length !== DEFAULT_OPENAI_EMBEDDING_DIMENSION
+          )
+        ) {
+          throw new Error('Embedding provider returned an unexpected dimension.');
+        }
+        return embeddings;
+      },
+      ...capture,
+      signal: input.signal,
+      selection: input.selection,
+    }
+  );
+}
+
 function summarizeCycle(
   result: BackstageNotionPartitionShadowCycleResult,
   requestedSemanticDigest: string
@@ -284,8 +359,13 @@ Readonly<Record<string, unknown>> {
     universe => universe.shardResults
   );
   const coverage = result.coverage;
+  const fullyScannedShards = shardResults.filter(
+    shard => shard.fullSourceScan
+  ).length;
   return Object.freeze({
-    fullSourceScan: true,
+    fullSourceScan:
+      shardResults.length > 0 && fullyScannedShards === shardResults.length,
+    shardsFullyScanned: fullyScannedShards,
     universes: result.synchronization.universes.length,
     shards: shardResults.length,
     manifestsPublished: result.synchronization.universes.filter(
@@ -366,8 +446,8 @@ function resolveInitialDelayMs(
 }
 
 /**
- * Start the additive worker-only writer. PR 1 never changes reads, readiness,
- * or the durable monolithic authority latch.
+ * Start the additive worker-only writer. Read-mode selection remains separate
+ * from readiness and the durable monolithic authority latch.
  */
 export function startBackstageNotionPartitionShadowLoop(
   dependencies: BackstageNotionPartitionShadowLoopDependencies = {}
@@ -375,13 +455,18 @@ export function startBackstageNotionPartitionShadowLoop(
   const loopLogger = dependencies.logger ?? logger;
   const readEnvironment = dependencies.readEnvironment ?? (name => getEnv(name));
   const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
+  const effectiveReadMode = policy.enabled && policy.requestedMode === 'partitioned'
+    ? 'partitioned'
+    : 'monolith';
   const policyMetadata = Object.freeze({
     module: 'backstage-notion-partition-shadow',
     modeStatus: policy.modeStatus,
     requestedMode: policy.requestedMode,
-    effectiveReadMode: 'monolith',
-    shadowSyncEnabled: policy.enabled,
-    cutoverAvailable: false,
+    effectiveReadMode,
+    partitionSyncEnabled: policy.enabled,
+    shadowSyncEnabled: policy.enabled && policy.requestedMode === 'shadow',
+    partitionedReadEnabled: effectiveReadMode === 'partitioned',
+    cutoverAvailable: true,
     configurationStatus: policy.configurationStatus,
     semanticDigest: policy.semanticDigest,
     configuredUniverses: policy.configuredUniverses,
@@ -462,7 +547,7 @@ export function startBackstageNotionPartitionShadowLoop(
             : 'backstage.notion_partition.shadow_cycle_completed',
           Object.freeze({
             module: 'backstage-notion-partition-shadow',
-            effectiveReadMode: 'monolith',
+            effectiveReadMode,
             semanticDigest: policy.semanticDigest,
             durationMs: Date.now() - startedAt,
             ...summary,
@@ -476,7 +561,7 @@ export function startBackstageNotionPartitionShadowLoop(
             'backstage.notion_partition.shadow_cycle_failed',
             Object.freeze({
               module: 'backstage-notion-partition-shadow',
-              effectiveReadMode: 'monolith',
+              effectiveReadMode,
               semanticDigest: policy.semanticDigest,
               durationMs: Date.now() - startedAt,
               reasonCode: 'SHADOW_CYCLE_FAILED',
@@ -520,7 +605,7 @@ export function startBackstageNotionPartitionShadowLoop(
         'backstage.notion_partition.shadow_drained',
         Object.freeze({
           module: 'backstage-notion-partition-shadow',
-          effectiveReadMode: 'monolith',
+          effectiveReadMode,
           drained: true,
         })
       );

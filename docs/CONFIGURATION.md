@@ -42,8 +42,10 @@ cp .env.example .env
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on web; authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on the web service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical value on web and worker for authority mode | none | Closed mapping from each exact universe ID to `{rootPageId,displayName,initialMinimumPageCount?}`. It makes the entire recursively discovered hierarchy authoritative, blocks all six backend mutations, quarantines legacy PostgreSQL reads, and selects one immutable active RAG snapshot. A present malformed value fails mutation checks closed. `initialMinimumPageCount` is 1–512 and applies only before the first activation. |
-| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a root UUID that is unique within its universe, a `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits. Unknown fields, duplicate universe/shard/tag identities, duplicate roots within one universe, malformed values, or excessive cardinality invalidate the complete envelope; distinct universe namespaces may reuse the same provider page ID. Its canonical semantic SHA-256 digest is separate from the operator generation. |
-| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical value on web and worker | `monolith` | Exact rollout mode: `monolith`, `shadow`, or `partitioned`. Absent, padded, differently cased, or unknown values resolve to `monolith` with non-sensitive validity metadata. In the shadow release, exact `shadow` enables only the post-readiness worker writer; reads, readiness, and the legacy sync stay monolithic. Exact `partitioned` is reserved and fail-closed until the controlled-cutover release. This flag does not weaken the durable authority latch. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a root UUID that is unique within its universe, a `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits. Archive-tier shards are structurally optional and must declare `required:false`, preventing one unavailable archive from fencing unrelated current-canon publication. Unknown fields, duplicate universe/shard/tag identities, duplicate roots within one universe, required archives, malformed values, or excessive cardinality invalidate the complete envelope; distinct universe namespaces may reuse the same provider page ID. Its canonical semantic SHA-256 digest is separate from the operator generation. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical value on web and worker | `monolith` | Exact rollout mode: `monolith`, `shadow`, or `partitioned`. Absent, padded, differently cased, or unknown values resolve to `monolith` with non-sensitive validity metadata. Exact `shadow` keeps the monolith as the sole returned read while executing web reads and protected queued relevant worker reads may perform bounded partition comparisons; the worker also synchronizes shards. Exact `partitioned` serves only manifest-scoped partition reads and fails closed without a monolith read fallback; restoring exact `monolith` is the read rollback. Both worker synchronization paths remain available. This flag does not weaken the durable authority latch. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | Yes on web for exact `shadow` or `partitioned` mode | none | Current server-only credential used to seal partition complete-scope cursors. Configure an exact 32–4096 UTF-8-byte unpadded, non-placeholder value with no whitespace, distinct from every other purpose-bound credential. New cursors use only this value. Never place it on workers, in Builder/client configuration, requests, logs, or source. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | No; web-only cursor rotation overlap | none | Optional prior partition cursor credential accepted only for unsealing. It must satisfy the current-secret rules and differ from the current key and every other purpose-bound credential. Retain it only until cursors pinned to still-fresh manifests have drained; removing it invalidates any remaining cursor sealed by that prior value. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Full-manifest synchronization cadence, clamped to 60,000–86,400,000 ms. The worker fetches the fixed configured root and descendants, never a caller URL; unchanged manifests only refresh verification time. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Maximum age of the last complete snapshot verification, clamped to 300,000–604,800,000 ms. Missing, stale, truncated, wrong-root, or wrong-model snapshots fail authoritative generation closed; they never reopen legacy fallback. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; only for Gaming source lifecycle Actions on the web service | none | Dedicated exact 32–4096-character visible-ASCII Bearer credential for only `POST /gpt-access/gaming/sources/ingestions`, `POST /gpt-access/gaming/sources/refreshes`, and `GET /gpt-access/gaming/sources/ingestions/{ingestionId}`. It must contain no whitespace or placeholder form and remain distinct from every other purpose-bound application credential. Configure it on the web service and in the Arcanos Gaming Custom GPT Action only; do not set it on workers. It never authenticates generic GPT Access routes, and the generic GPT Access token is rejected on these source routes. |
@@ -397,7 +399,7 @@ operations.
 | --- | --- | --- |
 | `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, legacy `POST /status`, `/api/afol/*`, `/api/assistants/*`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, Backstage state mutations across direct/GPT/dispatch/legacy aliases, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, assistant-registry list/detail reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `POST /system-state`, `/api/afol/decide`, `/api/assistants/sync`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Legacy `POST /status` also requires `mcp:invoke` but retains its existing explicit confirmation modes after authentication. Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus the existing confirmation contract through direct, canonical GPT, GPT-selected dispatch, and legacy module aliases; direct `/backstage/book-gpt` is included because it saves. Generation and simulation remain public. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, assistant-registry list/detail reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; manual `POST` and status `GET`/`HEAD` under `/api/backstage/notion-partitions/:universeId/syncs`, plus `GET`/`HEAD /api/backstage/notion-partitions/:universeId/diagnostics`, require `backstage:notion-sync`, with enqueue additionally requiring an issued one-use confirmation bound to the exact configured shard and configuration digest; `POST /system-state`, `/api/afol/decide`, `/api/assistants/sync`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Legacy `POST /status` also requires `mcp:invoke` but retains its existing explicit confirmation modes after authentication. Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus the existing confirmation contract through direct, canonical GPT, GPT-selected dispatch, and legacy module aliases; direct `/backstage/book-gpt` is included because it saves. Generation and simulation remain public. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
 | `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
 | `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
 
@@ -527,8 +529,12 @@ silently merged. Ancestor/descendant overlap still requires source-hierarchy
 ownership validation during synchronization.
 
 Every shard declares `retrievalTier` (`hot`, `cold`, or `archive`), `required`,
-and a complete `capacity` object. Capacity permits 1–512 pages, 1–2,048 chunks,
-depth 0–16, and 1–4,000,000 total content code points. The parser sorts
+and a complete `capacity` object. Archive-tier shards are structurally optional:
+they must declare `required:false`, and a required archive invalidates the whole
+closed configuration before synchronization or retrieval. This prevents an
+unavailable archive from blocking fresh manifests for unrelated current canon.
+Capacity permits 1–512 pages, 1–2,048 chunks, depth 0–16, and 1–4,000,000 total
+content code points. The parser sorts
 universes, shards, and tags before deriving a semantic SHA-256 digest. That
 digest intentionally excludes the separately auditable operator generation, so
 reordering fields or publishing identical semantics under a new generation does
@@ -537,34 +543,119 @@ not fabricate a content change.
 `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` accepts only exact lowercase
 `monolith`, `shadow`, or `partitioned`. Absent and invalid values both select
 `monolith`; the parser returns only bounded validity status, never the raw value,
-so operators can warn safely. In the shadow architecture, exact `shadow` starts
-only the additive partition writer on the worker after the ordinary readiness
-signal. User reads, readiness, the current authority resolver, and the legacy
-recurring sync remain monolithic. Exact `partitioned` is deliberately inert and
-reports `CUTOVER_NOT_AVAILABLE` until the controlled-cutover release. Neither
-the partition envelope nor this read-index mode downgrades the durable one-way
-Notion authority latch or restores legacy reads and writes.
+so operators can warn safely. Exact valid `shadow` and `partitioned` policies
+admit worker consumers without waiting for the universe-wide monolith format
+gate, allowing protected shard-repair jobs to run when that legacy snapshot is
+unavailable. Absent, invalid, or exact `monolith` policy retains the strict
+legacy readiness gate. Exact `shadow` performs bounded dual reads for executing
+web requests and protected queued relevant worker requests, but the monolith
+remains the sole result returned to the caller and still fails closed under its
+existing read rules. The worker does not receive cursor credentials, so
+complete-scope and cursor flows remain web-only. Exact `partitioned` keeps shard
+synchronization active and serves only manifest-scoped partition reads; missing
+or invalid partition state fails closed without a silent monolith read fallback.
+Restoring exact `monolith` is the read rollback and stops new partition writer
+cycles without deleting immutable shard or manifest history. The legacy
+recurring synchronization path remains intact under all three modes, and both
+loops start only after consumer readiness using their shared coordinator. No
+partition manifest or shard state gates worker `/readyz`. Neither the partition
+envelope nor this read-index mode downgrades the durable one-way Notion authority
+latch or restores legacy reads and writes. This code change does not set a
+deployed variable, and production must remain at exact `monolith` until a
+separate cutover is approved.
+
+In exact `shadow` or `partitioned`, the web control plane exposes one-shard
+manual enqueue and actor-scoped status reads under
+`/api/backstage/notion-partitions/:universeId/syncs`, plus a bodyless, query-free
+bounded diagnostics read at
+`/api/backstage/notion-partitions/:universeId/diagnostics`. The server resolves
+the closed configuration and never accepts or returns roots or raw
+configuration. All three operations require `backstage:notion-sync`; enqueue
+also requires one strict body, an idempotency key, and a consumed one-use
+challenge bound to the exact configuration generation and semantic digest.
+Claimed workers revalidate those fields before provider or synchronization
+effects, so a deployment configuration change safely stales queued work.
+The diagnostics route reads one repeatable, read-only database snapshot and
+returns only closed metadata. Its 128-shard and 16-active-job bounds use one
+internal overflow probe and fail closed rather than returning partial rows.
+Before the first partition registration, operational aggregates are explicitly
+unavailable; use the actor-scoped sync-status route for exact queued-job state.
 
 The legacy and partition loops share one worker-process synchronization
 coordinator, so their full crawls cannot overlap inside one replica. The first
 partition cycle waits one configured interval; each later interval begins only
 after the preceding partition cycle reaches terminal cleanup. The coordinator
 does not create a cross-replica lease for the legacy crawler, so operators must
-retain the normal single active Railway worker during shadow validation. Notion
+retain the normal single active Railway worker during partition validation. Notion
 does not expose an authoritative hierarchy delta feed: every shard still runs a
 bounded full hierarchy/content capture and metadata verification pass. Reuse is
 incremental only after capture, where unchanged immutable page, chunk, and
 embedding material is retained rather than regenerated.
 
-After each shadow reconciliation, the worker runs one statement-pinned,
+After each partition reconciliation, the worker runs one statement-pinned,
 identity-only PostgreSQL comparison per universe. It projects generation IDs,
 aggregate page/chunk counts, intersection counts, and constant-size ordered page
 ID samples; it never loads legacy snapshot Markdown, chunk content, metadata, or
 embeddings. Ordinary logs retain only semantic configuration digests and
 aggregate counts, never generation IDs, page IDs, titles, paths, content,
-provider errors, configuration JSON, or embeddings. Shadow failures remain
-nonfatal to readiness and reads and retain the last immutable successful shard
-and manifest history.
+provider errors, configuration JSON, or embeddings. Writer failures retain the
+last immutable successful shard and manifest history. In exact `shadow` they
+remain nonfatal to the returned monolith read; exact `partitioned` retrieval
+independently fails closed when it cannot resolve a valid selected manifest.
+
+The controlled-cutover resolver
+pins the durable Notion authority head, one sealed active universe manifest,
+and that manifest's exact immutable shard snapshots in one bounded PostgreSQL
+statement. Routing uses the definitions attached to that manifest even when a
+new desired configuration is waiting for synchronization; mutable shard heads
+are never consulted by reads. Exact lowercase scope/category selectors use
+AND semantics within one selector and OR semantics across selectors. Archive
+tiers require an explicit server-derived opt-in, and `required` controls
+manifest publication rather than forcing every shard into every request.
+
+Only the selected manifest members participate in the web freshness fence. A
+stale or omitted unselected archive therefore cannot disable an unrelated hot
+read, while selecting a stale member fails that request closed. Exact page and
+subtree ownership is resolved inside the active manifest with normalized
+SHA-256 title/path keys, an exact shard-relative suffix match, and a two-row
+ambiguity cap. The routing projection is limited to 128 identity/contract rows
+plus one overflow sentinel and contains no Markdown, chunk content, page
+versions, or embeddings. The exact read mode remains the authorization point:
+`shadow` compares this result without returning it, while `partitioned` returns
+it without a monolith fallback.
+
+Unscoped relevant retrieval uses a closed server-owned routing vocabulary.
+Recognized lane tags are `brand:raw`, `brand:smackdown`, `brand:nxt`, and
+`lane:ples`, plus four-digit `year:YYYY` tags derived from the bounded query.
+The PLE lane is selected only by `PLE`, `premium live event`, `pay-per-view`/`PPV`,
+or the closed built-in set of named premium live events; a display name never
+acts as a routing signal. When a request names a lane or year, a shared-current
+shard participates only when its definition contains the exact scope tag
+`shared`; its shard key or display name never grants shared ownership implicitly.
+More than eight distinct years or more than 32 derived selectors fails closed.
+Without the exact words `archive`, `archives`, or `archived`, routing admits only
+`hot` and `cold` tiers and excludes archive shards. With one of those exact
+signals, routing admits only `archive`; it never silently mixes archive and
+current-canon tiers. An omitted unrelated optional archive shard therefore does
+not disable a narrowed current-canon read, while an omitted shard selected by
+the request still makes that routing result incomplete and unavailable.
+
+Partition complete-scope cursors are server-sealed with
+`ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET`. Exact `shadow` and
+`partitioned` web reads require that current, purpose-isolated credential.
+Rotation across rolling or multi-replica web deployments requires two acceptance
+phases. First deploy K1 as current and K2 in
+`ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` to every replica,
+then drain every K1-only replica. Next deploy K2 as current and K1 in the
+previous slot to every replica. Both phases accept cursors sealed by either key,
+while new cursors always use that phase's current value. Remove K1 only after
+its still-fresh cursors and the rollback window have drained. Both values are
+exact 32–4096 UTF-8-byte unpadded,
+non-placeholder credentials with no whitespace and must differ from every other
+registered purpose. Removing the previous value rejects any remaining cursor it
+sealed. Monolith and partition cursor formats are intentionally incompatible;
+after changing between `monolith`/`shadow` and `partitioned`, restart any
+complete-scope pagination from its first page.
 
 The worker recursively discovers direct child `<page>` links, fetches every
 page separately from fixed `api.notion.com` endpoints, verifies parent IDs and
@@ -949,22 +1040,25 @@ configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
 `503` without changing `/healthz` liveness or `/health` diagnostics. Worker
-readiness remains `503` until database bootstrap, the Backstage Notion
-format-readiness gate, autonomy/module-registry bootstrap, and every configured
-consumer slot's dispatcher-start write have completed, and a supported OpenAI
-key setting is present. No configured authority passes the format gate without
-repository or provider work. Configured authorities must all have active
-snapshots with the current page-level index/heading marker; already-current
-inventories use PostgreSQL only, while an old/missing inventory gets one
-synchronous sync and a mandatory reload. Invalid configuration,
-`lease-busy`/`failed`/omitted sync results, or a still-old reload prevents the
-readiness signal. Provider readiness itself remains configuration-only rather
-than a paid probe, although a required Notion format rebuild performs the real
-Notion and embedding work. Later provider outages are handled by the worker's
-bounded probe/backoff and job-deferral path. The worker child reports the final
-transition through an exact, newline-delimited launcher protocol independent of
-`LOG_LEVEL`; arbitrary log text and filtered info logs cannot satisfy or
-suppress it.
+readiness remains `503` until database bootstrap, autonomy/module-registry
+bootstrap, every configured consumer slot's dispatcher-start write, and a
+supported OpenAI key setting are present. Absent, invalid, or exact `monolith`
+partition policy additionally retains the Backstage Notion format-readiness
+gate. No configured authority passes that gate without repository or provider
+work: configured authorities must all have active snapshots with the current
+page-level index/heading marker; already-current inventories use PostgreSQL
+only, while an old/missing inventory gets one synchronous sync and a mandatory
+reload. Invalid configuration, `lease-busy`/`failed`/omitted sync results, or a
+still-old reload prevents readiness in that policy. Exact valid `shadow` and
+`partitioned` skip only this universe-wide legacy gate so protected shard jobs
+can repair partition state; neither partition manifests nor shard freshness gate
+`/readyz`, and legacy reads retain their existing fail-closed rules. Provider
+readiness itself remains configuration-only rather than a paid probe, although a
+required monolith format rebuild performs the real Notion and embedding work.
+Later provider outages are handled by the worker's bounded probe/backoff and
+job-deferral path. The worker child reports the final transition through an
+exact, newline-delimited launcher protocol independent of `LOG_LEVEL`;
+arbitrary log text and filtered info logs cannot satisfy or suppress it.
 
 `railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
 repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its
@@ -993,7 +1087,9 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; optional authenticated Backstage generation on each executing service | none | Sensitive exact-universe-to-page-UUID mapping. Configure the identical value on worker before queued legacy supplement generation is enabled. One to three unique raw page UUIDs per universe; URLs and partial/invalid configuration are rejected before provider work. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical on web and worker | none | Exact universe-to-root authority mapping. Blocks/quarantines legacy state and selects recursive immutable RAG snapshots. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical on web and worker for partition shadow/cutover | none | Closed bounded version-1 universe/shard envelope with stable shard keys, retrieval tiers, required policy, scope/category tags, per-shard capacity, operator generation, and a separate canonical semantic digest. |
-| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical on web and worker | `monolith` | Exact `monolith`, `shadow`, or `partitioned`; absent or invalid values remain monolithic. In this shadow release, `shadow` enables only the post-readiness worker writer and `partitioned` remains unavailable; all user reads stay monolithic. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical on web and worker | `monolith` | Exact `monolith`, `shadow`, or `partitioned`; absent or invalid values remain monolithic. `shadow` synchronizes shards and compares bounded partition reads while returning only the monolith result. `partitioned` synchronizes shards and serves only manifest-scoped partition reads, with no monolith read fallback. Restore exact `monolith` for rollback. No deployed value is changed by this release. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | Yes on web for exact `shadow` or `partitioned` | none | Current server-only, purpose-isolated 32–4096 UTF-8-byte unpadded/non-placeholder credential for sealing partition complete-scope cursors. New cursors use only this value. Never configure it on workers or clients. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | No; web-only rotation overlap | none | Optional distinct prior cursor credential accepted only for unsealing while cursors pinned to still-fresh manifests drain. Removing it rejects remaining old cursors. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | No; worker only | `900000` | Bounded full-hierarchy sync cadence. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | No; web only | `86400000` | Bounded maximum age of a successful complete-snapshot verification. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | No; web service source lifecycle only | none | Dedicated purpose-bound Bearer credential for exactly the three `/gpt-access/gaming/sources/*` lifecycle routes. It must be 32–4096 visible ASCII characters with no whitespace or placeholder form, and distinct from every other application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action. Generic GPT Access routes reject it. |
@@ -1118,7 +1214,8 @@ database URL as a command-line argument.
 | `JOB_WORKER_RECOVERY_BATCH_SIZE` | `100` | Maximum generic stale jobs locked and transitioned in one recovery transaction, clamped to 1-1,000. Global and worker-targeted passes each apply the bound independently; oldest visible unlocked rows are processed first and overflow remains for later passes. |
 | `QUEUE_ASK_TERMINAL_RETENTION_MS` | `86400000` | Retains completed/cancelled `ask` results for polling. Values are bounded to 1 hour-30 days. |
 | `QUEUE_DAG_NODE_TERMINAL_RETENTION_MS` | `3600000` | Retains completed/cancelled `dag-node` queue rows for polling and reconciliation. Values are bounded to 1 hour-30 days. |
-| `QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED` | `true` | Enables one deterministic bounded cleanup batch per worker inspection for expired completed/cancelled `ask` and `dag-node` rows only. Each enabled pass also reports a bounded aggregate count of protected legacy rows whose deadline is null; it never reports IDs or payloads and never backfills those rows. |
+| `QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS` | `604800000` | Retains completed/cancelled protected manual partition synchronization rows for operator status reads and idempotency forensics. Values are bounded to 1 hour-30 days. |
+| `QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED` | `true` | Enables one deterministic bounded cleanup batch per worker inspection for expired completed/cancelled `ask`, `dag-node`, and `backstage-notion-partition-sync` rows only. Each enabled pass also reports a bounded aggregate count of protected legacy rows whose deadline is null; it never reports IDs or payloads and never backfills those rows. |
 | `QUEUE_NON_GPT_TERMINAL_CLEANUP_BATCH_SIZE` | `100` | Maximum eligible non-GPT terminal rows deleted per inspection and maximum protected legacy-null rows included in the aggregate inventory sample; bounded to 1-1000. |
 | `QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS` | `3600000` | Recent queue terminal/failure observation window, bounded to 1 minute-7 days. Non-GPT terminal cleanup preserves at least this window and the one-hour worker-budget window. |
 | `JOB_EVENTS_CLEANUP_ENABLED` | `true` | Enables best-effort `job_events` retention cleanup during worker inspection. Legacy `JOB_EVENT_CLEANUP_ENABLED` is also accepted. |
@@ -1319,6 +1416,10 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | commented placeholder | Outbound read-content-only token: web for synchronous optional legacy supplement; worker for authority sync and queued legacy supplement generation. It is never a Builder credential. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | commented example | Sensitive exact-universe-to-one-to-three-raw-page-UUID mapping for optional Notion generation context. Configure the identical mapping on worker before enabling queued legacy supplement generation. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | commented example | Identical web/worker exact-universe root map for one-way Notion authority and recursive RAG. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | commented example | Identical web/worker closed partition envelope with stable shard identities, bounded capacity, retrieval tiers, required policy, and routing tags. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | `monolith` (commented) | Exact read rollout control. `shadow` returns only monolith reads while comparing partitions; `partitioned` returns only manifest-scoped partition reads and never silently falls back. Restore `monolith` for rollback. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | commented empty | Current web-only 32–4096 UTF-8-byte purpose-isolated credential used to seal partition complete-scope cursors in exact `shadow` or `partitioned`. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | commented empty | Optional distinct prior web-only cursor credential retained solely for a bounded rotation overlap. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | `900000` (commented) | Worker full-manifest refresh cadence. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | `86400000` (commented) | Web-side freshness fence for authoritative retrieval. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | commented placeholder | Web-service-only dedicated Bearer credential for only the Gaming source ingestion, refresh, and status routes. Configure the same value in the Arcanos Gaming Custom GPT Action; do not use the generic GPT Access or bridge credential and do not configure it on workers. |

@@ -37,6 +37,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   backstageGeneration: Object.freeze({
     path: '/backstage/generation-contract',
     clearPolicyVersion: 'backstage-booker-clear-generation/v1',
+    partitionedAuthorityProofVersion:
+      'backstage-notion-partitioned-authority/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -49,6 +51,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofHeaders: Object.freeze({
       clearPolicyVersion:
         'x-arcanos-preview-backstage-clear-policy-version',
+      partitionedAuthorityVersion:
+        'x-arcanos-preview-backstage-partition-contract-version',
     }),
   }),
   mcpBodyCap: Object.freeze({

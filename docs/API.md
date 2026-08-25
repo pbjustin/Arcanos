@@ -243,8 +243,9 @@ Retention defaults:
 Generic queue result retention:
 - Completed and cancelled `ask` jobs remain readable for 24h by default.
 - Completed and cancelled internal `dag-node` rows are retained for 1h by default; durable DAG run snapshots and artifacts have separate ownership.
-- `QUEUE_ASK_TERMINAL_RETENTION_MS` and `QUEUE_DAG_NODE_TERMINAL_RETENTION_MS` are independently configurable from 1h through 30 days.
-- Cleanup is bounded and positively allowlisted to those two types and two statuses. It never deletes GPT, local-agent, failed, pending, running, unknown-type, active-idempotency, or null-deadline legacy rows.
+- Completed and cancelled protected manual Notion partition-sync rows are retained for 7 days by default.
+- `QUEUE_ASK_TERMINAL_RETENTION_MS`, `QUEUE_DAG_NODE_TERMINAL_RETENTION_MS`, and `QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS` are independently configurable from 1h through 30 days.
+- Cleanup is bounded and positively allowlisted to those three types and two statuses. It never deletes GPT, local-agent, failed, pending, running, unknown-type, active-idempotency, or null-deadline legacy rows.
 - Cleanup also preserves rows throughout the one-hour worker-budget accounting window and any longer configured queue-diagnostics window. After the result deadline, active idempotency window, and observation protection have all elapsed, generic reads return the existing `not_found` contract. Lifetime queue totals describe currently retained rows.
 
 Client retry guidance:
@@ -665,6 +666,61 @@ activate a compatible snapshot before continuity reads resume.
 Copyable request bodies, PowerShell examples, scope recipes, cursor-loop
 semantics, and the response/error guide are maintained in
 [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md#send-a-notion-continuity-query-to-the-backend).
+
+#### Manual Notion partition synchronization
+
+Operators can enqueue and inspect one configured shard without redeploying the
+worker:
+
+- `POST /api/backstage/notion-partitions/:universeId/syncs`
+- `GET|HEAD /api/backstage/notion-partitions/:universeId/syncs/:syncId`
+- `GET|HEAD /api/backstage/notion-partitions/:universeId/diagnostics`
+
+All three routes require the purpose-bound control-plane bearer, operator role, and
+the dedicated `backstage:notion-sync` scope. The POST body is exactly
+`{"version":1,"shardKey":"<stable-key>"}`, is capped at 4 KiB before the
+broad parser, and requires exactly one visible-ASCII `Idempotency-Key` of 8-240
+characters. Enqueue also requires a consumed one-use confirmation bound to the
+authenticated actor, stable universe and shard, idempotency-key hash, and the
+server-resolved configuration generation and semantic digest. The caller can
+never supply a Notion root, display name, capacity, retry policy, or raw
+configuration.
+
+The worker rereads the exact mode and configuration after claiming the job and
+before any Notion or database synchronization effect. A changed generation or
+digest, removed target, disabled mode, capacity rejection, source drift,
+unsupported content, or lease collision produces a bounded safe result rather
+than broad retries. Only a transient top-level infrastructure failure receives
+the job's single bounded retry. Exact-key replay returns the canonical job;
+another active request for the same stable shard is rejected, while disjoint
+shards can be admitted independently under the finite global queue cap. The
+worker's shared provider coordinator executes those jobs serially with the
+scheduled crawls inside each replica.
+
+Status lookup is actor-, type-, universe-, and input-contract-scoped. It returns
+only queue state, safe reason codes, bounded counts, opaque snapshot/manifest
+IDs, and timestamps; stored inputs, root/page IDs, content, idempotency values,
+configuration, and raw failures are never projected. All responses are
+`no-store`. The operation is available only in exact `shadow` or `partitioned`
+mode; this release does not change a deployed mode or perform production
+cutover.
+
+The bodyless and query-free diagnostics read uses the same authentication and
+scope but is not tied to one actor-owned sync ID. It reads one repeatable,
+read-only PostgreSQL snapshot. The query admits at most 128 configured shard
+rows and 16 active jobs; each internal maximum-plus-one probe fails the read
+closed on overflow rather than returning partial state or sentinel rows. The
+response contains only stable shard keys, required/tier policy, activation and
+freshness classifications, opaque manifest/snapshot audit IDs, safe manifest
+and configuration generations, manifest counts and timestamps,
+last-known-good availability, active-lease expiry, and aggregate job counts. It
+separately reports whether required shards are ready and whether the complete
+configured scope is ready. Before the first partition registration, authority
+and operational aggregates are reported as unavailable rather than fabricated
+as zero. It never returns page/chunk content, embeddings, root or page IDs,
+display names, raw configuration or configuration digests, provider errors,
+job IDs/inputs/results, or lease owner/token/generation data. Use the
+actor-scoped sync-status endpoint when exact manual-job detail is required.
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation

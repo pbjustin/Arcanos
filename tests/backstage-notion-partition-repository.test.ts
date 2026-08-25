@@ -45,6 +45,10 @@ const SOURCE_EDITED_AT = new Date('2026-08-24T12:00:00.000Z');
 const VERIFIED_AT = new Date('2026-08-24T12:02:00.000Z');
 const ROOT_TITLE = 'Monday Night Raw';
 const ROOT_CANONICAL_URL = `https://www.notion.so/${ROOT_PAGE_ID.replaceAll('-', '')}`;
+const MANIFEST_CREATED_AT = new Date('2026-08-24T12:03:00.000Z');
+const SNAPSHOT_SEALED_AT = new Date('2026-08-24T12:03:30.000Z');
+const MANIFEST_SEALED_AT = new Date('2026-08-24T12:04:00.000Z');
+const DIAGNOSTICS_OBSERVED_AT = new Date('2026-08-24T12:05:00.000Z');
 
 interface QueryRecord {
   readonly sql: string;
@@ -65,6 +69,192 @@ function result(
   rowCount = rows.length
 ): MockQueryResult {
   return { rows, rowCount };
+}
+
+function routingMemberRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    manifest_id: MANIFEST_ID,
+    manifest_generation: '3',
+    desired_configuration_version_id: CONFIGURATION_VERSION_ID,
+    desired_configuration_generation: CONFIGURATION_GENERATION,
+    desired_configuration_hash: CONFIGURATION_HASH,
+    configuration_version_id: CONFIGURATION_VERSION_ID,
+    configuration_generation: CONFIGURATION_GENERATION,
+    configuration_hash: CONFIGURATION_HASH,
+    configured_shard_count: '1',
+    configuration_state: 'sealed',
+    embedding_model: 'text-embedding-test',
+    embedding_version: '1',
+    embedding_dimension: '2',
+    index_format_version: '1',
+    member_count: '1',
+    omission_count: '0',
+    manifest_page_count: '1',
+    manifest_chunk_count: '1',
+    manifest_state: 'sealed',
+    manifest_created_at: MANIFEST_CREATED_AT,
+    manifest_sealed_at: MANIFEST_SEALED_AT,
+    record_kind: 'member',
+    shard_key: SHARD_KEY,
+    partition_version_id: PARTITION_VERSION_ID,
+    retrieval_tier: 'hot',
+    is_required: true,
+    scope_tags: ['brand:raw', 'year:2026'],
+    category_tags: ['current'],
+    shard_snapshot_id: SNAPSHOT_ID,
+    member_decision: 'fresh',
+    member_verified_at: VERIFIED_AT,
+    snapshot_page_count: '1',
+    snapshot_chunk_count: '1',
+    snapshot_embedding_model: 'text-embedding-test',
+    snapshot_embedding_version: '1',
+    snapshot_embedding_dimension: '2',
+    snapshot_index_format_version: '1',
+    snapshot_state: 'sealed',
+    snapshot_created_at: SOURCE_EDITED_AT,
+    snapshot_sealed_at: SNAPSHOT_SEALED_AT,
+    omission_decision: null,
+    safe_reason_code: null,
+    ...overrides,
+  };
+}
+
+function routingOmissionRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return routingMemberRow({
+    configured_shard_count: '2',
+    member_count: '1',
+    omission_count: '1',
+    record_kind: 'omission',
+    shard_key: OPTIONAL_SHARD_KEY,
+    partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+    retrieval_tier: 'archive',
+    is_required: false,
+    scope_tags: ['brand:raw', 'year:2025'],
+    category_tags: ['archive'],
+    shard_snapshot_id: null,
+    member_decision: null,
+    member_verified_at: null,
+    snapshot_page_count: null,
+    snapshot_chunk_count: null,
+    snapshot_embedding_model: null,
+    snapshot_embedding_version: null,
+    snapshot_embedding_dimension: null,
+    snapshot_index_format_version: null,
+    snapshot_state: null,
+    snapshot_created_at: null,
+    snapshot_sealed_at: null,
+    omission_decision: 'optional_unavailable',
+    safe_reason_code: 'SHARD_SYNC_INCOMPLETE',
+    ...overrides,
+  });
+}
+
+function diagnosticsMemberRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    observed_at: DIAGNOSTICS_OBSERVED_AT,
+    authority: 'notion',
+    desired_configuration_version_id: CONFIGURATION_VERSION_ID,
+    desired_configuration_generation: CONFIGURATION_GENERATION,
+    desired_configuration_hash: CONFIGURATION_HASH,
+    universe_head_generation: '4',
+    manifest_generation: '3',
+    configured_shard_count: '1',
+    configuration_state: 'sealed',
+    head_active_manifest_id: MANIFEST_ID,
+    head_active_configuration_version_id: CONFIGURATION_VERSION_ID,
+    active_manifest_id: MANIFEST_ID,
+    manifest_configuration_version_id: CONFIGURATION_VERSION_ID,
+    manifest_configuration_generation: CONFIGURATION_GENERATION,
+    manifest_configuration_hash: CONFIGURATION_HASH,
+    manifest_member_count: '1',
+    manifest_omission_count: '0',
+    manifest_page_count: '1',
+    manifest_chunk_count: '1',
+    manifest_state: 'sealed',
+    manifest_created_at: MANIFEST_CREATED_AT,
+    manifest_sealed_at: MANIFEST_SEALED_AT,
+    shard_key: SHARD_KEY,
+    partition_version_id: PARTITION_VERSION_ID,
+    retrieval_tier: 'hot',
+    is_required: true,
+    scope_tags: ['brand:raw', 'year:2026'],
+    category_tags: ['current'],
+    current_partition_version_id: PARTITION_VERSION_ID,
+    active_snapshot_id: SNAPSHOT_ID,
+    shard_head_generation: '3',
+    snapshot_generation: '1',
+    last_attempt_at: SNAPSHOT_SEALED_AT,
+    last_verified_at: VERIFIED_AT,
+    lkg_snapshot_id: SNAPSHOT_ID,
+    lkg_partition_version_id: PARTITION_VERSION_ID,
+    lkg_page_count: '1',
+    lkg_chunk_count: '1',
+    lkg_state: 'sealed',
+    lkg_created_at: SOURCE_EDITED_AT,
+    lkg_sealed_at: SNAPSHOT_SEALED_AT,
+    manifest_member_snapshot_id: SNAPSHOT_ID,
+    manifest_member_decision: 'fresh',
+    manifest_member_required: true,
+    manifest_member_verified_at: VERIFIED_AT,
+    manifest_snapshot_id: SNAPSHOT_ID,
+    manifest_snapshot_page_count: '1',
+    manifest_snapshot_chunk_count: '1',
+    manifest_snapshot_state: 'sealed',
+    manifest_snapshot_created_at: SOURCE_EDITED_AT,
+    manifest_snapshot_sealed_at: SNAPSHOT_SEALED_AT,
+    omission_decision: null,
+    omission_safe_reason_code: null,
+    lease_acquired_at: null,
+    lease_expires_at: null,
+    active_job_candidate_count: '0',
+    universe_active_job_count: '0',
+    invalid_active_job_count: '0',
+    unconfigured_active_job_count: '0',
+    shard_active_job_count: '0',
+    shard_pending_job_count: '0',
+    shard_running_job_count: '0',
+    shard_stale_configuration_job_count: '0',
+    ...overrides,
+  };
+}
+
+function diagnosticsOmissionRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return diagnosticsMemberRow({
+    configured_shard_count: '2',
+    manifest_member_count: '1',
+    manifest_omission_count: '1',
+    shard_key: OPTIONAL_SHARD_KEY,
+    partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+    retrieval_tier: 'archive',
+    is_required: false,
+    scope_tags: ['brand:raw', 'year:2025'],
+    category_tags: ['archive'],
+    current_partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+    active_snapshot_id: OPTIONAL_SNAPSHOT_ID,
+    lkg_snapshot_id: OPTIONAL_SNAPSHOT_ID,
+    lkg_partition_version_id: OPTIONAL_PARTITION_VERSION_A,
+    manifest_member_snapshot_id: null,
+    manifest_member_decision: null,
+    manifest_member_required: null,
+    manifest_member_verified_at: null,
+    manifest_snapshot_id: null,
+    manifest_snapshot_page_count: null,
+    manifest_snapshot_chunk_count: null,
+    manifest_snapshot_state: null,
+    manifest_snapshot_created_at: null,
+    manifest_snapshot_sealed_at: null,
+    omission_decision: 'optional_unavailable',
+    omission_safe_reason_code: 'SHARD_SYNC_FAILED',
+    ...overrides,
+  });
 }
 
 class PartitionRepositoryHarness {
@@ -97,6 +287,7 @@ class PartitionRepositoryHarness {
     }
     if (
       sql === 'BEGIN'
+      || sql === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
       || sql === 'COMMIT'
       || sql === 'ROLLBACK'
       || sql.startsWith('SET LOCAL lock_timeout')
@@ -748,6 +939,547 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     expect(query).not.toHaveBeenCalled();
     await expect(repository.loadShadowCoverage(UNIVERSE_ID, 1))
       .rejects.toThrow('monolith_only_page_ids exceeds its bounded sample contract');
+  });
+
+  test('loads one bounded routing generation from exact immutable manifest membership', async () => {
+    const nextConfigurationId = 'abababab-abab-4bab-8bab-abababababab';
+    const nextConfigurationHash = 'f'.repeat(64);
+    const harness = new PartitionRepositoryHarness(async (
+      sql: string,
+      values: readonly unknown[]
+    ) => {
+      const normalized = normalizeSql(sql);
+      expect(normalized).toContain('WITH pinned_manifest AS MATERIALIZED');
+      expect(normalized).toContain('manifest.id = partition_head.active_manifest_id');
+      expect(normalized).toContain('member.shard_snapshot_id');
+      expect(normalized).toContain('LIMIT $2');
+      expect(normalized).not.toMatch(/backstage_notion_partition_heads/iu);
+      expect(normalized).not.toMatch(
+        /backstage_notion_(?:page_versions|chunk_versions|chunk_embeddings)/iu
+      );
+      expect(normalized).not.toMatch(/\b(?:markdown|content)\b/iu);
+      expect(values).toEqual([UNIVERSE_ID, 129]);
+      const common = {
+        configured_shard_count: '2',
+        member_count: '1',
+        omission_count: '1',
+        desired_configuration_version_id: nextConfigurationId,
+        desired_configuration_generation: 'partition-generation-2',
+        desired_configuration_hash: nextConfigurationHash,
+      };
+      return result([
+        routingMemberRow(common),
+        routingOmissionRow(common),
+      ]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadActiveManifestRoutingState(UNIVERSE_ID);
+
+    expect(harness.connect).toHaveBeenCalledTimes(1);
+    expect(harness.queries.map(item => item.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('WITH pinned_manifest AS MATERIALIZED'),
+      'COMMIT',
+    ]);
+    expect(harness.release).toHaveBeenCalledWith(false);
+    expect(state).toMatchObject({
+      universeId: UNIVERSE_ID,
+      manifestId: MANIFEST_ID,
+      manifestGeneration: '3',
+      configurationVersionId: CONFIGURATION_VERSION_ID,
+      configurationGeneration: CONFIGURATION_GENERATION,
+      configurationHash: CONFIGURATION_HASH,
+      configurationCurrent: false,
+      embeddingModel: 'text-embedding-test',
+      embeddingVersion: 1,
+      embeddingDimension: 2,
+      indexFormatVersion: 1,
+      pageCount: 1,
+      chunkCount: 1,
+      members: [{
+        shardKey: SHARD_KEY,
+        snapshotId: SNAPSHOT_ID,
+        verifiedAt: VERIFIED_AT,
+        snapshotSealedAt: SNAPSHOT_SEALED_AT,
+        pageCount: 1,
+        chunkCount: 1,
+        scopeTags: ['brand:raw', 'year:2026'],
+      }],
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        required: false,
+        decision: 'optional_unavailable',
+        safeReasonCode: 'SHARD_SYNC_INCOMPLETE',
+      }],
+    });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state?.members)).toBe(true);
+    expect(Object.isFrozen(state?.members[0])).toBe(true);
+  });
+
+  test('loads one repeatable-read, bounded diagnostics generation without corpus or secret fields', async () => {
+    const harness = new PartitionRepositoryHarness(async (
+      sql: string,
+      values: readonly unknown[]
+    ) => {
+      const normalized = normalizeSql(sql);
+      expect(normalized).toContain('WITH pinned_universe AS MATERIALIZED');
+      expect(normalized).toContain('statement_timestamp() AS observed_at');
+      expect(normalized).not.toContain('transaction_timestamp() AS observed_at');
+      expect(normalized).toContain('active_job_candidates AS MATERIALIZED');
+      expect(normalized).toContain('configured_shards AS MATERIALIZED');
+      expect(normalized).toContain('LIMIT $2');
+      expect(normalized).toContain('LIMIT $3');
+      expect(normalized).toContain("active_lease.expires_at > pinned.observed_at");
+      expect(normalized).toContain('ELSE COALESCE(( job.input ->> \'protocol\' = $5');
+      expect(normalized).toContain('NOT target_valid OR NOT timestamps_valid');
+      expect(normalized).toContain("AND job.input ->> 'universeId' = $1");
+      expect(normalized).toContain('job.updated_at < job.created_at');
+      expect(normalized).toContain("job.status = 'running' AND job.started_at IS NULL");
+      expect(normalized).not.toMatch(
+        /backstage_notion_(?:shard_snapshot_pages|shard_snapshot_chunk_occurrences|page_versions|page_version_chunks|chunk_versions|chunk_embeddings|manifest_page_ownership)/iu
+      );
+      expect(normalized).not.toMatch(
+        /\b(?:root_page_id|page_id|title|canonical_url|path|markdown|content|embedding_model|embedding_dimension|lease_token|holder_id|lease_generation|correlation_id|idempotency_scope_hash|idempotency_key_hash)\b/iu
+      );
+      expect(normalized).not.toMatch(
+        /\bjob\.(?:id|output|error_message|request_fingerprint_hash)\b/iu
+      );
+      expect(values).toEqual([
+        UNIVERSE_ID,
+        17,
+        129,
+        'backstage-notion-partition-sync',
+        'backstage-notion-partition-sync-job-v1',
+      ]);
+      return result([diagnosticsMemberRow()]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadUniverseDiagnosticsState(UNIVERSE_ID);
+
+    expect(harness.queries.map(item => item.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('WITH pinned_universe AS MATERIALIZED'),
+      'COMMIT',
+    ]);
+    expect(state).toEqual({
+      universeId: UNIVERSE_ID,
+      observedAt: DIAGNOSTICS_OBSERVED_AT,
+      authorityActive: true,
+      desiredConfigurationVersionId: CONFIGURATION_VERSION_ID,
+      desiredConfigurationGeneration: CONFIGURATION_GENERATION,
+      desiredConfigurationHash: CONFIGURATION_HASH,
+      headGeneration: '4',
+      manifestGeneration: '3',
+      activeManifest: {
+        manifestId: MANIFEST_ID,
+        configurationVersionId: CONFIGURATION_VERSION_ID,
+        configurationGeneration: CONFIGURATION_GENERATION,
+        configurationHash: CONFIGURATION_HASH,
+        createdAt: MANIFEST_CREATED_AT,
+        sealedAt: MANIFEST_SEALED_AT,
+        memberCount: 1,
+        omissionCount: 0,
+        pageCount: 1,
+        chunkCount: 1,
+      },
+      activeJobCount: 0,
+      unconfiguredActiveJobCount: 0,
+      shards: [{
+        shardKey: SHARD_KEY,
+        partitionVersionId: PARTITION_VERSION_ID,
+        currentHeadPartitionVersionId: PARTITION_VERSION_ID,
+        retrievalTier: 'hot',
+        required: true,
+        scopeTags: ['brand:raw', 'year:2026'],
+        categoryTags: ['current'],
+        headGeneration: '3',
+        snapshotGeneration: '1',
+        lastAttemptAt: SNAPSHOT_SEALED_AT,
+        lastVerifiedAt: VERIFIED_AT,
+        lastKnownGood: {
+          snapshotId: SNAPSHOT_ID,
+          partitionVersionId: PARTITION_VERSION_ID,
+          exactForConfiguredPartition: true,
+          pageCount: 1,
+          chunkCount: 1,
+          createdAt: SOURCE_EDITED_AT,
+          sealedAt: SNAPSHOT_SEALED_AT,
+        },
+        manifestRecord: {
+          kind: 'member',
+          decision: 'fresh',
+          snapshotId: SNAPSHOT_ID,
+          verifiedAt: VERIFIED_AT,
+          pageCount: 1,
+          chunkCount: 1,
+        },
+        lease: null,
+        activeJobs: {
+          total: 0,
+          pending: 0,
+          running: 0,
+          configurationStale: 0,
+        },
+      }],
+    });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state?.shards)).toBe(true);
+    expect(Object.isFrozen(state?.shards[0]?.lastKnownGood)).toBe(true);
+  });
+
+  test('projects only active leases, closed omission reasons, and aggregate job counts', async () => {
+    const leaseAcquiredAt = new Date('2026-08-24T12:04:30.000Z');
+    const leaseExpiresAt = new Date('2026-08-24T12:06:00.000Z');
+    const commonJobs = {
+      active_job_candidate_count: '1',
+      universe_active_job_count: '1',
+      invalid_active_job_count: '0',
+      unconfigured_active_job_count: '0',
+    };
+    const harness = new PartitionRepositoryHarness(async () => result([
+      diagnosticsOmissionRow({
+        ...commonJobs,
+        lease_acquired_at: leaseAcquiredAt,
+        lease_expires_at: leaseExpiresAt,
+        shard_active_job_count: '1',
+        shard_pending_job_count: '0',
+        shard_running_job_count: '1',
+        shard_stale_configuration_job_count: '1',
+      }),
+      diagnosticsMemberRow({
+        ...commonJobs,
+        configured_shard_count: '2',
+        manifest_member_count: '1',
+        manifest_omission_count: '1',
+      }),
+    ]));
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadUniverseDiagnosticsState(UNIVERSE_ID);
+
+    expect(state?.activeJobCount).toBe(1);
+    expect(state?.shards).toHaveLength(2);
+    expect(state?.shards[0]).toMatchObject({
+      shardKey: OPTIONAL_SHARD_KEY,
+      required: false,
+      manifestRecord: {
+        kind: 'omission',
+        decision: 'optional_unavailable',
+        safeReasonCode: 'SHARD_SYNC_FAILED',
+      },
+      lease: { acquiredAt: leaseAcquiredAt, expiresAt: leaseExpiresAt },
+      activeJobs: {
+        total: 1,
+        pending: 0,
+        running: 1,
+        configurationStale: 1,
+      },
+    });
+    expect(state?.shards[1]).toMatchObject({
+      shardKey: SHARD_KEY,
+      lease: null,
+      activeJobs: { total: 0 },
+    });
+  });
+
+  test('labels a historical shard head as non-exact for the desired partition version', async () => {
+    const harness = new PartitionRepositoryHarness(async () => result([
+      diagnosticsMemberRow({
+        desired_configuration_version_id: OPTIONAL_PARTITION_VERSION_B,
+        desired_configuration_generation: 'partition-generation-2',
+        desired_configuration_hash: 'f'.repeat(64),
+        partition_version_id: OPTIONAL_PARTITION_VERSION_B,
+        current_partition_version_id: PARTITION_VERSION_ID,
+        manifest_member_snapshot_id: null,
+        manifest_member_decision: null,
+        manifest_member_required: null,
+        manifest_member_verified_at: null,
+        manifest_snapshot_id: null,
+        manifest_snapshot_page_count: null,
+        manifest_snapshot_chunk_count: null,
+        manifest_snapshot_state: null,
+        manifest_snapshot_created_at: null,
+        manifest_snapshot_sealed_at: null,
+      }),
+    ]));
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadUniverseDiagnosticsState(UNIVERSE_ID);
+
+    expect(state?.activeManifest?.configurationVersionId)
+      .toBe(CONFIGURATION_VERSION_ID);
+    expect(state?.desiredConfigurationVersionId)
+      .toBe(OPTIONAL_PARTITION_VERSION_B);
+    expect(state?.shards[0]).toMatchObject({
+      partitionVersionId: OPTIONAL_PARTITION_VERSION_B,
+      currentHeadPartitionVersionId: PARTITION_VERSION_ID,
+      lastKnownGood: {
+        partitionVersionId: PARTITION_VERSION_ID,
+        exactForConfiguredPartition: false,
+      },
+      manifestRecord: null,
+    });
+  });
+
+  test('rejects diagnostics overflow, duplicates, cross-generation rows, and malformed metadata', async () => {
+    const repositoryFor = (rows: Array<Record<string, unknown>>) =>
+      new PostgresBackstageNotionPartitionRepository(
+        new PartitionRepositoryHarness(async () => result(rows)).pool
+      );
+
+    await expect(repositoryFor(Array.from({ length: 129 }, (_, index) =>
+      diagnosticsMemberRow({
+        configured_shard_count: '129',
+        shard_key: `raw/${String(index).padStart(3, '0')}`,
+      })
+    )).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/bounded shard contract/u);
+
+    await expect(repositoryFor([diagnosticsMemberRow({
+      active_job_candidate_count: '17',
+    })]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/active-job metadata is invalid or unbounded/u);
+
+    await expect(repositoryFor([
+      diagnosticsMemberRow({ configured_shard_count: '2' }),
+      diagnosticsMemberRow({ configured_shard_count: '2' }),
+    ]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/duplicate configured shards/u);
+
+    await expect(repositoryFor([
+      diagnosticsMemberRow({ configured_shard_count: '2' }),
+      diagnosticsOmissionRow({
+        manifest_generation: '4',
+        omission_safe_reason_code: 'NOT_AN_APPROVED_REASON',
+      }),
+    ]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/crossed authority generations/u);
+
+    await expect(repositoryFor([
+      diagnosticsMemberRow({
+        configured_shard_count: '2',
+        manifest_omission_count: '1',
+      }),
+      diagnosticsOmissionRow({
+        omission_safe_reason_code: 'NOT_AN_APPROVED_REASON',
+      }),
+    ]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/not an approved shard failure reason/u);
+
+    await expect(repositoryFor([diagnosticsMemberRow({
+      active_job_candidate_count: '1',
+      invalid_active_job_count: '1',
+    })]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/active-job metadata is invalid or unbounded/u);
+
+    await expect(repositoryFor([diagnosticsMemberRow({
+      active_job_candidate_count: '2',
+      universe_active_job_count: '2',
+      shard_active_job_count: '2',
+      shard_pending_job_count: '1',
+      shard_running_job_count: '1',
+    })]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/active-job summary is inconsistent/u);
+
+    await expect(repositoryFor([
+      diagnosticsMemberRow({
+        configured_shard_count: '2',
+        manifest_omission_count: '1',
+      }),
+      diagnosticsOmissionRow({ manifest_page_count: '2' }),
+    ]).loadUniverseDiagnosticsState(UNIVERSE_ID))
+      .rejects.toThrow(/manifest rows are inconsistent/u);
+  });
+
+  test('fails closed for missing authority, oversized metadata, and inconsistent totals', async () => {
+    const absentHarness = new PartitionRepositoryHarness(async () => result());
+    const absent = new PostgresBackstageNotionPartitionRepository(
+      absentHarness.pool
+    );
+    await expect(absent.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .resolves.toBeNull();
+
+    const oversizedHarness = new PartitionRepositoryHarness(async () => result(Array.from(
+        { length: 129 },
+        () => routingMemberRow()
+      )));
+    const oversized = new PostgresBackstageNotionPartitionRepository(
+      oversizedHarness.pool
+    );
+    await expect(oversized.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .rejects.toThrow(/exceeds its bounded contract/u);
+
+    const inconsistentHarness = new PartitionRepositoryHarness(async () => result([
+        routingMemberRow({ manifest_chunk_count: '2' }),
+      ]));
+    const inconsistent = new PostgresBackstageNotionPartitionRepository(
+      inconsistentHarness.pool
+    );
+    await expect(inconsistent.loadActiveManifestRoutingState(UNIVERSE_ID))
+      .rejects.toThrow(/totals are internally inconsistent/u);
+  });
+
+  test('resolves exact manifest scope ownership with bounded suffix matching', async () => {
+    const requestedPath = [
+      ...Array.from({ length: 100 }, (_, index) => `Ancestor ${index}`),
+      'Monday Night Raw',
+    ];
+    const requestedPathKey = normalizeBackstageNotionScopePath(requestedPath);
+    const titleKey = normalizeBackstageNotionScopeKey(ROOT_TITLE);
+    const harness = new PartitionRepositoryHarness(async (
+      sql: string,
+      values: readonly unknown[]
+    ) => {
+      const normalized = normalizeSql(sql);
+      expect(normalized).toContain('WITH RECURSIVE pinned_manifest AS MATERIALIZED');
+      expect(normalized).toContain('manifest.id = $2');
+      expect(normalized).not.toContain(
+        'backstage_notion_partitioned_universe_heads'
+      );
+      expect(normalized).toContain('page.scope_title_key = $3');
+      expect(normalized).toContain('jsonb_array_length(page.scope_path_key)');
+      expect(normalized).toContain('parent.traversal_depth < $7');
+      expect(normalized).toContain('child.depth = parent.page_depth + 1');
+      expect(normalized).toContain('COUNT(DISTINCT occurrence.page_id)');
+      expect(normalized).toContain(
+        'OR EXISTS ( SELECT 1 FROM public.backstage_notion_shard_snapshot_chunk_occurrences AS retrievable_occurrence'
+      );
+      expect(normalized).toMatch(/FROM candidates AS candidate UNION SELECT/iu);
+      expect(normalized.match(/LIMIT \$6/gu)).toHaveLength(2);
+      expect(normalized).not.toMatch(
+        /backstage_notion_(?:page_versions|chunk_versions|chunk_embeddings)/iu
+      );
+      expect(normalized).not.toMatch(/\b(?:markdown|content|embedding)\b/iu);
+      expect(values).toEqual([
+        UNIVERSE_ID,
+        MANIFEST_ID,
+        titleKey,
+        requestedPathKey,
+        'subtree',
+        2,
+        16,
+      ]);
+      return result([{
+        manifest_id: MANIFEST_ID,
+        shard_key: SHARD_KEY,
+        partition_version_id: PARTITION_VERSION_ID,
+        shard_snapshot_id: SNAPSHOT_ID,
+        page_id: ROOT_PAGE_ID,
+        page_title: ROOT_TITLE,
+        scope_path: [ROOT_TITLE],
+        scope_chunk_count: '3',
+        scope_page_count: '2',
+      }]);
+    });
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
+
+    await expect(repository.resolveManifestScopeOwner(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      {
+        pageTitleKey: titleKey,
+        pagePathKey: Array.from({ length: 102 }, () => titleKey),
+        scopeKind: 'subtree',
+      }
+    )).rejects.toThrow(/pagePathKey is invalid/u);
+    expect(harness.connect).not.toHaveBeenCalled();
+    await expect(repository.resolveManifestScopeOwner(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      {
+        pageTitleKey: titleKey,
+        pagePathKey: requestedPathKey,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: MANIFEST_ID,
+      shardKey: SHARD_KEY,
+      partitionVersionId: PARTITION_VERSION_ID,
+      snapshotId: SNAPSHOT_ID,
+      pageId: ROOT_PAGE_ID,
+      pageTitle: ROOT_TITLE,
+      pagePath: [ROOT_TITLE],
+      sectionPath: null,
+      sectionOccurrencePath: null,
+      scopeKind: 'subtree',
+      scopeChunkCount: 3,
+      scopePageCount: 2,
+    });
+    expect(harness.connect).toHaveBeenCalledTimes(1);
+    expect(harness.queries.map(item => item.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('WITH RECURSIVE pinned_manifest AS MATERIALIZED'),
+      'COMMIT',
+    ]);
+    expect(harness.release).toHaveBeenCalledWith(false);
+  });
+
+  test('distinguishes stale manifests, missing scopes, ambiguity, and corrupt scope rows', async () => {
+    const titleKey = normalizeBackstageNotionScopeKey(ROOT_TITLE);
+    const baseRow = {
+      manifest_id: MANIFEST_ID,
+      shard_key: SHARD_KEY,
+      partition_version_id: PARTITION_VERSION_ID,
+      shard_snapshot_id: SNAPSHOT_ID,
+      page_id: ROOT_PAGE_ID,
+      page_title: ROOT_TITLE,
+      scope_path: [ROOT_TITLE],
+      scope_chunk_count: '1',
+      scope_page_count: '1',
+    };
+    const resolveRows = async (rows: Array<Record<string, unknown>>) => {
+      const harness = new PartitionRepositoryHarness(async () => result(rows));
+      return new PostgresBackstageNotionPartitionRepository(
+        harness.pool
+      ).resolveManifestScopeOwner(
+        UNIVERSE_ID,
+        MANIFEST_ID,
+        { pageTitleKey: titleKey, pagePathKey: null, scopeKind: 'page' }
+      );
+    };
+
+    await expect(resolveRows([])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolveRows([{
+      manifest_id: MANIFEST_ID,
+      shard_key: null,
+      partition_version_id: null,
+      shard_snapshot_id: null,
+      page_id: null,
+      page_title: null,
+      scope_path: null,
+      scope_chunk_count: null,
+      scope_page_count: null,
+    }])).resolves.toEqual({ status: 'not_found' });
+    await expect(resolveRows([
+      baseRow,
+      { ...baseRow, page_id: OPTIONAL_ROOT_PAGE_ID },
+    ])).resolves.toEqual({ status: 'ambiguous' });
+    await expect(resolveRows([{
+      ...baseRow,
+      page_title: 'SmackDown',
+    }])).resolves.toEqual({ status: 'invalid' });
+    await expect(resolveRows([{
+      ...baseRow,
+      scope_chunk_count: '0',
+      scope_page_count: '0',
+    }])).resolves.toEqual({ status: 'not_found' });
   });
 
   test('rejects malformed inputs before obtaining a database connection', async () => {
@@ -1562,6 +2294,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       configurationVersionId: CONFIGURATION_VERSION_ID,
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SOURCE_UNAVAILABLE',
+      }],
       pageCount: 1,
       chunkCount: 1,
       headGeneration: '5',
@@ -1612,6 +2348,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     )).resolves.toMatchObject({
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });
@@ -1679,6 +2419,13 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     )).resolves.toMatchObject({
       memberCount: 1,
       omissionCount: 2,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }, {
+        shardKey: SECOND_OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });

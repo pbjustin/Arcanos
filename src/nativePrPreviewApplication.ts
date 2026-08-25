@@ -134,6 +134,31 @@ import {
   prepareBackstageNotionRagPage,
 } from './shared/backstage/backstageNotionRagCore.js';
 import {
+  BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
+  parseBackstageNotionPartitionConfiguration,
+  parseBackstageNotionPartitionedIndexMode,
+  resolveBackstageNotionPartitionUniverse,
+} from './shared/backstage/backstageNotionPartitionCore.js';
+import {
+  classifyBackstageNotionPageMaterials,
+  hashBackstageNotionPageMaterial,
+} from './shared/backstage/backstageNotionPartitionMaterialCore.js';
+import {
+  resolveBackstageNotionPartitionRouting,
+} from './shared/backstage/backstageNotionPartitionRoutingCore.js';
+import {
+  decideBackstageNotionPartitionManifestMembership,
+  planBackstageNotionPartitionFullReconciliation,
+} from './shared/backstage/backstageNotionPartitionSyncCore.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+  BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+  BACKSTAGE_NOTION_PARTITION_SYNC_RESULT_PROTOCOL,
+  parseBackstageNotionPartitionSyncJobInput,
+  parseBackstageNotionPartitionSyncJobResult,
+  parseBackstageNotionPartitionSyncRequestBody,
+} from './shared/jobs/backstageNotionPartitionSyncJob.js';
+import {
   probeBackstageNotionPreviewConnectivity,
   type BackstageNotionPreviewConnectivityResult,
 } from './shared/backstage/backstageNotionPreviewCanary.js';
@@ -2670,10 +2695,413 @@ async function assertBackstageNotionPromptBoundaryFixture(): Promise<void> {
   }
 }
 
+function buildNativePreviewPartitionConfiguration(
+  generation: string,
+  rawDisplayName: string,
+  archiveRequired: boolean
+): string {
+  const capacity = {
+    maxPages: 512,
+    maxChunks: BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
+    maxDepth: 16,
+    maxContentCodePoints: 4_000_000,
+  };
+  return JSON.stringify({
+    version: 1,
+    generation,
+    universes: [{
+      universeId: 'native-preview-partitioned-authority',
+      shards: [
+        {
+          shardKey: 'raw/2026',
+          rootPageId: '11111111111141118111111111111111',
+          displayName: rawDisplayName,
+          retrievalTier: 'hot',
+          required: true,
+          scopeTags: ['brand:raw', 'year:2026'],
+          categoryTags: ['current-canon', 'show'],
+          capacity,
+        },
+        {
+          shardKey: 'shared',
+          rootPageId: '22222222222242228222222222222222',
+          displayName: 'Shared Current Canon',
+          retrievalTier: 'cold',
+          required: true,
+          scopeTags: ['shared'],
+          categoryTags: ['current-canon'],
+          capacity,
+        },
+        {
+          shardKey: 'archive/raw/2025',
+          rootPageId: '33333333333343338333333333333333',
+          displayName: 'Raw Archive 2025',
+          retrievalTier: 'archive',
+          required: archiveRequired,
+          scopeTags: ['brand:raw', 'year:2025'],
+          categoryTags: ['archive', 'show'],
+          capacity,
+        },
+      ],
+    }],
+  });
+}
+
+function assertBackstageNotionPartitionedAuthorityFixture():
+  typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.partitionedAuthorityProofVersion {
+  const parsed = parseBackstageNotionPartitionConfiguration(
+    buildNativePreviewPartitionConfiguration(
+      'preview-partition-generation-1',
+      'Monday Night Raw',
+      false
+    )
+  );
+  const renamed = parseBackstageNotionPartitionConfiguration(
+    buildNativePreviewPartitionConfiguration(
+      'preview-partition-generation-2',
+      'Raw',
+      false
+    )
+  );
+  const requiredArchive = parseBackstageNotionPartitionConfiguration(
+    buildNativePreviewPartitionConfiguration(
+      'preview-partition-generation-3',
+      'Raw',
+      true
+    )
+  );
+  if (parsed.status !== 'valid' || renamed.status !== 'valid') {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_CONFIGURATION_INVALID');
+  }
+  const universe = resolveBackstageNotionPartitionUniverse(
+    parsed,
+    'native-preview-partitioned-authority'
+  );
+  const renamedUniverse = resolveBackstageNotionPartitionUniverse(
+    renamed,
+    'native-preview-partitioned-authority'
+  );
+  const rawDefinition = universe?.shards.find(
+    shard => shard.shardKey === 'raw/2026'
+  );
+  const sharedDefinition = universe?.shards.find(
+    shard => shard.shardKey === 'shared'
+  );
+  const archiveDefinition = universe?.shards.find(
+    shard => shard.shardKey === 'archive/raw/2025'
+  );
+  const renamedRawDefinition = renamedUniverse?.shards.find(
+    shard => shard.shardKey === 'raw/2026'
+  );
+  if (
+    !universe
+    || !renamedUniverse
+    || !rawDefinition
+    || !sharedDefinition
+    || !archiveDefinition
+    || !renamedRawDefinition
+    || requiredArchive.status !== 'invalid'
+    || rawDefinition.shardKey !== renamedRawDefinition.shardKey
+    || rawDefinition.rootPageId !== renamedRawDefinition.rootPageId
+    || rawDefinition.displayName === renamedRawDefinition.displayName
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_IDENTITY_INVALID');
+  }
+
+  const reconciliation = planBackstageNotionPartitionFullReconciliation([
+    universe,
+  ]);
+  const aggregateChunkCapacity = universe.shards.reduce(
+    (total, shard) => total + shard.capacity.maxChunks,
+    0
+  );
+  if (
+    aggregateChunkCapacity <= BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+    || universe.shards.some(
+      shard => shard.capacity.maxChunks > BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+    )
+    || reconciliation.map(job => job.shardKey).join(',')
+      !== 'raw/2026,shared,archive/raw/2025'
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_CAPACITY_INVALID');
+  }
+
+  const expectedIndex = {
+    embeddingModel: 'text-embedding-3-small',
+    embeddingVersion: 1,
+    embeddingDimension: 1_536,
+    indexFormatVersion: 1,
+  };
+  const now = new Date('2026-08-25T01:00:00.000Z');
+  const verifiedAt = new Date('2026-08-25T00:00:00.000Z');
+  const rawPartitionVersionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const sharedPartitionVersionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+  const archivePartitionVersionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+  const rawSnapshotId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+  const sharedSnapshotId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  const lastKnownGood = (
+    snapshotId: string,
+    partitionVersionId: string
+  ) => ({
+    snapshotId,
+    partitionVersionId,
+    ...expectedIndex,
+    verifiedAt,
+  });
+  const rawDecision = decideBackstageNotionPartitionManifestMembership({
+    definition: rawDefinition,
+    partitionVersionId: rawPartitionVersionId,
+    attempt: {
+      shardKey: rawDefinition.shardKey,
+      status: 'fresh',
+      safeReasonCode: null,
+      freshSnapshotId: rawSnapshotId,
+    },
+    terminalActiveSnapshot: lastKnownGood(
+      rawSnapshotId,
+      rawPartitionVersionId
+    ),
+    expectedIndex,
+    now,
+    lastKnownGoodMaximumAgeMs: 24 * 60 * 60 * 1_000,
+  });
+  const sharedDecision = decideBackstageNotionPartitionManifestMembership({
+    definition: sharedDefinition,
+    partitionVersionId: sharedPartitionVersionId,
+    attempt: {
+      shardKey: sharedDefinition.shardKey,
+      status: 'failed',
+      safeReasonCode: 'SHARD_SOURCE_DRIFT',
+      freshSnapshotId: null,
+    },
+    terminalActiveSnapshot: lastKnownGood(
+      sharedSnapshotId,
+      sharedPartitionVersionId
+    ),
+    expectedIndex,
+    now,
+    lastKnownGoodMaximumAgeMs: 24 * 60 * 60 * 1_000,
+  });
+  const archiveDecision = decideBackstageNotionPartitionManifestMembership({
+    definition: archiveDefinition,
+    partitionVersionId: archivePartitionVersionId,
+    attempt: {
+      shardKey: archiveDefinition.shardKey,
+      status: 'failed',
+      safeReasonCode: 'SHARD_CAPACITY_EXCEEDED',
+      freshSnapshotId: null,
+    },
+    terminalActiveSnapshot: null,
+    expectedIndex,
+    now,
+    lastKnownGoodMaximumAgeMs: 24 * 60 * 60 * 1_000,
+  });
+  if (
+    rawDecision.kind !== 'fresh'
+    || sharedDecision.kind !== 'retained_last_known_good'
+    || archiveDecision.kind !== 'optional_unavailable'
+    || archiveDecision.safeReasonCode !== 'SHARD_CAPACITY_EXCEEDED'
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_MANIFEST_INVALID');
+  }
+
+  const member = (
+    definition: typeof rawDefinition,
+    decision: typeof rawDecision | typeof sharedDecision
+  ) => ({
+    shardKey: definition.shardKey,
+    partitionVersionId: decision.partitionVersionId,
+    snapshotId: decision.snapshotId,
+    retrievalTier: definition.retrievalTier,
+    required: definition.required,
+    decision: decision.kind,
+    verifiedAt: decision.verifiedAt,
+    scopeTags: definition.scopeTags,
+    categoryTags: definition.categoryTags,
+  });
+  const routingState = {
+    universeId: universe.universeId,
+    manifestId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+    manifestGeneration: '1',
+    configurationVersionId: 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1',
+    configurationHash: parsed.semanticDigest,
+    configurationCurrent: true,
+    ...expectedIndex,
+    members: [
+      member(rawDefinition, rawDecision),
+      member(sharedDefinition, sharedDecision),
+    ],
+    omissions: [{
+      shardKey: archiveDefinition.shardKey,
+      partitionVersionId: archiveDecision.partitionVersionId,
+      retrievalTier: archiveDefinition.retrievalTier,
+      required: false,
+      decision: archiveDecision.kind,
+      safeReasonCode: archiveDecision.safeReasonCode,
+      scopeTags: archiveDefinition.scopeTags,
+      categoryTags: archiveDefinition.categoryTags,
+    }],
+  };
+  const currentCanon = resolveBackstageNotionPartitionRouting(
+    routingState,
+    {
+      kind: 'relevant',
+      cardinality: 'all_matching',
+      allowedTiers: ['hot'],
+      explicitArchive: false,
+      selectors: [{
+        allScopeTags: ['brand:raw', 'year:2026'],
+        allCategoryTags: ['current-canon'],
+      }],
+    }
+  );
+  const shared = resolveBackstageNotionPartitionRouting(routingState, {
+    kind: 'relevant',
+    cardinality: 'exactly_one',
+    allowedTiers: ['cold'],
+    explicitArchive: false,
+    selectors: [{
+      allScopeTags: ['shared'],
+      allCategoryTags: ['current-canon'],
+    }],
+  });
+  const archive = resolveBackstageNotionPartitionRouting(routingState, {
+    kind: 'relevant',
+    cardinality: 'exactly_one',
+    allowedTiers: ['archive'],
+    explicitArchive: true,
+    selectors: [{
+      allScopeTags: ['brand:raw', 'year:2025'],
+      allCategoryTags: ['archive'],
+    }],
+  });
+  const complete = resolveBackstageNotionPartitionRouting(routingState, {
+    kind: 'complete_all',
+    cardinality: 'all_matching',
+  });
+  if (
+    currentCanon.status !== 'resolved'
+    || !currentCanon.complete
+    || currentCanon.shards.length !== 1
+    || currentCanon.shards[0]?.shardKey !== rawDefinition.shardKey
+    || currentCanon.matchingOmissions.length !== 0
+    || shared.status !== 'resolved'
+    || shared.shards[0]?.decision !== 'retained_last_known_good'
+    || archive.status !== 'indeterminate'
+    || archive.matchingOmissions[0]?.shardKey !== archiveDefinition.shardKey
+    || archive.matchingOmissions[0]?.safeReasonCode
+      !== 'SHARD_CAPACITY_EXCEEDED'
+    || complete.status !== 'indeterminate'
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_ROUTING_INVALID');
+  }
+
+  const materialHash = hashBackstageNotionPageMaterial('Stable canon.');
+  const changedHash = hashBackstageNotionPageMaterial('Changed canon.');
+  const page = (
+    pageId: string,
+    contentHash: string,
+    title: string,
+    parentPageId: string | null,
+    path: readonly string[]
+  ) => ({ pageId, contentHash, title, parentPageId, path });
+  const rootPageId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const classifications = classifyBackstageNotionPageMaterials(
+    [
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', materialHash, 'Stable', rootPageId, ['Raw', 'Stable']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', materialHash, 'Moved', rootPageId, ['Raw', 'Moved']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4', materialHash, 'Changed', rootPageId, ['Raw', 'Changed']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee5', materialHash, 'Deleted', rootPageId, ['Raw', 'Deleted']),
+    ],
+    [
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', materialHash, 'Stable', rootPageId, ['Raw', 'Stable']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', materialHash, 'Moved', null, ['Moved']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4', changedHash, 'Changed', rootPageId, ['Raw', 'Changed']),
+      page('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee6', materialHash, 'Added', rootPageId, ['Raw', 'Added']),
+    ]
+  );
+  const classificationByState = new Map(
+    classifications.map(classification => [classification.state, classification])
+  );
+  const moved = classificationByState.get('moved');
+  const unchanged = classificationByState.get('unchanged');
+  if (
+    classifications.length !== 5
+    || classificationByState.size !== 5
+    || !moved?.placementChanged
+    || moved.contentChanged
+    || moved.previous?.contentHash !== moved.current?.contentHash
+    || unchanged?.placementChanged
+    || unchanged?.contentChanged
+    || unchanged?.previous?.contentHash !== unchanged?.current?.contentHash
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_REUSE_INVALID');
+  }
+
+  const syncRequest = parseBackstageNotionPartitionSyncRequestBody({
+    version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+    shardKey: rawDefinition.shardKey,
+  });
+  const syncInput = parseBackstageNotionPartitionSyncJobInput({
+    protocol: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+    version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+    universeId: universe.universeId,
+    shardKey: rawDefinition.shardKey,
+    configurationGeneration: parsed.generation,
+    configurationDigest: parsed.semanticDigest,
+  });
+  const syncResult = parseBackstageNotionPartitionSyncJobResult({
+    protocol: BACKSTAGE_NOTION_PARTITION_SYNC_RESULT_PROTOCOL,
+    version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+    outcome: 'synchronized',
+    safeReasonCode: null,
+    universeId: universe.universeId,
+    shardKey: rawDefinition.shardKey,
+    fullSourceScan: true,
+    manifestStatus: 'published',
+    manifestId: routingState.manifestId,
+    freshSnapshotId: rawSnapshotId,
+    pageCount: 4,
+    chunkCount: 6,
+    pageVersionReuseCount: 2,
+    embeddedChunkCount: 3,
+    pageChanges: {
+      added: 1,
+      changed: 1,
+      moved: 1,
+      deleted: 1,
+      unchanged: 1,
+    },
+  });
+  const modes = ['monolith', 'shadow', 'partitioned'] as const;
+  if (
+    !syncRequest
+    || !syncInput
+    || !syncResult
+    || syncResult.pageVersionReuseCount !== 2
+    || syncResult.embeddedChunkCount >= syncResult.chunkCount
+    || modes.some(mode => {
+      const resolution = parseBackstageNotionPartitionedIndexMode(mode);
+      return resolution.status !== 'valid' || resolution.mode !== mode;
+    })
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_SYNC_CONTRACT_INVALID');
+  }
+  return NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+    .partitionedAuthorityProofVersion;
+}
+
+interface BackstageGenerationFixtureExecution {
+  readonly payload: Record<string, unknown>;
+  readonly partitionedAuthorityProofVersion:
+    | typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.partitionedAuthorityProofVersion
+    | null;
+}
+
 async function runBackstageNotionAuthorityRagFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
-): Promise<Record<string, unknown>> {
+): Promise<BackstageGenerationFixtureExecution> {
   const connectivity = await connectivityProbe();
   if (!connectivity.apiReached || !connectivity.authenticationRejected) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_CONNECTIVITY_INVALID');
@@ -2877,36 +3305,42 @@ async function runBackstageNotionAuthorityRagFixture(
     throw new Error('PREVIEW_BACKSTAGE_NOTION_AUTHORITY_RAG_INVALID');
   }
 
+  const partitionedAuthorityProofVersion =
+    assertBackstageNotionPartitionedAuthorityFixture();
+
   return {
-    accepted: true,
-    cacheBoundaryReached: false,
-    databaseBoundaryReached: false,
-    effectsBoundaryReached: false,
-    externalNetworkAttempted: true,
-    fixture,
-    notionAuthority: {
-      deterministicContentFixture: true,
-      citationProvenanceVerified,
-      instructionBoundaryPreserved,
-      liveCredentialUsed: false,
-      liveNotionApiReached: connectivity.apiReached,
-      liveNotionAuthenticationRejected: connectivity.authenticationRejected,
-      markdownRequests,
-      metadataRequests,
-      mutationActionsRecognized,
-      productionSharedPageCore: true,
-      productionSharedPromptCore: true,
-      sanitizationApplied,
+    partitionedAuthorityProofVersion,
+    payload: {
+      accepted: true,
+      cacheBoundaryReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: true,
+      fixture,
+      notionAuthority: {
+        deterministicContentFixture: true,
+        citationProvenanceVerified,
+        instructionBoundaryPreserved,
+        liveCredentialUsed: false,
+        liveNotionApiReached: connectivity.apiReached,
+        liveNotionAuthenticationRejected: connectivity.authenticationRejected,
+        markdownRequests,
+        metadataRequests,
+        mutationActionsRecognized,
+        productionSharedPageCore: true,
+        productionSharedPromptCore: true,
+        sanitizationApplied,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      rag: {
+        category: prepared.category,
+        chunkCount: prepared.chunks.length,
+        citationCount: promptContext.chunkCount,
+        promptTruncated: promptContext.truncated,
+      },
+      schemaVersion: 1,
     },
-    protectedEffectsEnabled: false,
-    providerBoundaryReached: false,
-    rag: {
-      category: prepared.category,
-      chunkCount: prepared.chunks.length,
-      citationCount: promptContext.chunkCount,
-      promptTruncated: promptContext.truncated,
-    },
-    schemaVersion: 1,
   };
 }
 
@@ -4095,27 +4529,45 @@ async function assertBackstageClearGenerationPolicyFixture(): Promise<void> {
 async function runBackstageGenerationFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
-): Promise<Record<string, unknown>> {
+): Promise<BackstageGenerationFixtureExecution> {
   await assertBackstageClearGenerationPolicyFixture();
   const fixtures = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures;
   switch (fixture) {
     case fixtures.routeBudget:
-      return runBackstageRouteBudgetFixture(fixture);
+      return {
+        payload: await runBackstageRouteBudgetFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.hrcRetryCache:
-      return runBackstageHrcRetryCacheFixture(fixture);
+      return {
+        payload: await runBackstageHrcRetryCacheFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.reviewCompletion:
-      return runBackstageReviewCompletionFixture(fixture);
+      return {
+        payload: await runBackstageReviewCompletionFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.compactRetry:
-      return runBackstageCompactRetryFixture(fixture);
+      return {
+        payload: await runBackstageCompactRetryFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.notionAuthorityRag:
       return runBackstageNotionAuthorityRagFixture(
         fixture,
         connectivityProbe
       );
     case fixtures.continuityQuery:
-      return runBackstageContinuityQueryFixture(fixture);
+      return {
+        payload: await runBackstageContinuityQueryFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.continuitySubtree:
-      return runBackstageContinuitySubtreeFixture(fixture);
+      return {
+        payload: await runBackstageContinuitySubtreeFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     default:
       throw new Error('PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID');
   }
@@ -6132,16 +6584,23 @@ export function createNativePrPreviewApplication(
         fixture,
         runNotionConnectivityProbeOnce
       )
-        .then(payload => {
+        .then(result => {
           response.setHeader(
             NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
               .clearPolicyVersion,
             BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION
           );
+          if (result.partitionedAuthorityProofVersion !== null) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .partitionedAuthorityVersion,
+              result.partitionedAuthorityProofVersion
+            );
+          }
           return sendBoundedJsonResponse(
             request,
             response,
-            payload,
+            result.payload,
             {
               logEvent: 'native_pr_preview.backstage_generation_fixture',
               maxBytes: MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES,

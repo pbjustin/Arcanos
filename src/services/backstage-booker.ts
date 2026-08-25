@@ -80,8 +80,10 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
   BackstageNotionIndexUnavailableError,
-  retrieveBackstageNotionBookingRagContext,
 } from './backstageNotionRag.js';
+import {
+  retrieveBackstageNotionAuthorityBookingRagContext,
+} from './backstageNotionPartitionCutover.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
@@ -1334,7 +1336,7 @@ async function buildStructuredBookingPrompt(
 ): Promise<StructuredBookingPrompt> {
   if (await isBackstageNotionAuthorityEnforced(universeId)) {
     //audit Assumption: a configured Notion-authoritative universe must never observe quarantined legacy canon; failure risk: a missing/stale index silently falls back and presents obsolete PostgreSQL or process state as current; expected invariant: retrieval uses one verified immutable snapshot or fails closed before model generation; handling strategy: resolve bounded RAG context first and propagate an unavailable error without entering either legacy context branch.
-    const notionRag = await retrieveBackstageNotionBookingRagContext(
+    const notionRag = await retrieveBackstageNotionAuthorityBookingRagContext(
       universeId,
       basePrompt
     );

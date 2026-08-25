@@ -183,6 +183,14 @@ function responseHeadersForCase(
             .clearPolicyVersion]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
               .clearPolicyVersion,
+          ...(requestCase.fixtureName === 'notionAuthorityRag'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.partitionedAuthorityVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .partitionedAuthorityProofVersion,
+              }
+            : {}),
         }
       : {}),
     ...(
@@ -1457,6 +1465,34 @@ test('executes the bounded credential-free matrix and detects identity stability
       simulatedAuth: false,
     }
   );
+  const partitionProofCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-notion-authority-rag'
+  );
+  assert.ok(partitionProofCase);
+  assert.deepEqual(
+    result.checks.find(({ caseId }) =>
+      caseId === 'backstage-generation-notion-authority-rag'
+    ),
+    {
+      bodySha256: result.checks.find(({ caseId }) =>
+        caseId === 'backstage-generation-notion-authority-rag'
+      ).bodySha256,
+      caseId: 'backstage-generation-notion-authority-rag',
+      clearPolicyVersionVerified: true,
+      httpStatus: 200,
+      method: 'POST',
+      partitionedAuthorityVerified: true,
+      pathTemplate: '/backstage/generation-contract',
+      responseBytes: Buffer.byteLength(JSON.stringify(
+        expectedNativePrPreviewResponseBody(partitionProofCase, {
+          commitSha: COMMIT_SHA,
+          prNumber: PR_NUMBER,
+        })
+      )),
+      role: 'web',
+      simulatedAuth: false,
+    }
+  );
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -1913,6 +1949,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .clearPolicyVersion
         ] = 'backstage-booker-clear-generation/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .partitionedAuthorityVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .partitionedAuthorityVersion
+        ] = 'backstage-notion-partitioned-authority/drifted';
       },
     },
     {

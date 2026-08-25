@@ -7,13 +7,16 @@ function ownKey(record: object, key: string): boolean {
 }
 
 describe('shared runtime redaction', () => {
-  it('redacts the complete Backstage Notion universe-page mapping', () => {
+  it('redacts complete Backstage Notion authority configuration values', () => {
     const mapping = '{"my-universe-2k26":["11111111-1111-4111-8111-111111111111"]}';
+    const partitions = '{"version":1,"generation":"generation-1","universes":[]}';
 
     expect(redactSensitive({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: partitions,
       ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: mapping,
       ordinary: 'visible',
     })).toEqual({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '[REDACTED]',
       ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: '[REDACTED]',
       ordinary: 'visible',
     });

@@ -67,6 +67,12 @@ import {
   assistantRegistryBodyParser,
 } from '@services/controlPlane/assistantRegistryBodyParser.js';
 import {
+  backstageNotionPartitionSyncHttpBoundary,
+} from '@services/controlPlane/backstageNotionPartitionSyncHttpBoundary.js';
+import {
+  backstageNotionPartitionSyncBodyParser,
+} from '@services/controlPlane/backstageNotionPartitionSyncBodyParser.js';
+import {
   dagHttpBoundary,
 } from '@services/controlPlane/dagHttpBoundary.js';
 import {
@@ -175,6 +181,17 @@ export function createApp(): Express {
   // exact namespace before CORS or broad application parsing.
   app.use('/api/assistants', assistantRegistryHttpBoundary);
   app.use('/api/assistants', assistantRegistryBodyParser);
+  // Manual partition synchronization is an operator-only control-plane
+  // surface. Authenticate and enforce its 4 KiB closed JSON contract before
+  // CORS or the broad application parsers can allocate caller input.
+  app.use(
+    '/api/backstage/notion-partitions',
+    backstageNotionPartitionSyncHttpBoundary
+  );
+  app.use(
+    '/api/backstage/notion-partitions',
+    backstageNotionPartitionSyncBodyParser
+  );
   // Gaming source operations are a narrow GPT-access control plane. Establish
   // dedicated bearer identity, client throttling, no-store policy, and the
   // route-specific JSON ceiling before CORS, the broad application parser, or

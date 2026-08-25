@@ -17,6 +17,7 @@ export const BACKSTAGE_NOTION_PARTITION_OPTIONAL_UNAVAILABLE_REASON_CODES = [
   'SHARD_INDEX_INCOMPATIBLE',
   'SHARD_LEASE_BUSY',
   'SHARD_LEASE_LOST',
+  'SHARD_NOT_REQUESTED',
   'SHARD_OWNERSHIP_CONFLICT',
   'SHARD_SOURCE_DRIFT',
   'SHARD_SYNC_FAILED',
@@ -35,7 +36,12 @@ export interface BackstageNotionPartitionReconciliationJob {
 
 export interface BackstageNotionPartitionShardAttemptSummary {
   readonly shardKey: string;
-  readonly status: 'fresh' | 'failed' | 'lease-busy' | 'aborted';
+  readonly status:
+    | 'fresh'
+    | 'failed'
+    | 'lease-busy'
+    | 'aborted'
+    | 'not-requested';
   readonly safeReasonCode: BackstageNotionPartitionOptionalUnavailableReasonCode | null;
   readonly freshSnapshotId: string | null;
 }

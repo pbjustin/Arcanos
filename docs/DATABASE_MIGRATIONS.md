@@ -382,12 +382,45 @@ future freshness decisions. Mutable shard and universe heads accept only sealed
 objects and require exact compare-and-swap generation increments. Shard and
 provider leases independently fence distributed synchronization.
 
+Partition candidate ranking uses stock PostgreSQL 18 and remains additive to
+the shadow schema. One read-only, repeatable-read statement fences the exact
+sealed manifest, immutable shard tuples, page ownership, embedding contract,
+and durable Notion authority before returning any content. A request already
+pinned to manifest A may finish coherently after manifest B becomes active;
+the query never consults mutable shard heads or mixes snapshots. Up to 2,048
+selected chunks are ranked exhaustively. Larger selections use a versioned
+bounded hybrid pool: the content GIN index contributes at most 256 lexical
+candidates, and a database-side cosine scan contributes the best 32 semantic
+candidates from every selected shard. Total universe size is therefore not a
+search ceiling, and growth in one selected shard cannot remove every semantic
+candidate from another. The fallback is not an ANN index: it scans embeddings
+only in the requested immutable shards, validates the complete selected
+occurrence set, and may fail its five-second statement budget rather than
+silently return a partial authority view. Each transaction limits `work_mem`
+to 8 MiB and temporary files to 256 MiB; at most 128 ranked chunks, without
+embedding arrays, cross into the web process. The initial lexical GIN index
+covers chunk content only. Metadata-weighted lexical indexing and optional
+`pgvector` acceleration require separate measured schema and infrastructure
+changes; neither is assumed by this migration or the PostgreSQL 18 CI image.
+
 `migrations/20260824_backstage_notion_partition_storage_v1.rollback.sql`
 acquires exclusive locks in a fixed order and refuses with SQLSTATE `55000` if
 any partition table contains a row. It never uses `CASCADE`. Validate execution
 only through the dedicated PostgreSQL 18 integration suite and its explicitly
 guarded disposable loopback database; ordinary static validation must not apply
 the migration to a configured or shared database.
+
+`migrations/20260824_backstage_notion_partition_scope_reads_v1/` adds the
+partial parent-page index used by bounded recursive subtree resolution through
+an exact catalog precheck, a standalone `CREATE INDEX CONCURRENTLY`, and an
+exact post-build verifier. Its guarded recovery removes only an exact invalid
+index left by an interrupted concurrent build. Scope
+reads pin an exact sealed universe manifest and its immutable shard tuples;
+page, subtree, and positional section eligibility is established before chunk
+integrity checks or candidate generation. Complete-scope reads use deterministic
+keyset pagination and return at most 128 chunks per application page without
+projecting embedding arrays. Its guarded, idempotent rollback removes only the
+additive exact index and does not remove partition history.
 
 ### Local-agent hardening migration
 

@@ -14,6 +14,9 @@ import {
   assertDisposablePostgresTestDatabaseUrl,
   resolvePostgresTestDatabaseUrl
 } from './postgresTestDatabase.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE
+} from '../../src/shared/jobs/backstageNotionPartitionSyncJob.js';
 
 let firstClient: Client;
 
@@ -28,6 +31,42 @@ const repositoryQueryMock = jest.fn(
   (text: string, params: unknown[] = []) => firstClient.query(text, params)
 );
 const recordJobEventMock = jest.fn(async () => ({ inserted: true as const }));
+let failQueuedEventForTraceId: string | null = null;
+const recordJobEventWithClientMock = jest.fn(async (
+  client: { query: (text: string, params?: unknown[]) => Promise<unknown> },
+  input: {
+    jobId: string;
+    traceId?: string | null;
+    eventType: string;
+    workerId?: string | null;
+    metadata?: Readonly<Record<string, unknown>>;
+  }
+) => {
+  if (
+    input.traceId === failQueuedEventForTraceId
+    && input.eventType === 'job.queued'
+  ) {
+    throw new Error('Disposable queued-event failure.');
+  }
+  await client.query(
+    `INSERT INTO job_events (
+       job_id,
+       trace_id,
+       event_type,
+       worker_id,
+       metadata
+     )
+     VALUES ($1::UUID, $2, $3, $4, $5::JSONB)`,
+    [
+      input.jobId,
+      input.traceId ?? null,
+      input.eventType,
+      input.workerId ?? null,
+      JSON.stringify(input.metadata ?? {}),
+    ]
+  );
+  return { inserted: true as const };
+});
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: getPoolMock,
@@ -40,13 +79,20 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 
 jest.unstable_mockModule(
   '../../src/core/db/repositories/jobEventRepository.js',
-  () => ({ recordJobEvent: recordJobEventMock })
+  () => ({
+    recordJobEvent: recordJobEventMock,
+    recordJobEventWithClient: recordJobEventWithClientMock
+  })
 );
 
 const {
   MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS,
   RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL,
+  BackstageNotionPartitionSyncInProgressError,
+  BackstageNotionPartitionSyncQueueSaturatedError,
+  IdempotencyKeyConflictError,
   createJob,
+  findOrCreateBackstageNotionPartitionSyncJob,
   inspectLegacyNullNonGptTerminalJobs,
   recoverStaleJobs,
   recoverStalledJobsForWorkers,
@@ -74,6 +120,7 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
   let secondClient: Client;
   let previousAskRetention: string | undefined;
   let previousDagNodeRetention: string | undefined;
+  let previousPartitionSyncRetention: string | undefined;
 
   async function insertJob(
     client: Client,
@@ -168,6 +215,78 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
     expect(Number(result.rows[0]?.retention_window_ms)).toBe(durationMs);
   }
 
+  function useConcurrentAdmissionClients(): void {
+    const clients = [firstClient, secondClient];
+    let nextClientIndex = 0;
+    getPoolMock.mockReturnValue({
+      connect: async () => {
+        const client = clients[nextClientIndex];
+        nextClientIndex += 1;
+        if (!client) {
+          throw new Error('Unexpected disposable PostgreSQL connection request.');
+        }
+        return {
+          query: (text: string, params: unknown[] = []) =>
+            client.query(text, params),
+          release: jest.fn()
+        };
+      }
+    });
+  }
+
+  function partitionSyncInput(shardKey = 'current') {
+    return Object.freeze({
+      protocol: 'backstage-notion-partition-sync-job-v1',
+      version: 1,
+      universeId: 'my-universe-2k26',
+      shardKey,
+      configurationGeneration: 'generation-1',
+      configurationDigest: 'd'.repeat(64)
+    });
+  }
+
+  function partitionSyncAdmission(
+    input: ReturnType<typeof partitionSyncInput>,
+    overrides: Partial<Parameters<
+      typeof findOrCreateBackstageNotionPartitionSyncJob
+    >[0]> = {}
+  ): Parameters<typeof findOrCreateBackstageNotionPartitionSyncJob>[0] {
+    return {
+      workerId: 'backstage-notion-partition-sync',
+      input,
+      universeId: input.universeId,
+      shardKey: input.shardKey,
+      requestFingerprintHash: 'c'.repeat(64),
+      idempotencyScopeHash: 'a'.repeat(64),
+      idempotencyKeyHash: 'b'.repeat(64),
+      idempotencyUntil: new Date(Date.now() + 60 * 60 * 1_000),
+      correlationId: 'pg18-concurrent-sync',
+      ...overrides
+    };
+  }
+
+  async function readPartitionAdmissionCounts(): Promise<{
+    jobs: number;
+    events: number;
+  }> {
+    const [jobs, events] = await Promise.all([
+      firstClient.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM job_data
+         WHERE job_type = $1`,
+        [BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE]
+      ),
+      firstClient.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM job_events`
+      )
+    ]);
+    return {
+      jobs: Number(jobs.rows[0]?.count),
+      events: Number(events.rows[0]?.count)
+    };
+  }
+
   beforeAll(async () => {
     if (!configuredConnectionString) {
       throw new Error(`${TEST_DATABASE_ENV} is required for this test suite.`);
@@ -246,12 +365,24 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
 
     previousAskRetention = process.env.QUEUE_ASK_TERMINAL_RETENTION_MS;
     previousDagNodeRetention = process.env.QUEUE_DAG_NODE_TERMINAL_RETENTION_MS;
+    previousPartitionSyncRetention =
+      process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS;
     process.env.QUEUE_ASK_TERMINAL_RETENTION_MS = String(60 * 60 * 1_000);
     process.env.QUEUE_DAG_NODE_TERMINAL_RETENTION_MS = String(2 * 60 * 60 * 1_000);
+    process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
+      String(3 * 60 * 60 * 1_000);
   }, 30_000);
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    failQueuedEventForTraceId = null;
+    getPoolMock.mockImplementation(() => ({
+      connect: async () => ({
+        query: (text: string, params: unknown[] = []) =>
+          firstClient.query(text, params),
+        release: jest.fn()
+      })
+    }));
     await firstClient.query('DELETE FROM job_events');
     await firstClient.query('DELETE FROM job_data');
   });
@@ -271,6 +402,13 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
         delete process.env.QUEUE_DAG_NODE_TERMINAL_RETENTION_MS;
       } else {
         process.env.QUEUE_DAG_NODE_TERMINAL_RETENTION_MS = previousDagNodeRetention;
+      }
+      if (previousPartitionSyncRetention === undefined) {
+        delete process.env
+          .QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS;
+      } else {
+        process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
+          previousPartitionSyncRetention;
       }
       await Promise.all([firstClient.end(), secondClient.end()]);
     }
@@ -327,6 +465,14 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
       })
     ).resolves.not.toBeNull();
     await expectDatabaseRetentionWindow(claimedDagNode.id, 2 * 60 * 60 * 1_000);
+
+    const partitionSync = await createJob(
+      'queue',
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      { protocol: 'test-partition-sync' }
+    );
+    await updateJob(partitionSync.id, 'completed', { ok: true });
+    await expectDatabaseRetentionWindow(partitionSync.id, 3 * 60 * 60 * 1_000);
 
     const claimedPersistedDagNode = await createJob(
       'queue',
@@ -403,6 +549,136 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
     const unknownJob = await createJob('queue', 'unknown', { prompt: 'cancel unknown' });
     await requestJobCancellation(unknownJob.id);
     expect((await readLifecycle(unknownJob.id)).retention_until).toBeNull();
+  });
+
+  test('concurrent exact-key partition admission creates one durable job', async () => {
+    useConcurrentAdmissionClients();
+    const admission = partitionSyncAdmission(partitionSyncInput());
+
+    const results = await Promise.all([
+      findOrCreateBackstageNotionPartitionSyncJob(admission),
+      findOrCreateBackstageNotionPartitionSyncJob(admission)
+    ]);
+
+    expect(results.filter(result => result.created)).toHaveLength(1);
+    expect(results.filter(result => result.deduped)).toHaveLength(1);
+    expect(new Set(results.map(result => result.job.id)).size).toBe(1);
+    await expect(readPartitionAdmissionCounts()).resolves.toEqual({
+      jobs: 1,
+      events: 2
+    });
+  });
+
+  test('same target with different actor keys admits only one job', async () => {
+    useConcurrentAdmissionClients();
+    const input = partitionSyncInput();
+    const results = await Promise.allSettled([
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(input, {
+          idempotencyScopeHash: 'a'.repeat(64),
+          idempotencyKeyHash: 'b'.repeat(64)
+        })
+      ),
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(input, {
+          idempotencyScopeHash: 'c'.repeat(64),
+          idempotencyKeyHash: 'd'.repeat(64)
+        })
+      )
+    ]);
+
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejection = results.find(result => result.status === 'rejected');
+    expect(rejection?.status).toBe('rejected');
+    if (rejection?.status === 'rejected') {
+      expect(rejection.reason).toBeInstanceOf(
+        BackstageNotionPartitionSyncInProgressError
+      );
+    }
+    await expect(readPartitionAdmissionCounts()).resolves.toEqual({
+      jobs: 1,
+      events: 2
+    });
+  });
+
+  test('capacity one never admits two disjoint targets concurrently', async () => {
+    useConcurrentAdmissionClients();
+    const firstInput = partitionSyncInput('current');
+    const secondInput = partitionSyncInput('archive/current');
+    const results = await Promise.allSettled([
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(firstInput, {
+          maxActiveJobs: 1,
+          requestFingerprintHash: 'c'.repeat(64),
+          idempotencyScopeHash: 'a'.repeat(64),
+          idempotencyKeyHash: 'b'.repeat(64)
+        })
+      ),
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(secondInput, {
+          maxActiveJobs: 1,
+          requestFingerprintHash: 'e'.repeat(64),
+          idempotencyScopeHash: 'c'.repeat(64),
+          idempotencyKeyHash: 'd'.repeat(64)
+        })
+      )
+    ]);
+
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejection = results.find(result => result.status === 'rejected');
+    expect(rejection?.status).toBe('rejected');
+    if (rejection?.status === 'rejected') {
+      expect(rejection.reason).toBeInstanceOf(
+        BackstageNotionPartitionSyncQueueSaturatedError
+      );
+    }
+    await expect(readPartitionAdmissionCounts()).resolves.toEqual({
+      jobs: 1,
+      events: 2
+    });
+  });
+
+  test('same actor key with different fingerprints inserts once and conflicts once', async () => {
+    useConcurrentAdmissionClients();
+    const input = partitionSyncInput();
+    const results = await Promise.allSettled([
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(input, {
+          requestFingerprintHash: 'c'.repeat(64)
+        })
+      ),
+      findOrCreateBackstageNotionPartitionSyncJob(
+        partitionSyncAdmission(input, {
+          requestFingerprintHash: 'e'.repeat(64)
+        })
+      )
+    ]);
+
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejection = results.find(result => result.status === 'rejected');
+    expect(rejection?.status).toBe('rejected');
+    if (rejection?.status === 'rejected') {
+      expect(rejection.reason).toBeInstanceOf(IdempotencyKeyConflictError);
+    }
+    await expect(readPartitionAdmissionCounts()).resolves.toEqual({
+      jobs: 1,
+      events: 2
+    });
+  });
+
+  test('rolls back the job and first event when the second event write fails', async () => {
+    const traceId = 'pg18-event-rollback';
+    failQueuedEventForTraceId = traceId;
+
+    await expect(findOrCreateBackstageNotionPartitionSyncJob(
+      partitionSyncAdmission(partitionSyncInput(), { correlationId: traceId })
+    )).rejects.toThrow('Disposable queued-event failure.');
+
+    await expect(readPartitionAdmissionCounts()).resolves.toEqual({
+      jobs: 0,
+      events: 0
+    });
+    expect(recordJobEventWithClientMock).toHaveBeenCalledTimes(2);
   });
 
   test('actual stale and stalled recovery writers retain allowlisted cancellations and exclude other types', async () => {
@@ -523,7 +799,13 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
       ['eligible-2', 'dag-node', 'cancelled', '-4 hours'],
       ['eligible-3', 'ask', 'cancelled', '-3 hours'],
       ['eligible-4', 'dag-node', 'completed', '-2 hours'],
-      ['eligible-5', 'ask', 'completed', '-1 hour']
+      ['eligible-5', 'ask', 'completed', '-1 hour'],
+      [
+        'eligible-6',
+        BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+        'completed',
+        '-30 minutes'
+      ]
     ] as const;
     const eligibleJobIds: string[] = [];
     for (const [id, jobType, status, retentionOffset] of eligibleRows) {

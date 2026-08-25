@@ -19,6 +19,9 @@ export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const AUTHORITY_READ_TIMEOUT_SQL = `SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+SET LOCAL idle_in_transaction_session_timeout = '5s'`;
 const BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL = `jsonb_build_object(
   'category', CASE
     WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
@@ -993,6 +996,26 @@ async function rollbackQuietly(client: PoolClient): Promise<boolean> {
   }
 }
 
+async function withBoundedAuthorityRead<T>(
+  pool: Pool,
+  action: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  let discardClient = false;
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query(AUTHORITY_READ_TIMEOUT_SQL);
+    const result = await action(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    discardClient = !(await rollbackQuietly(client));
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
+}
+
 export class PostgresBackstageNotionRagRepository implements BackstageNotionRagRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -1000,18 +1023,21 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     universeId: string
   ): Promise<BackstageNotionAuthorityHead | null> {
     const normalizedUniverseId = normalizeUniverseId(universeId);
-    const result = await this.pool.query<AuthorityHeadRow>(
-      `SELECT
-         head.universe_id,
-         head.authority,
-         head.active_snapshot_id,
-         snapshot.root_page_id
-       FROM backstage_notion_universe_heads AS head
-       LEFT JOIN backstage_notion_snapshots AS snapshot
-         ON snapshot.universe_id = head.universe_id
-        AND snapshot.id = head.active_snapshot_id
-       WHERE head.universe_id = $1`,
-      [normalizedUniverseId]
+    const result = await withBoundedAuthorityRead(
+      this.pool,
+      client => client.query<AuthorityHeadRow>(
+        `SELECT
+           head.universe_id,
+           head.authority,
+           head.active_snapshot_id,
+           snapshot.root_page_id
+         FROM backstage_notion_universe_heads AS head
+         LEFT JOIN backstage_notion_snapshots AS snapshot
+           ON snapshot.universe_id = head.universe_id
+          AND snapshot.id = head.active_snapshot_id
+         WHERE head.universe_id = $1`,
+        [normalizedUniverseId]
+      )
     );
     const row = result.rows[0];
     if (!row) {

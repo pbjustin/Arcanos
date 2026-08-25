@@ -10,6 +10,16 @@ const classifyWorkerExecutionErrorMock = jest.fn((error: unknown) => ({
   message: error instanceof Error ? error.message : String(error),
   retryable: true,
 }));
+const getOpenAIAdapterMock = jest.fn(() => ({
+  getClient: () => fakeOpenAIClient
+}));
+const probeOpenAIProviderHealthMock = jest.fn(async () => ({
+  ok: true,
+  runtime: providerRuntime
+}));
+const syncOpenAIProviderRuntimeMock = jest.fn(() => ({
+  runtime: providerRuntime
+}));
 const getGptModuleMapMock = jest.fn(async () => ({
   'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
   'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
@@ -34,6 +44,8 @@ const signalListenersBeforeImport = {
 };
 const originalOpenAIKey = process.env.OPENAI_API_KEY;
 const originalAskRetentionMs = process.env.QUEUE_ASK_TERMINAL_RETENTION_MS;
+const originalPartitionSyncRetentionMs =
+  process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS;
 const originalBackstagePayloadKey =
   process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
 const originalBackstageWorkerJobTimeout =
@@ -56,7 +68,8 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({
-  recordJobEvent: recordJobEventMock
+  recordJobEvent: recordJobEventMock,
+  recordJobEventWithClient: jest.fn()
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
@@ -73,21 +86,14 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
   assertValidResponsesCreateParams: jest.fn(),
   normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
-  getOpenAIAdapter: jest.fn(() => ({
-    getClient: () => fakeOpenAIClient
-  }))
+  getOpenAIAdapter: getOpenAIAdapterMock
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
   getOpenAIServiceHealth: jest.fn(() => providerRuntime),
   getOpenAIProviderRuntimeStatus: jest.fn(() => providerRuntime),
-  probeOpenAIProviderHealth: jest.fn(async () => ({
-    ok: true,
-    runtime: providerRuntime
-  })),
-  syncOpenAIProviderRuntime: jest.fn(() => ({
-    runtime: providerRuntime
-  }))
+  probeOpenAIProviderHealth: probeOpenAIProviderHealthMock,
+  syncOpenAIProviderRuntime: syncOpenAIProviderRuntimeMock
 }));
 
 jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
@@ -148,6 +154,12 @@ const { unprotectBackstageQueuedGptJobOutput } = await import(
 const { createClaimedJobFence, updateClaimedJobTerminal } = await import(
   '../src/core/db/repositories/jobRepository.js'
 );
+const {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+  BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+  BACKSTAGE_NOTION_PARTITION_SYNC_RESULT_PROTOCOL,
+} = await import('../src/shared/jobs/backstageNotionPartitionSyncJob.js');
 
 const introducedSignalListeners = {
   SIGINT: process
@@ -176,6 +188,13 @@ afterAll(() => {
   } else {
     process.env.QUEUE_ASK_TERMINAL_RETENTION_MS = originalAskRetentionMs;
   }
+  if (originalPartitionSyncRetentionMs === undefined) {
+    delete process.env
+      .QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS;
+  } else {
+    process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
+      originalPartitionSyncRetentionMs;
+  }
   if (originalBackstagePayloadKey === undefined) {
     delete process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
   } else {
@@ -191,6 +210,470 @@ afterAll(() => {
 });
 
 describe('job runner terminal persistence', () => {
+  it('executes partition synchronization through its dedicated provider-free lane and fenced terminal writer', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
+    process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
+      '7200000';
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    recordJobEventMock.mockClear();
+    routeGptRequestMock.mockReset();
+    runWorkerTrinityPromptMock.mockReset();
+    getOpenAIAdapterMock.mockClear();
+    probeOpenAIProviderHealthMock.mockClear();
+    syncOpenAIProviderRuntimeMock.mockClear();
+
+    const claimedJob = {
+      id: '44444444-4444-4444-8444-444444444444',
+      worker_id: 'queue',
+      job_type: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      status: 'running',
+      claim_generation: '21',
+      input: {
+        protocol: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+        version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+        universeId: 'my-universe-2k26',
+        shardKey: 'raw/year-1',
+        configurationGeneration: 'generation-1',
+        configurationDigest: 'a'.repeat(64),
+      },
+      retry_count: 0,
+      max_retries: 1,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2026-08-24T12:01:00.000Z'),
+      correlation_id: 'trace-partition-sync-completed',
+      cancel_requested_at: null,
+      cancel_reason: null,
+      created_at: new Date('2026-08-24T11:59:59.000Z'),
+      updated_at: new Date('2026-08-24T12:00:00.000Z'),
+    };
+    const boundedResult = {
+      protocol: BACKSTAGE_NOTION_PARTITION_SYNC_RESULT_PROTOCOL,
+      version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+      outcome: 'synchronized' as const,
+      safeReasonCode: null,
+      universeId: 'my-universe-2k26',
+      shardKey: 'raw/year-1',
+      fullSourceScan: true,
+      manifestStatus: 'published' as const,
+      manifestId: '55555555-5555-4555-8555-555555555555',
+      freshSnapshotId: '66666666-6666-4666-8666-666666666666',
+      pageCount: 4,
+      chunkCount: 12,
+      pageVersionReuseCount: 3,
+      embeddedChunkCount: 2,
+      pageChanges: {
+        added: 1,
+        changed: 0,
+        moved: 0,
+        deleted: 0,
+        unchanged: 3,
+      },
+    };
+    let executorSignal: AbortSignal | null = null;
+    const partitionSyncExecutor = jest.fn(async (input: {
+      rawInput: unknown;
+      cancellationSignal: AbortSignal;
+    }) => {
+      executorSignal = input.cancellationSignal;
+      expect(input.rawInput).toEqual(claimedJob.input);
+      return {
+        status: 'completed' as const,
+        output: boundedResult,
+        retryable: false,
+      };
+    });
+    let terminalSql = '';
+    let terminalParams: unknown[] = [];
+    claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        return { rows: [claimedJob] };
+      }
+      if (normalizedSql.includes('UPDATE job_data')) {
+        terminalSql = normalizedSql;
+        terminalParams = params;
+        return {
+          rows: [{
+            ...claimedJob,
+            status: 'completed',
+            output: JSON.parse(String(params[1])),
+            last_heartbeat_at: null,
+            lease_expires_at: null,
+            retention_until: new Date(Date.now() + Number(params[14])),
+            completed_at: new Date('2026-08-24T12:00:00.000Z'),
+          }],
+        };
+      }
+      throw new Error(`Unexpected repository query: ${normalizedSql}`);
+    });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 30_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      handleJobFailure: jest.fn(async () => ({ action: 'failed' as const })),
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markJobCompleted: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    try {
+      await expect(runWorkerConsumerSlot(
+        {
+          slotIndex: 0,
+          slotNumber: 1,
+          workerId: 'worker-test-slot-1',
+          statsWorkerId: 'worker-test-stats',
+          isInspectorSlot: true,
+        },
+        {
+          pollMs: 1,
+          idleBackoffMs: 1,
+          concurrency: 1,
+          baseWorkerId: 'worker-test',
+          statsWorkerId: 'worker-test-stats',
+        },
+        autonomyService as never,
+        undefined,
+        partitionSyncExecutor
+      )).rejects.toBe(stopAfterOneIteration);
+
+      expect(partitionSyncExecutor).toHaveBeenCalledTimes(1);
+      expect(executorSignal?.aborted).toBe(false);
+      expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+      expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
+      expect(syncOpenAIProviderRuntimeMock).not.toHaveBeenCalled();
+      expect(runWorkerTrinityPromptMock).not.toHaveBeenCalled();
+      expect(routeGptRequestMock).not.toHaveBeenCalled();
+      expect(terminalSql).toContain(
+        "WHEN 'backstage-notion-partition-sync' THEN CASE"
+      );
+      expect(terminalSql).toContain(
+        "AND claim_generation = $12::bigint"
+      );
+      expect(terminalParams[0]).toBe('completed');
+      expect(JSON.parse(String(terminalParams[1]))).toEqual(boundedResult);
+      expect(JSON.stringify(terminalParams[1])).not.toContain(
+        claimedJob.input.configurationDigest
+      );
+      expect(terminalParams[4]).toBeNull();
+      expect(terminalParams[5]).toBeNull();
+      expect(terminalParams.slice(9, 12)).toEqual([
+        claimedJob.id,
+        'worker-test-slot-1',
+        '21',
+      ]);
+      expect(terminalParams[14]).toBe(7_200_000);
+      expect(autonomyService.markJobCompleted).toHaveBeenCalledWith(
+        claimedJob.id
+      );
+      expect(autonomyService.handleJobFailure).not.toHaveBeenCalled();
+      expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    {
+      label: 'hands off one retry while the persisted budget remains',
+      retryCount: 0,
+      maxRetries: 1,
+      expectedAction: 'retried',
+    },
+    {
+      label: 'stops retrying at the persisted retry ceiling',
+      retryCount: 1,
+      maxRetries: 1,
+      expectedAction: 'failed',
+    },
+  ] as const)('$label for a retryable partition-sync outcome', async ({
+    retryCount,
+    maxRetries,
+    expectedAction,
+  }) => {
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    routeGptRequestMock.mockReset();
+    runWorkerTrinityPromptMock.mockReset();
+    getOpenAIAdapterMock.mockClear();
+    probeOpenAIProviderHealthMock.mockClear();
+    syncOpenAIProviderRuntimeMock.mockClear();
+
+    const claimedJob = {
+      id: retryCount === 0
+        ? '77777777-7777-4777-8777-777777777777'
+        : '88888888-8888-4888-8888-888888888888',
+      worker_id: 'queue',
+      job_type: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      status: 'running',
+      claim_generation: '22',
+      input: {
+        protocol: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+        version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+        universeId: 'my-universe-2k26',
+        shardKey: 'raw/year-1',
+        configurationGeneration: 'generation-1',
+        configurationDigest: 'b'.repeat(64),
+      },
+      retry_count: retryCount,
+      max_retries: maxRetries,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2099-08-24T12:01:00.000Z'),
+      correlation_id: `trace-partition-sync-retry-${retryCount}`,
+      cancel_requested_at: null,
+      cancel_reason: null,
+      created_at: new Date('2026-08-24T11:59:59.000Z'),
+      updated_at: new Date('2026-08-24T12:00:00.000Z'),
+    };
+    const partitionSyncExecutor = jest.fn(async () => ({
+      status: 'failed' as const,
+      output: null,
+      errorMessage:
+        'Partition synchronization infrastructure is temporarily unavailable.',
+      retryable: true,
+    }));
+    claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+    queryMock.mockImplementation(async (sql: unknown) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        return { rows: [claimedJob] };
+      }
+      throw new Error(`Unexpected repository query: ${normalizedSql}`);
+    });
+    const retryPolicyActions: string[] = [];
+    // Retry budgeting is owned by WorkerAutonomyService. This loop-level seam
+    // proves the dedicated executor's retryable outcome reaches that policy
+    // exactly once with the claimed row's persisted counters unchanged.
+    const handleJobFailure = jest.fn(async (
+      job: typeof claimedJob,
+      _errorMessage: string,
+      retryable: boolean
+    ) => {
+      const action = retryable && job.retry_count < job.max_retries
+        ? 'retried' as const
+        : 'failed' as const;
+      retryPolicyActions.push(action);
+      return { action };
+    });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 30_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      handleJobFailure,
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markJobCompleted: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    await expect(runWorkerConsumerSlot(
+      {
+        slotIndex: 0,
+        slotNumber: 1,
+        workerId: 'worker-test-slot-1',
+        statsWorkerId: 'worker-test-stats',
+        isInspectorSlot: true,
+      },
+      {
+        pollMs: 1,
+        idleBackoffMs: 1,
+        concurrency: 1,
+        baseWorkerId: 'worker-test',
+        statsWorkerId: 'worker-test-stats',
+      },
+      autonomyService as never,
+      undefined,
+      partitionSyncExecutor
+    )).rejects.toBe(stopAfterOneIteration);
+
+    expect(partitionSyncExecutor).toHaveBeenCalledTimes(1);
+    expect(handleJobFailure).toHaveBeenCalledTimes(1);
+    expect(handleJobFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: claimedJob.id,
+        retry_count: retryCount,
+        max_retries: maxRetries,
+      }),
+      'Partition synchronization infrastructure is temporarily unavailable.',
+      true,
+      null
+    );
+    expect(retryPolicyActions).toEqual([expectedAction]);
+    expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+    expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
+    expect(syncOpenAIProviderRuntimeMock).not.toHaveBeenCalled();
+    expect(runWorkerTrinityPromptMock).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+    expect(autonomyService.markJobCompleted).not.toHaveBeenCalled();
+    expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
+  });
+
+  it('aborts partition synchronization and refuses terminal persistence after the claim fence changes', async () => {
+    claimNextMock.mockReset();
+    queryMock.mockReset();
+    routeGptRequestMock.mockReset();
+    runWorkerTrinityPromptMock.mockReset();
+    getOpenAIAdapterMock.mockClear();
+    probeOpenAIProviderHealthMock.mockClear();
+    syncOpenAIProviderRuntimeMock.mockClear();
+
+    const claimedJob = {
+      id: '99999999-9999-4999-8999-999999999999',
+      worker_id: 'queue',
+      job_type: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      status: 'running',
+      claim_generation: '23',
+      input: {
+        protocol: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+        version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+        universeId: 'my-universe-2k26',
+        shardKey: 'raw/year-1',
+        configurationGeneration: 'generation-1',
+        configurationDigest: 'c'.repeat(64),
+      },
+      retry_count: 0,
+      max_retries: 1,
+      last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date('2099-08-24T12:01:00.000Z'),
+      correlation_id: 'trace-partition-sync-fence-loss',
+      cancel_requested_at: null,
+      cancel_reason: null,
+      created_at: new Date('2026-08-24T11:59:59.000Z'),
+      updated_at: new Date('2026-08-24T12:00:00.000Z'),
+    };
+    const reclaimedJob = {
+      ...claimedJob,
+      claim_generation: '24',
+      last_worker_id: 'worker-test-slot-2',
+    };
+    let executorSignal: AbortSignal | null = null;
+    const partitionSyncExecutor = jest.fn(async (input: {
+      cancellationSignal: AbortSignal;
+    }) => {
+      executorSignal = input.cancellationSignal;
+      return {
+        status: 'completed' as const,
+        output: {
+          protocol: BACKSTAGE_NOTION_PARTITION_SYNC_RESULT_PROTOCOL,
+          version: BACKSTAGE_NOTION_PARTITION_SYNC_REQUEST_VERSION,
+          outcome: 'synchronized' as const,
+          safeReasonCode: null,
+          universeId: 'my-universe-2k26',
+          shardKey: 'raw/year-1',
+          fullSourceScan: true,
+          manifestStatus: 'published' as const,
+          manifestId: null,
+          freshSnapshotId: null,
+          pageCount: 0,
+          chunkCount: 0,
+          pageVersionReuseCount: 0,
+          embeddedChunkCount: 0,
+          pageChanges: {
+            added: 0,
+            changed: 0,
+            moved: 0,
+            deleted: 0,
+            unchanged: 0,
+          },
+        },
+        retryable: false,
+      };
+    });
+    claimNextMock
+      .mockResolvedValueOnce({ job: claimedJob })
+      .mockResolvedValueOnce({ job: null });
+    queryMock.mockImplementation(async (sql: unknown) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+        return { rows: [reclaimedJob] };
+      }
+      throw new Error(`Unexpected repository query: ${normalizedSql}`);
+    });
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      recordClaimAttempt: jest.fn(),
+      getClaimOptions: jest.fn(() => ({
+        workerId: 'worker-test-slot-1',
+        leaseMs: 30_000,
+      })),
+      recordClaimResult: jest.fn(),
+      markIdle: jest.fn(async () => undefined),
+      markJobStarted: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      handleJobFailure: jest.fn(async () => ({ action: 'failed' as const })),
+      markJobLeaseLost: jest.fn(async () => undefined),
+      markJobCompleted: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+
+    await expect(runWorkerConsumerSlot(
+      {
+        slotIndex: 0,
+        slotNumber: 1,
+        workerId: 'worker-test-slot-1',
+        statsWorkerId: 'worker-test-stats',
+        isInspectorSlot: true,
+      },
+      {
+        pollMs: 1,
+        idleBackoffMs: 1,
+        concurrency: 1,
+        baseWorkerId: 'worker-test',
+        statsWorkerId: 'worker-test-stats',
+      },
+      autonomyService as never,
+      undefined,
+      partitionSyncExecutor
+    )).rejects.toBe(stopAfterOneIteration);
+
+    expect(partitionSyncExecutor).toHaveBeenCalledTimes(1);
+    expect(executorSignal?.aborted).toBe(true);
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(String(queryMock.mock.calls[0]?.[0])).toMatch(
+      /^SELECT \* FROM job_data/u
+    );
+    expect(autonomyService.markJobLeaseLost).toHaveBeenCalledWith(
+      claimedJob.id,
+      'Queue job lease lost before terminal persistence.'
+    );
+    expect(autonomyService.markJobCompleted).not.toHaveBeenCalled();
+    expect(autonomyService.handleJobFailure).not.toHaveBeenCalled();
+    expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+    expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
+    expect(syncOpenAIProviderRuntimeMock).not.toHaveBeenCalled();
+    expect(runWorkerTrinityPromptMock).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+  });
+
   it('claims protected Booker work once and persists only its sealed terminal result', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-08-23T12:00:00.000Z'));
@@ -1142,12 +1625,12 @@ describe('job runner terminal persistence', () => {
             : 1
         );
         expect(terminalSql).toContain("$1::varchar(50) = 'completed'::varchar(50)");
-        expect(terminalSql).toContain('AND $15::boolean');
+        expect(terminalSql).toContain('AND $16::boolean');
         expect(terminalWriteCount).toBe(
           cancellationPath === 'cas' && !parseFailure ? 2 : 1
         );
         expect(terminalParams[0]).toBe(admittedCanon ? 'completed' : 'cancelled');
-        expect(terminalParams[14]).toBe(admittedCanon);
+        expect(terminalParams[15]).toBe(admittedCanon);
         if (admittedCanon) {
           expect(JSON.parse(String(terminalParams[1]))).toEqual(routeEnvelope);
           expect(JSON.parse(String(terminalParams[3]))).toMatchObject({

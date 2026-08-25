@@ -1507,6 +1507,25 @@ describe('native PR contained application', () => {
         String(Buffer.byteLength(response.text, 'utf8'))
       );
     }
+    expect(
+      notionAuthorityRag.headers[
+        contract.proofHeaders.partitionedAuthorityVersion
+      ]
+    ).toBe(contract.partitionedAuthorityProofVersion);
+    for (const response of [
+      routeBudget,
+      hrcRetryCache,
+      reviewCompletion,
+      compactRetry,
+      continuityQuery,
+      continuitySubtree,
+    ]) {
+      expect(
+        response.headers[
+          contract.proofHeaders.partitionedAuthorityVersion
+        ]
+      ).toBeUndefined();
+    }
   }, 25_000);
 
   it('keeps Backstage generation fixtures sealed', async () => {
@@ -1523,6 +1542,9 @@ describe('native PR contained application', () => {
       expect(response.status).toBe(400);
       expect(
         response.headers[contract.proofHeaders.clearPolicyVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.partitionedAuthorityVersion]
       ).toBeUndefined();
       expect(response.body).toEqual({
         error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',

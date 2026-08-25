@@ -6,6 +6,7 @@ import {
   isGptJobResultReusable
 } from '@shared/gpt/gptJobLifecycle.js';
 import {
+  DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS,
   DEFAULT_ASK_TERMINAL_RETENTION_MS,
   DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS,
   MAX_NON_GPT_TERMINAL_RETENTION_MS,
@@ -13,6 +14,9 @@ import {
   computeQueueJobLifecycleDeadlines,
   resolveNonGptTerminalRetentionWindowMs
 } from '@shared/jobs/queueJobLifecycle.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE
+} from '@shared/jobs/backstageNotionPartitionSyncJob.js';
 
 const NOW = new Date('2026-08-01T12:00:00.000Z');
 
@@ -21,7 +25,17 @@ describe('queue job lifecycle policy', () => {
     ['ask', 'completed', DEFAULT_ASK_TERMINAL_RETENTION_MS],
     ['ask', 'cancelled', DEFAULT_ASK_TERMINAL_RETENTION_MS],
     ['dag-node', 'completed', DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS],
-    ['dag-node', 'cancelled', DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS]
+    ['dag-node', 'cancelled', DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS],
+    [
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      'completed',
+      DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS
+    ],
+    [
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      'cancelled',
+      DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS
+    ]
   ] as const)(
     'assigns the explicit %s %s retention window',
     (jobType, status, retentionWindowMs) => {
@@ -40,6 +54,7 @@ describe('queue job lifecycle policy', () => {
     ['ask', 'running'],
     ['ask', 'failed'],
     ['dag-node', 'failed'],
+    [BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE, 'failed'],
     ['local-agent', 'completed'],
     ['other', 'completed']
   ])('does not assign non-GPT retention to %s/%s', (jobType, status) => {
@@ -79,7 +94,8 @@ describe('queue job lifecycle policy', () => {
   it('uses per-type environment values with finite safety bounds', () => {
     const env = {
       QUEUE_ASK_TERMINAL_RETENTION_MS: '1',
-      QUEUE_DAG_NODE_TERMINAL_RETENTION_MS: String(90 * 24 * 60 * 60 * 1_000)
+      QUEUE_DAG_NODE_TERMINAL_RETENTION_MS: String(90 * 24 * 60 * 60 * 1_000),
+      QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS: '1'
     } as NodeJS.ProcessEnv;
 
     expect(resolveNonGptTerminalRetentionWindowMs('ask', 'completed', env)).toBe(
@@ -88,12 +104,18 @@ describe('queue job lifecycle policy', () => {
     expect(resolveNonGptTerminalRetentionWindowMs('dag-node', 'cancelled', env)).toBe(
       MAX_NON_GPT_TERMINAL_RETENTION_MS
     );
+    expect(resolveNonGptTerminalRetentionWindowMs(
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      'completed',
+      env
+    )).toBe(MIN_NON_GPT_TERMINAL_RETENTION_MS);
   });
 
   it('falls back per type for invalid duration values', () => {
     const env = {
       QUEUE_ASK_TERMINAL_RETENTION_MS: 'not-a-number',
-      QUEUE_DAG_NODE_TERMINAL_RETENTION_MS: '0'
+      QUEUE_DAG_NODE_TERMINAL_RETENTION_MS: '0',
+      QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS: 'invalid'
     } as NodeJS.ProcessEnv;
 
     expect(resolveNonGptTerminalRetentionWindowMs('ask', 'completed', env)).toBe(
@@ -102,5 +124,10 @@ describe('queue job lifecycle policy', () => {
     expect(resolveNonGptTerminalRetentionWindowMs('dag-node', 'completed', env)).toBe(
       DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS
     );
+    expect(resolveNonGptTerminalRetentionWindowMs(
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      'completed',
+      env
+    )).toBe(DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS);
   });
 });

@@ -1,7 +1,12 @@
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+} from './backstageNotionPartitionSyncJob.js';
 
 export const DEFAULT_ASK_TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1_000;
 export const DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS = 60 * 60 * 1_000;
+export const DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
+  7 * 24 * 60 * 60 * 1_000;
 export const MIN_NON_GPT_TERMINAL_RETENTION_MS = 60 * 60 * 1_000;
 export const MAX_NON_GPT_TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -28,7 +33,7 @@ function readBoundedDurationMs(
 /**
  * Resolve the retention window for durable non-GPT queue results.
  *
- * Only completed or cancelled `ask` and `dag-node` rows are eligible. Failed
+ * Only completed or cancelled positive-allowlisted rows are eligible. Failed
  * rows remain under the separate failed-job retention policy, and every other
  * job type remains outside this lifecycle.
  */
@@ -52,6 +57,13 @@ export function resolveNonGptTerminalRetentionWindowMs(
     return readBoundedDurationMs(
       env.QUEUE_DAG_NODE_TERMINAL_RETENTION_MS,
       DEFAULT_DAG_NODE_TERMINAL_RETENTION_MS
+    );
+  }
+
+  if (jobType === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {
+    return readBoundedDurationMs(
+      env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS,
+      DEFAULT_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS
     );
   }
 

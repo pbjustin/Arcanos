@@ -22,6 +22,12 @@ import {
   resolveNonGptTerminalRetentionWindowMs
 } from '@shared/jobs/queueJobLifecycle.js';
 import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+  BACKSTAGE_NOTION_PARTITION_SYNC_IDEMPOTENCY_WINDOW_MS,
+  BACKSTAGE_NOTION_PARTITION_SYNC_MAX_ACTIVE_JOBS,
+  parseBackstageNotionPartitionSyncJobInput,
+} from '@shared/jobs/backstageNotionPartitionSyncJob.js';
+import {
   PRIORITY_QUEUE_LANE_MAX_PRIORITY,
   isPriorityQueueEnabled,
   isPriorityQueueLaneJob,
@@ -33,7 +39,11 @@ import {
 } from '@core/scheduler/scheduler.js';
 import type { QueueLane, SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { dbLogger } from '@platform/logging/structuredLogging.js';
-import { recordJobEvent, type JobEventType } from './jobEventRepository.js';
+import {
+  recordJobEvent,
+  recordJobEventWithClient,
+  type JobEventType,
+} from './jobEventRepository.js';
 
 const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
   'Legacy queued GPT cancellation requested during compatibility drain.';
@@ -255,6 +265,26 @@ export interface FindOrCreateGptJobResult {
     | 'reused_terminal_result';
 }
 
+export interface FindOrCreateBackstageNotionPartitionSyncJobOptions {
+  workerId: string;
+  input: unknown;
+  universeId: string;
+  shardKey: string;
+  requestFingerprintHash: string;
+  idempotencyScopeHash: string;
+  idempotencyKeyHash: string;
+  idempotencyUntil: Date | string;
+  correlationId?: string | null;
+  maxActiveJobs?: number;
+}
+
+export interface FindOrCreateBackstageNotionPartitionSyncJobResult {
+  job: JobData;
+  created: boolean;
+  deduped: boolean;
+  dedupeReason: 'new_job' | 'reused_explicit_key';
+}
+
 export interface CancelJobResult {
   outcome: 'cancelled' | 'cancellation_requested' | 'already_terminal' | 'not_found';
   job: JobData | null;
@@ -288,6 +318,7 @@ export interface CleanupRetainedNonGptTerminalJobsResult {
   deletedTerminal: number;
   deletedAsk: number;
   deletedDagNode: number;
+  deletedBackstageNotionPartitionSync: number;
   deletedCompleted: number;
   deletedCancelled: number;
   deletedJobIds: string[];
@@ -334,6 +365,26 @@ export class IdempotencyKeyConflictError extends Error {
     this.name = 'IdempotencyKeyConflictError';
     Object.setPrototypeOf(this, new.target.prototype);
     Error.captureStackTrace?.(this, IdempotencyKeyConflictError);
+  }
+}
+
+export class BackstageNotionPartitionSyncInProgressError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_PARTITION_SYNC_IN_PROGRESS';
+
+  constructor(message = 'The requested partition shard is already synchronizing.') {
+    super(message);
+    this.name = 'BackstageNotionPartitionSyncInProgressError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export class BackstageNotionPartitionSyncQueueSaturatedError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_PARTITION_SYNC_QUEUE_SATURATED';
+
+  constructor(message = 'The partition synchronization queue is at capacity.') {
+    super(message);
+    this.name = 'BackstageNotionPartitionSyncQueueSaturatedError';
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -708,10 +759,15 @@ function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
 function computeTerminalLifecycleFallbacks(status: string): {
   askRetentionWindowMs: number;
   dagNodeRetentionWindowMs: number;
+  partitionSyncRetentionWindowMs: number;
 } {
   return {
     askRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('ask', status),
-    dagNodeRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('dag-node', status)
+    dagNodeRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs('dag-node', status),
+    partitionSyncRetentionWindowMs: resolveNonGptTerminalRetentionWindowMs(
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+      status
+    )
   };
 }
 
@@ -1010,11 +1066,16 @@ export async function updateJob(
                THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
              ELSE NULL
            END
-           WHEN 'dag-node' THEN CASE
-             WHEN $14::bigint > 0
-               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
-             ELSE NULL
-           END
+            WHEN 'dag-node' THEN CASE
+              WHEN $14::bigint > 0
+                THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+              ELSE NULL
+            END
+            WHEN 'backstage-notion-partition-sync' THEN CASE
+              WHEN $15::bigint > 0
+                THEN NOW() + ($15::bigint * INTERVAL '1 millisecond')
+              ELSE NULL
+            END
            ELSE NULL
          END
        ),
@@ -1068,7 +1129,8 @@ export async function updateJob(
       normalizeNullableString(metadata.cancelReason ?? null),
       jobId,
       lifecycleFallbacks.askRetentionWindowMs,
-      lifecycleFallbacks.dagNodeRetentionWindowMs
+      lifecycleFallbacks.dagNodeRetentionWindowMs,
+      lifecycleFallbacks.partitionSyncRetentionWindowMs
     ]
   );
 
@@ -1135,11 +1197,16 @@ export async function updateClaimedJobTerminal(
                THEN NOW() + ($13::bigint * INTERVAL '1 millisecond')
              ELSE NULL
            END
-           WHEN 'dag-node' THEN CASE
-             WHEN $14::bigint > 0
-               THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
-             ELSE NULL
-           END
+            WHEN 'dag-node' THEN CASE
+              WHEN $14::bigint > 0
+                THEN NOW() + ($14::bigint * INTERVAL '1 millisecond')
+              ELSE NULL
+            END
+            WHEN 'backstage-notion-partition-sync' THEN CASE
+              WHEN $15::bigint > 0
+                THEN NOW() + ($15::bigint * INTERVAL '1 millisecond')
+              ELSE NULL
+            END
            ELSE NULL
          END
        ),
@@ -1160,7 +1227,7 @@ export async function updateClaimedJobTerminal(
          $1::varchar(50) = 'cancelled'::varchar(50)
          OR (
            $1::varchar(50) = 'completed'::varchar(50)
-           AND $15::boolean
+            AND $16::boolean
          )
          OR cancel_requested_at IS NULL
        )
@@ -1186,6 +1253,7 @@ export async function updateClaimedJobTerminal(
       fence.claimGeneration,
       lifecycleFallbacks.askRetentionWindowMs,
       lifecycleFallbacks.dagNodeRetentionWindowMs,
+      lifecycleFallbacks.partitionSyncRetentionWindowMs,
       options.allowCompletionAfterCancellationRequest === true
     ]
   );
@@ -1381,6 +1449,287 @@ function classifyGptJobReuse(job: JobData): FindOrCreateGptJobResult['dedupeReas
   }
 
   return 'reused_inflight_job';
+}
+
+function normalizePartitionSyncActiveLimit(value: number | undefined): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    return BACKSTAGE_NOTION_PARTITION_SYNC_MAX_ACTIVE_JOBS;
+  }
+  return Math.min(
+    BACKSTAGE_NOTION_PARTITION_SYNC_MAX_ACTIVE_JOBS,
+    Number(value)
+  );
+}
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
+
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX_PATTERN.test(value);
+}
+
+function normalizePartitionSyncIdempotencyDeadline(
+  value: unknown,
+  nowMs: number
+): string | null {
+  if (!(value instanceof Date) && typeof value !== 'string') {
+    return null;
+  }
+  if (
+    typeof value === 'string'
+    && (value !== value.trim() || value.length < 20 || value.length > 64)
+  ) {
+    return null;
+  }
+  const deadline = value instanceof Date ? value : new Date(value);
+  const deadlineMs = deadline.getTime();
+  if (
+    !Number.isFinite(deadlineMs)
+    || deadlineMs <= nowMs
+    || deadlineMs > nowMs + BACKSTAGE_NOTION_PARTITION_SYNC_IDEMPOTENCY_WINDOW_MS
+  ) {
+    return null;
+  }
+  return new Date(deadlineMs).toISOString();
+}
+
+/**
+ * Admit one explicit operator shard synchronization under durable fencing.
+ *
+ * Exact-key replay is resolved before target and capacity checks. A different
+ * request using the same key conflicts, while any other in-flight request for
+ * the same stable shard is rejected. The global capacity lock serializes the
+ * bounded count with insertion while keeping disjoint shard identities
+ * independently admissible.
+ */
+export async function findOrCreateBackstageNotionPartitionSyncJob(
+  options: FindOrCreateBackstageNotionPartitionSyncJobOptions
+): Promise<FindOrCreateBackstageNotionPartitionSyncJobResult> {
+  const parsedInput = parseBackstageNotionPartitionSyncJobInput(options.input);
+  const workerId = normalizeNullableString(options.workerId);
+  const idempotencyUntil = normalizePartitionSyncIdempotencyDeadline(
+    options.idempotencyUntil,
+    Date.now()
+  );
+  const requiredHashes = [
+    options.requestFingerprintHash,
+    options.idempotencyScopeHash,
+    options.idempotencyKeyHash,
+  ];
+  if (
+    !parsedInput
+    || parsedInput.universeId !== options.universeId
+    || parsedInput.shardKey !== options.shardKey
+    || !workerId
+    || workerId !== options.workerId
+    || workerId.length > 255
+    || requiredHashes.some(value => !isSha256Hex(value))
+    || !idempotencyUntil
+  ) {
+    throw new TypeError('Partition synchronization admission identifiers are invalid.');
+  }
+
+  assertDatabaseReady();
+
+  const pool = getPool();
+  if (!pool) {
+    throw new JobRepositoryUnavailableError('Database pool unavailable');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await acquireAdvisoryLock(
+      client,
+      'job_data.backstage_notion_partition_sync.scope',
+      options.idempotencyScopeHash
+    );
+    await acquireAdvisoryLock(
+      client,
+      'job_data.backstage_notion_partition_sync.key',
+      `${options.idempotencyScopeHash}:${options.idempotencyKeyHash}`
+    );
+
+    const exactKeyResult = await client.query(
+      `SELECT *
+       FROM job_data
+       WHERE job_type = $1
+         AND idempotency_scope_hash = $2
+         AND idempotency_key_hash = $3
+         AND (
+           status IN ('pending', 'running')
+           OR (idempotency_until IS NOT NULL AND idempotency_until > NOW())
+         )
+       ORDER BY created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [
+        BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+        options.idempotencyScopeHash,
+        options.idempotencyKeyHash,
+      ]
+    );
+    const exactKeyJob = normalizeClaimedJob(
+      exactKeyResult.rows[0] as JobData | undefined,
+      'Partition synchronization idempotent job claim_generation'
+    );
+    if (exactKeyJob) {
+      if (exactKeyJob.request_fingerprint_hash !== options.requestFingerprintHash) {
+        throw new IdempotencyKeyConflictError(
+          'Explicit idempotency key mapped to a different partition synchronization request.'
+        );
+      }
+      await client.query('COMMIT');
+      return {
+        job: exactKeyJob,
+        created: false,
+        deduped: true,
+        dedupeReason: 'reused_explicit_key',
+      };
+    }
+
+    await acquireAdvisoryLock(
+      client,
+      'job_data.backstage_notion_partition_sync.target',
+      `${parsedInput.universeId}:${parsedInput.shardKey}`
+    );
+    const activeTargetResult = await client.query(
+      `SELECT id
+       FROM job_data
+       WHERE job_type = $1
+         AND status IN ('pending', 'running')
+         AND input ->> 'universeId' = $2
+         AND input ->> 'shardKey' = $3
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [
+        BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+        parsedInput.universeId,
+        parsedInput.shardKey,
+      ]
+    );
+    if (activeTargetResult.rows.length > 0) {
+      throw new BackstageNotionPartitionSyncInProgressError();
+    }
+
+    await acquireAdvisoryLock(
+      client,
+      'job_data.backstage_notion_partition_sync.capacity',
+      BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE
+    );
+    const activeCountResult = await client.query(
+      `SELECT COUNT(*)::int AS active_count
+       FROM job_data
+       WHERE job_type = $1
+         AND status IN ('pending', 'running')`,
+      [BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE]
+    );
+    const activeCount = Number(activeCountResult.rows[0]?.active_count ?? 0);
+    if (
+      !Number.isSafeInteger(activeCount)
+      || activeCount < 0
+      || activeCount >= normalizePartitionSyncActiveLimit(options.maxActiveJobs)
+    ) {
+      throw new BackstageNotionPartitionSyncQueueSaturatedError();
+    }
+
+    const insertResult = await client.query(
+      `INSERT INTO job_data (
+         worker_id,
+         job_type,
+         status,
+         input,
+         retry_count,
+         max_retries,
+         next_run_at,
+         priority,
+         correlation_id,
+         autonomy_state,
+         request_fingerprint_hash,
+         idempotency_key_hash,
+         idempotency_scope_hash,
+         idempotency_origin,
+         idempotency_until,
+         retention_until,
+         claim_generation
+       )
+       VALUES (
+         $1,
+         $2,
+         'pending',
+         $3::jsonb,
+         0,
+         1,
+         NOW(),
+         100,
+         $4,
+         $5::jsonb,
+         $6,
+         $7,
+         $8,
+         'explicit',
+         $9::timestamptz,
+         NULL,
+         0
+       )
+       RETURNING *`,
+      [
+        workerId,
+        BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+        normalizeJsonbInput(
+          parsedInput,
+          'jobRepository.findOrCreateBackstageNotionPartitionSyncJob.input'
+        ),
+        normalizeNullableString(options.correlationId ?? null),
+        normalizeJsonbInput(
+          { operation: 'backstage_notion_partition_sync' },
+          'jobRepository.findOrCreateBackstageNotionPartitionSyncJob.autonomyState'
+        ),
+        options.requestFingerprintHash,
+        options.idempotencyKeyHash,
+        options.idempotencyScopeHash,
+        idempotencyUntil,
+      ]
+    );
+    const createdJob = normalizeClaimedJob(
+      insertResult.rows[0] as JobData | undefined,
+      'Created partition synchronization job claim_generation'
+    );
+    if (!createdJob) {
+      throw new Error('Partition synchronization job insert did not return a row.');
+    }
+    const eventBase = {
+      jobId: createdJob.id,
+      traceId: normalizeJobEventTraceId(createdJob),
+      workerId: createdJob.worker_id,
+      metadata: {
+        jobType: BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+        status: createdJob.status,
+        universeId: parsedInput.universeId,
+        shardKey: parsedInput.shardKey,
+      },
+    } as const;
+    await recordJobEventWithClient(client, {
+      ...eventBase,
+      eventType: 'job.created',
+    });
+    await recordJobEventWithClient(client, {
+      ...eventBase,
+      eventType: 'job.queued',
+    });
+    await client.query('COMMIT');
+    return {
+      job: createdJob,
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    };
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -3128,7 +3477,7 @@ export const RETAINED_NON_GPT_TERMINAL_CLEANUP_SQL = `WITH delete_candidates AS 
     completed_at,
     created_at
   FROM job_data
-  WHERE job_type IN ('ask', 'dag-node')
+  WHERE job_type IN ('ask', 'dag-node', 'backstage-notion-partition-sync')
     AND status IN ('completed', 'cancelled')
     AND retention_until IS NOT NULL
     AND retention_until <= NOW()
@@ -3261,6 +3610,7 @@ export async function cleanupRetainedNonGptTerminalJobs(
     deletedTerminal: 0,
     deletedAsk: 0,
     deletedDagNode: 0,
+    deletedBackstageNotionPartitionSync: 0,
     deletedCompleted: 0,
     deletedCancelled: 0,
     deletedJobIds: []
@@ -3284,7 +3634,11 @@ export async function cleanupRetainedNonGptTerminalJobs(
     const record = row as Record<string, unknown>;
     if (
       typeof record.id !== 'string' ||
-      (record.job_type !== 'ask' && record.job_type !== 'dag-node') ||
+      (
+        record.job_type !== 'ask'
+        && record.job_type !== 'dag-node'
+        && record.job_type !== BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE
+      ) ||
       (record.status !== 'completed' && record.status !== 'cancelled')
     ) {
       return [];
@@ -3302,6 +3656,9 @@ export async function cleanupRetainedNonGptTerminalJobs(
     deletedTerminal: deletedRows.length,
     deletedAsk: deletedRows.filter((row) => row.jobType === 'ask').length,
     deletedDagNode: deletedRows.filter((row) => row.jobType === 'dag-node').length,
+    deletedBackstageNotionPartitionSync: deletedRows.filter(
+      row => row.jobType === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE
+    ).length,
     deletedCompleted: deletedRows.filter((row) => row.status === 'completed').length,
     deletedCancelled: deletedRows.filter((row) => row.status === 'cancelled').length,
     deletedJobIds: deletedRows.map((row) => row.id)

@@ -4,7 +4,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 
 import {
+  requiresBackstageNotionMonolithWorkerReadiness,
   resolveBackstageNotionPartitionShadowPolicy,
+  runBackstageNotionWorkerReadinessGate,
   startBackstageNotionPartitionShadowLoop,
   type BackstageNotionPartitionShadowCycleResult,
 } from '../src/workers/backstageNotionPartitionShadowLoop.js';
@@ -64,12 +66,14 @@ function successfulCycleResult(): BackstageNotionPartitionShadowCycleResult {
         manifestId: PARTITION_MANIFEST_ID,
         memberCount: 1,
         omissionCount: 0,
+        manifestOmissions: [],
         shardResults: [{
           universeId: 'my-universe-2k26',
           shardKey: 'raw/2026',
           status: 'fresh',
           safeReasonCode: null,
           freshSnapshotId: FRESH_SNAPSHOT_ID,
+          fullSourceScan: true,
           pageCount: 2,
           chunkCount: 3,
           pageVersionReuseCount: 1,
@@ -111,6 +115,13 @@ function shadowEnvironment(): (name: string) => string | undefined {
   });
 }
 
+function partitionedEnvironment(): (name: string) => string | undefined {
+  return environment({
+    ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
+    ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
+  });
+}
+
 afterEach(() => {
   jest.useRealTimers();
   jest.restoreAllMocks();
@@ -135,8 +146,15 @@ describe('Backstage Notion partition shadow worker policy', () => {
     }, false, 'shadow', 'SHADOW_CONFIGURATION_INVALID'],
     [{
       ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
+    }, false, 'partitioned', 'PARTITIONED_CONFIGURATION_ABSENT'],
+    [{
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '{',
+    }, false, 'partitioned', 'PARTITIONED_CONFIGURATION_INVALID'],
+    [{
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
       ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
-    }, false, 'partitioned', 'CUTOVER_NOT_AVAILABLE'],
+    }, true, 'partitioned', 'PARTITIONED_ENABLED'],
     [{
       ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
       ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
@@ -158,6 +176,58 @@ describe('Backstage Notion partition shadow worker policy', () => {
       reasonCode: 'ENVIRONMENT_READ_FAILED',
     }));
   });
+
+  test.each([
+    ['shadow', shadowEnvironment()],
+    ['partitioned', partitionedEnvironment()],
+  ] as const)(
+    'does not invoke monolith readiness for an exact enabled %s policy',
+    async (_mode, readEnvironment) => {
+      const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
+      const ensureReadiness = jest.fn(async () => ({ configuredUniverses: 1 }));
+
+      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(false);
+      await expect(runBackstageNotionWorkerReadinessGate(
+        policy,
+        ensureReadiness
+      )).resolves.toEqual({
+        monolithReadinessRequired: false,
+        evidence: null,
+      });
+      expect(ensureReadiness).not.toHaveBeenCalled();
+    }
+  );
+
+  test.each([
+    ['absent', environment({})],
+    ['monolith', environment({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'monolith',
+    })],
+    ['invalid-mode', environment({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'SHADOW',
+    })],
+    ['missing-shadow-config', environment({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
+    })],
+    ['invalid-partitioned-config', environment({
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '{',
+    })],
+  ] as const)(
+    'runs and propagates monolith readiness for the %s fallback policy',
+    async (_case, readEnvironment) => {
+      const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
+      const failure = new Error('bounded monolith readiness failure');
+      const ensureReadiness = jest.fn(async () => Promise.reject(failure));
+
+      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(true);
+      await expect(runBackstageNotionWorkerReadinessGate(
+        policy,
+        ensureReadiness
+      )).rejects.toBe(failure);
+      expect(ensureReadiness).toHaveBeenCalledTimes(1);
+    }
+  );
 
   test('never logs invalid raw mode or raw partition configuration', async () => {
     const warn = jest.fn();
@@ -187,7 +257,10 @@ describe('Backstage Notion partition shadow worker policy', () => {
     },
     {
       ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
+    },
+    {
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '{',
     },
   ])('performs zero shadow work for disabled policy %#', async values => {
     jest.useFakeTimers();
@@ -207,6 +280,46 @@ describe('Backstage Notion partition shadow worker policy', () => {
 });
 
 describe('Backstage Notion partition shadow worker lifecycle', () => {
+  test.each([
+    ['shadow', shadowEnvironment(), 'monolith', true, false],
+    ['partitioned', partitionedEnvironment(), 'partitioned', false, true],
+  ] as const)(
+    'enables the shard writer with accurate safe rollout metadata in %s mode',
+    async (_mode, readEnvironment, effectiveReadMode, shadowSyncEnabled,
+      partitionedReadEnabled) => {
+      jest.useFakeTimers();
+      const info = jest.fn();
+      const runCycle = jest.fn(async () => successfulCycleResult());
+      const handle = startBackstageNotionPartitionShadowLoop({
+        readEnvironment,
+        intervalMs: INTERVAL_MS,
+        initialDelayMs: 0,
+        runCycle,
+        logger: { info, warn: jest.fn() } as never,
+      });
+
+      expect(handle.enabled).toBe(true);
+      expect(info).toHaveBeenCalledWith(
+        'backstage.notion_partition.shadow_enabled',
+        expect.objectContaining({
+          effectiveReadMode,
+          partitionSyncEnabled: true,
+          shadowSyncEnabled,
+          partitionedReadEnabled,
+          cutoverAvailable: true,
+        })
+      );
+      expect(JSON.stringify(info.mock.calls)).not.toContain(ROOT_PAGE_ID);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(runCycle).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith(
+        'backstage.notion_partition.shadow_cycle_completed',
+        expect.objectContaining({ effectiveReadMode })
+      );
+      await handle.stopAndDrain();
+    }
+  );
+
   test('delays the first cycle and measures recurrence from terminal completion', async () => {
     jest.useFakeTimers();
     let resolveCycle!: (value: BackstageNotionPartitionShadowCycleResult) => void;
@@ -440,6 +553,8 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
     expect(info).toHaveBeenCalledWith(
       'backstage.notion_partition.shadow_cycle_completed',
       expect.objectContaining({
+        fullSourceScan: true,
+        shardsFullyScanned: 1,
         manifestsPublished: 1,
         shardsFresh: 1,
         pageVersionsReused: 1,

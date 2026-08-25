@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T22:21:30.462Z",
+  "generatedAt": "2026-08-25T04:32:18.688Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1172,6 +1172,9 @@
           "relativePath": "src/routes/api-assistants.ts"
         },
         {
+          "relativePath": "src/routes/api-backstage-notion-partitions.ts"
+        },
+        {
           "relativePath": "src/routes/api-codebase.ts"
         },
         {
@@ -1583,10 +1586,25 @@
           "relativePath": "src/services/backstageNotionEnrichmentAuthorization.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionPartitionCutover.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionPartitionDiagnostics.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionPartitionMaterial.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionPartitionRetrieval.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionPartitionRouting.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionPartitionSync.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionPartitionSyncOperations.ts"
         },
         {
           "relativePath": "src/services/backstageNotionRag.ts"
@@ -1680,6 +1698,15 @@
         },
         {
           "relativePath": "src/services/controlPlane/backstageMutationHttpBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncConfirmation.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/cefBodyParser.ts"
@@ -2456,6 +2483,9 @@
           "relativePath": "src/shared/backstage/backstageNotionPartitionMaterialCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionRoutingCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionPartitionSyncCore.ts"
         },
         {
@@ -2643,6 +2673,9 @@
         },
         {
           "relativePath": "src/shared/idGenerator.ts"
+        },
+        {
+          "relativePath": "src/shared/jobs/backstageNotionPartitionSyncJob.ts"
         },
         {
           "relativePath": "src/shared/jobs/jobLeaseTiming.ts"
@@ -2973,6 +3006,9 @@
         },
         {
           "relativePath": "src/workers/backstageNotionPartitionShadowLoop.ts"
+        },
+        {
+          "relativePath": "src/workers/backstageNotionPartitionSyncJob.ts"
         },
         {
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
@@ -3382,7 +3418,22 @@
           "relativePath": "tests/backstage-notion-enrichment-authorization.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-partition-candidate-repository.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-partition-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-cutover.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-diagnostics-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-diagnostics-route.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-diagnostics.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-material-core.test.ts"
@@ -3397,10 +3448,28 @@
           "relativePath": "tests/backstage-notion-partition-repository.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-partition-retrieval.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-routing-core.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-routing.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-partition-shadow-loop.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-job.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-operations.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-sync.test.ts"
@@ -4007,6 +4076,9 @@
         },
         {
           "relativePath": "tests/job-read-capability.test.ts"
+        },
+        {
+          "relativePath": "tests/job-repository.backstageNotionPartitionSync.test.ts"
         },
         {
           "relativePath": "tests/job-repository.claim-generation-create.test.ts"

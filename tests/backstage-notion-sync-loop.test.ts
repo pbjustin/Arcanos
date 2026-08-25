@@ -455,7 +455,7 @@ describe('Backstage Notion synchronization loop', () => {
       .toBe(BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS);
   });
 
-  it('gates readiness before the signal, then starts coordinated recurring loops', () => {
+  it('shares one coordinator across queue slots before starting recurring loops', () => {
     const source = fs
       .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
       .replace(/\r\n/gu, '\n');
@@ -466,21 +466,41 @@ describe('Backstage Notion synchronization loop', () => {
       'initializeWorkerOpenAIAdapterIfConfigured();',
       databaseBootstrapIndex
     );
-    const notionReadinessIndex = source.indexOf(
-      'await ensureBackstageNotionWorkerReadiness({',
+    const partitionPolicyIndex = source.indexOf(
+      'resolveBackstageNotionPartitionShadowPolicy();',
       adapterInitializationIndex
+    );
+    const readinessGateIndex = source.indexOf(
+      'await runBackstageNotionWorkerReadinessGate(',
+      partitionPolicyIndex
+    );
+    const notionReadinessIndex = source.indexOf(
+      '() => ensureBackstageNotionWorkerReadiness({',
+      readinessGateIndex
+    );
+    const coordinatorIndex = source.indexOf(
+      'createBackstageNotionSynchronizationCoordinator()',
+      notionReadinessIndex
+    );
+    const executorIndex = source.indexOf(
+      'createBackstageNotionPartitionSyncJobExecutor({',
+      coordinatorIndex
+    );
+    const slotStartIndex = source.indexOf(
+      'const slotRuntimePromise = runWorkerConsumerSlot(',
+      executorIndex
+    );
+    const executorInjectionIndex = source.indexOf(
+      'partitionSyncExecutor',
+      slotStartIndex
     );
     const readinessBarrierIndex = source.indexOf(
       'await commitAllWorkerSlotsReadyOrThrow(',
-      notionReadinessIndex
+      executorInjectionIndex
     );
     const readinessSignalIndex = source.indexOf(
       'emitWorkerBootstrapReadySignal()',
       readinessBarrierIndex
-    );
-    const coordinatorIndex = source.indexOf(
-      'createBackstageNotionSynchronizationCoordinator()',
-      readinessSignalIndex
     );
     const syncStartIndex = source.indexOf(
       'backstageNotionSyncHandle = startBackstageNotionSyncLoop({',
@@ -506,10 +526,15 @@ describe('Backstage Notion synchronization loop', () => {
     expect([
       databaseBootstrapIndex,
       adapterInitializationIndex,
+      partitionPolicyIndex,
+      readinessGateIndex,
       notionReadinessIndex,
+      coordinatorIndex,
+      executorIndex,
+      slotStartIndex,
+      executorInjectionIndex,
       readinessBarrierIndex,
       readinessSignalIndex,
-      coordinatorIndex,
       syncStartIndex,
       shadowStartIndex,
       runtimeBarrierIndex,
@@ -517,11 +542,16 @@ describe('Backstage Notion synchronization loop', () => {
       shadowDrainIndex,
     ]).not.toContain(-1);
     expect(databaseBootstrapIndex).toBeLessThan(adapterInitializationIndex);
-    expect(adapterInitializationIndex).toBeLessThan(notionReadinessIndex);
-    expect(notionReadinessIndex).toBeLessThan(readinessBarrierIndex);
+    expect(adapterInitializationIndex).toBeLessThan(partitionPolicyIndex);
+    expect(partitionPolicyIndex).toBeLessThan(readinessGateIndex);
+    expect(readinessGateIndex).toBeLessThan(notionReadinessIndex);
+    expect(notionReadinessIndex).toBeLessThan(coordinatorIndex);
+    expect(coordinatorIndex).toBeLessThan(executorIndex);
+    expect(executorIndex).toBeLessThan(slotStartIndex);
+    expect(slotStartIndex).toBeLessThan(executorInjectionIndex);
+    expect(executorInjectionIndex).toBeLessThan(readinessBarrierIndex);
     expect(readinessBarrierIndex).toBeLessThan(readinessSignalIndex);
-    expect(readinessSignalIndex).toBeLessThan(coordinatorIndex);
-    expect(coordinatorIndex).toBeLessThan(syncStartIndex);
+    expect(readinessSignalIndex).toBeLessThan(syncStartIndex);
     expect(syncStartIndex).toBeLessThan(shadowStartIndex);
     expect(shadowStartIndex).toBeLessThan(runtimeBarrierIndex);
     expect(runtimeBarrierIndex).toBeLessThan(syncDrainIndex);

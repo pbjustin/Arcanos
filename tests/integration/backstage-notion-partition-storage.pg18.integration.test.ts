@@ -42,6 +42,27 @@ const rollbackMigration = readFileSync(
   ),
   'utf8'
 );
+const scopeMigrationRoot = join(
+  process.cwd(),
+  'migrations',
+  '20260824_backstage_notion_partition_scope_reads_v1'
+);
+const scopeIndexPrecheck = readFileSync(
+  join(scopeMigrationRoot, '01_precheck_parent_page_index.sql'),
+  'utf8'
+);
+const scopeIndexCreate = readFileSync(
+  join(scopeMigrationRoot, '02_create_parent_page_index.sql'),
+  'utf8'
+);
+const scopeIndexVerify = readFileSync(
+  join(scopeMigrationRoot, '03_verify_parent_page_index.sql'),
+  'utf8'
+);
+const scopeIndexRollback = readFileSync(
+  join(scopeMigrationRoot, 'rollback', '01_drop_parent_page_index.sql'),
+  'utf8'
+);
 const runtimeSql = BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS.join('\n');
 
 const partitionTables = [
@@ -97,7 +118,10 @@ function createSavepointRepositoryPool(client: Client): Pool {
     values: readonly unknown[] = []
   ): Promise<Awaited<ReturnType<Client['query']>>> => {
     const transactionCommand = text.trim().toUpperCase();
-    if (transactionCommand === 'BEGIN') {
+    if (
+      transactionCommand === 'BEGIN'
+      || transactionCommand.startsWith('BEGIN TRANSACTION ')
+    ) {
       if (activeSavepoint !== null) {
         throw new Error('Repository transaction nesting is unsupported in this test adapter.');
       }
@@ -354,7 +378,7 @@ async function insertSealedFixture(
        content,
        content_code_points
      ) VALUES ($1::UUID, $2, $3, 1, 'canon', 5)`,
-    [chunkVersionId, universeId, fingerprint(`chunk:${label}`)]
+    [chunkVersionId, universeId, fingerprint('canon')]
   );
   await client.query(
     `INSERT INTO public.backstage_notion_chunk_embeddings (
@@ -769,6 +793,783 @@ async function insertSealedFixture(
   };
 }
 
+type ScopeHierarchyFixture = Readonly<{
+  manifestId: string;
+  snapshotId: string;
+  contentPageId: string;
+  outOfScopePageId: string;
+  outOfScopeChunkVersionId: string;
+  blankPageId: string;
+  secondBlankPageId: string;
+}>;
+
+type CandidateBoundaryShardFixture = Readonly<{
+  shardKey: string;
+  rootPageId: string;
+  partitionVersionId: string;
+  pageVersionId: string;
+  snapshotId: string;
+  semanticChunkVersionId: string;
+  semanticContent: string;
+}>;
+
+type CandidateBoundaryFixture = Readonly<{
+  universeId: string;
+  configurationId: string;
+  configurationHash: string;
+  manifestId: string;
+  chunksPerShard: number;
+  shards: readonly CandidateBoundaryShardFixture[];
+}>;
+
+async function insertCandidateBoundaryFixture(
+  client: Client,
+  label: string
+): Promise<CandidateBoundaryFixture> {
+  const chunksPerShard = 1_025;
+  const universeId = `partition-pg18-${label}`;
+  const configurationId = randomUUID();
+  const configurationGeneration = `generation-${label}`;
+  const configurationHash = fingerprint(`configuration:${label}`);
+  const manifestId = randomUUID();
+  const sourceEditedAt = '2026-08-24T13:00:00.000Z';
+  const verifiedAt = '2026-08-24T13:02:00.000Z';
+  const shardSeeds = [
+    { shardKey: `hot/${label}-a`, title: 'Boundary A', semanticVector: [0, 1] },
+    { shardKey: `hot/${label}-b`, title: 'Boundary B', semanticVector: [0.6, 0.8] },
+  ] as const;
+  const shards = shardSeeds.map(seed => ({
+    ...seed,
+    rootPageId: randomUUID(),
+    partitionVersionId: randomUUID(),
+    pageVersionId: randomUUID(),
+    snapshotId: randomUUID(),
+    semanticChunkVersionId: randomUUID(),
+    semanticContent: `semantic-only-${seed.shardKey.at(-1)}`,
+  }));
+
+  await client.query(
+    `INSERT INTO public.backstage_notion_universe_heads (universe_id)
+     VALUES ($1)`,
+    [universeId]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_partition_configuration_versions (
+       id,
+       universe_id,
+       configuration_generation,
+       configuration_hash,
+       shard_count
+     ) VALUES ($1::UUID, $2, $3, $4, 2)`,
+    [configurationId, universeId, configurationGeneration, configurationHash]
+  );
+  for (const shard of shards) {
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_identities (
+         universe_id,
+         shard_key
+       ) VALUES ($1, $2)`,
+      [universeId, shard.shardKey]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_versions (
+         id,
+         universe_id,
+         shard_key,
+         root_page_id,
+         display_name,
+         retrieval_tier,
+         is_required,
+         scope_tags,
+         category_tags,
+         max_pages,
+         max_chunks,
+         max_depth,
+         max_content_code_points,
+         semantic_hash
+       ) VALUES (
+         $1::UUID, $2, $3, $4::UUID, $5, 'hot', TRUE,
+         '["boundary"]'::JSONB, '["canon"]'::JSONB,
+         8, 2048, 4, 10000, $6
+       )`,
+      [
+        shard.partitionVersionId,
+        universeId,
+        shard.shardKey,
+        shard.rootPageId,
+        shard.title,
+        fingerprint(`partition:${shard.shardKey}`),
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_partition_configuration_members (
+         universe_id,
+         partition_configuration_version_id,
+         configuration_generation,
+         shard_key,
+         partition_version_id,
+         root_page_id
+       ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $6::UUID)`,
+      [
+        universeId,
+        configurationId,
+        configurationGeneration,
+        shard.shardKey,
+        shard.partitionVersionId,
+        shard.rootPageId,
+      ]
+    );
+  }
+  await client.query(
+    `UPDATE public.backstage_notion_partition_configuration_versions
+     SET state = 'sealed', sealed_at = clock_timestamp()
+     WHERE universe_id = $1 AND id = $2::UUID`,
+    [universeId, configurationId]
+  );
+
+  for (const [shardIndex, shard] of shards.entries()) {
+    const markdown = `bulk-${shardIndex}`;
+    const chunks = Array.from({ length: chunksPerShard }, (_, ordinal) => {
+      const semantic = ordinal === chunksPerShard - 1;
+      const content = semantic
+        ? shard.semanticContent
+        : `generic-${shardIndex}-${ordinal}`;
+      const [embeddingX, embeddingY] = semantic
+        ? shard.semanticVector
+        : [1, 0];
+      return {
+        id: semantic ? shard.semanticChunkVersionId : randomUUID(),
+        ordinal,
+        content,
+        content_hash: fingerprint(content),
+        content_code_points: Array.from(content).length,
+        embedding_x: embeddingX,
+        embedding_y: embeddingY,
+        embedding_norm: 1,
+      };
+    });
+    const serializedChunks = JSON.stringify(chunks);
+
+    await client.query(
+      `INSERT INTO public.backstage_notion_chunk_versions (
+         id,
+         universe_id,
+         content_hash,
+         chunker_version,
+         content,
+         content_code_points
+       )
+       SELECT
+         item.id::UUID,
+         $1,
+         item.content_hash,
+         1,
+         item.content,
+         item.content_code_points
+       FROM pg_catalog.jsonb_to_recordset($2::JSONB) AS item(
+         id TEXT,
+         content_hash TEXT,
+         content TEXT,
+         content_code_points INTEGER
+       )`,
+      [universeId, serializedChunks]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_chunk_embeddings (
+         universe_id,
+         chunk_version_id,
+         embedding_model,
+         embedding_version,
+         embedding_dimension,
+         embedding_norm,
+         embedding
+       )
+       SELECT
+         $1,
+         item.id::UUID,
+         'pg18-test-model',
+         1,
+         2,
+         item.embedding_norm,
+         ARRAY[item.embedding_x, item.embedding_y]::DOUBLE PRECISION[]
+       FROM pg_catalog.jsonb_to_recordset($2::JSONB) AS item(
+         id TEXT,
+         embedding_x DOUBLE PRECISION,
+         embedding_y DOUBLE PRECISION,
+         embedding_norm DOUBLE PRECISION
+       )`,
+      [universeId, serializedChunks]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_page_versions (
+         id,
+         universe_id,
+         page_id,
+         content_hash,
+         page_format_version,
+         chunker_version,
+         markdown,
+         content_code_points,
+         chunk_count
+       ) VALUES ($1::UUID, $2, $3::UUID, $4, 1, 1, $5, $6, $7)`,
+      [
+        shard.pageVersionId,
+        universeId,
+        shard.rootPageId,
+        fingerprint(markdown),
+        markdown,
+        Array.from(markdown).length,
+        chunksPerShard,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_page_version_chunks (
+         universe_id,
+         page_version_id,
+         ordinal,
+         chunk_version_id,
+         heading_path,
+         scope_heading_path_key,
+         heading_occurrence_path
+       )
+       SELECT
+         $1,
+         $2::UUID,
+         item.ordinal,
+         item.id::UUID,
+         '[]'::JSONB,
+         '[]'::JSONB,
+         '[]'::JSONB
+       FROM pg_catalog.jsonb_to_recordset($3::JSONB) AS item(
+         id TEXT,
+         ordinal INTEGER
+       )`,
+      [universeId, shard.pageVersionId, serializedChunks]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_page_versions
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND id = $2::UUID`,
+      [universeId, shard.pageVersionId]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshots (
+         id,
+         universe_id,
+         shard_key,
+         partition_version_id,
+         root_page_id,
+         source_manifest_hash,
+         embedding_model,
+         embedding_version,
+         embedding_dimension,
+         index_format_version,
+         page_count,
+         chunk_count,
+         content_code_points,
+         max_depth,
+         source_max_last_edited_at,
+         verification_count
+       ) VALUES (
+         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
+         'pg18-test-model', 1, 2, 1, 1, $7, $8, 0, $9::TIMESTAMPTZ, 2
+       )`,
+      [
+        shard.snapshotId,
+        universeId,
+        shard.shardKey,
+        shard.partitionVersionId,
+        shard.rootPageId,
+        fingerprint(`snapshot:${shard.shardKey}`),
+        chunksPerShard,
+        Array.from(markdown).length,
+        sourceEditedAt,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_pages (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         page_id,
+         page_version_id,
+         parent_page_id,
+         title,
+         canonical_url,
+         source_last_edited_at,
+         depth,
+         path,
+         scope_path,
+         scope_title_key,
+         scope_path_key
+       ) VALUES (
+         $1, $2, $3::UUID, $4::UUID, $5::UUID, NULL, $6, $7,
+         $8::TIMESTAMPTZ, 0, $9::JSONB, $10::JSONB, $11, $12::JSONB
+       )`,
+      [
+        universeId,
+        shard.shardKey,
+        shard.snapshotId,
+        shard.rootPageId,
+        shard.pageVersionId,
+        shard.title,
+        `https://www.notion.so/${shard.rootPageId.replaceAll('-', '')}`,
+        sourceEditedAt,
+        JSON.stringify([shard.rootPageId]),
+        JSON.stringify([shard.title]),
+        scopeKey(shard.title),
+        JSON.stringify([scopeKey(shard.title)]),
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_chunk_occurrences (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         page_id,
+         page_version_id,
+         ordinal,
+         chunk_version_id,
+         embedding_model,
+         embedding_version,
+         category
+       )
+       SELECT
+         $1,
+         $2,
+         $3::UUID,
+         $4::UUID,
+         $5::UUID,
+         item.ordinal,
+         item.id::UUID,
+         'pg18-test-model',
+         1,
+         'general'
+       FROM pg_catalog.jsonb_to_recordset($6::JSONB) AS item(
+         id TEXT,
+         ordinal INTEGER
+       )`,
+      [
+        universeId,
+        shard.shardKey,
+        shard.snapshotId,
+        shard.rootPageId,
+        shard.pageVersionId,
+        serializedChunks,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_snapshot_verifications (
+         universe_id,
+         shard_key,
+         shard_snapshot_id,
+         ordinal,
+         verification_kind,
+         result_hash,
+         verified_at
+       ) VALUES
+         ($1, $2, $3::UUID, 0, 'source_drift', $4, $5::TIMESTAMPTZ),
+         ($1, $2, $3::UUID, 1, 'completeness', $6, $5::TIMESTAMPTZ)`,
+      [
+        universeId,
+        shard.shardKey,
+        shard.snapshotId,
+        fingerprint(`drift:${shard.shardKey}`),
+        verifiedAt,
+        fingerprint(`complete:${shard.shardKey}`),
+      ]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_shard_snapshots
+       SET state = 'sealed', sealed_at = clock_timestamp()
+       WHERE universe_id = $1 AND shard_key = $2 AND id = $3::UUID`,
+      [universeId, shard.shardKey, shard.snapshotId]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_shard_heads (
+         universe_id,
+         shard_key,
+         current_partition_version_id,
+         root_page_id,
+         active_snapshot_id,
+         head_generation,
+         snapshot_generation,
+         last_verified_at
+       ) VALUES ($1, $2, $3::UUID, $4::UUID, $5::UUID, 1, 1, $6::TIMESTAMPTZ)`,
+      [
+        universeId,
+        shard.shardKey,
+        shard.partitionVersionId,
+        shard.rootPageId,
+        shard.snapshotId,
+        verifiedAt,
+      ]
+    );
+  }
+
+  await client.query(
+    `INSERT INTO public.backstage_notion_universe_manifests (
+       id,
+       universe_id,
+       partition_configuration_version_id,
+       configuration_generation,
+       configuration_hash,
+       embedding_model,
+       embedding_version,
+       embedding_dimension,
+       index_format_version,
+       member_count,
+       omission_count,
+       page_count,
+       chunk_count
+     ) VALUES (
+       $1::UUID, $2, $3::UUID, $4, $5,
+       'pg18-test-model', 1, 2, 1, 2, 0, 2, $6
+     )`,
+    [
+      manifestId,
+      universeId,
+      configurationId,
+      configurationGeneration,
+      configurationHash,
+      chunksPerShard * shards.length,
+    ]
+  );
+  for (const shard of shards) {
+    await client.query(
+      `INSERT INTO public.backstage_notion_universe_manifest_shards (
+         universe_id,
+         manifest_id,
+         shard_key,
+         partition_version_id,
+         shard_snapshot_id,
+         decision,
+         is_required,
+         verified_at
+       ) VALUES (
+         $1, $2::UUID, $3, $4::UUID, $5::UUID, 'fresh', TRUE, $6::TIMESTAMPTZ
+       )`,
+      [
+        universeId,
+        manifestId,
+        shard.shardKey,
+        shard.partitionVersionId,
+        shard.snapshotId,
+        verifiedAt,
+      ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_manifest_page_ownership (
+         universe_id,
+         manifest_id,
+         page_id,
+         shard_key,
+         shard_snapshot_id
+       ) VALUES ($1, $2::UUID, $3::UUID, $4, $5::UUID)`,
+      [
+        universeId,
+        manifestId,
+        shard.rootPageId,
+        shard.shardKey,
+        shard.snapshotId,
+      ]
+    );
+  }
+  await client.query(
+    `UPDATE public.backstage_notion_universe_manifests
+     SET state = 'sealed', sealed_at = clock_timestamp()
+     WHERE universe_id = $1 AND id = $2::UUID`,
+    [universeId, manifestId]
+  );
+  await client.query(
+    `INSERT INTO public.backstage_notion_partitioned_universe_heads (
+       universe_id,
+       desired_configuration_version_id,
+       desired_configuration_generation,
+       desired_configuration_hash,
+       active_manifest_id,
+       active_configuration_version_id,
+       head_generation,
+       manifest_generation,
+       last_verified_at
+     ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $2::UUID, 1, 1, $6::TIMESTAMPTZ)`,
+    [
+      universeId,
+      configurationId,
+      configurationGeneration,
+      configurationHash,
+      manifestId,
+      verifiedAt,
+    ]
+  );
+
+  return {
+    universeId,
+    configurationId,
+    configurationHash,
+    manifestId,
+    chunksPerShard,
+    shards: Object.freeze(shards.map(shard => Object.freeze({
+      shardKey: shard.shardKey,
+      rootPageId: shard.rootPageId,
+      partitionVersionId: shard.partitionVersionId,
+      pageVersionId: shard.pageVersionId,
+      snapshotId: shard.snapshotId,
+      semanticChunkVersionId: shard.semanticChunkVersionId,
+      semanticContent: shard.semanticContent,
+    }))),
+  };
+}
+
+async function activateScopeHierarchyFixture(
+  client: Client,
+  fixture: SealedFixture
+): Promise<ScopeHierarchyFixture> {
+  const repository = new PostgresBackstageNotionPartitionRepository(
+    createSavepointRepositoryPool(client)
+  );
+  const contentPageId = randomUUID();
+  const outOfScopePageId = randomUUID();
+  const blankPageId = randomUUID();
+  const secondBlankPageId = randomUUID();
+  const rootMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: fixture.rootPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const contentMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: contentPageId,
+    contentHash: fingerprint('canon'),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: 'canon',
+    contentCodePoints: 5,
+    chunks: [{
+      ordinal: 0,
+      chunkVersionId: fixture.chunkVersionId,
+      headingPath: ['Canon'],
+      scopeHeadingPathKey: [scopeKey('Canon')],
+      headingOccurrencePath: [0],
+    }],
+  });
+  const outOfScopeChunk = await repository.storeChunkVersion({
+    universeId: fixture.universeId,
+    contentHash: fingerprint('perfect canon'),
+    chunkerVersion: 1,
+    content: 'perfect canon',
+    contentCodePoints: 13,
+  });
+  await repository.storeEmbedding({
+    universeId: fixture.universeId,
+    chunkVersionId: outOfScopeChunk.id,
+    embeddingModel: 'pg18-test-model',
+    embeddingVersion: 1,
+    embedding: [0, 1],
+  });
+  const outOfScopeMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: outOfScopePageId,
+    contentHash: fingerprint('perfect canon'),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: 'perfect canon',
+    contentCodePoints: 13,
+    chunks: [{
+      ordinal: 0,
+      chunkVersionId: outOfScopeChunk.id,
+      headingPath: ['Perfect Canon'],
+      scopeHeadingPathKey: [scopeKey('Perfect Canon')],
+      headingOccurrencePath: [0],
+    }],
+  });
+  const blankMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: blankPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const secondBlankMaterial = await repository.storePageVersion({
+    universeId: fixture.universeId,
+    pageId: secondBlankPageId,
+    contentHash: fingerprint(''),
+    pageFormatVersion: 1,
+    chunkerVersion: 1,
+    markdown: '',
+    contentCodePoints: 0,
+    chunks: [],
+  });
+  const synchronizationState = await repository.loadUniverseSynchronizationState(
+    fixture.universeId,
+    fixture.configurationId
+  );
+  if (!synchronizationState?.shards[0]) {
+    throw new Error('Scope hierarchy fixture requires one active shard.');
+  }
+  const lease = await repository.acquireShardLease(
+    fixture.universeId,
+    fixture.shardKey,
+    'pg18-scope-hierarchy',
+    60_000
+  );
+  if (!lease) {
+    throw new Error('Scope hierarchy fixture could not acquire its shard lease.');
+  }
+  const snapshotId = randomUUID();
+  const sourceEditedAt = new Date(Date.now() - 60_000);
+  const verifiedAt = new Date();
+  const activated = await repository.activateShardSnapshot({
+    snapshotId,
+    universeId: fixture.universeId,
+    shardKey: fixture.shardKey,
+    partitionVersionId: fixture.partitionVersionId,
+    rootPageId: fixture.rootPageId,
+    sourceManifestHash: fingerprint('scope-hierarchy-source'),
+    embeddingModel: 'pg18-test-model',
+    embeddingVersion: 1,
+    indexFormatVersion: 1,
+    sourceMaxLastEditedAt: sourceEditedAt,
+    expectedHead: synchronizationState.shards[0].expectedHead,
+    lease,
+    pages: [{
+      pageId: fixture.rootPageId,
+      pageVersionId: rootMaterial.id,
+      parentPageId: null,
+      title: 'Navigation Root',
+      canonicalUrl: `https://www.notion.so/${fixture.rootPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 0,
+      path: [fixture.rootPageId],
+      scopePath: ['Navigation Root'],
+      scopeTitleKey: scopeKey('Navigation Root'),
+      scopePathKey: [scopeKey('Navigation Root')],
+    }, {
+      pageId: contentPageId,
+      pageVersionId: contentMaterial.id,
+      parentPageId: fixture.rootPageId,
+      title: 'Content Child',
+      canonicalUrl: `https://www.notion.so/${contentPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 1,
+      path: [fixture.rootPageId, contentPageId],
+      scopePath: ['Navigation Root', 'Content Child'],
+      scopeTitleKey: scopeKey('Content Child'),
+      scopePathKey: [scopeKey('Navigation Root'), scopeKey('Content Child')],
+    }, {
+      pageId: outOfScopePageId,
+      pageVersionId: outOfScopeMaterial.id,
+      parentPageId: fixture.rootPageId,
+      title: 'Out Of Scope Child',
+      canonicalUrl: `https://www.notion.so/${outOfScopePageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 1,
+      path: [fixture.rootPageId, outOfScopePageId],
+      scopePath: ['Navigation Root', 'Out Of Scope Child'],
+      scopeTitleKey: scopeKey('Out Of Scope Child'),
+      scopePathKey: [scopeKey('Navigation Root'), scopeKey('Out Of Scope Child')],
+    }, {
+      pageId: blankPageId,
+      pageVersionId: blankMaterial.id,
+      parentPageId: fixture.rootPageId,
+      title: 'Blank Child',
+      canonicalUrl: `https://www.notion.so/${blankPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 1,
+      path: [fixture.rootPageId, blankPageId],
+      scopePath: ['Navigation Root', 'Blank Child'],
+      scopeTitleKey: scopeKey('Blank Child'),
+      scopePathKey: [scopeKey('Navigation Root'), scopeKey('Blank Child')],
+    }, {
+      pageId: secondBlankPageId,
+      pageVersionId: secondBlankMaterial.id,
+      parentPageId: contentPageId,
+      title: 'Blank Child',
+      canonicalUrl: `https://www.notion.so/${secondBlankPageId.replaceAll('-', '')}`,
+      sourceLastEditedAt: sourceEditedAt,
+      depth: 2,
+      path: [fixture.rootPageId, contentPageId, secondBlankPageId],
+      scopePath: ['Navigation Root', 'Content Child', 'Blank Child'],
+      scopeTitleKey: scopeKey('Blank Child'),
+      scopePathKey: [
+        scopeKey('Navigation Root'),
+        scopeKey('Content Child'),
+        scopeKey('Blank Child'),
+      ],
+    }],
+    occurrences: [{
+      pageId: contentPageId,
+      pageVersionId: contentMaterial.id,
+      ordinal: 0,
+      chunkVersionId: fixture.chunkVersionId,
+      category: 'general',
+    }, {
+      pageId: outOfScopePageId,
+      pageVersionId: outOfScopeMaterial.id,
+      ordinal: 0,
+      chunkVersionId: outOfScopeChunk.id,
+      category: 'general',
+    }],
+    verifications: [{
+      kind: 'source_drift',
+      resultHash: fingerprint('scope-hierarchy-drift'),
+      verifiedAt,
+    }, {
+      kind: 'completeness',
+      resultHash: fingerprint('scope-hierarchy-complete'),
+      verifiedAt,
+    }],
+  });
+  const terminal = await repository.loadUniverseSynchronizationState(
+    fixture.universeId,
+    fixture.configurationId
+  );
+  if (!terminal?.shards[0]) {
+    throw new Error('Scope hierarchy fixture lost its activated shard.');
+  }
+  const manifestId = randomUUID();
+  await repository.activateUniverseManifest({
+    manifestId,
+    universeId: fixture.universeId,
+    configurationVersionId: fixture.configurationId,
+    configurationGeneration: fixture.configurationGeneration,
+    configurationHash: fixture.configurationHash,
+    indexFormatVersion: 1,
+    expectedUniverseHead: terminal.expectedUniverseHead,
+    members: [{
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: activated.snapshotId,
+      decision: 'fresh',
+      verifiedAt: activated.verifiedAt,
+      expectedHead: terminal.shards[0].expectedHead,
+    }],
+    omissions: [],
+  });
+  await repository.releaseShardLease(
+    fixture.universeId,
+    fixture.shardKey,
+    lease
+  );
+  return Object.freeze({
+    manifestId,
+    snapshotId,
+    contentPageId,
+    outOfScopePageId,
+    outOfScopeChunkVersionId: outOfScopeChunk.id,
+    blankPageId,
+    secondBlankPageId,
+  });
+}
+
 async function insertOptionalOverlapSnapshot(
   client: Client,
   fixture: SealedFixture,
@@ -1014,7 +1815,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
        WHERE table_schema = 'public'
          AND table_name = ANY($1::TEXT[])
        ORDER BY table_name`,
-      [[...partitionTables, 'backstage_notion_universe_heads']]
+      [[...partitionTables, 'backstage_notion_universe_heads', 'job_data']]
     );
     if (preexisting.rows.length > 0) {
       throw new Error(
@@ -1031,6 +1832,17 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
        )`
     );
     await client.query(
+      `CREATE TABLE public.job_data (
+         worker_id TEXT NOT NULL,
+         job_type TEXT NOT NULL,
+         status TEXT NOT NULL,
+         input JSONB NOT NULL,
+         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         started_at TIMESTAMPTZ
+       )`
+    );
+    await client.query(
       `CREATE FUNCTION public.backstage_notion_reject_immutable_mutation()
        RETURNS TRIGGER
        LANGUAGE plpgsql
@@ -1044,6 +1856,12 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     await client.query(forwardMigration);
     await client.query(forwardMigration);
     await client.query(runtimeSql);
+    await client.query(scopeIndexPrecheck);
+    await client.query(scopeIndexCreate);
+    await client.query(scopeIndexVerify);
+    await client.query(scopeIndexPrecheck);
+    await client.query(scopeIndexCreate);
+    await client.query(scopeIndexVerify);
   }, 60_000);
 
   afterEach(async () => {
@@ -1060,7 +1878,9 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     }
     try {
       await client.query('ROLLBACK');
+      await client.query(scopeIndexRollback);
       await client.query(rollbackMigration);
+      await client.query('DROP TABLE IF EXISTS public.job_data');
       await client.query('DROP TABLE IF EXISTS public.backstage_notion_universe_heads');
       await client.query(
         'DROP FUNCTION IF EXISTS public.backstage_notion_reject_immutable_mutation()'
@@ -1106,6 +1926,31 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     expect(lexicalIndex.rows[0]?.indexdef).toContain('USING gin');
     expect(lexicalIndex.rows[0]?.indexdef).toContain(
       "to_tsvector('simple'::regconfig, content)"
+    );
+
+    const scopeIndex = await client.query<{
+      indisvalid: boolean;
+      indisready: boolean;
+      definition: string;
+      predicate: string;
+    }>(
+      `SELECT
+         index_data.indisvalid,
+         index_data.indisready,
+         pg_catalog.pg_get_indexdef(index_data.indexrelid) AS definition,
+         pg_catalog.pg_get_expr(index_data.indpred, index_data.indrelid) AS predicate
+       FROM pg_catalog.pg_index AS index_data
+       WHERE index_data.indexrelid =
+         'public.idx_backstage_notion_shard_snapshot_pages_parent'::REGCLASS`
+    );
+    expect(scopeIndex.rows).toHaveLength(1);
+    expect(scopeIndex.rows[0]).toMatchObject({
+      indisvalid: true,
+      indisready: true,
+    });
+    expect(scopeIndex.rows[0]?.predicate).toContain('parent_page_id IS NOT NULL');
+    expect(scopeIndex.rows[0]?.definition).toContain(
+      '(universe_id, shard_key, shard_snapshot_id, parent_page_id, page_id)'
     );
 
     const triggers = await client.query<{ trigger_count: string }>(
@@ -1169,6 +2014,352 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       );
     }
   });
+
+  test('ranks exact immutable manifest candidates on stock PostgreSQL without loading embeddings', async () => {
+    await client.query('BEGIN');
+    const fixture = await insertSealedFixture(client, 'candidate-search');
+    const vectorExtension = await client.query<{ installed: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_extension
+         WHERE extname = 'vector'
+       ) AS installed`
+    );
+    expect(vectorExtension.rows).toEqual([{ installed: false }]);
+
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const input = {
+      universeId: fixture.universeId,
+      manifestId: fixture.manifestId,
+      configurationVersionId: fixture.configurationId,
+      configurationHash: fixture.configurationHash,
+      embeddingModel: 'pg18-test-model',
+      embeddingVersion: 1,
+      embeddingDimension: 2,
+      indexFormatVersion: 1,
+      shards: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        snapshotId: fixture.snapshotId,
+      }],
+      queryText: 'canon',
+      queryEmbedding: [3, 4],
+      limit: 4,
+    } as const;
+
+    const ranked = await repository.rankManifestShardCandidates(input);
+
+    expect(ranked).toMatchObject({
+      status: 'ready',
+      manifestId: fixture.manifestId,
+      strategy: 'exact_float8_hybrid_v1',
+      exhaustive: true,
+      selectedShardCount: 1,
+      selectedChunkCount: 1,
+      candidatePoolCount: 1,
+      candidates: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        snapshotId: fixture.snapshotId,
+        pageId: fixture.rootPageId,
+        pageVersionId: fixture.pageVersionId,
+        chunkVersionId: fixture.chunkVersionId,
+        pageTitle: 'Canon Root',
+        pagePath: ['Canon Root'],
+        content: 'canon',
+        contentHash: fingerprint('canon'),
+        semanticScore: 1,
+      }],
+    });
+    if (ranked.status !== 'ready') {
+      throw new Error('Expected exact partition candidate search to be ready.');
+    }
+    expect(ranked.candidates[0]).not.toHaveProperty('embedding');
+    expect(ranked.candidates[0]?.lexicalScore).toBeGreaterThan(0);
+    expect(ranked.candidates[0]?.score).toBeGreaterThan(1);
+
+    const settings = await client.query<{ name: string; setting: string }>(
+      `SELECT 'work_mem'::TEXT AS name, current_setting('work_mem') AS setting
+       UNION ALL
+       SELECT 'temp_file_limit'::TEXT, current_setting('temp_file_limit')
+       ORDER BY name`
+    );
+    expect(settings.rows).toEqual([
+      { name: 'temp_file_limit', setting: '256MB' },
+      { name: 'work_mem', setting: '8MB' },
+    ]);
+
+    await expect(repository.rankManifestShardCandidates({
+      ...input,
+      shards: [{ ...input.shards[0], snapshotId: randomUUID() }],
+    })).resolves.toEqual({ status: 'invalid' });
+    await expect(repository.rankManifestShardCandidates({
+      ...input,
+      configurationHash: fingerprint('forged-configuration'),
+    })).resolves.toEqual({ status: 'invalid' });
+  });
+
+  test('preserves per-shard semantic recall above 2,048 total chunks', async () => {
+    await client.query('BEGIN');
+    const fixture = await insertCandidateBoundaryFixture(
+      client,
+      'candidate-boundary'
+    );
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const selectedShards = fixture.shards.map(shard => ({
+      shardKey: shard.shardKey,
+      partitionVersionId: shard.partitionVersionId,
+      snapshotId: shard.snapshotId,
+    }));
+    const input = {
+      universeId: fixture.universeId,
+      manifestId: fixture.manifestId,
+      configurationVersionId: fixture.configurationId,
+      configurationHash: fixture.configurationHash,
+      embeddingModel: 'pg18-test-model',
+      embeddingVersion: 1,
+      embeddingDimension: 2,
+      indexFormatVersion: 1,
+      shards: selectedShards,
+      queryText: 'unmatched quasar request',
+      queryEmbedding: [0, 1],
+      limit: 8,
+    } as const;
+
+    const startedAt = Date.now();
+    const first = await repository.rankManifestShardCandidates(input);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(first).toMatchObject({
+      status: 'ready',
+      manifestId: fixture.manifestId,
+      strategy: 'bounded_float8_hybrid_v1',
+      exhaustive: false,
+      selectedShardCount: 2,
+      selectedChunkCount: fixture.chunksPerShard * 2,
+      candidatePoolCount: 64,
+    });
+    expect(elapsedMs).toBeLessThan(6_000);
+    if (first.status !== 'ready') {
+      throw new Error('Expected bounded partition candidate search to be ready.');
+    }
+    expect(first.candidates).toHaveLength(8);
+    expect(first.candidates[0]).toMatchObject({
+      shardKey: fixture.shards[0]!.shardKey,
+      chunkVersionId: fixture.shards[0]!.semanticChunkVersionId,
+      content: fixture.shards[0]!.semanticContent,
+      semanticScore: 1,
+      lexicalScore: 0,
+      score: 1,
+    });
+    expect(first.candidates[1]).toMatchObject({
+      shardKey: fixture.shards[1]!.shardKey,
+      chunkVersionId: fixture.shards[1]!.semanticChunkVersionId,
+      content: fixture.shards[1]!.semanticContent,
+      semanticScore: 0.8,
+      lexicalScore: 0,
+      score: 0.8,
+    });
+    expect(first.candidates.every(candidate => !('embedding' in candidate))).toBe(true);
+
+    const repeated = await repository.rankManifestShardCandidates(input);
+    expect(repeated).toEqual(first);
+
+    await expect(repository.rankManifestShardCandidates({
+      ...input,
+      shards: [
+        selectedShards[0]!,
+        { ...selectedShards[1]!, snapshotId: randomUUID() },
+      ],
+    })).resolves.toEqual({ status: 'invalid' });
+
+    const isolated = await repository.rankManifestShardCandidates({
+      ...input,
+      shards: [selectedShards[0]!],
+    });
+    expect(isolated).toMatchObject({
+      status: 'ready',
+      strategy: 'exact_float8_hybrid_v1',
+      selectedShardCount: 1,
+      selectedChunkCount: fixture.chunksPerShard,
+    });
+    if (isolated.status !== 'ready') {
+      throw new Error('Expected isolated shard candidate search to be ready.');
+    }
+    expect(isolated.candidates.every(candidate => (
+      candidate.shardKey === fixture.shards[0]!.shardKey
+    ))).toBe(true);
+  }, 90_000);
+
+  test('fences scoped candidates before ranking and keyset-pages one immutable manifest', async () => {
+    await client.query('BEGIN');
+    const fixture = await insertSealedFixture(client, 'scoped-candidate-search');
+    const originalManifestId = fixture.manifestId;
+    const hierarchy = await activateScopeHierarchyFixture(client, fixture);
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+
+    const active = await repository.loadActiveManifestRoutingState(fixture.universeId);
+    const pinnedOriginal = await repository.loadManifestRoutingState(
+      fixture.universeId,
+      originalManifestId
+    );
+    expect(active?.manifestId).toBe(hierarchy.manifestId);
+    expect(pinnedOriginal?.manifestId).toBe(originalManifestId);
+
+    const owner = await repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Content Child'),
+        pagePathKey: null,
+        sectionPathKey: null,
+        scopeKind: 'page',
+      }
+    );
+    expect(owner).toMatchObject({
+      status: 'resolved',
+      pageId: hierarchy.contentPageId,
+      scopePageCount: 1,
+      scopeChunkCount: 1,
+    });
+    if (owner.status !== 'resolved') {
+      throw new Error('Expected the exact content-page owner to resolve.');
+    }
+    const exactScope = {
+      shardKey: owner.shardKey,
+      partitionVersionId: owner.partitionVersionId,
+      snapshotId: owner.snapshotId,
+      pageId: owner.pageId,
+      scopeKind: owner.scopeKind,
+      sectionOccurrencePath: owner.sectionOccurrencePath,
+      expectedPageCount: owner.scopePageCount,
+      expectedChunkCount: owner.scopeChunkCount,
+    } as const;
+    const ranked = await repository.rankManifestShardCandidates({
+      universeId: fixture.universeId,
+      manifestId: hierarchy.manifestId,
+      configurationVersionId: fixture.configurationId,
+      configurationHash: fixture.configurationHash,
+      embeddingModel: 'pg18-test-model',
+      embeddingVersion: 1,
+      embeddingDimension: 2,
+      indexFormatVersion: 1,
+      shards: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        snapshotId: hierarchy.snapshotId,
+      }],
+      scope: exactScope,
+      queryText: 'perfect canon',
+      queryEmbedding: [0, 1],
+      limit: 8,
+    });
+    expect(ranked).toMatchObject({
+      status: 'ready',
+      selectedChunkCount: 1,
+      candidates: [{
+        pageId: hierarchy.contentPageId,
+        content: 'canon',
+      }],
+    });
+    if (ranked.status !== 'ready') {
+      throw new Error('Expected scoped candidate search to be ready.');
+    }
+    expect(ranked.candidates.map(candidate => candidate.pageId)).not.toContain(
+      hierarchy.outOfScopePageId
+    );
+    expect(ranked.candidates.map(candidate => candidate.chunkVersionId)).not.toContain(
+      hierarchy.outOfScopeChunkVersionId
+    );
+
+    const subtreeOwner = await repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Navigation Root'),
+        pagePathKey: null,
+        sectionPathKey: null,
+        scopeKind: 'subtree',
+      }
+    );
+    expect(subtreeOwner).toMatchObject({
+      status: 'resolved',
+      scopePageCount: 2,
+      scopeChunkCount: 2,
+    });
+    if (subtreeOwner.status !== 'resolved') {
+      throw new Error('Expected the exact subtree owner to resolve.');
+    }
+    const subtreeScope = {
+      shardKey: subtreeOwner.shardKey,
+      partitionVersionId: subtreeOwner.partitionVersionId,
+      snapshotId: subtreeOwner.snapshotId,
+      pageId: subtreeOwner.pageId,
+      scopeKind: subtreeOwner.scopeKind,
+      sectionOccurrencePath: subtreeOwner.sectionOccurrencePath,
+      expectedPageCount: subtreeOwner.scopePageCount,
+      expectedChunkCount: subtreeOwner.scopeChunkCount,
+    } as const;
+    const pageInput = {
+      universeId: fixture.universeId,
+      manifestId: hierarchy.manifestId,
+      configurationVersionId: fixture.configurationId,
+      configurationHash: fixture.configurationHash,
+      indexFormatVersion: 1,
+      shards: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        snapshotId: hierarchy.snapshotId,
+      }],
+      scope: subtreeScope,
+      after: null,
+      limit: 1,
+    } as const;
+    const firstPage = await repository.loadManifestScopeChunkPage(pageInput);
+    expect(firstPage).toMatchObject({
+      status: 'ready',
+      scopePageCount: 2,
+      scopeChunkCount: 2,
+      hasMore: true,
+    });
+    if (firstPage.status !== 'ready' || !firstPage.chunks[0]) {
+      throw new Error('Expected the first keyset scope page.');
+    }
+    const firstChunk = firstPage.chunks[0];
+    const secondPage = await repository.loadManifestScopeChunkPage({
+      ...pageInput,
+      after: {
+        shardKey: firstChunk.shardKey,
+        pageId: firstChunk.pageId,
+        ordinal: firstChunk.ordinal,
+        chunkVersionId: firstChunk.chunkVersionId,
+      },
+    });
+    expect(secondPage).toMatchObject({
+      status: 'ready',
+      scopePageCount: 2,
+      scopeChunkCount: 2,
+      hasMore: false,
+    });
+    if (secondPage.status !== 'ready') {
+      throw new Error('Expected the second keyset scope page.');
+    }
+    expect(new Set([
+      ...firstPage.chunks.map(chunk => chunk.pageId),
+      ...secondPage.chunks.map(chunk => chunk.pageId),
+    ])).toEqual(new Set([
+      hierarchy.contentPageId,
+      hierarchy.outOfScopePageId,
+    ]));
+    expect(firstPage.chunks.every(chunk => !('embedding' in chunk))).toBe(true);
+    expect(secondPage.chunks.every(chunk => !('embedding' in chunk))).toBe(true);
+  }, 60_000);
 
   test('seals only exact rooted ancestor paths and exact occurrence dimensions', async () => {
     await client.query('BEGIN');
@@ -2592,6 +3783,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       manifestId,
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: optionalPartition.shardKey,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });
@@ -3725,9 +4920,298 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     expect(serializedPlan).not.toContain('backstage_notion_page_versions');
     expect(serializedPlan).not.toContain('backstage_notion_chunk_versions');
     expect(serializedPlan).not.toContain('backstage_notion_chunk_embeddings');
+
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      createSavepointRepositoryPool(client)
+    );
+    const originalRoutingState = await repository.loadActiveManifestRoutingState(
+      fixture.universeId
+    );
+    const originalDiagnostics = await repository.loadUniverseDiagnosticsState(
+      fixture.universeId
+    );
+    expect(originalRoutingState).toMatchObject({
+        universeId: fixture.universeId,
+        manifestId: fixture.manifestId,
+        manifestGeneration: '1',
+        configurationVersionId: fixture.configurationId,
+        configurationCurrent: true,
+        embeddingModel: 'pg18-test-model',
+        embeddingVersion: 1,
+        embeddingDimension: 2,
+        indexFormatVersion: 1,
+        pageCount: 1,
+        chunkCount: 1,
+        members: [{
+          shardKey: fixture.shardKey,
+          partitionVersionId: fixture.partitionVersionId,
+          snapshotId: fixture.snapshotId,
+          retrievalTier: 'hot',
+          required: true,
+          decision: 'fresh',
+          pageCount: 1,
+          chunkCount: 1,
+          scopeTags: ['current'],
+          categoryTags: ['canon'],
+        }],
+        omissions: [],
+      });
+    expect(originalDiagnostics).toMatchObject({
+      universeId: fixture.universeId,
+      manifestGeneration: '1',
+      activeManifest: {
+        manifestId: fixture.manifestId,
+        configurationVersionId: fixture.configurationId,
+        memberCount: 1,
+        omissionCount: 0,
+        pageCount: 1,
+        chunkCount: 1,
+      },
+      activeJobCount: 0,
+      shards: [{
+        shardKey: fixture.shardKey,
+        partitionVersionId: fixture.partitionVersionId,
+        lastKnownGood: { snapshotId: fixture.snapshotId },
+        manifestRecord: {
+          kind: 'member',
+          snapshotId: fixture.snapshotId,
+        },
+        lease: null,
+        activeJobs: { total: 0, pending: 0, running: 0 },
+      }],
+    });
+    expect(originalDiagnostics).not.toBeNull();
+    expect(originalDiagnostics?.activeManifest).not.toBeNull();
+    expect(originalDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      originalDiagnostics!.activeManifest!.sealedAt.getTime()
+    );
+    expect(originalDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      originalDiagnostics!.shards[0]!.lastKnownGood!.sealedAt.getTime()
+    );
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      fixture.manifestId,
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: [scopeKey('Backstage'), normalizedTitleKey],
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: fixture.manifestId,
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: fixture.snapshotId,
+      pageId: fixture.rootPageId,
+      pageTitle: 'Canon Root',
+      pagePath: ['Canon Root'],
+      sectionPath: null,
+      sectionOccurrencePath: null,
+      scopeKind: 'page',
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+
+    const hierarchy = await activateScopeHierarchyFixture(client, fixture);
+    await expect(repository.loadActiveManifestRoutingState(fixture.universeId))
+      .resolves.toMatchObject({
+        manifestId: hierarchy.manifestId,
+        manifestGeneration: '2',
+        pageCount: 5,
+        chunkCount: 2,
+        members: [{
+          shardKey: fixture.shardKey,
+          snapshotId: hierarchy.snapshotId,
+          pageCount: 5,
+          chunkCount: 2,
+        }],
+      });
+    const flippedDiagnostics = await repository.loadUniverseDiagnosticsState(
+      fixture.universeId
+    );
+    expect(flippedDiagnostics).toMatchObject({
+      manifestGeneration: '2',
+      activeManifest: {
+        manifestId: hierarchy.manifestId,
+        pageCount: 5,
+        chunkCount: 2,
+      },
+      shards: [{
+        shardKey: fixture.shardKey,
+        lastKnownGood: { snapshotId: hierarchy.snapshotId },
+        manifestRecord: {
+          kind: 'member',
+          snapshotId: hierarchy.snapshotId,
+          pageCount: 5,
+          chunkCount: 2,
+        },
+      }],
+    });
+    expect(flippedDiagnostics).not.toBeNull();
+    expect(flippedDiagnostics?.activeManifest).not.toBeNull();
+    expect(flippedDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      flippedDiagnostics!.activeManifest!.sealedAt.getTime()
+    );
+    expect(flippedDiagnostics!.observedAt.getTime()).toBeGreaterThanOrEqual(
+      flippedDiagnostics!.shards[0]!.lastKnownGood!.sealedAt.getTime()
+    );
+
+    // A request that pinned immutable manifest A remains coherent after B wins
+    // the active head; it never mixes B's snapshot into A's routing tuples.
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      originalRoutingState!.manifestId,
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      manifestId: fixture.manifestId,
+      snapshotId: fixture.snapshotId,
+      pageTitle: 'Canon Root',
+    });
+
+    const navigationTitleKey = scopeKey('Navigation Root');
+    const longNavigationPath = [
+      ...Array.from({ length: 100 }, (_, index) => scopeKey(`Ancestor ${index}`)),
+      navigationTitleKey,
+    ];
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: navigationTitleKey,
+        pagePathKey: longNavigationPath,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: navigationTitleKey,
+        pagePathKey: longNavigationPath,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({
+      status: 'resolved',
+      manifestId: hierarchy.manifestId,
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: hierarchy.snapshotId,
+      pageId: fixture.rootPageId,
+      pageTitle: 'Navigation Root',
+      pagePath: ['Navigation Root'],
+      sectionPath: null,
+      sectionOccurrencePath: null,
+      scopeKind: 'subtree',
+      scopeChunkCount: 2,
+      scopePageCount: 2,
+    });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Content Child'),
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      pageId: hierarchy.contentPageId,
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Content Child'),
+        pagePathKey: null,
+        sectionPathKey: [scopeKey('Canon')],
+        scopeKind: 'page',
+      }
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      pageId: hierarchy.contentPageId,
+      sectionPath: ['Canon'],
+      sectionOccurrencePath: [0],
+      scopeChunkCount: 1,
+      scopePageCount: 1,
+    });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: null,
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({ status: 'ambiguous' });
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      hierarchy.manifestId,
+      {
+        pageTitleKey: scopeKey('Blank Child'),
+        pagePathKey: [scopeKey('Navigation Root'), scopeKey('Blank Child')],
+        scopeKind: 'subtree',
+      }
+    )).resolves.toEqual({ status: 'not_found' });
+
+    await expect(repository.resolveManifestScopeOwner(
+      fixture.universeId,
+      randomUUID(),
+      {
+        pageTitleKey: normalizedTitleKey,
+        pagePathKey: null,
+        scopeKind: 'page',
+      }
+    )).resolves.toEqual({ status: 'invalid' });
+
+    await client.query(
+      `INSERT INTO public.job_data (
+         worker_id,
+         job_type,
+         status,
+         input
+       )
+       SELECT
+         'backstage-notion-partition-sync',
+         'backstage-notion-partition-sync',
+         'pending',
+         pg_catalog.jsonb_build_object(
+           'protocol', 'backstage-notion-partition-sync-job-v1',
+           'version', 1,
+           'universeId', $1::TEXT,
+           'shardKey', 'unconfigured/'
+             || pg_catalog.lpad(generated.value::TEXT, 2, '0'),
+           'configurationGeneration', $2::TEXT,
+           'configurationDigest', $3::TEXT
+         )
+       FROM pg_catalog.generate_series(1, 17) AS generated(value)`,
+      [
+        fixture.universeId,
+        fixture.configurationGeneration,
+        fixture.configurationHash,
+      ]
+    );
+    await expect(repository.loadUniverseDiagnosticsState(fixture.universeId))
+      .rejects.toThrow(/active-job metadata is invalid or unbounded/u);
   });
 
   test('empty rollback succeeds and both migration paths reinstall cleanly', async () => {
+    await client.query(scopeIndexRollback);
     await client.query(rollbackMigration);
 
     const removed = await client.query<{ installed: boolean }>(
@@ -3743,6 +5227,9 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
 
     await client.query(forwardMigration);
     await client.query(runtimeSql);
+    await client.query(scopeIndexPrecheck);
+    await client.query(scopeIndexCreate);
+    await client.query(scopeIndexVerify);
     const restored = await client.query<{ installed: boolean }>(
       `SELECT to_regclass('public.backstage_notion_partition_versions') IS NOT NULL AS installed`
     );

@@ -2741,11 +2741,12 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(logged).not.toContain(chunks[0]?.pageTitle);
     expect(logged).not.toContain(chunks[0]?.contentHash);
     expect(logged).not.toContain(chunks[0]?.metadata.sourceHash);
+    expect(logged).not.toContain(UNIVERSE_ID);
+    expect(logged).not.toContain(SNAPSHOT_ID);
     expect(logger.info).toHaveBeenCalledWith(
       'backstage.notion_rag.retrieved',
       expect.objectContaining({
-        universeId: UNIVERSE_ID,
-        snapshotId: SNAPSHOT_ID,
+        authorityIndex: 'monolith',
         candidateChunks: chunks.length,
       })
     );

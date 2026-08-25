@@ -184,6 +184,7 @@ describe('workerAutonomyService', () => {
       deletedTerminal: 0,
       deletedAsk: 0,
       deletedDagNode: 0,
+      deletedBackstageNotionPartitionSync: 0,
       deletedCompleted: 0,
       deletedCancelled: 0,
       deletedJobIds: []
