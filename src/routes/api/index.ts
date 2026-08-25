@@ -7,6 +7,7 @@ import apiCodebaseRouter from "@routes/api-codebase.js";
 import apiCommandsRouter from "@routes/api-commands.js";
 import apiControlPlaneRouter from "@routes/api-control-plane.js";
 import apiAssistantsRouter from "@routes/api-assistants.js";
+import apiBackstageNotionPartitionsRouter from '@routes/api-backstage-notion-partitions.js';
 import apiVisionRouter from "@routes/api-vision.js";
 import apiTranscribeRouter from "@routes/api-transcribe.js";
 import apiUpdateRouter from "@routes/api-update.js";
@@ -80,6 +81,12 @@ router.use('/api/afol', routeAfolRead);
 // Assistant-registry reads and confirmed synchronization are direct
 // control-plane operations and must never enter writing-plane rerouting.
 router.use('/api/assistants', apiAssistantsRouter);
+// Manual Notion partition synchronization and status inspection are direct
+// control-plane operations and must never enter writing-plane rerouting.
+router.use(
+  '/api/backstage/notion-partitions',
+  apiBackstageNotionPartitionsRouter
+);
 router.use('/api/memory', requireMemoryPlaneAuth);
 router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);

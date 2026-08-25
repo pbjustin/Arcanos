@@ -15,7 +15,8 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobEventRepository.js', () => ({
-  recordJobEvent: recordJobEventMock
+  recordJobEvent: recordJobEventMock,
+  recordJobEventWithClient: jest.fn()
 }));
 
 const {
@@ -81,7 +82,7 @@ describe('jobRepository.updateJob', () => {
 
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
     expect(sql).not.toContain("WHEN 'gpt'");
-    expect(params).toHaveLength(14);
+    expect(params).toHaveLength(15);
     expect(params[6]).toBeNull();
     expect(params[7]).toBeNull();
   });
@@ -347,14 +348,15 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('AND lease_expires_at >= NOW()');
     expect(sql).toContain("$1::varchar(50) = 'cancelled'::varchar(50)");
     expect(sql).toContain("$1::varchar(50) = 'completed'::varchar(50)");
-    expect(sql).toContain('AND $15::boolean');
+    expect(sql).toContain('AND $16::boolean');
     expect(sql).toContain('OR cancel_requested_at IS NULL');
     expect(sql).not.toContain('current_job');
     expect(sql).not.toContain('UNION ALL');
     expect(params.slice(9, 12)).toEqual(['job-1', 'worker-1', '7']);
     expect(params[12]).toBe(24 * 60 * 60 * 1_000);
     expect(params[13]).toBe(60 * 60 * 1_000);
-    expect(params[14]).toBe(false);
+    expect(params[14]).toBe(7 * 24 * 60 * 60 * 1_000);
+    expect(params[15]).toBe(false);
     expect(recordJobEventMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'job.completed',
       metadata: expect.objectContaining({
@@ -382,7 +384,7 @@ describe('jobRepository.updateJob', () => {
     });
 
     const [, params] = queryMock.mock.calls[0] as [string, unknown[]];
-    expect(params[14]).toBe(true);
+    expect(params[15]).toBe(true);
   });
 
   it('emits a generation-tagged event for fenced cancellation', async () => {

@@ -20,6 +20,7 @@ export const SENSITIVE_KEYS = [
   'databaseurl',
   'redis_url',
   'redisurl',
+  'arcanos_backstage_notion_partitions_json',
   'arcanos_backstage_notion_universe_pages_json',
   'dsn',
   'credential',

@@ -64,12 +64,14 @@ function successfulCycleResult(): BackstageNotionPartitionShadowCycleResult {
         manifestId: PARTITION_MANIFEST_ID,
         memberCount: 1,
         omissionCount: 0,
+        manifestOmissions: [],
         shardResults: [{
           universeId: 'my-universe-2k26',
           shardKey: 'raw/2026',
           status: 'fresh',
           safeReasonCode: null,
           freshSnapshotId: FRESH_SNAPSHOT_ID,
+          fullSourceScan: true,
           pageCount: 2,
           chunkCount: 3,
           pageVersionReuseCount: 1,
@@ -497,6 +499,8 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
     expect(info).toHaveBeenCalledWith(
       'backstage.notion_partition.shadow_cycle_completed',
       expect.objectContaining({
+        fullSourceScan: true,
+        shardsFullyScanned: 1,
         manifestsPublished: 1,
         shardsFresh: 1,
         pageVersionsReused: 1,

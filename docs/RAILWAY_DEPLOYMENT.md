@@ -278,11 +278,12 @@ Environment variables:
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | Required on web for exact `shadow` or `partitioned` | Exact 32–4096 UTF-8-byte unpadded/non-placeholder server-only credential with no whitespace, distinct from every other purpose-bound credential. It seals new partition complete-scope cursors and must never be placed on workers, in Builder/client configuration, requests, logs, or source. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | Optional on web during cursor-key rotation | Prior cursor credential accepted only for unsealing. It must satisfy the current-secret rules and remain distinct from the current key and every other registered credential. Retain it until cursors pinned to still-fresh manifests drain; removing it rejects remaining cursors sealed by the prior value. |
 | `ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS` | Optional; worker only | Full-hierarchy sync cadence; default 900,000 ms, clamped to 60,000–86,400,000 ms. Partition synchronization uses the same cadence, delays its first run by one interval, and schedules again only after terminal cleanup. |
+| `QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS` | Optional on worker; defaults to 604800000 | Retains only completed/cancelled protected manual partition-sync job rows for 1 hour-30 days. Cleanup remains positively allowlisted and preserves active idempotency and observation windows. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | Optional; web only | Maximum last-complete-verification age; default 86,400,000 ms, clamped to 300,000–604,800,000 ms. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | Optional; required only for Arcanos Gaming source ingestion, refresh, and status Actions on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action authentication field; do not copy it to the worker service. It grants access only to the three `/gpt-access/gaming/sources/*` lifecycle routes. Generic GPT Access routes reject it, and the generic GPT Access token is rejected on the Gaming source routes. |
 | `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Required on the web service when HTTP control-plane, AFOL decision/inspection, reinforcement feedback/inspection, Backstage state mutation, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, or CLI self-heal inspection is used | Exact purpose-bound bearer credential stored only in Railway Variables. It must remain distinct from approval, GPT Access, daemon, memory, worker-helper, automation, and other application credentials. Backstage mutation paths include direct, canonical GPT, GPT-selected `/dispatch`, and legacy module aliases; missing or invalid control-plane configuration fails them closed with 503. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | Required with the control-plane access token | Server-owned operator identifier used for HTTP control-plane attribution. Do not derive it from request fields. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | Required with the control-plane access token | Grant only intended operations. AFOL health/log/analytics and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `/api/afol/decide` requires `mcp:invoke` plus its issued one-use challenge; `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke`. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus confirmation across every public HTTP alias; `/backstage/book-gpt` is included because it saves, while generation and simulation stay public. `/api/codebase/*` requires `repo:read`; direct PR analysis requires `repo:verify`; DevOps self-test/daily-summary execution requires `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads, self-heal reads, and detailed safety diagnostics also require `arcanos:read`; an active provider probe adds `self-heal:probe`; decisions require `self-heal:decide`; and `execute: true` adds `self-heal:execute`. Manual self-improve runs require both decision and execution scopes. Freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. Omit active grants unless the operator workflow explicitly needs them. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | Required with the control-plane access token | Grant only intended operations. Manual partition shard enqueue and its status reads require `backstage:notion-sync`; enqueue also consumes a one-use challenge bound to actor, target, idempotency hash, and exact configuration. AFOL health/log/analytics and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `/api/afol/decide` requires `mcp:invoke` plus its issued one-use challenge; `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke`. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus confirmation across every public HTTP alias; `/backstage/book-gpt` is included because it saves, while generation and simulation stay public. `/api/codebase/*` requires `repo:read`; direct PR analysis requires `repo:verify`; DevOps self-test/daily-summary execution requires `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads, self-heal reads, and detailed safety diagnostics also require `arcanos:read`; an active provider probe adds `self-heal:probe`; decisions require `self-heal:decide`; and `execute: true` adds `self-heal:execute`. Manual self-improve runs require both decision and execution scopes. Freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. Omit active grants unless the operator workflow explicitly needs them. |
 | `PROMPT_DEBUG_TRACE_MODE` | Optional; defaults to `metadata` | Keep `metadata` in normal deployments. Use `off` to collect nothing. `full` can retain sensitive prompt and response prose after bounded redaction and should be enabled only for a short, approved diagnostic window. Invalid values fail closed to `off`. |
 | `PROMPT_DEBUG_TRACE_PERSIST` | Optional; defaults to `false` | Only exact `true`, together with a valid byte cap, enables JSONL reads and writes. |
 | `PROMPT_DEBUG_TRACE_MAX_BYTES` | Required only when persistence is enabled | Integer from 1,024 through 104,857,600. At capacity, new disk events are dropped without automatic truncation or rotation. |
@@ -301,6 +302,14 @@ Environment variables:
 | `GPT_FAST_PATH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; use a low-latency model for inline fast-path requests. |
 | `GPT_FAST_PATH_TIMEOUT_MS` | Optional | Defaults to `8000`; inline model timeout for fast-path requests. |
 | `GPT_FAST_PATH_GPT_ALLOWLIST` | Optional | Comma-separated GPT IDs allowed to use fast path; empty means all GPT IDs. |
+
+Native PR previews keep the worker passive and run a credential-empty sealed
+web application that does not mount the manual partition-sync control plane.
+Preview success therefore proves the exact-SHA build, integrity gate, and
+contained startup only. It does not prove control-plane authentication,
+PostgreSQL admission/claiming, Notion capture, embedding calls, or manual job
+execution; focused mocked suites and PostgreSQL 18 CI are authoritative for
+those effects.
 
 The public worker-helper status command does not carry the worker-control token.
 Protected helper commands fail locally when the caller's env-only credential is
@@ -712,9 +721,21 @@ parity from chunk totals because the two bounded chunkers may differ. Ordinary
 logs must not contain configuration JSON, roots, page IDs, titles, paths,
 generation IDs, content, embeddings, cursors, credentials, or provider errors.
 
-To stop shadow validation, restore exact `monolith` and deploy the worker through
-the normal worker-first path. Allow the old worker's cooperative shadow cycle to
-abort and drain within the platform shutdown envelope before changing the web.
+To stop shadow validation, first establish a controlled maintenance freeze that
+prevents every principal with `backstage:notion-sync` from submitting new manual
+partition syncs. Do not treat an actor-scoped status read as global queue proof.
+While the compatible web/worker pair still uses exact `shadow` or `partitioned`,
+let the compatible worker finish queued and running partition-sync jobs, drain
+its cooperative shadow cycle, and then stop it gracefully. With the compatible
+web still partition-enabled, inspect protected diagnostics for every configured
+universe and require `activeLeases`, `queuedJobs`, `runningJobs`, and
+`unconfiguredActiveJobs` all to be zero. Actor-scoped status may supplement this
+check for known sync IDs only. If any aggregate is nonzero, restart the same
+compatible worker and reconcile it before repeating the stop-and-inspect gate.
+Only after the admission freeze is in force, the compatible worker has stopped,
+and every aggregate is zero should the web be restored to exact `monolith` and
+its old replicas allowed to drain. Then deploy the downgraded worker with exact
+`monolith`; never allow it to claim an unsupported partition-sync job type.
 This rollback stops future partition writes; it does not delete immutable shard
 snapshots/manifests, alter the monolithic active head, downgrade the durable
 Notion authority latch, or restore legacy writes. A stalled database operation
@@ -730,10 +751,11 @@ activation. When authorized, change the compatible pair through the approved
 worker-first/web-second workflow so the web cutover is last. Partition reads are
 manifest-scoped and fail closed; they never silently retry the monolith. The
 legacy synchronization path remains active as rollback inventory. Restore exact
-`monolith` on the web before stopping partition writer cycles on the worker, then
-confirm the old web revision has drained. A mode change invalidates an in-flight
-complete-scope cursor from the other index format; clients must restart at the
-first page.
+`monolith` only through the preceding controlled admission-freeze,
+compatible-worker drain/stop, and zero-aggregate diagnostics gate. Then drain
+the old web replicas before deploying the downgraded worker with exact
+`monolith`. A mode change invalidates an in-flight complete-scope cursor from the
+other index format; clients must restart at the first page.
 
 Before shadow validation, audit routing tags as a closed contract. Current lanes
 use `brand:raw`, `brand:smackdown`, `brand:nxt`, or `lane:ples`; year lanes use

@@ -67,6 +67,7 @@ describe('queue job event cleanup', () => {
       deletedTerminal: 2,
       deletedAsk: 1,
       deletedDagNode: 1,
+      deletedBackstageNotionPartitionSync: 0,
       deletedCompleted: 1,
       deletedCancelled: 1,
       deletedJobIds: ['ask-old', 'dag-old']
@@ -120,7 +121,8 @@ describe('queue job event cleanup', () => {
         skipped: false,
         deletedTerminal: 2,
         deletedAsk: 1,
-        deletedDagNode: 1
+        deletedDagNode: 1,
+        deletedBackstageNotionPartitionSync: 0
       })
     );
     expect(cleanupRetainedNonGptTerminalJobsMock).toHaveBeenCalledWith({
