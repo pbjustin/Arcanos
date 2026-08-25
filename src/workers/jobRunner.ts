@@ -163,6 +163,14 @@ import {
   startBackstageNotionPartitionShadowLoop,
   type BackstageNotionPartitionShadowLoopHandle,
 } from './backstageNotionPartitionShadowLoop.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+  BACKSTAGE_NOTION_PARTITION_SYNC_MAX_AI_CALLS,
+} from '@shared/jobs/backstageNotionPartitionSyncJob.js';
+import {
+  createBackstageNotionPartitionSyncJobExecutor,
+  type BackstageNotionPartitionSyncJobExecutor,
+} from './backstageNotionPartitionSyncJob.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -1804,14 +1812,17 @@ async function pauseClaimIfBudgetDisallowed(
 /**
  * Run one queue-consumer slot inside the Railway worker process.
  * Purpose: allow one deployed worker container to claim and execute multiple queue jobs concurrently.
- * Inputs/outputs: accepts one slot definition, the shared runtime settings, an optional prebuilt autonomy service, and a dispatcher-ready callback; does not resolve during normal operation.
+ * Inputs/outputs: accepts one slot definition, shared runtime settings, optional
+ * prebuilt autonomy and partition-sync executors, and a dispatcher-ready
+ * callback; does not resolve during normal operation.
  * Edge case behavior: unsupported or invalid job payloads fail deterministically per slot without stopping sibling slots.
  */
 export async function runWorkerConsumerSlot(
   slotDefinition: JobRunnerSlotDefinition,
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition),
-  onDispatcherReady: () => void = () => undefined
+  onDispatcherReady: () => void = () => undefined,
+  partitionSyncExecutor?: BackstageNotionPartitionSyncJobExecutor
 ): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
@@ -2071,6 +2082,59 @@ export async function runWorkerConsumerSlot(
           continue;
         }
 
+        let dedicatedPartitionSyncOutcome: JobExecutionOutcome | null = null;
+        let protectedBackstageOperationDeadlineAt: number | null = null;
+        if (job.job_type === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {
+          jobExecutionStarted = true;
+          const partitionSyncAiExecutionContext = createAiExecutionContext({
+            sourceType: 'job',
+            sourceName: job.job_type,
+            requestId: job.correlation_id ?? job.id,
+            traceId: job.correlation_id ?? undefined,
+            jobId: job.id,
+            budget: {
+              maxCalls: BACKSTAGE_NOTION_PARTITION_SYNC_MAX_AI_CALLS,
+            },
+          });
+          dedicatedPartitionSyncOutcome = await runWithAiExecutionContext(
+            partitionSyncAiExecutionContext,
+            async () => runWithRequestAbortContext(
+              {
+                requestId: job.correlation_id ?? job.id,
+                controller: jobCancellationController,
+                signal: jobCancellationController.signal,
+                deadlineAt: Number.MAX_SAFE_INTEGER,
+                timeoutMs: Number.MAX_SAFE_INTEGER,
+              },
+              async () => partitionSyncExecutor
+                ? partitionSyncExecutor({
+                    rawInput: job.input ?? {},
+                    cancellationSignal: jobCancellationController.signal,
+                  })
+                : {
+                    status: 'failed',
+                    output: null,
+                    errorMessage:
+                      'Partition synchronization worker executor is unavailable.',
+                    retryable: false,
+                  } satisfies JobExecutionOutcome
+            )
+          );
+          const partitionSyncAiUsageSummary = summarizeAiExecutionContext(
+            partitionSyncAiExecutionContext
+          );
+          if (
+            partitionSyncAiUsageSummary
+            && partitionSyncAiUsageSummary.totals.calls > 0
+          ) {
+            logger.info('worker.ai.summary', {
+              module: 'job-runner',
+              workerId: slotDefinition.workerId,
+              jobId: job.id,
+              jobType: job.job_type,
+            }, { aiUsage: partitionSyncAiUsageSummary });
+          }
+        } else {
         const ensuredClientState = await ensureOpenAIClientForSlot({
           workerId: slotDefinition.workerId,
           currentClient: openai,
@@ -2092,7 +2156,7 @@ export async function runWorkerConsumerSlot(
         const protectedBackstageBudget = protectedBackstageAction
           ? resolveProtectedBackstageWorkerBudget(protectedBackstageAction)
           : null;
-        const protectedBackstageOperationDeadlineAt = protectedBackstageBudget
+        protectedBackstageOperationDeadlineAt = protectedBackstageBudget
           ? resolveBackstageWorkerOperationDeadlineAt(
               job.started_at ?? job.created_at,
               protectedBackstageBudget
@@ -2191,6 +2255,7 @@ export async function runWorkerConsumerSlot(
             continue;
           }
         }
+        }
         const queueWaitMs = Math.max(
           0,
           jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
@@ -2203,6 +2268,10 @@ export async function runWorkerConsumerSlot(
           });
         }
 
+        let outcome: JobExecutionOutcome;
+        if (dedicatedPartitionSyncOutcome) {
+          outcome = dedicatedPartitionSyncOutcome;
+        } else {
         const aiExecutionContext = createAiExecutionContext({
           sourceType: 'job',
           sourceName: job.job_type,
@@ -2213,7 +2282,7 @@ export async function runWorkerConsumerSlot(
             maxCalls: 24
           }
         });
-        let outcome = await runWithAiExecutionContext(aiExecutionContext, async () =>
+        outcome = await runWithAiExecutionContext(aiExecutionContext, async () =>
           runWithRequestAbortContext(
             {
               requestId: job.correlation_id ?? job.id,
@@ -2282,6 +2351,7 @@ export async function runWorkerConsumerSlot(
             jobId: job.id,
             jobType: job.job_type
           }, { aiUsage: aiUsageSummary });
+        }
         }
 
         if (jobLeaseLost) {
@@ -2773,6 +2843,11 @@ async function run(): Promise<void> {
 
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
+  const backstageNotionSynchronizationCoordinator =
+    createBackstageNotionSynchronizationCoordinator();
+  const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
+    coordinator: backstageNotionSynchronizationCoordinator,
+  });
   let backstageNotionSyncHandle: BackstageNotionSyncLoopHandle | null = null;
   let backstageNotionPartitionShadowHandle:
     BackstageNotionPartitionShadowLoopHandle | null = null;
@@ -2793,7 +2868,8 @@ async function run(): Promise<void> {
         slotDefinition.isInspectorSlot
           ? inspectorAutonomyService
           : buildAutonomyServiceForSlot(slotDefinition),
-        resolveSlotReadiness
+        resolveSlotReadiness,
+        partitionSyncExecutor
       );
       return slotRuntimePromise;
     });
@@ -2842,8 +2918,6 @@ async function run(): Promise<void> {
       return;
     }
 
-    const backstageNotionSynchronizationCoordinator =
-      createBackstageNotionSynchronizationCoordinator();
     backstageNotionSyncHandle = startBackstageNotionSyncLoop({
       signal: workerProcessShutdownController.signal,
       coordinator: backstageNotionSynchronizationCoordinator,

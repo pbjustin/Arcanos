@@ -66,6 +66,26 @@ export type BackstageNotionPartitionedIndexMode =
   | 'shadow'
   | 'partitioned';
 
+export function isBackstageNotionUniverseId(value: unknown): value is string {
+  return typeof value === 'string'
+    && BACKSTAGE_UNIVERSE_ID_PATTERN.test(value)
+    && !FORBIDDEN_IDENTITY_VALUES.has(value);
+}
+
+export function isBackstageNotionPartitionGeneration(
+  value: unknown
+): value is string {
+  return typeof value === 'string'
+    && BACKSTAGE_NOTION_PARTITION_GENERATION_PATTERN.test(value)
+    && !FORBIDDEN_IDENTITY_VALUES.has(value);
+}
+
+export function isBackstageNotionShardKey(value: unknown): value is string {
+  return typeof value === 'string'
+    && BACKSTAGE_NOTION_SHARD_KEY_PATTERN.test(value)
+    && !FORBIDDEN_IDENTITY_VALUES.has(value);
+}
+
 export type BackstageNotionPartitionedIndexModeResolution = Readonly<{
   mode: BackstageNotionPartitionedIndexMode;
   status: 'absent' | 'valid' | 'invalid';
@@ -317,9 +337,7 @@ export function parseBackstageNotionPartitionConfiguration(
       ['generation', 'universes', 'version']
     )
     || parsed.version !== BACKSTAGE_NOTION_PARTITION_CONFIGURATION_VERSION
-    || typeof parsed.generation !== 'string'
-    || !BACKSTAGE_NOTION_PARTITION_GENERATION_PATTERN.test(parsed.generation)
-    || FORBIDDEN_IDENTITY_VALUES.has(parsed.generation)
+    || !isBackstageNotionPartitionGeneration(parsed.generation)
     || !Array.isArray(parsed.universes)
     || parsed.universes.length < 1
     || parsed.universes.length > BACKSTAGE_NOTION_PARTITION_MAX_UNIVERSES
@@ -335,9 +353,7 @@ export function parseBackstageNotionPartitionConfiguration(
     if (
       !isPlainObject(rawUniverse)
       || !hasClosedShape(rawUniverse, UNIVERSE_KEYS, ['shards', 'universeId'])
-      || typeof rawUniverse.universeId !== 'string'
-      || !BACKSTAGE_UNIVERSE_ID_PATTERN.test(rawUniverse.universeId)
-      || FORBIDDEN_IDENTITY_VALUES.has(rawUniverse.universeId)
+      || !isBackstageNotionUniverseId(rawUniverse.universeId)
       || seenUniverseIds.has(rawUniverse.universeId)
       || !Array.isArray(rawUniverse.shards)
       || rawUniverse.shards.length < 1
@@ -359,9 +375,7 @@ export function parseBackstageNotionPartitionConfiguration(
       if (
         !isPlainObject(rawShard)
         || !hasClosedShape(rawShard, SHARD_KEYS, REQUIRED_SHARD_KEYS)
-        || typeof rawShard.shardKey !== 'string'
-        || !BACKSTAGE_NOTION_SHARD_KEY_PATTERN.test(rawShard.shardKey)
-        || FORBIDDEN_IDENTITY_VALUES.has(rawShard.shardKey)
+        || !isBackstageNotionShardKey(rawShard.shardKey)
         || seenShardKeys.has(rawShard.shardKey)
         || typeof rawShard.rootPageId !== 'string'
         || rawShard.rootPageId !== rawShard.rootPageId.trim()

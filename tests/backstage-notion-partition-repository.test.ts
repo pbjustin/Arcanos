@@ -1906,6 +1906,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       configurationVersionId: CONFIGURATION_VERSION_ID,
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SOURCE_UNAVAILABLE',
+      }],
       pageCount: 1,
       chunkCount: 1,
       headGeneration: '5',
@@ -1956,6 +1960,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     )).resolves.toMatchObject({
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });
@@ -2023,6 +2031,13 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     )).resolves.toMatchObject({
       memberCount: 1,
       omissionCount: 2,
+      omissions: [{
+        shardKey: OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }, {
+        shardKey: SECOND_OPTIONAL_SHARD_KEY,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });

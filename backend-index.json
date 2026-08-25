@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T02:32:05.839Z",
+  "generatedAt": "2026-08-25T03:53:47.811Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1172,6 +1172,9 @@
           "relativePath": "src/routes/api-assistants.ts"
         },
         {
+          "relativePath": "src/routes/api-backstage-notion-partitions.ts"
+        },
+        {
           "relativePath": "src/routes/api-codebase.ts"
         },
         {
@@ -1598,6 +1601,9 @@
           "relativePath": "src/services/backstageNotionPartitionSync.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionPartitionSyncOperations.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionRag.ts"
         },
         {
@@ -1689,6 +1695,15 @@
         },
         {
           "relativePath": "src/services/controlPlane/backstageMutationHttpBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncBodyParser.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncConfirmation.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/backstageNotionPartitionSyncHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/cefBodyParser.ts"
@@ -2657,6 +2672,9 @@
           "relativePath": "src/shared/idGenerator.ts"
         },
         {
+          "relativePath": "src/shared/jobs/backstageNotionPartitionSyncJob.ts"
+        },
+        {
           "relativePath": "src/shared/jobs/jobLeaseTiming.ts"
         },
         {
@@ -2985,6 +3003,9 @@
         },
         {
           "relativePath": "src/workers/backstageNotionPartitionShadowLoop.ts"
+        },
+        {
+          "relativePath": "src/workers/backstageNotionPartitionSyncJob.ts"
         },
         {
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
@@ -3428,6 +3449,15 @@
         },
         {
           "relativePath": "tests/backstage-notion-partition-storage-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-job.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-sync-operations.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-sync.test.ts"
@@ -4034,6 +4064,9 @@
         },
         {
           "relativePath": "tests/job-read-capability.test.ts"
+        },
+        {
+          "relativePath": "tests/job-repository.backstageNotionPartitionSync.test.ts"
         },
         {
           "relativePath": "tests/job-repository.claim-generation-create.test.ts"

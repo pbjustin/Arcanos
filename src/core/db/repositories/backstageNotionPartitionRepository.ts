@@ -382,6 +382,10 @@ export interface ActivatedBackstageNotionUniverseManifest {
   readonly configurationVersionId: string;
   readonly memberCount: number;
   readonly omissionCount: number;
+  readonly omissions: readonly Readonly<{
+    shardKey: string;
+    safeReasonCode: string;
+  }>[];
   readonly pageCount: number;
   readonly chunkCount: number;
   readonly headGeneration: string;
@@ -8308,6 +8312,10 @@ export class PostgresBackstageNotionPartitionRepository {
           configurationVersionId,
           memberCount: effectiveMembers.length,
           omissionCount: effectiveOmissions.length,
+          omissions: Object.freeze(effectiveOmissions.map(omission => Object.freeze({
+            shardKey: omission.shardKey,
+            safeReasonCode: omission.safeReasonCode,
+          }))),
           pageCount,
           chunkCount,
           headGeneration: mapGeneration(activatedRow.head_generation, 'head_generation'),

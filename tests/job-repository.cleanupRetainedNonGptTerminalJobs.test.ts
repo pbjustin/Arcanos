@@ -29,18 +29,25 @@ describe('jobRepository.cleanupRetainedNonGptTerminalJobs', () => {
     queryMock.mockResolvedValue({
       rows: [
         { id: 'ask-completed-old', job_type: 'ask', status: 'completed' },
-        { id: 'dag-cancelled-old', job_type: 'dag-node', status: 'cancelled' }
+        { id: 'dag-cancelled-old', job_type: 'dag-node', status: 'cancelled' },
+        {
+          id: 'partition-sync-completed-old',
+          job_type: 'backstage-notion-partition-sync',
+          status: 'completed'
+        }
       ]
     });
   });
 
   it('deletes one deterministic bounded allowlisted batch', async () => {
-    const result = await cleanupRetainedNonGptTerminalJobs({ batchSize: 2 });
+    const result = await cleanupRetainedNonGptTerminalJobs({ batchSize: 3 });
 
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
 
-    expect(sql).toContain("job_type IN ('ask', 'dag-node')");
+    expect(sql).toContain(
+      "job_type IN ('ask', 'dag-node', 'backstage-notion-partition-sync')"
+    );
     expect(sql).toContain("status IN ('completed', 'cancelled')");
     expect(sql).not.toContain("job_type <> 'gpt'");
     expect(sql).not.toContain("job_type <> 'local-agent'");
@@ -57,17 +64,22 @@ describe('jobRepository.cleanupRetainedNonGptTerminalJobs', () => {
     expect(sql).toContain('FOR UPDATE SKIP LOCKED');
     expect(sql).toContain('LIMIT $1');
     expect(params).toEqual([
-      2,
+      3,
       MIN_NON_GPT_TERMINAL_CLEANUP_OBSERVATION_WINDOW_MS
     ]);
     expect(result).toEqual({
-      batchSize: 2,
-      deletedTerminal: 2,
+      batchSize: 3,
+      deletedTerminal: 3,
       deletedAsk: 1,
       deletedDagNode: 1,
-      deletedCompleted: 1,
+      deletedBackstageNotionPartitionSync: 1,
+      deletedCompleted: 2,
       deletedCancelled: 1,
-      deletedJobIds: ['ask-completed-old', 'dag-cancelled-old']
+      deletedJobIds: [
+        'ask-completed-old',
+        'dag-cancelled-old',
+        'partition-sync-completed-old'
+      ]
     });
   });
 
@@ -138,6 +150,7 @@ describe('jobRepository.cleanupRetainedNonGptTerminalJobs', () => {
       deletedTerminal: 0,
       deletedAsk: 0,
       deletedDagNode: 0,
+      deletedBackstageNotionPartitionSync: 0,
       deletedCompleted: 0,
       deletedCancelled: 0,
       deletedJobIds: []

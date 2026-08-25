@@ -243,11 +243,19 @@ export interface BackstageNotionPartitionSyncDependencies
   readonly lastKnownGoodMaximumAgeMs?: number;
   readonly now?: () => Date;
   readonly wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  /** Restrict one manual reconciliation to an exact stable shard identity. */
+  readonly selection?: BackstageNotionPartitionSyncSelection;
+}
+
+export interface BackstageNotionPartitionSyncSelection {
+  readonly universeId: string;
+  readonly shardKey: string;
 }
 
 export interface BackstageNotionPartitionShardSyncResult
   extends BackstageNotionPartitionShardAttemptSummary {
   readonly universeId: string;
+  readonly fullSourceScan: boolean;
   readonly pageCount: number;
   readonly chunkCount: number;
   readonly pageVersionReuseCount: number;
@@ -269,11 +277,15 @@ export interface BackstageNotionPartitionUniverseSyncResult {
   readonly manifestId: string | null;
   readonly memberCount: number;
   readonly omissionCount: number;
+  readonly manifestOmissions: readonly Readonly<{
+    shardKey: string;
+    safeReasonCode: string;
+  }>[];
   readonly shardResults: readonly BackstageNotionPartitionShardSyncResult[];
 }
 
 export interface BackstageNotionPartitionSynchronizationResult {
-  readonly kind: 'full_reconciliation';
+  readonly kind: 'full_reconciliation' | 'targeted_reconciliation';
   readonly universes: readonly BackstageNotionPartitionUniverseSyncResult[];
 }
 
@@ -1079,13 +1091,17 @@ function safeReasonCode(error: unknown): BackstageNotionPartitionOptionalUnavail
   return 'SHARD_SYNC_FAILED';
 }
 
-function abortedResult(task: ShardTask): BackstageNotionPartitionShardSyncResult {
+function abortedResult(
+  task: ShardTask,
+  fullSourceScan = false
+): BackstageNotionPartitionShardSyncResult {
   return Object.freeze({
     universeId: task.universeId,
     shardKey: task.shardKey,
     status: 'aborted',
     safeReasonCode: 'SHARD_ABORTED',
     freshSnapshotId: null,
+    fullSourceScan,
     pageCount: 0,
     chunkCount: 0,
     pageVersionReuseCount: 0,
@@ -1102,6 +1118,26 @@ const EMPTY_PAGE_CHANGES = Object.freeze({
   deleted: 0,
   unchanged: 0,
 });
+
+function notRequestedResult(
+  universeId: string,
+  shardKey: string
+): BackstageNotionPartitionShardSyncResult {
+  return Object.freeze({
+    universeId,
+    shardKey,
+    status: 'not-requested',
+    safeReasonCode: 'SHARD_NOT_REQUESTED',
+    freshSnapshotId: null,
+    fullSourceScan: false,
+    pageCount: 0,
+    chunkCount: 0,
+    pageVersionReuseCount: 0,
+    embeddedChunkCount: 0,
+    leaseReleaseVerified: true,
+    pageChanges: EMPTY_PAGE_CHANGES,
+  });
+}
 
 async function syncShard(
   task: ShardTask,
@@ -1132,6 +1168,7 @@ async function syncShard(
       status: 'failed',
       safeReasonCode: safeReasonCode(error),
       freshSnapshotId: null,
+      fullSourceScan: false,
       pageCount: 0,
       chunkCount: 0,
       pageVersionReuseCount: 0,
@@ -1147,6 +1184,7 @@ async function syncShard(
       status: 'lease-busy',
       safeReasonCode: 'SHARD_LEASE_BUSY',
       freshSnapshotId: null,
+      fullSourceScan: false,
       pageCount: 0,
       chunkCount: 0,
       pageVersionReuseCount: 0,
@@ -1167,6 +1205,7 @@ async function syncShard(
     )
   );
   let terminalFence: BackstageNotionPartitionLeaseFence = lease;
+  let fullSourceScan = false;
   const attempt = await (async (): Promise<BackstageNotionPartitionShardSyncResult> => {
     try {
     const capture = await dependencies.captureFullHierarchy({
@@ -1174,6 +1213,7 @@ async function syncShard(
       provider: governor,
       signal: heartbeat.signal,
     });
+    fullSourceScan = capture.captureMode === 'full_hierarchy_content_scan';
     const idPaths = validateBackstageNotionPartitionCapture({
       definition: task.definition,
       capture,
@@ -1333,6 +1373,7 @@ async function syncShard(
       status: 'fresh',
       safeReasonCode: null,
       freshSnapshotId: activated.snapshotId,
+      fullSourceScan,
       pageCount: activated.pageCount,
       chunkCount: activated.chunkCount,
       pageVersionReuseCount,
@@ -1342,7 +1383,7 @@ async function syncShard(
     });
     } catch (error) {
       if (dependencies.signal?.aborted) {
-        return abortedResult(task);
+        return abortedResult(task, fullSourceScan);
       }
       return Object.freeze({
         universeId: task.universeId,
@@ -1350,6 +1391,7 @@ async function syncShard(
         status: 'failed',
         safeReasonCode: safeReasonCode(error),
         freshSnapshotId: null,
+        fullSourceScan,
         pageCount: 0,
         chunkCount: 0,
         pageVersionReuseCount: 0,
@@ -1468,13 +1510,18 @@ async function publishManifest(input: {
   readonly dependencies: BackstageNotionPartitionSyncDependencies;
   readonly lastKnownGoodMaximumAgeMs: number;
 }): Promise<Pick<BackstageNotionPartitionUniverseSyncResult,
-  'manifestStatus' | 'manifestId' | 'memberCount' | 'omissionCount'>> {
+  | 'manifestStatus'
+  | 'manifestId'
+  | 'memberCount'
+  | 'omissionCount'
+  | 'manifestOmissions'>> {
   if (input.attempts.some(attempt => !attempt.leaseReleaseVerified)) {
     return {
       manifestStatus: 'deferred',
       manifestId: null,
       memberCount: 0,
       omissionCount: 0,
+      manifestOmissions: Object.freeze([]),
     };
   }
   const attempts = new Map(input.attempts.map(attempt => [attempt.shardKey, attempt]));
@@ -1491,6 +1538,7 @@ async function publishManifest(input: {
         manifestId: null,
         memberCount: 0,
         omissionCount: 0,
+        manifestOmissions: Object.freeze([]),
       };
     }
     if (!terminal) {
@@ -1499,6 +1547,7 @@ async function publishManifest(input: {
         manifestId: null,
         memberCount: 0,
         omissionCount: 0,
+        manifestOmissions: Object.freeze([]),
       };
     }
     const manifestInput = buildManifestInput({
@@ -1516,6 +1565,7 @@ async function publishManifest(input: {
         manifestId: null,
         memberCount: 0,
         omissionCount: 0,
+        manifestOmissions: Object.freeze([]),
       };
     }
     try {
@@ -1527,6 +1577,7 @@ async function publishManifest(input: {
         manifestId: published.manifestId,
         memberCount: published.memberCount,
         omissionCount: published.omissionCount,
+        manifestOmissions: published.omissions,
       };
     } catch (error) {
       if (
@@ -1542,6 +1593,7 @@ async function publishManifest(input: {
           manifestId: null,
           memberCount: 0,
           omissionCount: 0,
+          manifestOmissions: Object.freeze([]),
         };
       }
       const retryable = error instanceof BackstageNotionPartitionRepositoryError
@@ -1555,6 +1607,7 @@ async function publishManifest(input: {
           manifestId: null,
           memberCount: 0,
           omissionCount: 0,
+          manifestOmissions: Object.freeze([]),
         };
       }
     }
@@ -1564,14 +1617,15 @@ async function publishManifest(input: {
     manifestId: null,
     memberCount: 0,
     omissionCount: 0,
+    manifestOmissions: Object.freeze([]),
   };
 }
 
 /**
- * Execute one full, unwired partition reconciliation. Notion source capture is
- * deliberately full-scan on every run; incremental behavior begins only after
- * sanitized page material is captured, where immutable chunks and embeddings
- * are reused by the material resolver.
+ * Execute a full configured reconciliation or one exact targeted shard.
+ * Notion source capture remains a full hierarchy scan for every attempted
+ * shard; incremental reuse begins after sanitized page material is captured,
+ * where immutable chunks and embeddings are resolved by content identity.
  */
 export async function syncBackstageNotionPartitionConfiguration(
   configuration: BackstageNotionPartitionConfiguration,
@@ -1594,6 +1648,22 @@ export async function syncBackstageNotionPartitionConfiguration(
     throw new BackstageNotionPartitionSyncError(
       'BACKSTAGE_NOTION_PARTITION_SYNC_CONFIGURATION_INVALID',
       'Partition synchronization embedding configuration is invalid.'
+    );
+  }
+  const selectedUniverse = dependencies.selection
+    ? configuration.universes.find(universe => (
+        universe.universeId === dependencies.selection!.universeId
+      ))
+    : null;
+  const selectedShard = selectedUniverse && dependencies.selection
+    ? selectedUniverse.shards.find(shard => (
+        shard.shardKey === dependencies.selection!.shardKey
+      ))
+    : null;
+  if (dependencies.selection && (!selectedUniverse || !selectedShard)) {
+    throw new BackstageNotionPartitionSyncError(
+      'BACKSTAGE_NOTION_PARTITION_SYNC_CONFIGURATION_INVALID',
+      'The selected partition shard is not present in the exact configuration.'
     );
   }
   throwIfAborted(dependencies.signal);
@@ -1630,7 +1700,10 @@ export async function syncBackstageNotionPartitionConfiguration(
     7 * 24 * 60 * 60 * 1_000
   );
   const registered: RegisteredUniverse[] = [];
-  for (const universe of configuration.universes) {
+  const universesToRegister = selectedUniverse
+    ? [selectedUniverse]
+    : configuration.universes;
+  for (const universe of universesToRegister) {
     throwIfAborted(dependencies.signal);
     const expectedUniverseHead = await dependencies.repository.loadUniverseHead(
       universe.universeId
@@ -1658,8 +1731,11 @@ export async function syncBackstageNotionPartitionConfiguration(
     item,
   ]));
   const planned = planBackstageNotionPartitionFullReconciliation(
-    configuration.universes
-  );
+    universesToRegister
+  ).filter(job => !dependencies.selection || (
+    job.universeId === dependencies.selection.universeId
+    && job.shardKey === dependencies.selection.shardKey
+  ));
   const tasks = planned.map(job => {
     const registeredUniverse = registeredByUniverse.get(job.universeId)!;
     const definitionState = registeredUniverse.initialState.shards.find(
@@ -1700,15 +1776,27 @@ export async function syncBackstageNotionPartitionConfiguration(
   );
   const universeResults: BackstageNotionPartitionUniverseSyncResult[] = [];
   for (const registeredUniverse of registered) {
-    const results = shardResults.filter(
+    const executedResults = shardResults.filter(
       result => result.universeId === registeredUniverse.universe.universeId
     );
+    const executedByShardKey = new Map(executedResults.map(result => [
+      result.shardKey,
+      result,
+    ]));
+    const results = registeredUniverse.universe.shards.map(definition => (
+      executedByShardKey.get(definition.shardKey)
+      ?? notRequestedResult(
+        registeredUniverse.universe.universeId,
+        definition.shardKey
+      )
+    ));
     const publication = dependencies.signal?.aborted
       ? {
           manifestStatus: 'deferred' as const,
           manifestId: null,
           memberCount: 0,
           omissionCount: 0,
+          manifestOmissions: Object.freeze([]),
         }
       : await publishManifest({
           registered: registeredUniverse,
@@ -1724,7 +1812,9 @@ export async function syncBackstageNotionPartitionConfiguration(
     }));
   }
   return Object.freeze({
-    kind: 'full_reconciliation',
+    kind: dependencies.selection
+      ? 'targeted_reconciliation'
+      : 'full_reconciliation',
     universes: Object.freeze(universeResults),
   });
 }

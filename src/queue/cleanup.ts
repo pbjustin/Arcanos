@@ -227,6 +227,7 @@ export async function runNonGptTerminalCleanup(
       deletedTerminal: 0,
       deletedAsk: 0,
       deletedDagNode: 0,
+      deletedBackstageNotionPartitionSync: 0,
       deletedCompleted: 0,
       deletedCancelled: 0,
       deletedJobIds: [],
@@ -252,6 +253,8 @@ export async function runNonGptTerminalCleanup(
     deletedTerminal: result.deletedTerminal,
     deletedAsk: result.deletedAsk,
     deletedDagNode: result.deletedDagNode,
+    deletedBackstageNotionPartitionSync:
+      result.deletedBackstageNotionPartitionSync,
     deletedCompleted: result.deletedCompleted,
     deletedCancelled: result.deletedCancelled,
     batchFull: result.deletedTerminal === result.batchSize,

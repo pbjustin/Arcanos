@@ -3771,6 +3771,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       manifestId,
       memberCount: 1,
       omissionCount: 1,
+      omissions: [{
+        shardKey: optionalPartition.shardKey,
+        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
+      }],
       pageCount: 1,
       chunkCount: 1,
     });

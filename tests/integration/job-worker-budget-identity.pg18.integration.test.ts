@@ -193,7 +193,10 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
 jest.unstable_mockModule('@core/db/query.js', () => ({ query: repositoryQueryMock }));
 jest.unstable_mockModule(
   '../../src/core/db/repositories/jobEventRepository.js',
-  () => ({ recordJobEvent: recordJobEventMock })
+  () => ({
+    recordJobEvent: recordJobEventMock,
+    recordJobEventWithClient: jest.fn()
+  })
 );
 
 const {

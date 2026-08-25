@@ -14,6 +14,7 @@ import {
 import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
+  type BackstageNotionPartitionSyncSelection,
   type BackstageNotionPartitionSynchronizationResult,
 } from '@services/backstageNotionPartitionSync.js';
 import {
@@ -72,6 +73,13 @@ export interface BackstageNotionPartitionShadowCycleResult {
   readonly synchronization: BackstageNotionPartitionSynchronizationResult;
   readonly coverage: readonly BackstageNotionPartitionShadowCoverage[];
   readonly coverageUnavailable: number;
+}
+
+export interface BackstageNotionPartitionSynchronizationCycleInput {
+  readonly configuration: ValidPartitionConfiguration;
+  readonly signal: AbortSignal;
+  readonly readEnvironment?: (name: string) => string | undefined;
+  readonly selection?: BackstageNotionPartitionSyncSelection;
 }
 
 export interface BackstageNotionPartitionShadowLoopHandle {
@@ -227,33 +235,10 @@ async function runDefaultShadowCycle(input: {
   readonly readEnvironment: (name: string) => string | undefined;
 }): Promise<BackstageNotionPartitionShadowCycleResult> {
   throwIfAborted(input.signal);
-  const repository = getBackstageNotionPartitionRepository();
-  const capture = createBackstageNotionPartitionProviderCaptureDependencies({
-    readEnvironment: input.readEnvironment,
-    fetchImpl: fetch,
-  });
-  const synchronization = await syncBackstageNotionPartitionConfiguration(
-    input.configuration,
-    {
-      repository,
-      embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
-      embeddingDimension: DEFAULT_OPENAI_EMBEDDING_DIMENSION,
-      embedBatch: async (inputs, signal) => {
-        const embeddings = await createEmbeddings(inputs, undefined, { signal });
-        if (
-          embeddings.length !== inputs.length
-          || embeddings.some(
-            embedding => embedding.length !== DEFAULT_OPENAI_EMBEDDING_DIMENSION
-          )
-        ) {
-          throw new Error('Embedding provider returned an unexpected dimension.');
-        }
-        return embeddings;
-      },
-      ...capture,
-      signal: input.signal,
-    }
+  const synchronization = await runBackstageNotionPartitionSynchronizationCycle(
+    input
   );
+  const repository = getBackstageNotionPartitionRepository();
   const coverage: BackstageNotionPartitionShadowCoverage[] = [];
   let coverageUnavailable = 0;
   for (const universe of input.configuration.universes) {
@@ -274,6 +259,47 @@ async function runDefaultShadowCycle(input: {
   });
 }
 
+/**
+ * Run one partition reconciliation without coverage reads or coordinator
+ * ownership. Scheduled and operator-triggered callers can therefore share the
+ * exact capture, embedding, persistence, and cancellation behavior while the
+ * worker owns cross-cycle serialization.
+ */
+export async function runBackstageNotionPartitionSynchronizationCycle(
+  input: BackstageNotionPartitionSynchronizationCycleInput
+): Promise<BackstageNotionPartitionSynchronizationResult> {
+  throwIfAborted(input.signal);
+  const readEnvironment = input.readEnvironment ?? (name => getEnv(name));
+  const repository = getBackstageNotionPartitionRepository();
+  const capture = createBackstageNotionPartitionProviderCaptureDependencies({
+    readEnvironment,
+    fetchImpl: fetch,
+  });
+  return syncBackstageNotionPartitionConfiguration(
+    input.configuration,
+    {
+      repository,
+      embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      embeddingDimension: DEFAULT_OPENAI_EMBEDDING_DIMENSION,
+      embedBatch: async (inputs, signal) => {
+        const embeddings = await createEmbeddings(inputs, undefined, { signal });
+        if (
+          embeddings.length !== inputs.length
+          || embeddings.some(
+            embedding => embedding.length !== DEFAULT_OPENAI_EMBEDDING_DIMENSION
+          )
+        ) {
+          throw new Error('Embedding provider returned an unexpected dimension.');
+        }
+        return embeddings;
+      },
+      ...capture,
+      signal: input.signal,
+      selection: input.selection,
+    }
+  );
+}
+
 function summarizeCycle(
   result: BackstageNotionPartitionShadowCycleResult,
   requestedSemanticDigest: string
@@ -283,8 +309,13 @@ Readonly<Record<string, unknown>> {
     universe => universe.shardResults
   );
   const coverage = result.coverage;
+  const fullyScannedShards = shardResults.filter(
+    shard => shard.fullSourceScan
+  ).length;
   return Object.freeze({
-    fullSourceScan: true,
+    fullSourceScan:
+      shardResults.length > 0 && fullyScannedShards === shardResults.length,
+    shardsFullyScanned: fullyScannedShards,
     universes: result.synchronization.universes.length,
     shards: shardResults.length,
     manifestsPublished: result.synchronization.universes.filter(
