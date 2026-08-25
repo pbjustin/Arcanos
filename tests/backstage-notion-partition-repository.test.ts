@@ -182,6 +182,7 @@ class PartitionRepositoryHarness {
     }
     if (
       sql === 'BEGIN'
+      || sql === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
       || sql === 'COMMIT'
       || sql === 'ROLLBACK'
       || sql.startsWith('SET LOCAL lock_timeout')
@@ -838,7 +839,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
   test('loads one bounded routing generation from exact immutable manifest membership', async () => {
     const nextConfigurationId = 'abababab-abab-4bab-8bab-abababababab';
     const nextConfigurationHash = 'f'.repeat(64);
-    const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+    const harness = new PartitionRepositoryHarness(async (
+      sql: string,
+      values: readonly unknown[]
+    ) => {
       const normalized = normalizeSql(sql);
       expect(normalized).toContain('WITH pinned_manifest AS MATERIALIZED');
       expect(normalized).toContain('manifest.id = partition_head.active_manifest_id');
@@ -863,13 +867,20 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
         routingOmissionRow(common),
       ]);
     });
-    const repository = new PostgresBackstageNotionPartitionRepository({
-      query,
-    } as unknown as Pool);
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
 
     const state = await repository.loadActiveManifestRoutingState(UNIVERSE_ID);
 
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(harness.connect).toHaveBeenCalledTimes(1);
+    expect(harness.queries.map(item => item.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('WITH pinned_manifest AS MATERIALIZED'),
+      'COMMIT',
+    ]);
+    expect(harness.release).toHaveBeenCalledWith(false);
     expect(state).toMatchObject({
       universeId: UNIVERSE_ID,
       manifestId: MANIFEST_ID,
@@ -906,26 +917,29 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
   });
 
   test('fails closed for missing authority, oversized metadata, and inconsistent totals', async () => {
-    const absent = new PostgresBackstageNotionPartitionRepository({
-      query: jest.fn(async () => result()),
-    } as unknown as Pool);
+    const absentHarness = new PartitionRepositoryHarness(async () => result());
+    const absent = new PostgresBackstageNotionPartitionRepository(
+      absentHarness.pool
+    );
     await expect(absent.loadActiveManifestRoutingState(UNIVERSE_ID))
       .resolves.toBeNull();
 
-    const oversized = new PostgresBackstageNotionPartitionRepository({
-      query: jest.fn(async () => result(Array.from(
+    const oversizedHarness = new PartitionRepositoryHarness(async () => result(Array.from(
         { length: 129 },
         () => routingMemberRow()
-      ))),
-    } as unknown as Pool);
+      )));
+    const oversized = new PostgresBackstageNotionPartitionRepository(
+      oversizedHarness.pool
+    );
     await expect(oversized.loadActiveManifestRoutingState(UNIVERSE_ID))
       .rejects.toThrow(/exceeds its bounded contract/u);
 
-    const inconsistent = new PostgresBackstageNotionPartitionRepository({
-      query: jest.fn(async () => result([
+    const inconsistentHarness = new PartitionRepositoryHarness(async () => result([
         routingMemberRow({ manifest_chunk_count: '2' }),
-      ])),
-    } as unknown as Pool);
+      ]));
+    const inconsistent = new PostgresBackstageNotionPartitionRepository(
+      inconsistentHarness.pool
+    );
     await expect(inconsistent.loadActiveManifestRoutingState(UNIVERSE_ID))
       .rejects.toThrow(/totals are internally inconsistent/u);
   });
@@ -937,7 +951,10 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
     ];
     const requestedPathKey = normalizeBackstageNotionScopePath(requestedPath);
     const titleKey = normalizeBackstageNotionScopeKey(ROOT_TITLE);
-    const query = jest.fn(async (sql: string, values: readonly unknown[]) => {
+    const harness = new PartitionRepositoryHarness(async (
+      sql: string,
+      values: readonly unknown[]
+    ) => {
       const normalized = normalizeSql(sql);
       expect(normalized).toContain('WITH RECURSIVE pinned_manifest AS MATERIALIZED');
       expect(normalized).toContain('manifest.id = $2');
@@ -979,9 +996,9 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
         scope_page_count: '2',
       }]);
     });
-    const repository = new PostgresBackstageNotionPartitionRepository({
-      query,
-    } as unknown as Pool);
+    const repository = new PostgresBackstageNotionPartitionRepository(
+      harness.pool
+    );
 
     await expect(repository.resolveManifestScopeOwner(
       UNIVERSE_ID,
@@ -992,7 +1009,7 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
         scopeKind: 'subtree',
       }
     )).rejects.toThrow(/pagePathKey is invalid/u);
-    expect(query).not.toHaveBeenCalled();
+    expect(harness.connect).not.toHaveBeenCalled();
     await expect(repository.resolveManifestScopeOwner(
       UNIVERSE_ID,
       MANIFEST_ID,
@@ -1016,7 +1033,14 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       scopeChunkCount: 3,
       scopePageCount: 2,
     });
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(harness.connect).toHaveBeenCalledTimes(1);
+    expect(harness.queries.map(item => item.sql)).toEqual([
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
+      expect.stringContaining('WITH RECURSIVE pinned_manifest AS MATERIALIZED'),
+      'COMMIT',
+    ]);
+    expect(harness.release).toHaveBeenCalledWith(false);
   });
 
   test('distinguishes stale manifests, missing scopes, ambiguity, and corrupt scope rows', async () => {
@@ -1032,15 +1056,16 @@ describe('PostgresBackstageNotionPartitionRepository', () => {
       scope_chunk_count: '1',
       scope_page_count: '1',
     };
-    const resolveRows = async (rows: Array<Record<string, unknown>>) => (
-      new PostgresBackstageNotionPartitionRepository({
-        query: jest.fn(async () => result(rows)),
-      } as unknown as Pool).resolveManifestScopeOwner(
+    const resolveRows = async (rows: Array<Record<string, unknown>>) => {
+      const harness = new PartitionRepositoryHarness(async () => result(rows));
+      return new PostgresBackstageNotionPartitionRepository(
+        harness.pool
+      ).resolveManifestScopeOwner(
         UNIVERSE_ID,
         MANIFEST_ID,
         { pageTitleKey: titleKey, pagePathKey: null, scopeKind: 'page' }
-      )
-    );
+      );
+    };
 
     await expect(resolveRows([])).resolves.toEqual({ status: 'invalid' });
     await expect(resolveRows([{

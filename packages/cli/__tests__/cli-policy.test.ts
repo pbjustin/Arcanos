@@ -104,6 +104,9 @@ describe("CLI security policy helpers", () => {
       ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN: "backstage-booker-secret-value",
       ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY: "booker-payload-key-secret-value",
       ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY: "booker-previous-key-secret-value",
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '{"universes":[{"universeId":"private-universe","shards":[{"rootPageId":"private-root-page-id"}]}]}',
+      ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET: "partition-cursor-secret-value",
+      ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET: "partition-cursor-previous-secret-value",
       ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN: "notion-secret-value",
       ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: '{"private-universe":["private-page-id"]}',
       ARCANOS_GAMING_SOURCE_ACCESS_TOKEN: "gaming-source-secret-value",
@@ -113,6 +116,9 @@ describe("CLI security policy helpers", () => {
       ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN: "[REDACTED]",
       ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY: "[REDACTED]",
       ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY: "[REDACTED]",
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: "[REDACTED]",
+      ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET: "[REDACTED]",
+      ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET: "[REDACTED]",
       ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN: "[REDACTED]",
       ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON: "[REDACTED]",
       ARCANOS_GAMING_SOURCE_ACCESS_TOKEN: "[REDACTED]",
@@ -120,7 +126,7 @@ describe("CLI security policy helpers", () => {
     });
 
     const output = redactCliOutput(
-      `OPENAI_API_KEY='sk-test-secret-value' ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN=backstage-booker-secret-value ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY=booker-payload-key-secret-value ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY=booker-previous-key-secret-value ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=notion-secret-value ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON='{"private-universe":["private-page-id"]}' ARCANOS_GAMING_SOURCE_ACCESS_TOKEN=gaming-source-secret-value DATABASE_URL=postgresql://user:pass@host/db GITHUB_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaa Bearer test-token-value-123456 ${"x".repeat(1200)}`,
+      `OPENAI_API_KEY='sk-test-secret-value' ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN=backstage-booker-secret-value ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY=booker-payload-key-secret-value ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY=booker-previous-key-secret-value ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON='{"universes":[{"universeId":"private-universe","shards":[{"rootPageId":"private-root-page-id"}]}]}' ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET=partition-cursor-secret-value ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET=partition-cursor-previous-secret-value ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=notion-secret-value ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON='{"private-universe":["private-page-id"]}' ARCANOS_GAMING_SOURCE_ACCESS_TOKEN=gaming-source-secret-value DATABASE_URL=postgresql://user:pass@host/db GITHUB_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaa Bearer test-token-value-123456 ${"x".repeat(1200)}`,
       policy
     );
 
@@ -128,6 +134,9 @@ describe("CLI security policy helpers", () => {
     expect(output).toContain("ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN=[REDACTED]");
     expect(output).toContain("ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY=[REDACTED]");
     expect(output).toContain("ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY=[REDACTED]");
+    expect(output).toContain("ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON='[REDACTED]'");
+    expect(output).toContain("ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET=[REDACTED]");
+    expect(output).toContain("ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET=[REDACTED]");
     expect(output).toContain("ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN=[REDACTED]");
     expect(output).toContain("ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON='[REDACTED]'");
     expect(output).toContain("ARCANOS_GAMING_SOURCE_ACCESS_TOKEN=[REDACTED]");
@@ -139,6 +148,7 @@ describe("CLI security policy helpers", () => {
     expect(output).not.toContain("backstage-booker-secret-value");
     expect(output).not.toContain("booker-payload-key-secret-value");
     expect(output).not.toContain("booker-previous-key-secret-value");
+    expect(output).not.toContain("private-root-page-id");
     expect(output).not.toContain("notion-secret-value");
     expect(output).not.toContain("private-page-id");
     expect(output).not.toContain("gaming-source-secret-value");

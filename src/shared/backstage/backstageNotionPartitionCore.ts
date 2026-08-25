@@ -369,6 +369,10 @@ export function parseBackstageNotionPartitionConfiguration(
         || !isValidDisplayName(rawShard.displayName)
         || !['hot', 'cold', 'archive'].includes(String(rawShard.retrievalTier))
         || typeof rawShard.required !== 'boolean'
+        || (
+          rawShard.retrievalTier === 'archive'
+          && rawShard.required === true
+        )
       ) {
         return invalidConfiguration('invalid_shape');
       }

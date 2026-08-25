@@ -2387,8 +2387,10 @@ export class PostgresBackstageNotionPartitionRepository {
             partition_head.active_configuration_version_id`
       : 'manifest.id = $2::UUID';
     const routingLimitParameter = exactManifestId === null ? '$2' : '$3';
-    const result = await this.pool.query<ActiveManifestRoutingRow>(
-      `WITH pinned_manifest AS MATERIALIZED (
+    const result = await withCandidateSearchTransaction(
+      this.pool,
+      client => client.query<ActiveManifestRoutingRow>(
+        `WITH pinned_manifest AS MATERIALIZED (
          SELECT
            partition_head.manifest_generation,
            partition_head.desired_configuration_version_id,
@@ -2523,17 +2525,18 @@ export class PostgresBackstageNotionPartitionRepository {
        FROM pinned_manifest AS pinned
        JOIN manifest_records AS record ON TRUE
        ORDER BY record.shard_key, record.record_kind
-       LIMIT ${routingLimitParameter}`,
-      exactManifestId === null
-        ? [
-            normalizedUniverseId,
-            BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
-          ]
-        : [
-            normalizedUniverseId,
-            exactManifestId,
-            BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
-          ]
+         LIMIT ${routingLimitParameter}`,
+        exactManifestId === null
+          ? [
+              normalizedUniverseId,
+              BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+            ]
+          : [
+              normalizedUniverseId,
+              exactManifestId,
+              BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+            ]
+      )
     );
     if (result.rows.length === 0) {
       return null;
@@ -4941,7 +4944,8 @@ export class PostgresBackstageNotionPartitionRepository {
       throw new Error('lookup.sectionPathKey is unsupported for subtree scope.');
     }
 
-    const result = await this.pool.query<ManifestScopeOwnerRow>(
+    return withCandidateSearchTransaction(this.pool, async client => {
+      const result = await client.query<ManifestScopeOwnerRow>(
       `WITH RECURSIVE pinned_manifest AS MATERIALIZED (
          SELECT manifest.id AS manifest_id
          FROM public.backstage_notion_universe_heads AS authority_head
@@ -5109,9 +5113,9 @@ export class PostgresBackstageNotionPartitionRepository {
         BACKSTAGE_NOTION_PARTITION_MAX_DEPTH,
       ]
     );
-    if (result.rows.length === 0) {
-      return Object.freeze({ status: 'invalid' as const });
-    }
+      if (result.rows.length === 0) {
+        return Object.freeze({ status: 'invalid' as const });
+      }
     if (result.rows[0]?.page_id === null) {
       if (result.rows.length !== 1) {
         return Object.freeze({ status: 'invalid' as const });
@@ -5193,7 +5197,7 @@ export class PostgresBackstageNotionPartitionRepository {
       return Object.freeze({ status: 'invalid' as const });
     }
     if (sectionPathKey !== null) {
-      const sectionResult = await this.pool.query<ManifestSectionScopeRow>(
+      const sectionResult = await client.query<ManifestSectionScopeRow>(
         `WITH pinned_manifest AS MATERIALIZED (
            SELECT manifest.id AS manifest_id
            FROM public.backstage_notion_universe_heads AS authority_head
@@ -5341,20 +5345,21 @@ export class PostgresBackstageNotionPartitionRepository {
         scopePageCount: 1,
       });
     }
-    return Object.freeze({
-      status: 'resolved' as const,
-      manifestId: resolvedManifestId,
-      shardKey,
-      partitionVersionId,
-      snapshotId,
-      pageId,
-      pageTitle,
-      pagePath,
-      sectionPath: null,
-      sectionOccurrencePath: null,
-      scopeKind: lookup.scopeKind,
-      scopeChunkCount,
-      scopePageCount,
+      return Object.freeze({
+        status: 'resolved' as const,
+        manifestId: resolvedManifestId,
+        shardKey,
+        partitionVersionId,
+        snapshotId,
+        pageId,
+        pageTitle,
+        pagePath,
+        sectionPath: null,
+        sectionOccurrencePath: null,
+        scopeKind: lookup.scopeKind,
+        scopeChunkCount,
+        scopePageCount,
+      });
     });
   }
 

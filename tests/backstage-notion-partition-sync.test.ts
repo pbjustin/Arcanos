@@ -1126,7 +1126,11 @@ describe('partition synchronization policy', () => {
     const jobs = planBackstageNotionPartitionFullReconciliation([{
       universeId: 'my-universe-2k26',
       shards: [
-        shard(3, { retrievalTier: 'archive', shardKey: 'archive' }),
+        shard(3, {
+          retrievalTier: 'archive',
+          shardKey: 'archive',
+          required: false,
+        }),
         shard(2, { retrievalTier: 'hot', shardKey: 'hot-b' }),
         shard(1, { retrievalTier: 'hot', shardKey: 'hot-a' }),
         shard(4, { retrievalTier: 'cold', shardKey: 'cold' }),

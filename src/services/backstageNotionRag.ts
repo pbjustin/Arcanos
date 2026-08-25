@@ -1643,8 +1643,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
   }
   try {
     logger.info('backstage.notion_rag.retrieved', {
-      universeId,
-      snapshotId: active.snapshot.id,
+      authorityIndex: 'monolith',
       candidateChunks: active.snapshot.chunkCount,
       scopeChunks,
       retrievedChunks: promptContext.chunkCount,

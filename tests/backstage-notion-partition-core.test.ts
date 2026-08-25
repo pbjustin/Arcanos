@@ -209,6 +209,21 @@ describe('Backstage Notion partition configuration core', () => {
     )))).toMatchObject({ status: 'valid' });
   });
 
+  it('rejects required archive shards so archive failure cannot fence current canon', () => {
+    const configuration = envelope([shard({
+      shardKey: 'archive/raw/2025',
+      rootPageId: '11111111-1111-4111-8111-111111111111',
+      displayName: 'Raw 2025 archive',
+      retrievalTier: 'archive',
+      required: true,
+      scopeTags: ['brand:raw', 'year:2025'],
+      categoryTags: ['archive'],
+    })]);
+
+    expect(parseBackstageNotionPartitionConfiguration(JSON.stringify(configuration)))
+      .toMatchObject({ status: 'invalid', reason: 'invalid_shape' });
+  });
+
   it.each([
     envelope([shard({ shardKey: 'Raw/2026' })]),
     envelope([shard({ retrievalTier: 'warm' })]),

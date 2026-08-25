@@ -45,8 +45,10 @@ import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
   BackstageNotionCursorInvalidError,
-  retrieveBackstageNotionRagContext,
 } from './backstageNotionRag.js';
+import {
+  retrieveBackstageNotionAuthorityRagContext,
+} from './backstageNotionPartitionCutover.js';
 import { normalizeBackstageBookerActionPayload } from './backstageBookerContracts.js';
 
 function resolveContinuityQueryModel(): string {
@@ -115,12 +117,15 @@ export async function queryBackstageContinuity(
     executionBudget.operationTimeoutMs,
     0
   );
-  const retrieval = await retrieveBackstageNotionRagContext(input.universeId, {
-    query: input.query,
-    ...(input.retrievalScope ? { retrievalScope: input.retrievalScope } : {}),
-    ...(input.retrievalMode ? { retrievalMode: input.retrievalMode } : {}),
-    ...(input.cursor ? { cursor: input.cursor } : {}),
-  });
+  const retrieval = await retrieveBackstageNotionAuthorityRagContext(
+    input.universeId,
+    {
+      query: input.query,
+      ...(input.retrievalScope ? { retrievalScope: input.retrievalScope } : {}),
+      ...(input.retrievalMode ? { retrievalMode: input.retrievalMode } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    },
+  );
   try {
     const { client } = getOpenAIClientOrAdapter();
     if (!client) {
