@@ -258,7 +258,8 @@ The exact `POST /backstage/generation-contract` surface accepts only the
 server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `review-completion-contract`, `compact-retry-contract`,
 `notion-authority-rag-contract`,
-`continuity-query-contract`, and `continuity-subtree-contract` selectors.
+`partition-failure-telemetry-contract`, `continuity-query-contract`, and
+`continuity-subtree-contract` selectors.
 The route-budget case uses the
 production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
@@ -394,19 +395,25 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 128-request
+evidence, not Railway control-plane provenance. The current fixed 129-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, seven sealed Backstage generation
-timeout/cache/review-completion/compact-retry/Notion-authority/continuity cases, one
+worker-role approval-contract denial, eight sealed Backstage generation
+timeout/cache/review-completion/compact-retry/Notion-authority/failure-telemetry/continuity cases, one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, one canon-summary pagination case, two
 sealed dispatch GPT identifier boundary cases, one worker-role dispatch
 selector denial, one sealed status auth-before-parser case (the twenty-first
 `simulatedAuth` request), and one worker-role status selector denial.
+The failure-telemetry selector executes the exact semantic-digest-pinned pure
+projection used by the production partition worker over a valid root-ID-alias
+configuration and a maximum 512-failure server-owned input. The verifier pins
+the opaque identities, safe fallback, deterministic order, 55,314-byte bound,
+and absence of raw identifiers. It does not execute the worker loop, structured
+logger sink, Railway log transport, PostgreSQL, Notion, or a model provider.
 The additive subtree selector runs the production-shared continuity prompt and
 public-response core over sealed relevant and two-page continuation projections.
 It proves subtree-only scope/page fields stay coupled, coverage totals and source

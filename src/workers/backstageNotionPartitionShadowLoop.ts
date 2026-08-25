@@ -12,6 +12,9 @@ import {
   type BackstageNotionPartitionConfiguration,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import {
+  projectBackstageNotionPartitionFailedShardTelemetry,
+} from '@shared/backstage/backstageNotionPartitionTelemetryCore.js';
+import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
   type BackstageNotionPartitionSyncSelection,
@@ -362,6 +365,10 @@ Readonly<Record<string, unknown>> {
   const fullyScannedShards = shardResults.filter(
     shard => shard.fullSourceScan
   ).length;
+  const failedShards =
+    projectBackstageNotionPartitionFailedShardTelemetry(
+      shardResults
+    );
   return Object.freeze({
     fullSourceScan:
       shardResults.length > 0 && fullyScannedShards === shardResults.length,
@@ -379,6 +386,7 @@ Readonly<Record<string, unknown>> {
     ).length,
     shardsFresh: shardResults.filter(shard => shard.status === 'fresh').length,
     shardsFailed: shardResults.filter(shard => shard.status === 'failed').length,
+    failedShards,
     shardsAborted: shardResults.filter(shard => shard.status === 'aborted').length,
     shardsLeaseBusy: shardResults.filter(shard => shard.status === 'lease-busy').length,
     pages: shardResults.reduce((total, shard) => total + shard.pageCount, 0),

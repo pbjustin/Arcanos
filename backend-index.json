@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T04:32:18.688Z",
+  "generatedAt": "2026-08-25T21:04:48.248Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2489,6 +2489,9 @@
           "relativePath": "src/shared/backstage/backstageNotionPartitionSyncCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionTelemetryCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionPreviewCanary.ts"
         },
         {
@@ -3457,6 +3460,9 @@
           "relativePath": "tests/backstage-notion-partition-routing.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-partition-shadow-failure-telemetry.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-partition-shadow-loop.test.ts"
         },
         {
@@ -3473,6 +3479,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-partition-sync.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-telemetry-core.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-rag-core.test.ts"

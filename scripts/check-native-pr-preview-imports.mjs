@@ -63,6 +63,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
   'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
   'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
+  'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
@@ -236,6 +237,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
         ]),
       ],
       ['express', new Set(['default:express'])],
+      ['node:crypto', new Set(['createHash:createHash'])],
       ['node:stream', new Set(['Readable:Readable'])],
       ['node:timers/promises', new Set(['setTimeout:delay'])],
     ]),
@@ -285,6 +287,12 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+    new Map([
+      ['node:crypto', new Set(['createHash:createHash'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
     new Map([
       ['node:crypto', new Set(['createHash:createHash'])],
     ]),
@@ -723,6 +731,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
     '19843656896dd211fbb56e0daf17e75e06ad5cd15111245d6f82fc78d9ceff4e',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
+    '5c0b597be0a6180199d47f2557eba84a8a0361562872ab070133fcc896d30e8b',
   ],
   [
     'src/shared/backstage/backstageNotionRagCore.ts',

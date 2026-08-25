@@ -191,6 +191,14 @@ function responseHeadersForCase(
                     .partitionedAuthorityProofVersion,
               }
             : {}),
+          ...(requestCase.fixtureName === 'partitionFailureTelemetry'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.partitionFailureTelemetryVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .partitionFailureTelemetryProofVersion,
+              }
+            : {}),
         }
       : {}),
     ...(
@@ -441,7 +449,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 128);
+  assert.equal(requestPlan.length, 129);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -491,7 +499,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    7
+    8
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -822,6 +830,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
+  const partitionFailureTelemetryCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-partition-failure-telemetry'
+  );
   const continuityQueryCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-continuity-query'
   );
@@ -833,6 +844,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(reviewCompletionCase);
   assert.ok(compactRetryCase);
   assert.ok(notionAuthorityRagCase);
+  assert.ok(partitionFailureTelemetryCase);
   assert.ok(continuityQueryCase);
   assert.ok(continuitySubtreeCase);
   assert.equal(routeBudgetCase.requestTimeoutMs, 20_000);
@@ -1021,6 +1033,31 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
       schemaVersion: 1,
     }
+  );
+  const partitionFailureTelemetryPayload =
+    expectedNativePrPreviewResponseBody(partitionFailureTelemetryCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    });
+  assert.equal(
+    partitionFailureTelemetryPayload.failureTelemetry
+      .maximum.failedShardCount,
+    512
+  );
+  assert.equal(
+    partitionFailureTelemetryPayload.failureTelemetry
+      .maximum.uniqueIdentityCount,
+    512
+  );
+  assert.equal(
+    partitionFailureTelemetryPayload.failureTelemetry.loggerSinkExecuted,
+    false
+  );
+  assert.equal(
+    JSON.stringify(partitionFailureTelemetryPayload).includes(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+    ),
+    false
   );
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(continuityQueryCase, {
@@ -1412,14 +1449,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 128);
+  assert.equal(result.summary.requestsMade, 129);
   assert.equal(result.summary.simulatedAuthRequests, 21);
-  assert.equal(result.checks.length, 128);
+  assert.equal(result.checks.length, 129);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     21
   );
-  assert.equal(mock.requestCount, 128);
+  assert.equal(mock.requestCount, 129);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'status-auth-before-parser'
@@ -1493,6 +1530,34 @@ test('executes the bounded credential-free matrix and detects identity stability
       simulatedAuth: false,
     }
   );
+  const telemetryProofCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-partition-failure-telemetry'
+  );
+  assert.ok(telemetryProofCase);
+  assert.deepEqual(
+    result.checks.find(({ caseId }) =>
+      caseId === 'backstage-generation-partition-failure-telemetry'
+    ),
+    {
+      bodySha256: result.checks.find(({ caseId }) =>
+        caseId === 'backstage-generation-partition-failure-telemetry'
+      ).bodySha256,
+      caseId: 'backstage-generation-partition-failure-telemetry',
+      clearPolicyVersionVerified: true,
+      failedShardTelemetryVerified: true,
+      httpStatus: 200,
+      method: 'POST',
+      pathTemplate: '/backstage/generation-contract',
+      responseBytes: Buffer.byteLength(JSON.stringify(
+        expectedNativePrPreviewResponseBody(telemetryProofCase, {
+          commitSha: COMMIT_SHA,
+          prNumber: PR_NUMBER,
+        })
+      )),
+      role: 'web',
+      simulatedAuth: false,
+    }
+  );
   const researchCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/research/contract')
   );
@@ -1540,12 +1605,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 8);
+  assert.equal(backstageGenerationCalls.length, 9);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    7
+    8
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -1969,6 +2034,17 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .partitionedAuthorityVersion
         ] = 'backstage-notion-partitioned-authority/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-partition-failure-telemetry',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_FAILURE_TELEMETRY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .partitionFailureTelemetryVersion
+        ];
       },
     },
     {
