@@ -160,6 +160,8 @@ import {
   type BackstageNotionSyncLoopHandle,
 } from './backstageNotionSyncLoop.js';
 import {
+  resolveBackstageNotionPartitionShadowPolicy,
+  runBackstageNotionWorkerReadinessGate,
   startBackstageNotionPartitionShadowLoop,
   type BackstageNotionPartitionShadowLoopHandle,
 } from './backstageNotionPartitionShadowLoop.js';
@@ -2785,14 +2787,37 @@ async function run(): Promise<void> {
 
   initializeWorkerOpenAIAdapterIfConfigured();
 
+  const backstageNotionPartitionPolicy =
+    resolveBackstageNotionPartitionShadowPolicy();
   try {
-    const backstageNotionReadiness = await ensureBackstageNotionWorkerReadiness({
-      signal: workerProcessShutdownController.signal,
-    });
-    logger.info('worker.backstage_notion_readiness.completed', {
-      module: 'job-runner',
-      ...backstageNotionReadiness,
-    });
+    const backstageNotionReadiness = await runBackstageNotionWorkerReadinessGate(
+      backstageNotionPartitionPolicy,
+      () => ensureBackstageNotionWorkerReadiness({
+        signal: workerProcessShutdownController.signal,
+      })
+    );
+    const safePolicyMetadata = {
+      modeStatus: backstageNotionPartitionPolicy.modeStatus,
+      requestedMode: backstageNotionPartitionPolicy.requestedMode,
+      configurationStatus: backstageNotionPartitionPolicy.configurationStatus,
+      reasonCode: backstageNotionPartitionPolicy.reasonCode,
+      configuredUniverses: backstageNotionPartitionPolicy.configuredUniverses,
+      configuredShards: backstageNotionPartitionPolicy.configuredShards,
+    };
+    if (backstageNotionReadiness.monolithReadinessRequired) {
+      logger.info('worker.backstage_notion_readiness.completed', {
+        module: 'job-runner',
+        monolithReadinessRequired: true,
+        ...safePolicyMetadata,
+        ...backstageNotionReadiness.evidence,
+      });
+    } else {
+      logger.info('worker.backstage_notion_readiness.partition_mode_admitted', {
+        module: 'job-runner',
+        monolithReadinessRequired: false,
+        ...safePolicyMetadata,
+      });
+    }
   } catch (error) {
     if (isWorkerProcessShutdownRequested()) {
       logger.info('worker.shutdown.during_backstage_notion_readiness', {

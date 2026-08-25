@@ -562,7 +562,7 @@ describeWithDatabase('non-GPT terminal retention on PostgreSQL 18', () => {
 
     expect(results.filter(result => result.created)).toHaveLength(1);
     expect(results.filter(result => result.deduped)).toHaveLength(1);
-    expect(new Set(results.map(result => result.job.id))).toHaveSize(1);
+    expect(new Set(results.map(result => result.job.id)).size).toBe(1);
     await expect(readPartitionAdmissionCounts()).resolves.toEqual({
       jobs: 1,
       events: 2

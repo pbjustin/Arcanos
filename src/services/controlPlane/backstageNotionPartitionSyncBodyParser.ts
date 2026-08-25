@@ -192,7 +192,7 @@ export const backstageNotionPartitionSyncBodyParser: RequestHandler = (
     next();
     return;
   }
-  if (operation.kind === 'status') {
+  if (operation.kind !== 'create') {
     if (hasRequestBody(req)) {
       sendInvalidBackstageNotionPartitionSyncRequest(req, res);
       return;
