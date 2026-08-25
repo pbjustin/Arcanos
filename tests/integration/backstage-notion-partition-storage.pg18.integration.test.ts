@@ -3607,6 +3607,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       providerPollMs: 1,
       notionRequestDelayMs: 0,
       embeddingRequestDelayMs: 0,
+      now: () => new Date('2026-08-24T14:02:00.000Z'),
     });
     expect(syncResult.universes[0]).toMatchObject({
       universeId: fixture.universeId,

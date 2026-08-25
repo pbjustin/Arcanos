@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T04:32:18.688Z",
+  "generatedAt": "2026-08-25T19:52:03.970Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3455,6 +3455,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-partition-routing.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-shadow-failure-telemetry.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-partition-shadow-loop.test.ts"
