@@ -399,7 +399,7 @@ operations.
 | --- | --- | --- |
 | `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, direct `/system-state`, legacy `POST /status`, `/api/afol/*`, `/api/assistants/*`, `/rag/*`, reinforcement feedback and root-memory inspection, `/api/arcanos/dag/*`, `/api/commands*`, and `/api/agent/execute` access, Backstage state mutations across direct/GPT/dispatch/legacy aliases, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, assistant-registry list/detail reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; manual `POST` and status `GET`/`HEAD` under `/api/backstage/notion-partitions/:universeId/syncs` require `backstage:notion-sync`, with enqueue additionally requiring an issued one-use confirmation bound to the exact configured shard and configuration digest; `POST /system-state`, `/api/afol/decide`, `/api/assistants/sync`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Legacy `POST /status` also requires `mcp:invoke` but retains its existing explicit confirmation modes after authentication. Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus the existing confirmation contract through direct, canonical GPT, GPT-selected dispatch, and legacy module aliases; direct `/backstage/book-gpt` is included because it saves. Generation and simulation remain public. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. `GET /system-state`, AFOL health/log/analytics reads, assistant-registry list/detail reads, `POST /rag/query`, DAG run reads under `/api/arcanos/dag/*`, `GET`/`HEAD` command registry reads, and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; manual `POST` and status `GET`/`HEAD` under `/api/backstage/notion-partitions/:universeId/syncs`, plus `GET`/`HEAD /api/backstage/notion-partitions/:universeId/diagnostics`, require `backstage:notion-sync`, with enqueue additionally requiring an issued one-use confirmation bound to the exact configured shard and configuration digest; `POST /system-state`, `/api/afol/decide`, `/api/assistants/sync`, `/rag/fetch`, `/rag/save`, and command/agent CEF execution require `mcp:invoke` plus an issued, principal- and request-bound one-use confirmation challenge (manual, allow-all, trusted-mode, one-time-token, and automation bypasses do not apply). Legacy `POST /status` also requires `mcp:invoke` but retains its existing explicit confirmation modes after authentication. Agent execution confirms one frozen plan and derives a single-use CEF permit for each step. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus the existing confirmation contract through direct, canonical GPT, GPT-selected dispatch, and legacy module aliases; direct `/backstage/book-gpt` is included because it saves. Generation and simulation remain public. DAG run creation/cancellation, `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke` without this additional CEF challenge. The reinforcement machine-feedback routes do not add a confirmation challenge, while the current legacy `/audit` owner retains its existing confirmation gate. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
 | `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
 | `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
 
@@ -543,30 +543,43 @@ not fabricate a content change.
 `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` accepts only exact lowercase
 `monolith`, `shadow`, or `partitioned`. Absent and invalid values both select
 `monolith`; the parser returns only bounded validity status, never the raw value,
-so operators can warn safely. Exact `shadow` starts the additive partition
-writer on the worker after the ordinary readiness signal and performs bounded
-dual reads for executing web requests and protected queued relevant worker
-requests, but the monolith remains the sole result returned to the caller. The
-worker does not receive cursor credentials, so complete-scope and cursor flows
-remain web-only. Exact `partitioned` keeps shard synchronization active and serves only
-manifest-scoped partition reads; missing or invalid partition state fails closed
-without a silent monolith read fallback. Restoring exact `monolith` is the read
-rollback and stops new partition writer cycles without deleting immutable shard
-or manifest history. The legacy recurring synchronization path remains intact
-under all three modes. Neither the partition envelope nor this read-index mode
-downgrades the durable one-way Notion authority latch or restores legacy reads
-and writes. This code change does not set a deployed variable, and production
-must remain at exact `monolith` until a separate cutover is approved.
+so operators can warn safely. Exact valid `shadow` and `partitioned` policies
+admit worker consumers without waiting for the universe-wide monolith format
+gate, allowing protected shard-repair jobs to run when that legacy snapshot is
+unavailable. Absent, invalid, or exact `monolith` policy retains the strict
+legacy readiness gate. Exact `shadow` performs bounded dual reads for executing
+web requests and protected queued relevant worker requests, but the monolith
+remains the sole result returned to the caller and still fails closed under its
+existing read rules. The worker does not receive cursor credentials, so
+complete-scope and cursor flows remain web-only. Exact `partitioned` keeps shard
+synchronization active and serves only manifest-scoped partition reads; missing
+or invalid partition state fails closed without a silent monolith read fallback.
+Restoring exact `monolith` is the read rollback and stops new partition writer
+cycles without deleting immutable shard or manifest history. The legacy
+recurring synchronization path remains intact under all three modes, and both
+loops start only after consumer readiness using their shared coordinator. No
+partition manifest or shard state gates worker `/readyz`. Neither the partition
+envelope nor this read-index mode downgrades the durable one-way Notion authority
+latch or restores legacy reads and writes. This code change does not set a
+deployed variable, and production must remain at exact `monolith` until a
+separate cutover is approved.
 
 In exact `shadow` or `partitioned`, the web control plane exposes one-shard
 manual enqueue and actor-scoped status reads under
-`/api/backstage/notion-partitions/:universeId/syncs`. The server resolves the
-closed configuration and never accepts roots or configuration from the caller.
-Both operations require `backstage:notion-sync`; enqueue also requires one
-strict body, an idempotency key, and a consumed one-use challenge bound to the
-exact configuration generation and semantic digest. Claimed workers revalidate
-those fields before provider or synchronization effects, so a deployment
-configuration change safely stales queued work.
+`/api/backstage/notion-partitions/:universeId/syncs`, plus a bodyless, query-free
+bounded diagnostics read at
+`/api/backstage/notion-partitions/:universeId/diagnostics`. The server resolves
+the closed configuration and never accepts or returns roots or raw
+configuration. All three operations require `backstage:notion-sync`; enqueue
+also requires one strict body, an idempotency key, and a consumed one-use
+challenge bound to the exact configuration generation and semantic digest.
+Claimed workers revalidate those fields before provider or synchronization
+effects, so a deployment configuration change safely stales queued work.
+The diagnostics route reads one repeatable, read-only database snapshot and
+returns only closed metadata. Its 128-shard and 16-active-job bounds use one
+internal overflow probe and fail closed rather than returning partial rows.
+Before the first partition registration, operational aggregates are explicitly
+unavailable; use the actor-scoped sync-status route for exact queued-job state.
 
 The legacy and partition loops share one worker-process synchronization
 coordinator, so their full crawls cannot overlap inside one replica. The first
@@ -1027,22 +1040,25 @@ configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
 `503` without changing `/healthz` liveness or `/health` diagnostics. Worker
-readiness remains `503` until database bootstrap, the Backstage Notion
-format-readiness gate, autonomy/module-registry bootstrap, and every configured
-consumer slot's dispatcher-start write have completed, and a supported OpenAI
-key setting is present. No configured authority passes the format gate without
-repository or provider work. Configured authorities must all have active
-snapshots with the current page-level index/heading marker; already-current
-inventories use PostgreSQL only, while an old/missing inventory gets one
-synchronous sync and a mandatory reload. Invalid configuration,
-`lease-busy`/`failed`/omitted sync results, or a still-old reload prevents the
-readiness signal. Provider readiness itself remains configuration-only rather
-than a paid probe, although a required Notion format rebuild performs the real
-Notion and embedding work. Later provider outages are handled by the worker's
-bounded probe/backoff and job-deferral path. The worker child reports the final
-transition through an exact, newline-delimited launcher protocol independent of
-`LOG_LEVEL`; arbitrary log text and filtered info logs cannot satisfy or
-suppress it.
+readiness remains `503` until database bootstrap, autonomy/module-registry
+bootstrap, every configured consumer slot's dispatcher-start write, and a
+supported OpenAI key setting are present. Absent, invalid, or exact `monolith`
+partition policy additionally retains the Backstage Notion format-readiness
+gate. No configured authority passes that gate without repository or provider
+work: configured authorities must all have active snapshots with the current
+page-level index/heading marker; already-current inventories use PostgreSQL
+only, while an old/missing inventory gets one synchronous sync and a mandatory
+reload. Invalid configuration, `lease-busy`/`failed`/omitted sync results, or a
+still-old reload prevents readiness in that policy. Exact valid `shadow` and
+`partitioned` skip only this universe-wide legacy gate so protected shard jobs
+can repair partition state; neither partition manifests nor shard freshness gate
+`/readyz`, and legacy reads retain their existing fail-closed rules. Provider
+readiness itself remains configuration-only rather than a paid probe, although a
+required monolith format rebuild performs the real Notion and embedding work.
+Later provider outages are handled by the worker's bounded probe/backoff and
+job-deferral path. The worker child reports the final transition through an
+exact, newline-delimited launcher protocol independent of `LOG_LEVEL`;
+arbitrary log text and filtered info logs cannot satisfy or suppress it.
 
 `railway.json` also sets numeric `deploy.drainingSeconds` to `60`, the
 repository-owned outer SIGTERM-to-SIGKILL ceiling. The web process retains its

@@ -104,6 +104,31 @@ Launcher behavior:
   path. It does not prove a valid Notion credential or page share, PostgreSQL
   activation, worker scheduling, the normal authenticated route, or an OpenAI
   request.
+- The same sealed Notion-authority selector executes the production-shared pure
+  partition configuration, page-material classification, routing,
+  manifest-membership, reconciliation-planning, and sync request/job/result
+  contract cores before returning its existing byte-compatible response body.
+  Its
+  server-owned scenario accepts three independently bounded 2,048-chunk shards
+  with 6,144 aggregate capacity, retains the stable `raw/2026` key across a
+  display-name change, rejects a required archive tier, plans hot/cold/archive
+  reconciliation independently, retains a compatible last-known-good shared
+  snapshot, omits one optional archive capacity failure, and still resolves the
+  unrelated current-canon shard. It also classifies one added, changed, moved,
+  deleted, and unchanged page; moved and unchanged material retain the same
+  content hash, and the parsed sync result reports both page-version reuse and
+  fewer newly embedded chunks than total chunks. A successful exact-head
+  response carries
+  `x-arcanos-preview-backstage-partition-contract-version:
+  backstage-notion-partitioned-authority/v1`; the PR-head verifier requires the
+  exact value, while the base-pinned trusted lifecycle verifier still executes
+  the assertion through the unchanged response body. This remains
+  credential-free component E2E evidence. It does not import the partition
+  repository, sync or retrieval services, queue, provider, database connection,
+  or environment-backed partition configuration, and does not prove live
+  PostgreSQL, worker, operator-auth, embedding, retrieval-query, or Notion-sync
+  behavior. The hosted PostgreSQL 18 suites remain authoritative for partition
+  SQL atomicity and query behavior.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
@@ -208,29 +233,33 @@ Launcher behavior:
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation, `/healthz` remains liveness, and `/health` remains dependency diagnostics. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
-- Worker `/readyz` remains `503` until database bootstrap, the Backstage Notion
-  format-readiness gate, autonomy/module-registry bootstrap, and every configured
-  consumer slot's dispatcher-start write complete, and a supported OpenAI key
-  setting is present. With no configured Notion authorities the format gate is
-  a no-op. With authorities configured, it first verifies every active snapshot
-  from PostgreSQL has the current page-level heading/index marker. An
-  already-current set makes no Notion request; otherwise one synchronous full
-  sync must return only `activated`/`unchanged`, after which PostgreSQL is
-  reloaded and rechecked. Invalid configuration, `lease-busy`, `failed`, an
-  omitted root, or still-old metadata prevents the child readiness signal and
-  fails the revision closed. The child communicates the final transition through
-  an exact newline-delimited protocol independent of `LOG_LEVEL`; stderr and
-  embedded marker-like text cannot activate readiness. The normal OpenAI
-  readiness check does not perform a paid probe, though a required format rebuild
-  necessarily performs the configured Notion and embedding work. Transient
-  provider failure after activation remains handled through the worker's
-  probe/backoff and job-deferral path.
-- The additive partition writer starts only after that ordinary worker readiness
-  signal and only for exact `shadow` or `partitioned` plus a valid partition
-  envelope. It never participates in `/readyz` or weakens the durable authority
-  latch. Exact `shadow` keeps the monolith as the sole returned read while
-  executing web requests and protected queued relevant worker requests may run
-  bounded partition comparisons. The worker never receives cursor keys, so
+- Worker `/readyz` remains `503` until database bootstrap,
+  autonomy/module-registry bootstrap, every configured consumer slot's
+  dispatcher-start write, and a supported OpenAI key setting are present.
+  Absent, invalid, or exact `monolith` partition policy also retains the strict
+  Backstage Notion format-readiness gate. With no configured Notion authorities
+  that gate is a no-op. With authorities configured, it first verifies every
+  active monolith snapshot from PostgreSQL has the current page-level
+  heading/index marker. An already-current set makes no Notion request;
+  otherwise one synchronous full sync must return only `activated`/`unchanged`,
+  after which PostgreSQL is reloaded and rechecked. Invalid configuration,
+  `lease-busy`, `failed`, an omitted root, or still-old metadata prevents the
+  child readiness signal in that policy. Exact valid `shadow` and `partitioned`
+  skip only this universe-wide legacy gate so protected shard jobs can run and
+  repair partition state; legacy reads keep their existing fail-closed behavior.
+  The child communicates the final transition through an exact newline-delimited
+  protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text
+  cannot activate readiness. The normal OpenAI readiness check does not perform
+  a paid probe, though a required monolith format rebuild necessarily performs
+  the configured Notion and embedding work. Transient provider failure after
+  activation remains handled through the worker's probe/backoff and job-deferral
+  path.
+- The additive partition writer starts only after consumer readiness and only
+  for exact `shadow` or `partitioned` plus a valid partition envelope. Partition
+  manifests and shard freshness never participate in `/readyz` or weaken the
+  durable authority latch. Exact `shadow` keeps the monolith as the sole returned
+  read while executing web requests and protected queued relevant worker requests
+  may run bounded partition comparisons. The worker never receives cursor keys, so
   complete-scope and cursor flows stay web-only. Exact `partitioned` serves only
   manifest-scoped partition reads and fails closed without a monolith read
   fallback. The legacy and partition crawls remain active and share one
@@ -283,7 +312,7 @@ Environment variables:
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | Optional; required only for Arcanos Gaming source ingestion, refresh, and status Actions on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action authentication field; do not copy it to the worker service. It grants access only to the three `/gpt-access/gaming/sources/*` lifecycle routes. Generic GPT Access routes reject it, and the generic GPT Access token is rejected on the Gaming source routes. |
 | `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Required on the web service when HTTP control-plane, AFOL decision/inspection, reinforcement feedback/inspection, Backstage state mutation, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, or CLI self-heal inspection is used | Exact purpose-bound bearer credential stored only in Railway Variables. It must remain distinct from approval, GPT Access, daemon, memory, worker-helper, automation, and other application credentials. Backstage mutation paths include direct, canonical GPT, GPT-selected `/dispatch`, and legacy module aliases; missing or invalid control-plane configuration fails them closed with 503. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | Required with the control-plane access token | Server-owned operator identifier used for HTTP control-plane attribution. Do not derive it from request fields. |
-| `ARCANOS_CONTROL_PLANE_SCOPES` | Required with the control-plane access token | Grant only intended operations. Manual partition shard enqueue and its status reads require `backstage:notion-sync`; enqueue also consumes a one-use challenge bound to actor, target, idempotency hash, and exact configuration. AFOL health/log/analytics and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `/api/afol/decide` requires `mcp:invoke` plus its issued one-use challenge; `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke`. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus confirmation across every public HTTP alias; `/backstage/book-gpt` is included because it saves, while generation and simulation stay public. `/api/codebase/*` requires `repo:read`; direct PR analysis requires `repo:verify`; DevOps self-test/daily-summary execution requires `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads, self-heal reads, and detailed safety diagnostics also require `arcanos:read`; an active provider probe adds `self-heal:probe`; decisions require `self-heal:decide`; and `execute: true` adds `self-heal:execute`. Manual self-improve runs require both decision and execution scopes. Freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. Omit active grants unless the operator workflow explicitly needs them. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | Required with the control-plane access token | Grant only intended operations. Manual partition shard enqueue, its actor-scoped status reads, and the bounded universe diagnostics read require `backstage:notion-sync`; enqueue also consumes a one-use challenge bound to actor, target, idempotency hash, and exact configuration. AFOL health/log/analytics and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `/api/afol/decide` requires `mcp:invoke` plus its issued one-use challenge; `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke`. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus confirmation across every public HTTP alias; `/backstage/book-gpt` is included because it saves, while generation and simulation stay public. `/api/codebase/*` requires `repo:read`; direct PR analysis requires `repo:verify`; DevOps self-test/daily-summary execution requires `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads, self-heal reads, and detailed safety diagnostics also require `arcanos:read`; an active provider probe adds `self-heal:probe`; decisions require `self-heal:decide`; and `execute: true` adds `self-heal:execute`. Manual self-improve runs require both decision and execution scopes. Freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. Omit active grants unless the operator workflow explicitly needs them. |
 | `PROMPT_DEBUG_TRACE_MODE` | Optional; defaults to `metadata` | Keep `metadata` in normal deployments. Use `off` to collect nothing. `full` can retain sensitive prompt and response prose after bounded redaction and should be enabled only for a short, approved diagnostic window. Invalid values fail closed to `off`. |
 | `PROMPT_DEBUG_TRACE_PERSIST` | Optional; defaults to `false` | Only exact `true`, together with a valid byte cap, enables JSONL reads and writes. |
 | `PROMPT_DEBUG_TRACE_MAX_BYTES` | Required only when persistence is enabled | Integer from 1,024 through 104,857,600. At capacity, new disk events are dropped without automatic truncation or rotation. |

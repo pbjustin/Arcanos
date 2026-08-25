@@ -59,6 +59,10 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageGenerationError.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
+  'src/shared/backstage/backstageNotionPartitionCore.ts',
+  'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+  'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+  'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
@@ -78,6 +82,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/http/sendPreparedJsonResponse.ts',
   'src/shared/http/validation.ts',
   'src/shared/jobs/jobLinks.ts',
+  'src/shared/jobs/backstageNotionPartitionSyncJob.ts',
   'src/shared/jobs/jobReadCapability.ts',
   'src/shared/hrcEvaluationPolicy.ts',
   'src/shared/researchRequest.ts',
@@ -264,6 +269,24 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     'src/shared/backstage/backstageNotionPreviewCanary.ts',
     new Map([
       ['node:https', new Set(['request:requestHttps'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionCore.ts',
+    new Map([
+      ['node:crypto', new Set(['createHash:createHash'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+    new Map([
+      ['node:crypto', new Set(['createHash:createHash'])],
+    ]),
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+    new Map([
+      ['node:crypto', new Set(['createHash:createHash'])],
     ]),
   ],
   [
@@ -686,6 +709,22 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     'd6aa19cfb3ea5ee0e3b84faebc463d3a8ef549c456a04199de84497571bd4bc8',
   ],
   [
+    'src/shared/backstage/backstageNotionPartitionCore.ts',
+    '09f967c8ceaf705034ef981e5ed7729dbf9aba2e5c6189663be03a1abb178a26',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+    '2d171ddbe97fa6fb95549f5e1b58d1044d949521a583557212a2052116398594',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+    '28c0e5a78453e83446d4c45c1495cf594756309bf956974c1c5ad388fe4b2f50',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
+    '19843656896dd211fbb56e0daf17e75e06ad5cd15111245d6f82fc78d9ceff4e',
+  ],
+  [
     'src/shared/backstage/backstageNotionRagCore.ts',
     'a6eda06c2021987dc952c5f32c9653a7409ed1932cb6bb27002cf9e279b51598',
   ],
@@ -716,6 +755,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/researchRequest.ts',
     '3fc92f358952e766e3bfd3b69018906759b01ad88c642d9ca6aa730926367761',
+  ],
+  [
+    'src/shared/jobs/backstageNotionPartitionSyncJob.ts',
+    '8ceb6de1cad70fe4234b7f0afe40f9ccbe74f5f35cbf99250afb9a8d1f1e2faa',
   ],
   [
     'src/shared/security/sensitiveProviderStorage.ts',
@@ -1283,10 +1326,9 @@ function isForbiddenRuntimeCapabilityIdentifierReference(node) {
   );
 }
 
-function isReviewedResearchOwnKeysReference(filePath, node) {
+function isReviewedOwnKeysReference(filePath, node) {
   if (
-    filePath !== 'src/shared/researchRequest.ts'
-    || !ts.isIdentifier(node)
+    !ts.isIdentifier(node)
     || node.text !== 'Reflect'
   ) {
     return false;
@@ -1300,12 +1342,24 @@ function isReviewedResearchOwnKeysReference(filePath, node) {
     return false;
   }
   const call = access.parent;
+  if (
+    !ts.isCallExpression(call)
+    || call.expression !== access
+    || call.arguments.length !== 1
+    || !ts.isIdentifier(call.arguments[0])
+  ) {
+    return false;
+  }
   return (
-    ts.isCallExpression(call)
-    && call.expression === access
-    && call.arguments.length === 1
-    && ts.isIdentifier(call.arguments[0])
-    && call.arguments[0].text === 'descriptors'
+    (
+      filePath === 'src/shared/researchRequest.ts'
+      && call.arguments[0].text === 'descriptors'
+    )
+    || (
+      filePath
+        === 'src/shared/backstage/backstageNotionPartitionRoutingCore.ts'
+      && call.arguments[0].text === 'value'
+    )
   );
 }
 
@@ -4978,7 +5032,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       );
     } else if (
       isForbiddenRuntimeCapabilityIdentifierReference(node)
-      && !isReviewedResearchOwnKeysReference(filePath, node)
+      && !isReviewedOwnKeysReference(filePath, node)
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden runtime capability reference`

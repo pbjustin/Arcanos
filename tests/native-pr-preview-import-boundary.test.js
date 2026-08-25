@@ -74,6 +74,26 @@ const BACKSTAGE_NOTION_RAG_CORE_URL = new URL(
   '../src/shared/backstage/backstageNotionRagCore.ts',
   import.meta.url
 );
+const BACKSTAGE_NOTION_PARTITION_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionPartitionCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_NOTION_PARTITION_MATERIAL_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_NOTION_PARTITION_ROUTING_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_NOTION_PARTITION_SYNC_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionPartitionSyncCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_NOTION_PARTITION_SYNC_JOB_URL = new URL(
+  '../src/shared/jobs/backstageNotionPartitionSyncJob.ts',
+  import.meta.url
+);
 const TRINITY_DIRECT_ANSWER_MODE_URL = new URL(
   '../src/core/logic/trinityDirectAnswerMode.ts',
   import.meta.url
@@ -219,6 +239,10 @@ async function readBackstageNotionPreviewCanarySource() {
 async function readBackstageNotionRagCoreSource() {
   return (await readFile(BACKSTAGE_NOTION_RAG_CORE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageNotionPartitionSource(sourceUrl) {
+  return (await readFile(sourceUrl, 'utf8')).replace(/\r\n/gu, '\n');
 }
 
 async function readTrinityDirectAnswerModeSource() {
@@ -704,6 +728,101 @@ describe('native PR preview import boundary', () => {
       expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual(
         expect.arrayContaining([
           expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('pins only the pure partition authority contracts used by the preview proof', async () => {
+    const reviewedFiles = [
+      [
+        'src/shared/backstage/backstageNotionPartitionCore.ts',
+        BACKSTAGE_NOTION_PARTITION_CORE_URL,
+        'export const BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS = 2_048;',
+        'export const BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS = 4_096;',
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+        BACKSTAGE_NOTION_PARTITION_MATERIAL_CORE_URL,
+        "return createHash('sha256').update(sanitizedMarkdown, 'utf8').digest('hex');",
+        "return createHash('sha512').update(sanitizedMarkdown, 'utf8').digest('hex');",
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+        BACKSTAGE_NOTION_PARTITION_ROUTING_CORE_URL,
+        'export const BACKSTAGE_NOTION_PARTITION_ROUTING_VERSION = 1;',
+        'export const BACKSTAGE_NOTION_PARTITION_ROUTING_VERSION = 2;',
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
+        BACKSTAGE_NOTION_PARTITION_SYNC_CORE_URL,
+        "  'SHARD_CAPACITY_EXCEEDED',",
+        "  'SHARD_CAPACITY_RELAXED',",
+      ],
+      [
+        'src/shared/jobs/backstageNotionPartitionSyncJob.ts',
+        BACKSTAGE_NOTION_PARTITION_SYNC_JOB_URL,
+        "  'backstage-notion-partition-sync-job-v1';",
+        "  'backstage-notion-partition-sync-job-v2';",
+      ],
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles.map(([filePath]) => filePath))
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/services/backstageNotionPartitionSync.ts',
+        'src/services/backstageNotionPartitionRetrieval.ts',
+        'src/services/backstageNotionPartitionCutover.ts',
+        'src/services/backstageNotionPartitionDiagnostics.ts',
+        'src/services/backstageNotionPartitionSyncOperations.ts',
+        'src/core/db/repositories/backstageNotionPartitionRepository.ts',
+        'src/workers/backstageNotionPartitionSyncJob.ts',
+      ])
+    );
+
+    for (const [filePath, sourceUrl, expected, replacement] of reviewedFiles) {
+      const sourceText = await readBackstageNotionPartitionSource(sourceUrl);
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      const driftedSource = replaceRequired(
+        sourceText,
+        expected,
+        replacement
+      );
+      expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('rejects broader crypto access from the partition preview cores', async () => {
+    for (const [filePath, sourceUrl] of [
+      [
+        'src/shared/backstage/backstageNotionPartitionCore.ts',
+        BACKSTAGE_NOTION_PARTITION_CORE_URL,
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
+        BACKSTAGE_NOTION_PARTITION_MATERIAL_CORE_URL,
+      ],
+      [
+        'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
+        BACKSTAGE_NOTION_PARTITION_ROUTING_CORE_URL,
+      ],
+    ]) {
+      const sourceText = await readBackstageNotionPartitionSource(sourceUrl);
+      const broadenedCryptoImport = replaceRequired(
+        sourceText,
+        "import { createHash } from 'node:crypto';",
+        "import { createHash, randomBytes } from 'node:crypto';"
+      );
+      expect(findUnsafeRuntimeSyntax(filePath, broadenedCryptoImport)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            'forbidden runtime import binding "randomBytes:randomBytes"'
+          ),
         ])
       );
     }

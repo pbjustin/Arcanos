@@ -46,6 +46,10 @@ export type BackstageNotionPartitionSyncHttpOperation =
       kind: 'status';
       universeId: string;
       syncId: string;
+    }>
+  | Readonly<{
+      kind: 'diagnostics';
+      universeId: string;
     }>;
 
 type BackstageNotionPartitionSyncBoundaryRequest = Request & {
@@ -68,6 +72,11 @@ const PRINCIPAL_POLICIES: Readonly<
   },
   status: {
     bucketName: 'backstage-notion-partition-sync-status',
+    maxRequests: 120,
+    windowMs: BACKSTAGE_NOTION_PARTITION_STATUS_RATE_LIMIT_WINDOW_MS,
+  },
+  diagnostics: {
+    bucketName: 'backstage-notion-partition-diagnostics',
     maxRequests: 120,
     windowMs: BACKSTAGE_NOTION_PARTITION_STATUS_RATE_LIMIT_WINDOW_MS,
   },
@@ -115,7 +124,7 @@ function normalizeMethod(method: string): string {
 }
 
 /**
- * Resolve only the two canonical manual partition-sync routes.
+ * Resolve only the canonical manual partition-sync and diagnostic routes.
  *
  * The classifier rejects query strings, encoded path segments, optional
  * trailing slashes, extra segments, and unsupported methods. It deliberately
@@ -135,10 +144,7 @@ export function resolveBackstageNotionPartitionSyncHttpOperation(
 
   const suffix = pathname.slice(prefix.length);
   const segments = suffix.split('/');
-  if (
-    (segments.length !== 2 && segments.length !== 3)
-    || segments[1] !== 'syncs'
-  ) {
+  if (segments.length !== 2 && segments.length !== 3) {
     return null;
   }
   const universeId = decodeCanonicalSegment(segments[0] ?? '');
@@ -147,6 +153,14 @@ export function resolveBackstageNotionPartitionSyncHttpOperation(
   }
 
   const method = normalizeMethod(req.method);
+  if (segments.length === 2 && segments[1] === 'diagnostics') {
+    return method === 'GET'
+      ? Object.freeze({ kind: 'diagnostics' as const, universeId })
+      : null;
+  }
+  if (segments[1] !== 'syncs') {
+    return null;
+  }
   if (segments.length === 2) {
     return method === 'POST'
       ? Object.freeze({ kind: 'create' as const, universeId })

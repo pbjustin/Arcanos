@@ -16,9 +16,18 @@ import {
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import type { BackstageNotionRagCategory } from '@shared/backstage/backstageNotionRagCore.js';
 import {
+  BACKSTAGE_NOTION_PARTITION_OPTIONAL_UNAVAILABLE_REASON_CODES,
+  type BackstageNotionPartitionOptionalUnavailableReasonCode,
+} from '@shared/backstage/backstageNotionPartitionSyncCore.js';
+import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
+import {
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+  BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+  BACKSTAGE_NOTION_PARTITION_SYNC_MAX_ACTIVE_JOBS,
+} from '@shared/jobs/backstageNotionPartitionSyncJob.js';
 import { getPool } from '../client.js';
 
 export const BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS = 1_000;
@@ -37,6 +46,8 @@ export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_LEXICAL_POOL_SIZE = 256
 export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_SEMANTIC_POOL_PER_SHARD = 32;
 export const BACKSTAGE_NOTION_PARTITION_CANDIDATE_SEARCH_MAX_RESULTS = 128;
 export const BACKSTAGE_NOTION_PARTITION_SCOPE_PAGE_MAX_RESULTS = 128;
+export const BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_MAX_ACTIVE_JOBS =
+  BACKSTAGE_NOTION_PARTITION_SYNC_MAX_ACTIVE_JOBS;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -72,6 +83,8 @@ const BACKSTAGE_NOTION_RAG_CATEGORIES: ReadonlySet<BackstageNotionRagCategory> =
     'smackdown',
     'storylines',
   ]);
+const BACKSTAGE_NOTION_PARTITION_DIAGNOSTIC_SAFE_REASON_CODES: ReadonlySet<string> =
+  new Set(BACKSTAGE_NOTION_PARTITION_OPTIONAL_UNAVAILABLE_REASON_CODES);
 
 export type BackstageNotionPartitionRepositoryErrorCode =
   | 'BACKSTAGE_NOTION_PARTITION_CONFIGURATION_COLLISION'
@@ -498,6 +511,89 @@ export interface BackstageNotionActiveManifestRoutingState {
   readonly omissions: readonly BackstageNotionActiveManifestRoutingOmission[];
 }
 
+export interface BackstageNotionPartitionDiagnosticsActiveManifest {
+  readonly manifestId: string;
+  readonly configurationVersionId: string;
+  readonly configurationGeneration: string;
+  readonly configurationHash: string;
+  readonly createdAt: Date;
+  readonly sealedAt: Date;
+  readonly memberCount: number;
+  readonly omissionCount: number;
+  readonly pageCount: number;
+  readonly chunkCount: number;
+}
+
+export interface BackstageNotionPartitionDiagnosticsLastKnownGood {
+  readonly snapshotId: string;
+  readonly partitionVersionId: string;
+  readonly exactForConfiguredPartition: boolean;
+  readonly pageCount: number;
+  readonly chunkCount: number;
+  readonly createdAt: Date;
+  readonly sealedAt: Date;
+}
+
+export type BackstageNotionPartitionDiagnosticsManifestRecord =
+  | Readonly<{
+      kind: 'member';
+      decision: BackstageNotionManifestMemberDecision;
+      snapshotId: string;
+      verifiedAt: Date;
+      pageCount: number;
+      chunkCount: number;
+    }>
+  | Readonly<{
+      kind: 'omission';
+      decision: BackstageNotionManifestOmissionDecision;
+      safeReasonCode: BackstageNotionPartitionOptionalUnavailableReasonCode;
+    }>;
+
+export interface BackstageNotionPartitionDiagnosticsActiveLease {
+  readonly acquiredAt: Date;
+  readonly expiresAt: Date;
+}
+
+export interface BackstageNotionPartitionDiagnosticsActiveJobs {
+  readonly total: number;
+  readonly pending: number;
+  readonly running: number;
+  readonly configurationStale: number;
+}
+
+export interface BackstageNotionPartitionDiagnosticsShard {
+  readonly shardKey: string;
+  readonly partitionVersionId: string;
+  readonly currentHeadPartitionVersionId: string;
+  readonly retrievalTier: BackstageNotionRetrievalTier;
+  readonly required: boolean;
+  readonly scopeTags: readonly string[];
+  readonly categoryTags: readonly string[];
+  readonly headGeneration: string;
+  readonly snapshotGeneration: string;
+  readonly lastAttemptAt: Date | null;
+  readonly lastVerifiedAt: Date | null;
+  readonly lastKnownGood: BackstageNotionPartitionDiagnosticsLastKnownGood | null;
+  readonly manifestRecord: BackstageNotionPartitionDiagnosticsManifestRecord | null;
+  readonly lease: BackstageNotionPartitionDiagnosticsActiveLease | null;
+  readonly activeJobs: BackstageNotionPartitionDiagnosticsActiveJobs;
+}
+
+export interface BackstageNotionPartitionDiagnosticsState {
+  readonly universeId: string;
+  readonly observedAt: Date;
+  readonly authorityActive: boolean;
+  readonly desiredConfigurationVersionId: string;
+  readonly desiredConfigurationGeneration: string;
+  readonly desiredConfigurationHash: string;
+  readonly headGeneration: string;
+  readonly manifestGeneration: string;
+  readonly activeManifest: BackstageNotionPartitionDiagnosticsActiveManifest | null;
+  readonly activeJobCount: number;
+  readonly unconfiguredActiveJobCount: number;
+  readonly shards: readonly BackstageNotionPartitionDiagnosticsShard[];
+}
+
 export interface BackstageNotionManifestScopeOwnerLookup {
   readonly pageTitleKey: string;
   readonly pagePathKey: readonly string[] | null;
@@ -871,6 +967,72 @@ interface ActiveManifestRoutingRow {
   snapshot_sealed_at: TimestampValue | null;
   omission_decision: string | null;
   safe_reason_code: string | null;
+}
+
+interface PartitionDiagnosticsRow {
+  observed_at: TimestampValue;
+  authority: string;
+  desired_configuration_version_id: string;
+  desired_configuration_generation: string;
+  desired_configuration_hash: string;
+  universe_head_generation: number | string;
+  manifest_generation: number | string;
+  configured_shard_count: number | string;
+  configuration_state: string;
+  head_active_manifest_id: string | null;
+  head_active_configuration_version_id: string | null;
+  active_manifest_id: string | null;
+  manifest_configuration_version_id: string | null;
+  manifest_configuration_generation: string | null;
+  manifest_configuration_hash: string | null;
+  manifest_member_count: number | string | null;
+  manifest_omission_count: number | string | null;
+  manifest_page_count: number | string | null;
+  manifest_chunk_count: number | string | null;
+  manifest_state: string | null;
+  manifest_created_at: TimestampValue | null;
+  manifest_sealed_at: TimestampValue | null;
+  shard_key: string;
+  partition_version_id: string;
+  retrieval_tier: string;
+  is_required: boolean;
+  scope_tags: unknown;
+  category_tags: unknown;
+  current_partition_version_id: string;
+  active_snapshot_id: string | null;
+  shard_head_generation: number | string;
+  snapshot_generation: number | string;
+  last_attempt_at: TimestampValue | null;
+  last_verified_at: TimestampValue | null;
+  lkg_snapshot_id: string | null;
+  lkg_partition_version_id: string | null;
+  lkg_page_count: number | string | null;
+  lkg_chunk_count: number | string | null;
+  lkg_state: string | null;
+  lkg_created_at: TimestampValue | null;
+  lkg_sealed_at: TimestampValue | null;
+  manifest_member_snapshot_id: string | null;
+  manifest_member_decision: string | null;
+  manifest_member_required: boolean | null;
+  manifest_member_verified_at: TimestampValue | null;
+  manifest_snapshot_id: string | null;
+  manifest_snapshot_page_count: number | string | null;
+  manifest_snapshot_chunk_count: number | string | null;
+  manifest_snapshot_state: string | null;
+  manifest_snapshot_created_at: TimestampValue | null;
+  manifest_snapshot_sealed_at: TimestampValue | null;
+  omission_decision: string | null;
+  omission_safe_reason_code: string | null;
+  lease_acquired_at: TimestampValue | null;
+  lease_expires_at: TimestampValue | null;
+  active_job_candidate_count: number | string;
+  universe_active_job_count: number | string;
+  invalid_active_job_count: number | string;
+  unconfigured_active_job_count: number | string;
+  shard_active_job_count: number | string;
+  shard_pending_job_count: number | string;
+  shard_running_job_count: number | string;
+  shard_stale_configuration_job_count: number | string;
 }
 
 interface ManifestScopeOwnerRow {
@@ -1863,6 +2025,17 @@ function parseRetrievalTier(
     throw new Error(`${label} is not a supported retrieval tier.`);
   }
   return value;
+}
+
+function parseDiagnosticSafeReasonCode(
+  value: string,
+  label: string
+): BackstageNotionPartitionOptionalUnavailableReasonCode {
+  const normalized = normalizePattern(value, label, SAFE_REASON_CODE_PATTERN);
+  if (!BACKSTAGE_NOTION_PARTITION_DIAGNOSTIC_SAFE_REASON_CODES.has(normalized)) {
+    throw new Error(`${label} is not an approved shard failure reason.`);
+  }
+  return normalized as BackstageNotionPartitionOptionalUnavailableReasonCode;
 }
 
 function normalizeShadowCoveragePageIds(
@@ -2932,6 +3105,956 @@ export class PostgresBackstageNotionPartitionRepository {
       chunkCount,
       members: Object.freeze(members),
       omissions: Object.freeze(omissions),
+    });
+  }
+
+  /**
+   * Load one bounded, metadata-only operational view in a repeatable-read
+   * snapshot. The query deliberately excludes source roots, page identities,
+   * corpus material, provider coordinates, lease fences, and job payloads.
+   */
+  async loadUniverseDiagnosticsState(
+    universeId: string
+  ): Promise<BackstageNotionPartitionDiagnosticsState | null> {
+    const normalizedUniverseId = normalizeUniverseId(universeId);
+    const result = await withCandidateSearchTransaction(this.pool, client =>
+      client.query<PartitionDiagnosticsRow>(
+        `WITH pinned_universe AS MATERIALIZED (
+           SELECT
+             statement_timestamp() AS observed_at,
+             authority_head.authority,
+             partition_head.desired_configuration_version_id,
+             partition_head.desired_configuration_generation,
+             partition_head.desired_configuration_hash,
+             partition_head.head_generation AS universe_head_generation,
+             partition_head.manifest_generation,
+             partition_head.active_manifest_id AS head_active_manifest_id,
+             partition_head.active_configuration_version_id
+               AS head_active_configuration_version_id,
+             configuration.shard_count AS configured_shard_count,
+             configuration.state AS configuration_state,
+             manifest.id AS active_manifest_id,
+             manifest.partition_configuration_version_id
+               AS manifest_configuration_version_id,
+             manifest.configuration_generation
+               AS manifest_configuration_generation,
+             manifest.configuration_hash AS manifest_configuration_hash,
+             manifest.member_count AS manifest_member_count,
+             manifest.omission_count AS manifest_omission_count,
+             manifest.page_count AS manifest_page_count,
+             manifest.chunk_count AS manifest_chunk_count,
+             manifest.state AS manifest_state,
+             manifest.created_at AS manifest_created_at,
+             manifest.sealed_at AS manifest_sealed_at
+           FROM public.backstage_notion_universe_heads AS authority_head
+           JOIN public.backstage_notion_partitioned_universe_heads
+             AS partition_head
+             ON partition_head.universe_id = authority_head.universe_id
+           JOIN public.backstage_notion_partition_configuration_versions
+             AS configuration
+             ON configuration.universe_id = partition_head.universe_id
+            AND configuration.id =
+              partition_head.desired_configuration_version_id
+            AND configuration.configuration_generation =
+              partition_head.desired_configuration_generation
+            AND configuration.configuration_hash =
+              partition_head.desired_configuration_hash
+            AND configuration.state = 'sealed'
+           LEFT JOIN public.backstage_notion_universe_manifests AS manifest
+             ON manifest.universe_id = partition_head.universe_id
+            AND manifest.id = partition_head.active_manifest_id
+            AND manifest.partition_configuration_version_id =
+              partition_head.active_configuration_version_id
+            AND manifest.state = 'sealed'
+           WHERE authority_head.universe_id = $1
+         ),
+         active_job_candidates AS MATERIALIZED (
+           SELECT
+             job.status,
+             job.created_at,
+             job.updated_at,
+             job.started_at,
+             job.input ->> 'universeId' AS job_universe_id,
+             job.input ->> 'shardKey' AS job_shard_key,
+             job.input ->> 'configurationGeneration'
+               AS job_configuration_generation,
+             job.input ->> 'configurationDigest'
+               AS job_configuration_digest,
+             CASE
+               WHEN pg_catalog.jsonb_typeof(job.input) <> 'object' THEN FALSE
+               ELSE COALESCE((
+                 job.input ->> 'protocol' = $5
+                 AND job.input ->> 'version' = '1'
+                 AND job.input ->> 'universeId'
+                   ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                 AND job.input ->> 'universeId' NOT IN (
+                   '__proto__', 'constructor', 'prototype'
+                 )
+                 AND job.input ->> 'shardKey'
+                   ~ '^[a-z0-9][a-z0-9._:/-]{0,127}$'
+                 AND job.input ->> 'shardKey' NOT IN (
+                   '__proto__', 'constructor', 'prototype'
+                 )
+                 AND job.input ->> 'configurationGeneration'
+                   ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                 AND job.input ->> 'configurationGeneration' NOT IN (
+                   '__proto__', 'constructor', 'prototype'
+                 )
+                 AND job.input ->> 'configurationDigest' ~ '^[0-9a-f]{64}$'
+                 AND (
+                   SELECT pg_catalog.array_agg(field.key ORDER BY field.key)
+                   FROM pg_catalog.jsonb_object_keys(job.input) AS field(key)
+                 ) = ARRAY[
+                   'configurationDigest',
+                   'configurationGeneration',
+                   'protocol',
+                   'shardKey',
+                   'universeId',
+                   'version'
+                 ]::TEXT[]
+               ), FALSE)
+             END AS target_valid,
+             CASE
+               WHEN job.created_at IS NULL
+                 OR job.updated_at IS NULL
+                 OR NOT pg_catalog.isfinite(job.created_at)
+                 OR NOT pg_catalog.isfinite(job.updated_at)
+                 OR job.updated_at < job.created_at
+                 OR (
+                   job.started_at IS NOT NULL
+                   AND (
+                     NOT pg_catalog.isfinite(job.started_at)
+                     OR job.started_at < job.created_at
+                     OR job.started_at > job.updated_at
+                   )
+                 )
+                 OR (job.status = 'running' AND job.started_at IS NULL)
+               THEN FALSE
+               ELSE TRUE
+             END AS timestamps_valid
+           FROM public.job_data AS job
+           WHERE job.worker_id = $4
+             AND job.job_type = $4
+             AND job.status IN ('pending', 'running')
+             AND job.input ->> 'universeId' = $1
+           ORDER BY job.created_at
+           LIMIT $2
+         ),
+         configured_shards AS MATERIALIZED (
+           SELECT
+             pinned.*,
+             definition.shard_key,
+             definition.id AS partition_version_id,
+             definition.retrieval_tier,
+             definition.is_required,
+             definition.scope_tags,
+             definition.category_tags,
+             shard_head.current_partition_version_id,
+             shard_head.active_snapshot_id,
+             shard_head.head_generation AS shard_head_generation,
+             shard_head.snapshot_generation,
+             shard_head.last_attempt_at,
+             shard_head.last_verified_at,
+             lkg_snapshot.id AS lkg_snapshot_id,
+             lkg_snapshot.partition_version_id AS lkg_partition_version_id,
+             lkg_snapshot.page_count AS lkg_page_count,
+             lkg_snapshot.chunk_count AS lkg_chunk_count,
+             lkg_snapshot.state AS lkg_state,
+             lkg_snapshot.created_at AS lkg_created_at,
+             lkg_snapshot.sealed_at AS lkg_sealed_at,
+             manifest_member.shard_snapshot_id
+               AS manifest_member_snapshot_id,
+             manifest_member.decision AS manifest_member_decision,
+             manifest_member.is_required AS manifest_member_required,
+             manifest_member.verified_at AS manifest_member_verified_at,
+             manifest_snapshot.id AS manifest_snapshot_id,
+             manifest_snapshot.page_count AS manifest_snapshot_page_count,
+             manifest_snapshot.chunk_count AS manifest_snapshot_chunk_count,
+             manifest_snapshot.state AS manifest_snapshot_state,
+             manifest_snapshot.created_at AS manifest_snapshot_created_at,
+             manifest_snapshot.sealed_at AS manifest_snapshot_sealed_at,
+             omission.decision AS omission_decision,
+             omission.safe_reason_code AS omission_safe_reason_code,
+             active_lease.acquired_at AS lease_acquired_at,
+             active_lease.expires_at AS lease_expires_at
+           FROM pinned_universe AS pinned
+           JOIN public.backstage_notion_partition_configuration_members
+             AS configured_member
+             ON configured_member.universe_id = $1
+            AND configured_member.partition_configuration_version_id =
+              pinned.desired_configuration_version_id
+            AND configured_member.configuration_generation =
+              pinned.desired_configuration_generation
+           JOIN public.backstage_notion_partition_versions AS definition
+             ON definition.universe_id = configured_member.universe_id
+            AND definition.shard_key = configured_member.shard_key
+            AND definition.id = configured_member.partition_version_id
+           JOIN public.backstage_notion_shard_heads AS shard_head
+             ON shard_head.universe_id = configured_member.universe_id
+            AND shard_head.shard_key = configured_member.shard_key
+           LEFT JOIN public.backstage_notion_shard_snapshots AS lkg_snapshot
+             ON lkg_snapshot.universe_id = shard_head.universe_id
+            AND lkg_snapshot.shard_key = shard_head.shard_key
+            AND lkg_snapshot.id = shard_head.active_snapshot_id
+            AND lkg_snapshot.state = 'sealed'
+           LEFT JOIN public.backstage_notion_universe_manifest_shards
+             AS manifest_member
+             ON manifest_member.universe_id = configured_member.universe_id
+            AND manifest_member.manifest_id = pinned.active_manifest_id
+            AND manifest_member.shard_key = configured_member.shard_key
+            AND manifest_member.partition_version_id =
+              configured_member.partition_version_id
+           LEFT JOIN public.backstage_notion_shard_snapshots
+             AS manifest_snapshot
+             ON manifest_snapshot.universe_id = manifest_member.universe_id
+            AND manifest_snapshot.shard_key = manifest_member.shard_key
+            AND manifest_snapshot.partition_version_id =
+              manifest_member.partition_version_id
+            AND manifest_snapshot.id = manifest_member.shard_snapshot_id
+            AND manifest_snapshot.state = 'sealed'
+           LEFT JOIN public.backstage_notion_universe_manifest_omissions
+             AS omission
+             ON omission.universe_id = configured_member.universe_id
+            AND omission.manifest_id = pinned.active_manifest_id
+            AND omission.shard_key = configured_member.shard_key
+            AND omission.partition_version_id =
+              configured_member.partition_version_id
+           LEFT JOIN public.backstage_notion_shard_sync_leases AS active_lease
+             ON active_lease.universe_id = configured_member.universe_id
+            AND active_lease.shard_key = configured_member.shard_key
+            AND active_lease.expires_at > pinned.observed_at
+           ORDER BY definition.shard_key
+           LIMIT $3
+         ),
+         active_job_integrity AS MATERIALIZED (
+           SELECT
+             pg_catalog.count(*) AS active_job_candidate_count,
+             pg_catalog.count(*) FILTER (
+               WHERE NOT target_valid OR NOT timestamps_valid
+             ) AS invalid_active_job_count,
+             pg_catalog.count(*) FILTER (
+               WHERE target_valid
+             ) AS universe_active_job_count
+           FROM active_job_candidates
+         ),
+         unconfigured_jobs AS MATERIALIZED (
+           SELECT pg_catalog.count(*) AS unconfigured_active_job_count
+           FROM active_job_candidates AS job
+           WHERE job.target_valid
+             AND job.job_universe_id = $1
+             AND NOT EXISTS (
+               SELECT 1
+               FROM configured_shards AS shard
+               WHERE shard.shard_key = job.job_shard_key
+             )
+         ),
+         shard_jobs AS MATERIALIZED (
+           SELECT
+             shard.shard_key,
+             pg_catalog.count(job.status) AS shard_active_job_count,
+             pg_catalog.count(job.status) FILTER (
+               WHERE job.status = 'pending'
+             ) AS shard_pending_job_count,
+             pg_catalog.count(job.status) FILTER (
+               WHERE job.status = 'running'
+             ) AS shard_running_job_count,
+             pg_catalog.count(job.status) FILTER (
+               WHERE job.job_configuration_generation <>
+                       shard.desired_configuration_generation
+                  OR job.job_configuration_digest <>
+                       shard.desired_configuration_hash
+             ) AS shard_stale_configuration_job_count
+           FROM configured_shards AS shard
+           LEFT JOIN active_job_candidates AS job
+             ON job.target_valid
+            AND job.job_universe_id = $1
+            AND job.job_shard_key = shard.shard_key
+           GROUP BY shard.shard_key
+         )
+         SELECT
+           shard.*,
+           integrity.active_job_candidate_count,
+           integrity.universe_active_job_count,
+           integrity.invalid_active_job_count,
+           unconfigured.unconfigured_active_job_count,
+           jobs.shard_active_job_count,
+           jobs.shard_pending_job_count,
+           jobs.shard_running_job_count,
+           jobs.shard_stale_configuration_job_count
+         FROM configured_shards AS shard
+         CROSS JOIN active_job_integrity AS integrity
+         CROSS JOIN unconfigured_jobs AS unconfigured
+         JOIN shard_jobs AS jobs USING (shard_key)
+         ORDER BY shard.shard_key`,
+        [
+          normalizedUniverseId,
+          BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_MAX_ACTIVE_JOBS + 1,
+          BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE + 1,
+          BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
+          BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
+        ]
+      )
+    );
+    if (result.rows.length === 0) {
+      return null;
+    }
+    if (result.rows.length > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE) {
+      throw new Error('Partition diagnostics exceeds its bounded shard contract.');
+    }
+
+    const first = result.rows[0]!;
+    const observedAt = parseDate(first.observed_at, 'observed_at');
+    const desiredConfigurationVersionId = normalizeUuid(
+      first.desired_configuration_version_id,
+      'desired_configuration_version_id'
+    );
+    const desiredConfigurationGeneration = normalizePattern(
+      first.desired_configuration_generation,
+      'desired_configuration_generation',
+      GENERATION_PATTERN
+    );
+    const desiredConfigurationHash = normalizeSha256(
+      first.desired_configuration_hash,
+      'desired_configuration_hash'
+    );
+    const headGeneration = mapGeneration(
+      first.universe_head_generation,
+      'universe_head_generation'
+    );
+    const manifestGeneration = mapGeneration(
+      first.manifest_generation,
+      'manifest_generation'
+    );
+    const configuredShardCount = normalizeDatabaseInteger(
+      first.configured_shard_count,
+      'configured_shard_count',
+      1
+    );
+    if (
+      configuredShardCount > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+      || configuredShardCount !== result.rows.length
+      || first.configuration_state !== 'sealed'
+      || (first.authority !== 'notion' && first.authority !== 'postgres')
+    ) {
+      throw new Error('Partition diagnostics configuration is internally inconsistent.');
+    }
+
+    const activeJobCandidateCount = normalizeDatabaseInteger(
+      first.active_job_candidate_count,
+      'active_job_candidate_count'
+    );
+    const activeJobCount = normalizeDatabaseInteger(
+      first.universe_active_job_count,
+      'universe_active_job_count'
+    );
+    const invalidActiveJobCount = normalizeDatabaseInteger(
+      first.invalid_active_job_count,
+      'invalid_active_job_count'
+    );
+    const unconfiguredActiveJobCount = normalizeDatabaseInteger(
+      first.unconfigured_active_job_count,
+      'unconfigured_active_job_count'
+    );
+    if (
+      activeJobCandidateCount > BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_MAX_ACTIVE_JOBS
+      || activeJobCount > activeJobCandidateCount
+      || invalidActiveJobCount !== 0
+      || unconfiguredActiveJobCount > activeJobCount
+    ) {
+      throw new Error('Partition diagnostics active-job metadata is invalid or unbounded.');
+    }
+
+    const headActiveManifestId = first.head_active_manifest_id === null
+      ? null
+      : normalizeUuid(first.head_active_manifest_id, 'head_active_manifest_id');
+    const headActiveConfigurationVersionId =
+      first.head_active_configuration_version_id === null
+        ? null
+        : normalizeUuid(
+            first.head_active_configuration_version_id,
+            'head_active_configuration_version_id'
+          );
+    let activeManifest: BackstageNotionPartitionDiagnosticsActiveManifest | null = null;
+    if (headActiveManifestId === null) {
+      if (
+        headActiveConfigurationVersionId !== null
+        || first.active_manifest_id !== null
+        || first.manifest_configuration_version_id !== null
+        || first.manifest_configuration_generation !== null
+        || first.manifest_configuration_hash !== null
+        || first.manifest_member_count !== null
+        || first.manifest_omission_count !== null
+        || first.manifest_page_count !== null
+        || first.manifest_chunk_count !== null
+        || first.manifest_state !== null
+        || first.manifest_created_at !== null
+        || first.manifest_sealed_at !== null
+        || manifestGeneration !== '0'
+      ) {
+        throw new Error('Partition diagnostics contains an incomplete manifest head.');
+      }
+    } else {
+      if (
+        headActiveConfigurationVersionId === null
+        || first.active_manifest_id === null
+        || first.manifest_configuration_version_id === null
+        || first.manifest_configuration_generation === null
+        || first.manifest_configuration_hash === null
+        || first.manifest_member_count === null
+        || first.manifest_omission_count === null
+        || first.manifest_page_count === null
+        || first.manifest_chunk_count === null
+        || first.manifest_state !== 'sealed'
+        || first.manifest_created_at === null
+        || first.manifest_sealed_at === null
+        || manifestGeneration === '0'
+      ) {
+        throw new Error('Partition diagnostics active manifest is incomplete.');
+      }
+      const manifestId = normalizeUuid(first.active_manifest_id, 'active_manifest_id');
+      const configurationVersionId = normalizeUuid(
+        first.manifest_configuration_version_id,
+        'manifest_configuration_version_id'
+      );
+      const createdAt = parseDate(first.manifest_created_at, 'manifest_created_at');
+      const sealedAt = parseDate(first.manifest_sealed_at, 'manifest_sealed_at');
+      const memberCount = normalizeDatabaseInteger(
+        first.manifest_member_count,
+        'manifest_member_count',
+        1
+      );
+      const omissionCount = normalizeDatabaseInteger(
+        first.manifest_omission_count,
+        'manifest_omission_count'
+      );
+      const pageCount = normalizeDatabaseInteger(
+        first.manifest_page_count,
+        'manifest_page_count',
+        1
+      );
+      const chunkCount = normalizeDatabaseInteger(
+        first.manifest_chunk_count,
+        'manifest_chunk_count',
+        1
+      );
+      if (
+        manifestId !== headActiveManifestId
+        || configurationVersionId !== headActiveConfigurationVersionId
+        || memberCount + omissionCount > BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE
+        || createdAt.getTime() > sealedAt.getTime()
+        || sealedAt.getTime() > observedAt.getTime()
+      ) {
+        throw new Error('Partition diagnostics active manifest crossed authority generations.');
+      }
+      activeManifest = Object.freeze({
+        manifestId,
+        configurationVersionId,
+        configurationGeneration: normalizePattern(
+          first.manifest_configuration_generation,
+          'manifest_configuration_generation',
+          GENERATION_PATTERN
+        ),
+        configurationHash: normalizeSha256(
+          first.manifest_configuration_hash,
+          'manifest_configuration_hash'
+        ),
+        createdAt,
+        sealedAt,
+        memberCount,
+        omissionCount,
+        pageCount,
+        chunkCount,
+      });
+    }
+
+    const nullableTimestamp = (
+      value: TimestampValue | null,
+      label: string
+    ): Date | null => value === null ? null : parseDate(value, label);
+    const sameTimestamp = (
+      value: TimestampValue,
+      expected: Date,
+      label: string
+    ): boolean => parseDate(value, label).getTime() === expected.getTime();
+    const shardKeys = new Set<string>();
+    const shards: BackstageNotionPartitionDiagnosticsShard[] = [];
+    let configuredActiveJobCount = 0;
+    let currentManifestMemberCount = 0;
+    let currentManifestOmissionCount = 0;
+    let currentManifestPageCount = 0;
+    let currentManifestChunkCount = 0;
+    const activeManifestCurrent = activeManifest !== null
+      && activeManifest.configurationVersionId === desiredConfigurationVersionId
+      && activeManifest.configurationGeneration === desiredConfigurationGeneration
+      && activeManifest.configurationHash === desiredConfigurationHash;
+
+    for (const [index, row] of result.rows.entries()) {
+      const label = `diagnostic_rows[${index}]`;
+      if (
+        !sameTimestamp(row.observed_at, observedAt, `${label}.observed_at`)
+        || row.authority !== first.authority
+        || normalizeUuid(
+          row.desired_configuration_version_id,
+          `${label}.desired_configuration_version_id`
+        ) !== desiredConfigurationVersionId
+        || normalizePattern(
+          row.desired_configuration_generation,
+          `${label}.desired_configuration_generation`,
+          GENERATION_PATTERN
+        ) !== desiredConfigurationGeneration
+        || normalizeSha256(
+          row.desired_configuration_hash,
+          `${label}.desired_configuration_hash`
+        ) !== desiredConfigurationHash
+        || mapGeneration(
+          row.universe_head_generation,
+          `${label}.universe_head_generation`
+        ) !== headGeneration
+        || mapGeneration(row.manifest_generation, `${label}.manifest_generation`)
+          !== manifestGeneration
+        || normalizeDatabaseInteger(
+          row.configured_shard_count,
+          `${label}.configured_shard_count`,
+          1
+        ) !== configuredShardCount
+        || row.configuration_state !== 'sealed'
+        || normalizeDatabaseInteger(
+          row.active_job_candidate_count,
+          `${label}.active_job_candidate_count`
+        ) !== activeJobCandidateCount
+        || normalizeDatabaseInteger(
+          row.universe_active_job_count,
+          `${label}.universe_active_job_count`
+        ) !== activeJobCount
+        || normalizeDatabaseInteger(
+          row.invalid_active_job_count,
+          `${label}.invalid_active_job_count`
+        ) !== invalidActiveJobCount
+        || normalizeDatabaseInteger(
+          row.unconfigured_active_job_count,
+          `${label}.unconfigured_active_job_count`
+        ) !== unconfiguredActiveJobCount
+      ) {
+        throw new Error('Partition diagnostics rows crossed authority generations.');
+      }
+      const rowHeadManifestId = row.head_active_manifest_id === null
+        ? null
+        : normalizeUuid(row.head_active_manifest_id, `${label}.head_active_manifest_id`);
+      const rowHeadConfigurationId =
+        row.head_active_configuration_version_id === null
+          ? null
+          : normalizeUuid(
+              row.head_active_configuration_version_id,
+              `${label}.head_active_configuration_version_id`
+            );
+      const rowHasManifestProjection =
+        row.active_manifest_id !== null
+        || row.manifest_configuration_version_id !== null
+        || row.manifest_configuration_generation !== null
+        || row.manifest_configuration_hash !== null
+        || row.manifest_member_count !== null
+        || row.manifest_omission_count !== null
+        || row.manifest_page_count !== null
+        || row.manifest_chunk_count !== null
+        || row.manifest_state !== null
+        || row.manifest_created_at !== null
+        || row.manifest_sealed_at !== null;
+      if (
+        rowHeadManifestId !== headActiveManifestId
+        || rowHeadConfigurationId !== headActiveConfigurationVersionId
+        || (activeManifest === null && rowHasManifestProjection)
+        || (
+          activeManifest !== null
+          && (
+            row.active_manifest_id === null
+            || row.manifest_configuration_version_id === null
+            || row.manifest_configuration_generation === null
+            || row.manifest_configuration_hash === null
+            || row.manifest_member_count === null
+            || row.manifest_omission_count === null
+            || row.manifest_page_count === null
+            || row.manifest_chunk_count === null
+            || normalizeUuid(row.active_manifest_id!, `${label}.active_manifest_id`)
+              !== activeManifest.manifestId
+            || normalizeUuid(
+              row.manifest_configuration_version_id!,
+              `${label}.manifest_configuration_version_id`
+            ) !== activeManifest.configurationVersionId
+            || normalizePattern(
+              row.manifest_configuration_generation!,
+              `${label}.manifest_configuration_generation`,
+              GENERATION_PATTERN
+            ) !== activeManifest.configurationGeneration
+            || normalizeSha256(
+              row.manifest_configuration_hash!,
+              `${label}.manifest_configuration_hash`
+            ) !== activeManifest.configurationHash
+            || normalizeDatabaseInteger(
+              row.manifest_member_count!,
+              `${label}.manifest_member_count`,
+              1
+            ) !== activeManifest.memberCount
+            || normalizeDatabaseInteger(
+              row.manifest_omission_count!,
+              `${label}.manifest_omission_count`
+            ) !== activeManifest.omissionCount
+            || normalizeDatabaseInteger(
+              row.manifest_page_count!,
+              `${label}.manifest_page_count`,
+              1
+            ) !== activeManifest.pageCount
+            || normalizeDatabaseInteger(
+              row.manifest_chunk_count!,
+              `${label}.manifest_chunk_count`,
+              1
+            ) !== activeManifest.chunkCount
+            || row.manifest_state !== 'sealed'
+            || row.manifest_created_at === null
+            || row.manifest_sealed_at === null
+            || !sameTimestamp(
+              row.manifest_created_at,
+              activeManifest.createdAt,
+              `${label}.manifest_created_at`
+            )
+            || !sameTimestamp(
+              row.manifest_sealed_at,
+              activeManifest.sealedAt,
+              `${label}.manifest_sealed_at`
+            )
+          )
+        )
+      ) {
+        throw new Error('Partition diagnostics manifest rows are inconsistent.');
+      }
+
+      const shardKey = normalizeShardKey(row.shard_key);
+      if (shardKeys.has(shardKey)) {
+        throw new Error('Partition diagnostics contains duplicate configured shards.');
+      }
+      shardKeys.add(shardKey);
+      if (typeof row.is_required !== 'boolean') {
+        throw new Error(`${label}.is_required is invalid.`);
+      }
+      const partitionVersionId = normalizeUuid(
+        row.partition_version_id,
+        `${label}.partition_version_id`
+      );
+      const currentHeadPartitionVersionId = normalizeUuid(
+        row.current_partition_version_id,
+        `${label}.current_partition_version_id`
+      );
+      const snapshotGeneration = mapGeneration(
+        row.snapshot_generation,
+        `${label}.snapshot_generation`
+      );
+      const lastAttemptAt = nullableTimestamp(
+        row.last_attempt_at,
+        `${label}.last_attempt_at`
+      );
+      const lastVerifiedAt = nullableTimestamp(
+        row.last_verified_at,
+        `${label}.last_verified_at`
+      );
+      const activeSnapshotId = row.active_snapshot_id === null
+        ? null
+        : normalizeUuid(row.active_snapshot_id, `${label}.active_snapshot_id`);
+      let lastKnownGood: BackstageNotionPartitionDiagnosticsLastKnownGood | null = null;
+      if (activeSnapshotId === null) {
+        if (
+          snapshotGeneration !== '0'
+          || row.lkg_snapshot_id !== null
+          || row.lkg_partition_version_id !== null
+          || row.lkg_page_count !== null
+          || row.lkg_chunk_count !== null
+          || row.lkg_state !== null
+          || row.lkg_created_at !== null
+          || row.lkg_sealed_at !== null
+          || lastVerifiedAt !== null
+        ) {
+          throw new Error(`${label} contains an incomplete empty shard head.`);
+        }
+      } else {
+        if (
+          snapshotGeneration === '0'
+          || row.lkg_snapshot_id === null
+          || row.lkg_partition_version_id === null
+          || row.lkg_page_count === null
+          || row.lkg_chunk_count === null
+          || row.lkg_state !== 'sealed'
+          || row.lkg_created_at === null
+          || row.lkg_sealed_at === null
+          || lastVerifiedAt === null
+        ) {
+          throw new Error(`${label} contains an incomplete last-known-good snapshot.`);
+        }
+        const snapshotId = normalizeUuid(
+          row.lkg_snapshot_id,
+          `${label}.lkg_snapshot_id`
+        );
+        const snapshotPartitionVersionId = normalizeUuid(
+          row.lkg_partition_version_id,
+          `${label}.lkg_partition_version_id`
+        );
+        const pageCount = normalizeDatabaseInteger(
+          row.lkg_page_count,
+          `${label}.lkg_page_count`,
+          1
+        );
+        const chunkCount = normalizeDatabaseInteger(
+          row.lkg_chunk_count,
+          `${label}.lkg_chunk_count`,
+          1
+        );
+        const createdAt = parseDate(row.lkg_created_at, `${label}.lkg_created_at`);
+        const sealedAt = parseDate(row.lkg_sealed_at, `${label}.lkg_sealed_at`);
+        if (
+          snapshotId !== activeSnapshotId
+          || snapshotPartitionVersionId !== currentHeadPartitionVersionId
+          || pageCount > BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+          || chunkCount > BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+          || createdAt.getTime() > sealedAt.getTime()
+          || sealedAt.getTime() > observedAt.getTime()
+        ) {
+          throw new Error(`${label} last-known-good snapshot is inconsistent.`);
+        }
+        lastKnownGood = Object.freeze({
+          snapshotId,
+          partitionVersionId: snapshotPartitionVersionId,
+          exactForConfiguredPartition:
+            snapshotPartitionVersionId === partitionVersionId,
+          pageCount,
+          chunkCount,
+          createdAt,
+          sealedAt,
+        });
+      }
+
+      const hasMember = row.manifest_member_snapshot_id !== null
+        || row.manifest_member_decision !== null
+        || row.manifest_member_required !== null
+        || row.manifest_member_verified_at !== null
+        || row.manifest_snapshot_id !== null
+        || row.manifest_snapshot_page_count !== null
+        || row.manifest_snapshot_chunk_count !== null
+        || row.manifest_snapshot_state !== null
+        || row.manifest_snapshot_created_at !== null
+        || row.manifest_snapshot_sealed_at !== null;
+      const hasOmission = row.omission_decision !== null
+        || row.omission_safe_reason_code !== null;
+      if (hasMember && hasOmission) {
+        throw new Error(`${label} is both a manifest member and omission.`);
+      }
+      let manifestRecord: BackstageNotionPartitionDiagnosticsManifestRecord | null = null;
+      if (hasMember) {
+        if (
+          activeManifest === null
+          || row.manifest_member_snapshot_id === null
+          || (
+            row.manifest_member_decision !== 'fresh'
+            && row.manifest_member_decision !== 'retained_last_known_good'
+          )
+          || typeof row.manifest_member_required !== 'boolean'
+          || row.manifest_member_required !== row.is_required
+          || row.manifest_member_verified_at === null
+          || row.manifest_snapshot_id === null
+          || row.manifest_snapshot_page_count === null
+          || row.manifest_snapshot_chunk_count === null
+          || row.manifest_snapshot_state !== 'sealed'
+          || row.manifest_snapshot_created_at === null
+          || row.manifest_snapshot_sealed_at === null
+        ) {
+          throw new Error(`${label} manifest member is incomplete.`);
+        }
+        const snapshotId = normalizeUuid(
+          row.manifest_member_snapshot_id,
+          `${label}.manifest_member_snapshot_id`
+        );
+        const manifestSnapshotId = normalizeUuid(
+          row.manifest_snapshot_id,
+          `${label}.manifest_snapshot_id`
+        );
+        const verifiedAt = parseDate(
+          row.manifest_member_verified_at,
+          `${label}.manifest_member_verified_at`
+        );
+        const pageCount = normalizeDatabaseInteger(
+          row.manifest_snapshot_page_count,
+          `${label}.manifest_snapshot_page_count`,
+          1
+        );
+        const chunkCount = normalizeDatabaseInteger(
+          row.manifest_snapshot_chunk_count,
+          `${label}.manifest_snapshot_chunk_count`,
+          1
+        );
+        const snapshotCreatedAt = parseDate(
+          row.manifest_snapshot_created_at,
+          `${label}.manifest_snapshot_created_at`
+        );
+        const snapshotSealedAt = parseDate(
+          row.manifest_snapshot_sealed_at,
+          `${label}.manifest_snapshot_sealed_at`
+        );
+        if (
+          snapshotId !== manifestSnapshotId
+          || pageCount > BACKSTAGE_NOTION_PARTITION_MAX_PAGES
+          || chunkCount > BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS
+          || snapshotCreatedAt.getTime() > snapshotSealedAt.getTime()
+          || snapshotSealedAt.getTime() > activeManifest.sealedAt.getTime()
+          || verifiedAt.getTime() > activeManifest.sealedAt.getTime()
+        ) {
+          throw new Error(`${label} manifest snapshot is inconsistent.`);
+        }
+        manifestRecord = Object.freeze({
+          kind: 'member' as const,
+          decision: row.manifest_member_decision,
+          snapshotId,
+          verifiedAt,
+          pageCount,
+          chunkCount,
+        });
+        if (activeManifestCurrent) {
+          currentManifestMemberCount += 1;
+          currentManifestPageCount += pageCount;
+          currentManifestChunkCount += chunkCount;
+        }
+      } else if (hasOmission) {
+        if (
+          activeManifest === null
+          || row.is_required
+          || (
+            row.omission_decision !== 'optional_unavailable'
+            && row.omission_decision !== 'optional_disabled'
+          )
+          || row.omission_safe_reason_code === null
+        ) {
+          throw new Error(`${label} manifest omission is incomplete.`);
+        }
+        manifestRecord = Object.freeze({
+          kind: 'omission' as const,
+          decision: row.omission_decision,
+          safeReasonCode: parseDiagnosticSafeReasonCode(
+            row.omission_safe_reason_code,
+            `${label}.omission_safe_reason_code`
+          ),
+        });
+        if (activeManifestCurrent) {
+          currentManifestOmissionCount += 1;
+        }
+      }
+
+      let lease: BackstageNotionPartitionDiagnosticsActiveLease | null = null;
+      if (row.lease_acquired_at === null || row.lease_expires_at === null) {
+        if (row.lease_acquired_at !== null || row.lease_expires_at !== null) {
+          throw new Error(`${label} contains an incomplete active lease.`);
+        }
+      } else {
+        const acquiredAt = parseDate(
+          row.lease_acquired_at,
+          `${label}.lease_acquired_at`
+        );
+        const expiresAt = parseDate(
+          row.lease_expires_at,
+          `${label}.lease_expires_at`
+        );
+        if (
+          acquiredAt.getTime() > observedAt.getTime()
+          || expiresAt.getTime() <= observedAt.getTime()
+          || expiresAt.getTime() <= acquiredAt.getTime()
+        ) {
+          throw new Error(`${label} active lease timestamps are invalid.`);
+        }
+        lease = Object.freeze({ acquiredAt, expiresAt });
+      }
+
+      const shardActiveJobCount = normalizeDatabaseInteger(
+        row.shard_active_job_count,
+        `${label}.shard_active_job_count`
+      );
+      const shardPendingJobCount = normalizeDatabaseInteger(
+        row.shard_pending_job_count,
+        `${label}.shard_pending_job_count`
+      );
+      const shardRunningJobCount = normalizeDatabaseInteger(
+        row.shard_running_job_count,
+        `${label}.shard_running_job_count`
+      );
+      const shardStaleConfigurationJobCount = normalizeDatabaseInteger(
+        row.shard_stale_configuration_job_count,
+        `${label}.shard_stale_configuration_job_count`
+      );
+      if (
+        shardActiveJobCount > 1
+        || shardPendingJobCount + shardRunningJobCount !== shardActiveJobCount
+        || shardStaleConfigurationJobCount > shardActiveJobCount
+      ) {
+        throw new Error(`${label} active-job summary is inconsistent.`);
+      }
+      configuredActiveJobCount += shardActiveJobCount;
+      shards.push(Object.freeze({
+        shardKey,
+        partitionVersionId,
+        currentHeadPartitionVersionId,
+        retrievalTier: parseRetrievalTier(
+          row.retrieval_tier,
+          `${label}.retrieval_tier`
+        ),
+        required: row.is_required,
+        scopeTags: parseRoutingTags(row.scope_tags, `${label}.scope_tags`),
+        categoryTags: parseRoutingTags(
+          row.category_tags,
+          `${label}.category_tags`
+        ),
+        headGeneration: mapGeneration(
+          row.shard_head_generation,
+          `${label}.shard_head_generation`
+        ),
+        snapshotGeneration,
+        lastAttemptAt,
+        lastVerifiedAt,
+        lastKnownGood,
+        manifestRecord,
+        lease,
+        activeJobs: Object.freeze({
+          total: shardActiveJobCount,
+          pending: shardPendingJobCount,
+          running: shardRunningJobCount,
+          configurationStale: shardStaleConfigurationJobCount,
+        }),
+      }));
+    }
+
+    if (configuredActiveJobCount + unconfiguredActiveJobCount !== activeJobCount) {
+      throw new Error('Partition diagnostics active-job totals are inconsistent.');
+    }
+    if (
+      activeManifestCurrent
+      && activeManifest !== null
+      && (
+        currentManifestMemberCount !== activeManifest.memberCount
+        || currentManifestOmissionCount !== activeManifest.omissionCount
+        || currentManifestPageCount !== activeManifest.pageCount
+        || currentManifestChunkCount !== activeManifest.chunkCount
+        || currentManifestMemberCount + currentManifestOmissionCount
+          !== configuredShardCount
+      )
+    ) {
+      throw new Error('Partition diagnostics current manifest totals are inconsistent.');
+    }
+
+    return Object.freeze({
+      universeId: normalizedUniverseId,
+      observedAt,
+      authorityActive: first.authority === 'notion',
+      desiredConfigurationVersionId,
+      desiredConfigurationGeneration,
+      desiredConfigurationHash,
+      headGeneration,
+      manifestGeneration,
+      activeManifest,
+      activeJobCount,
+      unconfiguredActiveJobCount,
+      shards: Object.freeze(shards),
     });
   }
 
