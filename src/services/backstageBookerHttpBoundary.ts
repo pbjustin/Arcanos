@@ -20,6 +20,8 @@ export const BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH =
   '/gpt-access/capabilities/v1/backstage-booker/run';
 export const BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX =
   '/gpt-access/capabilities/v1/backstage-booker/universes';
+export const BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX =
+  '/gpt-access/capabilities/v1/backstage-booker/jobs';
 export const BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX =
   '/storyline-summary';
 export const BACKSTAGE_BOOKER_BODY_LIMIT_BYTES = 256 * 1024;
@@ -75,13 +77,22 @@ export function isBackstageBookerCapabilityRunRequest(req: Request): boolean {
     && readRequestPath(req) === BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH;
 }
 
-/** Keep the whole private read namespace behind the dedicated bearer. */
+/** Keep the whole private universe-read namespace behind the dedicated bearer. */
 export function isBackstageBookerUniverseReadNamespaceRequest(
   req: Request
 ): boolean {
   const requestPath = readRequestPath(req);
   return requestPath === BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX
     || requestPath.startsWith(`${BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX}/`);
+}
+
+/** Keep the whole private async-result namespace behind the dedicated bearer. */
+export function isBackstageBookerAsyncResultNamespaceRequest(
+  req: Request
+): boolean {
+  const requestPath = readRequestPath(req);
+  return requestPath === BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX
+    || requestPath.startsWith(`${BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX}/`);
 }
 
 /** Match the canonical exact-ID GET/HEAD shape; leaf validation checks the ID. */
@@ -121,6 +132,24 @@ export function isBackstageBookerStorylineSummaryReadRequest(
     -suffix.length
   );
   return encodedUniverseId.length > 0 && !encodedUniverseId.includes('/');
+}
+
+/** Match the canonical exact-job result GET/HEAD shape. */
+export function isBackstageBookerAsyncResultReadRequest(
+  req: Request
+): boolean {
+  const method = req.method.toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    return false;
+  }
+  const requestPath = readRequestPath(req);
+  const prefix = `${BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX}/`;
+  const suffix = '/result';
+  if (!requestPath.startsWith(prefix) || !requestPath.endsWith(suffix)) {
+    return false;
+  }
+  const encodedJobId = requestPath.slice(prefix.length, -suffix.length);
+  return encodedJobId.length > 0 && !encodedJobId.includes('/');
 }
 
 export function isBackstageBookerHttpBoundaryApplied(req: Request): boolean {
@@ -259,6 +288,24 @@ const rejectBackstageUniverseReadBody: RequestHandler = (
   );
 };
 
+const rejectBackstageAsyncResultReadBody: RequestHandler = (
+  req,
+  res,
+  next
+): void => {
+  if (!hasRequestBody(req)) {
+    next();
+    return;
+  }
+
+  sendInvalidBackstageBookerRequest(
+    req,
+    res,
+    400,
+    'The Backstage Booker async result request is invalid.'
+  );
+};
+
 const parseBackstageBookerRequestBody: RequestHandler = (
   req,
   res,
@@ -341,7 +388,13 @@ export function createBackstageBookerHttpBoundary(
     const isCapabilityRun = isBackstageBookerCapabilityRunRequest(req);
     const isUniverseReadNamespace =
       isBackstageBookerUniverseReadNamespaceRequest(req);
-    if (!isCapabilityRun && !isUniverseReadNamespace) {
+    const isAsyncResultNamespace =
+      isBackstageBookerAsyncResultNamespaceRequest(req);
+    if (
+      !isCapabilityRun
+      && !isUniverseReadNamespace
+      && !isAsyncResultNamespace
+    ) {
       next();
       return;
     }
@@ -380,14 +433,17 @@ export function createBackstageBookerHttpBoundary(
       authenticateNext();
     };
 
+    const dedicatedReadNamespace =
+      isUniverseReadNamespace || isAsyncResultNamespace;
     const middlewareChain: RequestHandler[] = [
       securityHeaders,
       setBackstageBookerNoStoreHeaders,
       rateLimit,
-      isUniverseReadNamespace
+      dedicatedReadNamespace
         ? backstageBookerAccessAuthMiddleware
         : authenticate,
       ...(isUniverseReadNamespace ? [rejectBackstageUniverseReadBody] : []),
+      ...(isAsyncResultNamespace ? [rejectBackstageAsyncResultReadBody] : []),
       ...(isCapabilityRun ? [parseBackstageBookerRequestBody] : []),
     ];
     let middlewareIndex = 0;
