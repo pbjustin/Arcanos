@@ -26,7 +26,10 @@ export const BACKSTAGE_WORKER_ORCHESTRATION_RESERVE_MS = 30_000;
 // a retry when no complete supported response can fit.
 export const BACKSTAGE_RECOVERY_OUTPUT_TOKEN_RESERVE = 96;
 export const BACKSTAGE_WORKER_RECOVERY_OUTPUT_TOKEN_RESERVE = 1_200;
-export const BACKSTAGE_RESULT_POLL_WAIT_MS = 500;
+// Reuse the generic bounded hybrid waiter before returning HTTP 202. The
+// durable worker remains authoritative, and jobs that outlive this window
+// retain the existing job-specific result continuation contract.
+export const BACKSTAGE_RESULT_POLL_WAIT_MS = 30_000;
 
 export type BackstageExecutionBudgetProfile =
   | 'continuity_sync'
