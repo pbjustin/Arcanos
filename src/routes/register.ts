@@ -147,12 +147,14 @@ export function registerRoutes(app: Express): void {
   app.use('/', safetyRouter);
   app.use('/', dispatchRouter);
   app.use('/', mcpRouter);
+  // The dedicated bearer result adapter must run before the GPT Access
+  // namespace catch-all, while generic /jobs capability reads stay unchanged.
+  app.use('/', jobsRouter);
   app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);
   app.use('/', selfHealRouter);
   app.use('/', selfImproveRouter);
   app.use('/', systemStateRouter);
-  app.use('/', jobsRouter);
   app.use('/', askRouter);
   app.use('/', queryFinetuneRouter);
   app.use('/', apiSessionSystemRouter);
