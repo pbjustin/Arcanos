@@ -4296,15 +4296,12 @@ router.post(
         return sendGuardedGptJsonResponse(
           req,
           res,
-          projectAsyncJobResponseForRequest(
-            req,
-            buildDirectReturnTimeoutResponse({
-              pendingResponse,
-              jobId: queuedJobId ?? pendingResponse.jobId,
-              waitForResultMs: queuedAsyncWaitForResultMs ?? routeTimeoutMs,
-              pollIntervalMs: queuedAsyncPollIntervalMs ?? resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
-            })
-          ),
+          buildDirectReturnTimeoutResponse({
+            pendingResponse,
+            jobId: queuedJobId ?? pendingResponse.jobId,
+            waitForResultMs: queuedAsyncWaitForResultMs ?? routeTimeoutMs,
+            pollIntervalMs: queuedAsyncPollIntervalMs ?? resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
+          }),
           'gpt.response.timeout_pending',
           202
         );

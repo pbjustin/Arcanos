@@ -2486,6 +2486,74 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('projects an authenticated Booker route-timeout continuation onto the managed bearer lane', async () => {
+    const accessToken = `backstage-${'y'.repeat(48)}`;
+    const privatePrompt = 'private-route-timeout-booking-sentinel';
+    const jobId = '55555555-5555-4555-8555-555555555555';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x65).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => ({
+      job: {
+        id: jobId,
+        job_type: 'gpt',
+        status: 'pending',
+        input: options.input,
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    }));
+    const timeoutError = new Error('GPT route timeout after 60000ms');
+    timeoutError.name = 'AbortError';
+    waitForQueuedGptJobCompletionMock.mockRejectedValueOnce(timeoutError);
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: `${privatePrompt}: return exactly six matches.`,
+        },
+      });
+
+    const managedPoll =
+      `/gpt-access/capabilities/v1/backstage-booker/jobs/${jobId}/result`;
+    expect(response.status).toBe(202);
+    expectManagedBookerJobResponse(response.body, jobId);
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'timeout',
+      timedOut: true,
+      instruction:
+        `Call getBackstageBookerJobResult with jobId ${jobId}; `
+        + 'the configured Backstage Booker Bearer credential authenticates continuation.',
+      directReturn: {
+        requested: true,
+        timedOut: true,
+        waitForResultMs: 30_000,
+        pollIntervalMs: 250,
+        poll: managedPoll,
+        result: managedPoll,
+      },
+    });
+    const serializedResponse = JSON.stringify(response.body);
+    expect(serializedResponse).not.toContain(privatePrompt);
+    expect(serializedResponse).not.toContain(accessToken);
+    expect(serializedResponse).not.toContain('jobReadToken');
+    expect(serializedResponse).not.toContain('"stream"');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('projects a completed authenticated Booker job onto the managed bearer continuation lane', async () => {
     const accessToken = `backstage-${'v'.repeat(48)}`;
     const jobId = '11111111-1111-4111-8111-111111111111';
