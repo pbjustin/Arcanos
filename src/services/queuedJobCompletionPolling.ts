@@ -36,6 +36,17 @@ function readNonNegativeInteger(
     : fallbackValue;
 }
 
+function normalizeQueuedJobPollIntervalMs(
+  value: number | string | undefined,
+  fallbackValue: number
+): number {
+  const normalizedValue = Number(value);
+  if (!Number.isFinite(normalizedValue) || normalizedValue <= 0) {
+    return fallbackValue;
+  }
+  return Math.min(1_000, Math.max(50, Math.trunc(normalizedValue)));
+}
+
 export function resolveQueuedJobWaitForResultMs(input: {
   requestedWaitMs: number | undefined;
   configuredWaitMs: string | undefined;
@@ -65,22 +76,18 @@ export function resolveQueuedJobPollIntervalMs(input: {
   configuredPollIntervalMs: string | undefined;
   defaultPollIntervalMs: number;
 }): number {
-  const defaultPollIntervalMs = readNonNegativeInteger(
-    input.configuredPollIntervalMs,
-    input.defaultPollIntervalMs
+  const builtInPollIntervalMs = normalizeQueuedJobPollIntervalMs(
+    input.defaultPollIntervalMs,
+    50
   );
-  const rawPollIntervalMs =
-    input.requestedPollIntervalMs ?? defaultPollIntervalMs;
-  const normalizedPollIntervalMs = Number(rawPollIntervalMs);
-
-  if (
-    !Number.isFinite(normalizedPollIntervalMs)
-    || normalizedPollIntervalMs <= 0
-  ) {
-    return defaultPollIntervalMs;
-  }
-
-  return Math.min(1_000, Math.max(50, Math.trunc(normalizedPollIntervalMs)));
+  const configuredPollIntervalMs = normalizeQueuedJobPollIntervalMs(
+    input.configuredPollIntervalMs,
+    builtInPollIntervalMs
+  );
+  return normalizeQueuedJobPollIntervalMs(
+    input.requestedPollIntervalMs,
+    configuredPollIntervalMs
+  );
 }
 
 export function resolveQueuedJobWaitPollLimit(

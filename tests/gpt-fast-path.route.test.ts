@@ -2386,6 +2386,7 @@ describe('GPT fast-path route branching', () => {
     expect(createOptions.input).not.toHaveProperty('body');
     expect(createOptions.input).not.toHaveProperty('prompt');
     expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(30_000);
+    expect(resolveAsyncGptPollIntervalMsMock).toHaveBeenCalledWith(undefined);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
       'job-orchestrated',
       expect.objectContaining({

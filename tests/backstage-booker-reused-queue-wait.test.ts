@@ -5,9 +5,13 @@ import {
   resolveBackstageExecutionBudgetPolicy,
 } from '../src/shared/backstage/backstageExecutionBudget.js';
 import {
+  DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  MAX_ASYNC_GPT_WAIT_POLLS,
   MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs,
 } from '../src/services/queuedGptCompletionService.js';
+import { resolveQueuedJobWaitPollLimit } from '../src/services/queuedJobCompletionPolling.js';
 
 describe('Backstage Booker reused queue wait', () => {
   it('uses the existing maximum bounded hybrid wait before returning HTTP 202', () => {
@@ -32,5 +36,27 @@ describe('Backstage Booker reused queue wait', () => {
       profile: 'bounded_sync_generation',
       action: 'generateBooking',
     }).resultPollWaitMs).toBe(0);
+  });
+
+  it('keeps the 30-second polling window within the shared read bounds', () => {
+    const emptyEnvironment = {} as NodeJS.ProcessEnv;
+    const defaultPollIntervalMs = resolveAsyncGptPollIntervalMs(
+      undefined,
+      emptyEnvironment
+    );
+    const minimumPollIntervalMs = resolveAsyncGptPollIntervalMs(1, emptyEnvironment);
+
+    expect(defaultPollIntervalMs).toBe(DEFAULT_ASYNC_GPT_WAIT_POLL_MS);
+    expect(resolveQueuedJobWaitPollLimit(
+      BACKSTAGE_RESULT_POLL_WAIT_MS,
+      defaultPollIntervalMs,
+      MAX_ASYNC_GPT_WAIT_POLLS
+    )).toBe(121);
+    expect(minimumPollIntervalMs).toBe(50);
+    expect(resolveQueuedJobWaitPollLimit(
+      BACKSTAGE_RESULT_POLL_WAIT_MS,
+      minimumPollIntervalMs,
+      MAX_ASYNC_GPT_WAIT_POLLS
+    )).toBe(MAX_ASYNC_GPT_WAIT_POLLS);
   });
 });
