@@ -47,6 +47,139 @@ const CUSTOM_GPT_BRIDGE_OPENAPI_CONTRACT_PATH = path.resolve(
   'custom-gpt-bridge.yaml'
 );
 
+export const BACKSTAGE_BOOKER_BUILDER_CONTRACT_VERSION = '1.6.0';
+export const BACKSTAGE_BOOKER_BUILDER_ASYNC_RESULT_PATH =
+  '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result';
+const BACKSTAGE_BOOKER_LEGACY_ASYNC_RESULT_PATH = '/jobs/{jobId}/result';
+
+interface JsonRecord {
+  [key: string]: unknown;
+}
+
+function readJsonRecord(value: unknown, fieldName: string): JsonRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Backstage Booker OpenAPI ${fieldName} is invalid.`);
+  }
+  return value as JsonRecord;
+}
+
+function cloneJsonDocument(value: unknown): JsonRecord {
+  try {
+    return readJsonRecord(
+      JSON.parse(JSON.stringify(value)) as unknown,
+      'document'
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Backstage Booker')) {
+      throw error;
+    }
+    throw new Error('Backstage Booker OpenAPI document is invalid.');
+  }
+}
+
+/**
+ * Project the repository contract into the Builder-safe bearer continuation.
+ * Direct clients retain the generic job-token route; only the live Builder
+ * projection replaces that operation with the managed Backstage bearer lane.
+ */
+export function buildBackstageBookerBuilderOpenApiDocument(
+  baseDocument: unknown
+): JsonRecord {
+  const document = cloneJsonDocument(baseDocument);
+  const info = readJsonRecord(document.info, 'info');
+  const paths = readJsonRecord(document.paths, 'paths');
+  const legacyPathItem = readJsonRecord(
+    paths[BACKSTAGE_BOOKER_LEGACY_ASYNC_RESULT_PATH],
+    'legacy async result path'
+  );
+  const legacyOperation = readJsonRecord(
+    legacyPathItem.get,
+    'legacy async result operation'
+  );
+  const components = readJsonRecord(document.components, 'components');
+  const schemas = readJsonRecord(components.schemas, 'schemas');
+  const acceptedSchema = readJsonRecord(
+    schemas.BackstageAsyncAcceptedResponse,
+    'async accepted schema'
+  );
+  const acceptedProperties = readJsonRecord(
+    acceptedSchema.properties,
+    'async accepted properties'
+  );
+
+  info.version = BACKSTAGE_BOOKER_BUILDER_CONTRACT_VERSION;
+  info.description =
+    'Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for continuity, generation, simulation, exact reads, queued-result continuation, and canon writes. Production-sized generation is durably queued; the same managed bearer retrieves its result without forwarding a dynamic job token. Only canon writes require ChatGPT consequential-action approval.';
+
+  const bearerResultOperation: JsonRecord = {
+    ...legacyOperation,
+    operationId: 'getBackstageBookerJobResult',
+    summary: 'Retrieve queued Backstage Booker generation',
+    description:
+      'After runBackstageBooker returns queued or running, call this operation with the exact returned jobId. The configured Backstage Booker Bearer credential is applied automatically. waitForResultMs performs one bounded wait for the existing job; if status remains pending, call this same operation again. Never resubmit runBackstageBooker while polling.',
+    'x-openai-isConsequential': false,
+    security: [{ bearerAuth: [] }],
+    parameters: [
+      {
+        name: 'jobId',
+        in: 'path',
+        required: true,
+        description: 'Exact jobId returned by runBackstageBooker.',
+        schema: { type: 'string', format: 'uuid' },
+      },
+      {
+        name: 'waitForResultMs',
+        in: 'query',
+        required: false,
+        description:
+          'Bounded server-side wait for the existing queued job. Use 30000. A pending response may be queried again without creating replacement work.',
+        schema: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 30000,
+          default: 30000,
+        },
+      },
+    ],
+  };
+
+  const projectedPaths: JsonRecord = {};
+  for (const [pathName, pathItem] of Object.entries(paths)) {
+    if (pathName === BACKSTAGE_BOOKER_LEGACY_ASYNC_RESULT_PATH) {
+      projectedPaths[BACKSTAGE_BOOKER_BUILDER_ASYNC_RESULT_PATH] = {
+        get: bearerResultOperation,
+      };
+    } else {
+      projectedPaths[pathName] = pathItem;
+    }
+  }
+  document.paths = projectedPaths;
+
+  const runPathItem = readJsonRecord(
+    projectedPaths['/gpt/backstage-booker'],
+    'run path'
+  );
+  const runOperation = readJsonRecord(runPathItem.post, 'run operation');
+  runOperation.description =
+    'Run one non-persistent Booker action with the configured bearer. Continuity and simulation remain synchronous. Heavy booking generation may return queued or running; then call getBackstageBookerJobResult with the returned jobId until terminal. Never resubmit generation while the accepted job is active. Canon writes use writeBackstageCanon.';
+  const runResponses = readJsonRecord(runOperation.responses, 'run responses');
+  const acceptedResponse = readJsonRecord(runResponses['202'], '202 response');
+  acceptedResponse.description =
+    'Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it. Call getBackstageBookerJobResult with the returned jobId; the configured Bearer credential authenticates continuation.';
+
+  acceptedSchema.required = Array.isArray(acceptedSchema.required)
+    ? acceptedSchema.required.filter(
+        value => value !== 'jobReadToken' && value !== 'jobReadTokenHeader'
+      )
+    : acceptedSchema.required;
+  delete acceptedProperties.jobReadToken;
+  delete acceptedProperties.jobReadTokenHeader;
+  acceptedSchema.description =
+    'Accepted Backstage Booker generation. Builder continuation uses jobId plus the managed Bearer-authenticated getBackstageBookerJobResult operation; dynamic job-token forwarding is intentionally absent from this projection.';
+
+  return document;
+}
+
 async function readOpenApiContract(contractPath: string): Promise<unknown> {
   const rawContract = await fs.readFile(contractPath, "utf8");
   return JSON.parse(rawContract) as unknown;
@@ -74,7 +207,9 @@ router.get(
 router.get(
   '/contracts/backstage_booker.openapi.v1.json',
   asyncHandler(async (_req: Request, res: Response) => {
-    const contract = await readOpenApiContract(BACKSTAGE_BOOKER_OPENAPI_CONTRACT_PATH);
+    const contract = buildBackstageBookerBuilderOpenApiDocument(
+      await readOpenApiContract(BACKSTAGE_BOOKER_OPENAPI_CONTRACT_PATH)
+    );
     res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
   })
