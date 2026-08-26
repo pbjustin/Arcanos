@@ -47,6 +47,7 @@ interface WaiterDescriptor {
   waitEnvName: 'ASK_ASYNC_WAIT_FOR_RESULT_MS' | 'GPT_ASYNC_WAIT_FOR_RESULT_MS';
   pollEnvName: 'ASK_ASYNC_WAIT_POLL_MS' | 'GPT_ASYNC_WAIT_POLL_MS';
   defaultWaitMs: number;
+  defaultPollMs: number;
 }
 
 const WAITERS: readonly WaiterDescriptor[] = [
@@ -57,7 +58,8 @@ const WAITERS: readonly WaiterDescriptor[] = [
     resolvePoll: resolveAsyncAskPollIntervalMs,
     waitEnvName: 'ASK_ASYNC_WAIT_FOR_RESULT_MS',
     pollEnvName: 'ASK_ASYNC_WAIT_POLL_MS',
-    defaultWaitMs: 15_000
+    defaultWaitMs: 15_000,
+    defaultPollMs: 250
   },
   {
     name: 'GPT',
@@ -66,7 +68,8 @@ const WAITERS: readonly WaiterDescriptor[] = [
     resolvePoll: resolveAsyncGptPollIntervalMs,
     waitEnvName: 'GPT_ASYNC_WAIT_FOR_RESULT_MS',
     pollEnvName: 'GPT_ASYNC_WAIT_POLL_MS',
-    defaultWaitMs: 3_500
+    defaultWaitMs: 3_500,
+    defaultPollMs: 250
   }
 ];
 
@@ -174,27 +177,27 @@ describe.each(WAITERS)('$name queue waiter resolver characterization', (waiter) 
     expect(waiter.resolvePoll(5_000, {} as NodeJS.ProcessEnv)).toBe(1_000);
   });
 
-  it('preserves the current un-clamped environment fallback for invalid poll requests', () => {
+  it('clamps configured poll defaults and falls back on invalid configuration', () => {
     expect(
       waiter.resolvePoll(0, {
         [waiter.pollEnvName]: '1'
       } as NodeJS.ProcessEnv)
-    ).toBe(1);
+    ).toBe(50);
     expect(
       waiter.resolvePoll(-1, {
         [waiter.pollEnvName]: '5000'
       } as NodeJS.ProcessEnv)
-    ).toBe(5_000);
+    ).toBe(1_000);
     expect(
       waiter.resolvePoll(Number.NaN, {
         [waiter.pollEnvName]: '0'
       } as NodeJS.ProcessEnv)
-    ).toBe(0);
+    ).toBe(waiter.defaultPollMs);
     expect(
       waiter.resolvePoll(undefined, {
         [waiter.pollEnvName]: '0'
       } as NodeJS.ProcessEnv)
-    ).toBe(0);
+    ).toBe(waiter.defaultPollMs);
   });
 });
 

@@ -2,6 +2,9 @@ import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_MAX_MS,
 } from './backstageActionPolicy.js';
+import {
+  MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+} from '../gpt/gptAsyncWaitPolicy.js';
 
 export const BACKSTAGE_CONTINUITY_OPERATION_TIMEOUT_MS = 45_000;
 export const BACKSTAGE_CONTINUITY_MODEL_STAGE_TIMEOUT_DEFAULT_MS = 20_000;
@@ -26,7 +29,11 @@ export const BACKSTAGE_WORKER_ORCHESTRATION_RESERVE_MS = 30_000;
 // a retry when no complete supported response can fit.
 export const BACKSTAGE_RECOVERY_OUTPUT_TOKEN_RESERVE = 96;
 export const BACKSTAGE_WORKER_RECOVERY_OUTPUT_TOKEN_RESERVE = 1_200;
-export const BACKSTAGE_RESULT_POLL_WAIT_MS = 500;
+// Reuse the generic bounded hybrid waiter before returning HTTP 202. The
+// durable worker remains authoritative, and jobs that outlive this window
+// retain the existing job-specific result continuation contract.
+export const BACKSTAGE_RESULT_POLL_WAIT_MS =
+  MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS;
 
 export type BackstageExecutionBudgetProfile =
   | 'continuity_sync'

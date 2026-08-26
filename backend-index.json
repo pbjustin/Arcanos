@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T21:04:48.248Z",
+  "generatedAt": "2026-08-26T05:00:45.486Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2552,6 +2552,9 @@
           "relativePath": "src/shared/gpt/bridgeSmoke.ts"
         },
         {
+          "relativePath": "src/shared/gpt/gptAsyncWaitPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/gptControlActions.ts"
         },
         {
@@ -3368,6 +3371,9 @@
         },
         {
           "relativePath": "tests/backstage-booker-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker-reused-queue-wait.test.ts"
         },
         {
           "relativePath": "tests/backstage-booker-schema-parity.test.ts"

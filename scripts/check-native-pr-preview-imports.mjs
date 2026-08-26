@@ -52,7 +52,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/gamingPublicDispatcher.ts',
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
+  'src/services/queuedJobCompletionPolling.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageExecutionBudget.ts',
   'src/shared/backstage/backstageJobPayloadProtection.ts',
   'src/shared/backstage/backstageQueuedJobResultProtection.ts',
   'src/shared/backstage/backstageCompactOutputContract.ts',
@@ -72,6 +74,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
   'src/shared/dispatch/universalDispatch.ts',
   'src/shared/gpt/gptIdentifier.ts',
+  'src/shared/gpt/gptAsyncWaitPolicy.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
@@ -110,7 +113,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -689,6 +692,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '37b2f80a28eb4354ee734849c62cff310427899cbf15029a2e2fef84f1187323',
   ],
   [
+    'src/shared/backstage/backstageExecutionBudget.ts',
+    '39472dc3eebb9975b026884cf8aa617451ac22561a7ed5bfc34d26402fe80fbf',
+  ],
+  [
     'src/shared/backstage/backstageJobPayloadProtection.ts',
     '98164fec89091c5281a129c252d97ca42b9b9c68a5e8b3159377599ca6531383',
   ],
@@ -753,8 +760,16 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     'e3ebb2cae5501b419712013b7f64c69faaddcd876f9b6672f666b18ad3040883',
   ],
   [
+    'src/shared/gpt/gptAsyncWaitPolicy.ts',
+    'f8e5a89f661a48033d6d2db03e19a2e301c943f0c76bd6cf1f63b45c9102bfdd',
+  ],
+  [
     'src/shared/gpt/gptIdentifier.ts',
     'fb0047bf8bc554e33c217bf47fae59ced14507ce0facf9039acee55b4ed6d3bb',
+  ],
+  [
+    'src/services/queuedJobCompletionPolling.ts',
+    '53214e84184a8558268839c19fc3c9fd14d61585d0c45103e7d72fd59549cfb3',
   ],
   [
     'src/shared/hrcEvaluationPolicy.ts',

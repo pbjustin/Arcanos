@@ -2,15 +2,23 @@ import { getJobById } from '@core/db/repositories/jobRepository.js';
 import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
 import {
+  DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  MAX_ASYNC_GPT_WAIT_POLLS
+} from '@shared/gpt/gptAsyncWaitPolicy.js';
+import {
   pollQueuedJobCompletion,
   resolveQueuedJobPollIntervalMs,
   resolveQueuedJobWaitForResultMs
 } from '@services/queuedJobCompletionPolling.js';
 
-export const DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS = 3_500;
-export const MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS = 30_000;
-export const DEFAULT_ASYNC_GPT_WAIT_POLL_MS = 250;
-export const MAX_ASYNC_GPT_WAIT_POLLS = 601;
+export {
+  DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  MAX_ASYNC_GPT_WAIT_POLLS
+};
 
 export interface WaitForQueuedGptJobCompletionOptions {
   waitForResultMs?: number;

@@ -41,6 +41,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-notion-partitioned-authority/v1',
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1',
+    queueWaitPolicyProofVersion:
+      'backstage-booker-queue-wait-policy/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -58,6 +60,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-partition-contract-version',
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version',
+      queueWaitPolicyVersion:
+        'x-arcanos-preview-backstage-queue-wait-policy-version',
     }),
   }),
   mcpBodyCap: Object.freeze({

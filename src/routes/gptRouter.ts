@@ -101,7 +101,9 @@ import {
   type BackstageBookerWorkloadDecision,
 } from '@shared/backstage/backstageActionPolicy.js';
 import { resolveBackstageCompactOutputContract } from '@shared/backstage/backstageCompactOutputContract.js';
-import { BACKSTAGE_RESULT_POLL_WAIT_MS } from '@shared/backstage/backstageExecutionBudget.js';
+import {
+  resolveGptAsyncHeavyWaitForResultMs,
+} from '@shared/gpt/gptAsyncWaitPolicy.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_CODE,
   BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE_ERROR_CODE,
@@ -2906,12 +2908,12 @@ router.post(
           if (queryAndWaitRequested) {
             requestedAsyncWaitForResultMs = resolveGptWaitTimeoutMs();
           } else if (executionPlan.heavyPrompt) {
-            requestedAsyncWaitForResultMs = protectedBackstageQueueRequired
-              ? BACKSTAGE_RESULT_POLL_WAIT_MS
-              : readPositiveIntegerEnv(
-                  'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
-                  BACKSTAGE_RESULT_POLL_WAIT_MS
-                );
+            requestedAsyncWaitForResultMs =
+              resolveGptAsyncHeavyWaitForResultMs({
+                protectedBackstageQueueRequired,
+                configuredGenericWaitForResultMs:
+                  process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS,
+              });
           }
         }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(

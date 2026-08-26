@@ -41,6 +41,8 @@ export interface NativePrPreviewE2eContract {
       'backstage-notion-partitioned-authority/v1';
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1';
+    queueWaitPolicyProofVersion:
+      'backstage-booker-queue-wait-policy/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -58,6 +60,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-partition-contract-version';
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version';
+      queueWaitPolicyVersion:
+        'x-arcanos-preview-backstage-queue-wait-policy-version';
     }>;
   }>;
   readonly mcpBodyCap: Readonly<{
