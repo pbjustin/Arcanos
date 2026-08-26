@@ -14,9 +14,16 @@ const BACKSTAGE_BOOKER_ACCESS_BEARER_PATTERN = /^[\x21-\x7E]+$/u;
 const backstageBookerAccessAuthenticated = Symbol(
   'backstageBookerAccessAuthenticated'
 );
+const backstageBookerAccessLegacyActorKey = Symbol(
+  'backstageBookerAccessLegacyActorKey'
+);
+
+export const BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY =
+  'backstage-booker-access:principal:v1';
 
 type BackstageBookerAccessRequest = Request & {
   [backstageBookerAccessAuthenticated]?: true;
+  [backstageBookerAccessLegacyActorKey]?: string;
 };
 
 export type BackstageBookerAccessAuthenticationResult =
@@ -43,6 +50,12 @@ function countRawAuthorizationHeaders(req: Request): number {
   }
 
   return count;
+}
+
+/** Distinguish a truly absent credential from any presented header shape. */
+export function hasPresentedAuthorizationHeader(req: Request): boolean {
+  return countRawAuthorizationHeaders(req) > 0
+    || req.headers?.authorization !== undefined;
 }
 
 /** Parse exactly one dedicated Backstage Booker opaque bearer credential. */
@@ -109,7 +122,9 @@ export function authenticateBackstageBookerAccessRequest(
   if (!bearerToken) {
     return {
       ok: false,
-      reason: req.header('authorization') ? 'invalid_auth' : 'missing_auth',
+      reason: hasPresentedAuthorizationHeader(req)
+        ? 'invalid_auth'
+        : 'missing_auth',
     };
   }
 
@@ -134,13 +149,31 @@ export function establishBackstageBookerAccessAuthentication(
   req: Request,
   credential: string
 ): void {
-  (req as BackstageBookerAccessRequest)[
+  const authenticatedRequest = req as BackstageBookerAccessRequest;
+  authenticatedRequest[
     backstageBookerAccessAuthenticated
   ] = true;
-  req.authenticatedActorKey = buildAuthenticatedCredentialActorKey(
-    'backstage-booker-access',
-    credential
-  );
+  authenticatedRequest[backstageBookerAccessLegacyActorKey] =
+    buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      credential
+    );
+  req.authenticatedActorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
+}
+
+/**
+ * Return only the pre-principal credential actor after exact authentication.
+ * This compatibility alias contains no bearer material and must not authorize
+ * a request independently of the private authenticated marker.
+ */
+export function getBackstageBookerAccessLegacyActorKey(
+  req: Request
+): string | null {
+  const authenticatedRequest = req as BackstageBookerAccessRequest;
+  if (!isBackstageBookerAccessAuthenticated(req)) {
+    return null;
+  }
+  return authenticatedRequest[backstageBookerAccessLegacyActorKey] ?? null;
 }
 
 export function isBackstageBookerAccessAuthenticated(req: Request): boolean {

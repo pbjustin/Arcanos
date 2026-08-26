@@ -13,6 +13,9 @@ import {
   backstageBookerAccessAuthMiddleware,
   establishBackstageBookerAccessAuthentication,
 } from './backstageBookerAccessAuth.js';
+import {
+  BACKSTAGE_BOOKER_MANAGED_ASYNC_RESULT_PATH_PREFIX,
+} from '@shared/backstage/backstageBookerAsyncContinuation.js';
 import { gptAccessAuthMiddleware } from './gptAccessGateway.js';
 import { gptAccessRateLimit } from './gptAccessRateLimit.js';
 
@@ -21,7 +24,7 @@ export const BACKSTAGE_BOOKER_CAPABILITY_RUN_PATH =
 export const BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX =
   '/gpt-access/capabilities/v1/backstage-booker/universes';
 export const BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX =
-  '/gpt-access/capabilities/v1/backstage-booker/jobs';
+  BACKSTAGE_BOOKER_MANAGED_ASYNC_RESULT_PATH_PREFIX;
 export const BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX =
   '/storyline-summary';
 export const BACKSTAGE_BOOKER_BODY_LIMIT_BYTES = 256 * 1024;

@@ -17,6 +17,9 @@ import {
 } from '../src/shared/backstage/backstageQueuedJobResultProtection.js';
 import { BACKSTAGE_STORYLINE_MAX_BYTES } from '../src/shared/backstage/backstageStoryline.js';
 import { buildAuthenticatedCredentialActorKey } from '../src/shared/security/opaqueSecret.js';
+import {
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+} from '../src/services/backstageBookerAccessAuth.js';
 
 const getJobByIdMock = jest.fn();
 const requestJobCancellationMock = jest.fn();
@@ -1220,12 +1223,10 @@ describe('/jobs routes', () => {
     );
   });
 
-  it('authenticates the dedicated Booker bearer as the protected job owner before cancelling it', async () => {
+  it('authenticates a rotated Booker bearer as the stable protected job owner before cancelling it', async () => {
     const privateCancellationReason = 'private-job-cancel-reason-sentinel';
-    const backstageActorKey = buildAuthenticatedCredentialActorKey(
-      'backstage-booker-access',
-      BACKSTAGE_ACCESS_TOKEN
-    );
+    const rotatedAccessToken = 'booker-cancellation-rotated-access-secret';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedAccessToken;
     const protectedInput = buildProtectedBackstageQueuedGptJobInput({
       action: 'generateBooking',
       body: {
@@ -1239,7 +1240,9 @@ describe('/jobs routes', () => {
       id: PROTECTED_BOOKER_JOB_ID,
       job_type: 'gpt',
       status: 'pending',
-      idempotency_scope_hash: hashActorKey(backstageActorKey),
+      idempotency_scope_hash: hashActorKey(
+        BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY
+      ),
       input: protectedInput,
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:00:00.000Z',
@@ -1265,7 +1268,7 @@ describe('/jobs routes', () => {
       `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
       PROTECTED_BOOKER_JOB_ID
     )
-      .set('Authorization', `Bearer ${BACKSTAGE_ACCESS_TOKEN}`)
+      .set('Authorization', `Bearer ${rotatedAccessToken}`)
       .set('x-confirmed', 'yes')
       .send({ reason: privateCancellationReason });
 
@@ -1276,6 +1279,71 @@ describe('/jobs routes', () => {
     );
     expect(JSON.stringify(requestJobCancellationMock.mock.calls))
       .not.toContain(privateCancellationReason);
+  });
+
+  it('accepts the exact-current-token legacy owner only during cancellation cutover', async () => {
+    const rotatedAccessToken = 'booker-cancellation-rotated-access-secret';
+    const legacyActorKey = buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      BACKSTAGE_ACCESS_TOKEN
+    );
+    const protectedInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: { universeId: 'my-universe-2k26', prompt: 'private prompt' },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    const protectedJob = {
+      id: PROTECTED_BOOKER_JOB_ID,
+      job_type: 'gpt',
+      status: 'pending',
+      idempotency_scope_hash: hashActorKey(legacyActorKey),
+      input: protectedInput,
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+    };
+    getJobByIdMock.mockResolvedValue(protectedJob);
+    requestJobCancellationMock.mockResolvedValue({
+      outcome: 'cancelled',
+      job: {
+        ...protectedJob,
+        status: 'cancelled',
+        completed_at: '2026-04-06T10:01:00.000Z',
+        cancel_requested_at: '2026-04-06T10:01:00.000Z',
+        cancel_reason: 'Protected Backstage generation cancellation requested.',
+      },
+    });
+
+    const currentResponse = await postWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
+      PROTECTED_BOOKER_JOB_ID
+    )
+      .set('Authorization', `Bearer ${BACKSTAGE_ACCESS_TOKEN}`)
+      .set('x-confirmed', 'yes')
+      .send({ reason: 'private-current-token-reason' });
+    expect(currentResponse.status).toBe(200);
+    expect(requestJobCancellationMock).toHaveBeenCalledTimes(1);
+
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedAccessToken;
+    const rotatedResponse = await postWithJobReadToken(
+      `/jobs/${PROTECTED_BOOKER_JOB_ID}/cancel`,
+      PROTECTED_BOOKER_JOB_ID
+    )
+      .set('Authorization', `Bearer ${rotatedAccessToken}`)
+      .set('x-confirmed', 'yes')
+      .send({ reason: 'private-rotated-token-reason' });
+
+    expect(rotatedResponse.status).toBe(403);
+    expect(rotatedResponse.body.error.code).toBe('JOB_CANCELLATION_FORBIDDEN');
+    expect(requestJobCancellationMock).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed without persisting a caller reason for any raw protected marker', async () => {

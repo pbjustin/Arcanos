@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T05:00:45.486Z",
+  "generatedAt": "2026-08-26T19:23:43.760Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1265,6 +1265,9 @@
           "relativePath": "src/routes/backstage.ts"
         },
         {
+          "relativePath": "src/routes/backstageBookerAsyncResult.ts"
+        },
+        {
           "relativePath": "src/routes/bridge.ts"
         },
         {
@@ -2450,6 +2453,9 @@
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageBookerAsyncContinuation.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageCompactOutputContract.ts"
         },
         {
@@ -3365,6 +3371,9 @@
         },
         {
           "relativePath": "tests/backstage-action-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker-async-continuation.test.ts"
         },
         {
           "relativePath": "tests/backstage-booker-protocol-contract.test.ts"

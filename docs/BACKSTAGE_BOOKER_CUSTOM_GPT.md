@@ -52,12 +52,18 @@ generates and then saves, so it remains a protected mutation.
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
-- Repository contract: [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
-- Schema version: `1.5.0`
+- Tracked compatibility base/projection input:
+  [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json).
+  That file intentionally remains the `1.5.0` direct-client contract; do not
+  import it from source as the Builder schema.
+- Served Builder schema version: `1.6.0` (the no-store endpoint above projects
+  the tracked base at request time)
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
   static purpose-bound Action credential, not OAuth and not a user's password.
+  It authenticates one shared managed principal for this private Action; it is
+  not per-user, per-session, or per-universe identity.
 - Secret placement: store the value only in the Railway web service and
   ChatGPT's encrypted Action authentication field. Never put it in the OpenAPI
   schema, GPT instructions, chat, source, logs, screenshots, or a worker
@@ -71,9 +77,12 @@ The contract defines exactly five operations:
   Builder projection declares the saved Action bearer so an authoritative
   Notion request has verified provenance; the backend route remains publicly
   compatible for non-authoritative direct clients.
-- `getBackstageBookerJobResult` -> `GET /jobs/{jobId}/result` for the durable
-  lifecycle and terminal result of an accepted heavy generation. It requires
-  the exact `x-arcanos-job-read-token` capability returned with that job.
+- `getBackstageBookerJobResult` ->
+  `GET /gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` for the
+  durable lifecycle and terminal result of an accepted heavy generation. The
+  saved Action bearer is applied automatically; Builder neither receives nor
+  forwards a dynamic `jobReadToken`. This operation is bounded polling only.
+  It does not expose the generic `/jobs/{jobId}/stream` SSE capability.
 - `getBackstageUniverse` ->
   `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}`
   for one authenticated, non-consequential, read-only PostgreSQL snapshot.
@@ -87,10 +96,13 @@ The contract defines exactly five operations:
 Every `runBackstageBooker` request retains `executionMode: "sync"` for Builder
 compatibility. Lightweight continuity and simulation stay inline. When a
 generation is production-sized, the server overrides that preference to avoid
-the known unsafe synchronous timeout condition and returns `202` with `jobId`,
-`poll`, and a job-specific read capability. Call
-`getBackstageBookerJobResult` with those exact values until the job becomes
-terminal; never resubmit the generation while polling.
+the known unsafe synchronous timeout condition and returns `202` with `jobId`
+and a managed-bearer `poll` URL. Call `getBackstageBookerJobResult` with that
+exact `jobId` until the job becomes terminal; never resubmit the generation
+while polling. The Builder projection omits `jobReadToken`,
+  `jobReadTokenHeader`, and `stream` because the managed continuation requires no
+  dynamic header and has no bearer-authenticated SSE route or cancellation
+  operation.
 
 `getBackstageUniverse` is marked `x-openai-isConsequential: false`. It accepts
 only the dedicated Backstage bearer, never the generic GPT Access token, and
@@ -140,8 +152,9 @@ The tradeoff is explicit: the backend authenticates possession of a shared
 Action bearer token, but cannot independently prove that a particular person
 saw or accepted ChatGPT's banner. The design therefore trusts the ChatGPT
 Action platform to enforce the consequential flag before sending the request.
-Anyone who obtains the bearer can read any valid exact universe ID, including
-full summaries selected by an exact storyline key, and can
+Anyone who obtains the bearer can poll any known valid managed Booker job ID,
+read any valid exact universe ID, including full summaries selected by an exact
+storyline key, and can
 exercise the narrow canon endpoint without establishing per-user identity. If
 Notion enrichment or authority is configured, the same holder can also request
 continuity answers or generation for any mapped universe and cause selected
@@ -177,14 +190,14 @@ authorization, tenant identity, or proof that the caller owns that universe.
 ### Supplemental generation context (legacy mode)
 
 This legacy supplement is backend-only at the operation level and does not add
-a sixth operation. Schema `1.5.0` must nevertheless be re-imported because it
+a sixth operation. Schema `1.6.0` must nevertheless be re-imported because it
 declares
-the saved bearer on `runBackstageBooker`, materializes the nested public
-payload fields for Builder, and documents the authority-specific error
-responses. Keep Apps disabled and retain the existing Action API Key/Bearer
-setting. Outside the Builder contract, anonymous or invalid-bearer calls to a
-non-authoritative universe retain the existing non-Notion
-PostgreSQL/process-fallback behavior.
+the saved bearer on every Builder operation, moves result polling to the
+managed-bearer namespace, materializes the nested public payload fields for
+Builder, and documents the authority-specific error responses. Keep Apps
+disabled and retain the existing Action API Key/Bearer setting. Outside the
+Builder contract, anonymous or invalid-bearer calls to a non-authoritative
+universe retain the existing non-Notion PostgreSQL/process-fallback behavior.
 
 For synchronous legacy generation, configure both on the web service:
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
@@ -217,7 +230,7 @@ and verify the web service emits the sanitized
 `backstage.notion_context.loaded` event without inspecting raw prompt content.
 For a non-authoritative test universe, make the same request directly without
 the dedicated bearer and verify no Notion request/event occurs while the
-legacy generation behavior remains available. Schema `1.5.0` explicitly marks
+legacy generation behavior remains available. Schema `1.6.0` explicitly marks
 the Builder operation with `bearerAuth`; after import, verify the outgoing
 Builder request carries the credential without exposing it. Do not weaken the
 backend gate if that verification fails.
@@ -466,7 +479,7 @@ counter.
 | Status | Meaning and safe next step |
 | --- | --- |
 | `200` | Read `result.answer`, `result.coverage`, and `result.sources`. Do not infer more coverage than the metadata supports. An answer ending in `...[truncated]` was shortened by transport projection and is not a complete answer. |
-| `202` | Heavy generation was accepted. Preserve `jobId` and `jobReadToken`, then call `getBackstageBookerJobResult`; do not resubmit the booking request. |
+| `202` | Heavy generation was accepted. Preserve `jobId`, then call the managed-bearer `getBackstageBookerJobResult`; do not resubmit the booking request. The Builder contract exposes no dynamic job token or bearer stream. |
 | `400` | The closed request envelope or action payload is invalid. Correct the request shape. |
 | `404` | The exact page or section was not found. Correct the title, full path, or section path. |
 | `409` | The scope is ambiguous or the cursor is invalid/stale. Disambiguate the scope, or discard a failed traversal and restart cursor-free. |
@@ -551,23 +564,27 @@ the exact backend revision and contract route are deployed:
 2. Open the existing Backstage Booker GPT in ChatGPT Builder and edit its
    existing Action. Import
    `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`.
-   Import schema `1.5.0` only after that backend version is deployed. Do not
+   Import schema `1.6.0` only after that backend version is deployed. Do not
    create a second ARCANOS Action schema.
 3. Under Authentication, select **API Key** and **Bearer**, then enter the same
    dedicated credential in the authentication field.
 4. Verify the imported operation IDs are exactly `runBackstageBooker`,
    `getBackstageBookerJobResult`,
    `getBackstageUniverse`, `getBackstageStoryline`, and
-   `writeBackstageCanon`. Verify `runBackstageBooker` shows the nested
+   `writeBackstageCanon`. Verify `getBackstageBookerJobResult` uses the exact
+   managed-bearer jobs namespace, is non-consequential, and requires only
+   `jobId` plus optional `waitForResultMs`; its response must not expose
+   `jobReadToken`, `jobReadTokenHeader`, or `stream`. Verify
+   `runBackstageBooker` shows the nested
    `payload.universeId`, `payload.query`, `payload.retrievalScope`,
    `payload.retrievalMode`, `payload.cursor`, `payload.prompt`, `payload.match`,
    `payload.rosters`, and `payload.winProbModifier` arguments. Verify
    `writeBackstageCanon` shows
    `payload.universeId`, `payload.mutationId`, `payload.expectedVersion`,
    `payload.storyline`, `payload.storylineKey`, `payload.beat`, and
-   `payload.nextStatus`. Both operations must use the saved bearer, both reads
-   must be non-consequential, and the write must be consequential. The schema
-   must not contain `confirmation_token`.
+   `payload.nextStatus`. Every operation must use the saved bearer, all three
+   reads must be non-consequential, and the write must be consequential. The
+   schema must not contain `confirmation_token`.
 5. Preserve the GPT's name, instructions, knowledge, conversation starters,
    model selection, visibility, and sharing settings except for the reviewed
    Action/instruction changes. Save the same GPT.
@@ -591,8 +608,10 @@ Use runBackstageBooker only for queryContinuity, generateBooking,
 generateBookingWithHRC, and simulateMatch.
 Always keep executionMode set to "sync" for runBackstageBooker, as required by
 the Action schema. The backend may return 202 for heavy generation. In that
-case, call getBackstageBookerJobResult with the returned jobId and jobReadToken
-until terminal. Never resubmit a queued generation while polling.
+case, call getBackstageBookerJobResult with the returned jobId until terminal.
+The saved Action bearer is applied automatically; do not request or forward a
+jobReadToken, and do not use the generic job stream. Never resubmit a queued
+generation while polling.
 
 For a Notion-authoritative universe, use queryContinuity for factual retrieval
 and continuity reviews. Send the exact universeId and full question in
@@ -715,16 +734,39 @@ with K2 current/K1 previous, and only then deploy web with K2 current/K1
 previous. To roll back routing, set the async flag to `false`; do not remove K1
 until every retained protected job sealed with it has expired.
 
-There is no previous-token overlap variable for the Action bearer itself. Plan its rotation as a
-brief maintenance window:
+The initial Builder `1.5.0` to `1.6.0` change is an atomic operational cutover,
+not a compatible rolling interval. The old Action expects the dynamic job
+capability omitted by the new backend, and the new Action calls a managed route
+that an old backend does not have. Before deployment, close a generation
+maintenance window, stop every new generation request (the async flag alone is
+insufficient because explicit async and idempotent requests still queue), drain
+legacy pending jobs and any retained terminal re-reads that matter, and remove
+all old web replicas from traffic. Deploy and verify the backend, immediately
+re-import the live `1.6.0` schema, and only then reopen generation.
+
+There is no previous-token overlap variable for the Action bearer itself. Schema
+`1.6.0` binds new queued jobs to one stable, purpose-bound managed principal,
+not to the bearer bytes, so a future Action-token rotation does not change the
+owner of those jobs. The rollout also preserves reads for pre-`1.6.0` jobs whose
+token-derived owner matches the exact currently configured token. That
+transition check is read-only ownership compatibility: it neither accepts a
+previous token nor aliases the old idempotency scope to the stable principal.
+Preserve the returned `jobId` and poll it; never resubmit a pre-cutover request
+as an attempted lookup. Before the first post-upgrade rotation, conservatively
+wait through both the retained-job and idempotency windows or otherwise verify
+that every legacy result has been consumed and no legacy request will be
+retried. Then plan the credential change as a brief authentication maintenance
+window:
 
 1. Generate a new distinct credential through the approved secret workflow.
 2. Update the exact web-service variable and deploy it, then immediately update
    the existing GPT's API Key/Bearer authentication and save. Requests can
    return authentication errors between the two updates; do not weaken the
    boundary to hide that gap.
-3. Reopen the saved GPT and repeat the consequential-banner check. Verify that
-   the old credential no longer works without printing either value.
+3. Reopen the saved GPT and repeat the result-poll and consequential-banner
+   checks. Verify that a retained `1.6.0` job remains readable through the new
+   credential and that the old credential no longer works, without printing
+   either value.
 
 To revoke the lane, delete `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` from the web
 service through an approved deployment change and remove or disable the
@@ -732,10 +774,14 @@ protected Action configuration. Missing dedicated authentication fails closed;
 do not substitute the generic GPT Access or control-plane credential.
 
 For a non-authoritative universe, feature rollback can restore the last
-reviewed Builder schema, authentication, and instructions, revoke the
-dedicated web credential, and deploy the approved backend revision. An
-activated Notion-authoritative universe is different: do not deploy code that
-can expose quarantined legacy reads. Removing its environment mapping does not
-downgrade the durable PostgreSQL authority head. Restoring PostgreSQL authority
-requires a separate recovery export, review, and explicit governance operation;
-it is never an automatic GPT or deployment rollback.
+reviewed Builder schema, authentication, and instructions only after generation
+is stopped and every stable-principal job whose pending or terminal result must
+remain readable has drained through retention. An older backend cannot read
+those new ownership scopes, so rollback is unavailable while they remain in
+use. Revoke the dedicated web credential and deploy the approved backend
+revision only after that drain. An activated Notion-authoritative universe is
+different: do not deploy code that can expose quarantined legacy reads.
+Removing its environment mapping does not downgrade the durable PostgreSQL
+authority head. Restoring PostgreSQL authority requires a separate recovery
+export, review, and explicit governance operation; it is never an automatic GPT
+or deployment rollback.

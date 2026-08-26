@@ -3,8 +3,9 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { BACKSTAGE_MODULE_ROUTE } from '@shared/backstage/backstageActionPolicy.js';
 import {
-  authenticateBackstageBookerAccessRequest,
-  establishBackstageBookerAccessAuthentication,
+  backstageBookerAccessAuthMiddleware,
+  hasPresentedAuthorizationHeader,
+  isBackstageBookerAccessAuthenticated,
 } from './backstageBookerAccessAuth.js';
 
 interface BackstageNotionEnrichmentAuthorizationContext {
@@ -106,27 +107,46 @@ export function runWithBackstageLegacyQueuedExecution<T>(
 }
 
 /**
- * Establish Notion request provenance without changing backend route admission.
- * Missing or invalid credentials retain non-Notion behavior only for a
- * non-authoritative universe; authority retrieval independently fails closed.
+ * Establish Notion request provenance for the exact public Booker route.
+ * A truly absent credential retains public non-Notion compatibility. Once an
+ * Authorization header is presented, malformed, invalid, and unavailable
+ * dedicated authentication fail closed before provider admission.
  */
 export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): void => {
   const gptId = typeof req.params.gptId === 'string' ? req.params.gptId : '';
-  if (gptId !== BACKSTAGE_MODULE_ROUTE) {
+  const originalPath = typeof req.originalUrl === 'string'
+    ? req.originalUrl.split('?', 1)[0]
+    : null;
+  const isExactPublicRoute = originalPath
+    ? originalPath === `/gpt/${BACKSTAGE_MODULE_ROUTE}`
+    : gptId === BACKSTAGE_MODULE_ROUTE;
+  if (gptId !== BACKSTAGE_MODULE_ROUTE || !isExactPublicRoute) {
     next();
     return;
   }
 
-  const authentication = authenticateBackstageBookerAccessRequest(req);
-  if (authentication.ok) {
-    establishBackstageBookerAccessAuthentication(req, authentication.credential);
+  // Canon mutations use the established control-plane identity on this same
+  // route and must not be reinterpreted as dedicated Builder credentials.
+  if (req.controlPlanePrincipal) {
+    runWithBackstageNotionEnrichmentAuthorization(false, next);
+    return;
   }
-  runWithBackstageNotionEnrichmentAuthorization(
-    authentication.ok,
-    next
-  );
+
+  if (isBackstageBookerAccessAuthenticated(req)) {
+    runWithBackstageNotionEnrichmentAuthorization(true, next);
+    return;
+  }
+
+  if (!hasPresentedAuthorizationHeader(req)) {
+    runWithBackstageNotionEnrichmentAuthorization(false, next);
+    return;
+  }
+
+  backstageBookerAccessAuthMiddleware(req, res, () => {
+    runWithBackstageNotionEnrichmentAuthorization(true, next);
+  });
 };

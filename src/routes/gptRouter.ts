@@ -13,6 +13,7 @@ import {
   isBackstageNotionEnrichmentAuthorized,
   optionalBackstageNotionEnrichmentAuth,
 } from '@services/backstageNotionEnrichmentAuthorization.js';
+import { isBackstageBookerAccessAuthenticated } from '@services/backstageBookerAccessAuth.js';
 import { resolveBackstageNotionAuthorityRoot } from '@services/backstageNotionAuthority.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
@@ -74,6 +75,9 @@ import {
 import {
   unprotectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
+import {
+  projectBackstageBookerManagedPendingResponse,
+} from '@shared/backstage/backstageBookerAsyncContinuation.js';
 import {
   BackstageJobPayloadProtectionError,
   resolveBackstageJobPayloadProtectionConfig,
@@ -1123,9 +1127,16 @@ function sendGuardedGptJsonResponse(
   res: express.Response,
   payload: object,
   logEvent: string,
-  statusCode = 200
+  statusCode = 200,
+  bounds: {
+    maxBytes?: number;
+    maxBytesCeiling?: number;
+  } = {}
 ) {
-  const payloadRecord = payload as Record<string, unknown>;
+  const payloadRecord = projectAsyncJobResponseForRequest(
+    req,
+    payload
+  ) as Record<string, unknown>;
   const requestId = req.requestId ?? req.traceId ?? 'unknown';
   const traceId = req.traceId ?? requestId;
   const correlatedPayload = payloadRecord.ok === false
@@ -1147,7 +1158,24 @@ function sendGuardedGptJsonResponse(
   return sendBoundedJsonResponse(req, res, correlatedPayload, {
     logEvent,
     statusCode,
+    ...bounds,
   });
+}
+
+function projectAsyncJobResponseForRequest(
+  req: express.Request,
+  payload: object
+): object {
+  const jobId = (payload as Record<string, unknown>).jobId;
+  return typeof jobId === 'string'
+    && jobId.length > 0
+    && req.params.gptId === BACKSTAGE_MODULE_ROUTE
+    && isBackstageBookerAccessAuthenticated(req)
+    ? projectBackstageBookerManagedPendingResponse({
+        ...(payload as Record<string, unknown>),
+        jobId,
+      })
+    : payload;
 }
 
 function normalizeQueryAndWaitBody(
@@ -1498,10 +1526,10 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 
 router.post(
   "/:gptId",
-  optionalBackstageNotionEnrichmentAuth,
   canonicalGptIdentifierBoundary,
   backstageMutationHttpBoundary,
   backstageMutationConfirmationGate,
+  optionalBackstageNotionEnrichmentAuth,
   canonicalResearchGptAdmissionBoundary,
   publicProviderGptAdmission,
   canonicalResearchGptPreflightBoundary,
@@ -3512,7 +3540,7 @@ router.post(
                 return sendGuardedGptJsonResponse(
                   req,
                   res,
-                  queuedPendingResponse,
+                  projectAsyncJobResponseForRequest(req, queuedPendingResponse),
                   'gpt.response.async_pending',
                   202
                 );
@@ -3676,30 +3704,32 @@ router.post(
                   completedEnvelope._route.module === BACKSTAGE_MODULE_NAME
                   && completedEnvelope._route.action === 'trackStoryline'
                   && Array.isArray(completedEnvelope.result);
-                const publicEnvelope = prepareBoundedClientJsonPayload({
-                  ...completedEnvelope,
-                  ...buildAsyncJobResponseMetadata({
-                    action: asyncBridgeAction,
-                    jobId: job.id,
-                    jobStatus: waitedJob.job.status,
-                    deduped: createResult.deduped,
-                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                    idempotencySource: idempotencyDescriptor.source
-                  }),
-                  result: isBackstageStorylineResponse
-                    ? completedEnvelope.result
-                    : shapeClientRouteResult(completedEnvelope.result),
-                }, {
-                  logger: req.logger,
-                  logEvent: 'gpt.response.async_completed',
-                  ...(isBackstageStorylineResponse
+                return sendGuardedGptJsonResponse(
+                  req,
+                  res,
+                  {
+                    ...completedEnvelope,
+                    ...buildAsyncJobResponseMetadata({
+                      action: asyncBridgeAction,
+                      jobId: job.id,
+                      jobStatus: waitedJob.job.status,
+                      deduped: createResult.deduped,
+                      idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                      idempotencySource: idempotencyDescriptor.source
+                    }),
+                    result: isBackstageStorylineResponse
+                      ? completedEnvelope.result
+                      : shapeClientRouteResult(completedEnvelope.result),
+                  },
+                  'gpt.response.async_completed',
+                  200,
+                  isBackstageStorylineResponse
                     ? {
                         maxBytes: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES,
                         maxBytesCeiling: BACKSTAGE_STORYLINE_PUBLIC_RESPONSE_MAX_BYTES
                       }
-                    : {}),
-                });
-                return sendPreparedJsonResponse(res, publicEnvelope);
+                    : {}
+                );
               }
 
               if (waitedJob.state === 'failed') {
@@ -3866,12 +3896,15 @@ router.post(
                 return sendGuardedGptJsonResponse(
                   req,
                   res,
-                  buildDirectReturnTimeoutResponse({
-                    pendingResponse: queuedPendingResponse,
-                    jobId: job.id,
-                    waitForResultMs: asyncWaitForResultMs,
-                    pollIntervalMs: asyncPollIntervalMs
-                  }),
+                  projectAsyncJobResponseForRequest(
+                    req,
+                    buildDirectReturnTimeoutResponse({
+                      pendingResponse: queuedPendingResponse,
+                      jobId: job.id,
+                      waitForResultMs: asyncWaitForResultMs,
+                      pollIntervalMs: asyncPollIntervalMs
+                    })
+                  ),
                   'gpt.response.async_direct_return_timeout',
                   202
                 );
@@ -3879,7 +3912,7 @@ router.post(
               return sendGuardedGptJsonResponse(
                 req,
                 res,
-                queuedPendingResponse,
+                projectAsyncJobResponseForRequest(req, queuedPendingResponse),
                 'gpt.response.async_pending',
                 202
               );
@@ -4263,12 +4296,15 @@ router.post(
         return sendGuardedGptJsonResponse(
           req,
           res,
-          buildDirectReturnTimeoutResponse({
-            pendingResponse,
-            jobId: queuedJobId ?? pendingResponse.jobId,
-            waitForResultMs: queuedAsyncWaitForResultMs ?? routeTimeoutMs,
-            pollIntervalMs: queuedAsyncPollIntervalMs ?? resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
-          }),
+          projectAsyncJobResponseForRequest(
+            req,
+            buildDirectReturnTimeoutResponse({
+              pendingResponse,
+              jobId: queuedJobId ?? pendingResponse.jobId,
+              waitForResultMs: queuedAsyncWaitForResultMs ?? routeTimeoutMs,
+              pollIntervalMs: queuedAsyncPollIntervalMs ?? resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
+            })
+          ),
           'gpt.response.timeout_pending',
           202
         );
@@ -4399,7 +4435,7 @@ router.post(
       return sendGuardedGptJsonResponse(
         req,
         res,
-        recoveryPendingResponse,
+        projectAsyncJobResponseForRequest(req, recoveryPendingResponse),
         'gpt.response.async_recovery_pending',
         202
       );

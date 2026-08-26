@@ -1,5 +1,6 @@
 import { Express, Request, Response } from 'express';
 import askRouter from './ask.js';
+import backstageBookerAsyncResultRouter from './backstageBookerAsyncResult.js';
 import jobsRouter from './jobs.js';
 import queryFinetuneRouter from './queryFinetune.js';
 import arcanosRouter from './arcanos.js';
@@ -149,6 +150,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', mcpRouter);
   // The dedicated bearer result adapter must run before the GPT Access
   // namespace catch-all, while generic /jobs capability reads stay unchanged.
+  app.use('/', backstageBookerAsyncResultRouter);
   app.use('/', jobsRouter);
   app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);

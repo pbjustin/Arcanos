@@ -44,18 +44,20 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-Builder schema `1.5.0` declares this credential on `runBackstageBooker` as well
-as the exact-ID
+Builder schema `1.6.0` declares this credential on every operation, including
+the poll-only managed result read at
+`GET /gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result`, the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
 and its fixed `/storyline-summary` exact-key read, plus the exact
-`POST /gpt-access/capabilities/v1/backstage-booker/run` write, and the existing
-capability-protected `GET /jobs/{jobId}/result` read used after an accepted
-heavy generation, with no trailing-slash aliases. The three reads are
-non-consequential and expose no list or
-display-name lookup. They return a bounded PostgreSQL snapshot with explicit
-truncation metadata or a fixed 4,000-code-point, version-fenced full-summary
-page; neither falls back to process memory. An ID with no stored rows returns
-`hasPersistedData: false`. The dedicated write lane fails
+`POST /gpt-access/capabilities/v1/backstage-booker/run` write, with no
+trailing-slash aliases. The managed result operation uses the saved bearer plus
+`jobId`; it omits `jobReadToken`, `jobReadTokenHeader`, and `stream` and does not
+expose a bearer SSE route. Generic job-token status/result/stream routes remain
+separate. All three dedicated reads are non-consequential. The two domain reads
+expose no list or display-name lookup and return a bounded PostgreSQL snapshot
+with explicit truncation metadata or a fixed 4,000-code-point, version-fenced
+full-summary page; neither falls back to process memory. An ID with no stored
+rows returns `hasPersistedData: false`. The dedicated write lane fails
 closed unless `action` is `upsertStoryline` or
 `appendCanonBeat`; Phase One, public, and unknown actions receive the fixed
 `403 BACKSTAGE_BOOKER_ACCESS_ACTION_DENIED` response. The dedicated token
@@ -65,6 +67,9 @@ and generation, a verified copy establishes request-local authorization for
 private Notion context; it never authorizes a mutation. Non-authoritative direct
 callers keep the existing public non-Notion generation behavior, while
 authority-mode queries and generation fail closed without verified provenance.
+The tracked `contracts/backstage_booker.openapi.v1.json` intentionally remains
+the `1.5.0` direct-client compatibility base/projection input. Builder imports
+the live no-store `1.6.0` endpoint rather than that tracked file directly.
 
 The legacy supplement requires separate outbound
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values
@@ -73,9 +78,9 @@ dedicated worker for queued heavy generation. It reads at most three fixed
 Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
-send it inbound. Schema `1.5.0` has five operations and must be re-imported
-because it adds the protected async-result read while retaining the bearer,
-nested public payload fields, and authority-specific errors.
+send it inbound. Schema `1.6.0` has five operations and must be re-imported
+because it moves async-result polling to the managed-bearer namespace while
+retaining the nested public payload fields and authority-specific errors.
 
 Notion-authority mode is separate. Configure the exact closed
 `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` value on web and worker and put
@@ -103,8 +108,12 @@ bound to the exact request, scope kind, and active snapshot. Invalid, stale, or
 differently bound cursors return nonretryable
 `409 BACKSTAGE_NOTION_CURSOR_INVALID` and must be replaced by restarting the
 scoped read without a cursor. Version-2 cursors are invalid after the 1.4.0
-rollout. Deploy the backend before re-importing schema 1.5.0 into the existing
-Builder Action. Snapshots that
+rollout. Use a generation maintenance window for schema 1.6.0: stop all new
+generation, drain legacy continuations, remove old web replicas, deploy the
+backend, immediately re-import the live schema, and reopen generation only
+after both sides are verified. The old Builder and new backend cannot continue
+the same queued response, and the new Builder cannot poll an old backend.
+Snapshots that
 predate the current heading index also fail closed until the worker rebuilds
 and activates a compatible snapshot.
 
@@ -114,9 +123,16 @@ preflight validation, `MCP_ALLOW_MODULE_ACTIONS`, service authorization, rate
 limits, no-store responses, version fencing, mutation-ID idempotency, and
 transactional persistence still apply. The Builder contract marks
 `writeBackstageCanon` consequential, so this design deliberately trusts
-ChatGPT's Allow/Deny banner as the one approval step. The bearer is shared
-Action authentication, not OAuth, a user password, or per-user identity, and
-`universeId` is not authorization.
+ChatGPT's Allow/Deny banner as the one approval step. The bearer authenticates
+one shared purpose-bound managed principal, not OAuth, a user password, or
+per-user identity. Any credential holder with a known valid job UUID can poll
+that protected Booker result; `jobId` and `universeId` select resources and are
+not authorization. New `1.6.0` jobs keep the stable principal across future
+token rotations. During rollout, the result read also recognizes the legacy
+owner derived from the exact current token. This fallback does not alias the
+old idempotency scope: preserve the original `jobId`, never resubmit legacy work
+as a lookup, and drain both result-retention and idempotency windows before the
+first rotation because no prior Action token is accepted.
 
 Keep the value distinct from `ARCANOS_GPT_ACCESS_TOKEN` and
 `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`, store it only on the web service and in

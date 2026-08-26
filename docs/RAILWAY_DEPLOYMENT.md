@@ -291,7 +291,7 @@ Environment variables:
 | `PUBLIC_PROVIDER_RATE_LIMIT_NAMESPACE` | Required only for non-Railway production Redis | Railway derives a stable namespace from project, environment, and service IDs. Other production deployments must configure a stable lowercase namespace; never use deploy or commit identity because that resets the window on rollout. Missing/invalid isolation keeps `/readyz` unavailable. |
 | `PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP` | Optional; default `false` | Set exact `true` only after verifying public-edge-only provenance for provider routes. Even then, the app accepts `X-Real-IP` only with a valid Railway edge marker and an immediate peer in `100.0.0.0/8`; direct/private traffic remains socket-cohorted. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Required for generic protected `/gpt-access/*` routes | Strong generic gateway bearer token stored only in Railway Variables and authorized generic GPT Access client authentication. `/gpt-access/openapi.json` is public. The generic token remains accepted on the Backstage canon route under the existing `capabilities.run` scope and backend-confirmation policy, but do not configure it in the dedicated Backstage Booker Custom GPT; use `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` there. It cannot authorize the exact Backstage universe or storyline-summary reads and is not accepted by Gaming source lifecycle routes. |
-| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | Optional; required for protected Backstage Booker Custom GPT operations and private Notion-derived generation on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the existing Backstage Booker Custom GPT Action's API Key/Bearer field; do not copy it to a worker, schema, GPT instructions, chat, source, or logs. Legacy supplement remains optional, but mapped Notion-authority generation requires the credential and fails closed when it is missing or invalid. |
+| `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` | Optional; required for protected Backstage Booker Custom GPT operations and private Notion-derived generation on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. It authenticates one shared purpose-bound managed principal for all Builder operations, including queued-result polling; it is not per-user, per-session, or per-universe identity. Configure it only on the web service and in the existing Backstage Booker Custom GPT Action's API Key/Bearer field; do not copy it to a worker, schema, GPT instructions, chat, source, or logs. Legacy supplement remains optional, but mapped Notion-authority generation requires the credential and fails closed when it is missing or invalid. |
 | `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` | Optional web automatic-routing flag; defaults false | Only exact `true` promotes workload-classified heavy generation, and malformed values fail to the false routing default. Explicit async and idempotent generation remain protected queue jobs under either setting. Enable automatic promotion only after the current payload-protection key is present on both web and worker. Enabled heavy generation fails closed rather than executing in web if the queue or protection boundary is unavailable. Set exact `false` for automatic-routing rollback. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Required on both web and worker for any job-backed Booker generation | Canonical base64 for exactly 32 random bytes, distinct from all other credentials. It seals private queue input and output; never put it in Builder, requests, logs, or source. Rotate in worker-first deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | Optional on web and worker during key rotation | Decryption-only previous 32-byte base64 key. Retain through the maximum protected-job retention window, then remove. |
@@ -569,16 +569,29 @@ The Backstage Booker protected Action is a separate, purpose-bound ingress
 rollout on top of that canon substrate. Deploy and verify the exact backend
 revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
-Custom GPT. The web service alone receives a distinct
+Custom GPT. The tracked `contracts/backstage_booker.openapi.v1.json` remains the
+`1.5.0` direct-client compatibility base/projection input; import only the live
+no-store `1.6.0` endpoint into Builder. This requires a generation maintenance
+window: stop all new generation, including explicit async/idempotent requests;
+drain legacy pending jobs and required terminal re-reads; remove all old web
+replicas from traffic; deploy and verify the backend; immediately re-import the
+live `1.6.0` schema; and only then reopen generation. The old Builder cannot
+continue a new-backend job, and the new Builder cannot poll an old backend.
+Rollback to an older backend/schema is unavailable until stable-principal jobs
+whose results must remain readable have drained through retention. The web
+service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
-`1.5.0` declares that credential for continuity queries, generation, and
-simulation as well as the exact
-universe and storyline-summary reads, which are
-non-consequential, and return a bounded repeatable-read PostgreSQL projection
-or one fixed 4,000-code-point, version-fenced summary page without a
+`1.6.0` declares that credential for every operation: continuity queries,
+generation, simulation, the managed
+`/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` poll, the
+exact universe and storyline-summary reads, and the canon write. All three
+reads are non-consequential. Managed result continuation requires only the
+saved bearer plus `jobId`, returns no dynamic job token, and exposes no bearer
+SSE stream. The domain reads return a bounded repeatable-read PostgreSQL
+projection or one fixed 4,000-code-point, version-fenced summary page without a
 list/display-name surface or in-memory fallback. Each database statement has a
-3.5-second transaction-local PostgreSQL timeout. The generic GPT Access token and
-`capabilities.read` scope do not authorize them. The exact canon route may bypass
+3.5-second transaction-local PostgreSQL timeout. The generic GPT Access token
+and `capabilities.read` scope do not authorize them. The exact canon route may bypass
 generic `ARCANOS_GPT_ACCESS_SCOPES` authorization, but the
 server-side `MCP_ALLOW_MODULE_ACTIONS` allowlist must still include
 `BACKSTAGE:BOOKER:upsertStoryline` and
@@ -589,11 +602,13 @@ Heavy-generation rollout additionally requires the same distinct
 `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` on web and worker before enabling
 `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` on web. The existing
 PostgreSQL queue remains the only job system: web encrypts private input,
-deduplicates by its authenticated actor and semantic fingerprint, and returns
-the existing job-read capability; worker decrypts, dispatches, encrypts the
-terminal result, and never receives the Action bearer. Payload/protection or
-queue unavailability fails closed while enabled. Setting the flag to `false`
-restores the previous synchronous routing policy. For payload-key rotation,
+deduplicates by its authenticated managed principal and semantic fingerprint,
+and returns the managed bearer poll URL; worker decrypts, dispatches, encrypts
+the terminal result, and never receives the Action bearer. New `1.6.0` jobs use
+one stable server-owned principal, so a future Action-token rotation does not
+change their owner. Payload/protection or queue unavailability fails closed
+while enabled. Setting the flag to `false` restores the previous synchronous
+routing policy. For payload-key rotation,
 first configure both roles with K1 current/K2 previous, deploy the worker with
 K2 current/K1 previous, and only then deploy the web role with K2 current/K1
 previous. Keep K1 configured as previous until every K1-sealed retained job
@@ -695,12 +710,14 @@ never becomes a successful job result. The exact routing rollback remains
 re-enables the unsafe synchronous heavy path.
 
 In ChatGPT Builder configure that value as API Key/Bearer authentication, not
-OAuth or a user password. Both imported read operations are non-consequential;
-the write operation is consequential, and
+OAuth or a user password. All three imported read operations are
+non-consequential; the write operation is consequential, and
 the backend deliberately trusts ChatGPT's Allow/Deny banner instead of issuing
-a second confirmation challenge. This is shared Action authentication, not
-per-user identity; anyone holding it can read any valid exact universe ID and
-exact storyline key within that scope. `universeId` does not authorize access.
+a second confirmation challenge. This is one shared managed Action principal,
+not per-user identity; anyone holding the credential and a known valid job UUID
+can poll that protected Booker result, and anyone holding it can read any valid
+exact universe ID and exact storyline key within that scope. `jobId` and
+`universeId` select resources; neither authorizes access.
 Phase One
 mutations are unavailable on this lane and retain the existing backend
 challenge on established generic/direct/control-plane/legacy paths. The
@@ -710,20 +727,25 @@ workaround. See
 Builder and security contract.
 
 Optional Notion enrichment is configured wherever generation executes: web for
-synchronous rollback and worker for queued heavy generation. Schema `1.5.0`
-must be re-imported because it adds the protected result operation while retaining
-bearer provenance and the nested public payload. Create a dedicated Notion integration
+synchronous rollback and worker for queued heavy generation. Schema `1.6.0`
+must be re-imported because it moves result polling to the managed-bearer
+namespace while retaining bearer provenance and the nested public payload.
+Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on each executing service. Never reuse
-an ARCANOS bearer or copy the Notion token to Builder configuration.
-Deploy the backend first. Then call `generateBooking` for a mapped disposable
-scope through the existing private GPT and verify the sanitized
+an ARCANOS bearer or copy the Notion token to Builder configuration. Use the
+generation maintenance cutover above, including the legacy continuation drain
+and immediate live-schema import. After `1.6.0` is active on both sides, call
+`generateBooking` for a mapped disposable scope through the existing private
+GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
 bearer and verify generation stays available but no Notion event/request occurs.
-After importing `1.5.0`, verify Builder attaches its saved API-key
-authentication to `runBackstageBooker`. If it does not, enrichment must remain
-disabled; do not remove the server-side gate.
+After importing `1.6.0`, verify Builder attaches its saved API-key
+authentication to every operation, including `runBackstageBooker` and
+`getBackstageBookerJobResult`. Verify result polling returns no dynamic job
+token or stream. If Builder does not attach the credential, enrichment and the
+managed continuation must remain disabled; do not remove the server-side gate.
 
 Every Notion attempt is fixed to `api.notion.com`, rejects redirects, shares a
 four-second deadline across at most three reads, caps each response at 256 KiB,
@@ -872,7 +894,7 @@ retry over the same retrieval and budget, and a second exhaustion returns the
 sanitized incomplete-output error. Confirm each response used one snapshot, no
 Notion request originated from web, no legacy repository/fallback was called,
 and OpenAI storage/transcript/cache suppression remained active.
-Only after the backend serves schema `1.5.0`, re-import that contract into the
+Only after the backend serves schema `1.6.0`, re-import that contract into the
 existing Builder Action, preserve its saved bearer and visibility, and repeat
 one page and one subtree request through the GPT. Then remove any
 authority-only Notion token left on web. A failed new crawl
@@ -881,12 +903,22 @@ exceeds the configured limit, generation must stop rather than use old canon.
 Restoring PostgreSQL authority is a separate emergency governance operation,
 not an automatic rollback or GPT action.
 
-The lane has no previous-token overlap setting. A rotation therefore requires
-a coordinated web-service variable change/deploy and existing-GPT auth update,
-with a brief expected authentication gap. To revoke or roll back, remove the
-web-service credential, restore the last reviewed Builder configuration, and
-deploy the approved backend revision. Those actions do not erase previously
-committed canon; any data correction remains a separate authorized mutation.
+The lane has no previous-token overlap setting. The `1.6.0` deployment maps the
+exact current credential to one stable managed principal for new jobs and also
+checks the exact-current-token-derived legacy owner for pre-cutover jobs. That
+check is result-read compatibility only and does not alias the old idempotency
+scope. Keep K1 current, preserve returned job IDs, never resubmit legacy work as
+a lookup, and drain both the result-retention and idempotency windows; the
+compatibility check cannot read an undrained K1 legacy job after K2 becomes
+current. Once the legacy windows are clear, a K1-to-K2 rotation preserves reads
+for stable-principal jobs but still
+requires a coordinated web-service variable change/deploy and existing-GPT
+authentication update, with a brief expected authentication gap. Verify one
+retained `1.6.0` result through K2 without printing either credential. To revoke
+or roll back, remove the web-service credential, restore the last reviewed
+Builder configuration, and deploy the approved backend revision. Those actions
+do not erase previously committed canon; any data correction remains a separate
+authorized mutation.
 
 Each upload is bounded to 10 minutes, each exact-deployment observation to 45
 elapsed minutes with ten-second polling, and every Railway status or variable

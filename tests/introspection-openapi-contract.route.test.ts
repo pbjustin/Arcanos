@@ -189,12 +189,41 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(JSON.stringify(asyncResultOperation?.parameters)).not.toContain(
       'x-arcanos-job-read-token'
     );
+    expect(Object.keys(asyncResultOperation?.responses ?? {})).toEqual(
+      expect.arrayContaining(['200', '400', '401', '429', '503'])
+    );
+    for (const status of ['400', '401', '503']) {
+      expect(asyncResultOperation?.responses?.[status]?.content?.['application/json']?.schema)
+        .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
+    }
+    expect(asyncResultOperation?.responses?.['429']?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/RateLimitResponse' });
+    expect(asyncResultOperation?.responses?.['429']?.headers?.['Retry-After'])
+      .toEqual({ $ref: '#/components/headers/RetryAfter' });
+    expect(response.body.paths?.['/gpt/backstage-booker']?.post?.responses?.['401']
+      ?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
     const acceptedSchema =
       response.body.components?.schemas?.BackstageAsyncAcceptedResponse;
     expect(acceptedSchema?.required).not.toContain('jobReadToken');
     expect(acceptedSchema?.required).not.toContain('jobReadTokenHeader');
+    expect(acceptedSchema?.required).not.toContain('stream');
     expect(acceptedSchema?.properties).not.toHaveProperty('jobReadToken');
     expect(acceptedSchema?.properties).not.toHaveProperty('jobReadTokenHeader');
+    expect(acceptedSchema?.properties).not.toHaveProperty('stream');
+    expect(acceptedSchema?.properties?.poll?.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    const resultSchema =
+      response.body.components?.schemas?.BackstageJobResultLookup;
+    expect(resultSchema?.required).not.toContain('stream');
+    expect(resultSchema?.properties).not.toHaveProperty('stream');
+    expect(resultSchema?.properties?.poll?.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    expect(response.body.components?.parameters).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('x-arcanos-job-read-token');
+    expect(JSON.stringify(response.body)).not.toContain('jobReadToken');
     expect(response.body.paths?.[
       '/gpt-access/capabilities/v1/backstage-booker/run'
     ]?.post?.operationId).toBe('writeBackstageCanon');

@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import {
   afterAll,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   it,
@@ -37,10 +38,13 @@ import {
   createBackstageBookerAsyncResultRouter,
   parseBackstageBookerAsyncResultQuery,
   readBackstageBookerAsyncResult,
-} from '../src/routes/jobs.js';
+} from '../src/routes/backstageBookerAsyncResult.js';
 import {
   createBackstageBookerHttpBoundary,
 } from '../src/services/backstageBookerHttpBoundary.js';
+import {
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+} from '../src/services/backstageBookerAccessAuth.js';
 import {
   resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs,
@@ -70,11 +74,10 @@ function restoreEnvironmentValue(
   }
 }
 
-function buildProtectedJob(overrides: Partial<JobData> = {}): JobData {
-  const actorKey = buildAuthenticatedCredentialActorKey(
-    'backstage-booker-access',
-    ACCESS_TOKEN
-  );
+function buildProtectedJob(
+  overrides: Partial<JobData> = {},
+  actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY
+): JobData {
   const input = buildProtectedBackstageQueuedGptJobInput({
     body: {
       action: 'generateBooking',
@@ -146,6 +149,10 @@ function buildTestBoundary() {
 beforeAll(() => {
   process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = ACCESS_TOKEN;
   process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = PAYLOAD_KEY;
+});
+
+beforeEach(() => {
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = ACCESS_TOKEN;
 });
 
 afterAll(() => {
@@ -271,8 +278,65 @@ describe('Backstage Booker reused queue wait', () => {
         booking: 'Official protected Backstage Booker result.',
       },
     });
+    expect(response.body.poll).toBe(RESULT_PATH);
+    expect(response.body).not.toHaveProperty('stream');
     expect(getJobByIdFn).toHaveBeenCalledTimes(1);
     expect(waitForCompletion).not.toHaveBeenCalled();
+  });
+
+  it('keeps stable-principal jobs readable after the managed bearer rotates', async () => {
+    const rotatedToken = `backstage-test-${'b'.repeat(64)}`;
+    const completedJob = completeProtectedJob(buildProtectedJob());
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => completedJob,
+      recordJobLookup: jest.fn(),
+    }));
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedToken;
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${rotatedToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('completed');
+    expect(response.body.poll).toBe(RESULT_PATH);
+  });
+
+  it('reads exact-current-token legacy jobs only during the cutover window', async () => {
+    const rotatedToken = `backstage-test-${'c'.repeat(64)}`;
+    const legacyActorKey = buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      ACCESS_TOKEN
+    );
+    const legacyJob = completeProtectedJob(
+      buildProtectedJob({}, legacyActorKey)
+    );
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => legacyJob,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const currentTokenResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+    expect(currentTokenResponse.status).toBe(200);
+    expect(currentTokenResponse.body.status).toBe('completed');
+
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedToken;
+    const rotatedResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${rotatedToken}`);
+    const revokedResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(rotatedResponse.status).toBe(200);
+    expect(rotatedResponse.body.status).toBe('not_found');
+    expect(revokedResponse.status).toBe(401);
   });
 
   it('reuses the existing bounded waiter for an owned running job', async () => {
@@ -315,11 +379,39 @@ describe('Backstage Booker reused queue wait', () => {
     expect(getJobByIdFn).toHaveBeenCalledTimes(2);
   });
 
-  it('conceals unrelated or unowned jobs before entering the waiter', async () => {
-    const actorKey = buildAuthenticatedCredentialActorKey(
-      'backstage-booker-access',
-      ACCESS_TOKEN
+  it('conceals a waiter reread that no longer belongs to the managed principal', async () => {
+    const runningJob = buildProtectedJob();
+    const switchedJob = completeProtectedJob(buildProtectedJob({
+      idempotency_scope_hash: '0'.repeat(64),
+    }));
+    const getJobByIdFn = jest
+      .fn<(jobId: string) => Promise<JobData | null>>()
+      .mockResolvedValueOnce(runningJob)
+      .mockResolvedValueOnce(switchedJob);
+    const waitForCompletion = jest.fn<typeof waitForQueuedGptJobCompletion>(
+      async (jobId, _options, dependencies) => {
+        expect(await dependencies!.getJobByIdFn!(jobId)).toBe(runningJob);
+        expect(await dependencies!.getJobByIdFn!(jobId)).toBeNull();
+        return { state: 'pending', job: null };
+      }
     );
+
+    const result = await readBackstageBookerAsyncResult({
+      jobId: JOB_ID,
+      actorKey: BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+      waitForResultMs: 30_000,
+    }, {
+      getJobByIdFn,
+      waitForQueuedGptJobCompletionFn: waitForCompletion,
+    });
+
+    expect(result.status).toBe('not_found');
+    expect(result.result).toBeNull();
+    expect(result.poll).toBe(RESULT_PATH);
+  });
+
+  it('conceals unrelated or unowned jobs before entering the waiter', async () => {
+    const actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
     const jobs: Array<JobData | null> = [
       null,
       buildProtectedJob({ idempotency_scope_hash: '0'.repeat(64) }),
@@ -340,6 +432,8 @@ describe('Backstage Booker reused queue wait', () => {
 
       expect(result.status).toBe('not_found');
       expect(result.result).toBeNull();
+      expect(result.poll).toBe(RESULT_PATH);
+      expect(result).not.toHaveProperty('stream');
       expect(waitForCompletion).not.toHaveBeenCalled();
     }
   });

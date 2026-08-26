@@ -85,10 +85,12 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - `https://<your-backend>/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
-The Backstage Booker builder uses its own fixed-path schema. It exposes one
-Builder-authenticated continuity-query/generation/simulation operation, two
-protected non-consequential exact reads, and one consequential canon-write operation without
-exposing generic GPT Access or control-plane tools:
+The Backstage Booker builder uses the live no-store `1.6.0` projection of its
+tracked `1.5.0` direct-client compatibility base. It exposes one
+Builder-authenticated continuity-query/generation/simulation operation, one
+poll-only managed queued-result read, two protected non-consequential exact
+domain reads, and one consequential canon-write operation without exposing
+generic GPT Access or control-plane tools:
 
 - `https://<your-backend>/contracts/backstage_booker.openapi.v1.json`
 - [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md)
@@ -204,10 +206,12 @@ and exposes multiple actions for booking workflows.
   `saveStoryline`, `upsertStoryline`, `appendCanonBeat`
 (`src/services/backstage-booker.ts`)
 
-The Builder-only `getBackstageUniverse` and
-`getBackstageStoryline` HTTP operations are not module actions. They
-read one bounded exact-universe snapshot or one exact storyline summary page
-through the protected GPT Access boundary and never enter module dispatch.
+The Builder-only `getBackstageBookerJobResult`, `getBackstageUniverse`, and
+`getBackstageStoryline` HTTP operations are not module actions. The first polls
+one protected Booker job through the shared managed bearer and exposes no
+dynamic job token or stream. The other two read one bounded exact-universe
+snapshot or one exact storyline summary page through the protected GPT Access
+boundary. None enters module dispatch.
 
 The original seven Backstage Booker actions accept an optional `universeId`. Omitted scope
 uses the backward-compatible `legacy` universe; explicit IDs are bounded to
@@ -372,11 +376,15 @@ bypass a missing/stale index through legacy state. Answer generation performs
 one compact retry only when the provider reports max-output exhaustion; it does
 not retry other provider failures. A second length exhaustion or an enforceable
 exact/maximum compact-contract violation returns the sanitized incomplete-output
-error without a third generation attempt. Schema `1.5.0` materializes these public
-payload/result fields, declares the bearer and authority-specific errors, and
-adds the capability-protected async-result read;
-deploy it first, then re-import it into the existing Builder Action before
-validating this mode.
+error without a third generation attempt. The served schema `1.6.0` materializes
+these public payload/result fields, declares the bearer and authority-specific
+errors, and moves async-result polling to the managed-bearer namespace. The
+tracked `1.5.0` file remains the direct-client compatibility base. Stop all new
+generation and drain legacy continuations before the cutover; then remove old
+web replicas, deploy the projecting backend, immediately re-import its live
+no-store endpoint into the existing Builder Action, and reopen generation only
+after both sides are verified. Neither schema version is continuation-compatible
+with the other backend version during the interval.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the
 end-user action guide, exact Notion backend-query examples, Builder instructions,

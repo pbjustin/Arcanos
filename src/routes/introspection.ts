@@ -8,6 +8,9 @@ import {
 } from "@services/moduleRegistry.js";
 import { isPublicGptModule } from "@services/moduleCatalog.js";
 import { asyncHandler } from "@shared/http/index.js";
+import {
+  BACKSTAGE_BOOKER_MANAGED_ASYNC_RESULT_OPENAPI_PATH,
+} from '@shared/backstage/backstageBookerAsyncContinuation.js';
 import { resolveGptRouting } from "./_core/gptDispatch.js";
 
 const router = express.Router();
@@ -49,7 +52,7 @@ const CUSTOM_GPT_BRIDGE_OPENAPI_CONTRACT_PATH = path.resolve(
 
 export const BACKSTAGE_BOOKER_BUILDER_CONTRACT_VERSION = '1.6.0';
 export const BACKSTAGE_BOOKER_BUILDER_ASYNC_RESULT_PATH =
-  '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result';
+  BACKSTAGE_BOOKER_MANAGED_ASYNC_RESULT_OPENAPI_PATH;
 const BACKSTAGE_BOOKER_LEGACY_ASYNC_RESULT_PATH = '/jobs/{jobId}/result';
 
 interface JsonRecord {
@@ -98,6 +101,7 @@ export function buildBackstageBookerBuilderOpenApiDocument(
   );
   const components = readJsonRecord(document.components, 'components');
   const schemas = readJsonRecord(components.schemas, 'schemas');
+  const parameters = readJsonRecord(components.parameters, 'parameters');
   const acceptedSchema = readJsonRecord(
     schemas.BackstageAsyncAcceptedResponse,
     'async accepted schema'
@@ -105,6 +109,18 @@ export function buildBackstageBookerBuilderOpenApiDocument(
   const acceptedProperties = readJsonRecord(
     acceptedSchema.properties,
     'async accepted properties'
+  );
+  const resultSchema = readJsonRecord(
+    schemas.BackstageJobResultLookup,
+    'async result schema'
+  );
+  const resultProperties = readJsonRecord(
+    resultSchema.properties,
+    'async result properties'
+  );
+  const legacyResponses = readJsonRecord(
+    legacyOperation.responses,
+    'legacy async result responses'
   );
 
   info.version = BACKSTAGE_BOOKER_BUILDER_CONTRACT_VERSION;
@@ -141,6 +157,44 @@ export function buildBackstageBookerBuilderOpenApiDocument(
         },
       },
     ],
+    responses: {
+      ...legacyResponses,
+      '400': {
+        description: 'The job identifier, wait bound, query shape, or request body is invalid.',
+        content: {
+          'application/json': {
+            schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
+          },
+        },
+      },
+      '401': {
+        description: 'The dedicated Backstage Booker Bearer credential is missing or invalid.',
+        content: {
+          'application/json': {
+            schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
+          },
+        },
+      },
+      '429': {
+        description: 'The authenticated Backstage Booker request budget was exceeded.',
+        headers: {
+          'Retry-After': { $ref: '#/components/headers/RetryAfter' },
+        },
+        content: {
+          'application/json': {
+            schema: { $ref: '#/components/schemas/RateLimitResponse' },
+          },
+        },
+      },
+      '503': {
+        description: 'Backstage Booker authentication, durable job reads, or protected result materialization is unavailable.',
+        content: {
+          'application/json': {
+            schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
+          },
+        },
+      },
+    },
   };
 
   const projectedPaths: JsonRecord = {};
@@ -163,19 +217,50 @@ export function buildBackstageBookerBuilderOpenApiDocument(
   runOperation.description =
     'Run one non-persistent Booker action with the configured bearer. Continuity and simulation remain synchronous. Heavy booking generation may return queued or running; then call getBackstageBookerJobResult with the returned jobId until terminal. Never resubmit generation while the accepted job is active. Canon writes use writeBackstageCanon.';
   const runResponses = readJsonRecord(runOperation.responses, 'run responses');
+  runResponses['401'] = {
+    description: 'A presented Backstage Booker Bearer credential was invalid, malformed, or duplicated.',
+    content: {
+      'application/json': {
+        schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
+      },
+    },
+  };
   const acceptedResponse = readJsonRecord(runResponses['202'], '202 response');
   acceptedResponse.description =
     'Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it. Call getBackstageBookerJobResult with the returned jobId; the configured Bearer credential authenticates continuation.';
 
   acceptedSchema.required = Array.isArray(acceptedSchema.required)
     ? acceptedSchema.required.filter(
-        value => value !== 'jobReadToken' && value !== 'jobReadTokenHeader'
+        value => value !== 'jobReadToken'
+          && value !== 'jobReadTokenHeader'
+          && value !== 'stream'
       )
     : acceptedSchema.required;
   delete acceptedProperties.jobReadToken;
   delete acceptedProperties.jobReadTokenHeader;
+  delete acceptedProperties.stream;
+  acceptedProperties.poll = {
+    type: 'string',
+    description:
+      'Managed-bearer result path for getBackstageBookerJobResult. Call that operation with the returned jobId.',
+  };
   acceptedSchema.description =
-    'Accepted Backstage Booker generation. Builder continuation uses jobId plus the managed Bearer-authenticated getBackstageBookerJobResult operation; dynamic job-token forwarding is intentionally absent from this projection.';
+    'Accepted Backstage Booker generation. Builder continuation uses jobId plus the managed Bearer-authenticated getBackstageBookerJobResult operation; dynamic job-token forwarding and the token-authenticated stream route are intentionally absent from this projection.';
+
+  resultSchema.required = Array.isArray(resultSchema.required)
+    ? resultSchema.required.filter(value => value !== 'stream')
+    : resultSchema.required;
+  delete resultProperties.stream;
+  resultProperties.poll = {
+    type: 'string',
+    description:
+      'Managed-bearer path for the same getBackstageBookerJobResult operation. Reuse it while status is pending.',
+  };
+
+  delete parameters.JobReadToken;
+  if (Object.keys(parameters).length === 0) {
+    delete components.parameters;
+  }
 
   return document;
 }
