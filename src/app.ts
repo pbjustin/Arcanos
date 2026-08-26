@@ -111,6 +111,7 @@ import {
 import { gamingSourceHttpBoundary } from '@services/gamingSourceHttpBoundary.js';
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { backstageBookerHttpBoundary } from '@services/backstageBookerHttpBoundary.js';
+import { optionalBackstageNotionEnrichmentAuth } from '@services/backstageNotionEnrichmentAuthorization.js';
 import { mcpHttpBodyParser } from './mcp/httpBodyParser.js';
 
 const SERVICE_NAME = 'arcanos-backend';
@@ -348,6 +349,7 @@ export function createApp(): Express {
     canonicalGptIdentifierBoundary,
     backstageMutationHttpBoundary,
     backstageMutationConfirmationGate,
+    optionalBackstageNotionEnrichmentAuth,
     canonicalResearchGptAdmissionBoundary
   );
   app.post(

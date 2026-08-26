@@ -51,6 +51,9 @@ const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
 
 export interface GenericJobsRouterDependencies {
   establishCancellationActor?: express.RequestHandler;
+  getCompatibleCancellationActorKeys?: (
+    request: express.Request
+  ) => readonly string[];
   getJobById: (jobId: string) => Promise<GenericJobData | null>;
   isJobRepositoryUnavailable: (error: unknown) => boolean;
   requestJobCancellation: (
@@ -102,6 +105,8 @@ const {
 const establishCancellationActor: express.RequestHandler =
   dependencies.establishCancellationActor
   ?? ((_req, _res, next) => next());
+const getCompatibleCancellationActorKeys =
+  dependencies.getCompatibleCancellationActorKeys ?? (() => []);
 const router = express.Router();
 router.use('/jobs', noStoreResponse);
 
@@ -645,8 +650,25 @@ router.post(
         : cancellationActorKey
           ? hashActorKey(cancellationActorKey)
           : null;
+    const acceptedCancellationScopeHashes = new Set<string>();
+    if (cancellationScopeHash) {
+      acceptedCancellationScopeHashes.add(cancellationScopeHash);
+    }
+    if (
+      capabilitySurface === 'public-gpt'
+      && hasProtectedBackstageQueuedGptJobMarker(job.input)
+    ) {
+      for (const compatibleActorKey of getCompatibleCancellationActorKeys(req)) {
+        if (compatibleActorKey && !compatibleActorKey.startsWith('ip:')) {
+          acceptedCancellationScopeHashes.add(buildGptIdempotencyScopeHash({
+            surface: 'public-gpt',
+            actorKey: compatibleActorKey,
+          }));
+        }
+      }
+    }
     if (job.idempotency_scope_hash) {
-      if (job.idempotency_scope_hash !== cancellationScopeHash) {
+      if (!acceptedCancellationScopeHashes.has(job.idempotency_scope_hash)) {
         req.logger?.warn?.('gpt.job.cancel.forbidden', {
           endpoint: req.originalUrl,
           jobId: id

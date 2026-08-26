@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { runWithRequestAbortTimeout } from '@arcanos/runtime';
 import type { NextFunction, Request, Response } from 'express';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
+import { buildAuthenticatedCredentialActorKey } from '../src/shared/security/opaqueSecret.js';
+import {
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+  getBackstageBookerAccessLegacyActorKey,
+} from '../src/services/backstageBookerAccessAuth.js';
 import {
   isBackstageNotionEnrichmentAuthorized,
   isBackstageLegacyQueuedExecution,
@@ -25,7 +30,8 @@ function buildRequest(options: {
   return {
     params: { gptId: options.gptId ?? 'backstage-booker' },
     body: options.body ?? {},
-    rawHeaders: authorization ? ['authorization', authorization] : [],
+    headers: authorization === undefined ? {} : { authorization },
+    rawHeaders: authorization === undefined ? [] : ['authorization', authorization],
     header(name: string) {
       return name.toLowerCase() === 'authorization' ? authorization : undefined;
     },
@@ -73,16 +79,55 @@ describe('optional Backstage Notion enrichment authorization', () => {
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
   });
 
+  it('reuses an already verified dedicated bearer marker without re-authenticating', async () => {
+    const request = buildRequest({ authorization: `Bearer ${accessToken}` });
+    const authorized = await new Promise<boolean>((resolve, reject) => {
+      optionalBackstageNotionEnrichmentAuth(request, {} as Response, (firstError?: unknown) => {
+        if (firstError) {
+          reject(firstError);
+          return;
+        }
+        optionalBackstageNotionEnrichmentAuth(request, {} as Response, (secondError?: unknown) => {
+          if (secondError) {
+            reject(secondError);
+            return;
+          }
+          setImmediate(() => resolve(isBackstageNotionEnrichmentAuthorized()));
+        });
+      });
+    });
+
+    expect(authorized).toBe(true);
+    expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
+  });
+
   it('establishes a stable server-derived actor key without retaining the bearer', async () => {
     const firstRequest = buildRequest({ authorization: `Bearer ${accessToken}` });
-    const secondRequest = buildRequest({ authorization: `Bearer ${accessToken}` });
+    const rotatedToken = `backstage-${'b'.repeat(48)}`;
+    const secondRequest = buildRequest({ authorization: `Bearer ${rotatedToken}` });
 
     optionalBackstageNotionEnrichmentAuth(firstRequest, {} as Response, () => undefined);
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedToken;
     optionalBackstageNotionEnrichmentAuth(secondRequest, {} as Response, () => undefined);
 
-    expect(firstRequest.authenticatedActorKey).toMatch(/^backstage-booker-access:/u);
-    expect(secondRequest.authenticatedActorKey).toBe(firstRequest.authenticatedActorKey);
-    expect(firstRequest.authenticatedActorKey).not.toContain(accessToken);
+    expect(firstRequest.authenticatedActorKey)
+      .toBe(BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY);
+    expect(secondRequest.authenticatedActorKey)
+      .toBe(BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY);
+    expect(getBackstageBookerAccessLegacyActorKey(firstRequest)).toBe(
+      buildAuthenticatedCredentialActorKey('backstage-booker-access', accessToken)
+    );
+    expect(getBackstageBookerAccessLegacyActorKey(secondRequest)).toBe(
+      buildAuthenticatedCredentialActorKey('backstage-booker-access', rotatedToken)
+    );
+    expect(getBackstageBookerAccessLegacyActorKey(secondRequest))
+      .not.toBe(getBackstageBookerAccessLegacyActorKey(firstRequest));
+    const firstPrivateState = Object.getOwnPropertySymbols(firstRequest)
+      .map(symbol => (firstRequest as unknown as Record<symbol, unknown>)[symbol]);
+    const secondPrivateState = Object.getOwnPropertySymbols(secondRequest)
+      .map(symbol => (secondRequest as unknown as Record<symbol, unknown>)[symbol]);
+    expect(JSON.stringify(firstPrivateState)).not.toContain(accessToken);
+    expect(JSON.stringify(secondPrivateState)).not.toContain(rotatedToken);
     expect(firstRequest).not.toHaveProperty('authorization');
   });
 
@@ -117,11 +162,10 @@ describe('optional Backstage Notion enrichment authorization', () => {
     expect(isBackstageLegacyQueuedExecution()).toBe(false);
   });
 
-  it('keeps missing and invalid credentials unauthorized for non-authority fallback policy', async () => {
-    await expect(readAuthorizationInsideNext(buildRequest())).resolves.toBe(false);
-    await expect(readAuthorizationInsideNext(buildRequest({
-      authorization: `Bearer ${'wrong'.repeat(12)}`,
-    }))).resolves.toBe(false);
+  it('keeps a truly missing credential unauthorized for public non-authority fallback policy', async () => {
+    const missingRequest = buildRequest();
+    await expect(readAuthorizationInsideNext(missingRequest)).resolves.toBe(false);
+    expect(getBackstageBookerAccessLegacyActorKey(missingRequest)).toBeNull();
   });
 
   it('does not trust payload fields that imitate authorization state', async () => {

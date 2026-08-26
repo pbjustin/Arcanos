@@ -1,9 +1,32 @@
-import { describe, expect, it } from '@jest/globals';
+import { Buffer } from 'node:buffer';
 
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
+import express from 'express';
+import request from 'supertest';
+
+import type { JobData } from '../src/core/db/schema.js';
+import { buildAuthenticatedCredentialActorKey } from '../src/platform/runtime/security.js';
 import {
   BACKSTAGE_RESULT_POLL_WAIT_MS,
   resolveBackstageExecutionBudgetPolicy,
 } from '../src/shared/backstage/backstageExecutionBudget.js';
+import {
+  protectBackstageQueuedGptJobOutput,
+} from '../src/shared/backstage/backstageQueuedJobResultProtection.js';
+import {
+  buildProtectedBackstageQueuedGptJobInput,
+} from '../src/shared/gpt/asyncGptJob.js';
+import {
+  buildGptIdempotencyScopeHash,
+} from '../src/shared/gpt/gptIdempotency.js';
 import {
   DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
   DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS,
@@ -12,10 +35,136 @@ import {
   resolveGptAsyncHeavyWaitForResultMs,
 } from '../src/shared/gpt/gptAsyncWaitPolicy.js';
 import {
+  createBackstageBookerAsyncResultRouter,
+  parseBackstageBookerAsyncResultQuery,
+  readBackstageBookerAsyncResult,
+} from '../src/routes/backstageBookerAsyncResult.js';
+import {
+  createBackstageBookerHttpBoundary,
+} from '../src/services/backstageBookerHttpBoundary.js';
+import {
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+} from '../src/services/backstageBookerAccessAuth.js';
+import {
   resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs,
+  waitForQueuedGptJobCompletion,
 } from '../src/services/queuedGptCompletionService.js';
 import { resolveQueuedJobWaitPollLimit } from '../src/services/queuedJobCompletionPolling.js';
+
+const ACCESS_TOKEN = `backstage-test-${'a'.repeat(64)}`;
+const PAYLOAD_KEY = Buffer.alloc(32, 0x42).toString('base64');
+const JOB_ID = '77777777-7777-4777-8777-777777777777';
+const UNIVERSE_ID = 'my-universe-2k26';
+const RESULT_PATH =
+  `/gpt-access/capabilities/v1/backstage-booker/jobs/${JOB_ID}/result`;
+const ORIGINAL_ACCESS_TOKEN =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
+const ORIGINAL_PAYLOAD_KEY =
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
+
+function restoreEnvironmentValue(
+  key: string,
+  originalValue: string | undefined
+): void {
+  if (originalValue === undefined) {
+    Reflect.deleteProperty(process.env, key);
+  } else {
+    process.env[key] = originalValue;
+  }
+}
+
+function buildProtectedJob(
+  overrides: Partial<JobData> = {},
+  actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY
+): JobData {
+  const input = buildProtectedBackstageQueuedGptJobInput({
+    body: {
+      action: 'generateBooking',
+      executionMode: 'sync',
+      payload: {
+        universeId: UNIVERSE_ID,
+        prompt: 'Produce one bounded NXT booking segment.',
+      },
+    },
+    prompt: 'Produce one bounded NXT booking segment.',
+    action: 'generateBooking',
+    universeId: UNIVERSE_ID,
+    notionEnrichmentAuthorized: true,
+    requestId: 'request-test',
+    traceId: 'trace-test',
+    correlationId: 'trace-test',
+    executionModeReason: 'backstage_notion_authority_context',
+  });
+  return {
+    id: JOB_ID,
+    worker_id: 'test-worker',
+    job_type: 'gpt',
+    status: 'running',
+    claim_generation: '1',
+    input,
+    retry_count: 0,
+    max_retries: 1,
+    idempotency_scope_hash: buildGptIdempotencyScopeHash({
+      surface: 'public-gpt',
+      actorKey,
+    }),
+    created_at: new Date('2026-08-26T00:00:00.000Z'),
+    updated_at: new Date('2026-08-26T00:00:01.000Z'),
+    ...overrides,
+  };
+}
+
+function completeProtectedJob(
+  runningJob: JobData,
+  output: unknown = {
+    ok: true,
+    result: {
+      booking: 'Official protected Backstage Booker result.',
+    },
+  }
+): JobData {
+  return {
+    ...runningJob,
+    status: 'completed',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId: runningJob.id,
+      rawInput: runningJob.input,
+      output,
+    }),
+    completed_at: new Date('2026-08-26T00:00:42.000Z'),
+    updated_at: new Date('2026-08-26T00:00:42.000Z'),
+  };
+}
+
+function buildTestBoundary() {
+  return createBackstageBookerHttpBoundary({
+    genericAuth: (_req, res) => {
+      res.status(401).json({ error: 'generic-auth-not-allowed' });
+    },
+    rateLimit: (_req, _res, next) => next(),
+  });
+}
+
+beforeAll(() => {
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = ACCESS_TOKEN;
+  process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = PAYLOAD_KEY;
+});
+
+beforeEach(() => {
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = ACCESS_TOKEN;
+});
+
+afterAll(() => {
+  restoreEnvironmentValue(
+    'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
+    ORIGINAL_ACCESS_TOKEN
+  );
+  restoreEnvironmentValue(
+    'ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY',
+    ORIGINAL_PAYLOAD_KEY
+  );
+});
 
 describe('Backstage Booker reused queue wait', () => {
   it('uses the existing maximum bounded hybrid wait before returning HTTP 202', () => {
@@ -80,5 +229,252 @@ describe('Backstage Booker reused queue wait', () => {
       minimumPollIntervalMs,
       MAX_ASYNC_GPT_WAIT_POLLS
     )).toBe(MAX_ASYNC_GPT_WAIT_POLLS);
+  });
+
+  it('parses only the bounded canonical result wait query', () => {
+    expect(parseBackstageBookerAsyncResultQuery({})).toEqual({
+      ok: true,
+      waitForResultMs: 30_000,
+    });
+    expect(parseBackstageBookerAsyncResultQuery({
+      waitForResultMs: '0',
+    })).toEqual({ ok: true, waitForResultMs: 0 });
+    expect(parseBackstageBookerAsyncResultQuery({
+      waitForResultMs: '30000',
+    })).toEqual({ ok: true, waitForResultMs: 30_000 });
+    for (const query of [
+      { waitForResultMs: '30001' },
+      { waitForResultMs: '01' },
+      { waitForResultMs: '-1' },
+      { waitForResultMs: ['1000', '2000'] },
+      { waitForResultMs: '1000', extra: 'true' },
+    ]) {
+      expect(parseBackstageBookerAsyncResultQuery(query)).toEqual({ ok: false });
+    }
+  });
+
+  it('returns an owned completed protected job with the managed bearer only', async () => {
+    const completedJob = completeProtectedJob(buildProtectedJob());
+    const getJobByIdFn = jest.fn(async () => completedJob);
+    const waitForCompletion = jest.fn<typeof waitForQueuedGptJobCompletion>();
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn,
+      waitForQueuedGptJobCompletionFn: waitForCompletion,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body.status).toBe('completed');
+    expect(response.body.result).toEqual({
+      ok: true,
+      result: {
+        booking: 'Official protected Backstage Booker result.',
+      },
+    });
+    expect(response.body.poll).toBe(RESULT_PATH);
+    expect(response.body).not.toHaveProperty('stream');
+    expect(getJobByIdFn).toHaveBeenCalledTimes(1);
+    expect(waitForCompletion).not.toHaveBeenCalled();
+  });
+
+  it('keeps stable-principal jobs readable after the managed bearer rotates', async () => {
+    const rotatedToken = `backstage-test-${'b'.repeat(64)}`;
+    const completedJob = completeProtectedJob(buildProtectedJob());
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => completedJob,
+      recordJobLookup: jest.fn(),
+    }));
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedToken;
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${rotatedToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('completed');
+    expect(response.body.poll).toBe(RESULT_PATH);
+  });
+
+  it('reads exact-current-token legacy jobs only during the cutover window', async () => {
+    const rotatedToken = `backstage-test-${'c'.repeat(64)}`;
+    const legacyActorKey = buildAuthenticatedCredentialActorKey(
+      'backstage-booker-access',
+      ACCESS_TOKEN
+    );
+    const legacyJob = completeProtectedJob(
+      buildProtectedJob({}, legacyActorKey)
+    );
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => legacyJob,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const currentTokenResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+    expect(currentTokenResponse.status).toBe(200);
+    expect(currentTokenResponse.body.status).toBe('completed');
+
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = rotatedToken;
+    const rotatedResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${rotatedToken}`);
+    const revokedResponse = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(rotatedResponse.status).toBe(200);
+    expect(rotatedResponse.body.status).toBe('not_found');
+    expect(revokedResponse.status).toBe(401);
+  });
+
+  it('reuses the existing bounded waiter for an owned running job', async () => {
+    const runningJob = buildProtectedJob();
+    const completedJob = completeProtectedJob(runningJob);
+    const getJobByIdFn = jest
+      .fn<(jobId: string) => Promise<JobData | null>>()
+      .mockResolvedValueOnce(runningJob)
+      .mockResolvedValueOnce(completedJob);
+    const waitForCompletion = jest.fn<typeof waitForQueuedGptJobCompletion>(
+      async (jobId, options, dependencies) => {
+        expect(jobId).toBe(JOB_ID);
+        expect(options).toEqual(expect.objectContaining({
+          waitForResultMs: 30_000,
+          pollIntervalMs: 250,
+          signal: expect.any(AbortSignal),
+        }));
+        const first = await dependencies!.getJobByIdFn!(jobId);
+        const second = await dependencies!.getJobByIdFn!(jobId);
+        expect(first?.status).toBe('running');
+        expect(second?.status).toBe('completed');
+        return { state: 'completed', job: second! };
+      }
+    );
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn,
+      waitForQueuedGptJobCompletionFn: waitForCompletion,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('completed');
+    expect(waitForCompletion).toHaveBeenCalledTimes(1);
+    expect(getJobByIdFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('conceals a waiter reread that no longer belongs to the managed principal', async () => {
+    const runningJob = buildProtectedJob();
+    const switchedJob = completeProtectedJob(buildProtectedJob({
+      idempotency_scope_hash: '0'.repeat(64),
+    }));
+    const getJobByIdFn = jest
+      .fn<(jobId: string) => Promise<JobData | null>>()
+      .mockResolvedValueOnce(runningJob)
+      .mockResolvedValueOnce(switchedJob);
+    const waitForCompletion = jest.fn<typeof waitForQueuedGptJobCompletion>(
+      async (jobId, _options, dependencies) => {
+        expect(await dependencies!.getJobByIdFn!(jobId)).toBe(runningJob);
+        expect(await dependencies!.getJobByIdFn!(jobId)).toBeNull();
+        return { state: 'pending', job: null };
+      }
+    );
+
+    const result = await readBackstageBookerAsyncResult({
+      jobId: JOB_ID,
+      actorKey: BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+      waitForResultMs: 30_000,
+    }, {
+      getJobByIdFn,
+      waitForQueuedGptJobCompletionFn: waitForCompletion,
+    });
+
+    expect(result.status).toBe('not_found');
+    expect(result.result).toBeNull();
+    expect(result.poll).toBe(RESULT_PATH);
+  });
+
+  it('conceals unrelated or unowned jobs before entering the waiter', async () => {
+    const actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
+    const jobs: Array<JobData | null> = [
+      null,
+      buildProtectedJob({ idempotency_scope_hash: '0'.repeat(64) }),
+      buildProtectedJob({ job_type: 'ask' }),
+      buildProtectedJob({ input: { gptId: 'backstage-booker' } }),
+    ];
+
+    for (const job of jobs) {
+      const waitForCompletion = jest.fn<typeof waitForQueuedGptJobCompletion>();
+      const result = await readBackstageBookerAsyncResult({
+        jobId: JOB_ID,
+        actorKey,
+        waitForResultMs: 30_000,
+      }, {
+        getJobByIdFn: async () => job,
+        waitForQueuedGptJobCompletionFn: waitForCompletion,
+      });
+
+      expect(result.status).toBe('not_found');
+      expect(result.result).toBeNull();
+      expect(result.poll).toBe(RESULT_PATH);
+      expect(result).not.toHaveProperty('stream');
+      expect(waitForCompletion).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects an invalid bearer before reading any job', async () => {
+    const getJobByIdFn = jest.fn(async () => buildProtectedJob());
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', 'Bearer incorrect-token');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(getJobByIdFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when protected terminal output cannot be materialized', async () => {
+    const malformedJob = buildProtectedJob({
+      status: 'completed',
+      output: { source: 'tampered' },
+      completed_at: new Date('2026-08-26T00:00:42.000Z'),
+    });
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => malformedJob,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expect(JSON.stringify(response.body)).not.toContain('tampered');
   });
 });

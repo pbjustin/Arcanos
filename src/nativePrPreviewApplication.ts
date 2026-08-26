@@ -83,6 +83,27 @@ import {
   projectBackstageStorylineSummaryPage,
 } from './shared/backstage/backstageUniverseReadProjection.js';
 import {
+  authenticateBackstageBookerAccessCore,
+  buildBackstageBookerAccessActorIdentity,
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+  BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME,
+} from './shared/backstage/backstageBookerAccessAuthCore.js';
+import {
+  buildBackstageBookerManagedAsyncResultPath,
+  projectBackstageBookerManagedPendingResponse,
+} from './shared/backstage/backstageBookerAsyncContinuation.js';
+import {
+  isBackstageBookerBearerReadableJob,
+  readBackstageBookerAsyncResultCore,
+} from './shared/backstage/backstageBookerAsyncResultCore.js';
+import {
+  BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY_ENV_NAME,
+  resolveBackstageJobPayloadProtectionConfig,
+} from './shared/backstage/backstageJobPayloadProtection.js';
+import {
+  protectBackstageQueuedGptJobOutput,
+} from './shared/backstage/backstageQueuedJobResultProtection.js';
+import {
   BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   BACKSTAGE_GENERATION_TOKEN_LIMIT_MAX,
@@ -187,6 +208,9 @@ import {
   MAX_ASYNC_GPT_WAIT_POLLS,
   resolveGptAsyncHeavyWaitForResultMs,
 } from './shared/gpt/gptAsyncWaitPolicy.js';
+import {
+  buildGptIdempotencyScopeHash,
+} from './shared/gpt/gptIdempotency.js';
 import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
@@ -4922,6 +4946,378 @@ function runBackstageNotionPartitionFailureTelemetryFixture(
   };
 }
 
+async function runBackstageManagedAsyncContinuationFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const tokenA = `native-preview-backstage-a-${'A'.repeat(48)}`;
+  const tokenB = `native-preview-backstage-b-${'B'.repeat(48)}`;
+  const wrongToken = `native-preview-backstage-wrong-${'W'.repeat(48)}`;
+  const capability = `v1.${'C'.repeat(43)}`;
+  const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac';
+  const managedPoll = buildBackstageBookerManagedAsyncResultPath(jobId);
+  const readAccessEnvironment = (credential?: string) =>
+    (environmentName: string): string | undefined =>
+      environmentName === BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME
+        ? credential
+        : undefined;
+  const authenticate = (
+    authorizationHeader: string | undefined,
+    authorizationHeaderCount: number,
+    authorizationHeaderPresented: boolean,
+    credential?: string
+  ) => authenticateBackstageBookerAccessCore({
+    authorizationHeader,
+    authorizationHeaderCount,
+    authorizationHeaderPresented,
+    readEnvironmentValue: readAccessEnvironment(credential),
+  });
+
+  const authA = authenticate(`Bearer ${tokenA}`, 1, true, tokenA);
+  const authB = authenticate(`Bearer ${tokenB}`, 1, true, tokenB);
+  const missingAuth = authenticate(undefined, 0, false, tokenA);
+  const malformedAuth = authenticate('Basic preview', 1, true, tokenA);
+  const wrongAuth = authenticate(`Bearer ${wrongToken}`, 1, true, tokenA);
+  const duplicateAuth = authenticate(`Bearer ${tokenA}`, 2, true, tokenA);
+  const emptyAuth = authenticate('Bearer ', 1, true, tokenA);
+  const unavailableAuth = authenticate(`Bearer ${tokenA}`, 1, true);
+  const collisionAuth = authenticateBackstageBookerAccessCore({
+    authorizationHeader: `Bearer ${tokenA}`,
+    authorizationHeaderCount: 1,
+    authorizationHeaderPresented: true,
+    readEnvironmentValue: environmentName =>
+      environmentName === BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME
+        || environmentName === 'ARCANOS_GPT_ACCESS_TOKEN'
+        ? tokenA
+        : undefined,
+  });
+  if (!authA.ok || !authB.ok) {
+    throw new Error('PREVIEW_BACKSTAGE_MANAGED_ASYNC_AUTH_INVALID');
+  }
+
+  const identityA = buildBackstageBookerAccessActorIdentity(authA.credential);
+  const identityB = buildBackstageBookerAccessActorIdentity(authB.credential);
+  const stableScopeA = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey: identityA.principalActorKey,
+  });
+  const stableScopeB = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey: identityB.principalActorKey,
+  });
+  const legacyScopeA = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey: identityA.legacyActorKey,
+  });
+  const legacyScopeB = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey: identityB.legacyActorKey,
+  });
+  const protectedInput = {
+    gptId: 'backstage-booker',
+    requestPath: '/gpt/backstage-booker',
+    executionModeReason: 'backstage_notion_authority_context',
+    protectedBackstage: {
+      version: 1,
+      source: 'backstage-booker-http',
+      envelopeId: 'native-preview-managed-async',
+      action: 'generateBooking',
+      universeId: 'native-preview-managed-async',
+      sealedPayload: { fixture: 'server-owned' },
+    },
+  };
+  const payloadKey = Buffer.alloc(32, 0x5a).toString('base64');
+  const payloadProtectionConfig = resolveBackstageJobPayloadProtectionConfig(
+    environmentName =>
+      environmentName === BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY_ENV_NAME
+        ? payloadKey
+        : undefined
+  );
+  const pendingJob = buildFixture(jobId, 'pending', {
+    input: protectedInput,
+    idempotency_scope_hash: stableScopeA,
+  });
+  const completedOutput = {
+    ok: true,
+    result: { answer: 'sealed managed continuation complete' },
+  };
+  const completedJob = buildFixture(jobId, 'completed', {
+    input: protectedInput,
+    idempotency_scope_hash: stableScopeA,
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: completedOutput,
+      config: payloadProtectionConfig,
+    }),
+    completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+    updated_at: FIXTURE_COMPLETED_TIMESTAMP,
+  });
+  const legacyJob = buildFixture(jobId, 'pending', {
+    input: protectedInput,
+    idempotency_scope_hash: legacyScopeA,
+  });
+  const readOnce = (
+    job: GenericJobData | null,
+    actorKey = identityB.principalActorKey,
+    legacyActorKey: string | null = identityB.legacyActorKey
+  ) => readBackstageBookerAsyncResultCore(
+    {
+      jobId,
+      actorKey,
+      legacyActorKey,
+      waitForResultMs: 0,
+      pollIntervalMs: 50,
+    },
+    {
+      getJobByIdFn: async () => job,
+      waitForQueuedGptJobCompletionFn: async () => {
+        throw new Error('PREVIEW_MANAGED_ASYNC_UNEXPECTED_WAIT');
+      },
+      payloadProtectionConfig,
+    }
+  );
+
+  const genericPending = {
+    jobId,
+    status: 'queued',
+    poll: `/jobs/${jobId}/result`,
+    stream: `/jobs/${jobId}/stream`,
+    jobReadToken: capability,
+    jobReadTokenHeader: 'x-arcanos-job-read-token',
+    instruction: 'Poll the generic result endpoint.',
+    directReturn: {
+      poll: `/jobs/${jobId}/result`,
+      result: `/jobs/${jobId}/result`,
+    },
+  };
+  const managedPending = projectBackstageBookerManagedPendingResponse(
+    genericPending
+  );
+  const pendingResult = await readOnce(pendingJob);
+  const legacyPendingResult = await readOnce(
+    legacyJob,
+    identityA.principalActorKey,
+    identityA.legacyActorKey
+  );
+  const rotatedLegacyHidden = await readOnce(legacyJob);
+  const missingResult = await readOnce(null);
+
+  let repositoryReads = 0;
+  let waiterCalls = 0;
+  const transitionedResult = await readBackstageBookerAsyncResultCore(
+    {
+      jobId,
+      actorKey: identityB.principalActorKey,
+      legacyActorKey: identityB.legacyActorKey,
+      waitForResultMs: 1_000,
+      pollIntervalMs: 50,
+    },
+    {
+      getJobByIdFn: async () => {
+        repositoryReads += 1;
+        return repositoryReads === 1 ? pendingJob : completedJob;
+      },
+      waitForQueuedGptJobCompletionFn: async (
+        currentJobId,
+        options,
+        dependencies
+      ) => {
+        waiterCalls += 1;
+        let virtualNowMs = 0;
+        return pollQueuedJobCompletion({
+          jobId: currentJobId,
+          waitForResultMs: options?.waitForResultMs ?? 0,
+          pollIntervalMs: options?.pollIntervalMs ?? 50,
+          maxPolls: MAX_ASYNC_GPT_WAIT_POLLS,
+          signal: options?.signal,
+          readJob: async currentId =>
+            dependencies?.getJobByIdFn?.(currentId) ?? null,
+          sleepFn: async milliseconds => {
+            virtualNowMs += milliseconds;
+          },
+          nowFn: () => virtualNowMs,
+          mapObservation: job => job?.status === 'completed'
+            ? { state: 'completed', job }
+            : { state: 'pending', job },
+          buildPendingObservation: job => ({ state: 'pending', job }),
+        });
+      },
+      payloadProtectionConfig,
+    }
+  );
+
+  const failedResult = await readOnce(buildFixture(jobId, 'failed', {
+    input: protectedInput,
+    idempotency_scope_hash: stableScopeA,
+    error_message: 'Synthetic managed failure.',
+    completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+  }));
+  const cancelledResult = await readOnce(buildFixture(jobId, 'cancelled', {
+    input: protectedInput,
+    idempotency_scope_hash: stableScopeA,
+    error_message: 'Synthetic managed cancellation.',
+    completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+  }));
+  const expiredResult = await readOnce(buildFixture(jobId, 'expired', {
+    input: protectedInput,
+    idempotency_scope_hash: stableScopeA,
+    error_message: 'Synthetic managed expiry.',
+    completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+  }));
+
+  const expectedStableHashes = new Set([stableScopeA]);
+  const ownership = {
+    stableJobReadableAfterRotation:
+      stableScopeA === stableScopeB
+      && isBackstageBookerBearerReadableJob(pendingJob, expectedStableHashes),
+    legacyJobReadableDuringCutover: isBackstageBookerBearerReadableJob(
+      legacyJob,
+      new Set([stableScopeA, legacyScopeA])
+    ),
+    rotatedLegacyJobHidden: rotatedLegacyHidden.status === 'not_found',
+    wrongScopeHidden: !isBackstageBookerBearerReadableJob(
+      { ...pendingJob, idempotency_scope_hash: '0'.repeat(64) },
+      expectedStableHashes
+    ),
+    nonPublicJobHidden: !isBackstageBookerBearerReadableJob(
+      {
+        ...pendingJob,
+        input: {
+          ...protectedInput,
+          requestPath: '/gpt-access/jobs/create',
+          executionModeReason: 'gpt_access_create_ai_job',
+        },
+      },
+      expectedStableHashes
+    ),
+    nonGptJobHidden: !isBackstageBookerBearerReadableJob(
+      { ...pendingJob, job_type: 'research' },
+      expectedStableHashes
+    ),
+    malformedJobHidden: !isBackstageBookerBearerReadableJob(
+      { ...pendingJob, input: { requestPath: '/gpt/backstage-booker' } },
+      expectedStableHashes
+    ),
+  };
+  const directReturn = managedPending.directReturn as Record<string, unknown>;
+  const resultPayloads = [
+    pendingResult,
+    transitionedResult,
+    failedResult,
+    cancelledResult,
+    expiredResult,
+    missingResult,
+    legacyPendingResult,
+    rotatedLegacyHidden,
+  ];
+  const allManagedPolls = resultPayloads.every(
+    payload => payload.poll === managedPoll && !Object.hasOwn(payload, 'stream')
+  );
+  const noManagedCreationCapabilities =
+    managedPending.poll === managedPoll
+    && directReturn.poll === managedPoll
+    && directReturn.result === managedPoll
+    && !Object.hasOwn(managedPending, 'jobReadToken')
+    && !Object.hasOwn(managedPending, 'jobReadTokenHeader')
+    && !Object.hasOwn(managedPending, 'stream')
+    && Object.hasOwn(genericPending, 'jobReadToken')
+    && genericPending.poll === `/jobs/${jobId}/result`;
+  const authentication = {
+    currentAccepted: authA.ok,
+    rotatedAccepted: authB.ok,
+    missingRejected: !missingAuth.ok && missingAuth.reason === 'missing_auth',
+    malformedRejected:
+      !malformedAuth.ok && malformedAuth.reason === 'invalid_auth',
+    wrongRejected: !wrongAuth.ok && wrongAuth.reason === 'invalid_auth',
+    duplicateRejected:
+      !duplicateAuth.ok && duplicateAuth.reason === 'invalid_auth',
+    emptyRejected: !emptyAuth.ok && emptyAuth.reason === 'invalid_auth',
+    unavailableRejected:
+      !unavailableAuth.ok
+      && unavailableAuth.reason === 'configuration_unavailable',
+    collisionRejected:
+      !collisionAuth.ok
+      && collisionAuth.reason === 'configuration_unavailable',
+    stablePrincipalAcrossRotation:
+      identityA.principalActorKey
+        === BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY
+      && identityB.principalActorKey
+        === BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+    legacyIdentityChangesAcrossRotation:
+      identityA.legacyActorKey !== identityB.legacyActorKey
+      && legacyScopeA !== legacyScopeB,
+  };
+  const terminalMaterializationVerified =
+    transitionedResult.status === 'completed'
+    && JSON.stringify(transitionedResult.result) === JSON.stringify(completedOutput)
+    && repositoryReads === 2
+    && waiterCalls === 1;
+  const stateProjectionVerified =
+    pendingResult.status === 'pending'
+    && failedResult.status === 'failed'
+    && failedResult.error?.code === 'JOB_FAILED'
+    && cancelledResult.status === 'failed'
+    && cancelledResult.error?.code === 'JOB_CANCELLED'
+    && expiredResult.status === 'expired'
+    && expiredResult.error?.code === 'JOB_EXPIRED'
+    && missingResult.status === 'not_found'
+    && legacyPendingResult.status === 'pending';
+  const publicProjection = JSON.stringify({
+    authentication,
+    managedPending,
+    ownership,
+    resultPayloads,
+  });
+  const sensitiveValuesAbsent = [
+    tokenA,
+    tokenB,
+    wrongToken,
+    capability,
+    payloadKey,
+    'ciphertext',
+    'jobReadToken',
+    'jobReadTokenHeader',
+    '/stream',
+  ].every(value => !publicProjection.includes(value));
+
+  if (
+    Object.values(authentication).some(value => !value)
+    || Object.values(ownership).some(value => !value)
+    || !noManagedCreationCapabilities
+    || !allManagedPolls
+    || !terminalMaterializationVerified
+    || !stateProjectionVerified
+    || !sensitiveValuesAbsent
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_MANAGED_ASYNC_CONTINUATION_INVALID');
+  }
+
+  return {
+    accepted: true,
+    authentication,
+    cacheBoundaryReached: false,
+    continuation: {
+      allManagedPolls,
+      managedCreationCapabilitiesRemoved: noManagedCreationCapabilities,
+      managedPoll,
+      repositoryReads,
+      stateProjectionVerified,
+      terminalMaterializationVerified,
+      waiterCalls,
+    },
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    ownership,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    sensitiveValuesAbsent,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageGenerationFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
@@ -4940,6 +5336,13 @@ async function runBackstageGenerationFixture(
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.reviewCompletion:
+      // The trusted lifecycle verifier runs from the default branch and may
+      // predate this selector. Execute the new fail-closed proof behind the
+      // established review selector without changing its public contract;
+      // the exact-head verifier separately checks the dedicated body/header.
+      await runBackstageManagedAsyncContinuationFixture(
+        fixtures.managedAsyncContinuation
+      );
       return {
         payload: await runBackstageReviewCompletionFixture(fixture),
         partitionedAuthorityProofVersion: null,
@@ -4967,6 +5370,11 @@ async function runBackstageGenerationFixture(
     case fixtures.continuitySubtree:
       return {
         payload: await runBackstageContinuitySubtreeFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.managedAsyncContinuation:
+      return {
+        payload: await runBackstageManagedAsyncContinuationFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     default:
@@ -7020,6 +7428,18 @@ export function createNativePrPreviewApplication(
                 .queueWaitPolicyVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .queueWaitPolicyProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .managedAsyncContinuation
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .managedAsyncContinuationVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .managedAsyncContinuationProofVersion
             );
           }
           return sendBoundedJsonResponse(

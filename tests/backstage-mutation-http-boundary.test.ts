@@ -613,21 +613,38 @@ describe('Backstage mutation HTTP boundary', () => {
       dispatchBoundaryIndex
     );
     const gptRouteIndex = gptRouterSource.lastIndexOf('router.post(');
-    const gptNotionAuthIndex = gptRouterSource.indexOf(
-      'optionalBackstageNotionEnrichmentAuth',
-      gptRouteIndex
-    );
     const gptCanonicalBoundaryIndex = gptRouterSource.indexOf(
       'canonicalGptIdentifierBoundary',
-      gptNotionAuthIndex
+      gptRouteIndex
     );
     const gptBoundaryIndex = gptRouterSource.indexOf(
       'backstageMutationHttpBoundary',
-      gptNotionAuthIndex
+      gptCanonicalBoundaryIndex
+    );
+    const gptConfirmationIndex = gptRouterSource.indexOf(
+      'backstageMutationConfirmationGate',
+      gptBoundaryIndex
+    );
+    const gptNotionAuthIndex = gptRouterSource.indexOf(
+      'optionalBackstageNotionEnrichmentAuth',
+      gptConfirmationIndex
     );
     const gptProviderIndex = gptRouterSource.indexOf(
       'publicProviderGptAdmission',
-      gptBoundaryIndex
+      gptNotionAuthIndex
+    );
+    const appGptRouteIndex = appSource.indexOf("'/gpt/:gptId'", broadParserIndex);
+    const appGptBoundaryIndex = appSource.indexOf(
+      'backstageMutationHttpBoundary',
+      appGptRouteIndex
+    );
+    const appGptConfirmationIndex = appSource.indexOf(
+      'backstageMutationConfirmationGate',
+      appGptBoundaryIndex
+    );
+    const appGptNotionAuthIndex = appSource.indexOf(
+      'optionalBackstageNotionEnrichmentAuth',
+      appGptConfirmationIndex
     );
 
     expect(directBoundaryIndex).toBeGreaterThan(-1);
@@ -644,11 +661,16 @@ describe('Backstage mutation HTTP boundary', () => {
     expect(dispatchBoundaryIndex).toBeGreaterThan(dispatchRouteIndex);
     expect(dispatchHandlerIndex).toBeGreaterThan(dispatchBoundaryIndex);
     expect(gptRouteIndex).toBeGreaterThan(-1);
-    expect(gptNotionAuthIndex).toBeGreaterThan(gptRouteIndex);
-    expect(gptCanonicalBoundaryIndex).toBeGreaterThan(gptNotionAuthIndex);
-    expect(gptBoundaryIndex).toBeGreaterThan(gptRouteIndex);
-    expect(gptBoundaryIndex).toBeGreaterThan(gptNotionAuthIndex);
-    expect(gptProviderIndex).toBeGreaterThan(gptBoundaryIndex);
+    expect(gptCanonicalBoundaryIndex).toBeGreaterThan(gptRouteIndex);
+    expect(gptBoundaryIndex).toBeGreaterThan(gptCanonicalBoundaryIndex);
+    expect(gptConfirmationIndex).toBeGreaterThan(gptBoundaryIndex);
+    expect(gptNotionAuthIndex).toBeGreaterThan(gptConfirmationIndex);
+    expect(gptProviderIndex).toBeGreaterThan(gptNotionAuthIndex);
+    expect(appGptRouteIndex).toBeGreaterThan(broadParserIndex);
+    expect(appGptBoundaryIndex).toBeGreaterThan(appGptRouteIndex);
+    expect(appGptConfirmationIndex).toBeGreaterThan(appGptBoundaryIndex);
+    expect(appGptNotionAuthIndex).toBeGreaterThan(appGptConfirmationIndex);
+    expect(appGptNotionAuthIndex).toBeLessThan(providerAdmissionIndex);
     expect(modulesSource).toContain('backstageMutationConfirmationGate');
   });
 });

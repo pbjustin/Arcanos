@@ -29,4 +29,42 @@ describe('backend/CLI contract route ownership', () => {
     );
     expect(productionAdapterSource).toContain('const router = createGenericJobsRouter({');
   });
+
+  it('owns and mounts the managed-bearer result adapter before the GPT Access fallback', async () => {
+    const bearerAdapterSource = await fs.readFile(
+      new URL('../src/routes/backstageBookerAsyncResult.ts', import.meta.url),
+      'utf8',
+    );
+    const genericAdapterSource = await fs.readFile(
+      new URL('../src/routes/jobs.ts', import.meta.url),
+      'utf8',
+    );
+    const registerSource = await fs.readFile(
+      new URL('../src/routes/register.ts', import.meta.url),
+      'utf8',
+    );
+    const bearerMount = "app.use('/', backstageBookerAsyncResultRouter);";
+    const genericJobsMount = "app.use('/', jobsRouter);";
+    const gptAccessMount = "app.use('/', gptAccessRouter);";
+
+    expect(bearerAdapterSource).toContain(
+      'export function createBackstageBookerAsyncResultRouter(',
+    );
+    expect(bearerAdapterSource).toContain(
+      '`${BACKSTAGE_BOOKER_ASYNC_RESULT_PATH_PREFIX}/:jobId/result`',
+    );
+    expect(genericAdapterSource).not.toContain(
+      'createBackstageBookerAsyncResultRouter',
+    );
+    expect(registerSource).toContain(
+      "import backstageBookerAsyncResultRouter from './backstageBookerAsyncResult.js';",
+    );
+    expect(registerSource.indexOf(bearerMount)).toBeGreaterThan(-1);
+    expect(registerSource.indexOf(genericJobsMount)).toBeGreaterThan(-1);
+    expect(registerSource.indexOf(gptAccessMount)).toBeGreaterThan(-1);
+    expect(registerSource.indexOf(bearerMount))
+      .toBeLessThan(registerSource.indexOf(genericJobsMount));
+    expect(registerSource.indexOf(genericJobsMount))
+      .toBeLessThan(registerSource.indexOf(gptAccessMount));
+  });
 });

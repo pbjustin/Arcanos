@@ -444,13 +444,22 @@ envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
-The Builder-specific schema `1.5.0` at
+The Builder-specific schema `1.6.0` at
 `GET /contracts/backstage_booker.openapi.v1.json` defines five operations. Its
-saved dedicated bearer is declared on the four Booker operations so Notion-authoritative
-continuity queries and generation have verified provenance. The underlying
-generation and simulation route remains publicly compatible for
-non-authoritative direct clients; `queryContinuity` has no non-authoritative or
-legacy fallback.
+saved dedicated bearer is declared on every operation, including managed
+queued-result polling, so Notion-authoritative continuity queries and
+generation have verified provenance without requiring Builder to forward a
+dynamic job credential. The underlying generation and simulation route remains
+publicly compatible for non-authoritative direct clients; `queryContinuity` has
+no non-authoritative or legacy fallback.
+The tracked `contracts/backstage_booker.openapi.v1.json` remains the `1.5.0`
+direct-client compatibility base and projection input. Builder must import the
+live no-store endpoint after the `1.6.0` backend is deployed, not the tracked
+base file directly. Keep generation closed throughout that interval and drain
+legacy continuations first: the old Builder cannot continue a new-backend job,
+and the new Builder cannot poll an old backend. Remove old replicas before
+reopening generation. An older backend/schema rollback must wait until retained
+stable-principal jobs no longer need to be read.
 When `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, the pure Booker
 workload policy overrides an unsafe explicit synchronous preference for heavy
 `generateBooking` or `generateBookingWithHRC` requests. The route returns the
@@ -458,13 +467,36 @@ existing `202` durable-job acknowledgement and performs no provider call in the
 web process. Private input and terminal output are encrypted before persistence;
 only bounded action, universe, correlation, and planning metadata remain visible
 on the queue row. Repeated authenticated semantic submissions reuse the existing
-in-flight job. The returned job-specific capability authorizes
-`GET /jobs/{jobId}/result`, which decrypts only after the normal read gate and
-returns the existing terminal job envelope. Protected input above the shared
-worker ciphertext limit returns bounded `413 BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE`
-before job planning or persistence. Lightweight `queryContinuity` and
-`simulateMatch` stay synchronous. Disabling the flag restores the prior routing
-policy without changing endpoint or action authorization.
+in-flight job. For the Builder contract, the accepted envelope returns `jobId`
+plus a `poll` URL under
+`/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` and omits
+`jobReadToken`, `jobReadTokenHeader`, and `stream`. The saved Action bearer
+authenticates that exact poll; there is no bearer-authenticated SSE route.
+Generic callers retain the separate `/jobs/{jobId}/result` and
+`/jobs/{jobId}/stream` capability-token contract.
+
+The managed result GET accepts one canonical UUID `jobId` and optional bounded
+`waitForResultMs`, rejects request bodies and trailing-slash aliases, performs
+no enqueue, cancellation, provider, or module action, and decrypts only a
+protected public-GPT Booker result owned by the managed principal. Its pending,
+terminal, and retryable-unavailable envelopes keep the same managed `poll` URL
+and expose no dynamic token or stream. Authentication represents one shared,
+purpose-bound managed principal for the configured private Action, not an end
+user, session, tenant, or universe. New `1.6.0` jobs bind to that stable
+principal, so later bearer-token rotation does not change job ownership. During
+the upgrade only, an exact-current-token compatibility check preserves reads
+for pre-`1.6.0` jobs that used the earlier credential-derived owner. It neither
+accepts a previous Action token nor survives changing the current token. This
+is result-read ownership compatibility only; it does not alias the old
+idempotency scope to the stable principal. Preserve the original `jobId`, never
+resubmit a legacy request as a lookup, and drain both legacy result-retention
+and idempotency windows before the first post-upgrade rotation.
+
+Protected input above the shared worker ciphertext limit returns bounded `413
+BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE` before job planning or persistence.
+Lightweight `queryContinuity` and `simulateMatch` stay synchronous. Disabling
+the flag restores the prior routing policy without changing endpoint or action
+authorization.
 
 The encryption guarantee above applies to current protected Booker jobs. During
 the temporary Phase-A mixed-version rollout only, a worker can finish a
@@ -641,7 +673,7 @@ chunks, so a blank anchor can resolve without increasing them. These fields
 prevent a bounded sample or page from being represented as complete. Sources
 expose only opaque chunk/content
 hashes plus bounded page titles, page paths, heading paths, and categories; raw
-excerpts and Notion page IDs remain server-side. Deploy schema 1.5.0 before
+excerpts and Notion page IDs remain server-side. Deploy schema 1.6.0 before
 re-importing it into the existing Builder Action. Answer
 generation performs one compact retry only when the provider reports
 max-output exhaustion, reusing the same retrieval and runtime budget. Other
@@ -1181,6 +1213,9 @@ intent interception and retain their existing behavior.
 - `GET /jobs/:id/result` (job-specific capability required; `no-store`)
 - `GET /jobs/:id/stream` (job-specific capability required; `no-store`,
   `no-cache`, and `no-transform`)
+- `GET /gpt-access/capabilities/v1/backstage-booker/jobs/:jobId/result`
+  (dedicated managed Backstage bearer required; bounded polling only;
+  `no-store`; no stream or dynamic job token)
 - `POST /jobs/:id/cancel` (job-specific capability, confirmation, and
   authenticated actor ownership required; `no-store`)
 - `POST /orchestration/reset` (control-plane operator, `mcp:invoke`, and

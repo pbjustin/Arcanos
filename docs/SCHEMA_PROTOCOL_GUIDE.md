@@ -56,23 +56,29 @@ The original seven action schema files remain unchanged.
 
 The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
 projection of this module-action family, not another protocol family. Keep its
-closed payloads aligned with the catalog schemas. It intentionally exposes
-only the four read-only continuity-query/generation/simulation actions through
-the Builder-authenticated
-`runBackstageBooker`; two dedicated-Bearer, non-consequential exact database
-reads through `getBackstageUniverse` and `getBackstageStoryline`; and
-only `upsertStoryline` or
-`appendCanonBeat` through the Bearer-authenticated, consequential
-`writeBackstageCanon` operation. The reads are HTTP/Builder projections rather
-than eleventh or twelfth module actions, because the module policy partitions every
+closed payloads aligned with the catalog schemas. The tracked
+`contracts/backstage_booker.openapi.v1.json` intentionally remains the `1.5.0`
+direct-client compatibility base; the live no-store contract endpoint projects
+it into the Builder-specific `1.6.0` document. Schema `1.6.0` exposes exactly
+five operations: the four continuity-query/generation/simulation actions
+through Builder-authenticated `runBackstageBooker`; poll-only managed result
+retrieval through
+`GET /gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result`; two
+dedicated-Bearer exact database reads through `getBackstageUniverse` and
+`getBackstageStoryline`; and only `upsertStoryline` or `appendCanonBeat` through
+the Bearer-authenticated, consequential `writeBackstageCanon` operation. All
+three GET operations are non-consequential. The managed result projection uses
+the saved bearer plus `jobId`, omits dynamic job-token and stream fields, and
+does not add a bearer SSE route. These reads are HTTP/Builder projections rather
+than additional module actions, because the module policy partitions every
 non-public Backstage action as mutation-capable. Do not add generic GPT Access,
-control-plane, Phase One mutation, list-universe, or confirmation-token shapes
-to that contract.
+control-plane, Phase One mutation, list-universe, bearer-stream, or
+confirmation-token shapes to that contract.
 
 Notion-authority/RAG remains a backend source-selection and persistence
 invariant, not a new protocol command. The additive `queryContinuity` module
 action is carried by the existing `runBackstageBooker` operation, so it does
-not add a fifth Builder operation. Its request requires `universeId` and
+not add a sixth Builder operation. Its request requires `universeId` and
 `query`; an optional scope requires exact `pageTitle` and may add `pagePath`
 for title disambiguation. The discriminated `scopeKind` defaults to `"page"`;
 page scope may add `sectionPath` for one exact nested heading subtree. Explicit
@@ -91,8 +97,10 @@ Every response exposes chunk coverage; only subtree responses additionally set
 `resolvedScope.scopeKind: "subtree"` and expose `scopePages`, `selectedPages`,
 and `omittedPages`; these count only pages with indexed chunks, not an empty
 anchor. Sanitized opaque source hashes never expose raw excerpts or
-Notion page IDs. Deploy the backend before re-importing schema `1.5.0` into
-Builder. For configured universes, continuity
+Notion page IDs. Stop generation and drain legacy continuations before the
+backend/schema `1.6.0` maintenance cutover; remove old web replicas, deploy the
+backend, immediately re-import the live schema, and only then reopen generation.
+For configured universes, continuity
 queries and generation use the derived snapshot while the existing PostgreSQL
 read and canon-write operations return typed quarantine/read-only errors; keep
 those semantics synchronized across service, HTTP, Builder instructions, and

@@ -87,8 +87,8 @@ describe('gptoss durable replay migration guard', () => {
 
   it('detects missing required draft markers', async () => {
     const base = readFileSync(migrationDraftPath, 'utf8');
-    const missingDoNotApply = await runGuardForText(base.replace('-- DO NOT APPLY\n', ''));
-    const missingDesignDraft = await runGuardForText(base.replace('-- DESIGN DRAFT ONLY\n', ''));
+    const missingDoNotApply = await runGuardForText(base.replace(/^-- DO NOT APPLY\r?$/mu, ''));
+    const missingDesignDraft = await runGuardForText(base.replace(/^-- DESIGN DRAFT ONLY\r?$/mu, ''));
 
     expect(missingDoNotApply).toMatchObject({
       ok: false,

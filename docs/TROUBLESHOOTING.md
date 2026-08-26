@@ -94,8 +94,17 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, deploy and re-import schema `1.5.0`, verify the operation declares
-  `bearerAuth`, and resave the Action. Do not weaken the backend gate.
+  `runBackstageBooker`, deploy and re-import schema `1.6.0` from the live
+  no-store contract endpoint, verify the operation declares `bearerAuth`, and
+  resave the Action. Do not import the tracked `1.5.0` compatibility base or
+  weaken the backend gate.
+- Backstage Booker accepted generation asks for `jobReadToken`, follows
+  `/jobs/{jobId}/result`, or tries an SSE stream: the Builder is using the
+  direct-client compatibility contract or stale instructions. Re-import the
+  live `1.6.0` schema and verify `getBackstageBookerJobResult` uses
+  `/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` with the
+  saved bearer, returns no dynamic token or stream, and is called with the exact
+  original `jobId`. Do not resubmit the generation while polling.
 - Backstage Booker `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`: for an authoritative
   universe this is deliberately fail-closed. Verify the identical authority
   root mapping is present on web and worker, the Notion token is present only
@@ -146,7 +155,7 @@ If failing, inspect Railway build/deploy logs first.
   another request. Cursor version 2 is deliberately invalid after the 1.4.0
   rollout and requires the same cursor-free restart. `queryContinuity` is
   request-local and synchronous-only, so do not enqueue it or look for a worker
-  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.5.0
+  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.6.0
   first, re-import it into the existing Action, and preserve the saved bearer.
 - Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the original attempt
   exhausted the provider output limit, and the backend's one compact retry

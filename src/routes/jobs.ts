@@ -16,6 +16,7 @@ import {
   validateCustomGptBridgeCredential,
 } from '@shared/security/customGptBridgeCredential.js';
 import {
+  getBackstageBookerAccessLegacyActorKey,
   optionalBackstageBookerAccessActorMiddleware,
 } from '@services/backstageBookerAccessAuth.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
@@ -25,6 +26,10 @@ import { createGenericJobsRouter } from './genericJobsRouter.js';
 const router = createGenericJobsRouter({
   confirmCancellation: confirmGate,
   establishCancellationActor: optionalBackstageBookerAccessActorMiddleware,
+  getCompatibleCancellationActorKeys: request => {
+    const legacyActorKey = getBackstageBookerAccessLegacyActorKey(request);
+    return legacyActorKey ? [legacyActorKey] : [];
+  },
   getJobById,
   getRequestActorKey,
   getRequestEstablishedActorKey,

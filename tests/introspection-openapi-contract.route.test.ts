@@ -139,28 +139,91 @@ describe('custom GPT OpenAPI contract route', () => {
     const response = await request(buildApp())
       .get('/contracts/backstage_booker.openapi.v1.json');
 
+    const asyncResultPath =
+      '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result';
+    const asyncResultOperation = response.body.paths?.[asyncResultPath]?.get;
+
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(response.body.info?.version).toBe('1.5.0');
+    expect(response.body.info?.version).toBe('1.6.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
-      '/jobs/{jobId}/result',
+      asyncResultPath,
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
     ]);
+    expect(response.body.paths).not.toHaveProperty('/jobs/{jobId}/result');
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.operationId)
       .toBe('runBackstageBooker');
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.security)
       .toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.['x-openai-isConsequential'])
       .toBe(false);
-    expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.operationId)
+    expect(asyncResultOperation?.operationId)
       .toBe('getBackstageBookerJobResult');
-    expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.security)
-      .toEqual([]);
+    expect(asyncResultOperation?.security)
+      .toEqual([{ bearerAuth: [] }]);
+    expect(asyncResultOperation?.['x-openai-isConsequential']).toBe(false);
+    expect(asyncResultOperation?.parameters).toEqual([
+      expect.objectContaining({
+        name: 'jobId',
+        in: 'path',
+        required: true,
+        schema: expect.objectContaining({ format: 'uuid' }),
+      }),
+      expect.objectContaining({
+        name: 'waitForResultMs',
+        in: 'query',
+        required: false,
+        schema: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 30000,
+          default: 30000,
+        },
+      }),
+    ]);
+    expect(JSON.stringify(asyncResultOperation?.parameters)).not.toContain(
+      'x-arcanos-job-read-token'
+    );
+    expect(Object.keys(asyncResultOperation?.responses ?? {})).toEqual(
+      expect.arrayContaining(['200', '400', '401', '429', '503'])
+    );
+    for (const status of ['400', '401', '503']) {
+      expect(asyncResultOperation?.responses?.[status]?.content?.['application/json']?.schema)
+        .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
+    }
+    expect(asyncResultOperation?.responses?.['429']?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/RateLimitResponse' });
+    expect(asyncResultOperation?.responses?.['429']?.headers?.['Retry-After'])
+      .toEqual({ $ref: '#/components/headers/RetryAfter' });
+    expect(response.body.paths?.['/gpt/backstage-booker']?.post?.responses?.['401']
+      ?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
+    const acceptedSchema =
+      response.body.components?.schemas?.BackstageAsyncAcceptedResponse;
+    expect(acceptedSchema?.required).not.toContain('jobReadToken');
+    expect(acceptedSchema?.required).not.toContain('jobReadTokenHeader');
+    expect(acceptedSchema?.required).not.toContain('stream');
+    expect(acceptedSchema?.properties).not.toHaveProperty('jobReadToken');
+    expect(acceptedSchema?.properties).not.toHaveProperty('jobReadTokenHeader');
+    expect(acceptedSchema?.properties).not.toHaveProperty('stream');
+    expect(acceptedSchema?.properties?.poll?.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    const resultSchema =
+      response.body.components?.schemas?.BackstageJobResultLookup;
+    expect(resultSchema?.required).not.toContain('stream');
+    expect(resultSchema?.properties).not.toHaveProperty('stream');
+    expect(resultSchema?.properties?.poll?.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    expect(response.body.components?.parameters).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('x-arcanos-job-read-token');
+    expect(JSON.stringify(response.body)).not.toContain('jobReadToken');
     expect(response.body.paths?.[
       '/gpt-access/capabilities/v1/backstage-booker/run'
     ]?.post?.operationId).toBe('writeBackstageCanon');
