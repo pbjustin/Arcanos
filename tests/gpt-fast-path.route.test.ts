@@ -2385,6 +2385,15 @@ describe('GPT fast-path route branching', () => {
     expect(serializedInput.toLowerCase()).not.toContain('authorization');
     expect(createOptions.input).not.toHaveProperty('body');
     expect(createOptions.input).not.toHaveProperty('prompt');
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(30_000);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-orchestrated',
+      expect.objectContaining({
+        waitForResultMs: 30_000,
+        pollIntervalMs: 250,
+        signal: expect.any(AbortSignal),
+      })
+    );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
