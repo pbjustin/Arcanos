@@ -54,6 +54,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanaryFixture.ts',
   'src/services/queuedJobCompletionPolling.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
+  'src/shared/backstage/backstageBookerAccessAuthCore.ts',
+  'src/shared/backstage/backstageBookerAsyncContinuation.ts',
+  'src/shared/backstage/backstageBookerAsyncResultCore.ts',
   'src/shared/backstage/backstageExecutionBudget.ts',
   'src/shared/backstage/backstageJobPayloadProtection.ts',
   'src/shared/backstage/backstageQueuedJobResultProtection.ts',
@@ -696,12 +699,24 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '39472dc3eebb9975b026884cf8aa617451ac22561a7ed5bfc34d26402fe80fbf',
   ],
   [
+    'src/shared/backstage/backstageBookerAccessAuthCore.ts',
+    '4145ed74c0a27420a2d24a26a1d123d769cd5e4f0bc7b23241af00b30c4e654c',
+  ],
+  [
+    'src/shared/backstage/backstageBookerAsyncContinuation.ts',
+    '8f5b904d98811916b5dcc285350991756de73ce8bbaaed33cb9d7853a3197157',
+  ],
+  [
+    'src/shared/backstage/backstageBookerAsyncResultCore.ts',
+    '08cff40b53f090516d1041a705a5e3c890425c02211fa416733a5f016957c7be',
+  ],
+  [
     'src/shared/backstage/backstageJobPayloadProtection.ts',
     '98164fec89091c5281a129c252d97ca42b9b9c68a5e8b3159377599ca6531383',
   ],
   [
     'src/shared/backstage/backstageQueuedJobResultProtection.ts',
-    '290eff6f6d00d047583ba10a109e8498605f4165f35f38311bd7a503669214b2',
+    '490df519795106156a7e58e85e34bebfdabc7f6d052595c558b700a936232bfb',
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',

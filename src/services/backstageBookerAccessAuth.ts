@@ -1,16 +1,20 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
-import { buildAuthenticatedCredentialActorKey } from '@platform/runtime/security.js';
-import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import {
-  MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH,
-  resolveConfiguredPurposeBoundCredential,
-} from '@shared/security/purposeBoundCredential.js';
+  authenticateBackstageBookerAccessCore,
+  buildBackstageBookerAccessActorIdentity,
+  extractBackstageBookerAccessBearerTokenCore,
+  isBackstageBookerAccessAuthenticationConfiguredCore,
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+  BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME,
+  type BackstageBookerAccessAuthenticationResult,
+} from '@shared/backstage/backstageBookerAccessAuthCore.js';
 
-export const BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME =
-  'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN';
-
-const BACKSTAGE_BOOKER_ACCESS_BEARER_PATTERN = /^[\x21-\x7E]+$/u;
+export {
+  BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
+  BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME,
+  type BackstageBookerAccessAuthenticationResult,
+};
 const backstageBookerAccessAuthenticated = Symbol(
   'backstageBookerAccessAuthenticated'
 );
@@ -18,23 +22,10 @@ const backstageBookerAccessLegacyActorKey = Symbol(
   'backstageBookerAccessLegacyActorKey'
 );
 
-export const BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY =
-  'backstage-booker-access:principal:v1';
-
 type BackstageBookerAccessRequest = Request & {
   [backstageBookerAccessAuthenticated]?: true;
   [backstageBookerAccessLegacyActorKey]?: string;
 };
-
-export type BackstageBookerAccessAuthenticationResult =
-  | {
-      ok: true;
-      credential: string;
-    }
-  | {
-      ok: false;
-      reason: 'configuration_unavailable' | 'missing_auth' | 'invalid_auth';
-    };
 
 function countRawAuthorizationHeaders(req: Request): number {
   const rawHeaders = Array.isArray(req.rawHeaders) ? req.rawHeaders : [];
@@ -62,83 +53,30 @@ export function hasPresentedAuthorizationHeader(req: Request): boolean {
 export function extractBackstageBookerAccessBearerToken(
   req: Request
 ): string | null {
-  if (countRawAuthorizationHeaders(req) > 1) {
-    return null;
-  }
-
-  const authorization = req.header('authorization');
-  if (
-    typeof authorization !== 'string'
-    || authorization.length > MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH + 7
-  ) {
-    return null;
-  }
-
-  const match = /^Bearer ([\x21-\x7E]+)$/u.exec(authorization);
-  if (
-    !match
-    || match[1].length === 0
-    || match[1].length > MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH
-  ) {
-    return null;
-  }
-
-  return match[1];
-}
-
-function readConfiguredBackstageBookerAccessToken(
-  env: NodeJS.ProcessEnv
-): string | null {
-  const credential = resolveConfiguredPurposeBoundCredential({
-    ownEnvironmentName: BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME,
-    readEnvironmentValue: environmentName => env[environmentName],
+  return extractBackstageBookerAccessBearerTokenCore({
+    authorizationHeader: req.header('authorization'),
+    authorizationHeaderCount: countRawAuthorizationHeaders(req),
   });
-
-  return credential
-    && BACKSTAGE_BOOKER_ACCESS_BEARER_PATTERN.test(credential)
-    ? credential
-    : null;
 }
 
 export function isBackstageBookerAccessAuthenticationConfigured(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
-  return readConfiguredBackstageBookerAccessToken(env) !== null;
+  return isBackstageBookerAccessAuthenticationConfiguredCore(
+    environmentName => env[environmentName]
+  );
 }
 
 export function authenticateBackstageBookerAccessRequest(
   req: Request,
   env: NodeJS.ProcessEnv = process.env
 ): BackstageBookerAccessAuthenticationResult {
-  const expectedToken = readConfiguredBackstageBookerAccessToken(env);
-  if (!expectedToken) {
-    return {
-      ok: false,
-      reason: 'configuration_unavailable',
-    };
-  }
-
-  const bearerToken = extractBackstageBookerAccessBearerToken(req);
-  if (!bearerToken) {
-    return {
-      ok: false,
-      reason: hasPresentedAuthorizationHeader(req)
-        ? 'invalid_auth'
-        : 'missing_auth',
-    };
-  }
-
-  if (!timingSafeEqualOpaqueSecret(bearerToken, expectedToken)) {
-    return {
-      ok: false,
-      reason: 'invalid_auth',
-    };
-  }
-
-  return {
-    ok: true,
-    credential: bearerToken,
-  };
+  return authenticateBackstageBookerAccessCore({
+    authorizationHeader: req.header('authorization'),
+    authorizationHeaderCount: countRawAuthorizationHeaders(req),
+    authorizationHeaderPresented: hasPresentedAuthorizationHeader(req),
+    readEnvironmentValue: environmentName => env[environmentName],
+  });
 }
 
 /**
@@ -150,15 +88,13 @@ export function establishBackstageBookerAccessAuthentication(
   credential: string
 ): void {
   const authenticatedRequest = req as BackstageBookerAccessRequest;
+  const actorIdentity = buildBackstageBookerAccessActorIdentity(credential);
   authenticatedRequest[
     backstageBookerAccessAuthenticated
   ] = true;
   authenticatedRequest[backstageBookerAccessLegacyActorKey] =
-    buildAuthenticatedCredentialActorKey(
-      'backstage-booker-access',
-      credential
-    );
-  req.authenticatedActorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
+    actorIdentity.legacyActorKey;
+  req.authenticatedActorKey = actorIdentity.principalActorKey;
 }
 
 /**

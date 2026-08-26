@@ -146,6 +146,22 @@ const QUEUED_JOB_COMPLETION_POLLING_URL = new URL(
   '../src/services/queuedJobCompletionPolling.ts',
   import.meta.url
 );
+const BACKSTAGE_BOOKER_ACCESS_AUTH_CORE_URL = new URL(
+  '../src/shared/backstage/backstageBookerAccessAuthCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_BOOKER_ASYNC_CONTINUATION_URL = new URL(
+  '../src/shared/backstage/backstageBookerAsyncContinuation.ts',
+  import.meta.url
+);
+const BACKSTAGE_BOOKER_ASYNC_RESULT_CORE_URL = new URL(
+  '../src/shared/backstage/backstageBookerAsyncResultCore.ts',
+  import.meta.url
+);
+const BACKSTAGE_QUEUED_JOB_RESULT_PROTECTION_URL = new URL(
+  '../src/shared/backstage/backstageQueuedJobResultProtection.ts',
+  import.meta.url
+);
 const SYSTEM_STATE_HTTP_BOUNDARY_URL = new URL(
   '../src/services/controlPlane/systemStateHttpBoundary.ts',
   import.meta.url
@@ -380,6 +396,92 @@ describe('native PR preview import boundary', () => {
     ];
     for (const [filePath, driftedSource] of semanticDrifts) {
       expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('admits and pins only the pure managed Booker continuation seams', async () => {
+    const reviewedFiles = [
+      'src/shared/backstage/backstageBookerAccessAuthCore.ts',
+      'src/shared/backstage/backstageBookerAsyncContinuation.ts',
+      'src/shared/backstage/backstageBookerAsyncResultCore.ts',
+      'src/shared/backstage/backstageQueuedJobResultProtection.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/routes/backstageBookerAsyncResult.ts',
+        'src/services/backstageBookerAccessAuth.ts',
+        'src/services/queuedGptCompletionService.ts',
+        'src/core/db/repositories/jobRepository.ts',
+        'src/platform/observability/appMetrics.ts',
+        'src/workers/jobRunner.ts',
+      ])
+    );
+
+    const sources = new Map([
+      [reviewedFiles[0], await readNormalizedSource(
+        BACKSTAGE_BOOKER_ACCESS_AUTH_CORE_URL
+      )],
+      [reviewedFiles[1], await readNormalizedSource(
+        BACKSTAGE_BOOKER_ASYNC_CONTINUATION_URL
+      )],
+      [reviewedFiles[2], await readNormalizedSource(
+        BACKSTAGE_BOOKER_ASYNC_RESULT_CORE_URL
+      )],
+      [reviewedFiles[3], await readNormalizedSource(
+        BACKSTAGE_QUEUED_JOB_RESULT_PROTECTION_URL
+      )],
+    ]);
+    for (const [filePath, source] of sources) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(
+        filePath,
+        source.replace(/\n/gu, '\r\n')
+      )).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        reviewedFiles[0],
+        replaceRequired(
+          sources.get(reviewedFiles[0]),
+          "  'backstage-booker-access:principal:v1';",
+          "  'backstage-booker-access:principal:v2';"
+        ),
+      ],
+      [
+        reviewedFiles[1],
+        replaceRequired(
+          sources.get(reviewedFiles[1]),
+          "  '/gpt-access/capabilities/v1/backstage-booker/jobs';",
+          "  '/jobs';"
+        ),
+      ],
+      [
+        reviewedFiles[2],
+        replaceRequired(
+          sources.get(reviewedFiles[2]),
+          "    && resolvePublicGptJobCreationSurface(job.input) === 'public-gpt'",
+          "    && resolvePublicGptJobCreationSurface(job.input) !== 'public-gpt'"
+        ),
+      ],
+      [
+        reviewedFiles[3],
+        replaceRequired(
+          sources.get(reviewedFiles[3]),
+          "const PROTECTED_BACKSTAGE_JOB_RESULT_SOURCE = 'backstage-booker-worker';",
+          "const PROTECTED_BACKSTAGE_JOB_RESULT_SOURCE = 'backstage-booker-preview';"
+        ),
+      ],
+    ];
+    for (const [filePath, source] of semanticDrifts) {
+      expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual(
         expect.arrayContaining([
           expect.stringContaining('critical entry file semantic digest'),
         ])

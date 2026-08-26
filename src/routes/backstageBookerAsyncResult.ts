@@ -8,22 +8,13 @@ import type { JobData } from '@core/db/schema.js';
 import { recordGptJobLookup } from '@platform/observability/appMetrics.js';
 import { getRequestAuthenticatedActorKey } from '@platform/runtime/security.js';
 import {
-  isProtectedBackstageQueuedGptJobEnvelope,
-  markProtectedBackstageQueuedGptJobResultMaterialized,
-  unprotectBackstageQueuedGptJobOutput,
-} from '@shared/backstage/backstageQueuedJobResultProtection.js';
-import {
-  projectBackstageBookerManagedJobResultPayload,
-  type BackstageBookerManagedJobResultPayload,
-} from '@shared/backstage/backstageBookerAsyncContinuation.js';
-import {
-  buildGptIdempotencyScopeHash,
-  resolvePublicGptJobCreationSurface,
-} from '@shared/gpt/gptIdempotency.js';
-import { isGptJobTerminalStatus } from '@shared/gpt/gptJobLifecycle.js';
-import {
-  buildGptJobResultLookupPayload,
-} from '@shared/gpt/gptJobResult.js';
+  BackstageBookerAsyncResultUnavailableError,
+  isBackstageBookerBearerReadableJob,
+  readBackstageBookerAsyncResultCore,
+} from '@shared/backstage/backstageBookerAsyncResultCore.js';
+import type {
+  BackstageJobPayloadProtectionConfig,
+} from '@shared/backstage/backstageJobPayloadProtection.js';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
@@ -44,6 +35,11 @@ import {
   type QueuedGptCompletionResult,
   type WaitForQueuedGptJobCompletionOptions,
 } from '@services/queuedGptCompletionService.js';
+
+export {
+  BackstageBookerAsyncResultUnavailableError,
+  isBackstageBookerBearerReadableJob,
+};
 
 const UUID_JOB_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -73,21 +69,13 @@ export interface BackstageBookerAsyncResultReadDependencies {
     options?: WaitForQueuedGptJobCompletionOptions,
     dependencies?: QueuedGptCompletionDependencies
   ) => Promise<QueuedGptCompletionResult>;
+  payloadProtectionConfig?: BackstageJobPayloadProtectionConfig;
 }
 
 export interface BackstageBookerAsyncResultRouterDependencies
   extends BackstageBookerAsyncResultReadDependencies {
   boundary?: RequestHandler;
   recordJobLookup?: typeof recordGptJobLookup;
-}
-
-export class BackstageBookerAsyncResultUnavailableError extends Error {
-  readonly code = 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE';
-
-  constructor() {
-    super('Protected Backstage generation result is unavailable.');
-    this.name = 'BackstageBookerAsyncResultUnavailableError';
-  }
 }
 
 function parseCanonicalWaitMs(value: unknown): number | null {
@@ -130,35 +118,6 @@ export function parseBackstageBookerAsyncResultQuery(
     : { ok: true, waitForResultMs };
 }
 
-/** Restrict bearer reads to exact, owned protected Booker generation jobs. */
-export function isBackstageBookerBearerReadableJob(
-  job: JobData | null,
-  expectedScopeHashes: ReadonlySet<string>
-): job is JobData {
-  return job?.job_type === 'gpt'
-    && typeof job.idempotency_scope_hash === 'string'
-    && expectedScopeHashes.has(job.idempotency_scope_hash)
-    && resolvePublicGptJobCreationSurface(job.input) === 'public-gpt'
-    && isProtectedBackstageQueuedGptJobEnvelope(job.input);
-}
-
-function materializeProtectedBackstageJob(job: JobData): JobData {
-  let output: unknown;
-  try {
-    output = unprotectBackstageQueuedGptJobOutput({
-      jobId: job.id,
-      rawInput: job.input,
-      output: job.output,
-    });
-  } catch {
-    throw new BackstageBookerAsyncResultUnavailableError();
-  }
-
-  return markProtectedBackstageQueuedGptJobResultMaterialized(
-    output === job.output ? job : { ...job, output }
-  );
-}
-
 /**
  * Read one protected Booker job through the existing bounded queue waiter.
  * Unowned, malformed, and unrelated jobs share the non-disclosing not-found
@@ -167,69 +126,20 @@ function materializeProtectedBackstageJob(job: JobData): JobData {
 export async function readBackstageBookerAsyncResult(
   input: BackstageBookerAsyncResultReadInput,
   dependencies: BackstageBookerAsyncResultReadDependencies = {}
-): Promise<BackstageBookerManagedJobResultPayload> {
-  const getJobByIdFn = dependencies.getJobByIdFn ?? getJobById;
-  const waitForCompletion = dependencies.waitForQueuedGptJobCompletionFn
-    ?? waitForQueuedGptJobCompletion;
-  const expectedScopeHashes = new Set(
-    [input.actorKey, input.legacyActorKey]
-      .filter((actorKey): actorKey is string => Boolean(actorKey))
-      .map(actorKey => buildGptIdempotencyScopeHash({
-        surface: 'public-gpt',
-        actorKey,
-      }))
-  );
-
-  input.signal?.throwIfAborted();
-  const initialJob = await getJobByIdFn(input.jobId);
-  input.signal?.throwIfAborted();
-  if (!isBackstageBookerBearerReadableJob(initialJob, expectedScopeHashes)) {
-    return projectBackstageBookerManagedJobResultPayload(
-      buildGptJobResultLookupPayload(input.jobId, null)
-    );
-  }
-
-  let selectedJob: JobData | null = initialJob;
-  if (
-    input.waitForResultMs > 0
-    && !isGptJobTerminalStatus(initialJob.status)
-  ) {
-    let initialReadAvailable = true;
-    const getOwnedJobById = async (jobId: string): Promise<JobData | null> => {
-      const candidate = initialReadAvailable
-        ? initialJob
-        : await getJobByIdFn(jobId);
-      initialReadAvailable = false;
-      return isBackstageBookerBearerReadableJob(candidate, expectedScopeHashes)
-        ? candidate
-        : null;
-    };
-
-    const observation = await waitForCompletion(
-      input.jobId,
-      {
-        waitForResultMs: input.waitForResultMs,
-        pollIntervalMs:
-          input.pollIntervalMs ?? DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
-        signal: input.signal,
-      },
-      { getJobByIdFn: getOwnedJobById }
-    );
-    selectedJob = observation.job;
-  }
-
-  input.signal?.throwIfAborted();
-  if (!isBackstageBookerBearerReadableJob(selectedJob, expectedScopeHashes)) {
-    return projectBackstageBookerManagedJobResultPayload(
-      buildGptJobResultLookupPayload(input.jobId, null)
-    );
-  }
-
-  return projectBackstageBookerManagedJobResultPayload(
-    buildGptJobResultLookupPayload(
-      input.jobId,
-      materializeProtectedBackstageJob(selectedJob)
-    )
+): ReturnType<typeof readBackstageBookerAsyncResultCore> {
+  return readBackstageBookerAsyncResultCore(
+    {
+      ...input,
+      pollIntervalMs:
+        input.pollIntervalMs ?? DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+    },
+    {
+      getJobByIdFn: dependencies.getJobByIdFn ?? getJobById,
+      waitForQueuedGptJobCompletionFn:
+        dependencies.waitForQueuedGptJobCompletionFn
+        ?? waitForQueuedGptJobCompletion,
+      payloadProtectionConfig: dependencies.payloadProtectionConfig,
+    }
   );
 }
 

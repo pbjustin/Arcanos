@@ -2,6 +2,7 @@ import {
   BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE,
   sealBackstageJobPayload,
   unsealBackstageJobPayload,
+  type BackstageJobPayloadProtectionConfig,
 } from './backstageJobPayloadProtection.js';
 
 const PROTECTED_BACKSTAGE_JOB_VERSION = 1;
@@ -120,6 +121,7 @@ export function protectBackstageQueuedGptJobOutput(input: {
   jobId: string;
   rawInput: unknown;
   output: unknown;
+  config?: BackstageJobPayloadProtectionConfig;
 }): unknown {
   const jobBinding = readBinding(input.rawInput);
   if (!jobBinding) {
@@ -133,6 +135,7 @@ export function protectBackstageQueuedGptJobOutput(input: {
       purpose: BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE,
       identity: { jobId: input.jobId, ...jobBinding },
       payload: input.output,
+      config: input.config,
     }),
   };
 }
@@ -142,6 +145,7 @@ export function unprotectBackstageQueuedGptJobOutput(input: {
   jobId: string;
   rawInput: unknown;
   output: unknown;
+  config?: BackstageJobPayloadProtectionConfig;
 }): unknown {
   const jobBinding = readBinding(input.rawInput);
   if (!jobBinding) {
@@ -167,6 +171,7 @@ export function unprotectBackstageQueuedGptJobOutput(input: {
       purpose: BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE,
       identity: { jobId: input.jobId, ...jobBinding },
       envelope: output.sealedPayload,
+      config: input.config,
     });
   } catch {
     throw new Error('Protected Backstage job result is unavailable.');

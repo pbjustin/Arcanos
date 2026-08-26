@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T19:23:43.760Z",
+  "generatedAt": "2026-08-26T20:53:24.052Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2453,7 +2453,13 @@
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageBookerAccessAuthCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageBookerAsyncContinuation.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageBookerAsyncResultCore.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageCompactOutputContract.ts"

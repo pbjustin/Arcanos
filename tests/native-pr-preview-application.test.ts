@@ -1631,8 +1631,98 @@ describe('native PR contained application', () => {
           contract.proofHeaders.partitionFailureTelemetryVersion
         ]
       ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.managedAsyncContinuationVersion
+        ]
+      ).toBeUndefined();
     }
   }, 25_000);
+
+  it('executes the managed Backstage async continuation contract without exposing credentials', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const response = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.managedAsyncContinuation });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      accepted: true,
+      authentication: {
+        currentAccepted: true,
+        rotatedAccepted: true,
+        missingRejected: true,
+        malformedRejected: true,
+        wrongRejected: true,
+        duplicateRejected: true,
+        emptyRejected: true,
+        unavailableRejected: true,
+        collisionRejected: true,
+        stablePrincipalAcrossRotation: true,
+        legacyIdentityChangesAcrossRotation: true,
+      },
+      cacheBoundaryReached: false,
+      continuation: {
+        allManagedPolls: true,
+        managedCreationCapabilitiesRemoved: true,
+        managedPoll:
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac/result',
+        repositoryReads: 2,
+        stateProjectionVerified: true,
+        terminalMaterializationVerified: true,
+        waiterCalls: 1,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.managedAsyncContinuation,
+      ownership: {
+        stableJobReadableAfterRotation: true,
+        legacyJobReadableDuringCutover: true,
+        rotatedLegacyJobHidden: true,
+        wrongScopeHidden: true,
+        nonPublicJobHidden: true,
+        nonGptJobHidden: true,
+        malformedJobHidden: true,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      sensitiveValuesAbsent: true,
+      workerBoundaryReached: false,
+    });
+    expectContainedResponseHeaders(
+      response,
+      'native-pr-preview',
+      'native-pr-preview',
+      true
+    );
+    expect(response.headers[contract.proofHeaders.clearPolicyVersion]).toBe(
+      contract.clearPolicyVersion
+    );
+    expect(
+      response.headers[
+        contract.proofHeaders.managedAsyncContinuationVersion
+      ]
+    ).toBe(contract.managedAsyncContinuationProofVersion);
+    expect(response.headers[contract.proofHeaders.queueWaitPolicyVersion])
+      .toBeUndefined();
+    expect(response.headers[contract.proofHeaders.partitionedAuthorityVersion])
+      .toBeUndefined();
+    expect(
+      response.headers[
+        contract.proofHeaders.partitionFailureTelemetryVersion
+      ]
+    ).toBeUndefined();
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expect(response.text).not.toContain('native-preview-backstage-');
+    expect(response.text).not.toContain('jobReadToken');
+    expect(response.text).not.toContain('ciphertext');
+    expect(response.text).not.toContain('/stream');
+  });
 
   it('keeps Backstage generation fixtures sealed', async () => {
     const { app } = buildApplication();
@@ -1658,6 +1748,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.partitionFailureTelemetryVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.managedAsyncContinuationVersion
         ]
       ).toBeUndefined();
       expect(response.body).toEqual({

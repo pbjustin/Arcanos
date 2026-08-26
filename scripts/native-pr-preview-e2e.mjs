@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 129;
+const MAX_REQUESTS = 130;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -383,7 +383,7 @@ function backstageStorylineCase(caseId, fixtureName, status) {
   };
 }
 
-function backstageGenerationCase(caseId, fixtureName) {
+function backstageGenerationCase(caseId, fixtureName, simulatedAuth = false) {
   const fixture =
     NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.fixtures[fixtureName];
   return {
@@ -399,6 +399,7 @@ function backstageGenerationCase(caseId, fixtureName) {
     pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.path,
     requestTimeoutMs: BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS,
     role: 'web',
+    ...(simulatedAuth ? { simulatedAuth: true } : {}),
   };
 }
 
@@ -873,6 +874,11 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-continuity-subtree',
       'continuitySubtree'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-managed-async-continuation',
+      'managedAsyncContinuation',
+      true
     ),
     mcpBodyCapCase(
       'mcp-body-cap-effective-limits',
@@ -2310,6 +2316,53 @@ function expectedBackstageGenerationContractPayload(requestCase) {
       },
     };
   }
+  if (requestCase.fixtureName === 'managedAsyncContinuation') {
+    return {
+      accepted: true,
+      authentication: {
+        currentAccepted: true,
+        rotatedAccepted: true,
+        missingRejected: true,
+        malformedRejected: true,
+        wrongRejected: true,
+        duplicateRejected: true,
+        emptyRejected: true,
+        unavailableRejected: true,
+        collisionRejected: true,
+        stablePrincipalAcrossRotation: true,
+        legacyIdentityChangesAcrossRotation: true,
+      },
+      cacheBoundaryReached: false,
+      continuation: {
+        allManagedPolls: true,
+        managedCreationCapabilitiesRemoved: true,
+        managedPoll:
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac/result',
+        repositoryReads: 2,
+        stateProjectionVerified: true,
+        terminalMaterializationVerified: true,
+        waiterCalls: 1,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: requestCase.fixture,
+      ownership: {
+        stableJobReadableAfterRotation: true,
+        legacyJobReadableDuringCutover: true,
+        rotatedLegacyJobHidden: true,
+        wrongScopeHidden: true,
+        nonPublicJobHidden: true,
+        nonGptJobHidden: true,
+        malformedJobHidden: true,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      sensitiveValuesAbsent: true,
+      workerBoundaryReached: false,
+    };
+  }
   fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
 }
 
@@ -3280,6 +3333,27 @@ function validateResponseBody(requestCase, bodyBytes, options) {
       );
     }
   }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'managedAsyncContinuation'
+  ) {
+    if (
+      bodyText.includes('native-preview-backstage-')
+      || bodyText.includes('jobReadToken')
+      || bodyText.includes('ciphertext')
+      || bodyText.includes('/stream')
+      || body?.continuation?.terminalMaterializationVerified !== true
+      || body?.continuation?.stateProjectionVerified !== true
+      || body?.continuation?.allManagedPolls !== true
+      || body?.sensitiveValuesAbsent !== true
+      || body?.workerBoundaryReached !== false
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_MANAGED_ASYNC_OUTCOME_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
   requireExactJson(body, expectedBody, requestCase.caseId);
 }
 
@@ -3491,6 +3565,17 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      requestCase.fixtureName === 'managedAsyncContinuation'
+      && response.headers.get(
+        contract.proofHeaders.managedAsyncContinuationVersion
+      ) !== contract.managedAsyncContinuationProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_MANAGED_ASYNC_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3607,6 +3692,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'partitionFailureTelemetry'
       ? { failedShardTelemetryVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'managedAsyncContinuation'
+      ? { managedAsyncContinuationVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }
