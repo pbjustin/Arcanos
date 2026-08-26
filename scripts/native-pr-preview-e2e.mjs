@@ -3459,6 +3459,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'routeBudget'
+      && response.headers.get(
+        contract.proofHeaders.queueWaitPolicyVersion
+      ) !== contract.queueWaitPolicyProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'notionAuthorityRag'
       && response.headers.get(
         contract.proofHeaders.partitionedAuthorityVersion
@@ -3584,6 +3595,10 @@ async function executeRequestCase(
     simulatedAuth: requestCase.simulatedAuth === true,
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'routeBudget'
+      ? { queueWaitPolicyVerified: true }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'

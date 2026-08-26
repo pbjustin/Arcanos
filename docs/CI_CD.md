@@ -268,7 +268,18 @@ runner independently requires at least 13,000 ms of wall-clock response time,
 proving the hosted request crossed both former 6-second and 12-second boundaries
 while retaining the 40-second provider and 60-second route budgets. The sealed
 20-second case timeout is reported as `effectivePerCaseMaxRequestTimeoutMs`
-separately from the caller-configured default. The HRC case executes the pure
+separately from the caller-configured default. The route-budget selector first
+executes the production-shared heavy-wait selector, queued Backstage execution
+budget, and dependency-injected polling engine with virtual time. It requires
+the protected 30,000 ms window, 250 ms default interval, 121-read derived
+bound, 50 ms minimum interval, and 601-read independent cap; a reused running
+job completes on read two after one virtual interval, while an always-running
+generic job remains pending after its 500 ms deadline. A successful response
+carries `x-arcanos-preview-backstage-queue-wait-policy-version`; its body is
+unchanged for the trusted base-pinned verifier, and the exact-head verifier
+requires the marker. This is production-shared component evidence and performs
+no wall-clock queue wait, repository read, database access, queue integration,
+or worker execution. The HRC case executes the pure
 cache orchestration seam
 shared by production HRC: a real bounded synthetic timeout returns a marked
 noncacheable fallback, the next call evaluates successfully, and the third is
@@ -382,7 +393,9 @@ Research helper admits only its exact `createHash` import and pure
 `Reflect.ownKeys(descriptors)` read admitted to the contained graph. The
 Research abort-drain wrapper, the exact dispatch GPT identifier middleware and
 its pure lane/identifier dependencies, Backstage action/timeout policy, Backstage
-continuity-query core, GPT route timeout resolver, HRC cache policy, and exact
+continuity-query core, GPT route timeout resolver, the shared GPT async wait
+policy, queued Backstage execution budget, pure queued-completion polling
+engine, HRC cache policy, and exact
 request-abort runtime source are also semantic-digest pinned; only the reviewed
 timeout and AsyncLocalStorage
 capabilities are admitted. A tracked checker-only TypeScript resolver points the

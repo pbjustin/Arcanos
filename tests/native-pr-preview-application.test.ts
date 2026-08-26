@@ -1573,6 +1573,11 @@ describe('native PR contained application', () => {
       );
     }
     expect(
+      routeBudget.headers[
+        contract.proofHeaders.queueWaitPolicyVersion
+      ]
+    ).toBe(contract.queueWaitPolicyProofVersion);
+    expect(
       notionAuthorityRag.headers[
         contract.proofHeaders.partitionedAuthorityVersion
       ]
@@ -1582,6 +1587,21 @@ describe('native PR contained application', () => {
         contract.proofHeaders.partitionFailureTelemetryVersion
       ]
     ).toBe(contract.partitionFailureTelemetryProofVersion);
+    for (const response of [
+      hrcRetryCache,
+      reviewCompletion,
+      compactRetry,
+      notionAuthorityRag,
+      partitionFailureTelemetry,
+      continuityQuery,
+      continuitySubtree,
+    ]) {
+      expect(
+        response.headers[
+          contract.proofHeaders.queueWaitPolicyVersion
+        ]
+      ).toBeUndefined();
+    }
     for (const response of [
       routeBudget,
       hrcRetryCache,
@@ -1628,6 +1648,9 @@ describe('native PR contained application', () => {
       expect(response.status).toBe(400);
       expect(
         response.headers[contract.proofHeaders.clearPolicyVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.queueWaitPolicyVersion]
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionedAuthorityVersion]

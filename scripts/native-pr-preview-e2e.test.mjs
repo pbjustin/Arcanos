@@ -183,6 +183,14 @@ function responseHeadersForCase(
             .clearPolicyVersion]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
               .clearPolicyVersion,
+          ...(requestCase.fixtureName === 'routeBudget'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.queueWaitPolicyVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .queueWaitPolicyProofVersion,
+              }
+            : {}),
           ...(requestCase.fixtureName === 'notionAuthorityRag'
             ? {
                 [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
@@ -1492,6 +1500,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       minimumResponseMs: 13_000,
       minimumResponseMsVerified: true,
       pathTemplate: '/backstage/generation-contract',
+      queueWaitPolicyVerified: true,
       responseBytes: Buffer.byteLength(JSON.stringify(
         expectedNativePrPreviewResponseBody(routeBudgetCase, {
           commitSha: COMMIT_SHA,
@@ -1994,6 +2003,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
         delete headers[
           NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
         ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .queueWaitPolicyVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .queueWaitPolicyVersion
+        ] = 'backstage-booker-queue-wait-policy/drifted';
       },
     },
     {

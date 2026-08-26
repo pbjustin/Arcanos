@@ -134,6 +134,18 @@ const GPT_IDENTIFIER_URL = new URL(
   '../src/shared/gpt/gptIdentifier.ts',
   import.meta.url
 );
+const GPT_ASYNC_WAIT_POLICY_URL = new URL(
+  '../src/shared/gpt/gptAsyncWaitPolicy.ts',
+  import.meta.url
+);
+const BACKSTAGE_EXECUTION_BUDGET_URL = new URL(
+  '../src/shared/backstage/backstageExecutionBudget.ts',
+  import.meta.url
+);
+const QUEUED_JOB_COMPLETION_POLLING_URL = new URL(
+  '../src/services/queuedJobCompletionPolling.ts',
+  import.meta.url
+);
 const SYSTEM_STATE_HTTP_BOUNDARY_URL = new URL(
   '../src/services/controlPlane/systemStateHttpBoundary.ts',
   import.meta.url
@@ -315,6 +327,64 @@ describe('native PR preview import boundary', () => {
         'scripts/register-esm-loader.mjs',
       ])
     );
+  });
+
+  it('admits and pins only the pure Booker queue-wait policy seams', async () => {
+    const reviewedFiles = [
+      'src/shared/gpt/gptAsyncWaitPolicy.ts',
+      'src/shared/backstage/backstageExecutionBudget.ts',
+      'src/services/queuedJobCompletionPolling.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/routes/gptRouter.ts',
+        'src/services/queuedGptCompletionService.ts',
+        'src/core/db/repositories/jobRepository.ts',
+        'src/workers/jobRunner.ts',
+      ])
+    );
+
+    const sources = [
+      await readNormalizedSource(GPT_ASYNC_WAIT_POLICY_URL),
+      await readNormalizedSource(BACKSTAGE_EXECUTION_BUDGET_URL),
+      await readNormalizedSource(QUEUED_JOB_COMPLETION_POLLING_URL),
+    ];
+    for (const [index, filePath] of reviewedFiles.entries()) {
+      expect(findUnsafeRuntimeSyntax(filePath, sources[index])).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      [
+        reviewedFiles[0],
+        replaceRequired(
+          sources[0],
+          'return MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS;',
+          'return 1;'
+        ),
+      ],
+      [
+        reviewedFiles[1],
+        replaceRequired(
+          sources[1],
+          'export const BACKSTAGE_RESULT_POLL_WAIT_MS =\n  MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS;',
+          'export const BACKSTAGE_RESULT_POLL_WAIT_MS = 1;'
+        ),
+      ],
+      [
+        reviewedFiles[2],
+        replaceRequired(sources[2], 'Math.ceil(', 'Math.floor('),
+      ],
+    ];
+    for (const [filePath, driftedSource] of semanticDrifts) {
+      expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
   });
 
   it('admits and pins only the pure dispatch GPT identifier boundary seam', async () => {

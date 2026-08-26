@@ -2451,6 +2451,7 @@ describe('GPT fast-path route branching', () => {
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x55).toString('base64');
+    process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = '1';
     mockResolveGptRouting
       .mockResolvedValueOnce(buildBackstageRouting('generateBooking'))
       .mockResolvedValueOnce(buildBackstageRouting('generateBooking'));
@@ -2506,6 +2507,16 @@ describe('GPT fast-path route branching', () => {
       .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.requestFingerprintHash)
       .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.requestFingerprintHash);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(2);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenNthCalledWith(
+      2,
+      'job-orchestrated',
+      expect.objectContaining({
+        waitForResultMs: 30_000,
+        pollIntervalMs: 250,
+        signal: expect.any(AbortSignal),
+      })
+    );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

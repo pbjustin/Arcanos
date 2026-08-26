@@ -129,7 +129,18 @@ policy, shared Trinity run-options builder, and reviewed request-abort runtime t
 await a 13,250 ms synthetic provider seam; the live runner separately requires at
 least 13,000 ms before accepting the response. Its sealed 20-second request
 timeout is reported separately from the caller-configured default in
-`effectivePerCaseMaxRequestTimeoutMs`. The second uses the production HRC cache
+`effectivePerCaseMaxRequestTimeoutMs`. Before starting that real delay, the
+same selector executes the production-shared heavy-wait selector, queued
+Backstage execution budget, and dependency-injected polling engine. A reused
+running job becomes completed on its second synthetic read after one virtual
+250 ms interval, while an always-running generic job remains pending after its
+independent 500 ms deadline. The assertion also pins the protected 30,000 ms
+window to 121 default-interval reads and the 601-read hard cap at the 50 ms
+minimum. No wall-clock queue wait, repository, database, queue, or worker is
+used. A successful response carries
+`x-arcanos-preview-backstage-queue-wait-policy-version`; its body stays
+unchanged so the trusted base-pinned verifier remains compatible, while the
+exact-head verifier requires the marker. The second uses the production HRC cache
 orchestration seam to prove a
 real bounded synthetic timeout fallback is noncacheable, a retry succeeds, and a
 third read comes from the single successful cache write. The review-completion

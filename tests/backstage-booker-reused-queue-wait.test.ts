@@ -6,8 +6,12 @@ import {
 } from '../src/shared/backstage/backstageExecutionBudget.js';
 import {
   DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS,
   MAX_ASYNC_GPT_WAIT_POLLS,
   MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  resolveGptAsyncHeavyWaitForResultMs,
+} from '../src/shared/gpt/gptAsyncWaitPolicy.js';
+import {
   resolveAsyncGptPollIntervalMs,
   resolveAsyncGptWaitForResultMs,
 } from '../src/services/queuedGptCompletionService.js';
@@ -36,6 +40,24 @@ describe('Backstage Booker reused queue wait', () => {
       profile: 'bounded_sync_generation',
       action: 'generateBooking',
     }).resultPollWaitMs).toBe(0);
+  });
+
+  it('isolates the protected Booker wait from the generic heavy wait setting', () => {
+    expect(resolveGptAsyncHeavyWaitForResultMs({
+      protectedBackstageQueueRequired: true,
+      configuredGenericWaitForResultMs: 1,
+    })).toBe(BACKSTAGE_RESULT_POLL_WAIT_MS);
+    expect(resolveGptAsyncHeavyWaitForResultMs({
+      protectedBackstageQueueRequired: false,
+    })).toBe(DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS);
+    expect(resolveGptAsyncHeavyWaitForResultMs({
+      protectedBackstageQueueRequired: false,
+      configuredGenericWaitForResultMs: '750.9',
+    })).toBe(750);
+    expect(resolveGptAsyncHeavyWaitForResultMs({
+      protectedBackstageQueueRequired: false,
+      configuredGenericWaitForResultMs: 'invalid',
+    })).toBe(DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS);
   });
 
   it('keeps the 30-second polling window within the shared read bounds', () => {

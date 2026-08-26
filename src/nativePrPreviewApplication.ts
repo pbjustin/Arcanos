@@ -99,6 +99,10 @@ import {
   resolveBackstageGptAction,
 } from './shared/backstage/backstageActionPolicy.js';
 import {
+  BACKSTAGE_RESULT_POLL_WAIT_MS,
+  resolveBackstageExecutionBudgetPolicy,
+} from './shared/backstage/backstageExecutionBudget.js';
+import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
   buildBackstageBookerRequestedOutputShapeInstruction,
@@ -179,6 +183,11 @@ import {
   resolveGptRouteHardTimeoutMs,
 } from './shared/http/gptRouteTimeout.js';
 import {
+  DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  MAX_ASYNC_GPT_WAIT_POLLS,
+  resolveGptAsyncHeavyWaitForResultMs,
+} from './shared/gpt/gptAsyncWaitPolicy.js';
+import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
 import {
@@ -204,6 +213,11 @@ import {
   BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION,
   buildBackstageBookerDirectAnswerSystemPolicy,
 } from './services/backstageBookerClear.js';
+import {
+  pollQueuedJobCompletion,
+  resolveQueuedJobPollIntervalMs,
+  resolveQueuedJobWaitPollLimit,
+} from './services/queuedJobCompletionPolling.js';
 
 const MAX_REQUEST_BYTES = 4 * 1024;
 const MAX_RESEARCH_RESPONSE_BYTES = 4 * 1024;
@@ -2255,9 +2269,175 @@ interface SyntheticHrcResult {
   verdict: string;
 }
 
+interface SyntheticQueueWaitJob {
+  readonly id: string;
+  readonly status: 'running' | 'completed';
+}
+
+interface SyntheticQueueWaitObservation {
+  readonly state: 'pending' | 'completed';
+  readonly job: SyntheticQueueWaitJob | null;
+}
+
+async function assertBackstageQueueWaitPolicyFixture(): Promise<
+  typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.queueWaitPolicyProofVersion
+> {
+  const protectedBackstageWaitMs = resolveGptAsyncHeavyWaitForResultMs({
+    protectedBackstageQueueRequired: true,
+    configuredGenericWaitForResultMs: 1,
+  });
+  const genericHeavyWaitMs = resolveGptAsyncHeavyWaitForResultMs({
+    protectedBackstageQueueRequired: false,
+  });
+  const executionBudget = resolveBackstageExecutionBudgetPolicy({
+    profile: 'queued_generation',
+    action: 'generateBooking',
+  });
+  const pollIntervalMs = resolveQueuedJobPollIntervalMs({
+    requestedPollIntervalMs: undefined,
+    configuredPollIntervalMs: undefined,
+    defaultPollIntervalMs: DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  });
+  const invalidConfiguredPollIntervalMs = resolveQueuedJobPollIntervalMs({
+    requestedPollIntervalMs: undefined,
+    configuredPollIntervalMs: '0',
+    defaultPollIntervalMs: DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  });
+  const minimumPollIntervalMs = resolveQueuedJobPollIntervalMs({
+    requestedPollIntervalMs: 1,
+    configuredPollIntervalMs: undefined,
+    defaultPollIntervalMs: DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  });
+  const maximumPollIntervalMs = resolveQueuedJobPollIntervalMs({
+    requestedPollIntervalMs: 5_000,
+    configuredPollIntervalMs: undefined,
+    defaultPollIntervalMs: DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
+  });
+  const protectedPollLimit = resolveQueuedJobWaitPollLimit(
+    protectedBackstageWaitMs,
+    pollIntervalMs,
+    MAX_ASYNC_GPT_WAIT_POLLS
+  );
+  const minimumIntervalPollLimit = resolveQueuedJobWaitPollLimit(
+    protectedBackstageWaitMs,
+    minimumPollIntervalMs,
+    MAX_ASYNC_GPT_WAIT_POLLS
+  );
+  const genericPollLimit = resolveQueuedJobWaitPollLimit(
+    genericHeavyWaitMs,
+    pollIntervalMs,
+    MAX_ASYNC_GPT_WAIT_POLLS
+  );
+  if (
+    protectedBackstageWaitMs !== BACKSTAGE_RESULT_POLL_WAIT_MS
+    || genericHeavyWaitMs !== 500
+    || executionBudget.resultPollWaitMs !== protectedBackstageWaitMs
+    || executionBudget.resultPollWaitMs >= executionBudget.operationTimeoutMs
+    || pollIntervalMs !== 250
+    || invalidConfiguredPollIntervalMs !== pollIntervalMs
+    || minimumPollIntervalMs !== 50
+    || maximumPollIntervalMs !== 1_000
+    || protectedPollLimit !== 121
+    || minimumIntervalPollLimit !== MAX_ASYNC_GPT_WAIT_POLLS
+    || genericPollLimit !== 3
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_INVALID');
+  }
+
+  const jobId = '77777777-7777-4777-8777-777777777777';
+  const runningJob: SyntheticQueueWaitJob = { id: jobId, status: 'running' };
+  const completedJob: SyntheticQueueWaitJob = {
+    id: jobId,
+    status: 'completed',
+  };
+  const mapObservation = (
+    job: SyntheticQueueWaitJob | null
+  ): SyntheticQueueWaitObservation => ({
+    state: job?.status === 'completed' ? 'completed' : 'pending',
+    job,
+  });
+
+  let reusedJobNowMs = 0;
+  let reusedJobReadCount = 0;
+  const reusedJobSleepDurationsMs: number[] = [];
+  const reusedJobResult = await pollQueuedJobCompletion<
+    SyntheticQueueWaitJob,
+    SyntheticQueueWaitObservation
+  >({
+    jobId,
+    waitForResultMs: protectedBackstageWaitMs,
+    pollIntervalMs,
+    maxPolls: MAX_ASYNC_GPT_WAIT_POLLS,
+    readJob: async currentJobId => {
+      if (currentJobId !== jobId) {
+        throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_JOB_ID_INVALID');
+      }
+      reusedJobReadCount += 1;
+      return reusedJobReadCount === 1 ? runningJob : completedJob;
+    },
+    sleepFn: async milliseconds => {
+      reusedJobSleepDurationsMs.push(milliseconds);
+      reusedJobNowMs += milliseconds;
+    },
+    nowFn: () => reusedJobNowMs,
+    mapObservation,
+    buildPendingObservation: job => ({ state: 'pending', job }),
+  });
+
+  let genericNowMs = 0;
+  let genericReadCount = 0;
+  const genericSleepDurationsMs: number[] = [];
+  const genericResult = await pollQueuedJobCompletion<
+    SyntheticQueueWaitJob,
+    SyntheticQueueWaitObservation
+  >({
+    jobId,
+    waitForResultMs: genericHeavyWaitMs,
+    pollIntervalMs,
+    maxPolls: MAX_ASYNC_GPT_WAIT_POLLS,
+    readJob: async currentJobId => {
+      if (currentJobId !== jobId) {
+        throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_JOB_ID_INVALID');
+      }
+      genericReadCount += 1;
+      return runningJob;
+    },
+    sleepFn: async milliseconds => {
+      genericSleepDurationsMs.push(milliseconds);
+      genericNowMs += milliseconds;
+    },
+    nowFn: () => genericNowMs,
+    mapObservation,
+    buildPendingObservation: job => ({ state: 'pending', job }),
+  });
+
+  if (
+    reusedJobResult.state !== 'completed'
+    || reusedJobResult.job?.id !== jobId
+    || reusedJobReadCount !== 2
+    || reusedJobNowMs !== pollIntervalMs
+    || reusedJobSleepDurationsMs.length !== 1
+    || reusedJobSleepDurationsMs[0] !== pollIntervalMs
+    || genericResult.state !== 'pending'
+    || genericResult.job?.id !== jobId
+    || genericReadCount !== genericPollLimit
+    || genericNowMs !== genericHeavyWaitMs
+    || genericSleepDurationsMs.length !== 2
+    || genericSleepDurationsMs.some(
+      milliseconds => milliseconds !== pollIntervalMs
+    )
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_POLLING_INVALID');
+  }
+
+  return NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+    .queueWaitPolicyProofVersion;
+}
+
 async function runBackstageRouteBudgetFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
+  await assertBackstageQueueWaitPolicyFixture();
   if (!isBackstageGptRoute(BACKSTAGE_MODULE_ROUTE)) {
     throw new Error('PREVIEW_BACKSTAGE_CANONICAL_ROUTE_POLICY_INVALID');
   }
@@ -6828,6 +7008,18 @@ export function createNativePrPreviewApplication(
                 .partitionFailureTelemetryVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .partitionFailureTelemetryProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .routeBudget
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .queueWaitPolicyVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .queueWaitPolicyProofVersion
             );
           }
           return sendBoundedJsonResponse(
