@@ -12,6 +12,7 @@ import {
   authenticateBackstageBookerAccessRequest,
   backstageBookerAccessAuthMiddleware,
   establishBackstageBookerAccessAuthentication,
+  logBackstageBookerAccessAuthenticationSuccess,
 } from './backstageBookerAccessAuth.js';
 import {
   BACKSTAGE_BOOKER_MANAGED_ASYNC_RESULT_PATH_PREFIX,
@@ -424,15 +425,7 @@ export function createBackstageBookerHttpBoundary(
         request,
         dedicatedResult.credential
       );
-      try {
-        request.logger?.info('backstage_booker_access.authenticated', {
-          authMode: 'dedicated',
-          capabilityId: 'BACKSTAGE:BOOKER',
-          method: request.method,
-        });
-      } catch {
-        // Authentication diagnostics must not alter request handling.
-      }
+      logBackstageBookerAccessAuthenticationSuccess(request);
       authenticateNext();
     };
 

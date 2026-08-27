@@ -104,6 +104,16 @@ export type AuthenticatedGptClientIdentity =
       readonly authenticatedUser: GptClientOAuthUserIdentity;
     });
 
+export interface GptClientIdentityTelemetry {
+  readonly clientId: string;
+  readonly gptId: string;
+  readonly authenticationType: GptClientAuthenticationType;
+  readonly registeredModelProfile: GptRegisteredModelProfile | null;
+  readonly modelIdentityAssurance:
+    | 'credential-bound-profile'
+    | 'unknown';
+}
+
 export interface GptClientRegistry {
   resolveRegisteredClient(clientId: string): RegisteredGptClient | null;
   resolveAuthenticatedClient(input: {
@@ -320,3 +330,16 @@ const BACKSTAGE_BOOKER_REGISTRATION = Object.freeze({
 export const gptClientRegistry = createGptClientRegistry([
   BACKSTAGE_BOOKER_REGISTRATION,
 ]);
+
+/** Allowlist client identity fields that are safe for structured telemetry. */
+export function buildGptClientIdentityTelemetry(
+  identity: AuthenticatedGptClientIdentity
+): GptClientIdentityTelemetry {
+  return Object.freeze({
+    clientId: identity.clientId,
+    gptId: identity.gptId,
+    authenticationType: identity.authenticationType,
+    registeredModelProfile: identity.registeredModelProfile,
+    modelIdentityAssurance: identity.modelIdentityAssurance,
+  });
+}
