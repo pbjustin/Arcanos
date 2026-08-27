@@ -138,6 +138,10 @@ const GPT_ASYNC_WAIT_POLICY_URL = new URL(
   '../src/shared/gpt/gptAsyncWaitPolicy.ts',
   import.meta.url
 );
+const GPT_CLIENT_REGISTRY_URL = new URL(
+  '../src/shared/gpt/gptClientRegistry.ts',
+  import.meta.url
+);
 const BACKSTAGE_EXECUTION_BUDGET_URL = new URL(
   '../src/shared/backstage/backstageExecutionBudget.ts',
   import.meta.url
@@ -401,6 +405,33 @@ describe('native PR preview import boundary', () => {
         ])
       );
     }
+  });
+
+  it('admits and pins only the pure GPT client identity seam', async () => {
+    const filePath = 'src/shared/gpt/gptClientRegistry.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
+      expect.arrayContaining([
+        'src/routes/gptRouter.ts',
+        'src/services/backstageBookerAccessAuth.ts',
+        'src/core/db/repositories/jobRepository.ts',
+        'src/workers/jobRunner.ts',
+      ])
+    );
+
+    const sourceText = await readNormalizedSource(GPT_CLIENT_REGISTRY_URL);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+
+    const semanticDrift = replaceRequired(
+      sourceText,
+      "  clientId: 'backstage-booker',\n  gptId: 'backstage-booker',",
+      "  clientId: 'drifted-client',\n  gptId: 'backstage-booker',"
+    );
+    expect(findUnsafeRuntimeSyntax(filePath, semanticDrift)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ])
+    );
   });
 
   it('admits and pins only the pure managed Booker continuation seams', async () => {

@@ -1636,6 +1636,9 @@ describe('native PR contained application', () => {
           contract.proofHeaders.managedAsyncContinuationVersion
         ]
       ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.gptClientIdentityVersion]
+      ).toBeUndefined();
     }
   }, 25_000);
 
@@ -1715,6 +1718,8 @@ describe('native PR contained application', () => {
         contract.proofHeaders.partitionFailureTelemetryVersion
       ]
     ).toBeUndefined();
+    expect(response.headers[contract.proofHeaders.gptClientIdentityVersion])
+      .toBeUndefined();
     expect(response.headers['x-response-bytes']).toBe(
       String(Buffer.byteLength(response.text, 'utf8'))
     );
@@ -1722,6 +1727,98 @@ describe('native PR contained application', () => {
     expect(response.text).not.toContain('jobReadToken');
     expect(response.text).not.toContain('ciphertext');
     expect(response.text).not.toContain('/stream');
+  });
+
+  it('executes the sealed GPT client identity and durable provenance contract', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const response = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.gptClientIdentity });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      accepted: true,
+      authentication: {
+        currentAccepted: true,
+        missingRejected: true,
+        registryResolutionCount: 2,
+        rotatedAccepted: true,
+        unauthenticatedResolutionSkipped: true,
+        wrongRejected: true,
+      },
+      cacheBoundaryReached: false,
+      canonicalRouteReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.gptClientIdentity,
+      identity: {
+        authenticationType: 'managed-api-key',
+        clientId: 'backstage-booker',
+        frozen: true,
+        gptId: 'backstage-booker',
+        modelIdentityAssurance: 'unknown',
+        registeredModelProfile: null,
+        runtimeModel: null,
+        stableAcrossRotation: true,
+        telemetry: {
+          clientId: 'backstage-booker',
+          gptId: 'backstage-booker',
+          authenticationType: 'managed-api-key',
+          registeredModelProfile: null,
+          modelIdentityAssurance: 'unknown',
+        },
+        telemetryAllowlisted: true,
+        typeConfusionRejected: true,
+        unknownClientRejected: true,
+      },
+      protectedEffectsEnabled: false,
+      provenance: {
+        emptyFallbackValid: true,
+        legacyAbsencePreserved: true,
+        plannerStatePreserved: true,
+        rotationStable: true,
+        serializationRoundTripValid: true,
+        spoofedSnapshotOverwritten: true,
+        tamperedSnapshotRejected: true,
+      },
+      providerBoundaryReached: false,
+      queueBoundaryReached: false,
+      repositoryBoundaryReached: false,
+      schemaVersion: 1,
+      sensitiveValuesAbsent: true,
+      workerBoundaryReached: false,
+    });
+    expectContainedResponseHeaders(
+      response,
+      'native-pr-preview',
+      'native-pr-preview',
+      true
+    );
+    expect(response.headers[contract.proofHeaders.clearPolicyVersion]).toBe(
+      contract.clearPolicyVersion
+    );
+    expect(response.headers[contract.proofHeaders.gptClientIdentityVersion])
+      .toBe(contract.gptClientIdentityProofVersion);
+    expect(
+      response.headers[contract.proofHeaders.managedAsyncContinuationVersion]
+    ).toBeUndefined();
+    expect(response.headers[contract.proofHeaders.queueWaitPolicyVersion])
+      .toBeUndefined();
+    expect(response.headers[contract.proofHeaders.partitionedAuthorityVersion])
+      .toBeUndefined();
+    expect(
+      response.headers[
+        contract.proofHeaders.partitionFailureTelemetryVersion
+      ]
+    ).toBeUndefined();
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expect(response.text).not.toMatch(
+      /native-preview-gpt-client-|caller-controlled-|openai-attested|credentialFingerprint|principalActorKey/u
+    );
   });
 
   it('keeps Backstage generation fixtures sealed', async () => {
@@ -1754,6 +1851,9 @@ describe('native PR contained application', () => {
         response.headers[
           contract.proofHeaders.managedAsyncContinuationVersion
         ]
+      ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.gptClientIdentityVersion]
       ).toBeUndefined();
       expect(response.body).toEqual({
         error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',

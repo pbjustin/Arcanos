@@ -3433,7 +3433,7 @@ describe('GPT fast-path route branching', () => {
     ).not.toHaveProperty('gptClientProvenance');
   });
 
-  it('persists registered client provenance for an authenticated async query bridge', async () => {
+  it('persists registered client provenance for an authenticated async query bridge without planner state', async () => {
     const accessToken = `backstage-${'i'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     planAutonomousWorkerJobMock.mockResolvedValueOnce({
@@ -3441,13 +3441,6 @@ describe('GPT fast-path route branching', () => {
       retryCount: 0,
       maxRetries: 2,
       priority: 85,
-      autonomyState: {
-        planner: { reasons: [] },
-        gptClientProvenance: {
-          clientId: 'caller-spoofed-client',
-          runtimeModel: 'caller-spoofed-model',
-        },
-      },
       planningReasons: [],
     });
 
@@ -3477,7 +3470,6 @@ describe('GPT fast-path route branching', () => {
       };
     };
     expect(createCall.createOptions?.autonomyState).toEqual({
-      planner: { reasons: [] },
       gptClientProvenance: {
         version: 1,
         source: 'gpt-client-registry',

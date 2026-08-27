@@ -73,7 +73,7 @@ does not replace or weaken actor-based ownership.
 | --- | --- |
 | `openai-attested` | Reserved for a future documented OpenAI integrity-protected signal that proves actual caller runtime-model identity. The current registry never emits it. |
 | `credential-bound-profile` | ARCANOS authenticated a credential whose registration has a configured profile. It does not prove that ChatGPT used a model represented by that profile. |
-| `self-declared` | Untrusted diagnostic metadata only. It may never authorize, bill, rate-limit, or grant permission. This release intentionally does not collect it. |
+| `self-declared` | Untrusted diagnostic metadata only. It may never authorize, bill, rate-limit, or grant permission. The registry never accepts or promotes it as identity; generic queued request bodies may still retain caller-supplied fields as untrusted input. |
 | `unknown` | No trusted runtime-model information exists. This is the current Backstage Booker value. |
 
 A non-null `registeredModelProfile` is always distinct from `runtimeModel`.
@@ -146,6 +146,24 @@ addition to the existing event metadata:
 It intentionally omits runtime model, credentials and fingerprints, OAuth
 tokens and secrets, cookies, prompts, Notion text, and generated results. There
 is no public registry list or identity diagnostic endpoint in this release.
+
+## Sealed preview verification
+
+The credential-free native PR preview selector
+`gpt-client-identity-contract` exercises the production-shared strict bearer
+parser, immutable registry lookup, authenticated identity resolution, bounded
+telemetry projection, server-owned queued-job provenance merge, and strict
+absent/valid/invalid provenance parser with server-owned synthetic values. It
+proves credential rotation preserves the stable registration, caller claims
+cannot override provenance, unknown clients fail closed, and credentials and
+untrusted model claims do not enter the returned projection. A successful
+response carries
+`x-arcanos-preview-backstage-gpt-client-identity-version`.
+
+This is contained component E2E evidence. It does not invoke the normal route
+or authenticator, PostgreSQL, a queue, an active worker, a provider, Notion, or
+any protected effect. Focused assembled-route tests remain authoritative for
+the production middleware and queue-submission composition.
 
 ## OAuth readiness and deferral
 

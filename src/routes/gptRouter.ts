@@ -158,7 +158,9 @@ import {
   normalizeExplicitIdempotencyKey,
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
-import { buildGptClientJobProvenance } from '@shared/gpt/gptClientRegistry.js';
+import {
+  mergeGptClientJobProvenanceIntoAutonomyState,
+} from '@shared/gpt/gptClientRegistry.js';
 import {
   resolveGptJobLifecycleStatus,
   summarizeGptJobTimings
@@ -3310,12 +3312,11 @@ router.post(
               plannedJob = authenticatedClientIdentity
                 ? {
                     ...priorityAwarePlannedJob,
-                    autonomyState: {
-                      ...(priorityAwarePlannedJob.autonomyState ?? {}),
-                      gptClientProvenance: buildGptClientJobProvenance(
+                    autonomyState:
+                      mergeGptClientJobProvenanceIntoAutonomyState(
+                        priorityAwarePlannedJob.autonomyState,
                         authenticatedClientIdentity
                       ),
-                    },
                   }
                 : priorityAwarePlannedJob;
               createResult = await findOrCreateGptJob({

@@ -215,6 +215,14 @@ function responseHeadersForCase(
                     .managedAsyncContinuationProofVersion,
               }
             : {}),
+          ...(requestCase.fixtureName === 'gptClientIdentity'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.gptClientIdentityVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .gptClientIdentityProofVersion,
+              }
+            : {}),
         }
       : {}),
     ...(
@@ -465,7 +473,7 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 130);
+  assert.equal(requestPlan.length, 131);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -515,7 +523,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    9
+    10
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -537,7 +545,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   );
   assert.equal(
     requestPlan.filter(({ simulatedAuth }) => simulatedAuth === true).length,
-    22
+    23
   );
   assert.equal(
     requestPlan.filter(({ expectedType, simulatedAuth }) =>
@@ -571,6 +579,32 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(
     /authorization|cookie|credential|secret|session|token/iu.test(
       managedAsyncContinuationRequestBody
+    ),
+    false
+  );
+  const gptClientIdentityCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-gpt-client-identity'
+  );
+  assert.ok(gptClientIdentityCase);
+  assert.deepEqual(gptClientIdentityCase, {
+    body: { fixture: 'gpt-client-identity-contract' },
+    boundedResponse: true,
+    caseId: 'backstage-generation-gpt-client-identity',
+    expectedStatus: 200,
+    expectedType: 'backstage-generation-contract',
+    fixture: 'gpt-client-identity-contract',
+    fixtureName: 'gptClientIdentity',
+    method: 'POST',
+    path: '/backstage/generation-contract',
+    pathTemplate: '/backstage/generation-contract',
+    requestTimeoutMs: 20_000,
+    role: 'web',
+    simulatedAuth: true,
+  });
+  assert.deepEqual(Object.keys(gptClientIdentityCase.body), ['fixture']);
+  assert.equal(
+    /authorization|cookie|credential|secret|session|token/iu.test(
+      JSON.stringify(gptClientIdentityCase.body)
     ),
     false
   );
@@ -1494,14 +1528,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 130);
-  assert.equal(result.summary.simulatedAuthRequests, 22);
-  assert.equal(result.checks.length, 130);
+  assert.equal(result.summary.requestsMade, 131);
+  assert.equal(result.summary.simulatedAuthRequests, 23);
+  assert.equal(result.checks.length, 131);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
-    22
+    23
   );
-  assert.equal(mock.requestCount, 130);
+  assert.equal(mock.requestCount, 131);
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'status-auth-before-parser'
@@ -1535,6 +1569,26 @@ test('executes the bounded credential-free matrix and detects identity stability
     pathTemplate: '/backstage/generation-contract',
     responseBytes: Buffer.byteLength(JSON.stringify(
       expectedNativePrPreviewResponseBody(managedAsyncContinuationCase, {
+        commitSha: COMMIT_SHA,
+        prNumber: PR_NUMBER,
+      })
+    )),
+    role: 'web',
+    simulatedAuth: true,
+  });
+  const gptClientIdentityCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-gpt-client-identity'
+  );
+  assert.deepEqual(gptClientIdentityCheck, {
+    bodySha256: gptClientIdentityCheck.bodySha256,
+    caseId: 'backstage-generation-gpt-client-identity',
+    clearPolicyVersionVerified: true,
+    gptClientIdentityVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(
+      expectedNativePrPreviewResponseBody(gptClientIdentityCase, {
         commitSha: COMMIT_SHA,
         prNumber: PR_NUMBER,
       })
@@ -1671,12 +1725,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 10);
+  assert.equal(backstageGenerationCalls.length, 11);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    9
+    10
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2141,6 +2195,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .managedAsyncContinuationVersion
         ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-gpt-client-identity',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gptClientIdentityVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-gpt-client-identity',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gptClientIdentityVersion
+        ] = 'backstage-booker-gpt-client-identity/drifted';
       },
     },
     {

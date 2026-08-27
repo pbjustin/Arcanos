@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 130;
+const MAX_REQUESTS = 131;
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -878,6 +878,11 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-managed-async-continuation',
       'managedAsyncContinuation',
+      true
+    ),
+    backstageGenerationCase(
+      'backstage-generation-gpt-client-identity',
+      'gptClientIdentity',
       true
     ),
     mcpBodyCapCase(
@@ -2363,6 +2368,53 @@ function expectedBackstageGenerationContractPayload(requestCase) {
       workerBoundaryReached: false,
     };
   }
+  if (requestCase.fixtureName === 'gptClientIdentity') {
+    return {
+      ...base,
+      authentication: {
+        currentAccepted: true,
+        missingRejected: true,
+        registryResolutionCount: 2,
+        rotatedAccepted: true,
+        unauthenticatedResolutionSkipped: true,
+        wrongRejected: true,
+      },
+      canonicalRouteReached: false,
+      identity: {
+        authenticationType: 'managed-api-key',
+        clientId: 'backstage-booker',
+        frozen: true,
+        gptId: 'backstage-booker',
+        modelIdentityAssurance: 'unknown',
+        registeredModelProfile: null,
+        runtimeModel: null,
+        stableAcrossRotation: true,
+        telemetry: {
+          clientId: 'backstage-booker',
+          gptId: 'backstage-booker',
+          authenticationType: 'managed-api-key',
+          registeredModelProfile: null,
+          modelIdentityAssurance: 'unknown',
+        },
+        telemetryAllowlisted: true,
+        typeConfusionRejected: true,
+        unknownClientRejected: true,
+      },
+      provenance: {
+        emptyFallbackValid: true,
+        legacyAbsencePreserved: true,
+        plannerStatePreserved: true,
+        rotationStable: true,
+        serializationRoundTripValid: true,
+        spoofedSnapshotOverwritten: true,
+        tamperedSnapshotRejected: true,
+      },
+      queueBoundaryReached: false,
+      repositoryBoundaryReached: false,
+      sensitiveValuesAbsent: true,
+      workerBoundaryReached: false,
+    };
+  }
   fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
 }
 
@@ -3354,6 +3406,33 @@ function validateResponseBody(requestCase, bodyBytes, options) {
       );
     }
   }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'gptClientIdentity'
+  ) {
+    if (
+      bodyText.includes('native-preview-gpt-client-')
+      || bodyText.includes('caller-controlled-')
+      || bodyText.includes('openai-attested')
+      || bodyText.includes('credentialFingerprint')
+      || bodyText.includes('principalActorKey')
+      || body?.authentication?.registryResolutionCount !== 2
+      || body?.identity?.clientId !== 'backstage-booker'
+      || body?.identity?.runtimeModel !== null
+      || body?.identity?.telemetryAllowlisted !== true
+      || body?.provenance?.serializationRoundTripValid !== true
+      || body?.provenance?.spoofedSnapshotOverwritten !== true
+      || body?.provenance?.tamperedSnapshotRejected !== true
+      || body?.sensitiveValuesAbsent !== true
+      || body?.repositoryBoundaryReached !== false
+      || body?.workerBoundaryReached !== false
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_OUTCOME_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
   requireExactJson(body, expectedBody, requestCase.caseId);
 }
 
@@ -3576,6 +3655,17 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      requestCase.fixtureName === 'gptClientIdentity'
+      && response.headers.get(
+        contract.proofHeaders.gptClientIdentityVersion
+      ) !== contract.gptClientIdentityProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3696,6 +3786,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'managedAsyncContinuation'
       ? { managedAsyncContinuationVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'gptClientIdentity'
+      ? { gptClientIdentityVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

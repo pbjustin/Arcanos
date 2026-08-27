@@ -2,6 +2,7 @@ import {
   buildGptClientJobProvenance,
   createGptClientRegistry,
   gptClientRegistry,
+  mergeGptClientJobProvenanceIntoAutonomyState,
   resolveGptClientJobProvenance,
   type GptClientRegistrationDefinition,
 } from '../src/shared/gpt/gptClientRegistry.js';
@@ -148,6 +149,34 @@ describe('server-owned GPT client registry', () => {
     expect(resolveGptClientJobProvenance({
       planner: { reasons: [] },
     })).toEqual({ state: 'absent', provenance: null });
+  });
+
+  it('preserves planner state and replaces spoofed provenance, including the empty fallback', () => {
+    const identity = gptClientRegistry.resolveAuthenticatedClient({
+      clientId: 'backstage-booker',
+      authentication: { authenticationType: 'managed-api-key' },
+    });
+    expect(identity).not.toBeNull();
+
+    const merged = mergeGptClientJobProvenanceIntoAutonomyState({
+      planner: { reasons: ['sealed-preview'] },
+      gptClientProvenance: {
+        clientId: 'caller-controlled',
+        runtimeModel: 'gpt-5.6-pro',
+      },
+    }, identity!);
+    expect(merged.planner).toEqual({ reasons: ['sealed-preview'] });
+    expect(resolveGptClientJobProvenance(merged)).toEqual({
+      state: 'valid',
+      provenance: buildGptClientJobProvenance(identity!),
+    });
+
+    const emptyFallback = mergeGptClientJobProvenanceIntoAutonomyState(
+      undefined,
+      identity!
+    );
+    expect(Object.keys(emptyFallback)).toEqual(['gptClientProvenance']);
+    expect(resolveGptClientJobProvenance(emptyFallback).state).toBe('valid');
   });
 
   it.each([

@@ -433,6 +433,17 @@ export function buildGptClientJobProvenance(
   });
 }
 
+/** Preserve planner state while replacing any untrusted provenance snapshot. */
+export function mergeGptClientJobProvenanceIntoAutonomyState(
+  autonomyState: Readonly<Record<string, unknown>> | null | undefined,
+  identity: AuthenticatedGptClientIdentity
+): Record<string, unknown> {
+  return {
+    ...(autonomyState ?? {}),
+    gptClientProvenance: buildGptClientJobProvenance(identity),
+  };
+}
+
 const GPT_CLIENT_JOB_PROVENANCE_BASE_KEYS = [
   'version',
   'source',
