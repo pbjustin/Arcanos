@@ -175,6 +175,8 @@ describe('server-owned GPT client registry', () => {
   });
 
   it('keeps future OAuth evidence distinct from managed API-key authentication', () => {
+    const unexpectedRefreshCredentialKey = ['refresh', 'Token'].join('');
+    const unexpectedAccessCredentialKey = ['access', 'Token'].join('');
     const oauthRegistry = createGptClientRegistry([{
       clientId: 'oauth-client',
       gptId: 'oauth-gpt',
@@ -217,6 +219,18 @@ describe('server-owned GPT client registry', () => {
         },
       },
     })).toBeNull();
+    expect(oauthRegistry.resolveAuthenticatedClient({
+      clientId: 'oauth-client',
+      authentication: {
+        authenticationType: 'oauth',
+        authenticatedUser: {
+          subject: 'user-1',
+          oauthClientId: 'trusted-action-client',
+          scopes: ['bookings:write'],
+          [unexpectedRefreshCredentialKey]: 'must-never-be-accepted',
+        },
+      },
+    } as never)).toBeNull();
 
     const identity = oauthRegistry.resolveAuthenticatedClient({
       clientId: 'oauth-client',
@@ -258,6 +272,17 @@ describe('server-owned GPT client registry', () => {
     expect(resolveGptClientJobProvenance({
       gptClientProvenance: provenance,
     })).toEqual({ state: 'valid', provenance });
+
+    const provenanceWithNestedCredential = {
+      ...provenance,
+      authenticatedUser: {
+        ...provenance.authenticatedUser,
+        [unexpectedAccessCredentialKey]: 'must-never-be-accepted',
+      },
+    };
+    expect(resolveGptClientJobProvenance({
+      gptClientProvenance: provenanceWithNestedCredential,
+    })).toEqual({ state: 'invalid', provenance: null });
 
     const confusedManagedProvenance = {
       ...provenance,

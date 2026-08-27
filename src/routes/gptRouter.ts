@@ -3305,9 +3305,8 @@ router.post(
                     }
                   }
                 : plannedJobBase;
-              const authenticatedClientIdentity = protectedBackstageJobExecution
-                ? getAuthenticatedGptClientIdentity(req)
-                : null;
+              const authenticatedClientIdentity =
+                getAuthenticatedGptClientIdentity(req);
               plannedJob = authenticatedClientIdentity
                 ? {
                     ...priorityAwarePlannedJob,

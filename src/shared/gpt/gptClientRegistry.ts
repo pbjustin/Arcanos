@@ -166,6 +166,11 @@ const MAX_OAUTH_SUBJECT_LENGTH = 256;
 const MAX_OAUTH_CLIENT_ID_LENGTH = 256;
 const MAX_OAUTH_SCOPE_LENGTH = 128;
 const MAX_OAUTH_SCOPE_COUNT = 32;
+const OAUTH_USER_IDENTITY_KEYS = [
+  'subject',
+  'oauthClientId',
+  'scopes',
+] as const;
 
 function isBoundedNonEmptyString(value: unknown, maximumLength: number): value is string {
   return typeof value === 'string'
@@ -248,6 +253,9 @@ function normalizeOAuthUserIdentity(
   input: unknown
 ): GptClientOAuthUserIdentity | null {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return null;
+  }
+  if (!hasOnlyKeys(input as Record<string, unknown>, OAUTH_USER_IDENTITY_KEYS)) {
     return null;
   }
   const candidate = input as Partial<GptClientOAuthUserIdentity>;
