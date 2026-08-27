@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T20:14:41.027Z",
+  "generatedAt": "2026-08-27T22:21:21.039Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2567,6 +2567,9 @@
           "relativePath": "src/shared/gpt/gptAsyncWaitPolicy.ts"
         },
         {
+          "relativePath": "src/shared/gpt/gptClientRegistry.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/gptControlActions.ts"
         },
         {
@@ -3385,6 +3388,9 @@
           "relativePath": "tests/backstage-booker-async-continuation.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker-gpt-client-auth.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker-protocol-contract.test.ts"
         },
         {
@@ -3869,6 +3875,9 @@
         },
         {
           "relativePath": "tests/gpt-async-job-responses.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-client-registry.test.ts"
         },
         {
           "relativePath": "tests/gpt-dag-bridge.route.test.ts"

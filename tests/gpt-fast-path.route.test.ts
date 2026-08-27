@@ -1713,6 +1713,10 @@ describe('GPT fast-path route branching', () => {
       .post('/gpt/backstage-booker')
       .send({
         action: 'generateBooking',
+        clientId: 'backstage-booker',
+        authenticationType: 'managed-api-key',
+        runtimeModel: 'pro',
+        modelIdentityAssurance: 'openai-attested',
         payload: {
           universeId: 'builder-async-control-universe',
           prompt: 'x'.repeat(10_000),
@@ -1732,6 +1736,9 @@ describe('GPT fast-path route branching', () => {
     expect(response.body.jobReadToken).toMatch(/^v1\.[A-Za-z0-9_-]{43}$/u);
     expect(planAutonomousWorkerJobMock).toHaveBeenCalledTimes(1);
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(
+      findOrCreateGptJobMock.mock.calls[0]?.[0]?.createOptions?.autonomyState
+    ).not.toHaveProperty('gptClientProvenance');
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -2422,6 +2429,7 @@ describe('GPT fast-path route branching', () => {
   it('queues authenticated heavy Booker generation exactly once without persisting plaintext or calling the web model', async () => {
     const accessToken = `backstage-${'q'.repeat(48)}`;
     const privatePrompt = 'private-production-booking-prompt-sentinel';
+    const spoofedClientId = 'attacker-client-provenance-sentinel';
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
@@ -2429,6 +2437,22 @@ describe('GPT fast-path route branching', () => {
     mockResolveGptRouting.mockResolvedValueOnce(
       buildBackstageRouting('generateBooking')
     );
+    planAutonomousWorkerJobMock.mockResolvedValueOnce({
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 2,
+      priority: 85,
+      autonomyState: {
+        planner: { reasons: [] },
+        providerExecution: { providerModel: 'gpt-5.1' },
+        gptClientProvenance: {
+          clientId: spoofedClientId,
+          runtimeModel: 'pro',
+          modelIdentityAssurance: 'openai-attested',
+        },
+      },
+      planningReasons: [],
+    });
 
     const response = await request(buildApp())
       .post('/gpt/backstage-booker')
@@ -2436,6 +2460,14 @@ describe('GPT fast-path route branching', () => {
       .send({
         action: 'generateBooking',
         executionMode: 'sync',
+        clientId: spoofedClientId,
+        runtimeModel: 'pro',
+        modelIdentityAssurance: 'openai-attested',
+        clientReportedModelProfile: 'thinking',
+        gptClientProvenance: {
+          clientId: spoofedClientId,
+          runtimeModel: 'pro',
+        },
         payload: {
           universeId: 'my-universe-2k26',
           prompt: `${privatePrompt}: return exactly six matches.`,
@@ -2452,7 +2484,10 @@ describe('GPT fast-path route branching', () => {
     const createOptions = findOrCreateGptJobMock.mock.calls[0]?.[0] as {
       input: Record<string, unknown>;
       idempotencyScopeHash: string;
-      createOptions: { correlationId?: string };
+      createOptions: {
+        correlationId?: string;
+        autonomyState?: Record<string, unknown>;
+      };
     };
     const serializedInput = JSON.stringify(createOptions.input);
     expect(createOptions.input).toMatchObject({
@@ -2468,8 +2503,29 @@ describe('GPT fast-path route branching', () => {
       requestPath: '/gpt/backstage-booker',
     });
     expect(createOptions.createOptions.correlationId).toBe(createOptions.input.traceId);
+    expect(createOptions.createOptions.autonomyState).toEqual({
+      planner: { reasons: [] },
+      providerExecution: { providerModel: 'gpt-5.1' },
+      gptClientProvenance: {
+        version: 1,
+        source: 'gpt-client-registry',
+        clientId: 'backstage-booker',
+        gptId: 'backstage-booker',
+        authenticationType: 'managed-api-key',
+        registeredModelProfile: null,
+        runtimeModel: null,
+        modelIdentityAssurance: 'unknown',
+      },
+    });
+    expect(
+      (createOptions.createOptions.autonomyState?.gptClientProvenance as {
+        runtimeModel?: unknown;
+      }).runtimeModel
+    ).toBeNull();
     expect(serializedInput).not.toContain(privatePrompt);
     expect(serializedInput).not.toContain(accessToken);
+    expect(JSON.stringify(createOptions)).not.toContain(spoofedClientId);
+    expect(JSON.stringify(createOptions)).not.toContain('"runtimeModel":"pro"');
     expect(serializedInput.toLowerCase()).not.toContain('authorization');
     expect(createOptions.input).not.toHaveProperty('body');
     expect(createOptions.input).not.toHaveProperty('prompt');
@@ -2896,11 +2952,34 @@ describe('GPT fast-path route branching', () => {
       .toBe(expectedStableScopeHash);
     expect(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash)
       .toBe(expectedStableScopeHash);
+    const expectedClientProvenance = {
+      version: 1,
+      source: 'gpt-client-registry',
+      clientId: 'backstage-booker',
+      gptId: 'backstage-booker',
+      authenticationType: 'managed-api-key',
+      registeredModelProfile: null,
+      runtimeModel: null,
+      modelIdentityAssurance: 'unknown',
+    };
     for (const createCall of findOrCreateGptJobMock.mock.calls) {
       const serializedInput = JSON.stringify(createCall[0]?.input);
       expect(serializedInput).not.toContain(accessToken);
       expect(serializedInput).not.toContain(rotatedAccessToken);
+      expect(
+        createCall[0]?.createOptions?.autonomyState?.gptClientProvenance
+      ).toEqual(expectedClientProvenance);
+      const serializedCreateCall = JSON.stringify(createCall[0]);
+      expect(serializedCreateCall).not.toContain(accessToken);
+      expect(serializedCreateCall).not.toContain(rotatedAccessToken);
     }
+    expect(
+      findOrCreateGptJobMock.mock.calls[0]?.[0]
+        ?.createOptions?.autonomyState?.gptClientProvenance
+    ).toEqual(
+      findOrCreateGptJobMock.mock.calls[1]?.[0]
+        ?.createOptions?.autonomyState?.gptClientProvenance
+    );
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.requestFingerprintHash)
       .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.requestFingerprintHash);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(2);
@@ -3349,5 +3428,62 @@ describe('GPT fast-path route branching', () => {
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(
+      findOrCreateGptJobMock.mock.calls[0]?.[0]?.createOptions?.autonomyState
+    ).not.toHaveProperty('gptClientProvenance');
+  });
+
+  it('persists registered client provenance for an authenticated async query bridge without planner state', async () => {
+    const accessToken = `backstage-${'i'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    planAutonomousWorkerJobMock.mockResolvedValueOnce({
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 2,
+      priority: 85,
+      planningReasons: [],
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-OpenAI-Model', 'caller-spoofed-header-model')
+      .send({
+        action: 'query',
+        prompt: 'Generate a promo prompt.',
+        executionMode: 'fast',
+        clientId: 'caller-spoofed-client',
+        runtimeModel: 'caller-spoofed-model',
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'queued',
+      jobId: 'job-orchestrated',
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    const createCall = findOrCreateGptJobMock.mock.calls[0]?.[0] as {
+      createOptions?: {
+        autonomyState?: Record<string, unknown>;
+      };
+    };
+    expect(createCall.createOptions?.autonomyState).toEqual({
+      gptClientProvenance: {
+        version: 1,
+        source: 'gpt-client-registry',
+        clientId: 'backstage-booker',
+        gptId: 'backstage-booker',
+        authenticationType: 'managed-api-key',
+        registeredModelProfile: null,
+        runtimeModel: null,
+        modelIdentityAssurance: 'unknown',
+      },
+    });
+    expect(JSON.stringify(createCall)).not.toContain(accessToken);
+    expect(JSON.stringify(createCall)).not.toContain('caller-spoofed-header-model');
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 });

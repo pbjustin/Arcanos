@@ -63,7 +63,13 @@ generates and then saves, so it remains a protected mutation.
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
   static purpose-bound Action credential, not OAuth and not a user's password.
   It authenticates one shared managed principal for this private Action; it is
-  not per-user, per-session, or per-universe identity.
+  not per-user, per-session, or per-universe identity. On successful
+  authentication, the backend resolves the server-owned registered client
+  `backstage-booker`; its configured profile and runtime model are both null,
+  and model-identity assurance is `unknown`. This does not identify the actual
+  ChatGPT runtime model. See
+  [`GPT_CLIENT_IDENTITY.md`](GPT_CLIENT_IDENTITY.md) for the identity,
+  provenance, telemetry, and future OAuth boundaries.
 - Secret placement: store the value only in the Railway web service and
   ChatGPT's encrypted Action authentication field. Never put it in the OpenAPI
   schema, GPT instructions, chat, source, logs, screenshots, or a worker

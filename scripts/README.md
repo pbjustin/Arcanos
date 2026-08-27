@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 130-request plan without network access.
+untracked worktree, limits, and the fixed 131-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -52,7 +52,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 130-request probe
+the lifecycle reports the exact preview hosts, run the current 131-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -122,7 +122,7 @@ The sealed `POST /backstage/generation-contract` selectors are
 `review-completion-contract`, `compact-retry-contract`,
 `notion-authority-rag-contract`, `partition-failure-telemetry-contract`,
 `continuity-query-contract`, `continuity-subtree-contract`, and
-`managed-async-continuation-contract`. The first
+`managed-async-continuation-contract`, and `gpt-client-identity-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
@@ -209,6 +209,18 @@ stream, ciphertext, key material, and bearer values. A successful response
 carries `x-arcanos-preview-backstage-managed-async-version`. This is contained
 component evidence, not a literal external bearer request or normal route,
 PostgreSQL, active worker, provider, or Notion execution.
+
+The GPT client identity selector uses only a sealed fixture name at the HTTP
+boundary. Server-owned synthetic bearer values exercise the production-shared
+strict bearer parser, immutable registry lookup, authenticated identity
+resolution, bounded telemetry projection, server-owned queued-job provenance
+merge, and strict absent/valid/invalid provenance parser. It proves credential
+rotation preserves the stable registration, caller claims cannot replace the
+server-owned snapshot, unknown clients fail closed, and neither credentials nor
+untrusted model claims are returned. A successful response carries
+`x-arcanos-preview-backstage-gpt-client-identity-version`. This is contained
+component evidence: it does not invoke the normal route or authenticator,
+PostgreSQL, a queue, an active worker, a provider, or Notion.
 
 Every successful generation selector also executes the semantic-digest-pinned
 pure CLEAR policy composer shared with production, assembles the policy through

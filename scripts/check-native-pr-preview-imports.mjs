@@ -78,6 +78,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/dispatch/universalDispatch.ts',
   'src/shared/gpt/gptIdentifier.ts',
   'src/shared/gpt/gptAsyncWaitPolicy.ts',
+  'src/shared/gpt/gptClientRegistry.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
@@ -778,6 +779,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/gpt/gptAsyncWaitPolicy.ts',
     'f8e5a89f661a48033d6d2db03e19a2e301c943f0c76bd6cf1f63b45c9102bfdd',
+  ],
+  [
+    'src/shared/gpt/gptClientRegistry.ts',
+    '380a23bc34dc2168ca0c83965954599c84cb2e4cca5a7215713c93e8b662ad65',
   ],
   [
     'src/shared/gpt/gptIdentifier.ts',

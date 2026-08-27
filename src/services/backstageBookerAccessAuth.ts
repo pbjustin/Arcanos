@@ -9,6 +9,11 @@ import {
   BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME,
   type BackstageBookerAccessAuthenticationResult,
 } from '@shared/backstage/backstageBookerAccessAuthCore.js';
+import {
+  buildGptClientIdentityTelemetry,
+  gptClientRegistry,
+  type AuthenticatedGptClientIdentity,
+} from '@shared/gpt/gptClientRegistry.js';
 
 export {
   BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY,
@@ -21,10 +26,29 @@ const backstageBookerAccessAuthenticated = Symbol(
 const backstageBookerAccessLegacyActorKey = Symbol(
   'backstageBookerAccessLegacyActorKey'
 );
+const authenticatedGptClientIdentity = Symbol(
+  'authenticatedGptClientIdentity'
+);
+
+function resolveBackstageBookerManagedGptClientIdentity(
+): AuthenticatedGptClientIdentity {
+  const identity = gptClientRegistry.resolveAuthenticatedClient({
+    clientId: 'backstage-booker',
+    authentication: { authenticationType: 'managed-api-key' },
+  });
+  if (!identity) {
+    throw new Error('Backstage Booker GPT client registration is unavailable.');
+  }
+  return identity;
+}
+
+const backstageBookerManagedGptClientIdentity =
+  resolveBackstageBookerManagedGptClientIdentity();
 
 type BackstageBookerAccessRequest = Request & {
   [backstageBookerAccessAuthenticated]?: true;
   [backstageBookerAccessLegacyActorKey]?: string;
+  [authenticatedGptClientIdentity]?: AuthenticatedGptClientIdentity;
 };
 
 function countRawAuthorizationHeaders(req: Request): number {
@@ -94,7 +118,42 @@ export function establishBackstageBookerAccessAuthentication(
   ] = true;
   authenticatedRequest[backstageBookerAccessLegacyActorKey] =
     actorIdentity.legacyActorKey;
+  authenticatedRequest[authenticatedGptClientIdentity] =
+    backstageBookerManagedGptClientIdentity;
   req.authenticatedActorKey = actorIdentity.principalActorKey;
+}
+
+/** Read only identity established from the server-owned registry after auth. */
+export function getAuthenticatedGptClientIdentity(
+  req: Request
+): AuthenticatedGptClientIdentity | null {
+  if (!isBackstageBookerAccessAuthenticated(req)) {
+    return null;
+  }
+  return (req as BackstageBookerAccessRequest)[
+    authenticatedGptClientIdentity
+  ] ?? null;
+}
+
+/** Emit one bounded allowlisted success event without credential material. */
+export function logBackstageBookerAccessAuthenticationSuccess(
+  req: Request
+): void {
+  const identity = getAuthenticatedGptClientIdentity(req);
+  if (!identity) {
+    return;
+  }
+
+  try {
+    req.logger?.info('backstage_booker_access.authenticated', {
+      authMode: 'dedicated',
+      capabilityId: 'BACKSTAGE:BOOKER',
+      method: req.method,
+      ...buildGptClientIdentityTelemetry(identity),
+    });
+  } catch {
+    // Authentication diagnostics must not alter request handling.
+  }
 }
 
 /**
@@ -175,15 +234,7 @@ export const backstageBookerAccessAuthMiddleware: RequestHandler = (
   }
 
   establishBackstageBookerAccessAuthentication(req, result.credential);
-  try {
-    req.logger?.info('backstage_booker_access.authenticated', {
-      authMode: 'dedicated',
-      capabilityId: 'BACKSTAGE:BOOKER',
-      method: req.method,
-    });
-  } catch {
-    // Authentication diagnostics must not alter request handling.
-  }
+  logBackstageBookerAccessAuthenticationSuccess(req);
   next();
 };
 

@@ -212,6 +212,12 @@ import {
   buildGptIdempotencyScopeHash,
 } from './shared/gpt/gptIdempotency.js';
 import {
+  buildGptClientIdentityTelemetry,
+  gptClientRegistry,
+  mergeGptClientJobProvenanceIntoAutonomyState,
+  resolveGptClientJobProvenance,
+} from './shared/gpt/gptClientRegistry.js';
+import {
   resolveTrinityReasoningProviderPolicy,
   supportsDisabledReasoningEffort,
 } from './shared/gpt/trinityReasoningPolicy.js';
@@ -5048,6 +5054,222 @@ function runBackstageNotionPartitionFailureTelemetryFixture(
   };
 }
 
+function runBackstageGptClientIdentityFixture(
+  fixture: string
+): Record<string, unknown> {
+  const tokenA = `native-preview-gpt-client-a-${'A'.repeat(48)}`;
+  const tokenB = `native-preview-gpt-client-b-${'B'.repeat(48)}`;
+  const wrongToken = `native-preview-gpt-client-wrong-${'W'.repeat(48)}`;
+  const authenticate = (
+    authorizationHeader: string | undefined,
+    authorizationHeaderCount: number,
+    authorizationHeaderPresented: boolean,
+    credential?: string
+  ) => authenticateBackstageBookerAccessCore({
+    authorizationHeader,
+    authorizationHeaderCount,
+    authorizationHeaderPresented,
+    readEnvironmentValue: environmentName =>
+      environmentName === BACKSTAGE_BOOKER_ACCESS_TOKEN_ENV_NAME
+        ? credential
+        : undefined,
+  });
+  const currentAuth = authenticate(`Bearer ${tokenA}`, 1, true, tokenA);
+  const rotatedAuth = authenticate(`Bearer ${tokenB}`, 1, true, tokenB);
+  const missingAuth = authenticate(undefined, 0, false, tokenA);
+  const wrongAuth = authenticate(`Bearer ${wrongToken}`, 1, true, tokenA);
+  let authenticatedRegistryResolutions = 0;
+  const resolveAuthenticatedIdentity = (
+    authentication: ReturnType<typeof authenticateBackstageBookerAccessCore>
+  ) => {
+    if (!authentication.ok) {
+      return null;
+    }
+    authenticatedRegistryResolutions += 1;
+    return gptClientRegistry.resolveAuthenticatedClient({
+      clientId: 'backstage-booker',
+      authentication: { authenticationType: 'managed-api-key' },
+    });
+  };
+  const currentIdentity = resolveAuthenticatedIdentity(currentAuth);
+  const rotatedIdentity = resolveAuthenticatedIdentity(rotatedAuth);
+  const missingIdentity = resolveAuthenticatedIdentity(missingAuth);
+  const wrongIdentity = resolveAuthenticatedIdentity(wrongAuth);
+  if (!currentIdentity || !rotatedIdentity) {
+    throw new Error('PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_AUTH_INVALID');
+  }
+
+  const callerClaims = {
+    clientId: 'caller-controlled-client',
+    runtimeModel: 'caller-controlled-runtime-model',
+    modelIdentityAssurance: 'openai-attested',
+    providerModel: 'caller-controlled-provider-model',
+    credential: 'caller-controlled-credential',
+  };
+  const planner = Object.freeze({ reasons: Object.freeze(['sealed-preview']) });
+  const initialAutonomyState = {
+    planner,
+    gptClientProvenance: callerClaims,
+  };
+  const mergedState = mergeGptClientJobProvenanceIntoAutonomyState(
+    initialAutonomyState,
+    currentIdentity
+  );
+  const rotatedState = mergeGptClientJobProvenanceIntoAutonomyState(
+    {},
+    rotatedIdentity
+  );
+  const fallbackState = mergeGptClientJobProvenanceIntoAutonomyState(
+    undefined,
+    currentIdentity
+  );
+  const serializedState = JSON.stringify(mergedState);
+  const restoredState = JSON.parse(serializedState) as unknown;
+  const mergedResolution = resolveGptClientJobProvenance(restoredState);
+  const rotatedResolution = resolveGptClientJobProvenance(rotatedState);
+  const fallbackResolution = resolveGptClientJobProvenance(fallbackState);
+  const absentResolution = resolveGptClientJobProvenance({ planner });
+  const tamperedResolution = resolveGptClientJobProvenance({
+    ...mergedState,
+    gptClientProvenance: {
+      ...(mergedResolution.provenance ?? {}),
+      runtimeModel: callerClaims.runtimeModel,
+    },
+  });
+  const telemetry = buildGptClientIdentityTelemetry(currentIdentity);
+  const identityStableAcrossRotation =
+    JSON.stringify(currentIdentity) === JSON.stringify(rotatedIdentity);
+  const provenanceStableAcrossRotation =
+    mergedResolution.state === 'valid'
+    && rotatedResolution.state === 'valid'
+    && JSON.stringify(mergedResolution.provenance)
+      === JSON.stringify(rotatedResolution.provenance);
+  const telemetryKeys = Object.keys(telemetry).sort();
+  const expectedTelemetryKeys = [
+    'authenticationType',
+    'clientId',
+    'gptId',
+    'modelIdentityAssurance',
+    'registeredModelProfile',
+  ].sort();
+  const publicProjection = JSON.stringify({
+    authenticationType: currentIdentity.authenticationType,
+    clientId: currentIdentity.clientId,
+    gptId: currentIdentity.gptId,
+    modelIdentityAssurance: currentIdentity.modelIdentityAssurance,
+    provenance: mergedResolution.provenance,
+    registeredModelProfile: currentIdentity.registeredModelProfile,
+    runtimeModel: currentIdentity.runtimeModel,
+    telemetry,
+  });
+  const sensitiveValuesAbsent = [
+    tokenA,
+    tokenB,
+    wrongToken,
+    ...Object.values(callerClaims),
+    'authorization',
+    'credentialFingerprint',
+    'principalActorKey',
+  ].every(value => (
+    !serializedState.includes(value)
+    && !publicProjection.includes(value)
+  ));
+  const verification = {
+    currentAccepted: currentAuth.ok,
+    rotatedAccepted: rotatedAuth.ok,
+    missingRejected:
+      !missingAuth.ok && missingAuth.reason === 'missing_auth',
+    wrongRejected:
+      !wrongAuth.ok && wrongAuth.reason === 'invalid_auth',
+    unauthenticatedResolutionSkipped:
+      missingIdentity === null && wrongIdentity === null,
+    registryResolutionCountExact: authenticatedRegistryResolutions === 2,
+    stableIdentityAcrossRotation: identityStableAcrossRotation,
+    identityFrozen:
+      Object.isFrozen(currentIdentity) && Object.isFrozen(rotatedIdentity),
+    unknownClientRejected: gptClientRegistry.resolveAuthenticatedClient({
+      clientId: 'unknown-client',
+      authentication: { authenticationType: 'managed-api-key' },
+    }) === null,
+    authenticationTypeConfusionRejected:
+      gptClientRegistry.resolveAuthenticatedClient({
+        clientId: 'backstage-booker',
+        authentication: {
+          authenticationType: 'oauth',
+          authenticatedUser: {
+            subject: 'server-owned-subject',
+            oauthClientId: 'server-owned-client',
+            scopes: [],
+          },
+        },
+      }) === null,
+    plannerStatePreserved: mergedState.planner === planner,
+    spoofedProvenanceOverwritten:
+      mergedResolution.state === 'valid'
+      && mergedResolution.provenance.clientId === 'backstage-booker'
+      && mergedResolution.provenance.runtimeModel === null,
+    serializationRoundTripValid: mergedResolution.state === 'valid',
+    rotationStable: provenanceStableAcrossRotation,
+    emptyFallbackValid: fallbackResolution.state === 'valid',
+    legacyAbsencePreserved: absentResolution.state === 'absent',
+    tamperedSnapshotRejected: tamperedResolution.state === 'invalid',
+    telemetryAllowlisted:
+      JSON.stringify(telemetryKeys) === JSON.stringify(expectedTelemetryKeys),
+    sensitiveValuesAbsent,
+  };
+  if (Object.values(verification).some(value => value !== true)) {
+    throw new Error('PREVIEW_BACKSTAGE_GPT_CLIENT_IDENTITY_INVALID');
+  }
+
+  return {
+    accepted: true,
+    authentication: {
+      currentAccepted: true,
+      missingRejected: true,
+      registryResolutionCount: authenticatedRegistryResolutions,
+      rotatedAccepted: true,
+      unauthenticatedResolutionSkipped: true,
+      wrongRejected: true,
+    },
+    cacheBoundaryReached: false,
+    canonicalRouteReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    identity: {
+      authenticationType: currentIdentity.authenticationType,
+      clientId: currentIdentity.clientId,
+      frozen: true,
+      gptId: currentIdentity.gptId,
+      modelIdentityAssurance: currentIdentity.modelIdentityAssurance,
+      registeredModelProfile: currentIdentity.registeredModelProfile,
+      runtimeModel: currentIdentity.runtimeModel,
+      stableAcrossRotation: true,
+      telemetry,
+      telemetryAllowlisted: true,
+      typeConfusionRejected: true,
+      unknownClientRejected: true,
+    },
+    protectedEffectsEnabled: false,
+    provenance: {
+      emptyFallbackValid: true,
+      legacyAbsencePreserved: true,
+      plannerStatePreserved: true,
+      rotationStable: true,
+      serializationRoundTripValid: true,
+      spoofedSnapshotOverwritten: true,
+      tamperedSnapshotRejected: true,
+    },
+    providerBoundaryReached: false,
+    queueBoundaryReached: false,
+    repositoryBoundaryReached: false,
+    schemaVersion: 1,
+    sensitiveValuesAbsent: true,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageManagedAsyncContinuationFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -5445,6 +5667,7 @@ async function runBackstageGenerationFixture(
       await runBackstageManagedAsyncContinuationFixture(
         fixtures.managedAsyncContinuation
       );
+      runBackstageGptClientIdentityFixture(fixtures.gptClientIdentity);
       return {
         payload: await runBackstageReviewCompletionFixture(fixture),
         partitionedAuthorityProofVersion: null,
@@ -5477,6 +5700,11 @@ async function runBackstageGenerationFixture(
     case fixtures.managedAsyncContinuation:
       return {
         payload: await runBackstageManagedAsyncContinuationFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.gptClientIdentity:
+      return {
+        payload: runBackstageGptClientIdentityFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     default:
@@ -7548,6 +7776,18 @@ export function createNativePrPreviewApplication(
                 .managedAsyncContinuationVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .managedAsyncContinuationProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .gptClientIdentity
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .gptClientIdentityVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .gptClientIdentityProofVersion
             );
           }
           return sendBoundedJsonResponse(

@@ -47,6 +47,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'trinity-reasoning-provider-policy/v1',
     managedAsyncContinuationProofVersion:
       'backstage-booker-managed-async-continuation/v1',
+    gptClientIdentityProofVersion:
+      'backstage-booker-gpt-client-identity/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -57,6 +59,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       continuityQuery: 'continuity-query-contract',
       continuitySubtree: 'continuity-subtree-contract',
       managedAsyncContinuation: 'managed-async-continuation-contract',
+      gptClientIdentity: 'gpt-client-identity-contract',
     }),
     proofHeaders: Object.freeze({
       clearPolicyVersion:
@@ -71,6 +74,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-trinity-reasoning-policy-version',
       managedAsyncContinuationVersion:
         'x-arcanos-preview-backstage-managed-async-version',
+      gptClientIdentityVersion:
+        'x-arcanos-preview-backstage-gpt-client-identity-version',
     }),
   }),
   mcpBodyCap: Object.freeze({

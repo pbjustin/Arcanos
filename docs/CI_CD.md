@@ -418,15 +418,16 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 130-request
+evidence, not Railway control-plane provenance. The current fixed 131-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, nine sealed Backstage generation
-timeout/cache/review-completion/compact-retry/Notion-authority/failure-telemetry/continuity/managed-async cases
-(the managed-async case is the twenty-second `simulatedAuth` request), one
+worker-role approval-contract denial, ten sealed Backstage generation
+timeout/cache/review-completion/compact-retry/Notion-authority/failure-telemetry/continuity/managed-async/GPT-client-identity cases
+(the managed-async and GPT-client-identity cases are the twenty-second and
+twenty-third `simulatedAuth` requests), one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, one canon-summary pagination case, two
 sealed dispatch GPT identifier boundary cases, one worker-role dispatch
@@ -461,6 +462,16 @@ result materialization. The verifier requires the versioned managed-async proof
 header and rejects any returned capability, bearer, key, ciphertext, or stream
 marker. The normal authenticated route, PostgreSQL, active worker, provider,
 and Notion integrations remain outside this component E2E boundary.
+
+The GPT-client-identity generation selector accepts only a sealed fixture name
+and uses server-owned synthetic credentials. It executes the production-shared
+strict bearer parser, immutable registry lookup, authenticated identity
+resolution, bounded telemetry projection, server-owned queued-job provenance
+merge, and strict provenance parser. The verifier requires the versioned GPT
+client identity proof header and rejects returned credentials or untrusted
+model claims. The normal route and authenticator, PostgreSQL, queue, active
+worker, provider, and Notion integrations remain outside this component E2E
+boundary.
 
 This repository containment is for trusted same-repository PRs and accidental
 effects only. A PR controls its own launcher code, so untrusted or forked code
