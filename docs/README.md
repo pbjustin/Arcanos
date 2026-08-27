@@ -72,6 +72,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | [Async documentation workflow](GPT_ASYNC_DOCUMENTATION_WORKFLOW.md) | Generated | Output target for the CLI documentation generator; verify against API and source. |
 | [GPT fast path](GPT_FAST_PATH.md) | Companion | Inline prompt-generation behavior and fallback. |
 | [GPT Access gateway](gpt-access-gateway.md) | Canonical | Protected control-plane API, dispatch, scopes, and safety. |
+| [GPT client identity registry](GPT_CLIENT_IDENTITY.md) | Canonical | Registered authenticated clients, model-identity assurance, durable queue provenance, telemetry, and future OAuth boundaries. |
 | [Local-agent capability bridge](LOCAL_AGENT_CAPABILITY_BRIDGE.md) | Canonical | Protected TypeScript-to-Python execution protocol, local setup, and preview verification. |
 | [Memory backend](MEMORY_BACKEND_USAGE.md) | Canonical | Persistence semantics and safe usage. |
 | [Predictive self-healing](PREDICTIVE_SELF_HEALING.md) | Companion | Predictive healing configuration and execution. |

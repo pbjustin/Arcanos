@@ -124,15 +124,21 @@ limits, no-store responses, version fencing, mutation-ID idempotency, and
 transactional persistence still apply. The Builder contract marks
 `writeBackstageCanon` consequential, so this design deliberately trusts
 ChatGPT's Allow/Deny banner as the one approval step. The bearer authenticates
-one shared purpose-bound managed principal, not OAuth, a user password, or
-per-user identity. Any credential holder with a known valid job UUID can poll
-that protected Booker result; `jobId` and `universeId` select resources and are
-not authorization. New `1.6.0` jobs keep the stable principal across future
-token rotations. During rollout, the result read also recognizes the legacy
-owner derived from the exact current token. This fallback does not alias the
-old idempotency scope: preserve the original `jobId`, never resubmit legacy work
-as a lookup, and drain both result-retention and idempotency windows before the
-first rotation because no prior Action token is accepted.
+one shared purpose-bound managed principal and resolves the private registered
+client identity `backstage-booker`. The registration has
+`registeredModelProfile: null`, `runtimeModel: null`, and
+`modelIdentityAssurance: unknown`: it identifies the authenticated client, not
+the actual ChatGPT runtime model. It is not OAuth, a user password, or per-user
+identity. Authenticated queued jobs snapshot that bounded registration in the
+existing durable job metadata without changing ownership. Any credential
+holder with a known valid job UUID can poll that protected Booker result;
+`jobId` and `universeId` select resources and are not authorization. New
+`1.6.0` jobs keep the stable principal across future token rotations. During
+rollout, the result read also recognizes the legacy owner derived from the
+exact current token. This fallback does not alias the old idempotency scope:
+preserve the original `jobId`, never resubmit legacy work as a lookup, and
+drain both result-retention and idempotency windows before the first rotation
+because no prior Action token is accepted.
 
 Keep the value distinct from `ARCANOS_GPT_ACCESS_TOKEN` and
 `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`, store it only on the web service and in
@@ -141,7 +147,9 @@ instructions, chat, source, logs, or a worker. Ordinary confirmation challenges
 keep their 2-minute default; changing `CONFIRMATION_CHALLENGE_TTL_MS` is not a
 setup step for this lane. See
 [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for Builder,
-rotation, revocation, rollback, and security-tradeoff guidance.
+rotation, revocation, rollback, and security-tradeoff guidance. See
+[GPT_CLIENT_IDENTITY.md](GPT_CLIENT_IDENTITY.md) for the registered-client,
+runtime-model, durable-provenance, and future OAuth boundaries.
 
 ### Gaming source lifecycle Actions
 
