@@ -43,6 +43,8 @@ export interface NativePrPreviewE2eContract {
       'backstage-notion-partition-failure-telemetry/v1';
     queueWaitPolicyProofVersion:
       'backstage-booker-queue-wait-policy/v1';
+    trinityReasoningPolicyProofVersion:
+      'trinity-reasoning-provider-policy/v1';
     managedAsyncContinuationProofVersion:
       'backstage-booker-managed-async-continuation/v1';
     fixtures: Readonly<{
@@ -65,6 +67,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-partition-failure-telemetry-version';
       queueWaitPolicyVersion:
         'x-arcanos-preview-backstage-queue-wait-policy-version';
+      trinityReasoningPolicyVersion:
+        'x-arcanos-preview-trinity-reasoning-policy-version';
       managedAsyncContinuationVersion:
         'x-arcanos-preview-backstage-managed-async-version';
     }>;

@@ -277,7 +277,17 @@ job completes on read two after one virtual interval, while an always-running
 generic job remains pending after its 500 ms deadline. A successful response
 carries `x-arcanos-preview-backstage-queue-wait-policy-version`; its body is
 unchanged for the trusted base-pinned verifier, and the exact-head verifier
-requires the marker. This is production-shared component evidence and performs
+requires the marker. The same sealed request executes the
+semantic-digest-pinned Trinity reasoning provider policy used by the outbound
+structured-reasoning stage. It proves exact and dated GPT-5 maps `none` to
+`minimal`, GPT-5.1 and GPT-5.6 Terra retain `none`, non-`none` effort passes
+through, and strict configured output caps default or clamp to 16–8,000. A
+successful response carries
+`x-arcanos-preview-trinity-reasoning-policy-version`; the PR-head verifier
+reports `trinityReasoningPolicyVerified: true` while the response body remains
+compatible with the trusted verifier. This is credential-free production-core
+component evidence, not a live OpenAI call or proof of provider acceptance,
+model availability, or runtime model identity. The route-budget portion performs
 no wall-clock queue wait, repository read, database access, queue integration,
 or worker execution. The HRC case executes the pure
 cache orchestration seam
