@@ -13,7 +13,10 @@ import {
   isBackstageNotionEnrichmentAuthorized,
   optionalBackstageNotionEnrichmentAuth,
 } from '@services/backstageNotionEnrichmentAuthorization.js';
-import { isBackstageBookerAccessAuthenticated } from '@services/backstageBookerAccessAuth.js';
+import {
+  getAuthenticatedGptClientIdentity,
+  isBackstageBookerAccessAuthenticated,
+} from '@services/backstageBookerAccessAuth.js';
 import { resolveBackstageNotionAuthorityRoot } from '@services/backstageNotionAuthority.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
@@ -155,6 +158,7 @@ import {
   normalizeExplicitIdempotencyKey,
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
+import { buildGptClientJobProvenance } from '@shared/gpt/gptClientRegistry.js';
 import {
   resolveGptJobLifecycleStatus,
   summarizeGptJobTimings
@@ -3273,7 +3277,7 @@ router.post(
             let createResult;
             try {
               const plannedJobBase = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
-              plannedJob = priorityQueueActive
+              const priorityAwarePlannedJob = priorityQueueActive
                 ? {
                     ...plannedJobBase,
                     status: priorityDirectSlot ? 'running' : plannedJobBase.status,
@@ -3301,6 +3305,20 @@ router.post(
                     }
                   }
                 : plannedJobBase;
+              const authenticatedClientIdentity = protectedBackstageJobExecution
+                ? getAuthenticatedGptClientIdentity(req)
+                : null;
+              plannedJob = authenticatedClientIdentity
+                ? {
+                    ...priorityAwarePlannedJob,
+                    autonomyState: {
+                      ...(priorityAwarePlannedJob.autonomyState ?? {}),
+                      gptClientProvenance: buildGptClientJobProvenance(
+                        authenticatedClientIdentity
+                      ),
+                    },
+                  }
+                : priorityAwarePlannedJob;
               createResult = await findOrCreateGptJob({
                 workerId: process.env.WORKER_ID || 'api',
                 input: queuedGptJobInput,

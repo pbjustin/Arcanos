@@ -1,6 +1,8 @@
 import {
+  buildGptClientJobProvenance,
   createGptClientRegistry,
   gptClientRegistry,
+  resolveGptClientJobProvenance,
   type GptClientRegistrationDefinition,
 } from '../src/shared/gpt/gptClientRegistry.js';
 
@@ -120,6 +122,58 @@ describe('server-owned GPT client registry', () => {
     expect(Object.isFrozen(identity)).toBe(true);
   });
 
+  it('builds and strictly parses versioned managed-key job provenance', () => {
+    const identity = gptClientRegistry.resolveAuthenticatedClient({
+      clientId: 'backstage-booker',
+      authentication: { authenticationType: 'managed-api-key' },
+    });
+    expect(identity).not.toBeNull();
+
+    const provenance = buildGptClientJobProvenance(identity!);
+    expect(provenance).toEqual({
+      version: 1,
+      source: 'gpt-client-registry',
+      clientId: 'backstage-booker',
+      gptId: 'backstage-booker',
+      authenticationType: 'managed-api-key',
+      registeredModelProfile: null,
+      runtimeModel: null,
+      modelIdentityAssurance: 'unknown',
+    });
+    expect(Object.isFrozen(provenance)).toBe(true);
+    expect(resolveGptClientJobProvenance({
+      planner: { reasons: [] },
+      gptClientProvenance: provenance,
+    })).toEqual({ state: 'valid', provenance });
+    expect(resolveGptClientJobProvenance({
+      planner: { reasons: [] },
+    })).toEqual({ state: 'absent', provenance: null });
+  });
+
+  it.each([
+    ['caller runtime model', { runtimeModel: 'pro' }],
+    ['caller attestation', { modelIdentityAssurance: 'openai-attested' }],
+    ['unknown version', { version: 2 }],
+    ['unknown authentication', { authenticationType: 'bearer' }],
+    ['unexpected field', { callerReportedModelProfile: 'thinking' }],
+  ])('rejects malformed durable provenance with %s', (_caseName, override) => {
+    const candidate = {
+      version: 1,
+      source: 'gpt-client-registry',
+      clientId: 'backstage-booker',
+      gptId: 'backstage-booker',
+      authenticationType: 'managed-api-key',
+      registeredModelProfile: null,
+      runtimeModel: null,
+      modelIdentityAssurance: 'unknown',
+      ...override,
+    };
+
+    expect(resolveGptClientJobProvenance({
+      gptClientProvenance: candidate,
+    })).toEqual({ state: 'invalid', provenance: null });
+  });
+
   it('keeps future OAuth evidence distinct from managed API-key authentication', () => {
     const oauthRegistry = createGptClientRegistry([{
       clientId: 'oauth-client',
@@ -189,5 +243,28 @@ describe('server-owned GPT client registry', () => {
       },
     });
     expect(Object.isFrozen(identity?.authenticatedUser.scopes)).toBe(true);
+
+    const provenance = buildGptClientJobProvenance(identity!);
+    expect(provenance).toMatchObject({
+      authenticationType: 'oauth',
+      runtimeModel: null,
+      modelIdentityAssurance: 'unknown',
+      authenticatedUser: {
+        subject: 'user-1',
+        oauthClientId: 'trusted-action-client',
+        scopes: ['bookings:read', 'bookings:write'],
+      },
+    });
+    expect(resolveGptClientJobProvenance({
+      gptClientProvenance: provenance,
+    })).toEqual({ state: 'valid', provenance });
+
+    const confusedManagedProvenance = {
+      ...provenance,
+      authenticationType: 'managed-api-key',
+    };
+    expect(resolveGptClientJobProvenance({
+      gptClientProvenance: confusedManagedProvenance,
+    })).toEqual({ state: 'invalid', provenance: null });
   });
 });

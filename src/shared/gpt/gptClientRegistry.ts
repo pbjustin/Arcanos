@@ -114,6 +114,42 @@ export interface GptClientIdentityTelemetry {
     | 'unknown';
 }
 
+interface GptClientJobProvenanceBase {
+  readonly version: 1;
+  readonly source: 'gpt-client-registry';
+  readonly clientId: string;
+  readonly gptId: string;
+  readonly registeredModelProfile: GptRegisteredModelProfile | null;
+  readonly runtimeModel: null;
+  readonly modelIdentityAssurance:
+    | 'credential-bound-profile'
+    | 'unknown';
+}
+
+export type GptClientJobProvenance =
+  | (GptClientJobProvenanceBase & {
+      readonly authenticationType: 'managed-api-key';
+      readonly authenticatedUser?: never;
+    })
+  | (GptClientJobProvenanceBase & {
+      readonly authenticationType: 'oauth';
+      readonly authenticatedUser: GptClientOAuthUserIdentity;
+    });
+
+export type GptClientJobProvenanceResolution =
+  | {
+      readonly state: 'absent';
+      readonly provenance: null;
+    }
+  | {
+      readonly state: 'valid';
+      readonly provenance: GptClientJobProvenance;
+    }
+  | {
+      readonly state: 'invalid';
+      readonly provenance: null;
+    };
+
 export interface GptClientRegistry {
   resolveRegisteredClient(clientId: string): RegisteredGptClient | null;
   resolveAuthenticatedClient(input: {
@@ -255,6 +291,19 @@ function projectIdentityFields(registration: RegisteredGptClient) {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(
+  input: Record<string, unknown>,
+  expectedKeys: readonly string[]
+): boolean {
+  const actualKeys = Object.keys(input);
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every(key => expectedKeys.includes(key));
+}
+
 /** Build a closed, server-owned registry. Registration definitions never come from a request. */
 export function createGptClientRegistry(
   definitions: readonly GptClientRegistrationDefinition[]
@@ -342,4 +391,131 @@ export function buildGptClientIdentityTelemetry(
     registeredModelProfile: identity.registeredModelProfile,
     modelIdentityAssurance: identity.modelIdentityAssurance,
   });
+}
+
+/** Snapshot authenticated client provenance outside encrypted creative input. */
+export function buildGptClientJobProvenance(
+  identity: AuthenticatedGptClientIdentity
+): GptClientJobProvenance {
+  const base = {
+    version: 1 as const,
+    source: 'gpt-client-registry' as const,
+    clientId: identity.clientId,
+    gptId: identity.gptId,
+    registeredModelProfile: identity.registeredModelProfile,
+    runtimeModel: null,
+    modelIdentityAssurance: identity.modelIdentityAssurance,
+  };
+
+  if (identity.authenticationType === 'managed-api-key') {
+    return Object.freeze({
+      ...base,
+      authenticationType: identity.authenticationType,
+    });
+  }
+
+  return Object.freeze({
+    ...base,
+    authenticationType: identity.authenticationType,
+    authenticatedUser: Object.freeze({
+      subject: identity.authenticatedUser.subject,
+      oauthClientId: identity.authenticatedUser.oauthClientId,
+      scopes: Object.freeze([...identity.authenticatedUser.scopes]),
+    }),
+  });
+}
+
+const GPT_CLIENT_JOB_PROVENANCE_BASE_KEYS = [
+  'version',
+  'source',
+  'clientId',
+  'gptId',
+  'authenticationType',
+  'registeredModelProfile',
+  'runtimeModel',
+  'modelIdentityAssurance',
+] as const;
+
+/** Parse durable provenance while distinguishing legacy absence from tampering. */
+export function resolveGptClientJobProvenance(
+  autonomyState: unknown
+): GptClientJobProvenanceResolution {
+  if (
+    !isRecord(autonomyState)
+    || !Object.prototype.hasOwnProperty.call(
+      autonomyState,
+      'gptClientProvenance'
+    )
+  ) {
+    return Object.freeze({ state: 'absent', provenance: null });
+  }
+
+  const candidate = autonomyState.gptClientProvenance;
+  if (!isRecord(candidate)) {
+    return Object.freeze({ state: 'invalid', provenance: null });
+  }
+
+  const authenticationType = candidate.authenticationType;
+  const expectedKeys = authenticationType === 'oauth'
+    ? [...GPT_CLIENT_JOB_PROVENANCE_BASE_KEYS, 'authenticatedUser']
+    : GPT_CLIENT_JOB_PROVENANCE_BASE_KEYS;
+  if (
+    !hasOnlyKeys(candidate, expectedKeys)
+    || candidate.version !== 1
+    || candidate.source !== 'gpt-client-registry'
+    || !isGptClientIdentifier(candidate.clientId)
+    || !isGptClientIdentifier(candidate.gptId)
+    || !isRegisteredModelProfile(candidate.registeredModelProfile)
+    || candidate.runtimeModel !== null
+  ) {
+    return Object.freeze({ state: 'invalid', provenance: null });
+  }
+
+  const expectedAssurance: GptClientJobProvenanceBase[
+    'modelIdentityAssurance'
+  ] = candidate.registeredModelProfile === null
+    ? 'unknown'
+    : 'credential-bound-profile';
+  if (candidate.modelIdentityAssurance !== expectedAssurance) {
+    return Object.freeze({ state: 'invalid', provenance: null });
+  }
+
+  const base = {
+    version: 1 as const,
+    source: 'gpt-client-registry' as const,
+    clientId: candidate.clientId,
+    gptId: candidate.gptId,
+    registeredModelProfile: candidate.registeredModelProfile,
+    runtimeModel: null,
+    modelIdentityAssurance: expectedAssurance,
+  };
+
+  if (authenticationType === 'managed-api-key') {
+    return Object.freeze({
+      state: 'valid',
+      provenance: Object.freeze({
+        ...base,
+        authenticationType,
+      }),
+    });
+  }
+
+  if (authenticationType === 'oauth') {
+    const authenticatedUser = normalizeOAuthUserIdentity(
+      candidate.authenticatedUser
+    );
+    if (!authenticatedUser) {
+      return Object.freeze({ state: 'invalid', provenance: null });
+    }
+    return Object.freeze({
+      state: 'valid',
+      provenance: Object.freeze({
+        ...base,
+        authenticationType,
+        authenticatedUser,
+      }),
+    });
+  }
+
+  return Object.freeze({ state: 'invalid', provenance: null });
 }
