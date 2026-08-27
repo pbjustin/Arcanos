@@ -7,11 +7,11 @@ export function logArcanosRouting(stage: string, model: string, details?: string
 }
 
 /**
- * Log when ARCANOS routes to GPT-5.1
+ * Log when ARCANOS routes to the configured GPT-5 reasoning model.
  */
 export function logGPT5Invocation(reason: string, input: string) {
   const timestamp = new Date().toISOString();
-  console.log(`🚀 [GPT-5.1 INVOCATION] ${timestamp} - Reason: ${reason} | Input: ${input.substring(0, 100)}${input.length > 100 ? '...' : ''}`);
+  console.log(`🚀 [GPT-5 INVOCATION] ${timestamp} - Reason: ${reason} | Input: ${input.substring(0, 100)}${input.length > 100 ? '...' : ''}`);
 }
 
 /**
@@ -19,5 +19,5 @@ export function logGPT5Invocation(reason: string, input: string) {
  */
 export function logRoutingSummary(arcanosModel: string, gpt5Used: boolean, finalStage: string) {
   const timestamp = new Date().toISOString();
-  console.log(`📊 [ROUTING SUMMARY] ${timestamp} - ARCANOS: ${arcanosModel} | GPT-5.1 Used: ${gpt5Used} | Final Stage: ${finalStage}`);
+  console.log(`📊 [ROUTING SUMMARY] ${timestamp} - ARCANOS: ${arcanosModel} | GPT-5 Used: ${gpt5Used} | Final Stage: ${finalStage}`);
 }

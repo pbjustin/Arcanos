@@ -8,7 +8,8 @@ import {
   getDefaultModel,
   getFallbackModel,
   getComplexModel,
-  getGPT5Model
+  getGPT5Model,
+  getTrinityReasoningModel
 } from './openai/credentialProvider.js';
 import { generateMockResponse } from './openai/mock.js';
 import { getCircuitBreakerSnapshot } from './openai/resilience.js';
@@ -46,6 +47,7 @@ export {
   getFallbackModel,
   getComplexModel,
   getGPT5Model,
+  getTrinityReasoningModel,
   generateMockResponse,
   getCircuitBreakerSnapshot,
   validateClientHealth,
@@ -57,6 +59,7 @@ export default {
   getOpenAIClient: getOrCreateClient,
   getDefaultModel,
   getGPT5Model,
+  getTrinityReasoningModel,
   createGPT5Reasoning,
   createGPT5ReasoningLayer,
   runStructuredReasoning,

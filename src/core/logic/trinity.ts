@@ -4,7 +4,7 @@
  * Implements the ARCANOS Trinity architecture, a three-stage AI processing workflow:
  *
  * 1. **ARCANOS Intake**: Prepares and frames user requests with memory context
- * 2. **GPT-5.1 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
+ * 2. **GPT-5 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
  * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
  *
  * This file contains the low-level Trinity engine. Production callers should enter through
@@ -28,7 +28,7 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
-import { getGPT5Model } from "@services/openai/credentialProvider.js";
+import { getGPT5Model, getTrinityReasoningModel } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {
@@ -40,6 +40,8 @@ import type {
   TrinityReasoningHonesty,
   TrinityIntegrityRecoveryMeta,
   TrinityMetaTokens,
+  TrinityReasoningConfig,
+  TrinityReasoningUsage
 } from './trinityTypes.js';
 import {
   TRINITY_PREVIEW_SNIPPET_LENGTH,
@@ -223,8 +225,8 @@ function buildDryRunTrinityResult(
   gpt5Used: boolean,
   capabilityFlags: TrinityCapabilityFlags,
   outputControls: TrinityOutputControls,
-  tier?: Tier,
-  reasoningConfig?: { effort: 'high' },
+  tier: Tier,
+  reasoningConfig: TrinityReasoningConfig,
   budgetUsed?: number,
   budgetLimit?: number,
   internalMode?: boolean,
@@ -274,7 +276,7 @@ function buildDryRunTrinityResult(
     outputControls,
     tierInfo: tier ? {
       tier,
-      reasoningEffort: reasoningConfig?.effort,
+      reasoningEffort: reasoningConfig.effort,
       reflectionApplied: false,
       invocationsUsed: budgetUsed ?? 0,
       invocationBudget: budgetLimit ?? 0,
@@ -661,7 +663,7 @@ function buildExactLiteralTrinityResult(params: {
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
   tier: Tier;
-  reasoningConfig?: { effort: 'high' };
+  reasoningConfig: TrinityReasoningConfig;
   budgetLimit: number;
   internalMode: boolean;
   clarificationAllowed: boolean;
@@ -707,7 +709,7 @@ function buildExactLiteralTrinityResult(params: {
     outputControls: params.outputControls,
     tierInfo: {
       tier: params.tier,
-      reasoningEffort: params.reasoningConfig?.effort,
+      reasoningEffort: params.reasoningConfig.effort,
       reflectionApplied: false,
       invocationsUsed: 0,
       invocationBudget: params.budgetLimit,
@@ -915,6 +917,8 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   let releaseTierSlot: (() => void) | undefined;
+  let observedReasoningUsage: TrinityReasoningUsage | undefined;
+  let reasoningUsageRecorded = false;
   try {
     const activeAbortContext = getRequestAbortContext();
     const runtimeDeadlineAt = BUDGET_DISABLED
@@ -933,7 +937,7 @@ export async function runThroughBrain(
     const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
       tier,
       runtimeBudget,
-      getGPT5Model(),
+      getTrinityReasoningModel(),
       options.watchdogModelTimeoutMs,
       Math.min(
         options.directAnswerIntegrityRepair?.timeoutMs ?? 0,
@@ -1699,9 +1703,13 @@ export async function runThroughBrain(
             capabilityFlags,
             outputControls,
             tier,
+            reasoningConfig,
             runtimeBudget,
             stageTimeoutOverrideMs,
-            options.reasoningStagePreviewChaosHook
+            options.reasoningStagePreviewChaosHook,
+            usage => {
+              observedReasoningUsage = usage;
+            }
           )
       });
     } catch (error) {
@@ -1811,7 +1819,7 @@ export async function runThroughBrain(
           clearImprovement: (escalatedResult.clearAudit?.overall ?? 0) - clearAudit.overall,
           latencyInitial: watchdog.elapsed(),
           latencyFinal: escalatedResult.guardInfo?.latencyMs ?? 0,
-          tokenUsageInitial: (intakeOutput.usage?.total_tokens ?? 0) + (reasoningOutput.fallbackUsed ? 0 : 0), // Partial usage
+          tokenUsageInitial: (intakeOutput.usage?.total_tokens ?? 0) + (reasoningOutput.usage?.total_tokens ?? 0), // Partial usage
           tokenUsageFinal: escalatedResult.meta.tokens?.total_tokens ?? 0
         });
 
@@ -1849,7 +1857,7 @@ export async function runThroughBrain(
     // --- Stage 3: Final ---
     checkWatchdog();
 
-    logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
+    logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 reasoning output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
     let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
       ? selfHealingMitigation.activeAction
@@ -1981,7 +1989,7 @@ export async function runThroughBrain(
     ) {
       storePattern(getTrinityMessages().pattern_storage_label, [
         `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
-        `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `GPT-5 reasoning output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
       ], effectiveMemorySessionId);
     }
@@ -2009,18 +2017,23 @@ export async function runThroughBrain(
     logAITaskLineage(auditLogEntry);
 
     // --- Post-execution guards ---
-    const totalTokens = (finalOutput.usage?.total_tokens ?? 0) + (intakeOutput.usage?.total_tokens ?? 0);
+    const totalTokens = (finalOutput.usage?.total_tokens ?? 0)
+      + (intakeOutput.usage?.total_tokens ?? 0)
+      + (reasoningOutput.usage?.total_tokens ?? 0);
     //audit Assumption: DAG and worker flows may need a shared memory session but isolated token-audit buckets; failure risk: large multi-node runs exhaust one conversational token ceiling despite independent node work; expected invariant: memory continuity and token auditing can use different session identifiers when explicitly provided; handling strategy: audit against the optional token session id while preserving the original memory session for context lookup and storage.
     if (effectiveTokenAuditSessionId) {
+      // recordSessionTokens mutates before enforcing the ceiling, so mark the reasoning
+      // component accounted before the call to prevent failed-limit cleanup from adding it twice.
+      reasoningUsageRecorded = true;
       recordSessionTokens(effectiveTokenAuditSessionId, totalTokens);
     }
 
-    const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
+    const downgradeDetected = detectDowngrade(getTrinityReasoningModel(), gpt5ModelUsed);
     if (internalMode && downgradeDetected) {
       logger.warn('Model downgrade detected in Internal Architectural Mode - proceeding with degraded model', {
         module: 'trinity',
         operation: 'downgrade-guard',
-        requested: getGPT5Model(),
+        requested: getTrinityReasoningModel(),
         actual: gpt5ModelUsed
       });
     }
@@ -2040,7 +2053,7 @@ export async function runThroughBrain(
       finalFallbackUsed: finalOutput.fallbackUsed,
       fallbackReasons: [
         ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
-        ...(reasoningOutput.fallbackUsed ? ['GPT-5.1 fallback used'] : []),
+        ...(reasoningOutput.fallbackUsed ? ['GPT-5 reasoning fallback used'] : []),
         ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
       ]
     };
@@ -2175,6 +2188,20 @@ export async function runThroughBrain(
     return result;
 
   } finally {
+    if (effectiveTokenAuditSessionId && observedReasoningUsage && !reasoningUsageRecorded) {
+      // Account for billed structured reasoning even when parsing or a later stage fails.
+      // Preserve the original pipeline outcome if the session limit logger itself throws.
+      try {
+        recordSessionTokens(effectiveTokenAuditSessionId, observedReasoningUsage.total_tokens);
+      } catch (error) {
+        logger.warn('Unable to complete failed-stage reasoning token audit', {
+          module: 'trinity',
+          operation: 'reasoning-usage-audit',
+          requestId,
+          error: resolveErrorMessage(error)
+        });
+      }
+    }
     releaseTierSlot?.();
   }
 }

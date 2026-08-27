@@ -1,4 +1,4 @@
-import { detectTier } from "../src/core/logic/trinityTier.js";
+import { buildReasoningConfig, detectTier } from "../src/core/logic/trinityTier.js";
 
 describe("Unified Tier Authority (UTAL) - via TrinityTier", () => {
   it("should classify simple prompts as simple", () => {
@@ -28,5 +28,13 @@ describe("Unified Tier Authority (UTAL) - via TrinityTier", () => {
     
     const tier2 = detectTier("Explain concurrency.");
     expect(tier2).toBe("complex");
+  });
+
+  it.each([
+    ['simple', 'none'],
+    ['complex', 'low'],
+    ['critical', 'medium']
+  ] as const)('maps %s tier to %s reasoning effort', (tier, effort) => {
+    expect(buildReasoningConfig(tier)).toEqual({ effort });
   });
 });

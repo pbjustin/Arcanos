@@ -189,6 +189,10 @@ function responseHeadersForCase(
                   .proofHeaders.queueWaitPolicyVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .queueWaitPolicyProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.trinityReasoningPolicyVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .trinityReasoningPolicyProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'notionAuthorityRag'
@@ -1558,6 +1562,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       minimumResponseMsVerified: true,
       pathTemplate: '/backstage/generation-contract',
       queueWaitPolicyVerified: true,
+      trinityReasoningPolicyVerified: true,
       responseBytes: Buffer.byteLength(JSON.stringify(
         expectedNativePrPreviewResponseBody(routeBudgetCase, {
           commitSha: COMMIT_SHA,
@@ -2080,6 +2085,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .queueWaitPolicyVersion
         ] = 'backstage-booker-queue-wait-policy/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_TRINITY_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .trinityReasoningPolicyVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_TRINITY_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .trinityReasoningPolicyVersion
+        ] = 'trinity-reasoning-provider-policy/drifted';
       },
     },
     {

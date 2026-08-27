@@ -27,7 +27,8 @@ jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getDefaultModel: () => 'arcanos-intake-model',
   getComplexModel: () => 'arcanos-final-model',
   getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5-reasoning-model'
+  getGPT5Model: () => 'gpt-5.1',
+  getTrinityReasoningModel: () => 'gpt-5-reasoning-model'
 }));
 
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
@@ -74,7 +75,12 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 }));
 
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
-const { acquireTierSlot } = await import('../src/core/logic/trinityGuards.js');
+const {
+  acquireTierSlot,
+  getConfiguredTrinitySessionTokenLimit,
+  getSessionTokenUsage,
+  recordSessionTokens
+} = await import('../src/core/logic/trinityGuards.js');
 const { detectTier } = await import('../src/core/logic/trinityTier.js');
 const { createRuntimeBudget, createRuntimeBudgetWithLimit } = await import('@platform/resilience/runtimeBudget.js');
 const { getRequestAbortSignal, runWithRequestAbortContext } = await import('@arcanos/runtime');
@@ -105,19 +111,29 @@ function primeSuccessfulPipeline(): void {
   mockCreateSingleChatCompletion
     .mockResolvedValueOnce(completion('Framed request.', 'arcanos-intake-model'))
     .mockResolvedValueOnce(completion('Release summary.', 'arcanos-final-model'));
-  mockRunStructuredReasoning.mockResolvedValue({
-    reasoning_steps: ['Summarize the supplied material.'],
-    assumptions: [],
-    constraints: [],
-    tradeoffs: [],
-    alternatives_considered: [],
-    chosen_path_justification: 'A concise summary directly answers the request.',
-    response_mode: 'answer',
-    achievable_subtasks: ['summarize'],
-    blocked_subtasks: [],
-    user_visible_caveats: [],
-    claim_tags: [],
-    final_answer: 'Reasoned release summary.'
+  mockRunStructuredReasoning.mockImplementation(async (...args: unknown[]) => {
+    const options = args[5] as { onUsage?: (usage: unknown) => void } | undefined;
+    options?.onUsage?.({
+      input_tokens: 12,
+      input_tokens_details: { cached_tokens: 2 },
+      output_tokens: 18,
+      output_tokens_details: { reasoning_tokens: 10 },
+      total_tokens: 30
+    });
+    return {
+      reasoning_steps: ['Summarize the supplied material.'],
+      assumptions: [],
+      constraints: [],
+      tradeoffs: [],
+      alternatives_considered: [],
+      chosen_path_justification: 'A concise summary directly answers the request.',
+      response_mode: 'answer',
+      achievable_subtasks: ['summarize'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'Reasoned release summary.'
+    };
   });
   mockRunClearAudit.mockResolvedValue({
     clarity: 5,
@@ -213,6 +229,67 @@ describe('Trinity cancellation and optional side effects', () => {
       source: 'clear_audit',
       reason: 'disabled_by_caller'
     });
+  });
+
+  it('includes structured reasoning usage in the session token audit total', async () => {
+    primeSuccessfulPipeline();
+
+    const result = await runThroughBrain(
+      client,
+      'Assess this launch plan and note any limitation around competitor moves.',
+      'trinity-structured-usage-test',
+      undefined,
+      { disableOptionalSideEffects: true },
+      createRuntimeBudget()
+    );
+
+    expect(result.guardInfo?.sessionTokensUsed).toBe(50);
+  });
+
+  it('records structured reasoning usage when response parsing fails', async () => {
+    mockCreateSingleChatCompletion.mockResolvedValueOnce(
+      completion('Framed request.', 'arcanos-intake-model')
+    );
+    mockRunStructuredReasoning.mockImplementation(async (...args: unknown[]) => {
+      const options = args[5] as { onUsage?: (usage: unknown) => void } | undefined;
+      options?.onUsage?.({
+        input_tokens: 40,
+        output_tokens: 20,
+        output_tokens_details: { reasoning_tokens: 11 },
+        total_tokens: 60
+      });
+      throw new Error('structured reasoning returned incomplete structured output.');
+    });
+    const sessionId = 'trinity-structured-failure-usage-test';
+
+    await expect(runThroughBrain(
+      client,
+      'Assess this launch plan and note any limitation around competitor moves.',
+      sessionId,
+      undefined,
+      { disableOptionalSideEffects: true },
+      createRuntimeBudget()
+    )).rejects.toThrow('structured reasoning returned incomplete structured output.');
+
+    expect(getSessionTokenUsage(sessionId)).toBe(60);
+  });
+
+  it('does not double-count reasoning when aggregate session accounting exceeds its ceiling', async () => {
+    primeSuccessfulPipeline();
+    const sessionId = 'trinity-structured-ceiling-usage-test';
+    const sessionLimit = getConfiguredTrinitySessionTokenLimit();
+    recordSessionTokens(sessionId, sessionLimit);
+
+    await expect(runThroughBrain(
+      client,
+      'Assess this launch plan and note any limitation around competitor moves.',
+      sessionId,
+      undefined,
+      { disableOptionalSideEffects: true },
+      createRuntimeBudget()
+    )).rejects.toThrow('Session token limit exceeded');
+
+    expect(getSessionTokenUsage(sessionId)).toBe(sessionLimit + 50);
   });
 
   it('skips feedback persistence for exact-literal and direct-answer results when disabled', async () => {
