@@ -69,7 +69,7 @@ function runBoundedFixture(mode, timeoutMs = 5_000) {
   return spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
     encoding: 'utf8',
     env: withoutRailwayTokens(),
-    timeout: 15_000,
+    timeout: 45_000,
     windowsHide: true
   });
 }

@@ -82,6 +82,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
+  'src/shared/gpt/trinityReasoningPolicy.ts',
   'src/shared/http/clientJsonPayload.ts',
   'src/shared/http/clientResponseCommon.ts',
   'src/shared/http/errors.ts',
@@ -786,6 +787,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/gpt/gptIdentifier.ts',
     'fb0047bf8bc554e33c217bf47fae59ced14507ce0facf9039acee55b4ed6d3bb',
+  ],
+  [
+    'src/shared/gpt/trinityReasoningPolicy.ts',
+    'd0bae4a2763b145f3eae9aa5b62525f3106791ef00f8ebfbccf6132187b2ede1',
   ],
   [
     'src/services/queuedJobCompletionPolling.ts',

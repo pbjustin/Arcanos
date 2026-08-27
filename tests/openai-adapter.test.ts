@@ -9,6 +9,7 @@ const transcriptionsCreateMock = jest.fn();
 const openAIConstructorMock = jest.fn();
 
 let createOpenAIAdapter: typeof import('../src/core/adapters/openai.adapter.js').createOpenAIAdapter;
+let normalizeResponsesCreateParams: typeof import('../src/core/adapters/openai.adapter.js').normalizeResponsesCreateParams;
 let createEmbeddings: typeof import('../src/services/openai/embeddings.js').createEmbeddings;
 let defaultEmbeddingDimension: number;
 
@@ -49,7 +50,7 @@ beforeEach(async () => {
     default: openAIConstructorMock
   }));
 
-  ({ createOpenAIAdapter } = await import('../src/core/adapters/openai.adapter.js'));
+  ({ createOpenAIAdapter, normalizeResponsesCreateParams } = await import('../src/core/adapters/openai.adapter.js'));
   ({
     createEmbeddings,
     DEFAULT_OPENAI_EMBEDDING_DIMENSION: defaultEmbeddingDimension,
@@ -57,6 +58,21 @@ beforeEach(async () => {
 });
 
 describe('openai adapter', () => {
+  it.each([
+    [1, 16],
+    [15.9, 16],
+    [16, 16],
+    [4000, 4000]
+  ])('normalizes Responses max_output_tokens=%s to %s', (configuredValue, expectedValue) => {
+    const normalized = normalizeResponsesCreateParams({
+      model: 'gpt-5.6-terra',
+      input: 'test prompt',
+      max_output_tokens: configuredValue
+    } as never);
+
+    expect(normalized.max_output_tokens).toBe(expectedValue);
+  });
+
   it('forwards chat request options and enforces non-stream payloads', async () => {
     responsesCreateMock.mockResolvedValue({
       id: 'resp_1',

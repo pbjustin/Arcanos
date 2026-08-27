@@ -7,7 +7,7 @@ import type OpenAI from 'openai';
 import { logGPT5Invocation } from "@platform/logging/aiLogger.js";
 import {
   getDefaultModel,
-  getGPT5Model,
+  getTrinityReasoningModel,
   getComplexModel,
   getFallbackModel
 } from "@services/openai/credentialProvider.js";
@@ -35,6 +35,8 @@ import type {
   TrinityDryRunPreview,
   TrinityOutputControls,
   TrinityProviderCompletionMetadata,
+  TrinityReasoningConfig,
+  TrinityReasoningUsage,
   ReasoningLedger
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
@@ -71,6 +73,10 @@ import {
   resolveTrinityDirectAnswerTokenLimit
 } from './trinityDirectAnswerMode.js';
 import { runWithCooperativeAbortDrain } from '@shared/async/cooperativeAbortDrain.js';
+import {
+  resolveTrinityReasoningProviderPolicy,
+  supportsDisabledReasoningEffort,
+} from '@shared/gpt/trinityReasoningPolicy.js';
 
 export { buildTrinityDirectAnswerMessages } from './trinityDirectAnswerMode.js';
 
@@ -101,12 +107,6 @@ const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
 const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
 const validatedModelCache = new Map<string, number>();
-
-function supportsDisabledReasoningEffort(model: string): boolean {
-  const normalizedModel = model.trim().toLowerCase();
-  return /^gpt-5\.1(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
-    || /^gpt-5\.6(?:$|-\d{4}-\d{2}-\d{2}$|-(?:sol|terra|luna)(?:-\d{4}-\d{2}-\d{2})?$)/.test(normalizedModel);
-}
 
 function normalizeCompletionProviderMetadata(
   response: unknown,
@@ -452,10 +452,12 @@ export async function runReasoningStage(
   framedRequest: string,
   capabilityFlags: TrinityCapabilityFlags,
   outputControls: TrinityOutputControls,
-  tier?: Tier,
+  tier: Tier,
+  reasoningConfig: TrinityReasoningConfig,
   runtimeBudget?: RuntimeBudget,
   explicitTimeoutMs?: number,
-  previewChaosHook?: PreviewAskChaosHook
+  previewChaosHook?: PreviewAskChaosHook,
+  onUsage?: (usage: TrinityReasoningUsage) => void
 ): Promise<TrinityReasoningOutput> {
   //audit Assumption: reasoning stage requires a shared runtime budget; risk: unbounded model call if missing; invariant: one RuntimeBudget governs each job; handling: fail-fast.
   if (!runtimeBudget) {
@@ -474,8 +476,14 @@ export async function runReasoningStage(
   ].join('\n');
 
   logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
-  const gpt5ModelUsed = getGPT5Model();
+  const gpt5ModelUsed = getTrinityReasoningModel();
+  const reasoningPolicy = resolveTrinityReasoningProviderPolicy({
+    model: gpt5ModelUsed,
+    requestedEffort: reasoningConfig.effort,
+    configuredMaxOutputTokens: process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS,
+  });
   const schemaVariant = tier === 'simple' ? 'compact' : 'full';
+  let reasoningUsage: TrinityReasoningOutput['usage'];
   const structuredReasoning = await runStructuredReasoning(
     client,
     gpt5ModelUsed,
@@ -484,7 +492,29 @@ export async function runReasoningStage(
     resolveReasoningStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     {
       schemaVariant,
-      previewChaosHook
+      previewChaosHook,
+      reasoningEffort: reasoningPolicy.reasoningEffort,
+      maxOutputTokens: reasoningPolicy.maxOutputTokens,
+      onUsage: usage => {
+        const normalizedUsage: TrinityReasoningUsage = {
+          prompt_tokens: usage.input_tokens,
+          completion_tokens: usage.output_tokens,
+          total_tokens: usage.total_tokens,
+          reasoning_tokens: usage.output_tokens_details?.reasoning_tokens ?? 0
+        };
+        reasoningUsage = normalizedUsage;
+        logger.info('trinity.reasoning.usage', {
+          module: 'trinity',
+          operation: 'reasoning-usage',
+          model: gpt5ModelUsed,
+          tier,
+          usagePrompt: normalizedUsage.prompt_tokens,
+          usageCompletion: normalizedUsage.completion_tokens,
+          usageReasoning: normalizedUsage.reasoning_tokens ?? 0,
+          usageTotal: normalizedUsage.total_tokens
+        });
+        onUsage?.(normalizedUsage);
+      }
     }
   );
   if (!structuredReasoning) {
@@ -521,8 +551,14 @@ export async function runReasoningStage(
     module: 'trinity',
     operation: 'gpt5-reasoning',
     model: gpt5ModelUsed,
-    tier: tier ?? 'simple',
+    tier,
     schemaVariant,
+    reasoningEffort: reasoningPolicy.reasoningEffort,
+    maxOutputTokens: reasoningPolicy.maxOutputTokens,
+    usagePrompt: reasoningUsage?.prompt_tokens ?? 0,
+    usageCompletion: reasoningUsage?.completion_tokens ?? 0,
+    usageReasoning: reasoningUsage?.reasoning_tokens ?? 0,
+    usageTotal: reasoningUsage?.total_tokens ?? 0,
     structured: true
   });
 
@@ -530,6 +566,7 @@ export async function runReasoningStage(
     output: structuredReasoning.final_answer,
     model: gpt5ModelUsed,
     fallbackUsed: false,
+    usage: reasoningUsage,
     reasoningLedger,
     reasoningHonesty
   };
@@ -788,7 +825,7 @@ export function buildDryRunPreview(
 ): TrinityDryRunPreview {
   const intakeModelCandidate = getDefaultModel();
   const finalModelCandidate = getComplexModel();
-  const gpt5ModelCandidate = getGPT5Model();
+  const gpt5ModelCandidate = getTrinityReasoningModel();
   const routingPlan = [
     `ARCANOS-INTAKE:${intakeModelCandidate}`,
     `GPT5-REASONING:${gpt5ModelCandidate}`,

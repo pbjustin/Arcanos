@@ -3623,6 +3623,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'routeBudget'
+      && response.headers.get(
+        contract.proofHeaders.trinityReasoningPolicyVersion
+      ) !== contract.trinityReasoningPolicyProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_TRINITY_REASONING_POLICY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'notionAuthorityRag'
       && response.headers.get(
         contract.proofHeaders.partitionedAuthorityVersion
@@ -3774,6 +3785,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'routeBudget'
       ? { queueWaitPolicyVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'routeBudget'
+      ? { trinityReasoningPolicyVerified: true }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'

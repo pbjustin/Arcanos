@@ -218,6 +218,10 @@ import {
   resolveGptClientJobProvenance,
 } from './shared/gpt/gptClientRegistry.js';
 import {
+  resolveTrinityReasoningProviderPolicy,
+  supportsDisabledReasoningEffort,
+} from './shared/gpt/trinityReasoningPolicy.js';
+import {
   sendBoundedJsonResponse,
 } from './shared/http/sendBoundedJsonResponse.js';
 import {
@@ -2309,6 +2313,103 @@ interface SyntheticQueueWaitObservation {
   readonly job: SyntheticQueueWaitJob | null;
 }
 
+function assertTrinityReasoningPolicyFixture(): typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.trinityReasoningPolicyProofVersion {
+  const effortCases = [
+    { model: 'gpt-5', requestedEffort: 'none', expectedEffort: 'minimal' },
+    {
+      model: 'gpt-5-2025-08-07',
+      requestedEffort: 'none',
+      expectedEffort: 'minimal',
+    },
+    { model: 'gpt-5.1', requestedEffort: 'none', expectedEffort: 'none' },
+    {
+      model: 'gpt-5.1-2025-11-13',
+      requestedEffort: 'none',
+      expectedEffort: 'none',
+    },
+    {
+      model: 'gpt-5.6-terra',
+      requestedEffort: 'none',
+      expectedEffort: 'none',
+    },
+    {
+      model: 'gpt-5.6-terra-2026-08-01',
+      requestedEffort: 'none',
+      expectedEffort: 'none',
+    },
+    {
+      model: 'gpt-5-custom',
+      requestedEffort: 'none',
+      expectedEffort: 'none',
+    },
+    { model: 'gpt-5', requestedEffort: 'low', expectedEffort: 'low' },
+  ] as const;
+  const effortPolicyVerified = effortCases.every((testCase) => {
+    const policy = resolveTrinityReasoningProviderPolicy({
+      model: testCase.model,
+      requestedEffort: testCase.requestedEffort,
+      configuredMaxOutputTokens: '4000',
+    });
+    return policy.reasoningEffort === testCase.expectedEffort
+      && policy.maxOutputTokens === 4_000;
+  });
+
+  const tokenCases = [
+    { configuredValue: undefined, expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '   ', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '1.5', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '4000junk', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '1e3', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '+16', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '0', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '-1', expectedMaxOutputTokens: 8_000 },
+    {
+      configuredValue: '9007199254740992',
+      expectedMaxOutputTokens: 8_000,
+    },
+    { configuredValue: '1', expectedMaxOutputTokens: 16 },
+    { configuredValue: '15', expectedMaxOutputTokens: 16 },
+    { configuredValue: '16', expectedMaxOutputTokens: 16 },
+    { configuredValue: '4000', expectedMaxOutputTokens: 4_000 },
+    { configuredValue: '8000', expectedMaxOutputTokens: 8_000 },
+    { configuredValue: '12000', expectedMaxOutputTokens: 8_000 },
+  ] as const;
+  const outputCapVerified = tokenCases.every((testCase) => {
+    const policy = resolveTrinityReasoningProviderPolicy({
+      model: 'gpt-5.6-terra',
+      requestedEffort: 'none',
+      configuredMaxOutputTokens: testCase.configuredValue,
+    });
+    return policy.reasoningEffort === 'none'
+      && policy.maxOutputTokens === testCase.expectedMaxOutputTokens;
+  });
+
+  const disabledEffortCases = [
+    { model: 'gpt-5', expected: false },
+    { model: 'gpt-5.1', expected: true },
+    { model: 'gpt-5.1-2025-11-13', expected: true },
+    { model: 'gpt-5.6-terra', expected: true },
+    { model: 'gpt-5.6-terra-2026-08-01', expected: true },
+    { model: 'gpt-5-custom', expected: false },
+  ] as const;
+  const disabledEffortSupportVerified = disabledEffortCases.every(
+    testCase => supportsDisabledReasoningEffort(testCase.model)
+      === testCase.expected
+  );
+
+  if (
+    !effortPolicyVerified
+    || !outputCapVerified
+    || !disabledEffortSupportVerified
+  ) {
+    throw new Error('PREVIEW_TRINITY_REASONING_POLICY_INVALID');
+  }
+
+  return NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+    .trinityReasoningPolicyProofVersion;
+}
+
 async function assertBackstageQueueWaitPolicyFixture(): Promise<
   typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.queueWaitPolicyProofVersion
 > {
@@ -2467,6 +2568,7 @@ async function assertBackstageQueueWaitPolicyFixture(): Promise<
 async function runBackstageRouteBudgetFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
+  assertTrinityReasoningPolicyFixture();
   await assertBackstageQueueWaitPolicyFixture();
   if (!isBackstageGptRoute(BACKSTAGE_MODULE_ROUTE)) {
     throw new Error('PREVIEW_BACKSTAGE_CANONICAL_ROUTE_POLICY_INVALID');
@@ -7656,6 +7758,12 @@ export function createNativePrPreviewApplication(
                 .queueWaitPolicyVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .queueWaitPolicyProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .trinityReasoningPolicyVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .trinityReasoningPolicyProofVersion
             );
           }
           if (

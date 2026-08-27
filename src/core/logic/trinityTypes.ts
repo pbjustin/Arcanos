@@ -30,6 +30,17 @@ export interface TrinityMetaTokens {
   total_tokens: number;
 }
 
+export type TrinityReasoningEffort = 'none' | 'low' | 'medium';
+
+export interface TrinityReasoningConfig {
+  effort: TrinityReasoningEffort;
+}
+
+export interface TrinityReasoningUsage extends TrinityMetaTokens {
+  /** Reasoning tokens are included in completion_tokens and total_tokens. */
+  reasoning_tokens?: number;
+}
+
 export interface TrinityProviderCompletionMetadata {
   finishReason?: string | null;
   responseStatus?: string | null;
@@ -179,7 +190,7 @@ export interface TrinityResult {
   tierInfo?: {
     tier: 'simple' | 'complex' | 'critical';
     originalTier?: 'simple' | 'complex' | 'critical';
-    reasoningEffort?: 'high';
+    reasoningEffort?: TrinityReasoningEffort;
     reflectionApplied: boolean;
     invocationsUsed: number;
     invocationBudget: number;
@@ -312,6 +323,7 @@ export interface TrinityReasoningOutput {
   model: string;
   fallbackUsed: boolean;
   error?: string;
+  usage?: TrinityReasoningUsage;
   reasoningLedger?: ReasoningLedger;
   reasoningHonesty: TrinityReasoningHonesty;
 }

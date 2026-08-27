@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T01:17:31.675Z",
+  "generatedAt": "2026-08-27T22:21:21.039Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2618,6 +2618,9 @@
           "relativePath": "src/shared/gpt/priorityGpt.ts"
         },
         {
+          "relativePath": "src/shared/gpt/trinityReasoningPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/hashUtils.ts"
         },
         {
@@ -4826,6 +4829,9 @@
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-reasoning-policy.test.ts"
         },
         {
           "relativePath": "tests/trinity-stage-budget.test.ts"

@@ -27,13 +27,13 @@ function computeDefaultModelFromConfig(): string {
 /**
  * Purpose: Resolve the reasoning-model preference from unified runtime config.
  * Inputs/outputs: Reads the current config snapshot and returns one GPT-5 family model name.
- * Edge case behavior: Falls back to `GPT51_MODEL` and then the hard-coded default when `GPT5_MODEL` is unset.
+ * Edge case behavior: Falls back to `GPT51_MODEL` and then the hard-coded GPT-5.1 default when `GPT5_MODEL` is unset.
  */
 function computeGPT5ModelFromConfig(): string {
   const appConfig = getConfig();
   const configuredGPT5Model = getEnvVar('GPT5_MODEL');
 
-  //audit Assumption: operators may intentionally steer reasoning traffic with GPT5_MODEL while keeping GPT51_MODEL as a compatibility fallback; failure risk: production continues using the legacy GPT-5.1 path even after Railway config is updated or loses legacy behavior because the normalized config always materializes a default GPT5 model; expected invariant: an explicitly configured GPT5_MODEL takes precedence, otherwise the legacy GPT51_MODEL path remains intact; handling strategy: branch on raw env presence before falling back to unified-config defaults.
+  //audit Assumption: operators may intentionally steer shared GPT-5 traffic with GPT5_MODEL while keeping GPT51_MODEL as a compatibility fallback; failure risk: a scoped Trinity migration silently changes unrelated GPT-5 callers; expected invariant: shared callers retain their existing GPT5_MODEL -> GPT51_MODEL -> GPT-5.1 selection; handling strategy: keep this selector unchanged and use the dedicated Trinity selector below for Terra.
   if (configuredGPT5Model) {
     return configuredGPT5Model;
   }
@@ -43,6 +43,23 @@ function computeGPT5ModelFromConfig(): string {
   }
 
   return APPLICATION_CONSTANTS.MODEL_GPT_5_1;
+}
+
+/**
+ * Purpose: Resolve the model used only by Trinity's structured Responses reasoning stage.
+ * Inputs/outputs: Reads explicit selector environment variables and returns one model identifier.
+ * Edge case behavior: Preserves global and legacy rollback overrides before using the scoped Terra default.
+ */
+function computeTrinityReasoningModelFromConfig(): string {
+  const configuredTrinityModel = getEnvVar('TRINITY_REASONING_MODEL');
+  const configuredGPT5Model = getEnvVar('GPT5_MODEL');
+  const configuredGPT51Model = getEnvVar('GPT51_MODEL');
+
+  //audit Assumption: Terra should migrate only Trinity's structured reasoning call; failure risk: changing the shared selector moves unrelated callers that do not send an explicit effort; expected invariant: TRINITY_REASONING_MODEL wins, explicit shared/legacy overrides remain rollbacks, and only an entirely unset Trinity selector defaults to Terra; handling strategy: resolve raw selectors in narrow-to-broad order without consulting materialized config defaults.
+  return configuredTrinityModel
+    || configuredGPT5Model
+    || configuredGPT51Model
+    || APPLICATION_CONSTANTS.MODEL_GPT_5_6_TERRA;
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
@@ -122,8 +139,13 @@ export function getComplexModel(): string {
 /**
  * Purpose: Return the configured reasoning model used by GPT-5 execution paths.
  * Inputs/outputs: Reads the current unified runtime config and returns one model identifier string.
- * Edge case behavior: Preserves backward compatibility by falling back to `GPT51_MODEL` and then the built-in GPT-5.1 default.
+ * Edge case behavior: Preserves backward compatibility by falling back to `GPT51_MODEL` and then GPT-5.1.
  */
 export function getGPT5Model(): string {
   return computeGPT5ModelFromConfig();
+}
+
+/** Dedicated model selector for Trinity's structured Responses reasoning stage. */
+export function getTrinityReasoningModel(): string {
+  return computeTrinityReasoningModelFromConfig();
 }

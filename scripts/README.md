@@ -140,7 +140,17 @@ minimum. No wall-clock queue wait, repository, database, queue, or worker is
 used. A successful response carries
 `x-arcanos-preview-backstage-queue-wait-policy-version`; its body stays
 unchanged so the trusted base-pinned verifier remains compatible, while the
-exact-head verifier requires the marker. The second uses the production HRC cache
+exact-head verifier requires the marker. The same server-owned request executes
+the semantic-digest-pinned Trinity reasoning provider policy used at the
+outbound structured-reasoning boundary. It proves exact and dated GPT-5 maps
+`none` to `minimal`, GPT-5.1 and GPT-5.6 Terra retain `none`, non-`none`
+effort passes through, and strict configured output caps default or clamp to
+16–8,000. A successful response also carries
+`x-arcanos-preview-trinity-reasoning-policy-version`, and the exact-head
+verifier reports `trinityReasoningPolicyVerified: true`. The body remains
+unchanged for the trusted verifier. This is credential-free production-core
+component evidence; it does not call OpenAI or prove provider acceptance,
+model availability, or runtime model identity. The second uses the production HRC cache
 orchestration seam to prove a
 real bounded synthetic timeout fallback is noncacheable, a retry succeeds, and a
 third read comes from the single successful cache write. The review-completion

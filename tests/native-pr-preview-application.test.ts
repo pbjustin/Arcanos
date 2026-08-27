@@ -1578,6 +1578,11 @@ describe('native PR contained application', () => {
       ]
     ).toBe(contract.queueWaitPolicyProofVersion);
     expect(
+      routeBudget.headers[
+        contract.proofHeaders.trinityReasoningPolicyVersion
+      ]
+    ).toBe(contract.trinityReasoningPolicyProofVersion);
+    expect(
       notionAuthorityRag.headers[
         contract.proofHeaders.partitionedAuthorityVersion
       ]
@@ -1599,6 +1604,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.queueWaitPolicyVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.trinityReasoningPolicyVersion
         ]
       ).toBeUndefined();
     }
@@ -1711,6 +1721,9 @@ describe('native PR contained application', () => {
     ).toBe(contract.managedAsyncContinuationProofVersion);
     expect(response.headers[contract.proofHeaders.queueWaitPolicyVersion])
       .toBeUndefined();
+    expect(
+      response.headers[contract.proofHeaders.trinityReasoningPolicyVersion]
+    ).toBeUndefined();
     expect(response.headers[contract.proofHeaders.partitionedAuthorityVersion])
       .toBeUndefined();
     expect(
@@ -1838,6 +1851,11 @@ describe('native PR contained application', () => {
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.queueWaitPolicyVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.trinityReasoningPolicyVersion
+        ]
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionedAuthorityVersion]

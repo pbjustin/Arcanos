@@ -102,6 +102,10 @@ const TRINITY_DIRECT_ANSWER_MODE_URL = new URL(
   '../src/core/logic/trinityDirectAnswerMode.ts',
   import.meta.url
 );
+const TRINITY_REASONING_POLICY_URL = new URL(
+  '../src/shared/gpt/trinityReasoningPolicy.ts',
+  import.meta.url
+);
 const DIRECT_ANSWER_MODE_URL = new URL(
   '../src/services/directAnswerMode.ts',
   import.meta.url
@@ -428,6 +432,30 @@ describe('native PR preview import boundary', () => {
       "  clientId: 'drifted-client',\n  gptId: 'backstage-booker',"
     );
     expect(findUnsafeRuntimeSyntax(filePath, semanticDrift)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ])
+    );
+  });
+
+  it('admits and pins the pure Trinity reasoning provider policy', async () => {
+    const filePath = 'src/shared/gpt/trinityReasoningPolicy.ts';
+    const sourceText = await readNormalizedSource(
+      TRINITY_REASONING_POLICY_URL
+    );
+
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(
+      'src/core/logic/trinityStages.ts'
+    );
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+
+    const weakenedPolicy = replaceRequired(
+      sourceText,
+      'TRINITY_REASONING_MAX_OUTPUT_TOKENS_DEFAULT = 8_000;',
+      'TRINITY_REASONING_MAX_OUTPUT_TOKENS_DEFAULT = 9_000;'
+    );
+    expect(findUnsafeRuntimeSyntax(filePath, weakenedPolicy)).toEqual(
       expect.arrayContaining([
         expect.stringContaining('critical entry file semantic digest'),
       ])

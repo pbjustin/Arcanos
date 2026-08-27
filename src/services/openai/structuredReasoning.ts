@@ -10,6 +10,10 @@ import {
   TRINITY_STRUCTURED_REASONING_SCHEMA
 } from '@core/logic/trinitySchema.js';
 import { runStructuredReasoning as runStructuredReasoningGeneric } from '@arcanos/openai/structuredReasoning';
+import type {
+  StructuredReasoningEffort,
+  StructuredReasoningUsage
+} from '@arcanos/openai/structuredReasoning';
 
 type TrinityResolvedStructuredReasoning = TrinityCompactStructuredReasoning | TrinityStructuredReasoning;
 
@@ -80,6 +84,9 @@ function isStructuredReasoningPayload(value: unknown): value is TrinityStructure
 export interface StructuredReasoningSchemaOptions {
   schemaVariant?: 'compact' | 'full';
   previewChaosHook?: PreviewAskChaosHook;
+  reasoningEffort?: StructuredReasoningEffort;
+  maxOutputTokens?: number;
+  onUsage?: (usage: StructuredReasoningUsage) => void | Promise<void>;
 }
 
 const consumedReasoningTimeoutChaosTokens = new Set<string>();
@@ -146,6 +153,9 @@ export async function runStructuredReasoning(
     } as any,
     validate: schemaVariant === 'compact' ? isCompactStructuredReasoningPayload : isStructuredReasoningPayload,
     extractRefusal: extractRefusalReason as any,
+    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...(typeof options.maxOutputTokens === 'number' ? { maxOutputTokens: options.maxOutputTokens } : {}),
+    ...(options.onUsage ? { onUsage: options.onUsage } : {}),
     ...(activePreviewChaosHook ? { beforeCall: activePreviewChaosHook.beforeCall } : {}),
     ...(typeof timeoutMs === 'number' ? { timeoutMs } : {})
   });
