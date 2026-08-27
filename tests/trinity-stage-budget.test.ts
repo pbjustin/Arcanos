@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 const createSingleChatCompletionMock = jest.fn();
 const runStructuredReasoningMock = jest.fn();
 const getTokenParameterMock = jest.fn();
+const getTrinityReasoningModelMock = jest.fn(() => 'gpt-5.6-terra');
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getDefaultModel: () => 'ft:test-default',
   getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra',
+  getTrinityReasoningModel: getTrinityReasoningModelMock,
   getComplexModel: () => 'ft:test-complex',
   getFallbackModel: () => 'gpt-4.1'
 }));
@@ -35,6 +36,7 @@ describe('trinity stage budgets', () => {
     delete process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS;
     delete process.env.TRINITY_FINAL_STAGE_TIMEOUT_MS;
     getTokenParameterMock.mockReturnValue({ max_completion_tokens: 320 });
+    getTrinityReasoningModelMock.mockReturnValue('gpt-5.6-terra');
   });
 
   afterEach(() => {
@@ -358,6 +360,158 @@ describe('trinity stage budgets', () => {
     expect(result.reasoningLedger?.steps).toEqual([]);
     expect(result.reasoningLedger?.justification).toBe('');
   });
+
+  it.each([
+    ['gpt-5', 'minimal'],
+    ['gpt-5-2025-08-07', 'minimal'],
+    ['gpt-5.1', 'none'],
+    ['gpt-5.1-2025-11-13', 'none'],
+    ['gpt-5.6-terra', 'none'],
+    ['gpt-5-custom', 'none']
+  ] as const)(
+    'uses provider-compatible simple-tier reasoning effort for %s',
+    async (model, expectedReasoningEffort) => {
+      getTrinityReasoningModelMock.mockReturnValue(model);
+      runStructuredReasoningMock.mockResolvedValue({
+        response_mode: 'answer',
+        achievable_subtasks: ['answer'],
+        blocked_subtasks: [],
+        user_visible_caveats: [],
+        claim_tags: [],
+        final_answer: 'final'
+      });
+
+      await runReasoningStage(
+        {} as never,
+        'Framed request',
+        {
+          canBrowse: false,
+          canVerifyProvidedData: false,
+          canVerifyLiveData: false,
+          canConfirmExternalState: false,
+          canPersistData: false,
+          canCallBackend: false
+        },
+        { strictUserVisibleOutput: true },
+        'simple',
+        { effort: 'none' },
+        createRuntimeBudgetWithLimit(20_000, 0)
+      );
+
+      expect(runStructuredReasoningMock).toHaveBeenCalledWith(
+        expect.anything(),
+        model,
+        expect.any(String),
+        expect.anything(),
+        expect.any(Number),
+        expect.objectContaining({
+          schemaVariant: 'compact',
+          reasoningEffort: expectedReasoningEffort
+        })
+      );
+    }
+  );
+
+  it('does not normalize a non-none GPT-5 reasoning effort', async () => {
+    getTrinityReasoningModelMock.mockReturnValue('gpt-5');
+    runStructuredReasoningMock.mockResolvedValue({
+      reasoning_steps: ['step'],
+      assumptions: [],
+      constraints: [],
+      tradeoffs: [],
+      alternatives_considered: [],
+      chosen_path_justification: 'because',
+      response_mode: 'answer',
+      achievable_subtasks: ['answer'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'final'
+    });
+
+    await runReasoningStage(
+      {} as never,
+      'Framed request',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      'complex',
+      { effort: 'low' },
+      createRuntimeBudgetWithLimit(20_000, 0)
+    );
+
+    expect(runStructuredReasoningMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'gpt-5',
+      expect.any(String),
+      expect.anything(),
+      expect.any(Number),
+      expect.objectContaining({ reasoningEffort: 'low' })
+    );
+  });
+
+  it.each([
+    ['4000', 4000],
+    [' 4000 ', 4000],
+    ['16', 16],
+    ['8000', 8000],
+    ['15', 16],
+    ['1', 16],
+    ['1.5', 8000],
+    ['4000junk', 8000],
+    ['1e3', 8000],
+    ['+16', 8000],
+    ['0', 8000],
+    ['-1', 8000],
+    ['12000', 8000],
+    ['', 8000],
+    ['   ', 8000]
+  ] as const)(
+    'normalizes TRINITY_REASONING_MAX_OUTPUT_TOKENS=%j to %i',
+    async (configuredValue, expectedMaxOutputTokens) => {
+      process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS = configuredValue;
+      runStructuredReasoningMock.mockResolvedValue({
+        response_mode: 'answer',
+        achievable_subtasks: ['answer'],
+        blocked_subtasks: [],
+        user_visible_caveats: [],
+        claim_tags: [],
+        final_answer: 'final'
+      });
+
+      await runReasoningStage(
+        {} as never,
+        'Framed request',
+        {
+          canBrowse: false,
+          canVerifyProvidedData: false,
+          canVerifyLiveData: false,
+          canConfirmExternalState: false,
+          canPersistData: false,
+          canCallBackend: false
+        },
+        { strictUserVisibleOutput: true },
+        'simple',
+        { effort: 'none' },
+        createRuntimeBudgetWithLimit(20_000, 0)
+      );
+
+      expect(runStructuredReasoningMock).toHaveBeenCalledWith(
+        expect.anything(),
+        'gpt-5.6-terra',
+        expect.any(String),
+        expect.anything(),
+        expect.any(Number),
+        expect.objectContaining({ maxOutputTokens: expectedMaxOutputTokens })
+      );
+    }
+  );
 
   it('uses medium effort for critical requests and never exceeds the reasoning output ceiling', async () => {
     process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS = '12000';

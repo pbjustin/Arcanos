@@ -156,9 +156,9 @@ Tier detection logic:
 Structured reasoning effort:
 - `critical`: `medium`
 - `complex`: `low`
-- `simple`: `none`
+- `simple`: requests `none`; exact `gpt-5` and dated GPT-5 snapshots send `minimal` because they do not support disabled reasoning
 
-The structured stage alone defaults to `gpt-5.6-terra`. Model precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then Terra; other GPT-5 execution paths keep their existing shared selector and GPT-5.1 default.
+The structured stage alone defaults to `gpt-5.6-terra`. Model precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then Terra; other GPT-5 execution paths keep their existing shared selector and GPT-5.1 default. GPT-5.1 and GPT-5.6 models retain the requested `none` effort.
 
 Injection guard:
 - If prompt includes forbidden phrases such as `set tier to`, tier is forced to `simple`.
@@ -167,7 +167,7 @@ Core guardrails:
 - Per-tier semaphore in `src/core/logic/trinityGuards.ts`
 - Watchdog timeout
 - Visible/direct-answer hard token cap (`TRINITY_HARD_TOKEN_CAP`)
-- Structured reasoning Responses cap (`TRINITY_REASONING_MAX_OUTPUT_TOKENS`, default and maximum `8000`, including hidden reasoning tokens)
+- Structured reasoning Responses cap (`TRINITY_REASONING_MAX_OUTPUT_TOKENS`, strict positive base-10 integers clamped to `16`-`8000`, default `8000`, including hidden reasoning tokens)
 - Structured reasoning stage timeout (`TRINITY_REASONING_STAGE_TIMEOUT_MS`, default `20000`, clamped to remaining request/runtime budget)
 - Session token auditor
 - Retry lineage guard

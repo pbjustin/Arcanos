@@ -102,6 +102,7 @@ const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 6_000;
 const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
 const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const DEFAULT_TRINITY_REASONING_MAX_OUTPUT_TOKENS = APPLICATION_CONSTANTS.MAX_SAFE_TOKENS;
+const MIN_TRINITY_REASONING_MAX_OUTPUT_TOKENS = 16;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
 const validatedModelCache = new Map<string, number>();
 
@@ -109,6 +110,19 @@ function supportsDisabledReasoningEffort(model: string): boolean {
   const normalizedModel = model.trim().toLowerCase();
   return /^gpt-5\.1(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
     || /^gpt-5\.6(?:$|-\d{4}-\d{2}-\d{2}$|-(?:sol|terra|luna)(?:-\d{4}-\d{2}-\d{2})?$)/.test(normalizedModel);
+}
+
+function normalizeTrinityReasoningEffort(
+  model: string,
+  effort: TrinityReasoningConfig['effort']
+): TrinityReasoningConfig['effort'] | 'minimal' {
+  if (effort !== 'none') return effort;
+
+  const normalizedModel = model.trim().toLowerCase();
+  // Original GPT-5 accepts `minimal` but not disabled reasoning; preserve the selected model.
+  return /^gpt-5(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
+    ? 'minimal'
+    : effort;
 }
 
 function normalizeCompletionProviderMetadata(
@@ -252,16 +266,19 @@ function resolveReasoningStageTimeoutMs(
 }
 
 function resolveReasoningMaxOutputTokens(): number {
-  const configuredMaxOutputTokens = Number.parseInt(
-    process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS ?? '',
-    10
-  );
-  if (!Number.isFinite(configuredMaxOutputTokens) || configuredMaxOutputTokens <= 0) {
+  const configuredValue = process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS?.trim() ?? '';
+  if (!/^[0-9]+$/.test(configuredValue)) {
     return DEFAULT_TRINITY_REASONING_MAX_OUTPUT_TOKENS;
   }
+
+  const configuredMaxOutputTokens = Number(configuredValue);
+  if (!Number.isSafeInteger(configuredMaxOutputTokens) || configuredMaxOutputTokens <= 0) {
+    return DEFAULT_TRINITY_REASONING_MAX_OUTPUT_TOKENS;
+  }
+
   return Math.min(
-    Math.trunc(configuredMaxOutputTokens),
-    DEFAULT_TRINITY_REASONING_MAX_OUTPUT_TOKENS
+    DEFAULT_TRINITY_REASONING_MAX_OUTPUT_TOKENS,
+    Math.max(MIN_TRINITY_REASONING_MAX_OUTPUT_TOKENS, configuredMaxOutputTokens)
   );
 }
 
@@ -494,6 +511,7 @@ export async function runReasoningStage(
 
   logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
   const gpt5ModelUsed = getTrinityReasoningModel();
+  const reasoningEffort = normalizeTrinityReasoningEffort(gpt5ModelUsed, reasoningConfig.effort);
   const schemaVariant = tier === 'simple' ? 'compact' : 'full';
   const maxOutputTokens = resolveReasoningMaxOutputTokens();
   let reasoningUsage: TrinityReasoningOutput['usage'];
@@ -506,7 +524,7 @@ export async function runReasoningStage(
     {
       schemaVariant,
       previewChaosHook,
-      reasoningEffort: reasoningConfig.effort,
+      reasoningEffort,
       maxOutputTokens,
       onUsage: usage => {
         const normalizedUsage: TrinityReasoningUsage = {
@@ -566,7 +584,7 @@ export async function runReasoningStage(
     model: gpt5ModelUsed,
     tier,
     schemaVariant,
-    reasoningEffort: reasoningConfig.effort,
+    reasoningEffort,
     maxOutputTokens,
     usagePrompt: reasoningUsage?.prompt_tokens ?? 0,
     usageCompletion: reasoningUsage?.completion_tokens ?? 0,

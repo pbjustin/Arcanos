@@ -8,6 +8,46 @@ jest.unstable_mockModule('@arcanos/openai/structuredReasoning', () => ({
 
 const { runStructuredReasoning } = await import('../src/services/openai/structuredReasoning.ts');
 
+describe('structured reasoning service wrapper', () => {
+  beforeEach(() => {
+    runStructuredReasoningGenericMock.mockReset();
+  });
+
+  it('forwards provider-compatible effort and output cap to the shared helper', async () => {
+    runStructuredReasoningGenericMock.mockResolvedValue({
+      response_mode: 'answer',
+      achievable_subtasks: ['answer'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'ok'
+    });
+
+    await runStructuredReasoning(
+      {} as never,
+      'gpt-5',
+      'test prompt',
+      { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      5_000,
+      {
+        schemaVariant: 'compact',
+        reasoningEffort: 'minimal',
+        maxOutputTokens: 16
+      }
+    );
+
+    expect(runStructuredReasoningGenericMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'gpt-5',
+        reasoningEffort: 'minimal',
+        maxOutputTokens: 16,
+        timeoutMs: 5_000
+      })
+    );
+  });
+});
+
 describe('preview reasoning chaos hook', () => {
   beforeEach(() => {
     runStructuredReasoningGenericMock.mockReset();

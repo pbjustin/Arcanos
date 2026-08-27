@@ -90,6 +90,34 @@ describe('runStructuredReasoning budget handling', () => {
     expect(onUsage).toHaveBeenCalledWith(usage);
   });
 
+  it('forwards minimal reasoning effort to the Responses request', async () => {
+    const create = jest.fn().mockResolvedValue({
+      status: 'completed',
+      output_text: '{"answer":"ok"}',
+      output: [],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await runStructuredReasoning({ responses: { create } } as any, {
+      model: 'gpt-5',
+      prompt: 'test prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'test', schema: {} },
+      validate: (value: unknown): value is { answer: string } =>
+        typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string',
+      reasoningEffort: 'minimal',
+      maxOutputTokens: 16
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoning: { effort: 'minimal' },
+        max_output_tokens: 16
+      }),
+      expect.anything()
+    );
+  });
+
   it('rejects an invalid structured reasoning output cap before calling the SDK', async () => {
     const create = jest.fn();
     const beforeCall = jest.fn();
