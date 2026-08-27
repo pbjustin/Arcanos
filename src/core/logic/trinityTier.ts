@@ -11,6 +11,7 @@ import { ARCANOS_SYSTEM_PROMPTS } from "@platform/runtime/prompts.js";
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import { getRequestAbortSignal, getRequestRemainingMs, isAbortError } from "@arcanos/runtime";
+import type { TrinityReasoningConfig } from './trinityTypes.js';
 
 // --- Tier Detection ---
 
@@ -57,8 +58,12 @@ export function detectTier(prompt: string): Tier {
 
 // --- Reasoning Config ---
 
-export function buildReasoningConfig(tier: Tier): { effort: 'high' } | undefined {
-  return tier === 'simple' ? undefined : { effort: 'high' };
+export function buildReasoningConfig(tier: Tier): TrinityReasoningConfig {
+  switch (tier) {
+    case 'simple': return { effort: 'none' };
+    case 'complex': return { effort: 'low' };
+    case 'critical': return { effort: 'medium' };
+  }
 }
 
 export function getInvocationBudget(tier: Tier): number {

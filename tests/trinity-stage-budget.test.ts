@@ -7,6 +7,7 @@ const getTokenParameterMock = jest.fn();
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getDefaultModel: () => 'ft:test-default',
   getGPT5Model: () => 'gpt-5.1',
+  getTrinityReasoningModel: () => 'gpt-5.6-terra',
   getComplexModel: () => 'ft:test-complex',
   getFallbackModel: () => 'gpt-4.1'
 }));
@@ -31,6 +32,7 @@ describe('trinity stage budgets', () => {
     jest.clearAllMocks();
     delete process.env.TRINITY_INTAKE_STAGE_TIMEOUT_MS;
     delete process.env.TRINITY_REASONING_STAGE_TIMEOUT_MS;
+    delete process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS;
     delete process.env.TRINITY_FINAL_STAGE_TIMEOUT_MS;
     getTokenParameterMock.mockReturnValue({ max_completion_tokens: 320 });
   });
@@ -38,6 +40,7 @@ describe('trinity stage budgets', () => {
   afterEach(() => {
     delete process.env.TRINITY_INTAKE_STAGE_TIMEOUT_MS;
     delete process.env.TRINITY_REASONING_STAGE_TIMEOUT_MS;
+    delete process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS;
     delete process.env.TRINITY_FINAL_STAGE_TIMEOUT_MS;
   });
 
@@ -195,25 +198,35 @@ describe('trinity stage budgets', () => {
     );
   });
 
-  it('caps structured reasoning with an explicit stage timeout', async () => {
-    runStructuredReasoningMock.mockResolvedValue({
-      reasoning_steps: ['step'],
-      assumptions: [],
-      constraints: [],
-      tradeoffs: [],
-      alternatives_considered: [],
-      chosen_path_justification: 'because',
-      response_mode: 'answer',
-      achievable_subtasks: ['answer'],
-      blocked_subtasks: [],
-      user_visible_caveats: [],
-      claim_tags: [],
-      final_answer: 'final'
+  it('uses the 20-second default structured reasoning stage timeout', async () => {
+    runStructuredReasoningMock.mockImplementation(async (...args: unknown[]) => {
+      const options = args[5] as { onUsage?: (usage: unknown) => void } | undefined;
+      options?.onUsage?.({
+        input_tokens: 40,
+        input_tokens_details: { cached_tokens: 5 },
+        output_tokens: 20,
+        output_tokens_details: { reasoning_tokens: 11 },
+        total_tokens: 60
+      });
+      return {
+        reasoning_steps: ['step'],
+        assumptions: [],
+        constraints: [],
+        tradeoffs: [],
+        alternatives_considered: [],
+        chosen_path_justification: 'because',
+        response_mode: 'answer',
+        achievable_subtasks: ['answer'],
+        blocked_subtasks: [],
+        user_visible_caveats: [],
+        claim_tags: [],
+        final_answer: 'final'
+      };
     });
 
-    const runtimeBudget = createRuntimeBudgetWithLimit(20_000, 0);
+    const runtimeBudget = createRuntimeBudgetWithLimit(40_000, 0);
 
-    await runReasoningStage(
+    const result = await runReasoningStage(
       {} as never,
       'Framed request',
       {
@@ -226,20 +239,32 @@ describe('trinity stage budgets', () => {
       },
       { strictUserVisibleOutput: true },
       'complex',
+      { effort: 'low' },
       runtimeBudget
     );
 
     const complexReasoningCall = runStructuredReasoningMock.mock.calls[0];
     expect(runStructuredReasoningMock).toHaveBeenCalledWith(
       expect.anything(),
-      'gpt-5.1',
+      'gpt-5.6-terra',
       expect.any(String),
       runtimeBudget,
       expect.any(Number),
-      { schemaVariant: 'full' }
+      expect.objectContaining({
+        schemaVariant: 'full',
+        reasoningEffort: 'low',
+        maxOutputTokens: 8000,
+        onUsage: expect.any(Function)
+      })
     );
-    expect(complexReasoningCall?.[4]).toBeLessThanOrEqual(20000);
-    expect(complexReasoningCall?.[4]).toBeGreaterThan(0);
+    expect(complexReasoningCall?.[4]).toBeLessThanOrEqual(20_000);
+    expect(complexReasoningCall?.[4]).toBeGreaterThan(19_000);
+    expect(result.usage).toEqual({
+      prompt_tokens: 40,
+      completion_tokens: 20,
+      total_tokens: 60,
+      reasoning_tokens: 11
+    });
   });
 
   it('uses the worker override for structured reasoning and clamps it to the remaining budget', async () => {
@@ -273,6 +298,7 @@ describe('trinity stage budgets', () => {
       },
       { strictUserVisibleOutput: true },
       'complex',
+      { effort: 'low' },
       runtimeBudget,
       30_000
     );
@@ -308,22 +334,76 @@ describe('trinity stage budgets', () => {
       },
       { strictUserVisibleOutput: true },
       'simple',
+      { effort: 'none' },
       runtimeBudget
     );
 
     const simpleReasoningCall = runStructuredReasoningMock.mock.calls[0];
     expect(runStructuredReasoningMock).toHaveBeenCalledWith(
       expect.anything(),
-      'gpt-5.1',
+      'gpt-5.6-terra',
       expect.any(String),
       runtimeBudget,
       expect.any(Number),
-      { schemaVariant: 'compact' }
+      expect.objectContaining({
+        schemaVariant: 'compact',
+        reasoningEffort: 'none',
+        maxOutputTokens: 8000,
+        onUsage: expect.any(Function)
+      })
     );
     expect(simpleReasoningCall?.[4]).toBeLessThanOrEqual(20000);
     expect(simpleReasoningCall?.[4]).toBeGreaterThan(0);
     expect(result.output).toBe('final');
     expect(result.reasoningLedger?.steps).toEqual([]);
     expect(result.reasoningLedger?.justification).toBe('');
+  });
+
+  it('uses medium effort for critical requests and never exceeds the reasoning output ceiling', async () => {
+    process.env.TRINITY_REASONING_MAX_OUTPUT_TOKENS = '12000';
+    runStructuredReasoningMock.mockResolvedValue({
+      reasoning_steps: ['step'],
+      assumptions: [],
+      constraints: [],
+      tradeoffs: [],
+      alternatives_considered: [],
+      chosen_path_justification: 'because',
+      response_mode: 'answer',
+      achievable_subtasks: ['answer'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'final'
+    });
+
+    await runReasoningStage(
+      {} as never,
+      'Framed request',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      'critical',
+      { effort: 'medium' },
+      createRuntimeBudgetWithLimit(20_000, 0)
+    );
+
+    expect(runStructuredReasoningMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'gpt-5.6-terra',
+      expect.any(String),
+      expect.anything(),
+      expect.any(Number),
+      expect.objectContaining({
+        schemaVariant: 'full',
+        reasoningEffort: 'medium',
+        maxOutputTokens: 8000
+      })
+    );
   });
 });

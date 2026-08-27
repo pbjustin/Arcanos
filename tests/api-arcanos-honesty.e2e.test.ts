@@ -42,6 +42,7 @@ jest.unstable_mockModule('@services/openai.js', () => ({
   getComplexModel: () => 'arcanos-final-model',
   getFallbackModel: () => 'gpt-4.1',
   getGPT5Model: () => 'gpt-5-reasoning-model',
+  getTrinityReasoningModel: () => 'gpt-5-reasoning-model',
   generateMockResponse: mockGenerateMockResponse,
   createChatCompletionWithFallback: mockCreateChatCompletionWithFallback,
   createSingleChatCompletion: mockCreateChatCompletionWithFallback,
@@ -59,7 +60,8 @@ jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getDefaultModel: () => 'arcanos-intake-model',
   getComplexModel: () => 'arcanos-final-model',
   getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5-reasoning-model'
+  getGPT5Model: () => 'gpt-5-reasoning-model',
+  getTrinityReasoningModel: () => 'gpt-5-reasoning-model'
 }));
 
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({

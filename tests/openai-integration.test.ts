@@ -119,20 +119,23 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should prioritize GPT5_MODEL over GPT51_MODEL for reasoning model selection', async () => {
+    it('should prioritize GPT5_MODEL over GPT51_MODEL for shared and Trinity fallback selection', async () => {
       const originalModels = {
+        TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
         GPT51_MODEL: process.env.GPT51_MODEL
       };
 
+      delete process.env.TRINITY_REASONING_MODEL;
       process.env.GPT5_MODEL = 'gpt-5-custom';
       process.env.GPT51_MODEL = 'gpt-5.1-legacy';
 
       try {
         await resetOpenAITestState();
-        const { getGPT5Model } = await import('../src/services/openai.js');
+        const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
         expect(getGPT5Model()).toBe('gpt-5-custom');
+        expect(getTrinityReasoningModel()).toBe('gpt-5-custom');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {
@@ -144,20 +147,79 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should fallback to GPT51_MODEL when GPT5_MODEL is not set', async () => {
+    it('should fallback to GPT51_MODEL when newer selectors are not set', async () => {
       const originalModels = {
+        TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
         GPT51_MODEL: process.env.GPT51_MODEL
       };
 
+      delete process.env.TRINITY_REASONING_MODEL;
       delete process.env.GPT5_MODEL;
       process.env.GPT51_MODEL = 'gpt-5.1-configured';
 
       try {
         await resetOpenAITestState();
-        const { getGPT5Model } = await import('../src/services/openai.js');
+        const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
         expect(getGPT5Model()).toBe('gpt-5.1-configured');
+        expect(getTrinityReasoningModel()).toBe('gpt-5.1-configured');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
+
+    it('should scope the GPT-5.6 Terra default to Trinity structured reasoning', async () => {
+      const originalModels = {
+        TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
+        GPT5_MODEL: process.env.GPT5_MODEL,
+        GPT51_MODEL: process.env.GPT51_MODEL
+      };
+
+      delete process.env.TRINITY_REASONING_MODEL;
+      delete process.env.GPT5_MODEL;
+      delete process.env.GPT51_MODEL;
+
+      try {
+        await resetOpenAITestState();
+        const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
+
+        expect(getGPT5Model()).toBe('gpt-5.1');
+        expect(getTrinityReasoningModel()).toBe('gpt-5.6-terra');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
+
+    it('should prioritize TRINITY_REASONING_MODEL over shared GPT-5 selectors', async () => {
+      const originalModels = {
+        TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
+        GPT5_MODEL: process.env.GPT5_MODEL,
+        GPT51_MODEL: process.env.GPT51_MODEL
+      };
+
+      process.env.TRINITY_REASONING_MODEL = 'gpt-5.6-terra-custom';
+      process.env.GPT5_MODEL = 'gpt-5-shared';
+      process.env.GPT51_MODEL = 'gpt-5.1-legacy';
+
+      try {
+        await resetOpenAITestState();
+        const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
+
+        expect(getGPT5Model()).toBe('gpt-5-shared');
+        expect(getTrinityReasoningModel()).toBe('gpt-5.6-terra-custom');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {

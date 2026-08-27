@@ -125,6 +125,11 @@ Railway builds from the root package and uses `scripts/start-railway-service-wit
 - Its structured JSON helpers require an explicit completed lifecycle before
   parsing, reject incomplete partial JSON, and surface terminal, pending,
   unknown, or missing status without accepting provider output as success.
+- `@arcanos/openai/structuredReasoning` accepts optional `reasoningEffort`, a
+  positive-integer `maxOutputTokens`, and a best-effort `onUsage` observer while
+  preserving its parsed-value return type. Usage is reported before parsing so
+  billed incomplete, refusal, malformed, and validation-failure responses remain
+  observable; observer failures do not replace the provider or parser outcome.
 - The backend keeps server-specific adapter configuration, credential resolution, telemetry, circuit-breaker integration, request staging, and chat-flow orchestration in `src/core/adapters/openai.adapter.ts` and `src/services/openai/`.
 - `workers/` and `arcanos-ai-runtime/` import shared client/retry helpers rather than maintaining separate copies.
 - Retry is not globally app-only: the backend adapter can configure SDK retries, while backend chat flow and other runtimes may also apply an application retry helper. Changes must account for the combined attempt budget.

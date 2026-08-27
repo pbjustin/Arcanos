@@ -1,6 +1,9 @@
 import type OpenAI from 'openai';
+import type { ReasoningEffort } from 'openai/resources/shared';
+import type { ResponseUsage } from 'openai/resources/responses/responses';
 import {
-  callStructuredResponse,
+  callTextResponse,
+  parseStructuredJson,
   OpenAIResponseMalformedJsonError,
 } from './responses.js';
 import type { RuntimeBudget } from '@arcanos/runtime';
@@ -21,6 +24,9 @@ export interface JsonSchemaFormat {
   strict?: boolean;
 }
 
+export type StructuredReasoningEffort = Exclude<ReasoningEffort, null>;
+export type StructuredReasoningUsage = ResponseUsage;
+
 export interface StructuredReasoningOptions<T> {
   model: string;
   prompt: string;
@@ -30,7 +36,35 @@ export interface StructuredReasoningOptions<T> {
   extractRefusal?: (response: any) => string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  reasoningEffort?: StructuredReasoningEffort;
+  maxOutputTokens?: number;
+  onUsage?: (usage: StructuredReasoningUsage) => void | Promise<void>;
   beforeCall?: (signal: AbortSignal) => Promise<void>;
+}
+
+function normalizeMaxOutputTokens(maxOutputTokens?: number): number | undefined {
+  if (maxOutputTokens === undefined) return undefined;
+  if (!Number.isFinite(maxOutputTokens) || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new RangeError('Structured reasoning maxOutputTokens must be a positive integer.');
+  }
+  return maxOutputTokens;
+}
+
+function reportUsageSafely(
+  onUsage: StructuredReasoningOptions<unknown>['onUsage'],
+  usage: StructuredReasoningUsage | null | undefined
+): void {
+  if (!onUsage || !usage) return;
+
+  // Usage observers are accounting side effects and must not change the provider response outcome.
+  try {
+    const result = onUsage(usage);
+    if (result) {
+      void result.catch(() => undefined);
+    }
+  } catch {
+    // Deliberately best-effort: callers retain the model result or original parse failure.
+  }
 }
 
 /**
@@ -44,6 +78,7 @@ export async function runStructuredReasoning<T>(
   const requestRemainingMs = getRequestRemainingMs();
   const safeRemainingMs = getSafeRemainingMs(opts.budget);
   if (safeRemainingMs <= 0) throw new RuntimeBudgetExceededError();
+  const maxOutputTokens = normalizeMaxOutputTokens(opts.maxOutputTokens);
   const preferredTimeoutMs =
     typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
       ? Math.trunc(opts.timeoutMs)
@@ -67,20 +102,27 @@ export async function runStructuredReasoning<T>(
       await opts.beforeCall(requestScope.signal);
     }
 
-    const { outputParsed } = await callStructuredResponse(
+    const { response } = await callTextResponse(
       client as any,
       {
         model: opts.model,
         input: opts.prompt,
-        text: { format: opts.schema as any }
+        text: { format: opts.schema as any },
+        ...(opts.reasoningEffort ? { reasoning: { effort: opts.reasoningEffort } } : {}),
+        ...(maxOutputTokens ? { max_output_tokens: maxOutputTokens } : {})
       },
-      { signal: requestScope.signal },
-      {
-        validate: opts.validate,
-        extractRefusal: opts.extractRefusal,
-        source: 'structured reasoning'
-      }
+      { signal: requestScope.signal }
     );
+
+    // Capture billed usage before parsing so incomplete, refused, malformed, and schema-invalid
+    // Responses still reach accounting while preserving the original parse error.
+    reportUsageSafely(opts.onUsage as StructuredReasoningOptions<unknown>['onUsage'], response.usage);
+
+    const outputParsed = parseStructuredJson<T>(response, {
+      validate: opts.validate,
+      extractRefusal: opts.extractRefusal,
+      source: 'structured reasoning'
+    });
 
     return outputParsed;
   } catch (err) {
