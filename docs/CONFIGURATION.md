@@ -485,10 +485,12 @@ confirmation rules.
 
 Authenticated Backstage generation can optionally add a read-only Notion
 supplement. Schema `1.6.0` has five Builder operations, materializes the nested
-public payload, and moves async-result polling to the managed-bearer namespace;
-it must be re-imported from the live no-store endpoint. The tracked `1.5.0`
-contract remains the direct-client compatibility base/projection input, not the
-served Builder document. Configure
+public payload, and uses the managed-bearer namespace for async-result polling.
+The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
+Builder `1.6.0` contract and is served directly by the live no-store endpoint.
+After a deployed contract change, a human operator must refresh or re-import
+that endpoint in GPT Builder; repository changes do not update the Action.
+Configure
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on the web service;
 either value alone, invalid configuration, an unmapped universe, or a missing

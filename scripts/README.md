@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 131-request plan without network access.
+untracked worktree, limits, and the fixed 133-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -47,12 +47,19 @@ cookie, or session credential. Its attestation scope is the identity served by
 the two pre-confirmed public hosts. It does not independently prove Railway
 project/service/deployment ownership.
 
+The web plan also fetches
+`GET /contracts/backstage_booker.openapi.v1.json` and deep-compares the
+response with the bounded JSON blob read from the exact Git-evidence HEAD.
+It independently checks the 1.6.0 managed bearer/result-path shape and rejects
+legacy job-token, legacy result-path, or stream fields; the worker must return
+404 for the same path.
+
 The trusted Railway lifecycle intentionally executes the probe implementation
 and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 131-request probe
+the lifecycle reports the exact preview hosts, run the current 133-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,

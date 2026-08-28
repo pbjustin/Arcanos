@@ -6,6 +6,7 @@ import {
   createNativePrPreviewReadinessState,
 } from '../src/nativePrPreviewApplication.js';
 import {
+  NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
@@ -590,6 +591,48 @@ describe('native PR contained application', () => {
       sourceCommit: 'a'.repeat(40),
       trustScope: 'trusted-pr-accidental-effects',
     });
+  });
+
+  it('serves the canonical Backstage Booker Builder contract without synthetic provenance', async () => {
+    const { app } = buildApplication();
+
+    const response = await request(app)
+      .get(NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store, max-age=0');
+    expect(response.headers['content-type']).toBe(
+      'application/json; charset=utf-8'
+    );
+    expect(response.headers[
+      NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name
+    ]).toBeUndefined();
+    expect(response.body).toEqual(
+      NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.document
+    );
+    expect(response.body.info.version).toBe('1.6.0');
+    expect(response.body.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+    ].get).toMatchObject({
+      operationId: 'getBackstageBookerJobResult',
+      security: [{ bearerAuth: [] }],
+    });
+
+    const [query, credential] = await Promise.all([
+      request(app).get(
+        `${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}?cache=true`
+      ),
+      request(app)
+        .get(NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path)
+        .set('authorization', 'Bearer sensitive-sentinel'),
+    ]);
+    for (const rejected of [query, credential]) {
+      expect(rejected.status).toBe(404);
+      expect(rejected.text).toBe('not found');
+      expect(JSON.stringify(rejected.headers)).not.toContain(
+        'sensitive-sentinel'
+      );
+    }
   });
 
   it('returns 503 readiness until import and fixture sealing are complete and while draining', async () => {

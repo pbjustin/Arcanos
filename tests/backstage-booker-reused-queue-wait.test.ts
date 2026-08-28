@@ -438,7 +438,13 @@ describe('Backstage Booker reused queue wait', () => {
     }
   });
 
-  it('rejects an invalid bearer before reading any job', async () => {
+  it.each([
+    ['missing', undefined],
+    ['incorrect', 'Bearer incorrect-token'],
+  ] as const)('rejects a %s bearer before reading any job', async (
+    _caseName,
+    authorization
+  ) => {
     const getJobByIdFn = jest.fn(async () => buildProtectedJob());
     const app = express();
     app.use(createBackstageBookerAsyncResultRouter({
@@ -447,9 +453,11 @@ describe('Backstage Booker reused queue wait', () => {
       recordJobLookup: jest.fn(),
     }));
 
-    const response = await request(app)
-      .get(RESULT_PATH)
-      .set('Authorization', 'Bearer incorrect-token');
+    const responseRequest = request(app).get(RESULT_PATH);
+    if (authorization !== undefined) {
+      responseRequest.set('Authorization', authorization);
+    }
+    const response = await responseRequest;
 
     expect(response.status).toBe(401);
     expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');

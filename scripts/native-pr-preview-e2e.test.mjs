@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -12,6 +12,7 @@ import {
   expectedNativePrPreviewResponseBody,
   nativePrPreviewCaseCorrelation,
   parseNativePrPreviewE2eArguments,
+  readExpectedBackstageBookerOpenApiDocument,
   readLocalGitState,
   runNativePrPreviewE2e,
 } from './native-pr-preview-e2e.mjs';
@@ -34,6 +35,8 @@ const LOCAL_GIT_STATE = Object.freeze({
   head: COMMIT_SHA,
   repository: 'pbjustin/Arcanos',
 });
+const EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT =
+  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document;
 
 function validArguments(...extraArguments) {
   return [
@@ -49,13 +52,22 @@ function validArguments(...extraArguments) {
   ];
 }
 
-function responseBodyForCase(requestCase) {
+function responseBodyForCase(
+  requestCase,
+  {
+    commitSha = COMMIT_SHA,
+    expectedBackstageBookerOpenApiDocument =
+      EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    prNumber = PR_NUMBER,
+  } = {}
+) {
   if (requestCase.expectedType === 'head') {
     return null;
   }
   const expectedBody = expectedNativePrPreviewResponseBody(requestCase, {
-    commitSha: COMMIT_SHA,
-    prNumber: PR_NUMBER,
+    commitSha,
+    expectedBackstageBookerOpenApiDocument,
+    prNumber,
   });
   if (
     requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -270,7 +282,11 @@ function responseHeadersForCase(
   };
 }
 
-function buildMockFetch(requestPlan, override = undefined) {
+function buildMockFetch(
+  requestPlan,
+  override = undefined,
+  expectedResponseOptions = undefined
+) {
   let requestIndex = 0;
   let monotonicTimeMs = 0;
   const calls = [];
@@ -303,7 +319,7 @@ function buildMockFetch(requestPlan, override = undefined) {
     if (requestCase.caseId === 'backstage-generation-route-budget') {
       monotonicTimeMs += 13_250;
     }
-    const body = responseBodyForCase(requestCase);
+    const body = responseBodyForCase(requestCase, expectedResponseOptions);
     const bodyBytes = Buffer.byteLength(body ?? '');
     const headers = responseHeadersForCase(requestCase, bodyBytes);
     const response = new Response(body, {
@@ -331,6 +347,8 @@ test('validates an exact native PR target without network access by default', as
       networkAttempted = true;
       throw new Error('network must remain disabled');
     },
+    expectedBackstageBookerOpenApiDocument:
+      EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
     localGitState: LOCAL_GIT_STATE,
   });
 
@@ -429,7 +447,7 @@ test('rejects dirty worktrees and non-canonical repositories', () => {
   );
 });
 
-test('reads exact candidate Git evidence without executing candidate files', () => {
+test('reads exact candidate Git evidence without executing candidate files', async () => {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'arcanos-preview-evidence-'));
   const runGit = (...args) => {
     const result = spawnSync('git', args, {
@@ -444,8 +462,21 @@ test('reads exact candidate Git evidence without executing candidate files', () 
     runGit('init');
     runGit('config', 'user.email', 'preview-evidence@example.invalid');
     runGit('config', 'user.name', 'Preview Evidence');
+    const evidenceDocument = structuredClone(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
+    );
+    evidenceDocument['x-exact-head-evidence'] = 'candidate-only';
+    mkdirSync(path.join(repositoryRoot, 'contracts'));
+    writeFileSync(
+      path.join(
+        repositoryRoot,
+        'contracts',
+        'backstage_booker.openapi.v1.json'
+      ),
+      JSON.stringify(evidenceDocument)
+    );
     writeFileSync(path.join(repositoryRoot, 'candidate.txt'), 'candidate evidence\n');
-    runGit('add', 'candidate.txt');
+    runGit('add', 'candidate.txt', 'contracts/backstage_booker.openapi.v1.json');
     runGit('commit', '-m', 'candidate evidence');
     runGit('remote', 'add', 'origin', 'https://github.com/pbjustin/Arcanos.git');
     const head = runGit('rev-parse', 'HEAD').toLowerCase();
@@ -459,6 +490,69 @@ test('reads exact candidate Git evidence without executing candidate files', () 
     evidenceArguments[evidenceArguments.indexOf('--commit-sha') + 1] = head;
     const parsed = parseNativePrPreviewE2eArguments(evidenceArguments);
     assert.equal(parsed.commitSha, head);
+    assert.deepEqual(
+      readExpectedBackstageBookerOpenApiDocument(repositoryRoot, head),
+      evidenceDocument
+    );
+    const liveEvidenceArguments = validArguments(
+      '--git-evidence-root',
+      repositoryRoot,
+      '--execute',
+      '--allow-network'
+    );
+    liveEvidenceArguments[
+      liveEvidenceArguments.indexOf('--commit-sha') + 1
+    ] = head;
+    const requestPlan = buildNativePrPreviewRequestPlan();
+    const exactHeadMock = buildMockFetch(
+      requestPlan,
+      (requestCase) => {
+        if (requestCase.caseId !== 'web-backstage-booker-openapi') {
+          return undefined;
+        }
+        const body = JSON.stringify(evidenceDocument);
+        const response = new Response(body, {
+          headers: responseHeadersForCase(
+            requestCase,
+            Buffer.byteLength(body)
+          ),
+          status: requestCase.expectedStatus,
+        });
+        Object.defineProperty(response, 'url', {
+          value: `${WEB_BASE_URL}${requestCase.path}`,
+        });
+        return response;
+      },
+      { commitSha: head }
+    );
+    const exactHeadResult = await runNativePrPreviewE2e({
+      args: liveEvidenceArguments,
+      fetchImpl: exactHeadMock.fetchImpl,
+      monotonicNow: exactHeadMock.monotonicNow,
+    });
+    assert.equal(
+      exactHeadResult.checks.find(({ caseId }) =>
+        caseId === 'web-backstage-booker-openapi'
+      )?.backstageBookerOpenApiVerified,
+      true
+    );
+
+    const trustedCopyMock = buildMockFetch(
+      requestPlan,
+      undefined,
+      { commitSha: head }
+    );
+    await assert.rejects(
+      runNativePrPreviewE2e({
+        args: liveEvidenceArguments,
+        fetchImpl: trustedCopyMock.fetchImpl,
+        monotonicNow: trustedCopyMock.monotonicNow,
+      }),
+      (error) =>
+        error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_BODY_MISMATCH'
+        && error.caseId === 'web-backstage-booker-openapi'
+    );
     assert.throws(
       () => readLocalGitState(repositoryRoot, path.dirname(repositoryRoot)),
       (error) => error instanceof NativePrPreviewE2eError
@@ -477,10 +571,11 @@ test('reads exact candidate Git evidence without executing candidate files', () 
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 131);
+  assert.equal(requestPlan.length, 133);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
+      && expectedType !== 'backstage-booker-openapi'
       && expectedType !== 'backstage-storyline-contract'
       && expectedType !== 'backstage-generation-contract'
       && expectedType !== 'mcp-body-cap-contract'
@@ -492,12 +587,37 @@ test('executes the bounded credential-free matrix and detects identity stability
       && caseId !== 'worker-research-denied'
       && caseId !== 'worker-backstage-storyline-denied'
       && caseId !== 'worker-backstage-generation-denied'
+      && caseId !== 'worker-backstage-booker-openapi-denied'
       && caseId !== 'worker-mcp-body-cap-denied'
       && caseId !== 'worker-dispatch-gpt-identifier-denied'
       && caseId !== 'worker-status-auth-boundary-denied'
       && caseId !== 'worker-self-heal-approval-denied'
     ).length,
     50
+  );
+  assert.deepEqual(
+    requestPlan
+      .filter(({ caseId }) => caseId.includes('backstage-booker-openapi'))
+      .map(({ caseId, expectedStatus, expectedType, role }) => ({
+        caseId,
+        expectedStatus,
+        expectedType,
+        role,
+      })),
+    [
+      {
+        caseId: 'web-backstage-booker-openapi',
+        expectedStatus: 200,
+        expectedType: 'backstage-booker-openapi',
+        role: 'web',
+      },
+      {
+        caseId: 'worker-backstage-booker-openapi-denied',
+        expectedStatus: 404,
+        expectedType: 'not-found',
+        role: 'worker',
+      },
+    ]
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -1524,6 +1644,8 @@ test('executes the bounded credential-free matrix and detects identity stability
 
   const result = await runNativePrPreviewE2e({
     args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument:
+      EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
     fetchImpl: mock.fetchImpl,
     localGitState: LOCAL_GIT_STATE,
     monotonicNow: mock.monotonicNow,
@@ -1532,14 +1654,30 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 131);
+  assert.equal(result.summary.requestsMade, 133);
   assert.equal(result.summary.simulatedAuthRequests, 23);
-  assert.equal(result.checks.length, 131);
+  assert.equal(result.checks.length, 133);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     23
   );
-  assert.equal(mock.requestCount, 131);
+  assert.equal(mock.requestCount, 133);
+  const backstageBookerOpenApiCheck = result.checks.find(({ caseId }) =>
+    caseId === 'web-backstage-booker-openapi'
+  );
+  assert.deepEqual(backstageBookerOpenApiCheck, {
+    backstageBookerOpenApiVerified: true,
+    bodySha256: backstageBookerOpenApiCheck.bodySha256,
+    caseId: 'web-backstage-booker-openapi',
+    httpStatus: 200,
+    method: 'GET',
+    pathTemplate: '/contracts/backstage_booker.openapi.v1.json',
+    responseBytes: Buffer.byteLength(JSON.stringify(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
+    )),
+    role: 'web',
+    simulatedAuth: false,
+  });
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'status-auth-before-parser'
@@ -1966,6 +2104,8 @@ test('rejects a cancellation proof that returns before its drain window', async 
   await assert.rejects(
     runNativePrPreviewE2e({
       args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
       fetchImpl: mock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
       monotonicNow: mock.monotonicNow,
@@ -2000,6 +2140,8 @@ test('rejects a Backstage generation proof that returns before the former direct
   await assert.rejects(
     runNativePrPreviewE2e({
       args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
       fetchImpl: mock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
       monotonicNow: mock.monotonicNow,
@@ -2009,6 +2151,114 @@ test('rejects a Backstage generation proof that returns before the former direct
       && error.code === 'NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_TOO_EARLY'
       && error.caseId === 'backstage-generation-route-budget'
   );
+});
+
+test('rejects Backstage Booker contract semantic drift at the deployed endpoint', async () => {
+  const mutationCases = [
+    [
+      'version',
+      (document) => {
+        document.info.version = '1.5.0';
+      },
+    ],
+    [
+      'managed result path',
+      (document) => {
+        delete document.paths[
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+        ];
+      },
+    ],
+    [
+      'managed bearer security',
+      (document) => {
+        document.paths[
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+        ].get.security = [];
+      },
+    ],
+    [
+      'managed job identifier format',
+      (document) => {
+        document.paths[
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+        ].get.parameters[0].schema.format = 'opaque';
+      },
+    ],
+    [
+      'managed wait bounds',
+      (document) => {
+        document.paths[
+          '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+        ].get.parameters[1].schema.maximum = 60_000;
+      },
+    ],
+    [
+      'legacy result path',
+      (document) => {
+        document.paths['/jobs/{jobId}/result'] = { get: {} };
+      },
+    ],
+    [
+      'legacy job token',
+      (document) => {
+        document.jobReadToken = 'forbidden';
+      },
+    ],
+    [
+      'legacy job token header',
+      (document) => {
+        document.jobReadTokenHeader = 'forbidden';
+      },
+    ],
+    [
+      'legacy stream field',
+      (document) => {
+        document.stream = true;
+      },
+    ],
+  ];
+
+  for (const [name, mutate] of mutationCases) {
+    const requestPlan = buildNativePrPreviewRequestPlan();
+    const mock = buildMockFetch(requestPlan, (requestCase) => {
+      if (requestCase.caseId !== 'web-backstage-booker-openapi') {
+        return undefined;
+      }
+      const document = structuredClone(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
+      );
+      mutate(document);
+      const body = JSON.stringify(document);
+      const response = new Response(body, {
+        headers: responseHeadersForCase(
+          requestCase,
+          Buffer.byteLength(body)
+        ),
+        status: requestCase.expectedStatus,
+      });
+      Object.defineProperty(response, 'url', {
+        value: `${WEB_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    });
+
+    await assert.rejects(
+      runNativePrPreviewE2e({
+        args: validArguments('--execute', '--allow-network'),
+        expectedBackstageBookerOpenApiDocument:
+          EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+        fetchImpl: mock.fetchImpl,
+        localGitState: LOCAL_GIT_STATE,
+        monotonicNow: mock.monotonicNow,
+      }),
+      (error) =>
+        error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_INVALID'
+        && error.caseId === 'web-backstage-booker-openapi',
+      name
+    );
+  }
 });
 
 test('rejects extra response fields and an incorrect media type', async () => {
@@ -2043,6 +2293,8 @@ test('rejects extra response fields and an incorrect media type', async () => {
   await assert.rejects(
     runNativePrPreviewE2e({
       args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
       fetchImpl: bodyMismatchMock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
       monotonicNow: bodyMismatchMock.monotonicNow,
@@ -2080,6 +2332,8 @@ test('rejects extra response fields and an incorrect media type', async () => {
   await assert.rejects(
     runNativePrPreviewE2e({
       args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
       fetchImpl: contentTypeMock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
       monotonicNow: contentTypeMock.monotonicNow,
@@ -2361,6 +2615,8 @@ test('rejects missing synthetic provenance and correlation or security header dr
     await assert.rejects(
       runNativePrPreviewE2e({
         args: validArguments('--execute', '--allow-network'),
+        expectedBackstageBookerOpenApiDocument:
+          EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
         fetchImpl: mock.fetchImpl,
         localGitState: LOCAL_GIT_STATE,
         monotonicNow: mock.monotonicNow,
@@ -2410,6 +2666,8 @@ test('rejects dispatch identifier reflection and invalid timestamp evidence', as
     await assert.rejects(
       runNativePrPreviewE2e({
         args: validArguments('--execute', '--allow-network'),
+        expectedBackstageBookerOpenApiDocument:
+          EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
         fetchImpl: mock.fetchImpl,
         localGitState: LOCAL_GIT_STATE,
         monotonicNow: mock.monotonicNow,
@@ -2441,6 +2699,8 @@ test('returns a stable case-scoped failure without consuming a mismatched body',
   await assert.rejects(
     runNativePrPreviewE2e({
       args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
       fetchImpl: mock.fetchImpl,
       localGitState: LOCAL_GIT_STATE,
       monotonicNow: mock.monotonicNow,

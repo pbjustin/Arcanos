@@ -15,7 +15,17 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 131;
+const MAX_REQUESTS = 133;
+const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
+const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
+  'contracts/backstage_booker.openapi.v1.json';
+const BACKSTAGE_BOOKER_OPENAPI_PATHS = Object.freeze([
+  '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result',
+  '/gpt-access/capabilities/v1/backstage-booker/run',
+  '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
+  '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
+  '/gpt/backstage-booker',
+]);
 const BACKSTAGE_GENERATION_REQUEST_TIMEOUT_MS = 20_000;
 const BACKSTAGE_GENERATION_MIN_RESPONSE_MS = 13_000;
 const RESEARCH_CANCELLATION_MIN_RESPONSE_MS = 300;
@@ -208,6 +218,37 @@ export function readLocalGitState(cwd = REPOSITORY_ROOT, expectedRoot = cwd) {
   };
 }
 
+export function readExpectedBackstageBookerOpenApiDocument(
+  gitEvidenceRoot,
+  commitSha
+) {
+  if (!COMMIT_PATTERN.test(commitSha ?? '')) {
+    fail('NATIVE_PR_PREVIEW_COMMIT_INVALID');
+  }
+  const source = runLocalGit(
+    ['show', commitSha + ':' + BACKSTAGE_BOOKER_OPENAPI_GIT_PATH],
+    gitEvidenceRoot
+  );
+  if (
+    Buffer.byteLength(source, 'utf8')
+      > MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES
+  ) {
+    fail('NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_SOURCE_TOO_LARGE');
+  }
+  try {
+    const document = JSON.parse(source);
+    if (!document || typeof document !== 'object' || Array.isArray(document)) {
+      fail('NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_SOURCE_INVALID');
+    }
+    return document;
+  } catch (error) {
+    if (error instanceof NativePrPreviewE2eError) {
+      throw error;
+    }
+    fail('NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_SOURCE_INVALID');
+  }
+}
+
 export function parseNativePrPreviewE2eArguments(
   args,
   { localGitState = undefined } = {}
@@ -297,6 +338,7 @@ export function parseNativePrPreviewE2eArguments(
     allowNetwork,
     commitSha,
     execute,
+    gitEvidenceRoot,
     maxResponseBytes: readInteger(
       values.get('--max-response-bytes') ?? String(DEFAULT_MAX_RESPONSE_BYTES),
       1_024,
@@ -601,6 +643,24 @@ export function buildNativePrPreviewRequestPlan() {
       method: 'GET',
       path: '/readyz',
       pathTemplate: '/readyz',
+      role: 'worker',
+    },
+    {
+      caseId: 'web-backstage-booker-openapi',
+      expectedStatus: 200,
+      expectedType: 'backstage-booker-openapi',
+      method: 'GET',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.path,
+      role: 'web',
+    },
+    {
+      caseId: 'worker-backstage-booker-openapi-denied',
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method: 'GET',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.path,
       role: 'worker',
     },
   ];
@@ -3136,6 +3196,11 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedWebReadiness(options);
     case 'worker-readiness':
       return expectedWorkerReadiness(options);
+    case 'backstage-booker-openapi':
+      if (!options.expectedBackstageBookerOpenApiDocument) {
+        fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+      }
+      return options.expectedBackstageBookerOpenApiDocument;
     case 'completed-status':
       return expectedStatusPayload(
         requestCase.fixtureId,
@@ -3259,6 +3324,63 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
 
   const body = parseJsonBody(bodyText, requestCase.caseId);
+  if (requestCase.expectedType === 'backstage-booker-openapi') {
+    const managedResultPath =
+      '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result';
+    const managedResultOperation = body?.paths?.[managedResultPath]?.get;
+    const managedResultParameters = Array.isArray(
+      managedResultOperation?.parameters
+    )
+      ? managedResultOperation.parameters
+      : [];
+    const jobIdParameter = managedResultParameters.find(
+      (parameter) => parameter?.name === 'jobId'
+    );
+    const waitParameter = managedResultParameters.find(
+      (parameter) => parameter?.name === 'waitForResultMs'
+    );
+    const observedPaths = body?.paths && typeof body.paths === 'object'
+      ? Object.keys(body.paths).sort()
+      : [];
+    if (
+      body?.openapi !== '3.1.0'
+      || body?.info?.version !== '1.6.0'
+      || !isDeepStrictEqual(observedPaths, BACKSTAGE_BOOKER_OPENAPI_PATHS)
+      || managedResultOperation?.operationId
+        !== 'getBackstageBookerJobResult'
+      || !isDeepStrictEqual(
+        managedResultOperation?.security,
+        [{ bearerAuth: [] }]
+      )
+      || jobIdParameter?.in !== 'path'
+      || jobIdParameter?.required !== true
+      || !isDeepStrictEqual(
+        jobIdParameter?.schema,
+        { format: 'uuid', type: 'string' }
+      )
+      || waitParameter?.in !== 'query'
+      || waitParameter?.required !== false
+      || !isDeepStrictEqual(
+        waitParameter?.schema,
+        {
+          default: 30_000,
+          maximum: 30_000,
+          minimum: 0,
+          type: 'integer',
+        }
+      )
+      || Object.hasOwn(body?.paths ?? {}, '/jobs/{jobId}/result')
+      || bodyText.includes('"jobReadToken"')
+      || bodyText.includes('"jobReadTokenHeader"')
+      || bodyText.includes('x-arcanos-job-read-token')
+      || bodyText.includes('"stream":')
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
     if (
@@ -3809,6 +3931,9 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }
       : {}),
+    ...(requestCase.expectedType === 'backstage-booker-openapi'
+      ? { backstageBookerOpenApiVerified: true }
+      : {}),
     ...(generationProofStartedAt === null
       ? {}
       : {
@@ -3820,14 +3945,24 @@ async function executeRequestCase(
 
 export async function runNativePrPreviewE2e({
   args,
+  expectedBackstageBookerOpenApiDocument = undefined,
   fetchImpl = globalThis.fetch,
   localGitState = undefined,
   monotonicNow = () => performance.now(),
 } = {}) {
-  const options = parseNativePrPreviewE2eArguments(
+  const parsedOptions = parseNativePrPreviewE2eArguments(
     args ?? [],
     localGitState === undefined ? {} : { localGitState }
   );
+  const options = {
+    ...parsedOptions,
+    expectedBackstageBookerOpenApiDocument:
+      expectedBackstageBookerOpenApiDocument
+      ?? readExpectedBackstageBookerOpenApiDocument(
+          parsedOptions.gitEvidenceRoot,
+          parsedOptions.commitSha
+        ),
+  };
   const requestPlan = buildNativePrPreviewRequestPlan();
   const target = {
     repository: options.repository,

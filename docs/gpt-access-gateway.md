@@ -67,9 +67,9 @@ and generation, a verified copy establishes request-local authorization for
 private Notion context; it never authorizes a mutation. Non-authoritative direct
 callers keep the existing public non-Notion generation behavior, while
 authority-mode queries and generation fail closed without verified provenance.
-The tracked `contracts/backstage_booker.openapi.v1.json` intentionally remains
-the `1.5.0` direct-client compatibility base/projection input. Builder imports
-the live no-store `1.6.0` endpoint rather than that tracked file directly.
+The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
+Builder `1.6.0` contract, and the live no-store endpoint serves it directly.
+Generic job clients use the separate job-result/status capability contracts.
 
 The legacy supplement requires separate outbound
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and exact-universe page mapping values

@@ -1,5 +1,7 @@
 import { afterAll, beforeAll } from '@jest/globals';
 import express from 'express';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import request from 'supertest';
 
 import { resetGptModuleMapCache } from '../src/platform/runtime/gptRouterConfig.js';
@@ -136,6 +138,10 @@ describe('custom GPT OpenAPI contract route', () => {
   });
 
   it('serves the dedicated Backstage Booker builder contract with no-store caching', async () => {
+    const canonicalContract = JSON.parse(readFileSync(
+      join(process.cwd(), 'contracts/backstage_booker.openapi.v1.json'),
+      'utf8'
+    ));
     const response = await request(buildApp())
       .get('/contracts/backstage_booker.openapi.v1.json');
 
@@ -146,6 +152,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
+    expect(response.body).toEqual(canonicalContract);
     expect(response.body.openapi).toBe('3.1.0');
     expect(response.body.info?.version).toBe('1.6.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
@@ -211,6 +218,16 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(acceptedSchema?.properties).not.toHaveProperty('jobReadToken');
     expect(acceptedSchema?.properties).not.toHaveProperty('jobReadTokenHeader');
     expect(acceptedSchema?.properties).not.toHaveProperty('stream');
+    expect(acceptedSchema?.properties?.status?.enum).toEqual([
+      'queued',
+      'running',
+      'timeout',
+    ]);
+    expect(acceptedSchema?.properties).toEqual(expect.objectContaining({
+      jobStatus: expect.objectContaining({ type: 'string' }),
+      lifecycleStatus: expect.objectContaining({ type: 'string' }),
+      timedOut: expect.objectContaining({ type: 'boolean' }),
+    }));
     expect(acceptedSchema?.properties?.poll?.description).toContain(
       'getBackstageBookerJobResult'
     );
@@ -262,6 +279,14 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}/result']);
     expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.operationId).toBe('getJobResult');
+    expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.parameters).toEqual(
+      expect.arrayContaining([{ $ref: '#/components/parameters/JobReadToken' }])
+    );
+    expect(response.body.components?.parameters?.JobReadToken).toMatchObject({
+      name: 'x-arcanos-job-read-token',
+      in: 'header',
+      required: true,
+    });
     expect(response.body.components?.schemas?.JobResultLookup?.required).toEqual(
       expect.arrayContaining(['jobId', 'poll', 'stream'])
     );
@@ -279,6 +304,14 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}']);
     expect(response.body.paths?.['/jobs/{jobId}']?.get?.operationId).toBe('getJobStatus');
+    expect(response.body.paths?.['/jobs/{jobId}']?.get?.parameters).toEqual(
+      expect.arrayContaining([{ $ref: '#/components/parameters/JobReadToken' }])
+    );
+    expect(response.body.components?.parameters?.JobReadToken).toMatchObject({
+      name: 'x-arcanos-job-read-token',
+      in: 'header',
+      required: true,
+    });
     expect(response.body.components?.schemas?.JobStatus?.required).toEqual(
       expect.arrayContaining(['id', 'jobId', 'poll', 'stream'])
     );

@@ -96,11 +96,11 @@ If failing, inspect Railway build/deploy logs first.
   intentionally keep generation database-only. If Builder omits the bearer on
   `runBackstageBooker`, deploy and re-import schema `1.6.0` from the live
   no-store contract endpoint, verify the operation declares `bearerAuth`, and
-  resave the Action. Do not import the tracked `1.5.0` compatibility base or
-  weaken the backend gate.
+  resave the Action. The endpoint serves the tracked canonical `1.6.0` Builder
+  contract directly; do not weaken the backend gate.
 - Backstage Booker accepted generation asks for `jobReadToken`, follows
   `/jobs/{jobId}/result`, or tries an SSE stream: the Builder is using the
-  direct-client compatibility contract or stale instructions. Re-import the
+  generic job contract or stale instructions. Re-import the
   live `1.6.0` schema and verify `getBackstageBookerJobResult` uses
   `/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` with the
   saved bearer, returns no dynamic token or stream, and is called with the exact

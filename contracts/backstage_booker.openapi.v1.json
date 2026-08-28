@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.5.0",
-    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for scoped continuity queries, generation, simulation, exact reads, and canon writes; production-sized generation is durably queued and retrieved with a job-specific read capability. Only canon writes require ChatGPT's consequential-action approval banner."
+    "version": "1.6.0",
+    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for continuity queries, generation, simulation, exact reads, queued-result continuation, and canon writes. Production-sized generation is durably queued; the same managed bearer retrieves its result without forwarding a dynamic job token. Only canon writes require ChatGPT's consequential-action approval banner."
   },
   "servers": [
     {
@@ -16,7 +16,7 @@
       "post": {
         "operationId": "runBackstageBooker",
         "summary": "Query, generate, or simulate with Backstage Booker",
-        "description": "Run one non-persistent Booker action with the configured bearer. Continuity and simulation remain synchronous. Heavy booking generation may override executionMode=sync and return 202; poll getBackstageBookerJobResult with its jobReadToken. Canon writes use writeBackstageCanon.",
+        "description": "Run continuity, generation, or simulation with the Action bearer. Continuity and simulation stay synchronous. Generation may return HTTP 202: retain jobId, call getBackstageBookerJobResult with the same bearer until terminal, and never resubmit the active job. Use writeBackstageCanon for writes.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -100,7 +100,7 @@
             }
           },
           "202": {
-            "description": "Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it; poll the returned path with the job-specific read token.",
+            "description": "Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it. Call getBackstageBookerJobResult with the returned jobId; the configured bearer authenticates continuation.",
             "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/BackstageAsyncAcceptedResponse" } }
@@ -108,6 +108,16 @@
           },
           "400": {
             "description": "The public action or its payload was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A presented Backstage Booker bearer credential was invalid, malformed, or duplicated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -199,16 +209,40 @@
         }
       }
     },
-    "/jobs/{jobId}/result": {
+    "/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result": {
       "get": {
         "operationId": "getBackstageBookerJobResult",
         "summary": "Retrieve queued Backstage Booker generation",
-        "description": "Read one accepted booking job with its returned job-specific capability. This never creates or retries work; invalid capabilities are concealed as not_found.",
+        "description": "Use the exact jobId returned by runBackstageBooker. The configured Action bearer authenticates automatically. This route never creates, retries, or replaces work. If status remains pending, call getBackstageBookerJobResult again; never resubmit runBackstageBooker for the active job.",
         "x-openai-isConsequential": false,
-        "security": [],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
-          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-          { "$ref": "#/components/parameters/JobReadToken" }
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "description": "Exact jobId returned by runBackstageBooker.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "waitForResultMs",
+            "in": "query",
+            "required": false,
+            "description": "Bounded server-side wait for the existing queued job. Use 30000. A pending response may be queried again without creating replacement work.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000,
+              "default": 30000
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -219,15 +253,30 @@
             }
           },
           "400": {
-            "description": "The job identifier is invalid.",
+            "description": "The job identifier, wait bound, query shape, or request body is invalid.",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
             }
           },
-          "503": {
-            "description": "Durable job reads or protected Booker result materialization are unavailable.",
+          "401": {
+            "description": "The dedicated Backstage Booker bearer credential is missing or invalid.",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/BackstageJobReadUnavailable" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
+            }
+          },
+          "429": {
+            "description": "The authenticated Backstage Booker request budget was exceeded.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/RateLimitResponse" } }
+            }
+          },
+          "503": {
+            "description": "Backstage Booker authentication, durable job reads, or protected result materialization is unavailable.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
             }
           }
         }
@@ -746,21 +795,12 @@
     }
   },
   "components": {
-    "parameters": {
-      "JobReadToken": {
-        "name": "x-arcanos-job-read-token",
-        "in": "header",
-        "required": true,
-        "description": "Exact job-specific capability returned as jobReadToken. Never send it in a query string, body, or log.",
-        "schema": { "type": "string", "pattern": "^v1\\.[A-Za-z0-9_-]{43}$" }
-      }
-    },
     "securitySchemes": {
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Opaque Backstage Booker access token",
-        "description": "Required by this configured Action for Backstage continuity queries, generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
+        "description": "Required by this configured Action for Backstage continuity queries, generation, simulation, exact reads, queued-result continuation, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
       }
     },
     "headers": {
@@ -785,29 +825,35 @@
       "BackstageAsyncAcceptedResponse": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["ok", "status", "jobId", "poll", "jobReadToken", "jobReadTokenHeader"],
+        "description": "Accepted Backstage Booker generation. Builder continuation uses jobId plus the managed bearer-authenticated getBackstageBookerJobResult operation. Dynamic job-token forwarding and async stream URLs are intentionally absent from this Builder contract.",
+        "required": ["ok", "status", "jobId", "poll"],
         "properties": {
           "ok": { "type": "boolean", "const": true },
-          "status": { "type": "string", "enum": ["queued", "running"] },
+          "status": { "type": "string", "enum": ["queued", "running", "timeout"] },
           "jobId": { "type": "string" },
-          "poll": { "type": "string" },
-          "stream": { "type": "string" },
-          "jobReadToken": { "type": "string", "pattern": "^v1\\.[A-Za-z0-9_-]{43}$" },
-          "jobReadTokenHeader": { "type": "string", "const": "x-arcanos-job-read-token" },
+          "jobStatus": { "type": "string" },
+          "lifecycleStatus": { "type": "string" },
+          "poll": {
+            "type": "string",
+            "description": "Managed-bearer result path for getBackstageBookerJobResult. Call that operation with the returned jobId."
+          },
+          "timedOut": { "type": "boolean" },
           "deduped": { "type": "boolean" }
         }
       },
       "BackstageJobResultLookup": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["jobId", "status", "jobStatus", "lifecycleStatus", "poll", "stream", "result", "error"],
+        "required": ["jobId", "status", "jobStatus", "lifecycleStatus", "poll", "result", "error"],
         "properties": {
           "jobId": { "type": "string" },
           "status": { "type": "string", "enum": ["pending", "completed", "failed", "expired", "not_found"] },
           "jobStatus": { "type": ["string", "null"] },
           "lifecycleStatus": { "type": "string" },
-          "poll": { "type": "string" },
-          "stream": { "type": "string" },
+          "poll": {
+            "type": "string",
+            "description": "Managed-bearer path for the same getBackstageBookerJobResult operation. Reuse it while status is pending."
+          },
           "result": {},
           "error": {}
         }

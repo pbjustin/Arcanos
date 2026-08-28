@@ -85,8 +85,8 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - `https://<your-backend>/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
-The Backstage Booker builder uses the live no-store `1.6.0` projection of its
-tracked `1.5.0` direct-client compatibility base. It exposes one
+The Backstage Booker builder uses the canonical `1.6.0` contract, served
+directly by its live no-store endpoint. It exposes one
 Builder-authenticated continuity-query/generation/simulation operation, one
 poll-only managed queued-result read, two protected non-consequential exact
 domain reads, and one consequential canon-write operation without exposing
@@ -376,15 +376,14 @@ bypass a missing/stale index through legacy state. Answer generation performs
 one compact retry only when the provider reports max-output exhaustion; it does
 not retry other provider failures. A second length exhaustion or an enforceable
 exact/maximum compact-contract violation returns the sanitized incomplete-output
-error without a third generation attempt. The served schema `1.6.0` materializes
+error without a third generation attempt. The canonical schema `1.6.0` materializes
 these public payload/result fields, declares the bearer and authority-specific
-errors, and moves async-result polling to the managed-bearer namespace. The
-tracked `1.5.0` file remains the direct-client compatibility base. Stop all new
-generation and drain legacy continuations before the cutover; then remove old
-web replicas, deploy the projecting backend, immediately re-import its live
-no-store endpoint into the existing Builder Action, and reopen generation only
-after both sides are verified. Neither schema version is continuation-compatible
-with the other backend version during the interval.
+errors, and uses the managed-bearer namespace for async-result polling. The
+tracked file and served endpoint are the same Builder contract. After a contract
+revision is deployed, a human operator must refresh or re-import the live
+no-store endpoint into the existing Builder Action; repository changes do not
+update that Action automatically. Generic clients retain their separate
+job-result/status contracts and capability-token continuation.
 
 See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the
 end-user action guide, exact Notion backend-query examples, Builder instructions,

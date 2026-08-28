@@ -23,6 +23,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
+  NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -6732,6 +6733,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path}`,
@@ -7041,6 +7043,16 @@ export function createNativePrPreviewApplication(
       trustScope: NATIVE_PR_PREVIEW_TRUST_SCOPE,
     });
   });
+
+  app.get(
+    NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path,
+    (_request, response) => {
+      response.setHeader('Cache-Control', 'no-store, max-age=0');
+      response.json(
+        NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.document
+      );
+    }
+  );
 
   app.use((request, response, next) => {
     if (request.method !== 'POST') {

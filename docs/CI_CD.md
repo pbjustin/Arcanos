@@ -418,7 +418,7 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 131-request
+evidence, not Railway control-plane provenance. The current fixed 133-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
@@ -432,7 +432,9 @@ worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, one canon-summary pagination case, two
 sealed dispatch GPT identifier boundary cases, one worker-role dispatch
 selector denial, one sealed status auth-before-parser case (the twenty-first
-`simulatedAuth` request), and one worker-role status selector denial.
+`simulatedAuth` request), one worker-role status selector denial, one exact
+Backstage Booker Builder contract GET deep-compared with bounded JSON from the
+revalidated exact commit, and one worker-role denial for that contract path.
 The failure-telemetry selector executes the exact semantic-digest-pinned pure
 projection used by the production partition worker over a valid root-ID-alias
 configuration and a maximum 512-failure server-owned input. The verifier pins
