@@ -113,7 +113,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const crlfContractText = contractText.replace(/\r?\n/gu, '\r\n');
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.5.0');
+    expect(contract.info.version).toBe('1.6.0');
     expect(Buffer.byteLength(contractText, 'utf8')).toBeLessThanOrEqual(110_000);
     expect(Buffer.byteLength(crlfContractText, 'utf8')).toBeLessThanOrEqual(110_000);
     expect(contract.servers).toEqual([
@@ -125,7 +125,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(contract.security).toBeUndefined();
     expect(Object.keys(contract.paths)).toEqual([
       '/gpt/backstage-booker',
-      '/jobs/{jobId}/result',
+      '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result',
       '/gpt-access/capabilities/v1/backstage-booker/run',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}',
       '/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary',
@@ -241,6 +241,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '200',
       '202',
       '400',
+      '401',
       '404',
       '409',
       '413',
@@ -250,9 +251,23 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '504',
     ]);
     expect(publicOperation.responses['202']).toMatchObject({
+      description: expect.stringContaining('Do not resubmit'),
       content: {
         'application/json': {
           schema: { $ref: '#/components/schemas/BackstageAsyncAcceptedResponse' },
+        },
+      },
+    });
+    expect(publicOperation.responses['202'].description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    expect(publicOperation.responses['202'].description).toContain(
+      'configured bearer authenticates continuation'
+    );
+    expect(publicOperation.responses['401']).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
         },
       },
     });
@@ -266,18 +281,52 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         },
       },
     });
-    const resultOperation = contract.paths['/jobs/{jobId}/result'].get;
+    const resultOperation = contract.paths[
+      '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
+    ].get;
     expect(resultOperation.operationId).toBe('getBackstageBookerJobResult');
-    expect(resultOperation.security).toEqual([]);
+    expect(resultOperation.security).toEqual([{ bearerAuth: [] }]);
     expect(resultOperation['x-openai-isConsequential']).toBe(false);
-    expect(resultOperation.parameters).toEqual(expect.arrayContaining([
-      { $ref: '#/components/parameters/JobReadToken' },
-    ]));
-    expect(contract.components.parameters.JobReadToken).toMatchObject({
-      name: 'x-arcanos-job-read-token',
-      in: 'header',
-      required: true,
-    });
+    expect(resultOperation.description).toContain('exact jobId');
+    expect(resultOperation.description).toContain(
+      'configured Action bearer authenticates automatically'
+    );
+    expect(resultOperation.description).toContain(
+      'never creates, retries, or replaces work'
+    );
+    expect(resultOperation.description).toContain(
+      'call getBackstageBookerJobResult again'
+    );
+    expect(resultOperation.description).toContain(
+      'never resubmit runBackstageBooker'
+    );
+    expect(resultOperation.parameters).toEqual([
+      expect.objectContaining({
+        name: 'jobId',
+        in: 'path',
+        required: true,
+        schema: { type: 'string', format: 'uuid' },
+      }),
+      expect.objectContaining({
+        name: 'waitForResultMs',
+        in: 'query',
+        required: false,
+        schema: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 30000,
+          default: 30000,
+        },
+      }),
+    ]);
+    expect(Object.keys(resultOperation.responses)).toEqual([
+      '200',
+      '400',
+      '401',
+      '429',
+      '503',
+    ]);
+    expect(contract.components.parameters).toBeUndefined();
 
     const validateAccepted = compileComponent(
       contract,
@@ -285,14 +334,38 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     );
     expect(validateAccepted({
       ok: true,
-      status: 'queued',
+      status: 'timeout',
       jobId: '11111111-1111-4111-8111-111111111111',
-      poll: '/jobs/11111111-1111-4111-8111-111111111111/result',
-      stream: '/jobs/11111111-1111-4111-8111-111111111111/stream',
-      jobReadToken: `v1.${'a'.repeat(43)}`,
-      jobReadTokenHeader: 'x-arcanos-job-read-token',
+      jobStatus: 'running',
+      lifecycleStatus: 'active',
+      poll:
+        '/gpt-access/capabilities/v1/backstage-booker/jobs/11111111-1111-4111-8111-111111111111/result',
+      timedOut: true,
       deduped: false,
     })).toBe(true);
+    const acceptedSchema = contract.components.schemas.BackstageAsyncAcceptedResponse;
+    expect(acceptedSchema.required).toEqual(['ok', 'status', 'jobId', 'poll']);
+    expect(acceptedSchema.properties.status.enum).toEqual([
+      'queued',
+      'running',
+      'timeout',
+    ]);
+    expect(acceptedSchema.properties).not.toHaveProperty('jobReadToken');
+    expect(acceptedSchema.properties).not.toHaveProperty('jobReadTokenHeader');
+    expect(acceptedSchema.properties).not.toHaveProperty('stream');
+    expect(acceptedSchema.properties.poll.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    const resultSchema = contract.components.schemas.BackstageJobResultLookup;
+    expect(resultSchema.required).not.toContain('stream');
+    expect(resultSchema.properties).not.toHaveProperty('stream');
+    expect(resultSchema.properties.poll.description).toContain(
+      'getBackstageBookerJobResult'
+    );
+    expect(contractText).not.toContain('jobReadToken');
+    expect(contractText).not.toContain('jobReadTokenHeader');
+    expect(contractText).not.toContain('x-arcanos-job-read-token');
+    expect(contractText).not.toContain('"stream"');
 
     const canonOperation = contract.paths[
       '/gpt-access/capabilities/v1/backstage-booker/run'
@@ -395,7 +468,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
         scheme: 'bearer',
         bearerFormat: 'Opaque Backstage Booker access token',
         description:
-          'Required by this configured Action for Backstage continuity queries, generation, simulation, exact reads, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
+          'Required by this configured Action for Backstage continuity queries, generation, simulation, exact reads, queued-result continuation, and canon writes. Configure ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
       },
     });
 
