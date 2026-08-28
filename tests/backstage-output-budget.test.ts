@@ -10,7 +10,9 @@ import {
   buildBackstageOutputBudgetCompletionInstruction,
   buildBackstageOutputBudgetTelemetry,
   resolveBackstageOutputBudget,
+  resolveBackstageOutputRecoveryMode,
   resolveBackstageRequestedOutputFormat,
+  resolveBackstageResponseFormat,
   type BackstageOutputBudgetInput,
 } from '../src/shared/backstage/backstageOutputBudget.js';
 
@@ -178,6 +180,34 @@ describe('Backstage workload-aware output budget', () => {
     expect(resolveBackstageOutputBudget(input).tokenLimit).toBeGreaterThanOrEqual(
       BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
     );
+  });
+
+  it('keeps promoted capacity separate from explicit compact presentation', () => {
+    expect(resolveBackstageResponseFormat({
+      requestedFormat: 'structured_booking',
+      boundedReviewMode: false,
+      directAnswerMode: true,
+      explicitCompactItemCount: true,
+      completeBookingContainerComponentCount: false,
+      explicitCompactOutputRequest: false,
+      requestedOutputShapeInstructionPresent: true,
+    })).toBe('compact_direct');
+  });
+
+  it('keeps complete-container component counts structured by default', () => {
+    expect(resolveBackstageResponseFormat({
+      requestedFormat: 'structured_booking',
+      boundedReviewMode: false,
+      directAnswerMode: true,
+      explicitCompactItemCount: true,
+      completeBookingContainerComponentCount: true,
+      explicitCompactOutputRequest: false,
+      requestedOutputShapeInstructionPresent: false,
+    })).toBe('structured_booking');
+    expect(resolveBackstageOutputRecoveryMode({
+      responseFormat: 'structured_booking',
+      completeBookingContainerComponentCount: true,
+    })).toBe('structured');
   });
 
   it('cannot exceed the application-wide finite maximum', () => {

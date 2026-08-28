@@ -127,12 +127,21 @@ import {
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
+  buildBackstageBookerStructuredOutputRetryInstruction,
   buildBackstageBookerRequestedOutputShapeInstruction,
   parseBackstageBookerCompactRetryNumberedParagraphs,
   resolveBackstageCompactOutputContract,
   runBackstageBookerCompactOutputAttempts,
   type BackstageCompactOutputContract,
 } from './shared/backstage/backstageCompactOutputContract.js';
+import {
+  BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+  resolveBackstageOutputBudget,
+  resolveBackstageOutputRecoveryMode,
+  resolveBackstageRequestedOutputFormat,
+  resolveBackstageResponseFormat,
+  type BackstageOutputFormat,
+} from './shared/backstage/backstageOutputBudget.js';
 import {
   buildBackstageContinuityPolicyPrompt,
   buildBackstageContinuityResponse,
@@ -248,6 +257,9 @@ import {
   BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION,
   buildBackstageBookerDirectAnswerSystemPolicy,
 } from './services/backstageBookerClear.js';
+import {
+  shouldPreferDirectAnswerMode,
+} from './services/directAnswerMode.js';
 import {
   pollQueuedJobCompletion,
   resolveQueuedJobPollIntervalMs,
@@ -4256,6 +4268,13 @@ async function exerciseBackstageCompactRetryScenario(params: {
 async function runBackstageCompactRetryFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
+  // The trusted lifecycle verifier is pinned to the base revision. Keep this
+  // established response stable while making its deployed PR-head execution
+  // fail closed unless the new production output contracts also pass.
+  runBackstageProductionOutputContractsFixture(
+    NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+      .productionOutputContracts
+  );
   const tokenLimit = 240;
   const exactPrompt =
     'Generate exactly two match options for Raw, one numbered paragraph per option, at most 20 words each.';
@@ -4443,6 +4462,212 @@ async function runBackstageCompactRetryFixture(
     protectedEffectsEnabled: false,
     providerBoundaryReached: false,
     schemaVersion: 1,
+  };
+}
+
+interface BackstageProductionOutputScenarioInput {
+  action: 'generateBooking' | 'generateBookingWithHRC';
+  notionAuthorityContext?: boolean;
+  prompt: string;
+}
+
+function runBackstageProductionOutputScenario(
+  input: BackstageProductionOutputScenarioInput
+): Record<string, unknown> {
+  const requestedTokenLimit = 2_400;
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    input.prompt,
+    requestedTokenLimit
+  );
+  const directAnswerMode = shouldPreferDirectAnswerMode(input.prompt);
+  const boundedReviewMode = shouldUseBoundedBackstageReviewMode(input.prompt);
+  const requestedFormatPreference: BackstageOutputFormat = boundedReviewMode
+    ? 'bounded_review'
+    : directAnswerMode
+      ? 'compact_direct'
+      : 'structured_booking';
+  const explicitCompactItemCount =
+    compactOutputContract.itemPolicy.mode !== 'default';
+  const requestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(
+      input.prompt,
+      compactOutputContract
+    );
+  const requestedFormat = resolveBackstageRequestedOutputFormat({
+    action: input.action,
+    profile: 'queued_generation',
+    requestedFormat: requestedFormatPreference,
+    promptCodeUnits: input.prompt.length,
+    retrievedContextCodeUnits: input.notionAuthorityContext ? 200 : 0,
+    expectedOutputWords: compactOutputContract.wordBounds.totalWordLimit,
+    expectedItemCount: compactOutputContract.itemPolicy.budgetItemCount,
+    explicitCompactItemCount,
+    notionAuthorityContext: input.notionAuthorityContext === true,
+    completeBookingContainerComponentCount:
+      compactOutputContract.completeBookingContainerComponentCount,
+  });
+  const responseFormat = resolveBackstageResponseFormat({
+    requestedFormat,
+    boundedReviewMode,
+    directAnswerMode,
+    explicitCompactItemCount,
+    completeBookingContainerComponentCount:
+      compactOutputContract.completeBookingContainerComponentCount,
+    explicitCompactOutputRequest:
+      compactOutputContract.explicitCompactOutputRequest,
+    requestedOutputShapeInstructionPresent:
+      requestedOutputShapeInstruction !== null,
+  });
+  const outputBudget = resolveBackstageOutputBudget({
+    action: input.action,
+    profile: 'queued_generation',
+    requestedFormat,
+    requestedTokenLimit,
+    configuredWorkerTokenLimit:
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+    promptCodeUnits: input.prompt.length,
+    retrievedContextCodeUnits: input.notionAuthorityContext ? 200 : 0,
+    expectedOutputWords: compactOutputContract.wordBounds.totalWordLimit,
+    expectedItemCount: compactOutputContract.itemPolicy.budgetItemCount,
+    explicitCompactItemCount,
+    notionAuthorityContext: input.notionAuthorityContext === true,
+    completeBookingContainerComponentCount:
+      compactOutputContract.completeBookingContainerComponentCount,
+    model: 'gpt-5.6-terra',
+    modelStageTimeoutMs: 75_000,
+  });
+  const recoveryMode = resolveBackstageOutputRecoveryMode({
+    responseFormat,
+    completeBookingContainerComponentCount:
+      compactOutputContract.completeBookingContainerComponentCount,
+  });
+  const recoveryInstruction = recoveryMode === 'structured'
+    ? buildBackstageBookerStructuredOutputRetryInstruction()
+    : buildBackstageBookerCompactOutputRetryInstruction(
+        compactOutputContract
+      );
+  const recoveryInstructionVerified = recoveryMode === 'structured'
+    ? recoveryInstruction.includes('original hierarchy')
+      && recoveryInstruction.includes('component requirements')
+      && !recoveryInstruction.includes('numbered paragraphs')
+    : recoveryInstruction.includes('one compact paragraph per item')
+      && !recoveryInstruction.includes('original hierarchy');
+  const itemPolicy = compactOutputContract.itemPolicy;
+
+  return {
+    budgetClass: outputBudget.budgetClass,
+    budgetReason: outputBudget.reason,
+    capacityFormat: outputBudget.requestedFormat,
+    completeBookingContainerComponentCount:
+      compactOutputContract.completeBookingContainerComponentCount,
+    directAnswerMode,
+    enforceParsedItemContract:
+      !compactOutputContract.completeBookingContainerComponentCount
+      || responseFormat === 'compact_direct',
+    explicitCompactOutputRequest:
+      compactOutputContract.explicitCompactOutputRequest,
+    itemCount: 'count' in itemPolicy ? itemPolicy.count : null,
+    itemPolicyMode: itemPolicy.mode,
+    recoveryInstructionVerified,
+    recoveryMode,
+    requestedOutputShapeInstructionBound:
+      requestedOutputShapeInstruction !== null,
+    responseFormat,
+    tokenCap: outputBudget.tokenCap,
+    tokenLimit: outputBudget.tokenLimit,
+  };
+}
+
+function runBackstageProductionOutputContractsFixture(
+  fixture: string
+): Record<string, unknown> {
+  const exactCompact = runBackstageProductionOutputScenario({
+    action: 'generateBookingWithHRC',
+    prompt: [
+      'Answer directly. Generate exactly two match options for Raw.',
+      'Use one numbered paragraph per option, maximum 30 words each.',
+    ].join(' '),
+  });
+  const atMostCompact = runBackstageProductionOutputScenario({
+    action: 'generateBooking',
+    notionAuthorityContext: true,
+    prompt: [
+      'Answer directly. Give at most three booking ideas for Raw.',
+      'Use one numbered paragraph per idea, maximum 40 words each.',
+    ].join(' '),
+  });
+  const completeCard = runBackstageProductionOutputScenario({
+    action: 'generateBooking',
+    prompt:
+      'Answer directly. Book a complete Raw card with 3 matches and 2 segments.',
+  });
+  const commonCapacityValid = [
+    exactCompact,
+    atMostCompact,
+    completeCard,
+  ].every(scenario => (
+    scenario.capacityFormat === 'structured_booking'
+    && scenario.budgetClass === 'queued_extended'
+    && scenario.budgetReason === 'queued_structured_generation'
+    && scenario.tokenLimit === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && scenario.tokenCap === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && scenario.directAnswerMode === true
+    && scenario.recoveryInstructionVerified === true
+  ));
+  const contracts = {
+    atMostPresentationPreserved:
+      atMostCompact.itemPolicyMode === 'atMost'
+      && atMostCompact.itemCount === 3
+      && atMostCompact.responseFormat === 'compact_direct'
+      && atMostCompact.requestedOutputShapeInstructionBound === true
+      && atMostCompact.recoveryMode === 'compact'
+      && atMostCompact.enforceParsedItemContract === true,
+    completeCardHierarchyPreserved:
+      completeCard.completeBookingContainerComponentCount === true
+      && completeCard.explicitCompactOutputRequest === false
+      && completeCard.itemPolicyMode === 'preserve'
+      && completeCard.responseFormat === 'structured_booking'
+      && completeCard.requestedOutputShapeInstructionBound === false
+      && completeCard.recoveryMode === 'structured'
+      && completeCard.enforceParsedItemContract === false,
+    exactPresentationPreserved:
+      exactCompact.itemPolicyMode === 'exact'
+      && exactCompact.itemCount === 2
+      && exactCompact.responseFormat === 'compact_direct'
+      && exactCompact.requestedOutputShapeInstructionBound === true
+      && exactCompact.recoveryMode === 'compact'
+      && exactCompact.enforceParsedItemContract === true,
+    productionCapacitySelected: commonCapacityValid,
+  };
+  if (Object.values(contracts).some(value => !value)) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_PRODUCTION_OUTPUT_CONTRACT_INVALID'
+    );
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    outputContracts: {
+      contracts,
+      productionSharedBudgetCore: true,
+      productionSharedCompactContractCore: true,
+      productionSharedPresentationCore: true,
+      productionSharedRecoveryCore: true,
+      scenarios: {
+        atMostCompact,
+        completeCard,
+        exactCompact,
+      },
+    },
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
   };
 }
 
@@ -5676,6 +5901,11 @@ async function runBackstageGenerationFixture(
     case fixtures.compactRetry:
       return {
         payload: await runBackstageCompactRetryFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.productionOutputContracts:
+      return {
+        payload: runBackstageProductionOutputContractsFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.notionAuthorityRag:
@@ -7800,6 +8030,21 @@ export function createNativePrPreviewApplication(
                 .gptClientIdentityVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .gptClientIdentityProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .compactRetry
+            || fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .productionOutputContracts
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .outputCapacityPresentationVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .outputCapacityPresentationProofVersion
             );
           }
           return sendBoundedJsonResponse(

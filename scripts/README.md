@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 133-request plan without network access.
+untracked worktree, limits, and the fixed 134-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -59,7 +59,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 133-request probe
+the lifecycle reports the exact preview hosts, run the current 134-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -128,8 +128,9 @@ The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `review-completion-contract`, `compact-retry-contract`,
 `notion-authority-rag-contract`, `partition-failure-telemetry-contract`,
-`continuity-query-contract`, `continuity-subtree-contract`, and
-`managed-async-continuation-contract`, and `gpt-client-identity-contract`. The first
+`continuity-query-contract`, `continuity-subtree-contract`,
+`managed-async-continuation-contract`, `gpt-client-identity-contract`, and
+`production-output-contracts`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
@@ -204,6 +205,20 @@ changing its response shape so a trusted base-pinned lifecycle verifier still
 exercises both PR-head seams. This
 is synthetic component evidence: it does not call a model provider, the
 canonical route, HRC, RAG, a database, persistence, or protected effects.
+
+The production-output selector executes the semantic-digest-pinned compact
+contract parser plus the production-shared capacity, presentation, and recovery
+resolvers. Server-owned HRC-exact and Notion-authoritative at-most prompts prove
+that structured queued capacity and a 6,000-token finite cap do not erase an
+explicit compact response contract. A complete Raw card with nested match and
+segment counts proves that those counts select structured presentation, disable
+top-level item enforcement, and use hierarchy-preserving structured recovery.
+The established compact-retry selector runs the same proof fail-closed without
+changing its response body for the base-pinned lifecycle verifier. Both selectors
+carry `x-arcanos-preview-backstage-output-capacity-presentation-version`; the
+exact-head verifier reports `outputCapacityPresentationVerified: true` for the
+dedicated selector. This is credential-free production-core component evidence,
+not a canonical Booker route, provider, PostgreSQL, Notion, queue, or worker run.
 
 The managed-async continuation selector uses only a sealed fixture name at the
 HTTP boundary. Internally, server-owned synthetic credentials exercise the

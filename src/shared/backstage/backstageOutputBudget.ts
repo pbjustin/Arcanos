@@ -156,6 +156,18 @@ function isProductionSizedGeneration(
     );
 }
 
+export interface BackstageOutputPresentationInput {
+  requestedFormat: BackstageOutputFormat;
+  boundedReviewMode: boolean;
+  directAnswerMode: boolean;
+  explicitCompactItemCount: boolean;
+  completeBookingContainerComponentCount: boolean;
+  explicitCompactOutputRequest: boolean;
+  requestedOutputShapeInstructionPresent: boolean;
+}
+
+export type BackstageOutputRecoveryMode = 'compact' | 'structured';
+
 /**
  * Resolve capacity independently of the response presentation chosen by the
  * Booker service. A default, non-explicit item estimate and complete-container
@@ -199,6 +211,50 @@ export function resolveBackstageRequestedOutputFormat(
   )
     ? 'structured_booking'
     : 'compact_direct';
+}
+
+/**
+ * Resolve the user-visible response shape independently of the capacity class.
+ * Production signals may promote a queued request to structured capacity while
+ * an explicit exact/maximum compact contract remains the presentation surface.
+ * Complete booking-container component counts stay structured unless the
+ * caller separately and unambiguously constrains the returned list itself.
+ */
+export function resolveBackstageResponseFormat(
+  input: BackstageOutputPresentationInput
+): BackstageOutputFormat {
+  if (input.boundedReviewMode) {
+    return 'bounded_review';
+  }
+
+  const preserveExplicitCompactOutput = input.directAnswerMode
+    && input.explicitCompactItemCount
+    && (
+      !input.completeBookingContainerComponentCount
+      || input.explicitCompactOutputRequest
+      || input.requestedOutputShapeInstructionPresent
+    );
+  if (preserveExplicitCompactOutput) {
+    return 'compact_direct';
+  }
+  if (
+    input.directAnswerMode
+    && input.completeBookingContainerComponentCount
+  ) {
+    return 'structured_booking';
+  }
+  return input.requestedFormat;
+}
+
+/** Select the retry instruction family without reinterpreting component counts. */
+export function resolveBackstageOutputRecoveryMode(input: {
+  responseFormat: BackstageOutputFormat;
+  completeBookingContainerComponentCount: boolean;
+}): BackstageOutputRecoveryMode {
+  return input.completeBookingContainerComponentCount
+    && input.responseFormat === 'structured_booking'
+    ? 'structured'
+    : 'compact';
 }
 
 /**

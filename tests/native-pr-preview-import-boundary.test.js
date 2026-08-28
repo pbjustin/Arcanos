@@ -66,6 +66,14 @@ const BACKSTAGE_GENERATION_ERROR_URL = new URL(
   '../src/shared/backstage/backstageGenerationError.ts',
   import.meta.url
 );
+const BACKSTAGE_OUTPUT_BUDGET_URL = new URL(
+  '../src/shared/backstage/backstageOutputBudget.ts',
+  import.meta.url
+);
+const SHARED_CONSTANTS_URL = new URL(
+  '../src/shared/constants.ts',
+  import.meta.url
+);
 const BACKSTAGE_NOTION_PREVIEW_CANARY_URL = new URL(
   '../src/shared/backstage/backstageNotionPreviewCanary.ts',
   import.meta.url
@@ -913,6 +921,48 @@ describe('native PR preview import boundary', () => {
           expect.stringContaining('critical entry file semantic digest'),
         ])
       );
+    }
+  });
+
+  it('admits and pins the pure Backstage output capacity and presentation seam', async () => {
+    const reviewedFiles = [
+      'src/shared/backstage/backstageOutputBudget.ts',
+      'src/shared/constants.ts',
+    ];
+    const sources = [
+      await readNormalizedSource(BACKSTAGE_OUTPUT_BUDGET_URL),
+      await readNormalizedSource(SHARED_CONSTANTS_URL),
+    ];
+
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
+      expect.arrayContaining(reviewedFiles)
+    );
+    for (let index = 0; index < reviewedFiles.length; index += 1) {
+      expect(findUnsafeRuntimeSyntax(
+        reviewedFiles[index],
+        sources[index]
+      )).toEqual([]);
+    }
+
+    const semanticDrifts = [
+      replaceRequired(
+        sources[0],
+        "return 'compact_direct';",
+        "return 'structured_booking';"
+      ),
+      replaceRequired(
+        sources[1],
+        'MAX_SAFE_TOKENS: 8000',
+        'MAX_SAFE_TOKENS: 8001'
+      ),
+    ];
+    for (let index = 0; index < reviewedFiles.length; index += 1) {
+      expect(findUnsafeRuntimeSyntax(
+        reviewedFiles[index],
+        semanticDrifts[index]
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
     }
   });
 

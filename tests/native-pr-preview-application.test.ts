@@ -1109,6 +1109,9 @@ describe('native PR contained application', () => {
     const compactRetry = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.compactRetry });
+    const productionOutputContracts = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.productionOutputContracts });
     const notionAuthorityRag = await request(app)
       .post(contract.path)
       .send({ fixture: contract.fixtures.notionAuthorityRag });
@@ -1299,6 +1302,74 @@ describe('native PR contained application', () => {
       protectedEffectsEnabled: false,
       providerBoundaryReached: false,
       schemaVersion: 1,
+    });
+
+    const productionScenario = (overrides: Record<string, unknown>) => ({
+      budgetClass: 'queued_extended',
+      budgetReason: 'queued_structured_generation',
+      capacityFormat: 'structured_booking',
+      directAnswerMode: true,
+      recoveryInstructionVerified: true,
+      tokenCap: 6_000,
+      tokenLimit: 6_000,
+      ...overrides,
+    });
+    expect(productionOutputContracts.status).toBe(200);
+    expect(productionOutputContracts.body).toEqual({
+      accepted: true,
+      cacheBoundaryReached: false,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.productionOutputContracts,
+      outputContracts: {
+        contracts: {
+          atMostPresentationPreserved: true,
+          completeCardHierarchyPreserved: true,
+          exactPresentationPreserved: true,
+          productionCapacitySelected: true,
+        },
+        productionSharedBudgetCore: true,
+        productionSharedCompactContractCore: true,
+        productionSharedPresentationCore: true,
+        productionSharedRecoveryCore: true,
+        scenarios: {
+          atMostCompact: productionScenario({
+            completeBookingContainerComponentCount: false,
+            enforceParsedItemContract: true,
+            explicitCompactOutputRequest: false,
+            itemCount: 3,
+            itemPolicyMode: 'atMost',
+            recoveryMode: 'compact',
+            requestedOutputShapeInstructionBound: true,
+            responseFormat: 'compact_direct',
+          }),
+          completeCard: productionScenario({
+            completeBookingContainerComponentCount: true,
+            enforceParsedItemContract: false,
+            explicitCompactOutputRequest: false,
+            itemCount: null,
+            itemPolicyMode: 'preserve',
+            recoveryMode: 'structured',
+            requestedOutputShapeInstructionBound: false,
+            responseFormat: 'structured_booking',
+          }),
+          exactCompact: productionScenario({
+            completeBookingContainerComponentCount: false,
+            enforceParsedItemContract: true,
+            explicitCompactOutputRequest: false,
+            itemCount: 2,
+            itemPolicyMode: 'exact',
+            recoveryMode: 'compact',
+            requestedOutputShapeInstructionBound: true,
+            responseFormat: 'compact_direct',
+          }),
+        },
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      schemaVersion: 1,
+      workerBoundaryReached: false,
     });
 
     expect(notionAuthorityRag.status).toBe(200);
@@ -1597,6 +1668,7 @@ describe('native PR contained application', () => {
       hrcRetryCache,
       reviewCompletion,
       compactRetry,
+      productionOutputContracts,
       notionAuthorityRag,
       partitionFailureTelemetry,
       continuityQuery,
@@ -1635,10 +1707,18 @@ describe('native PR contained application', () => {
         contract.proofHeaders.partitionFailureTelemetryVersion
       ]
     ).toBe(contract.partitionFailureTelemetryProofVersion);
+    for (const response of [compactRetry, productionOutputContracts]) {
+      expect(
+        response.headers[
+          contract.proofHeaders.outputCapacityPresentationVersion
+        ]
+      ).toBe(contract.outputCapacityPresentationProofVersion);
+    }
     for (const response of [
       hrcRetryCache,
       reviewCompletion,
       compactRetry,
+      productionOutputContracts,
       notionAuthorityRag,
       partitionFailureTelemetry,
       continuityQuery,
@@ -1660,6 +1740,7 @@ describe('native PR contained application', () => {
       hrcRetryCache,
       reviewCompletion,
       compactRetry,
+      productionOutputContracts,
       partitionFailureTelemetry,
       continuityQuery,
       continuitySubtree,
@@ -1675,6 +1756,7 @@ describe('native PR contained application', () => {
       hrcRetryCache,
       reviewCompletion,
       compactRetry,
+      productionOutputContracts,
       notionAuthorityRag,
       continuityQuery,
       continuitySubtree,

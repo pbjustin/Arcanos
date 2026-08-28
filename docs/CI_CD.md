@@ -258,8 +258,9 @@ The exact `POST /backstage/generation-contract` surface accepts only the
 server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `review-completion-contract`, `compact-retry-contract`,
 `notion-authority-rag-contract`,
-`partition-failure-telemetry-contract`, `continuity-query-contract`, and
-`continuity-subtree-contract` selectors.
+`partition-failure-telemetry-contract`, `continuity-query-contract`,
+`continuity-subtree-contract`, `managed-async-continuation-contract`,
+`gpt-client-identity-contract`, and `production-output-contracts` selectors.
 The route-budget case uses the
 production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
@@ -310,8 +311,18 @@ coordinator and strict final validator across valid, malformed, under-count,
 over-count, word-overflow, second-length, and non-length outcomes without a
 third call. It is credential-free component evidence and does not call the
 canonical route, a model provider, HRC, RAG, a database, or persistence. The
-common generation dispatcher also executes the semantic-digest-pinned pure
-CLEAR policy composer shared with production before every one of the seven
+production-output selector executes the semantic-digest-pinned compact parser
+plus the production-shared capacity, presentation, and recovery resolvers over
+sealed HRC-exact, Notion-authoritative at-most, and complete-card
+nested-component prompts. It proves structured queued capacity can retain
+compact exact/maximum presentation, while complete-card component counts retain
+structured hierarchy and structured length recovery. The established
+compact-retry selector executes the same proof fail-closed without changing its
+body for the base-pinned verifier. The dedicated selector carries a versioned
+proof header and reports no provider, database, worker, or protected-effect
+boundary. The common generation dispatcher also executes the
+semantic-digest-pinned pure CLEAR policy composer shared with production before
+every one of the eleven
 selectors. It assembles server-owned authority and CLEAR policy through the
 production Trinity direct-answer message helper, forces one synthetic
 length-exhaustion retry, and requires the same single marker/version and five
@@ -418,14 +429,14 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 133-request
+evidence, not Railway control-plane provenance. The current fixed 134-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, ten sealed Backstage generation
-timeout/cache/review-completion/compact-retry/Notion-authority/failure-telemetry/continuity/managed-async/GPT-client-identity cases
+worker-role approval-contract denial, eleven sealed Backstage generation
+timeout/cache/review-completion/compact-retry/production-output/Notion-authority/failure-telemetry/continuity/managed-async/GPT-client-identity cases
 (the managed-async and GPT-client-identity cases are the twenty-second and
 twenty-third `simulatedAuth` requests), one
 worker-role Backstage generation denial, one sealed

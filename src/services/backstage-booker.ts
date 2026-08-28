@@ -111,7 +111,9 @@ import {
   buildBackstageOutputBudgetCompletionInstruction,
   buildBackstageOutputBudgetTelemetry,
   resolveBackstageOutputBudget,
+  resolveBackstageOutputRecoveryMode,
   resolveBackstageRequestedOutputFormat,
+  resolveBackstageResponseFormat,
   type BackstageOutputFormat,
 } from '@shared/backstage/backstageOutputBudget.js';
 import {
@@ -2547,14 +2549,6 @@ export async function generateBooking(
       input.prompt,
       preliminaryCompactOutputContract
     );
-  const preserveExplicitCompactOutput = directAnswerMode
-    && !boundedReviewMode
-    && explicitCompactItemCount
-    && (
-      !completeBookingContainerComponentCount
-      || preliminaryCompactOutputContract.explicitCompactOutputRequest
-      || preliminaryRequestedOutputShapeInstruction !== null
-    );
   const structuredPrompt: StructuredBookingPrompt = structuredScope
       ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
       : await (async (): Promise<StructuredBookingPrompt> => {
@@ -2591,13 +2585,17 @@ export async function generateBooking(
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
     completeBookingContainerComponentCount,
   });
-  const responseFormat: BackstageOutputFormat = boundedReviewMode
-    ? 'bounded_review'
-    : directAnswerMode && preserveExplicitCompactOutput
-      ? 'compact_direct'
-      : directAnswerMode && completeBookingContainerComponentCount
-        ? 'structured_booking'
-        : requestedFormat;
+  const responseFormat = resolveBackstageResponseFormat({
+    requestedFormat,
+    boundedReviewMode,
+    directAnswerMode,
+    explicitCompactItemCount,
+    completeBookingContainerComponentCount,
+    explicitCompactOutputRequest:
+      preliminaryCompactOutputContract.explicitCompactOutputRequest,
+    requestedOutputShapeInstructionPresent:
+      preliminaryRequestedOutputShapeInstruction !== null,
+  });
   const enforceParsedItemContract =
     !completeBookingContainerComponentCount
     || responseFormat === 'compact_direct';
@@ -2700,8 +2698,11 @@ export async function generateBooking(
       input.prompt,
       compactOutputContract
     );
-  const outputRetryInstruction = completeBookingContainerComponentCount
-    && responseFormat === 'structured_booking'
+  const outputRecoveryMode = resolveBackstageOutputRecoveryMode({
+    responseFormat,
+    completeBookingContainerComponentCount,
+  });
+  const outputRetryInstruction = outputRecoveryMode === 'structured'
     ? buildBackstageBookerStructuredOutputRetryInstruction()
     : buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.

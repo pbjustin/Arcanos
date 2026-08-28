@@ -239,6 +239,17 @@ function responseHeadersForCase(
                     .gptClientIdentityProofVersion,
               }
             : {}),
+          ...(
+            requestCase.fixtureName === 'compactRetry'
+            || requestCase.fixtureName === 'productionOutputContracts'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.outputCapacityPresentationVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .outputCapacityPresentationProofVersion,
+              }
+            : {}
+          ),
         }
       : {}),
     ...(
@@ -571,7 +582,7 @@ test('reads exact candidate Git evidence without executing candidate files', asy
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 133);
+  assert.equal(requestPlan.length, 134);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -647,7 +658,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    10
+    11
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -1030,6 +1041,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   const compactRetryCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-compact-retry'
   );
+  const productionOutputContractsCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-production-output-contracts'
+  );
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
@@ -1046,6 +1060,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(hrcRetryCacheCase);
   assert.ok(reviewCompletionCase);
   assert.ok(compactRetryCase);
+  assert.ok(productionOutputContractsCase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(partitionFailureTelemetryCase);
   assert.ok(continuityQueryCase);
@@ -1200,6 +1215,57 @@ test('executes the bounded credential-free matrix and detects identity stability
     true
   );
   assert.equal(compactRetryPayload.compactRetry.syntheticAttemptCount, 2);
+  const productionOutputContractsPayload =
+    expectedNativePrPreviewResponseBody(productionOutputContractsCase, {
+      commitSha: COMMIT_SHA,
+      prNumber: PR_NUMBER,
+    });
+  assert.deepEqual(productionOutputContractsPayload.outputContracts.contracts, {
+    atMostPresentationPreserved: true,
+    completeCardHierarchyPreserved: true,
+    exactPresentationPreserved: true,
+    productionCapacitySelected: true,
+  });
+  assert.deepEqual(
+    productionOutputContractsPayload.outputContracts.scenarios.exactCompact,
+    {
+      budgetClass: 'queued_extended',
+      budgetReason: 'queued_structured_generation',
+      capacityFormat: 'structured_booking',
+      completeBookingContainerComponentCount: false,
+      directAnswerMode: true,
+      enforceParsedItemContract: true,
+      explicitCompactOutputRequest: false,
+      itemCount: 2,
+      itemPolicyMode: 'exact',
+      recoveryInstructionVerified: true,
+      recoveryMode: 'compact',
+      requestedOutputShapeInstructionBound: true,
+      responseFormat: 'compact_direct',
+      tokenCap: 6_000,
+      tokenLimit: 6_000,
+    }
+  );
+  assert.deepEqual(
+    productionOutputContractsPayload.outputContracts.scenarios.completeCard,
+    {
+      budgetClass: 'queued_extended',
+      budgetReason: 'queued_structured_generation',
+      capacityFormat: 'structured_booking',
+      completeBookingContainerComponentCount: true,
+      directAnswerMode: true,
+      enforceParsedItemContract: false,
+      explicitCompactOutputRequest: false,
+      itemCount: null,
+      itemPolicyMode: 'preserve',
+      recoveryInstructionVerified: true,
+      recoveryMode: 'structured',
+      requestedOutputShapeInstructionBound: false,
+      responseFormat: 'structured_booking',
+      tokenCap: 6_000,
+      tokenLimit: 6_000,
+    }
+  );
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
       commitSha: COMMIT_SHA,
@@ -1654,14 +1720,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 133);
+  assert.equal(result.summary.requestsMade, 134);
   assert.equal(result.summary.simulatedAuthRequests, 23);
-  assert.equal(result.checks.length, 133);
+  assert.equal(result.checks.length, 134);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     23
   );
-  assert.equal(mock.requestCount, 133);
+  assert.equal(mock.requestCount, 134);
   const backstageBookerOpenApiCheck = result.checks.find(({ caseId }) =>
     caseId === 'web-backstage-booker-openapi'
   );
@@ -1737,6 +1803,23 @@ test('executes the bounded credential-free matrix and detects identity stability
     )),
     role: 'web',
     simulatedAuth: true,
+  });
+  const productionOutputContractsCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-production-output-contracts'
+  );
+  assert.deepEqual(productionOutputContractsCheck, {
+    bodySha256: productionOutputContractsCheck.bodySha256,
+    caseId: 'backstage-generation-production-output-contracts',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    outputCapacityPresentationVerified: true,
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(
+      productionOutputContractsPayload
+    )),
+    role: 'web',
+    simulatedAuth: false,
   });
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
@@ -1868,12 +1951,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 11);
+  assert.equal(backstageGenerationCalls.length, 12);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    10
+    11
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2433,6 +2516,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .clearPolicyVersion
         ] = 'backstage-booker-clear-generation/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-compact-retry',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_CAPACITY_PRESENTATION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .outputCapacityPresentationVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-production-output-contracts',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_CAPACITY_PRESENTATION_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .outputCapacityPresentationVersion
+        ] = 'backstage-booker-output-capacity-presentation/drifted';
       },
     },
     {

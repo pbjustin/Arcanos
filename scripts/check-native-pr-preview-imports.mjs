@@ -62,6 +62,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageJobPayloadProtection.ts',
   'src/shared/backstage/backstageQueuedJobResultProtection.ts',
   'src/shared/backstage/backstageCompactOutputContract.ts',
+  'src/shared/backstage/backstageOutputBudget.ts',
   'src/shared/backstage/backstageContinuityQueryCore.ts',
   'src/shared/backstage/backstageGenerationError.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
@@ -96,6 +97,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/jobs/jobReadCapability.ts',
   'src/shared/hrcEvaluationPolicy.ts',
   'src/shared/researchRequest.ts',
+  'src/shared/constants.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
   'src/shared/security/sensitiveProviderStorage.ts',
@@ -726,6 +728,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     'f521ee2b59118a0b74c77f95e7dc23642f325eb8349776aa78066cd56d0901e6',
   ],
   [
+    'src/shared/backstage/backstageOutputBudget.ts',
+    '1552dbf2f01b21463949b45e311b42e45df9ae4147195a5c54c1ca1f2e38ed9c',
+  ],
+  [
     'src/shared/backstage/backstageContinuityQueryCore.ts',
     '65539139100841a1f96925747ce6382093611e7427155a31dd24ab290e6ab12e',
   ],
@@ -768,6 +774,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageReviewContract.ts',
     'e413bf2b84f358cc6dce8ad1ff39bfd9c4322629b55acbd94b74d2582ce6dcd5',
+  ],
+  [
+    'src/shared/constants.ts',
+    '43418a19a3fd513380dc4ce0eebd17e93f90964d21900fcd4b5c8169a8a162d1',
   ],
   [
     'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
