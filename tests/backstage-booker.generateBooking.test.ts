@@ -3,6 +3,9 @@ import {
   BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER,
   BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION,
 } from '../src/services/backstageBookerClear.js';
+import {
+  BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN,
+} from '../src/shared/backstage/backstageOutputBudget.js';
 
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
@@ -660,6 +663,288 @@ describe('backstage-booker generateBooking', () => {
       expect(serializedBudgetLog).not.toContain(privatePromptMarker);
       expect(serializedBudgetLog).not.toContain('gpt-5.1');
       expect(serializedBudgetLog).not.toContain('Rivalry matrix output');
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      'generateBooking',
+      `Answer directly. Give me one complete Raw card with every requested match, segment, finish, and production beat. ${'Production booking context. '.repeat(60)}`,
+    ],
+    [
+      'generateBookingWithHRC',
+      'Answer directly. Give me one complete Raw card with every requested match, segment, finish, and production beat.',
+    ],
+  ] as const)(
+    'preserves queued production output capacity and direct style for %s',
+    async (executionAction, prompt) => {
+      mockGetGPT5Model.mockReturnValue('gpt-5.1');
+      const loggerInfoSpy = jest
+        .spyOn(structuredLogger, 'info')
+        .mockImplementation(() => undefined);
+
+      try {
+        await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+          generateBooking(
+            prompt,
+            undefined,
+            executionAction
+          )
+        )).resolves.toBe('Rivalry matrix output');
+
+        const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+          input: { prompt: string; tokenLimit: number };
+          context: {
+            runOptions: {
+              directAnswerTokenCapOverride: number;
+              directAnswerTokenLimitOverride: number;
+            };
+          };
+        };
+        expect(request.input.tokenLimit).toBeGreaterThanOrEqual(
+          BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+        );
+        expect(request.context.runOptions.directAnswerTokenLimitOverride)
+          .toBe(request.input.tokenLimit);
+        expect(request.context.runOptions.directAnswerTokenCapOverride)
+          .toBe(request.input.tokenLimit);
+        expect(request.input.prompt).toContain('<<EXECUTION_MODE>>');
+        expect(request.input.prompt).not.toContain('<<PERSONA>>');
+        expect(request.input.prompt).toContain(
+          'Answer with the complete requested booking immediately, without a preamble'
+        );
+        expect(request.input.prompt).toContain(
+          'do not collapse an entire card into one output item'
+        );
+        expect(request.input.prompt).not.toContain(
+          'Return only 1 top-level numbered bullet'
+        );
+        expect(request.input.prompt).not.toContain(
+          'Return only 5 top-level numbered bullets'
+        );
+
+        const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+          ([event]) => event === 'backstage.generation.output_budget'
+        );
+        expect(outputBudgetLog?.[1]).toMatchObject({
+          action: executionAction,
+          profile: 'queued_generation',
+          requestedFormat: 'structured_booking',
+          budgetClass: 'queued_extended',
+          reason: 'queued_structured_generation',
+        });
+        expect((outputBudgetLog?.[1] as { tokenLimit: number }).tokenLimit)
+          .toBeGreaterThanOrEqual(BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN);
+      } finally {
+        loggerInfoSpy.mockRestore();
+      }
+    }
+  );
+
+  it('uses structured direct style when retrieved legacy context makes a queued booking production-sized', async () => {
+    const prompt = 'Answer directly. Give me one complete Raw card.';
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          name: `Production Roster Context ${'x'.repeat(6_200)}`,
+          overall: 90,
+          updated_at: new Date('2026-08-28T12:00:00.000Z'),
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking(prompt)
+      )).resolves.toBe('Rivalry matrix output');
+
+      expect(mockQuery).toHaveBeenCalledTimes(4);
+      const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+        input: { prompt: string; tokenLimit: number };
+      };
+      expect(request.input.tokenLimit).toBeGreaterThanOrEqual(
+        BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+      );
+      expect(request.input.prompt).toContain(
+        'Answer with the complete requested booking immediately, without a preamble'
+      );
+      expect(request.input.prompt).not.toContain(
+        'Return only 5 top-level numbered bullets'
+      );
+      const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+        ([event]) => event === 'backstage.generation.output_budget'
+      );
+      expect(outputBudgetLog?.[1]).toMatchObject({
+        requestedFormat: 'structured_booking',
+        budgetClass: 'queued_extended',
+        reason: 'queued_structured_generation',
+      });
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
+
+  it('uses structured capacity for a short complete-card request queued by the default item estimate', async () => {
+    const prompt = 'Answer directly. Give me one complete Raw card.';
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking(prompt)
+      )).resolves.toBe('Rivalry matrix output');
+
+      const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+        input: { prompt: string; tokenLimit: number };
+      };
+      expect(request.input.tokenLimit).toBeGreaterThanOrEqual(
+        BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+      );
+      expect(request.input.prompt).toContain(
+        'Answer with the complete requested booking immediately, without a preamble'
+      );
+      expect(request.input.prompt).not.toContain(
+        'Return only 5 top-level numbered bullets'
+      );
+      const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+        ([event]) => event === 'backstage.generation.output_budget'
+      );
+      expect(outputBudgetLog?.[1]).toMatchObject({
+        requestedFormat: 'structured_booking',
+        budgetClass: 'queued_extended',
+        reason: 'queued_structured_generation',
+      });
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['Give me 1 short bullet. Answer directly.', 96, 1],
+    ['Give me 3 booking ideas. Answer directly.', 240, 3],
+    ['Give me 5 possible matches. Answer directly.', 400, 5],
+  ] as const)(
+    'keeps a genuine queued compact request bounded: %s',
+    async (prompt, tokenLimit, itemCount) => {
+      mockGetGPT5Model.mockReturnValue('gpt-5.1');
+      const loggerInfoSpy = jest
+        .spyOn(structuredLogger, 'info')
+        .mockImplementation(() => undefined);
+
+      try {
+        await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+          generateBooking(prompt)
+        )).resolves.toBe('Rivalry matrix output');
+
+        const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+          input: { prompt: string; tokenLimit: number };
+        };
+        expect(request.input.tokenLimit).toBe(tokenLimit);
+        expect(request.input.prompt).toContain(
+          `Return only ${itemCount} top-level numbered bullet`
+        );
+        const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+          ([event]) => event === 'backstage.generation.output_budget'
+        );
+        expect(outputBudgetLog?.[1]).toMatchObject({
+          requestedFormat: 'compact_direct',
+          budgetClass: 'bounded_request',
+          reason: 'compact_response_contract',
+          tokenLimit,
+        });
+      } finally {
+        loggerInfoSpy.mockRestore();
+      }
+    }
+  );
+
+  it('runs one queued compact retry with the same context and truthful telemetry', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    const privatePartial = 'PRIVATE-PRODUCTION-FIRST-PARTIAL';
+    const prompt = `Answer directly. Give me one complete Raw card. ${'Production booking context. '.repeat(60)}`;
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(new Error(privatePartial), {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        finishReason: 'length',
+        incompleteReason: 'max_output_tokens',
+        outputText: privatePartial,
+      }))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(8)));
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking(prompt)
+      )).resolves.toBe(buildNumberedRetryOutput(8));
+
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+      expect(mockQuery).toHaveBeenCalledTimes(4);
+      const [firstAttempt, retryAttempt] = mockRunTrinityWritingPipeline.mock.calls.map(
+        call => call[0] as {
+          input: { tokenLimit: number };
+          context: { runtimeBudget: unknown };
+        }
+      );
+      expect(retryAttempt.input.tokenLimit).toBe(firstAttempt.input.tokenLimit);
+      expect(retryAttempt.context.runtimeBudget).toBe(firstAttempt.context.runtimeBudget);
+      expect(firstAttempt.input.tokenLimit).toBeGreaterThanOrEqual(
+        BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+      );
+
+      const retryEvents = loggerInfoSpy.mock.calls
+        .filter(([event]) => event === 'backstage.generation.compact_retry')
+        .map(([, metadata]) => (metadata as { event: string }).event);
+      expect(retryEvents).toEqual([
+        'initial_length_exhaustion',
+        'compact_retry_started',
+        'compact_retry_provider_completed',
+        'compact_retry_succeeded',
+      ]);
+      expect(JSON.stringify(loggerInfoSpy.mock.calls)).not.toContain(privatePartial);
+      expect(JSON.stringify(mockRunTrinityWritingPipeline.mock.calls[1]?.[0]))
+        .not.toContain(privatePartial);
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
+
+  it('does not let retry telemetry failure alter a valid recovered booking', async () => {
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    const prompt = `Answer directly. Give me one complete Raw card. ${'Production booking context. '.repeat(60)}`;
+    mockRunTrinityWritingPipeline
+      .mockRejectedValueOnce(Object.assign(new Error('PRIVATE-FIRST-PARTIAL'), {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        incompleteReason: 'max_output_tokens',
+      }))
+      .mockResolvedValueOnce(buildMockTrinityResult(buildNumberedRetryOutput(8)));
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation((event: string, metadata?: Record<string, unknown>) => {
+        if (
+          event === 'backstage.generation.compact_retry'
+          && metadata?.event === 'compact_retry_succeeded'
+        ) {
+          throw new Error('telemetry unavailable');
+        }
+      });
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking(prompt)
+      )).resolves.toBe(buildNumberedRetryOutput(8));
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
     } finally {
       loggerInfoSpy.mockRestore();
     }

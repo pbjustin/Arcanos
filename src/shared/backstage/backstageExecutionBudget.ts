@@ -218,7 +218,7 @@ export function hasBackstageRecoveryBudget(input: {
   policy: BackstageExecutionBudgetPolicy;
   runtimeRemainingMs: number;
   requestRemainingMs: number | null;
-  remainingOutputTokens: number;
+  recoveryOutputTokenLimit: number;
   recoveryAttempted: boolean;
 }): boolean {
   if (input.recoveryAttempted) {
@@ -245,8 +245,8 @@ export function hasBackstageRecoveryBudget(input: {
   ) {
     return false;
   }
-  return Number.isFinite(input.remainingOutputTokens)
-    && input.remainingOutputTokens >= input.policy.recoveryOutputTokenReserve;
+  return Number.isFinite(input.recoveryOutputTokenLimit)
+    && input.recoveryOutputTokenLimit >= input.policy.recoveryOutputTokenReserve;
 }
 
 export function resolveBackstageWorkerOperationDeadlineAt(

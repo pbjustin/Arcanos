@@ -699,7 +699,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageExecutionBudget.ts',
-    '39472dc3eebb9975b026884cf8aa617451ac22561a7ed5bfc34d26402fe80fbf',
+    'ae5c0317e24d0aff915cd1cc1922e603e98ae64f0d3d95d1924d16158aab39b6',
   ],
   [
     'src/shared/backstage/backstageBookerAccessAuthCore.ts',
@@ -723,7 +723,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',
-    '7e3caa4f864d86e12faaf49a08a6c55db1c4f8dc6e3eb85eb34b3efc1dc55801',
+    'c5f48b07c61ad780cd73f36ac3e9724b4a9928d11c521252758606ebf875ae15',
   ],
   [
     'src/shared/backstage/backstageContinuityQueryCore.ts',

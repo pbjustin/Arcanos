@@ -6,9 +6,11 @@ import {
   BACKSTAGE_EXTENDED_OUTPUT_STAGE_MIN_MS,
   BACKSTAGE_OUTPUT_TOKEN_LIMIT_MAX,
   BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+  BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN,
   buildBackstageOutputBudgetCompletionInstruction,
   buildBackstageOutputBudgetTelemetry,
   resolveBackstageOutputBudget,
+  resolveBackstageRequestedOutputFormat,
   type BackstageOutputBudgetInput,
 } from '../src/shared/backstage/backstageOutputBudget.js';
 
@@ -55,11 +57,6 @@ describe('Backstage workload-aware output budget', () => {
       ...HEAVY_QUEUED_INPUT,
       profile: 'bounded_sync_generation' as const,
     }, 2_400],
-    ['compact direct output', {
-      ...HEAVY_QUEUED_INPUT,
-      requestedFormat: 'compact_direct' as const,
-      requestedTokenLimit: 400,
-    }, 400],
     ['bounded review output', {
       ...HEAVY_QUEUED_INPUT,
       requestedFormat: 'bounded_review' as const,
@@ -71,6 +68,91 @@ describe('Backstage workload-aware output budget', () => {
       tokenLimit: expectedTokenLimit,
       tokenCap: 2_400,
     });
+  });
+
+  it.each([
+    ['HRC action', {
+      action: 'generateBookingWithHRC' as const,
+      promptCodeUnits: 120,
+      retrievedContextCodeUnits: 0,
+    }],
+    ['production prompt', {
+      action: 'generateBooking' as const,
+      promptCodeUnits: 1_200,
+      retrievedContextCodeUnits: 0,
+    }],
+    ['production context', {
+      action: 'generateBooking' as const,
+      promptCodeUnits: 120,
+      retrievedContextCodeUnits: 6_000,
+    }],
+    ['Notion-authoritative production workload', {
+      action: 'generateBooking' as const,
+      promptCodeUnits: 120,
+      retrievedContextCodeUnits: 200,
+      notionAuthorityContext: true,
+    }],
+  ])('promotes queued production compact preference for %s', (_label, production) => {
+    const decision = resolveBackstageOutputBudget({
+      ...HEAVY_QUEUED_INPUT,
+      ...production,
+      requestedFormat: 'compact_direct',
+      requestedTokenLimit: 2_400,
+      expectedOutputWords: 100,
+    });
+
+    expect(decision).toMatchObject({
+      requestedFormat: 'structured_booking',
+      budgetClass: 'queued_extended',
+      reason: 'queued_structured_generation',
+    });
+    expect(decision.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+  });
+
+  it('keeps a genuinely small queued compact request bounded', () => {
+    const compactInput = {
+      ...HEAVY_QUEUED_INPUT,
+      requestedFormat: 'compact_direct' as const,
+      requestedTokenLimit: 400,
+      promptCodeUnits: 120,
+      retrievedContextCodeUnits: 200,
+      expectedOutputWords: 100,
+      expectedItemCount: 5,
+      explicitCompactItemCount: true,
+    };
+
+    expect(resolveBackstageRequestedOutputFormat(compactInput))
+      .toBe('compact_direct');
+    expect(resolveBackstageOutputBudget(compactInput)).toMatchObject({
+      requestedFormat: 'compact_direct',
+      budgetClass: 'bounded_request',
+      reason: 'compact_response_contract',
+      tokenLimit: 400,
+      tokenCap: 2_400,
+    });
+  });
+
+  it('promotes the default item estimate used for a complete queued card', () => {
+    const decision = resolveBackstageOutputBudget({
+      ...HEAVY_QUEUED_INPUT,
+      requestedFormat: 'compact_direct',
+      requestedTokenLimit: 400,
+      promptCodeUnits: 55,
+      retrievedContextCodeUnits: 200,
+      expectedOutputWords: 166,
+      expectedItemCount: 8,
+      explicitCompactItemCount: false,
+    });
+    expect(decision).toMatchObject({
+      requestedFormat: 'structured_booking',
+      budgetClass: 'queued_extended',
+      reason: 'queued_structured_generation',
+    });
+    expect(decision.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
   });
 
   it('cannot exceed the application-wide finite maximum', () => {

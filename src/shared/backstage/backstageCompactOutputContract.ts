@@ -30,6 +30,13 @@ export interface BackstageCompactOutputAttemptResult<T> {
   usedCompactOutputRetry: boolean;
 }
 
+export type BackstageCompactOutputAttemptEvent =
+  | 'initial_length_exhaustion'
+  | 'compact_retry_started'
+  | 'compact_retry_provider_completed'
+  | 'compact_retry_length_exhausted'
+  | 'compact_retry_skipped_insufficient_budget';
+
 export function resolveBackstageDirectAnswerBulletCount(contract: BackstageDirectAnswerOutputContract): number {
   return contract.requestedBulletCount ?? 5;
 }
@@ -68,7 +75,7 @@ const NUMBER_WORDS = new Map<string, number>([
 const BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN =
   Array.from(NUMBER_WORDS.keys()).join('|');
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
-  '(?:angles?|alternatives?|beats?|bouts?|bullets?|cards?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
+  '(?:angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
   '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
 
@@ -1026,8 +1033,17 @@ function countWhitespaceDelimitedWords(text: string): number {
  */
 export async function runBackstageBookerCompactOutputAttempts<T>(
   runAttempt: (compactOutputRetry: boolean) => Promise<T>,
-  canRetry: () => boolean = () => true
+  canRetry: () => boolean = () => true,
+  onEvent?: (event: BackstageCompactOutputAttemptEvent) => void
 ): Promise<BackstageCompactOutputAttemptResult<T>> {
+  const emitEvent = (event: BackstageCompactOutputAttemptEvent): void => {
+    try {
+      onEvent?.(event);
+    } catch {
+      // Telemetry must never replace generation or its cause-free terminal error.
+    }
+  };
+
   try {
     return {
       result: await runAttempt(false),
@@ -1037,19 +1053,25 @@ export async function runBackstageBookerCompactOutputAttempts<T>(
     if (!isBackstageProviderOutputLengthExhaustionError(error)) {
       throw error;
     }
+    emitEvent('initial_length_exhaustion');
   }
 
   if (!canRetry()) {
+    emitEvent('compact_retry_skipped_insufficient_budget');
     throw new BackstageBookerOutputIncompleteError();
   }
 
+  emitEvent('compact_retry_started');
   try {
+    const result = await runAttempt(true);
+    emitEvent('compact_retry_provider_completed');
     return {
-      result: await runAttempt(true),
+      result,
       usedCompactOutputRetry: true,
     };
   } catch (error) {
     if (isBackstageProviderOutputLengthExhaustionError(error)) {
+      emitEvent('compact_retry_length_exhausted');
       throw new BackstageBookerOutputIncompleteError();
     }
     throw error;

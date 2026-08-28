@@ -516,9 +516,9 @@ numbered paragraph per item and supplies a per-item word maximum, the first
 generation receives that compact output contract after the general response
 style. Those instructions preserve a tighter caller maximum, keep explicitly
 requested fields inline, omit unrequested fields, and target a total bounded by
-the requested item count. Answer generation makes exactly one compact retry
-only after provider max-output exhaustion, reusing the same retrieval and
-budget. That retry requests one numbered paragraph per requested item, no headings
+the requested item count. Answer generation makes at most one compact retry
+only after provider max-output exhaustion and only when the finite recovery
+budget remains available, reusing the same retrieval and budget. That retry requests one numbered paragraph per requested item, no headings
 or sub-bullets, and keeps explicitly requested fields inline. It allows at most
 125 words per item, never relaxes a tighter unambiguous caller maximum, and uses
 a total target that scales down with the existing token cap and never exceeds
@@ -543,7 +543,7 @@ areas, and expose only the final answer. It does not return scores, enforce a
 quality threshold, invoke a separate critique or booking-generation call,
 create an ActionPlan, persist the proposal, or guarantee roster/canon truth.
 The `generateBooking` raw string and `generateBookingWithHRC` result shapes,
-provider/token/timeout budgets, and persistence boundaries are unchanged.
+persistence boundaries, and CLEAR policy generation-call semantics are unchanged.
 Recognized exact-literal requests still short-circuit before model generation.
 
 All six backend mutations are denied and the two legacy PostgreSQL read
@@ -674,8 +674,10 @@ silently merging them. If the backend
 returns BACKSTAGE_NOTION_INDEX_UNAVAILABLE, report
 that the authoritative index is temporarily unavailable; never retry against
 legacy PostgreSQL, process memory, another universe, or a mutation action.
-If it returns BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE, report that the backend's one
-max-output-only compact retry was exhausted; do not present partial output or
+If it returns BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE, report only that the backend
+could not produce a complete response within the output limit. The backend may
+have skipped its one max-output-only compact retry when finite recovery budget
+was unavailable; do not claim a retry occurred, present partial output, or
 automatically retry, decompose the request, or fan it out into replacement
 generation calls.
 If it returns BACKSTAGE_CONTINUITY_QUERY_FAILED, report that the bounded
