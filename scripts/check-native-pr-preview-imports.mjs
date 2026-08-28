@@ -29,6 +29,7 @@ const PREVIEW_ENTRY_FILES = [
   'src/start-native-pr-preview.ts',
 ];
 export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
+  'contracts/backstage_booker.openapi.v1.json',
   'packages/arcanos-runtime/src/redaction.ts',
   'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.d.mts',

@@ -78,6 +78,10 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-gpt-client-identity-version';
     }>;
   }>;
+  readonly backstageBookerOpenApi: Readonly<{
+    readonly document: Readonly<Record<string, unknown>>;
+    readonly path: '/contracts/backstage_booker.openapi.v1.json';
+  }>;
   readonly mcpBodyCap: Readonly<{
     path: '/mcp/body-cap-contract';
     fixtures: Readonly<{

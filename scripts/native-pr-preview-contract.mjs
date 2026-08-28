@@ -1,3 +1,6 @@
+import backstageBookerOpenApiDocument from
+  '../contracts/backstage_booker.openapi.v1.json' with { type: 'json' };
+
 export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   schemaVersion: 1,
   mode: 'native-pr-application-e2e-v1',
@@ -77,6 +80,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       gptClientIdentityVersion:
         'x-arcanos-preview-backstage-gpt-client-identity-version',
     }),
+  }),
+  backstageBookerOpenApi: Object.freeze({
+    document: backstageBookerOpenApiDocument,
+    path: '/contracts/backstage_booker.openapi.v1.json',
   }),
   mcpBodyCap: Object.freeze({
     path: '/mcp/body-cap-contract',

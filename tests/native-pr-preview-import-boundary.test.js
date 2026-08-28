@@ -325,6 +325,17 @@ describe('native PR preview import boundary', () => {
     await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
   }, 30_000);
 
+  it('admits only the canonical Backstage Booker contract asset', () => {
+    expect(
+      NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter((filePath) =>
+        filePath.startsWith('contracts/')
+      )
+    ).toEqual(['contracts/backstage_booker.openapi.v1.json']);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(
+      'src/routes/introspection.ts'
+    );
+  });
+
   it('fails closed when the runtime graph gains an unreviewed module', async () => {
     const graphFiles = [
       ...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES,
