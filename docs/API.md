@@ -452,14 +452,12 @@ generation have verified provenance without requiring Builder to forward a
 dynamic job credential. The underlying generation and simulation route remains
 publicly compatible for non-authoritative direct clients; `queryContinuity` has
 no non-authoritative or legacy fallback.
-The tracked `contracts/backstage_booker.openapi.v1.json` remains the `1.5.0`
-direct-client compatibility base and projection input. Builder must import the
-live no-store endpoint after the `1.6.0` backend is deployed, not the tracked
-base file directly. Keep generation closed throughout that interval and drain
-legacy continuations first: the old Builder cannot continue a new-backend job,
-and the new Builder cannot poll an old backend. Remove old replicas before
-reopening generation. An older backend/schema rollback must wait until retained
-stable-principal jobs no longer need to be read.
+The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
+Builder `1.6.0` contract, and the no-store endpoint serves that file directly.
+After a revision changing this contract is deployed, a human operator must
+refresh or re-import the endpoint in the existing GPT Builder Action; repository
+and backend changes do not update an already configured Custom GPT Action.
+Generic clients use the separate job-result and job-status contracts.
 When `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, the pure Booker
 workload policy overrides an unsafe explicit synchronous preference for heavy
 `generateBooking` or `generateBookingWithHRC` requests. The route returns the
@@ -786,7 +784,7 @@ operation is marked `x-openai-isConsequential: true`; on this dedicated lane the
 backend relies on ChatGPT's Allow/Deny banner and does not issue its own
 confirmation challenge. The fixed write lane may bypass generic
 `ARCANOS_GPT_ACCESS_SCOPES` `capabilities.run` authorization, but the exact
-`MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The Builder projection
+`MCP_ALLOW_MODULE_ACTIONS` allowlist entries still apply. The Builder contract
 requires the dedicated bearer for continuity queries, generation, simulation,
 exact reads, and writes. At the backend boundary it gates private Notion
 retrieval but cannot

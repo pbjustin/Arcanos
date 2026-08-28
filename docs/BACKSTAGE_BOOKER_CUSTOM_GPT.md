@@ -52,12 +52,10 @@ generates and then saves, so it remains a protected mutation.
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
-- Tracked compatibility base/projection input:
-  [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json).
-  That file intentionally remains the `1.5.0` direct-client contract; do not
-  import it from source as the Builder schema.
-- Served Builder schema version: `1.6.0` (the no-store endpoint above projects
-  the tracked base at request time)
+- Canonical tracked Builder contract:
+  [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
+- Builder schema version: `1.6.0`. The no-store endpoint above serves this
+  canonical contract directly.
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
   only the dedicated `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` value. This is a
@@ -80,7 +78,7 @@ The contract defines exactly five operations:
 - `runBackstageBooker` -> `POST /gpt/backstage-booker` for
   `queryContinuity`, `generateBooking`, `generateBookingWithHRC`, and
   `simulateMatch`. The
-  Builder projection declares the saved Action bearer so an authoritative
+  Builder contract declares the saved Action bearer so an authoritative
   Notion request has verified provenance; the backend route remains publicly
   compatible for non-authoritative direct clients.
 - `getBackstageBookerJobResult` ->
@@ -105,10 +103,17 @@ generation is production-sized, the server overrides that preference to avoid
 the known unsafe synchronous timeout condition and returns `202` with `jobId`
 and a managed-bearer `poll` URL. Call `getBackstageBookerJobResult` with that
 exact `jobId` until the job becomes terminal; never resubmit the generation
-while polling. The Builder projection omits `jobReadToken`,
+while polling. The Builder contract omits `jobReadToken`,
   `jobReadTokenHeader`, and `stream` because the managed continuation requires no
   dynamic header and has no bearer-authenticated SSE route or cancellation
   operation.
+
+The Builder continuation flow is exact: use an HTTP `200` result immediately;
+after HTTP `202`, preserve the returned `jobId`, call
+`getBackstageBookerJobResult` with the same managed bearer, and call that same
+result operation again while `status` is `pending`. Stop at `completed`,
+`failed`, `expired`, or `not_found`, or when `lifecycleStatus` is `cancelled`.
+Never resubmit generation merely because the accepted job is still active.
 
 `getBackstageUniverse` is marked `x-openai-isConsequential: false`. It accepts
 only the dedicated Backstage bearer, never the generic GPT Access token, and
@@ -196,8 +201,9 @@ authorization, tenant identity, or proof that the caller owns that universe.
 ### Supplemental generation context (legacy mode)
 
 This legacy supplement is backend-only at the operation level and does not add
-a sixth operation. Schema `1.6.0` must nevertheless be re-imported because it
-declares
+a sixth operation. After any deployed contract change, refresh or re-import
+schema `1.6.0` because repository changes do not update the configured Action.
+The schema declares
 the saved bearer on every Builder operation, moves result polling to the
 managed-bearer namespace, materializes the nested public payload fields for
 Builder, and documents the authority-specific error responses. Keep Apps
@@ -564,16 +570,19 @@ index format is also rejected until the worker rebuilds and activates it.
 Repository changes do not update the external Custom GPT automatically. After
 the exact backend revision and contract route are deployed:
 
-1. Create a distinct strong credential through the approved secret-management
-   workflow. Set `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` only on the web
-   service. Do not display or copy it into a shell command, chat, or document.
+1. Preserve the existing `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN` deployment
+   secret and the existing Action bearer configuration unchanged. This schema
+   refresh does not require creating, revealing, copying, re-entering, or
+   rotating a credential.
 2. Open the existing Backstage Booker GPT in ChatGPT Builder and edit its
    existing Action. Import
    `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`.
    Import schema `1.6.0` only after that backend version is deployed. Do not
    create a second ARCANOS Action schema.
-3. Under Authentication, select **API Key** and **Bearer**, then enter the same
-   dedicated credential in the authentication field.
+3. Confirm Authentication remains **API Key** and **Bearer** and that Builder
+   still reports the saved credential as configured; do not replace or reveal
+   its value. If the import clears authentication, stop and treat restoration
+   as a separate authorized secret-management operation.
 4. Verify the imported operation IDs are exactly `runBackstageBooker`,
    `getBackstageBookerJobResult`,
    `getBackstageUniverse`, `getBackstageStoryline`, and
@@ -613,11 +622,12 @@ Builder's practical 8,000-character limit:
 Use runBackstageBooker only for queryContinuity, generateBooking,
 generateBookingWithHRC, and simulateMatch.
 Always keep executionMode set to "sync" for runBackstageBooker, as required by
-the Action schema. The backend may return 202 for heavy generation. In that
-case, call getBackstageBookerJobResult with the returned jobId until terminal.
-The saved Action bearer is applied automatically; do not request or forward a
-jobReadToken, and do not use the generic job stream. Never resubmit a queued
-generation while polling.
+the Action schema. Use an HTTP 200 result immediately. For HTTP 202, preserve
+jobId and call getBackstageBookerJobResult with the same saved Action bearer.
+Repeat that result operation while status is pending. Stop at completed,
+failed, expired, or not_found, or when lifecycleStatus is cancelled. Do not
+request or forward a jobReadToken, do not use the generic job stream, and never
+resubmit a queued generation while polling.
 
 For a Notion-authoritative universe, use queryContinuity for factual retrieval
 and continuity reviews. Send the exact universeId and full question in

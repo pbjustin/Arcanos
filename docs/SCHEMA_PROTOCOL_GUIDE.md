@@ -54,12 +54,11 @@ Module normalization also enforces the canon participant array's 16,384-byte
 PostgreSQL JSONB text bound, which JSON Schema cannot express directly.
 The original seven action schema files remain unchanged.
 
-The dedicated Backstage Booker Custom GPT OpenAPI contract is a Builder-facing
-projection of this module-action family, not another protocol family. Keep its
-closed payloads aligned with the catalog schemas. The tracked
-`contracts/backstage_booker.openapi.v1.json` intentionally remains the `1.5.0`
-direct-client compatibility base; the live no-store contract endpoint projects
-it into the Builder-specific `1.6.0` document. Schema `1.6.0` exposes exactly
+The dedicated Backstage Booker Custom GPT OpenAPI contract is the canonical
+Builder-facing view of this module-action family, not another protocol family.
+Keep its closed payloads aligned with the catalog schemas. The tracked
+`contracts/backstage_booker.openapi.v1.json` is version `1.6.0`, and the live
+no-store contract endpoint serves it directly. Schema `1.6.0` exposes exactly
 five operations: the four continuity-query/generation/simulation actions
 through Builder-authenticated `runBackstageBooker`; poll-only managed result
 retrieval through
@@ -67,9 +66,9 @@ retrieval through
 dedicated-Bearer exact database reads through `getBackstageUniverse` and
 `getBackstageStoryline`; and only `upsertStoryline` or `appendCanonBeat` through
 the Bearer-authenticated, consequential `writeBackstageCanon` operation. All
-three GET operations are non-consequential. The managed result projection uses
+three GET operations are non-consequential. The managed result operation uses
 the saved bearer plus `jobId`, omits dynamic job-token and stream fields, and
-does not add a bearer SSE route. These reads are HTTP/Builder projections rather
+does not add a bearer SSE route. These reads are HTTP/Builder operations rather
 than additional module actions, because the module policy partitions every
 non-public Backstage action as mutation-capable. Do not add generic GPT Access,
 control-plane, Phase One mutation, list-universe, bearer-stream, or

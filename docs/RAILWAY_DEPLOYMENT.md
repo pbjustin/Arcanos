@@ -570,17 +570,14 @@ The Backstage Booker protected Action is a separate, purpose-bound ingress
 rollout on top of that canon substrate. Deploy and verify the exact backend
 revision and its served
 `/contracts/backstage_booker.openapi.v1.json` before changing the existing
-Custom GPT. The tracked `contracts/backstage_booker.openapi.v1.json` remains the
-`1.5.0` direct-client compatibility base/projection input; import only the live
-no-store `1.6.0` endpoint into Builder. This requires a generation maintenance
-window: stop all new generation, including explicit async/idempotent requests;
-drain legacy pending jobs and required terminal re-reads; remove all old web
-replicas from traffic; deploy and verify the backend; immediately re-import the
-live `1.6.0` schema; and only then reopen generation. The old Builder cannot
-continue a new-backend job, and the new Builder cannot poll an old backend.
-Rollback to an older backend/schema is unavailable until stable-principal jobs
-whose results must remain readable have drained through retention. The web
-service alone receives a distinct
+Custom GPT. The tracked `contracts/backstage_booker.openapi.v1.json` is the
+canonical Builder `1.6.0` contract, and the no-store endpoint serves it
+directly. This source-of-truth convergence preserves the existing managed
+result route, stable ownership, queue, and storage behavior; it does not require
+credential rotation or a separate job-system migration. After deployment,
+verify the live contract and then have a human operator refresh or re-import it
+in the existing Builder Action. Repository changes do not update an already
+configured Custom GPT Action automatically. The web service alone receives a distinct
 `ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN`; the worker does not. Builder schema
 `1.6.0` declares that credential for every operation: continuity queries,
 generation, simulation, the managed
@@ -729,15 +726,14 @@ Builder and security contract.
 
 Optional Notion enrichment is configured wherever generation executes: web for
 synchronous rollback and worker for queued heavy generation. Schema `1.6.0`
-must be re-imported because it moves result polling to the managed-bearer
-namespace while retaining bearer provenance and the nested public payload.
+uses the managed-bearer result namespace while retaining bearer provenance and
+the nested public payload. Re-import it after the deployed contract changes.
 Create a dedicated Notion integration
 with read-content access, share only the approved pages, and configure both
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` on each executing service. Never reuse
-an ARCANOS bearer or copy the Notion token to Builder configuration. Use the
-generation maintenance cutover above, including the legacy continuation drain
-and immediate live-schema import. After `1.6.0` is active on both sides, call
+an ARCANOS bearer or copy the Notion token to Builder configuration. After
+`1.6.0` is active on both sides, call
 `generateBooking` for a mapped disposable scope through the existing private
 GPT and verify the sanitized
 `backstage.notion_context.loaded` event. Repeat without the dedicated Backstage
