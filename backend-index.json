@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T22:21:21.039Z",
+  "generatedAt": "2026-08-28T17:42:20.992Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3425,6 +3425,9 @@
         },
         {
           "relativePath": "tests/backstage-booker.storyline-lifecycle.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-compact-output-contract.test.ts"
         },
         {
           "relativePath": "tests/backstage-execution-budget.test.ts"

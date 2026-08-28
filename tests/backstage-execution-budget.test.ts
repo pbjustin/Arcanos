@@ -113,7 +113,7 @@ describe('Backstage execution timeout budget', () => {
       requestRemainingMs:
         policy.recoveryStageTimeoutMs
           + policy.hrcStageReserveMs,
-      remainingOutputTokens: policy.recoveryOutputTokenReserve,
+      recoveryOutputTokenLimit: policy.recoveryOutputTokenReserve,
       recoveryAttempted: false,
     };
 
@@ -132,7 +132,7 @@ describe('Backstage execution timeout budget', () => {
     })).toBe(false);
     expect(hasBackstageRecoveryBudget({
       ...allowed,
-      remainingOutputTokens: policy.recoveryOutputTokenReserve - 1,
+      recoveryOutputTokenLimit: policy.recoveryOutputTokenReserve - 1,
     })).toBe(false);
     expect(hasBackstageRecoveryBudget({
       ...allowed,
@@ -152,14 +152,14 @@ describe('Backstage execution timeout budget', () => {
       policy,
       runtimeRemainingMs: policy.recoveryStageTimeoutMs,
       requestRemainingMs: minimumRequestReserveMs,
-      remainingOutputTokens: policy.recoveryOutputTokenReserve,
+      recoveryOutputTokenLimit: policy.recoveryOutputTokenReserve,
       recoveryAttempted: false,
     })).toBe(true);
     expect(hasBackstageRecoveryBudget({
       policy,
       runtimeRemainingMs: policy.recoveryStageTimeoutMs,
       requestRemainingMs: minimumRequestReserveMs - 1,
-      remainingOutputTokens: policy.recoveryOutputTokenReserve,
+      recoveryOutputTokenLimit: policy.recoveryOutputTokenReserve,
       recoveryAttempted: false,
     })).toBe(false);
   });

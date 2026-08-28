@@ -158,10 +158,13 @@ If failing, inspect Railway build/deploy logs first.
   job to resume. If Builder does not expose `scopeKind`, deploy schema 1.6.0
   first, re-import it into the existing Action, and preserve the saved bearer.
 - Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the original attempt
-  exhausted the provider output limit, and the backend's one compact retry
-  either exhausted that limit again or failed its enforceable output contract.
-  The retry reused the same retrieval and token budget and occurs only for
-  max-output exhaustion. An unambiguous request for one numbered paragraph
+  exhausted the provider output limit. The backend permits at most one compact
+  retry only when its finite runtime and output recovery budgets remain
+  available; otherwise telemetry records
+  `compact_retry_skipped_insufficient_budget`. An executed retry reuses the same
+  retrieval and token budget, and the terminal error can also mean that retry
+  exhausted the limit again or failed its enforceable output contract. An
+  unambiguous request for one numbered paragraph
   per item with an explicit per-item word maximum receives the same compact
   shape instructions on the first attempt. They request one numbered paragraph
   per requested item, no headings or sub-bullets, explicitly requested fields

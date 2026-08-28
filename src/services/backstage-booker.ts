@@ -111,16 +111,21 @@ import {
   buildBackstageOutputBudgetCompletionInstruction,
   buildBackstageOutputBudgetTelemetry,
   resolveBackstageOutputBudget,
+  resolveBackstageOutputRecoveryMode,
+  resolveBackstageRequestedOutputFormat,
+  resolveBackstageResponseFormat,
   type BackstageOutputFormat,
 } from '@shared/backstage/backstageOutputBudget.js';
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
+  buildBackstageBookerStructuredOutputRetryInstruction,
   buildBackstageBookerRequestedOutputShapeInstruction,
   parseBackstageDirectAnswerOutputContract,
   resolveBackstageCompactOutputContract,
   resolveBackstageDirectAnswerBulletCount,
   runBackstageBookerCompactOutputAttempts,
+  type BackstageCompactOutputAttemptEvent,
   type BackstageDirectAnswerOutputContract,
 } from '@shared/backstage/backstageCompactOutputContract.js';
 import {
@@ -943,7 +948,8 @@ function applyBackstageDirectAnswerOutputContract(
 function buildBackstageResponseStyleInstruction(
   directAnswerMode: boolean,
   directAnswerContract: BackstageDirectAnswerOutputContract | null,
-  boundedReviewMode: boolean
+  boundedReviewMode: boolean,
+  compactDirectOutput = true
 ): string {
   if (boundedReviewMode) {
     return buildBackstageReviewResponseStyleInstruction();
@@ -951,6 +957,16 @@ function buildBackstageResponseStyleInstruction(
 
   if (!directAnswerMode) {
     return `${BOOKING_RESPONSE_GUIDELINES().trim()}${buildBackstageResponseStyleSuffix(false)}`;
+  }
+
+  if (!compactDirectOutput) {
+    return [
+      'Answer with the complete requested booking immediately, without a preamble or role-play framing.',
+      'Use organized markdown sections appropriate to the requested card, match, segment, or storyline.',
+      'Preserve every caller-requested match, segment, angle, finish, consequence, and production beat.',
+      'Keep wording concise where requested, but do not collapse an entire card into one output item.',
+      'Do not include meta commentary.',
+    ].join('\n');
   }
 
   const contract = directAnswerContract ?? {
@@ -996,7 +1012,14 @@ function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimi
   return Math.min(defaultTokenLimit, directAnswerTokenLimit);
 }
 
-async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<string> {
+interface LegacyStructuredBookingPrompts {
+  compactDirect: string;
+  structuredDirect: string;
+}
+
+async function buildLegacyStructuredBookingPrompts(
+  basePrompt: string
+): Promise<LegacyStructuredBookingPrompts> {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
@@ -1087,21 +1110,32 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       : 'No saved storylines yet.';
 
     //audit Assumption: explicit anti-simulation booking prompts should suspend the theatrical persona while preserving roster continuity; failure risk: direct-answer requests still receive in-character backstage narration; expected invariant: direct-answer mode swaps persona framing for neutral execution guidance only; handling strategy: emit an execution-mode section when the prompt contains explicit non-simulation cues.
-    const sections = [
-      directAnswerMode
-        ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
-        : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
-      `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
-      `<<CURRENT_ROSTER>>\n${rosterBlock}`,
-      `<<RECENT_EVENTS>>\n${eventsBlock}`,
-      `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
-      `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
-    ];
+    const buildPrompt = (compactDirectOutput: boolean): string => {
+      const sections = [
+        directAnswerMode
+          ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
+          : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
+        `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
+        `<<CURRENT_ROSTER>>\n${rosterBlock}`,
+        `<<RECENT_EVENTS>>\n${eventsBlock}`,
+        `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
+        `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
+        `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(
+          directAnswerMode,
+          directAnswerContract,
+          boundedReviewMode,
+          compactDirectOutput
+        )}`
+      ];
 
-    return boundedReviewMode
-      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
-      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+      return boundedReviewMode
+        ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+        : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    };
+    return {
+      compactDirect: buildPrompt(true),
+      structuredDirect: buildPrompt(false),
+    };
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', (error as Error).message);
     const legacyState = readFallbackUniverseState(DEFAULT_BACKSTAGE_UNIVERSE_ID);
@@ -1114,19 +1148,30 @@ async function buildLegacyStructuredBookingPrompt(basePrompt: string): Promise<s
       : 'No story beats recorded yet.';
 
     //audit Assumption: fallback continuity mode must preserve the same direct-answer vs persona split as the primary database-backed prompt builder; failure risk: DB outages reintroduce simulation-heavy framing that the primary path suppresses; expected invariant: execution mode remains stable regardless of data source; handling strategy: reuse the same direct-answer prompt sections in the fallback branch.
-    const sections = [
-      directAnswerMode
-        ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
-        : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
-      `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
-      `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
-      `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
-      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
-    ];
+    const buildPrompt = (compactDirectOutput: boolean): string => {
+      const sections = [
+        directAnswerMode
+          ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
+          : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
+        `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
+        `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
+        `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
+        `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(
+          directAnswerMode,
+          directAnswerContract,
+          boundedReviewMode,
+          compactDirectOutput
+        )}`
+      ];
 
-    return boundedReviewMode
-      ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
-      : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+      return boundedReviewMode
+        ? `${sections.join('\n\n')}\n\nComplete the six-bullet review and stop after bullet 6.`
+        : `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
+    };
+    return {
+      compactDirect: buildPrompt(true),
+      structuredDirect: buildPrompt(false),
+    };
   }
 }
 
@@ -1145,7 +1190,10 @@ interface BackstageCanonPromptBlocks {
 const BACKSTAGE_CANON_PROMPT_STORYLINES = 8;
 const BACKSTAGE_CANON_PROMPT_BEATS = 12;
 
-function buildBookingPolicyPrompt(basePrompt: string): string {
+function buildBookingPolicyPrompt(
+  basePrompt: string,
+  compactDirectOutput = true
+): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
   const directAnswerContract = directAnswerMode
@@ -1156,7 +1204,8 @@ function buildBookingPolicyPrompt(basePrompt: string): string {
     `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(
       directAnswerMode,
       directAnswerContract,
-      boundedReviewMode
+      boundedReviewMode,
+      compactDirectOutput
     )}`
   ];
 
@@ -1169,7 +1218,8 @@ function buildBookingPrompt(
   basePrompt: string,
   universeId: string,
   blocks: BackstagePromptBlocks,
-  canonBlocks: BackstageCanonPromptBlocks | null = null
+  canonBlocks: BackstageCanonPromptBlocks | null = null,
+  compactDirectOutput = true
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
@@ -1192,7 +1242,12 @@ function buildBookingPrompt(
       : []),
     `<<RECENT_STORY_BEATS>>\n${blocks.storyBeats}`,
     `<<SAVED_STORYLINES>>\n${blocks.savedStorylines}`,
-    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract, boundedReviewMode)}`
+    `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(
+      directAnswerMode,
+      directAnswerContract,
+      boundedReviewMode,
+      compactDirectOutput
+    )}`
   ];
 
   return boundedReviewMode
@@ -1202,7 +1257,8 @@ function buildBookingPrompt(
 
 function buildNotionAuthorityBookingPrompt(
   basePrompt: string,
-  universeId: string
+  universeId: string,
+  compactDirectOutput = true
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
@@ -1219,7 +1275,8 @@ function buildNotionAuthorityBookingPrompt(
     `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(
       directAnswerMode,
       directAnswerContract,
-      boundedReviewMode
+      boundedReviewMode,
+      compactDirectOutput
     )}`,
   ];
 
@@ -1325,7 +1382,10 @@ function promptBlocksFromFallback(state: FallbackUniverseState): BackstagePrompt
 interface StructuredBookingPrompt {
   instructions: string;
   includesNotion: boolean;
+  notionAuthorityContext: boolean;
   trustedPolicyPrompt: string;
+  structuredDirectInstructions: string;
+  structuredDirectTrustedPolicyPrompt: string;
   directAnswerSystemPolicyPrompt?: string;
   directAnswerUntrustedContextPrompt?: string;
 }
@@ -1343,7 +1403,17 @@ async function buildStructuredBookingPrompt(
     return {
       instructions: buildNotionAuthorityBookingPrompt(basePrompt, universeId),
       includesNotion: true,
+      notionAuthorityContext: true,
       trustedPolicyPrompt: buildBookingPolicyPrompt(basePrompt),
+      structuredDirectInstructions: buildNotionAuthorityBookingPrompt(
+        basePrompt,
+        universeId,
+        false
+      ),
+      structuredDirectTrustedPolicyPrompt: buildBookingPolicyPrompt(
+        basePrompt,
+        false
+      ),
       directAnswerSystemPolicyPrompt: BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
       directAnswerUntrustedContextPrompt: notionRag.prompt,
     };
@@ -1387,7 +1457,16 @@ async function buildStructuredBookingPrompt(
       canonBlocks
     ),
     includesNotion: notionContext !== null,
+    notionAuthorityContext: false,
     trustedPolicyPrompt: buildBookingPolicyPrompt(basePrompt),
+    structuredDirectInstructions: buildBookingPrompt(
+      basePrompt,
+      universeId,
+      blocks,
+      canonBlocks,
+      false
+    ),
+    structuredDirectTrustedPolicyPrompt: buildBookingPolicyPrompt(basePrompt, false),
     ...(notionContext
       ? {
           directAnswerSystemPolicyPrompt: BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
@@ -2409,7 +2488,7 @@ export async function generateBooking(
     BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
   );
   const defaultTokenLimit = resolveBackstageGenerationTokenLimit(configuredTokenLimit);
-  const requestedTokenLimit = resolveBackstageBookerPromptTokenLimit(
+  const compactRequestedTokenLimit = resolveBackstageBookerPromptTokenLimit(
     input.prompt,
     defaultTokenLimit
   );
@@ -2449,28 +2528,91 @@ export async function generateBooking(
     recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
     finalizationReserveMs: executionBudget.finalizationReserveMs,
   });
-  const structuredPrompt: StructuredBookingPrompt = structuredScope
-      ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
-      : {
-          instructions: await buildLegacyStructuredBookingPrompt(input.prompt),
-          includesNotion: false,
-          trustedPolicyPrompt: input.prompt,
-        };
-  const instructions = structuredPrompt.instructions;
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(input.prompt);
   const directAnswerMode = shouldPreferDirectAnswerMode(input.prompt);
-  const requestedFormat: BackstageOutputFormat = boundedReviewMode
+  const requestedFormatPreference: BackstageOutputFormat = boundedReviewMode
     ? 'bounded_review'
     : directAnswerMode
       ? 'compact_direct'
       : 'structured_booking';
   const preliminaryCompactOutputContract = resolveBackstageCompactOutputContract(
     input.prompt,
-    requestedTokenLimit
+    compactRequestedTokenLimit
   );
+  const preliminaryItemPolicy = preliminaryCompactOutputContract.itemPolicy;
+  const completeBookingContainerComponentCount =
+    preliminaryCompactOutputContract.completeBookingContainerComponentCount;
+  const expectedItemCount = preliminaryItemPolicy.budgetItemCount;
+  const explicitCompactItemCount = preliminaryItemPolicy.mode !== 'default';
+  const preliminaryRequestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(
+      input.prompt,
+      preliminaryCompactOutputContract
+    );
+  const structuredPrompt: StructuredBookingPrompt = structuredScope
+      ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
+      : await (async (): Promise<StructuredBookingPrompt> => {
+          const legacyPrompts = await buildLegacyStructuredBookingPrompts(
+            input.prompt
+          );
+          return {
+            instructions: legacyPrompts.compactDirect,
+            includesNotion: false,
+            notionAuthorityContext: false,
+            trustedPolicyPrompt: input.prompt,
+            structuredDirectInstructions: legacyPrompts.structuredDirect,
+            structuredDirectTrustedPolicyPrompt: input.prompt,
+          };
+        })();
+  const primaryContextCodeUnits = Math.max(
+    0,
+    structuredPrompt.instructions.length - input.prompt.length
+  );
+  const supplementalContextCodeUnits =
+    structuredPrompt.directAnswerUntrustedContextPrompt?.length ?? 0;
+  const retrievedContextCodeUnits =
+    primaryContextCodeUnits + supplementalContextCodeUnits;
+  const requestedFormat = resolveBackstageRequestedOutputFormat({
+    action: executionAction,
+    profile: executionBudget.profile,
+    requestedFormat: requestedFormatPreference,
+    promptCodeUnits: input.prompt.length,
+    retrievedContextCodeUnits,
+    expectedOutputWords:
+      preliminaryCompactOutputContract.wordBounds.totalWordLimit,
+    expectedItemCount,
+    explicitCompactItemCount,
+    notionAuthorityContext: structuredPrompt.notionAuthorityContext,
+    completeBookingContainerComponentCount,
+  });
+  const responseFormat = resolveBackstageResponseFormat({
+    requestedFormat,
+    boundedReviewMode,
+    directAnswerMode,
+    explicitCompactItemCount,
+    completeBookingContainerComponentCount,
+    explicitCompactOutputRequest:
+      preliminaryCompactOutputContract.explicitCompactOutputRequest,
+    requestedOutputShapeInstructionPresent:
+      preliminaryRequestedOutputShapeInstruction !== null,
+  });
+  const enforceParsedItemContract =
+    !completeBookingContainerComponentCount
+    || responseFormat === 'compact_direct';
+  const structuredDirectOutput = directAnswerMode
+    && responseFormat === 'structured_booking';
+  const instructions = structuredDirectOutput
+    ? structuredPrompt.structuredDirectInstructions
+    : structuredPrompt.instructions;
+  const trustedPolicyPrompt = structuredDirectOutput
+    ? structuredPrompt.structuredDirectTrustedPolicyPrompt
+    : structuredPrompt.trustedPolicyPrompt;
+  const requestedTokenLimit = responseFormat === 'structured_booking'
+    ? defaultTokenLimit
+    : compactRequestedTokenLimit;
   const requestRemainingMs = getRequestRemainingMs();
   const trinityTierPolicyPrompt = structuredPrompt.includesNotion
-    ? structuredPrompt.trustedPolicyPrompt
+    ? trustedPolicyPrompt
     : instructions;
   const trinityTierSoftCapMs = computeTierSoftCap(
     detectTier(trinityTierPolicyPrompt)
@@ -2516,19 +2658,37 @@ export async function generateBooking(
       BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
     ),
     promptCodeUnits: input.prompt.length,
-    retrievedContextCodeUnits:
-      structuredPrompt.directAnswerUntrustedContextPrompt?.length
-      ?? Math.max(0, instructions.length - input.prompt.length),
+    retrievedContextCodeUnits,
     expectedOutputWords:
       preliminaryCompactOutputContract.wordBounds.totalWordLimit,
+    expectedItemCount,
+    explicitCompactItemCount,
+    notionAuthorityContext: structuredPrompt.notionAuthorityContext,
+    completeBookingContainerComponentCount,
     model,
     modelStageTimeoutMs: effectiveModelStageBudgetMs,
   });
   const tokenLimit = outputBudget.tokenLimit;
-  logger.info(
-    'backstage.generation.output_budget',
-    buildBackstageOutputBudgetTelemetry(outputBudget)
-  );
+  logger.info('backstage.generation.output_budget', {
+    ...buildBackstageOutputBudgetTelemetry(outputBudget),
+    responseFormat,
+  });
+  const logCompactRetryEvent = (
+    event: BackstageCompactOutputAttemptEvent | 'compact_retry_succeeded'
+  ): void => {
+    try {
+      logger.info('backstage.generation.compact_retry', {
+        action: executionAction,
+        profile: executionBudget.profile,
+        requestedFormat: outputBudget.requestedFormat,
+        responseFormat,
+        budgetClass: outputBudget.budgetClass,
+        event,
+      });
+    } catch {
+      // Closed telemetry must never alter provider-attempt or output semantics.
+    }
+  };
   const compactOutputContract = resolveBackstageCompactOutputContract(
     input.prompt,
     tokenLimit
@@ -2538,8 +2698,13 @@ export async function generateBooking(
       input.prompt,
       compactOutputContract
     );
-  const compactOutputRetryInstruction =
-    buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
+  const outputRecoveryMode = resolveBackstageOutputRecoveryMode({
+    responseFormat,
+    completeBookingContainerComponentCount,
+  });
+  const outputRetryInstruction = outputRecoveryMode === 'structured'
+    ? buildBackstageBookerStructuredOutputRetryInstruction()
+    : buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
   const directAnswerSystemPolicyPrompt = [
     buildBackstageBookerDirectAnswerSystemPolicy(
@@ -2574,7 +2739,8 @@ export async function generateBooking(
         + (executionBudget.profile === 'queued_generation'
           ? 0
           : executionBudget.finalizationReserveMs),
-      ...(compactOutputContract.itemPolicy.mode === 'exact'
+      ...(enforceParsedItemContract
+        && compactOutputContract.itemPolicy.mode === 'exact'
         ? {
             expectedNumberedItemCount:
               compactOutputContract.itemPolicy.count,
@@ -2591,10 +2757,10 @@ export async function generateBooking(
       ? {
           trustedPolicyPrompt: requestedOutputShapeInstruction
             ? [
-                structuredPrompt.trustedPolicyPrompt,
+                trustedPolicyPrompt,
                 requestedOutputShapeInstruction,
               ].join('\n\n')
-            : structuredPrompt.trustedPolicyPrompt,
+            : trustedPolicyPrompt,
           directAnswerUntrustedContextPrompt:
             structuredPrompt.directAnswerUntrustedContextPrompt,
         }
@@ -2611,7 +2777,7 @@ export async function generateBooking(
     );
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
-        ? `${instructions}\n\n${compactOutputRetryInstruction}`
+        ? `${instructions}\n\n${outputRetryInstruction}`
         : requestedOutputShapeInstruction
           ? `${instructions}\n\n${requestedOutputShapeInstruction}`
           : instructions;
@@ -2621,8 +2787,8 @@ export async function generateBooking(
             directAnswerIntegrityRepair: undefined,
             modelStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
             trustedPolicyPrompt: [
-              structuredPrompt.trustedPolicyPrompt,
-              compactOutputRetryInstruction,
+              trustedPolicyPrompt,
+              outputRetryInstruction,
             ].join('\n\n'),
           }
         : trinityRunOptions;
@@ -2660,13 +2826,14 @@ export async function generateBooking(
         policy: executionBudget,
         runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
         requestRemainingMs: getRequestRemainingMs(),
-        remainingOutputTokens: tokenLimit,
+        recoveryOutputTokenLimit: tokenLimit,
         recoveryAttempted: false,
-      })
+      }),
+      logCompactRetryEvent
     );
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
-    //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
+    //audit Assumption: compact direct-answer prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore an explicit compact item count and reopen simulation-style framing; expected invariant: genuine compact output respects the caller's requested list shape while production structured output keeps every requested card element; handling strategy: apply cardinality cleanup only to compact-direct output and use preamble-only cleanup for structured direct style.
     const strictRetryItemCountOverride = usedCompactOutputRetry
       && (
         compactOutputContract.itemPolicy.mode === 'exact'
@@ -2676,23 +2843,31 @@ export async function generateBooking(
       : undefined;
     const normalizedOutput = boundedReviewMode
       ? applyBackstageReviewOutputContract(clean)
-      : directAnswerMode
+      : directAnswerMode && responseFormat === 'compact_direct'
         ? applyBackstageDirectAnswerOutputContract(
             clean,
             input.prompt,
             strictRetryItemCountOverride
           )
-        : clean;
+        : directAnswerMode
+          ? stripBackstageDirectAnswerPreamblePrefix(clean)
+          : clean;
     //audit Assumption: a provider stop after the compact retry does not prove the requested answer is complete; failure risk: a short or overlong retry is returned as successful output; expected invariant: unambiguous exact and maximum retry contracts are enforced on the final user-visible text; handling strategy: reject malformed retry output with the same cause-free terminal error and never start a third generation attempt.
-    assertBackstageBookerCompactRetryOutputValid(
-      normalizedOutput,
-      compactOutputContract,
-      usedCompactOutputRetry
-    );
-    return assertValidBackstageBookerActionData(
+    if (enforceParsedItemContract) {
+      assertBackstageBookerCompactRetryOutputValid(
+        normalizedOutput,
+        compactOutputContract,
+        usedCompactOutputRetry
+      );
+    }
+    const validatedOutput = assertValidBackstageBookerActionData(
       'generateBooking',
       normalizedOutput
     ) as string;
+    if (usedCompactOutputRetry) {
+      logCompactRetryEvent('compact_retry_succeeded');
+    }
+    return validatedOutput;
   } catch (error) {
     if (isBackstageBookerOutputIncompleteError(error)) {
       throw error;

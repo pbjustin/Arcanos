@@ -226,7 +226,7 @@ export async function queryBackstageContinuity(
         policy: executionBudget,
         runtimeRemainingMs: getSafeRemainingMs(runtimeBudget),
         requestRemainingMs: getRequestRemainingMs(),
-        remainingOutputTokens: outputBudget.tokenLimit,
+        recoveryOutputTokenLimit: outputBudget.tokenLimit,
         recoveryAttempted: false,
       })) {
         throw new BackstageBookerOutputIncompleteError();

@@ -399,6 +399,7 @@ describe('Backstage heavy network proof', () => {
       expectedItemCount: 6,
       expectedOutputWords: 600,
       notionAuthorityContext: false,
+      completeBookingContainerComponentCount: false,
       providerInvocationRequired: true,
     })).toMatchObject({
       workloadClass: 'production_generation',

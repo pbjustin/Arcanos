@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 133;
+const MAX_REQUESTS = 134;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -918,6 +918,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-compact-retry',
       'compactRetry'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-production-output-contracts',
+      'productionOutputContracts'
     ),
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
@@ -2129,6 +2133,66 @@ function expectedBackstageGenerationContractPayload(requestCase) {
           '2. Gunther accepts, then closes the segment with a decisive warning.',
         ].join('\n'),
       },
+    };
+  }
+  if (requestCase.fixtureName === 'productionOutputContracts') {
+    const scenario = (overrides) => ({
+      budgetClass: 'queued_extended',
+      budgetReason: 'queued_structured_generation',
+      capacityFormat: 'structured_booking',
+      directAnswerMode: true,
+      recoveryInstructionVerified: true,
+      tokenCap: 6_000,
+      tokenLimit: 6_000,
+      ...overrides,
+    });
+    return {
+      ...base,
+      outputContracts: {
+        contracts: {
+          atMostPresentationPreserved: true,
+          completeCardHierarchyPreserved: true,
+          exactPresentationPreserved: true,
+          productionCapacitySelected: true,
+        },
+        productionSharedBudgetCore: true,
+        productionSharedCompactContractCore: true,
+        productionSharedPresentationCore: true,
+        productionSharedRecoveryCore: true,
+        scenarios: {
+          atMostCompact: scenario({
+            completeBookingContainerComponentCount: false,
+            enforceParsedItemContract: true,
+            explicitCompactOutputRequest: false,
+            itemCount: 3,
+            itemPolicyMode: 'atMost',
+            recoveryMode: 'compact',
+            requestedOutputShapeInstructionBound: true,
+            responseFormat: 'compact_direct',
+          }),
+          completeCard: scenario({
+            completeBookingContainerComponentCount: true,
+            enforceParsedItemContract: false,
+            explicitCompactOutputRequest: false,
+            itemCount: null,
+            itemPolicyMode: 'preserve',
+            recoveryMode: 'structured',
+            requestedOutputShapeInstructionBound: false,
+            responseFormat: 'structured_booking',
+          }),
+          exactCompact: scenario({
+            completeBookingContainerComponentCount: false,
+            enforceParsedItemContract: true,
+            explicitCompactOutputRequest: false,
+            itemCount: 2,
+            itemPolicyMode: 'exact',
+            recoveryMode: 'compact',
+            requestedOutputShapeInstructionBound: true,
+            responseFormat: 'compact_direct',
+          }),
+        },
+      },
+      workerBoundaryReached: false,
     };
   }
   if (requestCase.fixtureName === 'notionAuthorityRag') {
@@ -3799,6 +3863,20 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      (
+        requestCase.fixtureName === 'compactRetry'
+        || requestCase.fixtureName === 'productionOutputContracts'
+      )
+      && response.headers.get(
+        contract.proofHeaders.outputCapacityPresentationVersion
+      ) !== contract.outputCapacityPresentationProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_CAPACITY_PRESENTATION_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3927,6 +4005,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'gptClientIdentity'
       ? { gptClientIdentityVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'productionOutputContracts'
+      ? { outputCapacityPresentationVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

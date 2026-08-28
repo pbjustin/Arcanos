@@ -8,6 +8,7 @@ import {
   BACKSTAGE_STORYLINE_MAX_BYTES,
   BACKSTAGE_STORYLINE_VALIDATION_ERROR_CODE,
 } from '../src/shared/backstage/backstageStoryline.js';
+import { BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN } from '../src/shared/backstage/backstageOutputBudget.js';
 
 const mockGetPool = jest.fn();
 const mockSaveMemory = jest.fn();
@@ -15,6 +16,7 @@ const mockSaveWithAuditCheck = jest.fn();
 const mockEvaluateWithHRC = jest.fn();
 const mockCreateBackstageBookerRepository = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
+const mockGetGPT5Model = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockLoadBackstageNotionPromptContext = jest.fn();
 const mockIsBackstageNotionAuthoritativeUniverse = jest.fn();
@@ -151,7 +153,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai.js', () => ({
-  getGPT5Model: jest.fn(() => 'gpt-test')
+  getGPT5Model: mockGetGPT5Model
 }));
 
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
@@ -331,6 +333,7 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockEvaluateWithHRC.mockReset();
     mockCreateBackstageBookerRepository.mockReset();
     mockRunTrinityWritingPipeline.mockReset();
+    mockGetGPT5Model.mockReset();
     mockGetOpenAIClientOrAdapter.mockReset();
     mockLoadBackstageNotionPromptContext.mockReset();
     mockIsBackstageNotionAuthoritativeUniverse.mockReset();
@@ -372,6 +375,7 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockRetrieveBackstageNotionRagContext.mockRejectedValue(
       new MockBackstageNotionIndexUnavailableError()
     );
+    mockGetGPT5Model.mockReturnValue('gpt-test');
     mockRunTrinityWritingPipeline.mockResolvedValue(
       buildPersistenceTrinityResult('Generated booking')
     );
@@ -2990,6 +2994,167 @@ describe('Backstage Booker service persistence outcomes', () => {
       ?.directAnswerSystemPolicyPrompt as string | undefined;
     expect(systemPolicy).toContain(BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER);
     expect(systemPolicy).not.toContain('Rhea Ripley is the current champion.');
+  });
+
+  it('keeps a short queued Notion-authoritative complete card on the structured worker budget', async () => {
+    const universeId = 'notion-authoritative-production-card';
+    const prompt = 'Answer directly. Give me one complete Raw card.';
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockIsBackstageNotionAuthoritativeUniverse.mockImplementation(
+      (candidate: string) => candidate === universeId
+    );
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+      universeId,
+      snapshotId: '77777777-7777-4777-8777-777777777777',
+      verifiedAt: new Date('2026-08-28T12:00:00.000Z'),
+      prompt: [
+        '<<UNTRUSTED_NOTION_RAG_BEGIN>>',
+        '> The current champions and active stories are available.',
+        '<<UNTRUSTED_NOTION_RAG_END>>',
+      ].join('\n'),
+      chunkCount: 1,
+      truncated: false,
+      citations: [],
+    });
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => generateBooking(prompt, universeId)
+    )).resolves.toBe('Generated booking');
+
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string; tokenLimit?: number };
+      context?: {
+        runOptions?: {
+          directAnswerTokenLimitOverride?: number;
+          directAnswerUntrustedContextPrompt?: string;
+        };
+      };
+    } | undefined;
+    expect(pipelineInput?.input?.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+    expect(pipelineInput?.context?.runOptions?.directAnswerTokenLimitOverride)
+      .toBe(pipelineInput?.input?.tokenLimit);
+    expect(pipelineInput?.input?.prompt).toContain(
+      'Answer with the complete requested booking immediately, without a preamble'
+    );
+    expect(pipelineInput?.input?.prompt).toContain(
+      'do not collapse an entire card into one output item'
+    );
+    expect(pipelineInput?.input?.prompt).not.toContain(
+      'Return only 1 top-level numbered bullet'
+    );
+    expect(pipelineInput?.context?.runOptions?.directAnswerUntrustedContextPrompt)
+      .toContain('<<UNTRUSTED_NOTION_RAG_BEGIN>>');
+  });
+
+  it('keeps exact compact policy and cleanup on a queued Notion-authoritative request', async () => {
+    const universeId = 'notion-authoritative-compact-output';
+    const prompt = 'Answer directly. Give me three booking ideas.';
+    const ragPrompt = [
+      '<<UNTRUSTED_NOTION_RAG_BEGIN>>',
+      '> The current champions and active stories are available.',
+      '<<UNTRUSTED_NOTION_RAG_END>>',
+    ].join('\n');
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockIsBackstageNotionAuthoritativeUniverse.mockImplementation(
+      (candidate: string) => candidate === universeId
+    );
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+      universeId,
+      snapshotId: '88888888-8888-4888-8888-888888888888',
+      verifiedAt: new Date('2026-08-28T12:00:00.000Z'),
+      prompt: ragPrompt,
+      chunkCount: 1,
+      truncated: false,
+      citations: [],
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildPersistenceTrinityResult(buildPersistenceNumberedRetryOutput(5))
+    );
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => generateBooking(prompt, universeId)
+    )).resolves.toBe(buildPersistenceNumberedRetryOutput(3));
+
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string; tokenLimit?: number };
+      context?: {
+        runOptions?: {
+          directAnswerTokenLimitOverride?: number;
+          directAnswerUntrustedContextPrompt?: string;
+          trustedPolicyPrompt?: string;
+        };
+      };
+    } | undefined;
+    expect(pipelineInput?.input?.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+    expect(pipelineInput?.input?.prompt).toContain(
+      'Return only 3 top-level numbered bullets.'
+    );
+    expect(pipelineInput?.input?.prompt).not.toContain(
+      'Answer with the complete requested booking immediately'
+    );
+    expect(pipelineInput?.context?.runOptions?.trustedPolicyPrompt).toContain(
+      'Return only 3 top-level numbered bullets.'
+    );
+    expect(pipelineInput?.context?.runOptions?.directAnswerUntrustedContextPrompt)
+      .toBe(ragPrompt);
+  });
+
+  it('does not let a small Notion supplement mask production-sized database context', async () => {
+    const universeId = 'supplemented-production-card';
+    const prompt = 'Answer directly. Give me one complete Raw card.';
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockRepository.loadContext.mockResolvedValueOnce({
+      roster: [{
+        name: `Production Roster Context ${'x'.repeat(6_200)}`,
+        overall: 90,
+        updatedAt: new Date('2026-08-28T12:00:00.000Z'),
+      }],
+      events: [],
+      storyBeats: [],
+      storylines: [],
+      canonContext: emptyCanonContext(universeId),
+    });
+    mockLoadBackstageNotionPromptContext.mockResolvedValueOnce({
+      content: '[Configured Notion reference 1]\n> Supplemental continuity.',
+      pageCount: 1,
+      truncated: false,
+      codePoints: 24,
+    });
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => generateBooking(prompt, universeId)
+    )).resolves.toBe('Generated booking');
+
+    expect(mockRepository.loadContext).toHaveBeenCalledTimes(1);
+    expect(mockLoadBackstageNotionPromptContext).toHaveBeenCalledTimes(1);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string; tokenLimit?: number };
+      context?: {
+        runOptions?: {
+          directAnswerUntrustedContextPrompt?: string;
+        };
+      };
+    } | undefined;
+    expect(pipelineInput?.input?.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+    expect(pipelineInput?.input?.prompt).toContain(
+      'Answer with the complete requested booking immediately, without a preamble'
+    );
+    expect(pipelineInput?.input?.prompt).not.toContain(
+      'Return only 5 top-level numbered bullets'
+    );
+    expect(pipelineInput?.context?.runOptions?.directAnswerUntrustedContextPrompt)
+      .toContain('Supplemental continuity.');
   });
 
   it('retries a six-match authoritative request with the same token, runtime, and RAG snapshot', async () => {

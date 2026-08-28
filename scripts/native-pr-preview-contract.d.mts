@@ -49,6 +49,8 @@ export interface NativePrPreviewE2eContract {
       'backstage-booker-managed-async-continuation/v1';
     gptClientIdentityProofVersion:
       'backstage-booker-gpt-client-identity/v1';
+    outputCapacityPresentationProofVersion:
+      'backstage-booker-output-capacity-presentation/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -60,6 +62,7 @@ export interface NativePrPreviewE2eContract {
       continuitySubtree: 'continuity-subtree-contract';
       managedAsyncContinuation: 'managed-async-continuation-contract';
       gptClientIdentity: 'gpt-client-identity-contract';
+      productionOutputContracts: 'production-output-contracts';
     }>;
     proofHeaders: Readonly<{
       clearPolicyVersion:
@@ -76,6 +79,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-managed-async-version';
       gptClientIdentityVersion:
         'x-arcanos-preview-backstage-gpt-client-identity-version';
+      outputCapacityPresentationVersion:
+        'x-arcanos-preview-backstage-output-capacity-presentation-version';
     }>;
   }>;
   readonly backstageBookerOpenApi: Readonly<{

@@ -2,6 +2,7 @@ import { APPLICATION_CONSTANTS } from '../constants.js';
 import {
   BACKSTAGE_BOOKING_HEAVY_CONTEXT_CODE_UNITS,
   BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS,
+  BACKSTAGE_BOOKING_HEAVY_ITEM_COUNT,
   BACKSTAGE_BOOKING_HEAVY_PROMPT_CODE_UNITS,
   BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
   BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
@@ -55,6 +56,10 @@ export interface BackstageOutputBudgetInput {
   promptCodeUnits: number;
   retrievedContextCodeUnits: number;
   expectedOutputWords: number;
+  expectedItemCount?: number;
+  explicitCompactItemCount?: boolean;
+  notionAuthorityContext?: boolean;
+  completeBookingContainerComponentCount?: boolean;
   model: string;
   modelStageTimeoutMs: number;
 }
@@ -126,26 +131,138 @@ function resolveStageTokenCap(modelStageTimeoutMs: number): number {
   return BACKSTAGE_OUTPUT_TOKEN_LIMIT_MAX;
 }
 
-function isProductionSizedStructuredGeneration(
-  input: BackstageOutputBudgetInput,
+function isProductionSizedGeneration(
+  input: Pick<
+    BackstageOutputBudgetInput,
+    | 'action'
+    | 'explicitCompactItemCount'
+    | 'notionAuthorityContext'
+    | 'completeBookingContainerComponentCount'
+  >,
   promptCodeUnits: number,
   retrievedContextCodeUnits: number,
-  expectedOutputWords: number
+  expectedOutputWords: number,
+  expectedItemCount: number
 ): boolean {
-  return input.requestedFormat === 'structured_booking'
-    && (
-      input.action === 'generateBookingWithHRC'
-      || promptCodeUnits >= BACKSTAGE_BOOKING_HEAVY_PROMPT_CODE_UNITS
-      || retrievedContextCodeUnits >= BACKSTAGE_BOOKING_HEAVY_CONTEXT_CODE_UNITS
-      || expectedOutputWords >= BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS
+  return input.action === 'generateBookingWithHRC'
+    || input.notionAuthorityContext === true
+    || input.completeBookingContainerComponentCount === true
+    || promptCodeUnits >= BACKSTAGE_BOOKING_HEAVY_PROMPT_CODE_UNITS
+    || retrievedContextCodeUnits >= BACKSTAGE_BOOKING_HEAVY_CONTEXT_CODE_UNITS
+    || expectedOutputWords >= BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS
+    || (
+      input.explicitCompactItemCount !== true
+      && expectedItemCount >= BACKSTAGE_BOOKING_HEAVY_ITEM_COUNT
     );
+}
+
+export interface BackstageOutputPresentationInput {
+  requestedFormat: BackstageOutputFormat;
+  boundedReviewMode: boolean;
+  directAnswerMode: boolean;
+  explicitCompactItemCount: boolean;
+  completeBookingContainerComponentCount: boolean;
+  explicitCompactOutputRequest: boolean;
+  requestedOutputShapeInstructionPresent: boolean;
+}
+
+export type BackstageOutputRecoveryMode = 'compact' | 'structured';
+
+/**
+ * Resolve capacity independently of the response presentation chosen by the
+ * Booker service. A default, non-explicit item estimate and complete-container
+ * component counts remain production signals, while explicit top-level compact
+ * cardinality is enforced separately after capacity selection.
+ */
+export function resolveBackstageRequestedOutputFormat(
+  input: Pick<
+    BackstageOutputBudgetInput,
+    | 'action'
+    | 'profile'
+    | 'requestedFormat'
+    | 'promptCodeUnits'
+    | 'retrievedContextCodeUnits'
+    | 'expectedOutputWords'
+    | 'expectedItemCount'
+    | 'explicitCompactItemCount'
+    | 'notionAuthorityContext'
+    | 'completeBookingContainerComponentCount'
+  >
+): BackstageOutputFormat {
+  if (
+    input.requestedFormat !== 'compact_direct'
+    || input.profile !== 'queued_generation'
+  ) {
+    return input.requestedFormat;
+  }
+
+  const promptCodeUnits = normalizePositiveInteger(input.promptCodeUnits);
+  const retrievedContextCodeUnits = normalizePositiveInteger(
+    input.retrievedContextCodeUnits
+  );
+  const expectedOutputWords = normalizePositiveInteger(input.expectedOutputWords);
+  const expectedItemCount = normalizePositiveInteger(input.expectedItemCount ?? 0);
+  return isProductionSizedGeneration(
+    input,
+    promptCodeUnits,
+    retrievedContextCodeUnits,
+    expectedOutputWords,
+    expectedItemCount
+  )
+    ? 'structured_booking'
+    : 'compact_direct';
+}
+
+/**
+ * Resolve the user-visible response shape independently of the capacity class.
+ * Production signals may promote a queued request to structured capacity while
+ * an explicit exact/maximum compact contract remains the presentation surface.
+ * Complete booking-container component counts stay structured unless the
+ * caller separately and unambiguously constrains the returned list itself.
+ */
+export function resolveBackstageResponseFormat(
+  input: BackstageOutputPresentationInput
+): BackstageOutputFormat {
+  if (input.boundedReviewMode) {
+    return 'bounded_review';
+  }
+
+  const preserveExplicitCompactOutput = input.directAnswerMode
+    && input.explicitCompactItemCount
+    && (
+      !input.completeBookingContainerComponentCount
+      || input.explicitCompactOutputRequest
+      || input.requestedOutputShapeInstructionPresent
+    );
+  if (preserveExplicitCompactOutput) {
+    return 'compact_direct';
+  }
+  if (
+    input.directAnswerMode
+    && input.completeBookingContainerComponentCount
+  ) {
+    return 'structured_booking';
+  }
+  return input.requestedFormat;
+}
+
+/** Select the retry instruction family without reinterpreting component counts. */
+export function resolveBackstageOutputRecoveryMode(input: {
+  responseFormat: BackstageOutputFormat;
+  completeBookingContainerComponentCount: boolean;
+}): BackstageOutputRecoveryMode {
+  return input.completeBookingContainerComponentCount
+    && input.responseFormat === 'structured_booking'
+    ? 'structured'
+    : 'compact';
 }
 
 /**
  * Select a finite output budget from safe workload metadata only. The queued
- * worker profile is the sole path allowed above the historical Booker cap;
- * synchronous, compact, continuity, and unsupported-model calls retain their
- * existing bounded budgets.
+ * worker profile is the sole path allowed above the historical Booker cap.
+ * Synchronous, continuity, and unsupported-model calls retain their existing
+ * bounded budgets; a production-sized queued call may retain compact response
+ * presentation while using this extended capacity.
  */
 export function resolveBackstageOutputBudget(
   input: BackstageOutputBudgetInput
@@ -155,8 +272,10 @@ export function resolveBackstageOutputBudget(
     input.retrievedContextCodeUnits
   );
   const expectedOutputWords = normalizePositiveInteger(input.expectedOutputWords);
+  const expectedItemCount = normalizePositiveInteger(input.expectedItemCount ?? 0);
   const modelStageTimeoutMs = normalizePositiveInteger(input.modelStageTimeoutMs);
   const modelCapability = resolveModelCapability(input.model);
+  const requestedFormat = resolveBackstageRequestedOutputFormat(input);
   const boundedRequestTokenLimit = input.action === 'queryContinuity'
     ? BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT
     : resolveBoundedRequestTokenLimit(input.requestedTokenLimit);
@@ -168,7 +287,7 @@ export function resolveBackstageOutputBudget(
   ): BackstageOutputBudgetDecision => ({
     action: input.action,
     profile: input.profile,
-    requestedFormat: input.requestedFormat,
+    requestedFormat,
     budgetClass,
     reason,
     modelCapability,
@@ -183,7 +302,7 @@ export function resolveBackstageOutputBudget(
   if (
     input.action === 'queryContinuity'
     || input.profile === 'continuity_sync'
-    || input.requestedFormat === 'continuity'
+    || requestedFormat === 'continuity'
   ) {
     return buildDecision(
       'continuity_small',
@@ -201,8 +320,8 @@ export function resolveBackstageOutputBudget(
   }
 
   if (
-    input.requestedFormat === 'compact_direct'
-    || input.requestedFormat === 'bounded_review'
+    requestedFormat === 'compact_direct'
+    || requestedFormat === 'bounded_review'
   ) {
     return buildDecision(
       'bounded_request',
@@ -228,11 +347,12 @@ export function resolveBackstageOutputBudget(
     );
   }
 
-  const productionSizedWorkload = isProductionSizedStructuredGeneration(
+  const productionSizedWorkload = isProductionSizedGeneration(
     input,
     promptCodeUnits,
     retrievedContextCodeUnits,
-    expectedOutputWords
+    expectedOutputWords,
+    expectedItemCount
   );
   const workloadTokenTarget = productionSizedWorkload
     ? resolveConfiguredWorkerTokenLimit(input.configuredWorkerTokenLimit)

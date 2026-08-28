@@ -32,6 +32,7 @@ const BASE_WORKLOAD_INPUT = {
   expectedItemCount: 1,
   expectedOutputWords: 120,
   notionAuthorityContext: false,
+  completeBookingContainerComponentCount: false,
   providerInvocationRequired: true,
 };
 
@@ -164,6 +165,19 @@ describe('Backstage action policy', () => {
       })).toMatchObject({ queueRequired: true, reason: 'generate_booking_with_hrc' });
     });
 
+    it('queues a complete booking container even when nested counts stay below numeric thresholds', () => {
+      expect(classifyBackstageBookerWorkload({
+        ...BASE_WORKLOAD_INPUT,
+        expectedItemCount: BACKSTAGE_BOOKING_HEAVY_ITEM_COUNT - 1,
+        expectedOutputWords: BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS - 1,
+        completeBookingContainerComponentCount: true,
+      })).toMatchObject({
+        workloadClass: 'production_generation',
+        queueRequired: true,
+        reason: 'complete_booking_container',
+      });
+    });
+
     it('returns only bounded workload metadata and never accepts raw content', () => {
       const decision = classifyBackstageBookerWorkload({
         ...BASE_WORKLOAD_INPUT,
@@ -174,6 +188,7 @@ describe('Backstage action policy', () => {
       expect(serializedDecision).not.toContain('private-prompt-sentinel');
       expect(serializedDecision).not.toContain('private-notion-sentinel');
       expect(Object.keys(decision).sort()).toEqual([
+        'completeBookingContainerComponentCount',
         'contextCodeUnits',
         'expectedItemCount',
         'expectedOutputWords',
