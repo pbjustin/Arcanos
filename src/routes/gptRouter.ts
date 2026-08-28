@@ -513,6 +513,8 @@ function classifyBackstageRouteWorkload(params: {
     expectedItemCount: outputContract.itemPolicy.budgetItemCount,
     expectedOutputWords: outputContract.wordBounds.totalWordLimit,
     notionAuthorityContext,
+    completeBookingContainerComponentCount:
+      outputContract.completeBookingContainerComponentCount,
     providerInvocationRequired:
       !prompt || tryExtractExactLiteralPromptShortcut(prompt) === null,
   });
@@ -2987,6 +2989,8 @@ router.post(
                 backstageExpectedOutputWords: backstageWorkloadDecision.expectedOutputWords,
                 backstageNotionAuthorityContext:
                   backstageWorkloadDecision.notionAuthorityContext,
+                backstageCompleteBookingContainerComponentCount:
+                  backstageWorkloadDecision.completeBookingContainerComponentCount,
                 backstageProviderInvocationRequired:
                   backstageWorkloadDecision.providerInvocationRequired,
               }

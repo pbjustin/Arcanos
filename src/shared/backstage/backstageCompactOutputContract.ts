@@ -78,6 +78,36 @@ const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
   '(?:angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
   '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
+const BACKSTAGE_DIRECT_GENERATION_VERB_PATTERN =
+  '(?:book|build|continue|create|design|draft|generate|give|make|need|plan|produce|provide|rebook|return|rewrite|schedule|want|write)';
+const BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN =
+  '(?:angles?|beats?|bouts?|finish(?:es)?|match(?:es)?|matchups?|promos?|segments?)';
+const BACKSTAGE_BOOKING_COMPONENT_COUNT_ADJECTIVE_PATTERN =
+  `(?:(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})(?:\\s*-\\s*|\\s+)${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\s+){0,2}`;
+const BACKSTAGE_BOOKING_CONTAINER_MODIFIER_PATTERN =
+  '(?:raw|smackdown|nxt|dynamite|collision|wwe|aew|weekly|wrestling|booking|match|premium[- ]live|pay[- ]per[- ]view)';
+const BACKSTAGE_COMPLETE_BOOKING_CONTAINER_REQUEST_PATTERN =
+  `(?:${BACKSTAGE_DIRECT_GENERATION_VERB_PATTERN}(?:\\s+(?:me|us))?|(?:i|we)(?:['’]d|\\s+would)\\s+like)`;
+const BACKSTAGE_COMPLETE_BOOKING_CONTAINER_DIRECTIVE_PATTERN = new RegExp(
+  `\\b${BACKSTAGE_COMPLETE_BOOKING_CONTAINER_REQUEST_PATTERN}\\s+(?:(?:a|an|the|this|that|my|our|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}|\\d{1,2})\\s+)?${BACKSTAGE_BOOKING_COMPONENT_COUNT_ADJECTIVE_PATTERN}(?:complete|full|entire|whole)\\s+(?:${BACKSTAGE_BOOKING_CONTAINER_MODIFIER_PATTERN}\\s+){0,3}${BACKSTAGE_BOOKING_COMPONENT_COUNT_ADJECTIVE_PATTERN}(?:${BACKSTAGE_BOOKING_CONTAINER_MODIFIER_PATTERN}\\s+){0,3}(?:bookings?|cards?|shows?|events?|episodes?|ppvs?|ples?)\\b`,
+  'giu'
+);
+const BACKSTAGE_BOOKING_COMPONENT_COUNT_PATTERN = new RegExp(
+  `\\b(?:(?:up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\b(?:\\s*-\\s*|\\s+)(?:(?:short|detailed|opening|closing|major|minor|wrestling|booking|title|singles|tag[- ]team|main[- ]event|raw|smackdown|nxt)\\s+){0,4}${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\b(?!\\s+(?:alternatives?|bullets?|ideas?|items?|options?|scenarios?)\\b)`,
+  'giu'
+);
+const BACKSTAGE_CONTAINER_COMPACT_OUTPUT_ANAPHORA_PATTERN = new RegExp(
+  `\\b(?:provide|return|write)\\s+(?:it|the\\s+(?:answer|output|response))\\s+(?:in|as|using)\\s+(?:(?<qualifier>exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?<digitCount>\\d+)|(?<wordCount>${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))\\b(?:\\s+(?:short|brief|concise|numbered|detailed)){0,3}\\s+(?:bullets?|items?|options?|alternatives?|scenarios?)\\b`,
+  'giu'
+);
+const BACKSTAGE_CONTAINER_COMPACT_OUTPUT_SUFFIX_PATTERN = new RegExp(
+  `\\b(?:(?:in|as|using|formatted\\s+as|keep\\s+(?:it|the\\s+(?:answer|output|response))\\s+to|limit\\s+(?:it|the\\s+(?:answer|output|response))\\s+to)\\s+(?:(?<qualifier>exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?|(?<standaloneQualifier>up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)(?:(?<digitCount>\\d+)|(?<wordCount>${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))\\b(?:\\s+(?:short|brief|concise|numbered|detailed)){0,3}\\s+(?:bullets?|items?|options?|alternatives?|scenarios?)\\b(?:\\s+(?<postQualifier>max(?:imum)?))?`,
+  'giu'
+);
+const BACKSTAGE_COMPACT_OUTPUT_COUNT_REFERENCE_PATTERN = new RegExp(
+  `\\b(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\b(?:\\s+(?:short|brief|concise|numbered|detailed)){0,3}\\s+(?:bullets?|items?|options?|alternatives?|scenarios?)\\b`,
+  'giu'
+);
 
 export function parseBackstageDirectAnswerOutputContract(prompt: string): BackstageDirectAnswerOutputContract {
   const normalizedPrompt = prompt.trim();
@@ -164,6 +194,8 @@ export interface BackstageCompactOutputContract
   itemPolicy: BackstageCompactRetryItemPolicy;
   wordBounds: BackstageCompactOutputWordBounds;
   embeddedContentState: BackstageCompactRetryEmbeddedContentState;
+  completeBookingContainerComponentCount: boolean;
+  explicitCompactOutputRequest: boolean;
 }
 
 export interface BackstageCompactRetryEmbeddedContentState {
@@ -543,6 +575,318 @@ function isBackstageCompactRetryDirectiveCreativeContent(
   );
 }
 
+function isBackstageTopLevelOutputRequestMatch(
+  prompt: string,
+  matchIndex: number,
+  embeddedContentState: BackstageCompactRetryEmbeddedContentState
+): boolean {
+  const directiveNegated = isBackstageCompactRetryDirectiveNegated(
+    prompt,
+    matchIndex
+  );
+  const boundedComponentQualifier = new RegExp(
+    `\\b(?:featuring|with)\\s+no\\s+more\\s+than\\s+(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\b(?:\\s+(?:short|detailed|opening|closing|major|minor|wrestling|booking|title|singles|tag[- ]team|main[- ]event|raw|smackdown|nxt)){0,4}\\s+${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\b\\s*$`,
+    'iu'
+  ).test(prompt.slice(Math.max(0, matchIndex - 180), matchIndex));
+  return embeddedContentState.quotedDispositionByCodeUnit[matchIndex] === 'topLevel'
+    && !isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
+    && (!directiveNegated || boundedComponentQualifier);
+}
+
+function isBackstageCompleteBookingContainerDirectiveMatch(
+  prompt: string,
+  match: RegExpMatchArray,
+  embeddedContentState: BackstageCompactRetryEmbeddedContentState
+): boolean {
+  const matchIndex = match.index!;
+  if (!isBackstageTopLevelOutputRequestMatch(
+    prompt,
+    matchIndex,
+    embeddedContentState
+  )) {
+    return false;
+  }
+
+  const precedingText = prompt.slice(Math.max(0, matchIndex - 180), matchIndex);
+  const clauseStart = Math.max(
+    precedingText.lastIndexOf('.'),
+    precedingText.lastIndexOf('!'),
+    precedingText.lastIndexOf('?'),
+    precedingText.lastIndexOf('\n'),
+    precedingText.lastIndexOf(','),
+    precedingText.lastIndexOf(';'),
+    precedingText.lastIndexOf(':')
+  );
+  if (
+    clauseStart >= 0
+    && /[,;:]/u.test(precedingText[clauseStart]!)
+    && /\b(?:according\s+to|asks?|asked|context|don['’]t|examples?|ignore|never|not|quote|says?|said|tells?|told|(?:instructions?|request)\s+(?:from|says?))\b[^.!?\n]{0,120}[,;:]\s*$/iu.test(
+      precedingText.slice(0, clauseStart + 1)
+    )
+  ) {
+    return false;
+  }
+  const directivePrefix = precedingText.slice(clauseStart + 1).trim();
+  return directivePrefix.length === 0
+    || /^(?:(?:and|but)\s+)?(?:(?:also|first|next|now|then)(?:\s+(?:kindly|please))?|(?:kindly|please))?$/iu.test(
+      directivePrefix
+    )
+    || /^(?:can|could|would|will)\s+you(?:\s+(?:kindly|please))?(?:\s+go\s+ahead\s+and)?$/iu.test(
+      directivePrefix
+    )
+    || /^(?:go\s+ahead\s+and|let(?:['’]s|\s+us)|you\s+(?:can|could|must|should))$/iu.test(
+      directivePrefix
+    )
+    || /^(?:i|we)(?:\s+(?:also|just|really))?$/iu.test(directivePrefix)
+    || /^(?:i|we)\s+(?:(?:also|just|really)\s+)?(?:need|want)(?:\s+you)?\s+to$/iu.test(
+      directivePrefix
+    )
+    || /^(?:i|we)(?:['’]d|\s+would)\s+like\s+you\s+to$/iu.test(
+      directivePrefix
+    )
+    || /^(?:answer|respond)\s+(?:briefly|concisely|directly)(?:\s+and)?$/iu.test(
+      directivePrefix
+    );
+}
+
+function isBackstageTerminalCompactOutputAttachment(
+  scope: string,
+  match: RegExpMatchArray
+): boolean {
+  const trailingText = scope.slice(match.index! + match[0].length);
+  const normalizedTail = trailingText
+    .replace(/^[\s,;:\-–—]+/u, '')
+    .trim();
+  if (normalizedTail.length === 0 || /^please$/iu.test(normalizedTail)) {
+    return true;
+  }
+
+  return new RegExp(
+    `^(?:total|(?:and\\s+)?(?:be|keep\\s+(?:it|the\\s+(?:answer|output|response)))\\s+(?:brief|concise)|(?:and\\s+)?(?:use\\s+)?no\\s+(?:headings?|sub[- ]bullets?|table)|each\\s+(?:containing|covering|including|with)\\s+(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}(?:\\s+and\\s+(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}){0,3}|(?:one|1)\\s+per\\s+(?:item|section))$`,
+    'iu'
+  ).test(normalizedTail);
+}
+
+function isBackstageComponentScopedCompactOutputAttachment(prefix: string): boolean {
+  return new RegExp(
+    `(?:\\bwhere\\b[^,;:.!?\\n]{0,120}\\b${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\b|\\bwith\\s+(?!(?:(?:at\\s+most|exactly|no\\s+more\\s+than|only|up\\s+to)\\s+)?(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\b)[^,;:.!?\\n]{0,80}\\b${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\b|\\b(?:a|an|my|our|that|the|this)\\s+(?:(?:closing|main[- ]event|opening|title)\\s+){0,3}${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}\\b|\\b(?:branches?|ending|plays?\\s+out|resolves?|unfold(?:ed|ing|s)?)\\b)[^,;:.!?\\n]{0,100}$`,
+    'iu'
+  ).test(prefix);
+}
+
+function resolveBackstageExplicitCompactOutputItemPolicy(
+  prompt: string,
+  embeddedContentState: BackstageCompactRetryEmbeddedContentState
+): Extract<BackstageCompactRetryItemPolicy, { mode: 'exact' | 'atMost' }> | null {
+  const validContainers = Array.from(prompt.matchAll(
+    BACKSTAGE_COMPLETE_BOOKING_CONTAINER_DIRECTIVE_PATTERN
+  )).filter(match => isBackstageCompleteBookingContainerDirectiveMatch(
+    prompt,
+    match,
+    embeddedContentState
+  ));
+  if (validContainers.length === 0) {
+    return null;
+  }
+  const firstContainerIndex = validContainers[0]!.index!;
+  const presentationScope = prompt.slice(firstContainerIndex, firstContainerIndex + 1_000);
+  const presentationReferences = Array.from(presentationScope.matchAll(
+    BACKSTAGE_COMPACT_OUTPUT_COUNT_REFERENCE_PATTERN
+  )).filter(match => isBackstageTopLevelOutputRequestMatch(
+    prompt,
+    firstContainerIndex + match.index!,
+    embeddedContentState
+  ));
+  const hasPresentationCorrection = Array.from(presentationScope.matchAll(new RegExp(
+    `\\b(?:actually|instead|rather|correction|make\\s+that|change\\s+(?:it|that)\\s+to)\\b[^.!?\\n]{0,48}\\b(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\b`,
+    'giu'
+  ))).some(match => isBackstageTopLevelOutputRequestMatch(
+    prompt,
+    firstContainerIndex + match.index!,
+    embeddedContentState
+  ));
+  if (presentationReferences.length > 1 || hasPresentationCorrection) {
+    return null;
+  }
+  const candidates = new Map<number, Extract<
+    BackstageCompactRetryItemPolicy,
+    { mode: 'exact' | 'atMost' }
+  >>();
+  const addCandidate = (match: RegExpMatchArray, offset = 0): void => {
+    const matchIndex = offset + match.index!;
+    if (
+      !isBackstageTopLevelOutputRequestMatch(
+        prompt,
+        matchIndex,
+        embeddedContentState
+      )
+    ) {
+      return;
+    }
+    const groups = match.groups as BackstageCompactRetryItemCountGroups & {
+      qualifier?: string;
+      postQualifier?: string;
+      standaloneQualifier?: string;
+    };
+    const count = parseBackstageCompactRetryItemCountGroups(groups);
+    if (count === null) {
+      return;
+    }
+    const qualifier = (
+      groups.qualifier
+      ?? groups.postQualifier
+      ?? groups.standaloneQualifier
+      ?? ''
+    ).toLowerCase();
+    candidates.set(matchIndex, {
+      mode: /^(?:up\s+to|at\s+most|no\s+more\s+than|max(?:imum)?)$/u.test(qualifier)
+        ? 'atMost'
+        : 'exact',
+      count,
+      budgetItemCount: count,
+    });
+  };
+  const addAttachedCandidates = (
+    scope: string,
+    offset: number,
+    requireLeadingRelation: boolean
+  ): void => {
+    for (const pattern of [
+      BACKSTAGE_CONTAINER_COMPACT_OUTPUT_SUFFIX_PATTERN,
+      BACKSTAGE_CONTAINER_COMPACT_OUTPUT_ANAPHORA_PATTERN,
+    ]) {
+      for (const match of scope.matchAll(pattern)) {
+        const prefix = scope.slice(0, match.index!);
+        const isAnaphora = pattern === BACKSTAGE_CONTAINER_COMPACT_OUTPUT_ANAPHORA_PATTERN;
+        const leadingRelation = /^[\s,;:!?\.\-–—]*(?:(?:and\s+)?then[\s,;:!?\.\-–—]*)?$/iu.test(
+          prefix
+        );
+        const competingDirective = new RegExp(
+          `\\b(?:${BACKSTAGE_DIRECT_GENERATION_VERB_PATTERN}|work)\\b`,
+          'iu'
+        ).test(prefix);
+        if (
+          (requireLeadingRelation && !leadingRelation)
+          || (!requireLeadingRelation && competingDirective)
+          || (!isAnaphora && !isBackstageTerminalCompactOutputAttachment(scope, match))
+          || (!isAnaphora && isBackstageComponentScopedCompactOutputAttachment(prefix))
+        ) {
+          continue;
+        }
+        addCandidate(match, offset);
+      }
+    }
+  };
+
+  for (const containerMatch of validContainers) {
+    const suffixScopeStart = containerMatch.index! + containerMatch[0].length;
+    const suffixScope = prompt.slice(suffixScopeStart, suffixScopeStart + 500);
+    const firstBoundaryIndex = suffixScope.search(/[.!?\n]/u);
+    const attachedScopeEnd = firstBoundaryIndex < 0
+      ? suffixScope.length
+      : firstBoundaryIndex;
+    addAttachedCandidates(
+      suffixScope.slice(0, attachedScopeEnd),
+      suffixScopeStart,
+      false
+    );
+    if (firstBoundaryIndex >= 0) {
+      const followingClauseStart = firstBoundaryIndex + 1;
+      const followingText = suffixScope.slice(followingClauseStart);
+      const followingBoundaryIndex = followingText.search(/[.!?\n]/u);
+      const followingClause = followingText.slice(
+        0,
+        followingBoundaryIndex < 0 ? followingText.length : followingBoundaryIndex
+      );
+      addAttachedCandidates(
+        followingClause,
+        suffixScopeStart + followingClauseStart,
+        true
+      );
+    }
+  }
+
+  const policies = Array.from(candidates.values());
+  const policy = policies[0];
+  return policy
+    && policies.every(candidate =>
+      candidate.mode === policy.mode && candidate.count === policy.count
+    )
+    ? policy
+    : null;
+}
+
+/**
+ * Detect a direct request for a complete booking container with nested component
+ * counts. Those counts describe the contents of the card; they must not demote
+ * the whole container to compact-list capacity.
+ */
+export function hasBackstageCompleteBookingContainerComponentCountRequest(
+  prompt: string,
+  embeddedContentState = buildBackstageCompactRetryEmbeddedContentState(prompt)
+): boolean {
+  const normalizedPrompt = prompt;
+  if (
+    normalizedPrompt.trim().length === 0
+    || shouldUseBoundedBackstageReviewMode(normalizedPrompt)
+  ) {
+    return false;
+  }
+
+  for (const containerMatch of normalizedPrompt.matchAll(
+    BACKSTAGE_COMPLETE_BOOKING_CONTAINER_DIRECTIVE_PATTERN
+  )) {
+    if (!isBackstageCompleteBookingContainerDirectiveMatch(
+      normalizedPrompt,
+      containerMatch,
+      embeddedContentState
+    )) {
+      continue;
+    }
+    const containerIndex = containerMatch.index!;
+    const componentScopeStart = containerIndex;
+    const componentScope = normalizedPrompt.slice(
+      componentScopeStart,
+      componentScopeStart + 500
+    );
+    for (const componentMatch of componentScope.matchAll(
+      BACKSTAGE_BOOKING_COMPONENT_COUNT_PATTERN
+    )) {
+      const componentIndex = componentScopeStart + componentMatch.index!;
+      if (isBackstageTopLevelOutputRequestMatch(
+        normalizedPrompt,
+        componentIndex,
+        embeddedContentState
+      )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Preserve explicit compact presentation independently of capacity promotion.
+ * These nouns describe the returned list itself rather than card components.
+ */
+export function hasBackstageExplicitCompactOutputRequest(
+  prompt: string,
+  embeddedContentState = buildBackstageCompactRetryEmbeddedContentState(prompt)
+): boolean {
+  const normalizedPrompt = prompt;
+  if (
+    normalizedPrompt.trim().length === 0
+    || shouldUseBoundedBackstageReviewMode(normalizedPrompt)
+  ) {
+    return false;
+  }
+
+  return resolveBackstageExplicitCompactOutputItemPolicy(
+    normalizedPrompt,
+    embeddedContentState
+  ) !== null;
+}
+
 function collectBackstageCompactRetryDirectiveCounts(
   prompt: string,
   embeddedContentState: BackstageCompactRetryEmbeddedContentState
@@ -754,6 +1098,12 @@ function resolveBackstageCompactRetryItemPolicy(
     return { mode: 'exact', count: 6, budgetItemCount: 6 };
   }
 
+  const explicitCompactOutputPolicy =
+    resolveBackstageExplicitCompactOutputItemPolicy(prompt, embeddedContentState);
+  if (explicitCompactOutputPolicy) {
+    return explicitCompactOutputPolicy;
+  }
+
   const directiveCounts = collectBackstageCompactRetryDirectiveCounts(
     prompt,
     embeddedContentState
@@ -943,6 +1293,15 @@ export function resolveBackstageCompactOutputContract(
       embeddedContentState
     ),
     embeddedContentState,
+    completeBookingContainerComponentCount:
+      hasBackstageCompleteBookingContainerComponentCountRequest(
+        prompt,
+        embeddedContentState
+      ),
+    explicitCompactOutputRequest: hasBackstageExplicitCompactOutputRequest(
+      prompt,
+      embeddedContentState
+    ),
   };
 }
 
@@ -1012,6 +1371,20 @@ export function buildBackstageBookerCompactOutputRetryInstruction(
     'Keep every requested field inline in its item, and omit unrequested fields.',
     stopInstruction,
     'Prioritize the direct answer and only the continuity facts needed to support it.',
+    'Do not mention this recovery instruction or the discarded response.',
+    '<<OUTPUT_LENGTH_RECOVERY_END>>',
+  ].join('\n');
+}
+
+export function buildBackstageBookerStructuredOutputRetryInstruction(): string {
+  return [
+    '<<OUTPUT_LENGTH_RECOVERY>>',
+    'The previous response was discarded because it exceeded the output limit.',
+    'Return a new, complete answer within the existing output limit; never continue or quote the discarded response.',
+    'Preserve every requested card, show, or event component and its original hierarchy.',
+    'Keep requested match, segment, angle, finish, consequence, and production-beat counts as component requirements, not as a replacement top-level item count.',
+    'Use concise organized markdown sections and compact lower-priority detail before omitting any requested component.',
+    'Use no preamble, recap, conclusion, optional alternatives, or meta commentary.',
     'Do not mention this recovery instruction or the discarded response.',
     '<<OUTPUT_LENGTH_RECOVERY_END>>',
   ].join('\n');

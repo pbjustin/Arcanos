@@ -117,6 +117,7 @@ import {
 import {
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
+  buildBackstageBookerStructuredOutputRetryInstruction,
   buildBackstageBookerRequestedOutputShapeInstruction,
   parseBackstageDirectAnswerOutputContract,
   resolveBackstageCompactOutputContract,
@@ -2537,31 +2538,31 @@ export async function generateBooking(
     compactRequestedTokenLimit
   );
   const preliminaryItemPolicy = preliminaryCompactOutputContract.itemPolicy;
+  const completeBookingContainerComponentCount =
+    preliminaryCompactOutputContract.completeBookingContainerComponentCount;
   const expectedItemCount = preliminaryItemPolicy.budgetItemCount;
   const explicitCompactItemCount = preliminaryItemPolicy.mode !== 'default';
-  const initialRequestedFormat = resolveBackstageRequestedOutputFormat({
-    action: executionAction,
-    profile: executionBudget.profile,
-    requestedFormat: requestedFormatPreference,
-    promptCodeUnits: input.prompt.length,
-    retrievedContextCodeUnits: 0,
-    expectedOutputWords:
-      preliminaryCompactOutputContract.wordBounds.totalWordLimit,
-    expectedItemCount,
-    explicitCompactItemCount,
-    notionAuthorityContext: false,
-  });
+  const preliminaryRequestedOutputShapeInstruction =
+    buildBackstageBookerRequestedOutputShapeInstruction(
+      input.prompt,
+      preliminaryCompactOutputContract
+    );
+  const preserveExplicitCompactOutput = directAnswerMode
+    && !boundedReviewMode
+    && explicitCompactItemCount
+    && (
+      !completeBookingContainerComponentCount
+      || preliminaryCompactOutputContract.explicitCompactOutputRequest
+      || preliminaryRequestedOutputShapeInstruction !== null
+    );
   const structuredPrompt: StructuredBookingPrompt = structuredScope
       ? await buildStructuredBookingPrompt(input.prompt, resolvedUniverseId)
       : await (async (): Promise<StructuredBookingPrompt> => {
           const legacyPrompts = await buildLegacyStructuredBookingPrompts(
             input.prompt
           );
-          const instructions = initialRequestedFormat === 'structured_booking'
-            ? legacyPrompts.structuredDirect
-            : legacyPrompts.compactDirect;
           return {
-            instructions,
+            instructions: legacyPrompts.compactDirect,
             includesNotion: false,
             notionAuthorityContext: false,
             trustedPolicyPrompt: input.prompt,
@@ -2588,16 +2589,27 @@ export async function generateBooking(
     expectedItemCount,
     explicitCompactItemCount,
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
+    completeBookingContainerComponentCount,
   });
+  const responseFormat: BackstageOutputFormat = boundedReviewMode
+    ? 'bounded_review'
+    : directAnswerMode && preserveExplicitCompactOutput
+      ? 'compact_direct'
+      : directAnswerMode && completeBookingContainerComponentCount
+        ? 'structured_booking'
+        : requestedFormat;
+  const enforceParsedItemContract =
+    !completeBookingContainerComponentCount
+    || responseFormat === 'compact_direct';
   const structuredDirectOutput = directAnswerMode
-    && requestedFormat === 'structured_booking';
+    && responseFormat === 'structured_booking';
   const instructions = structuredDirectOutput
     ? structuredPrompt.structuredDirectInstructions
     : structuredPrompt.instructions;
   const trustedPolicyPrompt = structuredDirectOutput
     ? structuredPrompt.structuredDirectTrustedPolicyPrompt
     : structuredPrompt.trustedPolicyPrompt;
-  const requestedTokenLimit = requestedFormat === 'structured_booking'
+  const requestedTokenLimit = responseFormat === 'structured_booking'
     ? defaultTokenLimit
     : compactRequestedTokenLimit;
   const requestRemainingMs = getRequestRemainingMs();
@@ -2654,14 +2666,15 @@ export async function generateBooking(
     expectedItemCount,
     explicitCompactItemCount,
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
+    completeBookingContainerComponentCount,
     model,
     modelStageTimeoutMs: effectiveModelStageBudgetMs,
   });
   const tokenLimit = outputBudget.tokenLimit;
-  logger.info(
-    'backstage.generation.output_budget',
-    buildBackstageOutputBudgetTelemetry(outputBudget)
-  );
+  logger.info('backstage.generation.output_budget', {
+    ...buildBackstageOutputBudgetTelemetry(outputBudget),
+    responseFormat,
+  });
   const logCompactRetryEvent = (
     event: BackstageCompactOutputAttemptEvent | 'compact_retry_succeeded'
   ): void => {
@@ -2670,6 +2683,7 @@ export async function generateBooking(
         action: executionAction,
         profile: executionBudget.profile,
         requestedFormat: outputBudget.requestedFormat,
+        responseFormat,
         budgetClass: outputBudget.budgetClass,
         event,
       });
@@ -2686,8 +2700,10 @@ export async function generateBooking(
       input.prompt,
       compactOutputContract
     );
-  const compactOutputRetryInstruction =
-    buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
+  const outputRetryInstruction = completeBookingContainerComponentCount
+    && responseFormat === 'structured_booking'
+    ? buildBackstageBookerStructuredOutputRetryInstruction()
+    : buildBackstageBookerCompactOutputRetryInstruction(compactOutputContract);
   //audit Assumption: every generated booking should receive the same server-owned quality policy; failure risk: direct-answer mode would otherwise return without a Booker-specific CLEAR quality pass; expected invariant: one mandatory CLEAR draft-review-revise instruction is present in the system policy for the normal attempt and the existing compact retry; handling strategy: combine it with any authority policy before invoking Trinity without adding a provider call or changing the response contract.
   const directAnswerSystemPolicyPrompt = [
     buildBackstageBookerDirectAnswerSystemPolicy(
@@ -2722,7 +2738,8 @@ export async function generateBooking(
         + (executionBudget.profile === 'queued_generation'
           ? 0
           : executionBudget.finalizationReserveMs),
-      ...(compactOutputContract.itemPolicy.mode === 'exact'
+      ...(enforceParsedItemContract
+        && compactOutputContract.itemPolicy.mode === 'exact'
         ? {
             expectedNumberedItemCount:
               compactOutputContract.itemPolicy.count,
@@ -2759,7 +2776,7 @@ export async function generateBooking(
     );
     const runGenerationAttempt = (compactOutputRetry: boolean) => {
       const attemptInstructions = compactOutputRetry
-        ? `${instructions}\n\n${compactOutputRetryInstruction}`
+        ? `${instructions}\n\n${outputRetryInstruction}`
         : requestedOutputShapeInstruction
           ? `${instructions}\n\n${requestedOutputShapeInstruction}`
           : instructions;
@@ -2770,7 +2787,7 @@ export async function generateBooking(
             modelStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
             trustedPolicyPrompt: [
               trustedPolicyPrompt,
-              compactOutputRetryInstruction,
+              outputRetryInstruction,
             ].join('\n\n'),
           }
         : trinityRunOptions;
@@ -2825,7 +2842,7 @@ export async function generateBooking(
       : undefined;
     const normalizedOutput = boundedReviewMode
       ? applyBackstageReviewOutputContract(clean)
-      : directAnswerMode && requestedFormat === 'compact_direct'
+      : directAnswerMode && responseFormat === 'compact_direct'
         ? applyBackstageDirectAnswerOutputContract(
             clean,
             input.prompt,
@@ -2835,11 +2852,13 @@ export async function generateBooking(
           ? stripBackstageDirectAnswerPreamblePrefix(clean)
           : clean;
     //audit Assumption: a provider stop after the compact retry does not prove the requested answer is complete; failure risk: a short or overlong retry is returned as successful output; expected invariant: unambiguous exact and maximum retry contracts are enforced on the final user-visible text; handling strategy: reject malformed retry output with the same cause-free terminal error and never start a third generation attempt.
-    assertBackstageBookerCompactRetryOutputValid(
-      normalizedOutput,
-      compactOutputContract,
-      usedCompactOutputRetry
-    );
+    if (enforceParsedItemContract) {
+      assertBackstageBookerCompactRetryOutputValid(
+        normalizedOutput,
+        compactOutputContract,
+        usedCompactOutputRetry
+      );
+    }
     const validatedOutput = assertValidBackstageBookerActionData(
       'generateBooking',
       normalizedOutput

@@ -516,16 +516,23 @@ numbered paragraph per item and supplies a per-item word maximum, the first
 generation receives that compact output contract after the general response
 style. Those instructions preserve a tighter caller maximum, keep explicitly
 requested fields inline, omit unrequested fields, and target a total bounded by
-the requested item count. Answer generation makes at most one compact retry
-only after provider max-output exhaustion and only when the finite recovery
-budget remains available, reusing the same retrieval and budget. That retry requests one numbered paragraph per requested item, no headings
-or sub-bullets, and keeps explicitly requested fields inline. It allows at most
+the requested item count. HRC, Notion authority, prompt size, or retrieved
+context may independently grant production output capacity without removing an
+explicit top-level exact or maximum compact-list contract. Match and segment
+counts nested inside a requested complete card, show, or event remain component
+requirements rather than top-level response cardinality. Answer generation makes
+at most one output-length recovery attempt only after provider max-output
+exhaustion and only when the finite recovery budget remains available, reusing
+the same retrieval and budget. For a compact request, recovery requests one
+numbered paragraph per requested item, no headings or sub-bullets, and keeps
+explicitly requested fields inline; a structured complete-container request
+instead preserves the requested component hierarchy. Compact recovery allows at most
 125 words per item, never relaxes a tighter unambiguous caller maximum, and uses
 a total target that scales down with the existing token cap and never exceeds
 1,000 words (for example, three items at 100 words each are capped at 300 words).
 The backend validates the final numbered shape, consecutive count, and derived
 word ceilings for unambiguous exact and qualified-maximum policies before it
-returns a compact retry. The initial attempt remains prompt-guided. Ranges,
+returns compact recovered output. The initial attempt remains prompt-guided. Ranges,
 corrections, per-group counts, conflicting counts, and requested-field semantics
 remain caller-owned prompt constraints; the backend does not mechanically
 validate or enforce those meanings. Recognized numeric range endpoints may be

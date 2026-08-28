@@ -3050,6 +3050,63 @@ describe('Backstage Booker service persistence outcomes', () => {
       .toContain('<<UNTRUSTED_NOTION_RAG_BEGIN>>');
   });
 
+  it('keeps exact compact policy and cleanup on a queued Notion-authoritative request', async () => {
+    const universeId = 'notion-authoritative-compact-output';
+    const prompt = 'Answer directly. Give me three booking ideas.';
+    const ragPrompt = [
+      '<<UNTRUSTED_NOTION_RAG_BEGIN>>',
+      '> The current champions and active stories are available.',
+      '<<UNTRUSTED_NOTION_RAG_END>>',
+    ].join('\n');
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockIsBackstageNotionAuthoritativeUniverse.mockImplementation(
+      (candidate: string) => candidate === universeId
+    );
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+      universeId,
+      snapshotId: '88888888-8888-4888-8888-888888888888',
+      verifiedAt: new Date('2026-08-28T12:00:00.000Z'),
+      prompt: ragPrompt,
+      chunkCount: 1,
+      truncated: false,
+      citations: [],
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildPersistenceTrinityResult(buildPersistenceNumberedRetryOutput(5))
+    );
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => generateBooking(prompt, universeId)
+    )).resolves.toBe(buildPersistenceNumberedRetryOutput(3));
+
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string; tokenLimit?: number };
+      context?: {
+        runOptions?: {
+          directAnswerTokenLimitOverride?: number;
+          directAnswerUntrustedContextPrompt?: string;
+          trustedPolicyPrompt?: string;
+        };
+      };
+    } | undefined;
+    expect(pipelineInput?.input?.tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+    expect(pipelineInput?.input?.prompt).toContain(
+      'Return only 3 top-level numbered bullets.'
+    );
+    expect(pipelineInput?.input?.prompt).not.toContain(
+      'Answer with the complete requested booking immediately'
+    );
+    expect(pipelineInput?.context?.runOptions?.trustedPolicyPrompt).toContain(
+      'Return only 3 top-level numbered bullets.'
+    );
+    expect(pipelineInput?.context?.runOptions?.directAnswerUntrustedContextPrompt)
+      .toBe(ragPrompt);
+  });
+
   it('does not let a small Notion supplement mask production-sized database context', async () => {
     const universeId = 'supplemented-production-card';
     const prompt = 'Answer directly. Give me one complete Raw card.';

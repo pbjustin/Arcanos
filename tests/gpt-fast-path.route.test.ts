@@ -2071,6 +2071,37 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('queues a complete low-count card instead of treating its components as compact output', async () => {
+    const accessToken = `backstage-${'q'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6a).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        payload: {
+          universeId: 'complete-low-count-card-universe',
+          prompt: 'Give me one complete Raw card with three matches and two segments.',
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-route-decision-reason']).toBe(
+      'backstage_complete_booking_container'
+    );
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('uses the nested canonical literal prompt instead of a heavy message alias', async () => {
     const accessToken = `backstage-${'i'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;

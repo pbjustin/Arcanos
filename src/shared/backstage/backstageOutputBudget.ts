@@ -59,6 +59,7 @@ export interface BackstageOutputBudgetInput {
   expectedItemCount?: number;
   explicitCompactItemCount?: boolean;
   notionAuthorityContext?: boolean;
+  completeBookingContainerComponentCount?: boolean;
   model: string;
   modelStageTimeoutMs: number;
 }
@@ -133,7 +134,10 @@ function resolveStageTokenCap(modelStageTimeoutMs: number): number {
 function isProductionSizedGeneration(
   input: Pick<
     BackstageOutputBudgetInput,
-    'action' | 'explicitCompactItemCount' | 'notionAuthorityContext'
+    | 'action'
+    | 'explicitCompactItemCount'
+    | 'notionAuthorityContext'
+    | 'completeBookingContainerComponentCount'
   >,
   promptCodeUnits: number,
   retrievedContextCodeUnits: number,
@@ -142,6 +146,7 @@ function isProductionSizedGeneration(
 ): boolean {
   return input.action === 'generateBookingWithHRC'
     || input.notionAuthorityContext === true
+    || input.completeBookingContainerComponentCount === true
     || promptCodeUnits >= BACKSTAGE_BOOKING_HEAVY_PROMPT_CODE_UNITS
     || retrievedContextCodeUnits >= BACKSTAGE_BOOKING_HEAVY_CONTEXT_CODE_UNITS
     || expectedOutputWords >= BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS
@@ -152,11 +157,10 @@ function isProductionSizedGeneration(
 }
 
 /**
- * Keep direct wording as a response-style preference without allowing it to
- * demote a production-sized queued booking to the compact-answer capacity.
- * A default, non-explicit item estimate remains a production signal so a
- * complete card cannot collapse into the compact fallback. Explicit requests
- * for a finite list of bullets, ideas, matches, or options remain compact.
+ * Resolve capacity independently of the response presentation chosen by the
+ * Booker service. A default, non-explicit item estimate and complete-container
+ * component counts remain production signals, while explicit top-level compact
+ * cardinality is enforced separately after capacity selection.
  */
 export function resolveBackstageRequestedOutputFormat(
   input: Pick<
@@ -170,6 +174,7 @@ export function resolveBackstageRequestedOutputFormat(
     | 'expectedItemCount'
     | 'explicitCompactItemCount'
     | 'notionAuthorityContext'
+    | 'completeBookingContainerComponentCount'
   >
 ): BackstageOutputFormat {
   if (
@@ -198,9 +203,10 @@ export function resolveBackstageRequestedOutputFormat(
 
 /**
  * Select a finite output budget from safe workload metadata only. The queued
- * worker profile is the sole path allowed above the historical Booker cap;
- * synchronous, compact, continuity, and unsupported-model calls retain their
- * existing bounded budgets.
+ * worker profile is the sole path allowed above the historical Booker cap.
+ * Synchronous, continuity, and unsupported-model calls retain their existing
+ * bounded budgets; a production-sized queued call may retain compact response
+ * presentation while using this extended capacity.
  */
 export function resolveBackstageOutputBudget(
   input: BackstageOutputBudgetInput

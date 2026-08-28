@@ -155,6 +155,31 @@ describe('Backstage workload-aware output budget', () => {
     );
   });
 
+  it('promotes a complete container independently of compact nested component counts', () => {
+    const input = {
+      ...HEAVY_QUEUED_INPUT,
+      requestedFormat: 'compact_direct' as const,
+      requestedTokenLimit: 320,
+      promptCodeUnits: 100,
+      retrievedContextCodeUnits: 100,
+      expectedOutputWords: 120,
+      expectedItemCount: 3,
+      explicitCompactItemCount: true,
+      completeBookingContainerComponentCount: true,
+    };
+
+    expect(resolveBackstageRequestedOutputFormat(input))
+      .toBe('structured_booking');
+    expect(resolveBackstageOutputBudget(input)).toMatchObject({
+      requestedFormat: 'structured_booking',
+      budgetClass: 'queued_extended',
+      reason: 'queued_structured_generation',
+    });
+    expect(resolveBackstageOutputBudget(input).tokenLimit).toBeGreaterThanOrEqual(
+      BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+    );
+  });
+
   it('cannot exceed the application-wide finite maximum', () => {
     expect(resolveBackstageOutputBudget({
       ...HEAVY_QUEUED_INPUT,

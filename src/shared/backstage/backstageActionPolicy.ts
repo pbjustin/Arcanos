@@ -56,6 +56,7 @@ export type BackstageBookerWorkloadReason =
   | 'bounded_small_sync'
   | 'generate_booking_with_hrc'
   | 'notion_authority_context'
+  | 'complete_booking_container'
   | 'prompt_size'
   | 'retrieved_context_size'
   | 'expected_item_count'
@@ -72,6 +73,7 @@ export interface BackstageBookerWorkloadDecision {
   expectedItemCount: number;
   expectedOutputWords: number;
   notionAuthorityContext: boolean;
+  completeBookingContainerComponentCount: boolean;
   providerInvocationRequired: boolean;
 }
 
@@ -84,6 +86,7 @@ export interface BackstageBookerWorkloadInput {
   expectedItemCount: number;
   expectedOutputWords: number;
   notionAuthorityContext: boolean;
+  completeBookingContainerComponentCount: boolean;
   providerInvocationRequired: boolean;
 }
 
@@ -140,6 +143,8 @@ export function classifyBackstageBookerWorkload(
     expectedItemCount,
     expectedOutputWords,
     notionAuthorityContext: input.notionAuthorityContext,
+    completeBookingContainerComponentCount:
+      input.completeBookingContainerComponentCount,
     providerInvocationRequired: input.providerInvocationRequired,
   });
 
@@ -188,9 +193,11 @@ export function classifyBackstageBookerWorkload(
             ? 'retrieved_context_size'
             : expectedItemCount >= BACKSTAGE_BOOKING_HEAVY_ITEM_COUNT
               ? 'expected_item_count'
-              : expectedOutputWords >= BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS
-                ? 'expected_output_words'
-                : null;
+              : input.completeBookingContainerComponentCount
+                ? 'complete_booking_container'
+                : expectedOutputWords >= BACKSTAGE_BOOKING_HEAVY_EXPECTED_WORDS
+                  ? 'expected_output_words'
+                  : null;
 
   if (!input.providerInvocationRequired && input.action === 'generateBooking') {
     return buildDecision('lightweight', false, true, 'provider_not_required');
