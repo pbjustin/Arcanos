@@ -208,7 +208,9 @@ If failing, inspect Railway build/deploy logs first.
   taxonomy. In particular, `chunking/chunk_limit_reached` means a complete
   candidate exceeded a bounded snapshot ceiling, while
   `completeness_validation/completeness_mismatch` means the prepared and
-  persisted inventories differed. Investigate the named phase without logging
+  persisted inventories differed. A `deadline_exhausted` reason retains the
+  operational phase that consumed the fixed cycle budget; the deadline is not
+  extended by retries, progress, or lease renewal. Investigate the named phase without logging
   Notion content, raw page/block identifiers, upstream bodies, or credentials.
 - Backstage `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` or
   `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`: this is the expected authority

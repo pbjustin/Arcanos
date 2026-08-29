@@ -13,8 +13,10 @@ import { getPool } from '../client.js';
 export const BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT = 5_000;
-export const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 2_048;
+export const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 4_096;
 export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
+export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS = 128;
+export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES = 16 * 1024 * 1024;
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -118,6 +120,8 @@ export interface ActivateBackstageNotionSnapshotInput {
   embeddingModel: string;
   sourceMaxEditedAt?: Date | string | null;
   lease: Pick<BackstageNotionSyncLease, 'holderId' | 'leaseToken'>;
+  /** Absolute wall-clock deadline shared with the authoritative sync cycle. */
+  deadlineAtMs?: number;
   pages: BackstageNotionSnapshotPageInput[];
   chunks: BackstageNotionSnapshotChunkInput[];
 }
@@ -372,6 +376,11 @@ interface ReusableEmbeddingRow {
   embedding: unknown;
 }
 
+interface SnapshotInventoryCountRow {
+  page_count: number | string;
+  chunk_count: number | string;
+}
+
 interface PreparedPage {
   page_id: string;
   parent_page_id: string | null;
@@ -405,6 +414,7 @@ interface PreparedSnapshotInput {
   sourceMaxEditedAt: Date | null;
   holderId: string;
   leaseToken: string;
+  deadlineAtMs: number;
   pages: PreparedPage[];
   chunks: PreparedChunk[];
 }
@@ -438,6 +448,26 @@ export class BackstageNotionSnapshotWriteError extends Error {
   constructor(readonly phase: BackstageNotionSnapshotWriteFailurePhase) {
     super('The Backstage Notion candidate snapshot could not be activated safely.');
     this.name = 'BackstageNotionSnapshotWriteError';
+  }
+}
+
+export class BackstageNotionSnapshotDeadlineError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_SNAPSHOT_DEADLINE_EXHAUSTED';
+
+  constructor(
+    readonly phase: BackstageNotionSnapshotWriteFailurePhase = 'persistence'
+  ) {
+    super('The bounded Backstage Notion snapshot write deadline was exhausted.');
+    this.name = 'BackstageNotionSnapshotDeadlineError';
+  }
+}
+
+export class BackstageNotionSnapshotCommitUnknownError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_SNAPSHOT_COMMIT_UNKNOWN';
+
+  constructor() {
+    super('The Backstage Notion snapshot activation outcome could not be reconciled.');
+    this.name = 'BackstageNotionSnapshotCommitUnknownError';
   }
 }
 
@@ -507,6 +537,41 @@ function parseInteger(value: number | string, label: string): number {
     throw new Error(`${label} is not a safe integer.`);
   }
   return parsed;
+}
+
+function buildBoundedJsonBatches<T>(records: readonly T[], label: string): string[] {
+  const batches: string[] = [];
+  let serializedRecords: string[] = [];
+  let batchBytes = 2;
+
+  const flush = (): void => {
+    if (serializedRecords.length === 0) {
+      return;
+    }
+    batches.push(`[${serializedRecords.join(',')}]`);
+    serializedRecords = [];
+    batchBytes = 2;
+  };
+
+  for (const record of records) {
+    const serialized = JSON.stringify(record);
+    const recordBytes = Buffer.byteLength(serialized, 'utf8');
+    if (recordBytes + 2 > BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES) {
+      throw new Error(`${label} contains a record exceeding the bounded insert size.`);
+    }
+    const separatorBytes = serializedRecords.length === 0 ? 0 : 1;
+    if (
+      serializedRecords.length >= BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS
+      || batchBytes + separatorBytes + recordBytes
+        > BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES
+    ) {
+      flush();
+    }
+    serializedRecords.push(serialized);
+    batchBytes += (serializedRecords.length === 1 ? 0 : 1) + recordBytes;
+  }
+  flush();
+  return batches;
 }
 
 function normalizeStringArray(
@@ -718,6 +783,19 @@ function normalizeCanonicalUrl(value: string | null | undefined): string | null 
 }
 
 function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): PreparedSnapshotInput {
+  const preparedAtMs = Date.now();
+  const requestedDeadlineAtMs = input.deadlineAtMs
+    ?? preparedAtMs + BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS;
+  if (
+    !Number.isSafeInteger(requestedDeadlineAtMs)
+    || requestedDeadlineAtMs <= preparedAtMs
+  ) {
+    throw new BackstageNotionSnapshotDeadlineError();
+  }
+  const deadlineAtMs = Math.min(
+    requestedDeadlineAtMs,
+    preparedAtMs + BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+  );
   const universeId = normalizeUniverseId(input.universeId);
   const rootPageId = normalizeUuid(input.rootPageId, 'rootPageId');
   const manifestHash = normalizeSha256(input.manifestHash, 'manifestHash');
@@ -927,6 +1005,7 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
     sourceMaxEditedAt,
     holderId,
     leaseToken,
+    deadlineAtMs,
     pages,
     chunks
   };
@@ -1010,6 +1089,40 @@ async function rollbackQuietly(client: PoolClient): Promise<boolean> {
   }
 }
 
+function remainingSnapshotWriteMilliseconds(
+  deadlineAtMs: number,
+  phase: BackstageNotionSnapshotWriteFailurePhase = 'persistence'
+): number {
+  const remainingMs = Math.trunc(deadlineAtMs - Date.now());
+  if (remainingMs < 1) {
+    throw new BackstageNotionSnapshotDeadlineError(phase);
+  }
+  return remainingMs;
+}
+
+async function configureSnapshotWriteDeadline(
+  client: PoolClient,
+  deadlineAtMs: number,
+  phase: BackstageNotionSnapshotWriteFailurePhase
+): Promise<void> {
+  const remainingMs = remainingSnapshotWriteMilliseconds(deadlineAtMs, phase);
+  await client.query(
+    `SELECT
+       set_config('lock_timeout', $1, TRUE),
+       set_config('statement_timeout', $2, TRUE),
+       set_config('idle_in_transaction_session_timeout', $2, TRUE)`,
+    [`${Math.min(60_000, remainingMs)}ms`, `${remainingMs}ms`]
+  );
+  remainingSnapshotWriteMilliseconds(deadlineAtMs, phase);
+}
+
+function isPostgresStatementTimeout(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: unknown }).code === '57014';
+}
+
 async function withBoundedAuthorityRead<T>(
   pool: Pool,
   action: (client: PoolClient) => Promise<T>
@@ -1028,6 +1141,22 @@ async function withBoundedAuthorityRead<T>(
   } finally {
     client.release(discardClient);
   }
+}
+
+async function reconcileSnapshotActivation(
+  pool: Pool,
+  universeId: string,
+  snapshotId: string
+): Promise<boolean> {
+  return withBoundedAuthorityRead(pool, async client => {
+    const result = await client.query<{ active_snapshot_id: string | null }>(
+      `SELECT active_snapshot_id
+       FROM backstage_notion_universe_heads
+       WHERE universe_id = $1`,
+      [universeId]
+    );
+    return result.rows[0]?.active_snapshot_id === snapshotId;
+  });
 }
 
 export class PostgresBackstageNotionRagRepository implements BackstageNotionRagRepository {
@@ -1249,12 +1378,19 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     input: ActivateBackstageNotionSnapshotInput
   ): Promise<BackstageNotionSnapshotRecord> {
     const prepared = prepareSnapshotInput(input);
+    const pageBatches = buildBoundedJsonBatches(prepared.pages, 'pages');
+    const chunkBatches = buildBoundedJsonBatches(prepared.chunks, 'chunks');
     const snapshotId = randomUUID();
     const client = await this.pool.connect();
     let discardClient = false;
+    let clientReleased = false;
+    let commitStarted = false;
+    let writePhase: BackstageNotionSnapshotWriteFailurePhase = 'persistence';
 
     try {
+      remainingSnapshotWriteMilliseconds(prepared.deadlineAtMs, writePhase);
       await client.query('BEGIN');
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       const leaseResult = await client.query<{ universe_id: string }>(
         `SELECT lease.universe_id
          FROM backstage_notion_sync_leases AS lease
@@ -1272,6 +1408,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       // Drain every legacy writer before touching the authority head. Legacy
       // DML takes its table lock before the trigger performs a locking head
       // read, so this order prevents a writer/cutover lock inversion.
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       await client.query(
         `LOCK TABLE
            backstage_wrestlers,
@@ -1286,6 +1423,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
          IN SHARE ROW EXCLUSIVE MODE`
       );
 
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       const epochResult = await client.query(
         `UPDATE backstage_notion_authority_epoch
          SET
@@ -1305,10 +1443,12 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       // refreshers until the immutable candidate and its head flip commit.
       // No earlier statement in this transaction touches this table, avoiding
       // an ACCESS SHARE -> ACCESS EXCLUSIVE upgrade deadlock between syncs.
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       await client.query(
         'LOCK TABLE backstage_notion_universe_heads IN ACCESS EXCLUSIVE MODE'
       );
 
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       const snapshotResult = await client.query<SnapshotRow>(
         `INSERT INTO backstage_notion_snapshots (
            id,
@@ -1345,9 +1485,16 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
           prepared.holderId
         ]
       );
+      const snapshotRow = snapshotResult.rows[0];
+      if (!snapshotRow) {
+        throw new BackstageNotionSnapshotWriteError('persistence');
+      }
+      const mappedSnapshot = mapSnapshot(snapshotRow);
 
-      await client.query(
-        `INSERT INTO backstage_notion_snapshot_pages (
+      for (const pageBatch of pageBatches) {
+        await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
+        await client.query(
+          `INSERT INTO backstage_notion_snapshot_pages (
            snapshot_id,
            universe_id,
            page_id,
@@ -1386,11 +1533,14 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
            path JSONB,
            metadata JSONB
          )`,
-        [snapshotId, prepared.universeId, JSON.stringify(prepared.pages)]
-      );
+          [snapshotId, prepared.universeId, pageBatch]
+        );
+      }
 
-      await client.query(
-        `INSERT INTO backstage_notion_snapshot_chunks (
+      for (const chunkBatch of chunkBatches) {
+        await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
+        await client.query(
+          `INSERT INTO backstage_notion_snapshot_chunks (
            id,
            snapshot_id,
            universe_id,
@@ -1428,14 +1578,48 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
            heading_path JSONB,
            metadata JSONB
          )`,
-        [
-          snapshotId,
-          prepared.universeId,
-          prepared.embeddingModel,
-          JSON.stringify(prepared.chunks)
-        ]
-      );
+          [
+            snapshotId,
+            prepared.universeId,
+            prepared.embeddingModel,
+            chunkBatch
+          ]
+        );
+      }
 
+      writePhase = 'completeness_validation';
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
+      const inventoryResult = await client.query<SnapshotInventoryCountRow>(
+        `SELECT
+           (
+             SELECT COUNT(*)
+             FROM backstage_notion_snapshot_pages AS page
+             WHERE page.universe_id = $1
+               AND page.snapshot_id = $2::UUID
+           ) AS page_count,
+           (
+             SELECT COUNT(*)
+             FROM backstage_notion_snapshot_chunks AS chunk
+             WHERE chunk.universe_id = $1
+               AND chunk.snapshot_id = $2::UUID
+           ) AS chunk_count`,
+        [prepared.universeId, snapshotId]
+      );
+      const inventory = inventoryResult.rows[0];
+      if (
+        !inventory
+        || parseInteger(inventory.page_count, 'persisted page_count')
+          !== prepared.pages.length
+        || parseInteger(inventory.chunk_count, 'persisted chunk_count')
+          !== prepared.chunks.length
+      ) {
+        throw new BackstageNotionSnapshotWriteError(
+          'completeness_validation'
+        );
+      }
+
+      writePhase = 'activation';
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
       const activationResult = await client.query(
         `UPDATE backstage_notion_universe_heads AS head
          SET
@@ -1469,22 +1653,52 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
          ]
       );
       if (activationResult.rowCount !== 1) {
-        throw new Error('Backstage Notion snapshot head could not be activated.');
+        throw new BackstageNotionSnapshotWriteError('activation');
       }
 
-      await client.query('COMMIT');
-      const snapshotRow = snapshotResult.rows[0];
-      if (!snapshotRow) {
-        throw new Error('Backstage Notion snapshot insert could not be confirmed.');
+      await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
+      commitStarted = true;
+      try {
+        await client.query('COMMIT');
+        return mappedSnapshot;
+      } catch {
+        client.release(true);
+        clientReleased = true;
+        try {
+          if (await reconcileSnapshotActivation(
+            this.pool,
+            prepared.universeId,
+            snapshotId
+          )) {
+            return mappedSnapshot;
+          }
+        } catch {
+          throw new BackstageNotionSnapshotCommitUnknownError();
+        }
+        throw new BackstageNotionSnapshotWriteError('activation');
       }
-      return mapSnapshot(snapshotRow);
     } catch (error) {
-      if (!(await rollbackQuietly(client))) {
+      if (!commitStarted && !(await rollbackQuietly(client))) {
+        discardClient = true;
+      } else if (commitStarted) {
         discardClient = true;
       }
-      throw error;
+      if (
+        error instanceof BackstageNotionSyncLeaseError
+        || error instanceof BackstageNotionSnapshotWriteError
+        || error instanceof BackstageNotionSnapshotDeadlineError
+        || error instanceof BackstageNotionSnapshotCommitUnknownError
+      ) {
+        throw error;
+      }
+      if (isPostgresStatementTimeout(error)) {
+        throw new BackstageNotionSnapshotDeadlineError(writePhase);
+      }
+      throw new BackstageNotionSnapshotWriteError(writePhase);
     } finally {
-      client.release(discardClient);
+      if (!clientReleased) {
+        client.release(discardClient);
+      }
     }
   }
 
@@ -1716,8 +1930,8 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
                        WHEN jsonb_typeof(heading_occurrence.value) = 'number'
                          AND heading_occurrence.value::TEXT
                            ~ '^[1-9][0-9]{0,3}$'
-                       THEN (heading_occurrence.value::TEXT)::INTEGER
-                         BETWEEN 1 AND 2048
+                        THEN (heading_occurrence.value::TEXT)::INTEGER
+                          BETWEEN 1 AND ${BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT}
                        ELSE FALSE
                      END IS NOT TRUE
                    )

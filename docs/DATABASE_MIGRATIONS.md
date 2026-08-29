@@ -339,7 +339,31 @@ authority-persistence trigger: a Notion-authoritative root cannot be replaced
 through snapshot rotation, so a deliberate root reset still requires the
 separately reviewed authority-restoration procedure.
 
-The fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
+`migrations/20260829_backstage_notion_rag_v3_snapshot_capacity.sql` is the
+bounded authoritative-snapshot capacity upgrade. Apply it after V2. It raises
+only the monolith snapshot ceiling from 2,048 to 4,096 chunks; partition shard
+ceilings remain separate and unchanged. The writer validates the complete
+candidate in memory, serializes page and chunk records into record- and
+byte-bounded batches, inserts every batch inside the existing single
+transaction, and compares exact persisted page and chunk counts before the
+authority head can flip. The V3 `BN002` fence independently repeats both count
+checks for alternate or rolling-version writers. Any batch, count, lease, or
+activation failure rolls the candidate back and leaves the prior active
+snapshot readable. Authoritative synchronization also passes one absolute,
+non-renewable cycle deadline into activation. Before every persistence batch,
+inventory check, head update, and commit, the repository reapplies a
+transaction-local statement timeout bounded by the remaining cycle budget.
+A lost commit response is reconciled against the active head on a fresh,
+bounded read before the writer reports success or failure.
+
+The V3 rollback refuses with SQLSTATE `55000` if declared or persisted immutable
+history exceeds 2,048 chunks. It never truncates or deletes a snapshot to make a
+downgrade fit. During a rolling release, an older reader encountering a newly
+expanded snapshot fails closed rather than loading a partial index; update
+reader capacity before allowing an upgraded worker to activate expanded
+history.
+
+The V2 fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
 SQLSTATE `55000` while any snapshot is active. Apply that rollback before the
 V1 storage rollback only on an unused installation; removing the fence from a
 live authority would allow an older worker to reactivate legacy metadata.

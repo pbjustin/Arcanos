@@ -347,14 +347,40 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
       CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT ck_backstage_notion_snapshots_embedding_model
       CHECK (char_length(btrim(embedding_model)) BETWEEN 1 AND 200),
-    CONSTRAINT ck_backstage_notion_snapshots_counts
-      CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 2048),
+    CONSTRAINT ck_backstage_notion_snapshots_counts_v3
+      CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 4096),
     CONSTRAINT ck_backstage_notion_snapshots_source_edited
       CHECK (source_max_edited_at IS NULL OR isfinite(source_max_edited_at)),
     CONSTRAINT ck_backstage_notion_snapshots_holder
       CHECK (char_length(btrim(sync_holder_id)) BETWEEN 1 AND 200),
     CONSTRAINT ck_backstage_notion_snapshots_created_at CHECK (isfinite(created_at))
   )`,
+
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1
+       FROM pg_constraint
+       WHERE conrelid = 'backstage_notion_snapshots'::regclass
+         AND conname = 'ck_backstage_notion_snapshots_counts'
+     ) OR NOT EXISTS (
+       SELECT 1
+       FROM pg_constraint
+       WHERE conrelid = 'backstage_notion_snapshots'::regclass
+         AND conname = 'ck_backstage_notion_snapshots_counts_v3'
+     ) THEN
+       LOCK TABLE backstage_notion_universe_heads IN SHARE ROW EXCLUSIVE MODE;
+       LOCK TABLE backstage_notion_snapshots IN ACCESS EXCLUSIVE MODE;
+       ALTER TABLE backstage_notion_snapshots
+         DROP CONSTRAINT IF EXISTS ck_backstage_notion_snapshots_counts;
+       ALTER TABLE backstage_notion_snapshots
+         DROP CONSTRAINT IF EXISTS ck_backstage_notion_snapshots_counts_v3;
+       ALTER TABLE backstage_notion_snapshots
+         ADD CONSTRAINT ck_backstage_notion_snapshots_counts_v3
+         CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 4096);
+     END IF;
+   END
+   $$`,
 
   `DO $$
    BEGIN
@@ -791,12 +817,14 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
    AS $$
    DECLARE
      expected_page_count INTEGER;
+     expected_chunk_count INTEGER;
      actual_page_count BIGINT;
+     actual_chunk_count BIGINT;
      distinct_marker_count BIGINT;
      derived_index_version INTEGER;
    BEGIN
-     SELECT snapshot.page_count
-       INTO expected_page_count
+     SELECT snapshot.page_count, snapshot.chunk_count
+       INTO expected_page_count, expected_chunk_count
        FROM public.backstage_notion_snapshots AS snapshot
        WHERE snapshot.universe_id = target_universe_id
          AND snapshot.id = target_snapshot_id;
@@ -829,6 +857,15 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
 
      IF actual_page_count IS DISTINCT FROM expected_page_count::BIGINT THEN
        RAISE EXCEPTION 'Backstage Notion snapshot page inventory is incomplete for index activation'
+         USING ERRCODE = 'BN002';
+     END IF;
+     SELECT COUNT(*)
+       INTO actual_chunk_count
+       FROM public.backstage_notion_snapshot_chunks AS chunk
+       WHERE chunk.universe_id = target_universe_id
+         AND chunk.snapshot_id = target_snapshot_id;
+     IF actual_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT THEN
+       RAISE EXCEPTION 'Backstage Notion snapshot chunk inventory is incomplete for index activation'
          USING ERRCODE = 'BN002';
      END IF;
      IF distinct_marker_count IS DISTINCT FROM 1::BIGINT THEN

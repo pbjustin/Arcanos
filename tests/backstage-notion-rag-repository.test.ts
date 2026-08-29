@@ -5,6 +5,10 @@ import type { Pool } from 'pg';
 
 import {
   BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES,
+  BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS,
+  BackstageNotionSnapshotCommitUnknownError,
+  BackstageNotionSnapshotDeadlineError,
   BackstageNotionSyncLeaseError,
   PostgresBackstageNotionRagRepository,
   type ActivateBackstageNotionSnapshotInput
@@ -83,6 +87,8 @@ function createPool(
         || normalized === 'COMMIT'
         || normalized === 'ROLLBACK'
         || normalized.startsWith('SET LOCAL lock_timeout')
+        || normalized.startsWith("SELECT set_config('lock_timeout'")
+        || normalized.startsWith('SELECT set_config(')
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -94,6 +100,93 @@ function createPool(
     query: (sql: string, values: unknown[] = []) => query(sql, values),
     connect: async () => client,
   } as unknown as Pool;
+}
+
+function commitAmbiguityHarness(
+  outcome: 'candidate-active' | 'prior-active' | 'reconciliation-failed'
+): {
+  pool: Pool;
+  writerReleasedWith: () => unknown;
+  connectionCount: () => number;
+} {
+  let candidateSnapshotId = '';
+  let writerRelease: unknown;
+  let connections = 0;
+  const writer = {
+    query: async (rawSql: string, values: unknown[] = []) => {
+      const sql = normalizeSql(rawSql);
+      if (sql.startsWith('SELECT lease.universe_id')) {
+        return { rows: [{ universe_id: UNIVERSE_ID }], rowCount: 1 };
+      }
+      if (sql.startsWith('INSERT INTO backstage_notion_snapshots')) {
+        candidateSnapshotId = String(values[0]);
+        return {
+          rows: [{
+            snapshot_id: candidateSnapshotId,
+            universe_id: UNIVERSE_ID,
+            root_page_id: ROOT_PAGE_ID,
+            manifest_hash: HASH_A,
+            embedding_model: 'text-embedding-test',
+            page_count: 2,
+            chunk_count: 2,
+            source_max_edited_at: NOW,
+            sync_holder_id: 'sync-worker-1',
+            snapshot_created_at: NOW,
+          }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+        return {
+          rows: [{ page_count: '2', chunk_count: '2' }],
+          rowCount: 1,
+        };
+      }
+      if (sql === 'COMMIT') {
+        throw new Error('PRIVATE-COMMIT-TRANSPORT');
+      }
+      return {
+        rows: [],
+        rowCount: sql.startsWith('UPDATE backstage_notion_authority_epoch')
+          || sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+          ? 1
+          : 0,
+      };
+    },
+    release: (value?: unknown) => {
+      writerRelease = value;
+    },
+  };
+  const reader = {
+    query: async (rawSql: string) => {
+      const sql = normalizeSql(rawSql);
+      if (sql.startsWith('SELECT active_snapshot_id')) {
+        if (outcome === 'reconciliation-failed') {
+          throw new Error('PRIVATE-RECONCILIATION-FAILURE');
+        }
+        return {
+          rows: [{
+            active_snapshot_id: outcome === 'candidate-active'
+              ? candidateSnapshotId
+              : SNAPSHOT_ID,
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => undefined,
+  };
+  return {
+    pool: {
+      connect: async () => {
+        connections += 1;
+        return connections === 1 ? writer : reader;
+      },
+    } as unknown as Pool,
+    writerReleasedWith: () => writerRelease,
+    connectionCount: () => connections,
+  };
 }
 
 function pageScopeMetadata(title: string, path: readonly string[]) {
@@ -216,6 +309,58 @@ function validSectionScopeCandidate(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PostgresBackstageNotionRagRepository', () => {
+  it('rejects an expired snapshot deadline before opening a connection', async () => {
+    let connected = false;
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => {
+        connected = true;
+        throw new Error('SENTINEL_CONNECT');
+      },
+    } as unknown as Pool);
+    const input = validSnapshotInput();
+    input.deadlineAtMs = Date.now() - 1;
+
+    await expect(repository.activateSnapshot(input)).rejects.toBeInstanceOf(
+      BackstageNotionSnapshotDeadlineError
+    );
+    expect(connected).toBe(false);
+  });
+
+  it('reconciles a lost COMMIT response when the candidate is active', async () => {
+    const harness = commitAmbiguityHarness('candidate-active');
+    const repository = new PostgresBackstageNotionRagRepository(harness.pool);
+
+    await expect(repository.activateSnapshot(validSnapshotInput())).resolves.toMatchObject({
+      universeId: UNIVERSE_ID,
+      pageCount: 2,
+      chunkCount: 2,
+    });
+    expect(harness.writerReleasedWith()).toBe(true);
+    expect(harness.connectionCount()).toBe(2);
+  });
+
+  it('reports activation failure when reconciliation proves the prior head remains', async () => {
+    const harness = commitAmbiguityHarness('prior-active');
+    const repository = new PostgresBackstageNotionRagRepository(harness.pool);
+
+    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toMatchObject({
+      name: 'BackstageNotionSnapshotWriteError',
+      phase: 'activation',
+    });
+    expect(harness.writerReleasedWith()).toBe(true);
+    expect(harness.connectionCount()).toBe(2);
+  });
+
+  it('uses a sanitized commit-unknown error when reconciliation is unavailable', async () => {
+    const harness = commitAmbiguityHarness('reconciliation-failed');
+    const repository = new PostgresBackstageNotionRagRepository(harness.pool);
+
+    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toBeInstanceOf(
+      BackstageNotionSnapshotCommitUnknownError
+    );
+    expect(harness.writerReleasedWith()).toBe(true);
+    expect(harness.connectionCount()).toBe(2);
+  });
   it('loads the persisted authority head without loading pages or chunks', async () => {
     const observedQueries: Array<{ sql: string; values: unknown[] }> = [];
     let releasedWith: boolean | undefined;
@@ -423,6 +568,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
             rowCount: 1
           };
         }
+        if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+          return {
+            rows: [{ page_count: '2', chunk_count: '2' }],
+            rowCount: 1,
+          };
+        }
         return {
           rows: [],
           rowCount: sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
@@ -456,6 +607,10 @@ describe('PostgresBackstageNotionRagRepository', () => {
     const activation = commands.find(command =>
       command.sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
     );
+    const inventoryValidation = commands.find(command =>
+      command.sql.includes('AS page_count')
+      && command.sql.includes('AS chunk_count')
+    );
     const cutoverFence = commands.find(command =>
       command.sql.startsWith('LOCK TABLE backstage_wrestlers, backstage_events')
     );
@@ -483,8 +638,280 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(commands.indexOf(cutoverFence!)).toBeLessThan(commands.indexOf(epochFence!));
     expect(commands.indexOf(epochFence!)).toBeLessThan(commands.indexOf(authorityHeadFence!));
     expect(commands.indexOf(authorityHeadFence!)).toBeLessThan(commands.indexOf(pageInsert!));
+    expect(commands.indexOf(chunkInsert!)).toBeLessThan(
+      commands.indexOf(inventoryValidation!)
+    );
+    expect(commands.indexOf(inventoryValidation!)).toBeLessThan(
+      commands.indexOf(activation!)
+    );
     expect(commands.indexOf(authorityHeadFence!)).toBeLessThan(commands.indexOf(activation!));
     expect(releasedWith).toBe(false);
+  });
+
+  it('rolls back before page persistence when the candidate row is not returned', async () => {
+    const commands: string[] = [];
+    const client = {
+      query: async (rawSql: string) => {
+        const sql = normalizeSql(rawSql);
+        commands.push(sql);
+        if (sql.startsWith('SELECT lease.universe_id')) {
+          return { rows: [{ universe_id: UNIVERSE_ID }], rowCount: 1 };
+        }
+        return {
+          rows: [],
+          rowCount: sql.startsWith('UPDATE backstage_notion_authority_epoch')
+            ? 1
+            : 0,
+        };
+      },
+      release: () => undefined,
+    };
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => client,
+    } as unknown as Pool);
+
+    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toMatchObject({
+      name: 'BackstageNotionSnapshotWriteError',
+      phase: 'persistence',
+    });
+    expect(commands).toContain('ROLLBACK');
+    expect(commands).not.toContain('COMMIT');
+    expect(commands.some(sql => (
+      sql.startsWith('INSERT INTO backstage_notion_snapshot_pages')
+      || sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+    ))).toBe(false);
+  });
+
+  it.each([
+    {
+      phase: 'persistence',
+      matches: (sql: string) => sql.startsWith(
+        'INSERT INTO backstage_notion_snapshot_pages'
+      ),
+    },
+    {
+      phase: 'completeness_validation',
+      matches: (sql: string) => (
+        sql.includes('AS page_count') && sql.includes('AS chunk_count')
+      ),
+    },
+    {
+      phase: 'activation',
+      matches: (sql: string) => sql.startsWith(
+        'UPDATE backstage_notion_universe_heads AS head'
+      ),
+    },
+  ] as const)(
+    'maps a PostgreSQL timeout to the exact $phase phase and rolls back',
+    async ({ phase, matches }) => {
+      const commands: string[] = [];
+      const client = {
+        query: async (rawSql: string) => {
+          const sql = normalizeSql(rawSql);
+          commands.push(sql);
+          if (matches(sql)) {
+            throw Object.assign(new Error('PRIVATE-POSTGRES-TIMEOUT'), {
+              code: '57014',
+            });
+          }
+          if (sql.startsWith('SELECT lease.universe_id')) {
+            return { rows: [{ universe_id: UNIVERSE_ID }], rowCount: 1 };
+          }
+          if (sql.startsWith('INSERT INTO backstage_notion_snapshots')) {
+            return {
+              rows: [{
+                snapshot_id: SNAPSHOT_ID,
+                universe_id: UNIVERSE_ID,
+                root_page_id: ROOT_PAGE_ID,
+                manifest_hash: HASH_A,
+                embedding_model: 'text-embedding-test',
+                page_count: 2,
+                chunk_count: 2,
+                source_max_edited_at: NOW,
+                sync_holder_id: 'sync-worker-1',
+                snapshot_created_at: NOW,
+              }],
+              rowCount: 1,
+            };
+          }
+          if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+            return {
+              rows: [{ page_count: '2', chunk_count: '2' }],
+              rowCount: 1,
+            };
+          }
+          return {
+            rows: [],
+            rowCount: sql.startsWith('UPDATE backstage_notion_authority_epoch')
+              || sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+              ? 1
+              : 0,
+          };
+        },
+        release: () => undefined,
+      };
+      const repository = new PostgresBackstageNotionRagRepository({
+        connect: async () => client,
+      } as unknown as Pool);
+
+      await expect(repository.activateSnapshot(validSnapshotInput()))
+        .rejects.toMatchObject({
+          name: 'BackstageNotionSnapshotDeadlineError',
+          phase,
+        });
+      expect(commands).toContain('ROLLBACK');
+      expect(commands).not.toContain('COMMIT');
+    }
+  );
+
+  it('persists a 2,117-chunk candidate in bounded batches before one head flip', async () => {
+    const input = validSnapshotInput();
+    input.pages = [input.pages[0]!];
+    input.chunks = Array.from({ length: 2_117 }, (_unused, ordinal) => {
+      const content = `synthetic-authority-chunk-${ordinal}`;
+      const contentHash = hash(content);
+      return {
+        chunkId: hash(JSON.stringify({
+          format: 'backstage-notion-rag-chunk-v1',
+          pageId: ROOT_PAGE_ID,
+          ordinal,
+          contentHash,
+        })),
+        pageId: ROOT_PAGE_ID,
+        ordinal,
+        contentHash,
+        content,
+        codePoints: Array.from(content).length,
+        embedding: [0.2, -0.4],
+        headingPath: [],
+        metadata: chunkScopeMetadata([]),
+      };
+    });
+    const commands: Array<{ sql: string; values: unknown[] }> = [];
+    const client = {
+      query: async (rawSql: string, values: unknown[] = []) => {
+        const sql = normalizeSql(rawSql);
+        commands.push({ sql, values });
+        if (sql.startsWith('SELECT lease.universe_id')) {
+          return { rows: [{ universe_id: UNIVERSE_ID }], rowCount: 1 };
+        }
+        if (sql.startsWith('INSERT INTO backstage_notion_snapshots')) {
+          return {
+            rows: [{
+              snapshot_id: SNAPSHOT_ID,
+              universe_id: UNIVERSE_ID,
+              root_page_id: ROOT_PAGE_ID,
+              manifest_hash: HASH_A,
+              embedding_model: 'text-embedding-test',
+              page_count: 1,
+              chunk_count: 2_117,
+              source_max_edited_at: NOW,
+              sync_holder_id: 'sync-worker-1',
+              snapshot_created_at: NOW,
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+          return {
+            rows: [{ page_count: '1', chunk_count: '2117' }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [],
+          rowCount: sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+            || sql.startsWith('UPDATE backstage_notion_authority_epoch')
+            ? 1
+            : 0,
+        };
+      },
+      release: () => undefined,
+    };
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => client,
+    } as unknown as Pool);
+
+    await expect(repository.activateSnapshot(input)).resolves.toMatchObject({
+      pageCount: 1,
+      chunkCount: 2_117,
+    });
+
+    const chunkInserts = commands.filter(command =>
+      command.sql.startsWith('INSERT INTO backstage_notion_snapshot_chunks')
+    );
+    expect(chunkInserts).toHaveLength(Math.ceil(
+      2_117 / BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS
+    ));
+    const persistedChunks = chunkInserts.flatMap(command => {
+      const serialized = String(command.values[3]);
+      expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(
+        BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES
+      );
+      const batch = JSON.parse(serialized) as Array<{ chunk_id: string }>;
+      expect(batch.length).toBeLessThanOrEqual(
+        BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS
+      );
+      return batch;
+    });
+    expect(persistedChunks).toHaveLength(2_117);
+    expect(new Set(persistedChunks.map(chunk => chunk.chunk_id)).size).toBe(2_117);
+    expect(commands.filter(command => (
+      command.sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+    ))).toHaveLength(1);
+  });
+
+  it('rolls back a persisted-count mismatch before activating the candidate', async () => {
+    const commands: string[] = [];
+    const client = {
+      query: async (rawSql: string) => {
+        const sql = normalizeSql(rawSql);
+        commands.push(sql);
+        if (sql.startsWith('SELECT lease.universe_id')) {
+          return { rows: [{ universe_id: UNIVERSE_ID }], rowCount: 1 };
+        }
+        if (sql.startsWith('INSERT INTO backstage_notion_snapshots')) {
+          return {
+            rows: [{
+              snapshot_id: SNAPSHOT_ID,
+              universe_id: UNIVERSE_ID,
+              root_page_id: ROOT_PAGE_ID,
+              manifest_hash: HASH_A,
+              embedding_model: 'text-embedding-test',
+              page_count: 2,
+              chunk_count: 2,
+              source_max_edited_at: NOW,
+              sync_holder_id: 'sync-worker-1',
+              snapshot_created_at: NOW,
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+          return {
+            rows: [{ page_count: '2', chunk_count: '1' }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [],
+          rowCount: sql.startsWith('UPDATE backstage_notion_authority_epoch') ? 1 : 0,
+        };
+      },
+      release: () => undefined,
+    };
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => client,
+    } as unknown as Pool);
+
+    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toMatchObject({
+      name: 'BackstageNotionSnapshotWriteError',
+      phase: 'completeness_validation',
+    });
+    expect(commands).toContain('ROLLBACK');
+    expect(commands.some(sql => (
+      sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
+    ))).toBe(false);
   });
 
   it('retains deterministic chunk IDs across distinct immutable snapshots', async () => {
@@ -518,6 +945,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
             snapshotId: String(values[0]),
             chunkIds: chunks.map(chunk => chunk.chunk_id)
           });
+        }
+        if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
+          return {
+            rows: [{ page_count: '2', chunk_count: '2' }],
+            rowCount: 1,
+          };
         }
         return {
           rows: [],
@@ -580,9 +1013,10 @@ describe('PostgresBackstageNotionRagRepository', () => {
     const pool = { connect: async () => client } as unknown as Pool;
     const repository = new PostgresBackstageNotionRagRepository(pool);
 
-    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toThrow(
-      'Backstage Notion authority epoch could not be advanced.'
-    );
+    await expect(repository.activateSnapshot(validSnapshotInput())).rejects.toMatchObject({
+      name: 'BackstageNotionSnapshotWriteError',
+      phase: 'persistence',
+    });
     expect(commands).toContain('ROLLBACK');
     expect(commands.some(sql => sql.startsWith('INSERT INTO backstage_notion_snapshots'))).toBe(false);
   });

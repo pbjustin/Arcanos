@@ -12,6 +12,7 @@ const ACCESS_TOKEN = `backstage-${'r'.repeat(48)}`;
 const QUERY = 'Who holds the Women\'s World Championship on Raw?';
 const NOTION_CONTENT = 'Rhea Ripley holds the Women\'s World Championship on Raw.';
 const PROVIDER_ANSWER = '- Rhea Ripley holds the Women\'s World Championship.';
+const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 4_096;
 
 const responsesCreate = jest.fn();
 const createEmbedding = jest.fn();
@@ -29,7 +30,7 @@ const { AUDITED_TRANSIENT_READ_QUERIES } = await import(
 );
 
 jest.unstable_mockModule('@core/db/repositories/backstageNotionRagRepository.js', () => ({
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT: 2_048,
+  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT: 5_000,
   getBackstageNotionRagRepository: () => ({
     loadAuthorityHead,
@@ -340,7 +341,10 @@ describe('Backstage continuity canonical route real chain', () => {
     expect(JSON.stringify(response.body)).not.toContain(NOTION_CONTENT);
 
     expect(loadAuthorityHead).toHaveBeenCalledWith(UNIVERSE_ID);
-    expect(loadActiveSnapshot).toHaveBeenCalledWith(UNIVERSE_ID, 2_048);
+    expect(loadActiveSnapshot).toHaveBeenCalledWith(
+      UNIVERSE_ID,
+      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    );
     expect(createEmbedding).toHaveBeenCalledWith(QUERY);
     expect(queryDatabase).not.toHaveBeenCalled();
     expect(persistModuleConversation).not.toHaveBeenCalled();
