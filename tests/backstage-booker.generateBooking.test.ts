@@ -732,6 +732,7 @@ describe('backstage-booker generateBooking', () => {
           action: executionAction,
           profile: 'queued_generation',
           requestedFormat: 'structured_booking',
+          responseFormat: 'structured_booking',
           budgetClass: 'queued_extended',
           reason: 'queued_structured_generation',
         });
@@ -1318,9 +1319,11 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it.each([
-    ['Give me 1 short bullet. Answer directly.', 96, 1],
-    ['Give me 3 booking ideas. Answer directly.', 240, 3],
-    ['Give me 5 possible matches. Answer directly.', 400, 5],
+    ['Give me 1 short bullet.', 96, 1],
+    ['Give me 3 booking ideas.', 240, 3],
+    ['Give me 5 possible matches.', 400, 5],
+    ['Give me 4 finish options.', 320, 4],
+    ['Give me three short alternative cards.', 240, 3],
   ] as const)(
     'keeps a genuine queued compact request bounded: %s',
     async (prompt, tokenLimit, itemCount) => {

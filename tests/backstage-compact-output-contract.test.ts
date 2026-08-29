@@ -320,6 +320,8 @@ describe('Backstage compact output count semantics', () => {
     ['Give me 1 short bullet.', 1, true],
     ['Give me 3 booking ideas.', 3, false],
     ['Give me 5 possible matches.', 5, false],
+    ['Give me 4 finish options.', 4, false],
+    ['Give me three short alternative cards.', 3, false],
     ['Give me 6 options.', 6, false],
   ] as const)('preserves genuine compact request %s', (prompt, count, short) => {
     expect(parseBackstageDirectAnswerOutputContract(prompt)).toEqual({

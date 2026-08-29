@@ -151,6 +151,9 @@ const { buildProtectedBackstageQueuedGptJobInput } = await import(
 const { unprotectBackstageQueuedGptJobOutput } = await import(
   '../src/shared/backstage/backstageQueuedJobResultProtection.js'
 );
+const { runBackstageBookerCompactOutputAttempts } = await import(
+  '../src/shared/backstage/backstageCompactOutputContract.js'
+);
 const { createClaimedJobFence, updateClaimedJobTerminal } = await import(
   '../src/core/db/repositories/jobRepository.js'
 );
@@ -677,6 +680,8 @@ describe('job runner terminal persistence', () => {
   it('claims protected Booker work once and persists only its sealed terminal result', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-08-23T12:00:00.000Z'));
+    const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     claimNextMock.mockReset();
     queryMock.mockReset();
     routeGptRequestMock.mockReset();
@@ -684,6 +689,7 @@ describe('job runner terminal persistence', () => {
       Buffer.alloc(32, 0x6a).toString('base64');
     const privatePrompt = 'private-claimed-booker-prompt-sentinel';
     const privateResult = 'private-claimed-booker-result-sentinel';
+    const privatePartial = 'PRIVATE-FIRST-PARTIAL-WORKER-SENTINEL';
     const jobId = '11111111-1111-4111-8111-111111111111';
     const queuedInput = buildProtectedBackstageQueuedGptJobInput({
       action: 'generateBooking',
@@ -716,8 +722,13 @@ describe('job runner terminal persistence', () => {
       cancel_reason: null,
       created_at: new Date('2026-08-23T11:59:59.000Z'),
       updated_at: new Date('2026-08-23T12:00:00.000Z'),
+      request_fingerprint_hash: 'a'.repeat(64),
+      idempotency_key_hash: 'b'.repeat(64),
+      idempotency_scope_hash: 'c'.repeat(64),
+      idempotency_origin: 'client',
     };
     let terminalParams: unknown[] = [];
+    let terminalRow: Record<string, unknown> | null = null;
     let terminalReadStarted!: () => void;
     const terminalReadStartedPromise = new Promise<void>(resolve => {
       terminalReadStarted = resolve;
@@ -728,16 +739,33 @@ describe('job runner terminal persistence', () => {
     });
 
     claimNextMock.mockResolvedValueOnce({ job: claimedJob });
-    routeGptRequestMock.mockResolvedValueOnce({
-      ok: true,
-      result: privateResult,
-      _route: {
-        gptId: 'backstage-booker',
-        module: 'BACKSTAGE:BOOKER',
-        action: 'generateBooking',
-        route: 'backstage-booker',
-        traceId: 'trace-claimed-booker',
-      },
+    const retryEvents: string[] = [];
+    const providerAttempt = jest
+      .fn<(compactOutputRetry: boolean) => Promise<string>>()
+      .mockRejectedValueOnce(Object.assign(new Error(privatePartial), {
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        finishReason: 'length',
+        incompleteReason: 'max_output_tokens',
+        outputText: privatePartial,
+      }))
+      .mockResolvedValueOnce(privateResult);
+    routeGptRequestMock.mockImplementationOnce(async () => {
+      const recovered = await runBackstageBookerCompactOutputAttempts(
+        providerAttempt,
+        () => true,
+        event => retryEvents.push(event)
+      );
+      return {
+        ok: true,
+        result: recovered.result,
+        _route: {
+          gptId: 'backstage-booker',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage-booker',
+          traceId: 'trace-claimed-booker',
+        },
+      };
     });
     queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
       const normalizedSql = String(sql);
@@ -748,15 +776,16 @@ describe('job runner terminal persistence', () => {
       }
       if (normalizedSql.includes('UPDATE job_data')) {
         terminalParams = params;
+        terminalRow = {
+          ...claimedJob,
+          status: 'completed',
+          output: JSON.parse(String(params[1])),
+          last_heartbeat_at: null,
+          lease_expires_at: null,
+          completed_at: new Date('2026-08-23T12:00:00.100Z'),
+        };
         return {
-          rows: [{
-            ...claimedJob,
-            status: 'completed',
-            output: JSON.parse(String(params[1])),
-            last_heartbeat_at: null,
-            lease_expires_at: null,
-            completed_at: new Date('2026-08-23T12:00:00.100Z'),
-          }],
+          rows: [terminalRow],
         };
       }
       throw new Error(`Unexpected repository query: ${normalizedSql}`);
@@ -810,6 +839,12 @@ describe('job runner terminal persistence', () => {
 
       expect(claimNextMock).toHaveBeenCalledTimes(1);
       expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+      expect(providerAttempt.mock.calls).toEqual([[false], [true]]);
+      expect(retryEvents).toEqual([
+        'initial_length_exhaustion',
+        'compact_retry_started',
+        'compact_retry_provider_completed',
+      ]);
       expect(routeGptRequestMock).toHaveBeenCalledWith(expect.objectContaining({
         gptId: 'backstage-booker',
         body: expect.objectContaining({
@@ -821,6 +856,9 @@ describe('job runner terminal persistence', () => {
         runtimeExecutionMode: 'background',
       }));
       expect(terminalParams[0]).toBe('completed');
+      expect(terminalParams[9]).toBe(jobId);
+      expect(terminalParams[10]).toBe('worker-test-slot-1');
+      expect(terminalParams[11]).toBe('9');
       const persistedOutput = JSON.parse(String(terminalParams[1]));
       expect(JSON.stringify(queuedInput)).not.toContain(privatePrompt);
       expect(JSON.stringify(persistedOutput)).not.toContain(privateResult);
@@ -829,9 +867,31 @@ describe('job runner terminal persistence', () => {
         rawInput: queuedInput,
         output: persistedOutput,
       })).toMatchObject({ ok: true, result: privateResult });
+      expect(terminalRow).toMatchObject({
+        id: jobId,
+        request_fingerprint_hash: claimedJob.request_fingerprint_hash,
+        idempotency_key_hash: claimedJob.idempotency_key_hash,
+        idempotency_scope_hash: claimedJob.idempotency_scope_hash,
+        idempotency_origin: claimedJob.idempotency_origin,
+      });
+      const repositorySql = queryMock.mock.calls.map(call => String(call[0]));
+      expect(repositorySql.filter(sql => /INSERT\s+INTO\s+job_data/iu.test(sql)))
+        .toHaveLength(0);
+      expect(repositorySql.filter(sql => sql.includes('UPDATE job_data')))
+        .toHaveLength(1);
+      expect(JSON.stringify([
+        terminalParams,
+        terminalRow,
+        recordJobEventMock.mock.calls,
+        retryEvents,
+        consoleLog.mock.calls,
+        consoleWarn.mock.calls,
+      ])).not.toContain(privatePartial);
       expect(autonomyService.markJobCompleted).toHaveBeenCalledWith(jobId);
       expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
     } finally {
+      consoleLog.mockRestore();
+      consoleWarn.mockRestore();
       jest.useRealTimers();
     }
   });

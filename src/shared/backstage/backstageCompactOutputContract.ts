@@ -75,9 +75,9 @@ const NUMBER_WORDS = new Map<string, number>([
 const BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN =
   Array.from(NUMBER_WORDS.keys()).join('|');
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
-  '(?:angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
+  '(?:alternative\\s+cards?|angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
-  '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
+  '(?:main[- ]event|booking|match|finish|title|storyline|rivalry|creative|different|possible|detailed|short|brief|concise|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
 const BACKSTAGE_DIRECT_GENERATION_VERB_PATTERN =
   '(?:book|build|continue|create|design|draft|generate|give|make|need|plan|produce|provide|rebook|return|rewrite|schedule|want|write)';
 const BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN =
@@ -175,6 +175,7 @@ const BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_TOTAL_WORDS = 1_000;
 interface BackstageCompactRetryDirectiveCount {
   count: number;
   mode: 'exact' | 'atMost';
+  compactPresentation: boolean;
   negated: boolean;
   quoteAmbiguous: boolean;
 }
@@ -196,6 +197,49 @@ export interface BackstageCompactOutputContract
   embeddedContentState: BackstageCompactRetryEmbeddedContentState;
   completeBookingContainerComponentCount: boolean;
   explicitCompactOutputRequest: boolean;
+}
+
+/**
+ * Identify a caller-owned top-level compact list without treating match,
+ * segment, or other nested counts inside a complete booking container as the
+ * returned list. An explicit compact shape attached to the container remains
+ * authoritative. Only unambiguous give-me/us list-return directives activate
+ * compact presentation here; book/create/generate counts retain booking
+ * capacity unless a separate direct-answer cue applies.
+ */
+export function hasBackstageExplicitTopLevelCompactItemCount(
+  prompt: string,
+  contract: Pick<
+    BackstageCompactOutputContract,
+    | 'itemPolicy'
+    | 'completeBookingContainerComponentCount'
+    | 'explicitCompactOutputRequest'
+  >
+): boolean {
+  if (
+    contract.itemPolicy.mode !== 'exact'
+    && contract.itemPolicy.mode !== 'atMost'
+  ) {
+    return false;
+  }
+  if (contract.completeBookingContainerComponentCount) {
+    return contract.explicitCompactOutputRequest;
+  }
+
+  const embeddedContentState = buildBackstageCompactRetryEmbeddedContentState(prompt);
+  const compactPresentationDirectives = collectBackstageCompactRetryDirectiveCounts(
+    prompt,
+    embeddedContentState
+  ).filter(directive =>
+    directive.compactPresentation
+    && !directive.negated
+    && !directive.quoteAmbiguous
+  );
+  const directive = compactPresentationDirectives[0];
+  return compactPresentationDirectives.length === 1
+    && directive !== undefined
+    && directive.count === contract.itemPolicy.count
+    && directive.mode === contract.itemPolicy.mode;
 }
 
 export interface BackstageCompactRetryEmbeddedContentState {
@@ -892,13 +936,15 @@ function collectBackstageCompactRetryDirectiveCounts(
   embeddedContentState: BackstageCompactRetryEmbeddedContentState
 ): BackstageCompactRetryDirectiveCount[] {
   const matches = prompt.matchAll(
-    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|items?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
+    /\b(?<requestVerb>book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?<recipient>me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|finish|title|storyline|rivalry|creative|different|possible|detailed|short|brief|concise|numbered|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:alternative\s+cards?|bullets?|items?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
   );
   const directiveCounts: BackstageCompactRetryDirectiveCount[] = [];
 
   for (const match of matches) {
     const groups = match.groups as BackstageCompactRetryItemCountGroups & {
       qualifier?: string;
+      recipient?: string;
+      requestVerb?: string;
     };
     const matchIndex = match.index!;
     const count = parseBackstageCompactRetryItemCountGroups(groups);
@@ -917,6 +963,9 @@ function collectBackstageCompactRetryDirectiveCounts(
       mode: /^(?:up\s+to|at\s+most|no\s+more\s+than)$/u.test(qualifier)
         ? 'atMost'
         : 'exact',
+      compactPresentation:
+        groups.requestVerb?.toLowerCase() === 'give'
+        && /^(?:me|us)$/u.test(groups.recipient?.toLowerCase() ?? ''),
       negated: isBackstageCompactRetryDirectiveNegated(
         prompt,
         matchIndex
