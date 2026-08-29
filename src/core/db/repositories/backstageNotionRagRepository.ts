@@ -13,7 +13,10 @@ import { getPool } from '../client.js';
 export const BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT = 5_000;
-export const BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT = 4_096;
+export const BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT = 4_096;
+// Compatibility release fence: deploy 4,096-capable readers everywhere before
+// a later release raises this writer ceiling.
+export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;
 export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
 export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS = 128;
 export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES = 16 * 1024 * 1024;
@@ -652,7 +655,7 @@ function parseBoundedPersistedOccurrencePath(
     typeof occurrence === 'string' ? Number(occurrence) : occurrence as number,
     `${label}[${index}]`,
     1,
-    BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
   ));
 }
 
@@ -731,7 +734,7 @@ function validateChunkScopeIndexMetadata(
     || occurrences.some(value => (
       !Number.isSafeInteger(value)
       || (value as number) < 1
-      || (value as number) > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      || (value as number) > BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     ))
   ) {
     throw new Error(`${label}.headingOccurrencePath is invalid.`);
@@ -816,9 +819,9 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
   if (
     !Array.isArray(input.chunks)
     || input.chunks.length < 1
-    || input.chunks.length > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+    || input.chunks.length > BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
   ) {
-    throw new Error(`chunks must contain 1-${BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT} records.`);
+    throw new Error(`chunks must contain 1-${BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT} records.`);
   }
 
   const pageIds = new Set<string>();
@@ -1711,7 +1714,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       maxChunks,
       'maxChunks',
       1,
-      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     );
     const result = await this.pool.query<ActiveChunkRow>(
       `SELECT
@@ -1931,7 +1934,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
                          AND heading_occurrence.value::TEXT
                            ~ '^[1-9][0-9]{0,3}$'
                         THEN (heading_occurrence.value::TEXT)::INTEGER
-                          BETWEEN 1 AND ${BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT}
+                          BETWEEN 1 AND ${BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT}
                        ELSE FALSE
                      END IS NOT TRUE
                    )
@@ -2064,7 +2067,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     }
     if (
       pageScopeChunkCount < 1
-      || pageScopeChunkCount > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      || pageScopeChunkCount > BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
       || pageScopePageCount < 1
       || pageScopePageCount > BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT
     ) {
@@ -2238,7 +2241,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
         occurrence,
         `selector.sectionOccurrencePath[${index}]`,
         1,
-        BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+        BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
       ));
     if (
       normalizedSectionOccurrencePath !== null
@@ -2253,13 +2256,13 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       offset,
       'offset',
       0,
-      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT - 1
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT - 1
     );
     const normalizedLimit = normalizeInteger(
       limit,
       'limit',
       1,
-      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     );
     const normalizedKnownScopeChunkCount = knownScopeChunkCount === null
       ? null
@@ -2267,7 +2270,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
         knownScopeChunkCount,
         'knownScopeChunkCount',
         1,
-        BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+        BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
       );
     const queryValues = [
       normalizedUniverseId,
@@ -2329,7 +2332,7 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     }
     if (
       scopeChunkCount < 0
-      || scopeChunkCount > BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+      || scopeChunkCount > BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     ) {
       throw new Error('Snapshot scope chunk count escaped its supported bounds.');
     }

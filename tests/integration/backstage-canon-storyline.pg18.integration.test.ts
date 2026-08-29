@@ -11,7 +11,7 @@ import {
   type BackstageCanonStorylineUpsertInput
 } from '../../src/core/db/repositories/backstageBookerRepository.js';
 import {
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   PostgresBackstageNotionRagRepository,
   type ActivateBackstageNotionSnapshotInput,
   type BackstageNotionSyncLease,
@@ -913,7 +913,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       expect(retainedHead.rows).toEqual([{ active_snapshot_id: prior.id }]);
       await expect(notionRepository.loadActiveSnapshot(
         universeId,
-        BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT
+        BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
       )).resolves.toMatchObject({
         snapshot: { id: prior.id, chunkCount: 1 },
         chunks: [{ content: 'Synthetic authority chunk prior' }],

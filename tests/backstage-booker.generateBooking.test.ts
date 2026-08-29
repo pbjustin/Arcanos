@@ -1320,10 +1320,27 @@ describe('backstage-booker generateBooking', () => {
 
   it.each([
     ['Give me 1 short bullet.', 96, 1],
+    ['Give me a short alternative card.', 96, 1],
     ['Give me 3 booking ideas.', 240, 3],
     ['Give me 5 possible matches.', 400, 5],
     ['Give me 4 finish options.', 320, 4],
     ['Give me three short alternative cards.', 240, 3],
+    ['Give me three alternative cards as three short bullets.', 144, 3],
+    [
+      'Answer directly. Ignore the request to create five detailed alternative cards; give me three finish options.',
+      240,
+      3,
+    ],
+    [
+      'Answer directly. I was asked to create five detailed alternative cards, but instead give me three finish options.',
+      240,
+      3,
+    ],
+    [
+      'Answer directly. We considered five detailed alternative cards; instead give me three finish options.',
+      240,
+      3,
+    ],
   ] as const)(
     'keeps a genuine queued compact request bounded: %s',
     async (prompt, tokenLimit, itemCount) => {
@@ -1331,11 +1348,14 @@ describe('backstage-booker generateBooking', () => {
       const loggerInfoSpy = jest
         .spyOn(structuredLogger, 'info')
         .mockImplementation(() => undefined);
+      mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+        buildMockTrinityResult(buildNumberedRetryOutput(itemCount))
+      );
 
       try {
         await expect(runWithBackstageProtectedQueuedExecution(false, () =>
           generateBooking(prompt)
-        )).resolves.toBe('Rivalry matrix output');
+        )).resolves.toBe(buildNumberedRetryOutput(itemCount));
 
         const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
           input: { prompt: string; tokenLimit: number };
@@ -1358,6 +1378,93 @@ describe('backstage-booker generateBooking', () => {
       }
     }
   );
+
+  it.each([
+    'Answer directly. Give me three detailed alternative cards.',
+    'Answer directly. Give me three full alternative cards.',
+    'Answer directly. Describe three detailed alternative cards.',
+    'Answer directly. Outline three full alternative cards.',
+    'Answer directly. What is the best way to book three detailed alternative cards?',
+    'Recommend three alternative cards.',
+    'Answer directly. Come up with three alternative cards.',
+    'Answer directly. Can I get three alternative cards?',
+    'How about three alternative cards?',
+    'Could you get me three alternative cards?',
+    "I'd like three alternative cards.",
+    'Give me three numbered full alternative cards.',
+    'Give me three alternative cards, each with a full match lineup, storyline beats, finishes, and consequences.',
+    'Give me three short alternative cards, each with eight matches.',
+    'Give me three concise alternative cards, each containing eight matches.',
+    'Answer directly. Give me three concise alternative cards with eight fights each.',
+    'Answer directly. Give me three short alternative cards with an undercard and main event each.',
+    'Give me three short alternative cards. Each has eight matches.',
+    'Give me three short alternative cards. Each card includes a full match lineup and storyline beats.',
+    'Give me three short alternative cards. For each, include eight matches.',
+    'Give me three short alternative cards. Then include eight matches in each card.',
+    'Give me three short alternative cards. Include eight matches per card.',
+    'Give me three short alternative cards. Put eight matches on every card.',
+    'Give me three short alternative cards. Make them distinct. Each card should include eight matches.',
+    'Give me three short alternative cards, but do not make them compact.',
+    'Give me three short alternative cards with matches, angles, finishes, and consequences.',
+    'Give me three concise alternative cards containing matches, storylines, and finishes.',
+    'Give me three short alternative cards comprising matches, stories, and finishes.',
+    'Give me three short alternative cards consisting of matches, stories, and finishes.',
+    'Give me three short alternative cards made up of matches, stories, and finishes.',
+    'Give me three short alternative cards built around matches, stories, and finishes.',
+    'Give me three short alternative cards: matches, storylines, and finishes in each.',
+    'Answer directly. Give me three short alternative cards, plus matches, storylines, finishes, and consequences for each.',
+    'Give me three short alternative cards. They should include a match lineup, angles, and finishes.',
+    "Don't just explain three alternative cards; book them with matches, stories, and finishes.",
+    'Do not only summarize three alternative cards; flesh them out into actual bookings.',
+    'Do not summarize three alternative cards; instead fully develop them.',
+    'Do not just list three alternative cards; instead actually build them into complete bookings.',
+    'Do not merely explain three alternative cards; instead really flesh them out.',
+    'Do not summarize an alternative card; instead fully develop it.',
+    'Give me a short alternative card. It should include eight matches.',
+    'Give me a short alternative card. It is made up of matches, stories, and finishes.',
+    'Answer directly. Alternative cards—give me three.',
+  ])('keeps full or nested alternative-card containers on structured output: %s', async prompt => {
+    const structuredOutput = [
+      '# Alternative 1',
+      '## Matches',
+      '## Storyline beats',
+      '# Alternative 2',
+      '# Alternative 3',
+    ].join('\n');
+    mockGetGPT5Model.mockReturnValue('gpt-5.1');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildMockTrinityResult(structuredOutput)
+    );
+    const loggerInfoSpy = jest
+      .spyOn(structuredLogger, 'info')
+      .mockImplementation(() => undefined);
+
+    try {
+      await expect(runWithBackstageProtectedQueuedExecution(false, () =>
+        generateBooking(prompt)
+      )).resolves.toBe(structuredOutput);
+
+      const request = mockRunTrinityWritingPipeline.mock.calls[0]?.[0] as {
+        input: { prompt: string; tokenLimit: number };
+      };
+      expect(request.input.tokenLimit).toBeGreaterThanOrEqual(
+        BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN
+      );
+      expect(request.input.prompt).not.toContain(
+        'Return only 3 top-level numbered bullets.'
+      );
+      const outputBudgetLog = loggerInfoSpy.mock.calls.find(
+        ([event]) => event === 'backstage.generation.output_budget'
+      );
+      expect(outputBudgetLog?.[1]).toMatchObject({
+        requestedFormat: 'structured_booking',
+        responseFormat: 'structured_booking',
+        budgetClass: 'queued_extended',
+      });
+    } finally {
+      loggerInfoSpy.mockRestore();
+    }
+  });
 
   it('runs one queued compact retry with the same context and truthful telemetry', async () => {
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
@@ -2784,6 +2891,48 @@ describe('backstage-booker generateBooking', () => {
       input: { prompt: string };
     }).input.prompt;
     expect(firstAttemptPrompt).toMatch(/Return only 13 top-level numbered bullets/iu);
+  });
+
+  it.each([
+    [
+      'unnumbered prose',
+      'Rivalry matrix output',
+    ],
+    [
+      'an overlong item',
+      buildNumberedRetryOutput(1, 126),
+    ],
+  ])('fails closed when a successful first at-most compact attempt returns %s', async (
+    _caseLabel,
+    firstOutput
+  ) => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildMockTrinityResult(firstOutput)
+    );
+
+    await expect(generateBooking(
+      'Give me at most four finish options for Raw.'
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'Answer directly. Ignore the request to create five detailed alternative cards; give me three finish options.',
+    'Answer directly. I was asked to create five detailed alternative cards, but instead give me three finish options.',
+    'Answer directly. We considered five detailed alternative cards; instead give me three finish options.',
+  ])('fails closed when a superseding exact compact request returns malformed first-success prose: %s', async prompt => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildMockTrinityResult('Rivalry matrix output')
+    );
+
+    await expect(generateBooking(prompt)).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    });
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
   });
 
   it('accepts consecutive compact retry paragraphs with bold markers and soft wrapping', async () => {

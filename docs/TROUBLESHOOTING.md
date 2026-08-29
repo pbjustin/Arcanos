@@ -206,7 +206,12 @@ If failing, inspect Railway build/deploy logs first.
   as deletion or activate a partial manifest.
   Internal `phase` and `reason` fields are a closed, content-free diagnostic
   taxonomy. In particular, `chunking/chunk_limit_reached` means a complete
-  candidate exceeded a bounded snapshot ceiling, while
+  candidate exceeded a bounded snapshot ceiling. During the V3 compatibility
+  release, readers and storage accept 4,096 chunks but the production writer
+  intentionally remains fenced at 2,048; a 2,117-chunk corpus therefore keeps
+  this diagnostic until the separately reviewed expansion release is deployed
+  after every serving web reader is confirmed compatible. Do not bypass the
+  writer fence or combine the two releases. A
   `completeness_validation/completeness_mismatch` means the prepared and
   persisted inventories differed. A `deadline_exhausted` reason retains the
   operational phase that consumed the fixed cycle budget; the deadline is not

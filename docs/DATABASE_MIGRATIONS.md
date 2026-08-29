@@ -341,10 +341,14 @@ separately reviewed authority-restoration procedure.
 
 `migrations/20260829_backstage_notion_rag_v3_snapshot_capacity.sql` is the
 bounded authoritative-snapshot capacity upgrade. Apply it after V2. It raises
-only the monolith snapshot ceiling from 2,048 to 4,096 chunks; partition shard
-ceilings remain separate and unchanged. The writer validates the complete
-candidate in memory, serializes page and chunk records into record- and
-byte-bounded batches, inserts every batch inside the existing single
+only the monolith storage and reader ceiling from 2,048 to 4,096 chunks;
+partition shard ceilings remain separate and unchanged. This compatibility
+release deliberately retains a 2,048-chunk writer fence in
+`BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT`. Deploy and verify this
+exact worker/web pair before a separate expansion release raises only that
+writer fence to 4,096. The writer validates the complete candidate in memory,
+serializes page and chunk records into record- and byte-bounded batches,
+inserts every batch inside the existing single
 transaction, and compares exact persisted page and chunk counts before the
 authority head can flip. The V3 `BN002` fence independently repeats both count
 checks for alternate or rolling-version writers. Any batch, count, lease, or
@@ -361,7 +365,9 @@ history exceeds 2,048 chunks. It never truncates or deletes a snapshot to make a
 downgrade fit. During a rolling release, an older reader encountering a newly
 expanded snapshot fails closed rather than loading a partial index; update
 reader capacity before allowing an upgraded worker to activate expanded
-history.
+history. Do not combine the compatibility and expansion releases: if the
+compatibility web deployment fails, its 2,048 writer fence is what keeps the
+still-serving old web revision readable.
 
 The V2 fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
 SQLSTATE `55000` while any snapshot is active. Apply that rollback before the

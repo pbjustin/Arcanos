@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES,
   BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS,
   BackstageNotionSnapshotCommitUnknownError,
@@ -53,7 +54,7 @@ export const BACKSTAGE_NOTION_SYNC_MAX_PAGES = 512;
 export const BACKSTAGE_NOTION_SYNC_MAX_DEPTH = 16;
 export const BACKSTAGE_NOTION_SYNC_MAX_TOTAL_CODE_POINTS = 4_000_000;
 export const BACKSTAGE_NOTION_SYNC_MAX_CHUNKS =
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT;
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT;
 export const BACKSTAGE_NOTION_SYNC_FETCH_TIMEOUT_MS = 15_000;
 export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
@@ -687,6 +688,65 @@ async function runWithTimeout<T>(
   } finally {
     clearTimeout(timeoutHandle);
     parentSignal?.removeEventListener('abort', forwardAbort);
+  }
+}
+
+async function releaseSyncLeaseBounded(
+  repository: BackstageNotionRagRepository,
+  universeId: string,
+  lease: Pick<BackstageNotionSyncLease, 'holderId' | 'leaseToken'>
+): Promise<void> {
+  try {
+    await runWithTimeout(
+      BACKSTAGE_NOTION_SYNC_CLEANUP_TIMEOUT_MS,
+      undefined,
+      signal => raceWithSignal(
+        () => repository.releaseSyncLease(
+          universeId,
+          lease.holderId,
+          lease.leaseToken
+        ),
+        signal
+      )
+    );
+  } catch {
+    safeLog('warn', 'backstage.notion_rag.sync_lease_release_failed', {
+      universeId,
+    });
+  }
+}
+
+async function acquireSyncLeaseWithinCycle(
+  repository: BackstageNotionRagRepository,
+  universeId: string,
+  holderId: string,
+  signal: AbortSignal
+): Promise<BackstageNotionSyncLease | null> {
+  // The repository call cannot be cancelled after dispatch. If cancellation
+  // wins the race, fence-clean any exact lease that commits afterward.
+  const pendingAcquisition = repository.acquireSyncLease(
+    universeId,
+    holderId,
+    BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+  );
+
+  try {
+    return await raceWithSignal(() => pendingAcquisition, signal);
+  } catch (error) {
+    // Observe the original mutation after the race rejects. This closes the
+    // microtask window where acquisition can settle just before cancellation
+    // while the abort still wins delivery to the caller.
+    void pendingAcquisition.then(
+      acquiredLease => acquiredLease
+        ? releaseSyncLeaseBounded(
+            repository,
+            universeId,
+            acquiredLease
+          )
+        : undefined,
+      () => undefined
+    );
+    throw error;
   }
 }
 
@@ -1356,12 +1416,10 @@ export async function syncBackstageNotionAuthorityRoot(
   progress.phase = 'lease';
   let lease: BackstageNotionSyncLease | null;
   try {
-    lease = await raceWithSignal(
-      () => repository.acquireSyncLease(
-        root.universeId,
-        holderId,
-        BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
-      ),
+    lease = await acquireSyncLeaseWithinCycle(
+      repository,
+      root.universeId,
+      holderId,
       cycleDeadline.signal
     );
   } catch (error) {
@@ -1468,7 +1526,8 @@ export async function syncBackstageNotionAuthorityRoot(
     if (
       activeInventory?.snapshot.manifestHash === manifestHash
       && activeInventory.snapshot.embeddingModel === DEFAULT_OPENAI_EMBEDDING_MODEL
-      && activeInventory.snapshot.chunkCount <= BACKSTAGE_NOTION_SYNC_MAX_CHUNKS
+      && activeInventory.snapshot.chunkCount
+        <= BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     ) {
       await verifyHierarchyDidNotDrift({
         pages,
@@ -1564,22 +1623,7 @@ export async function syncBackstageNotionAuthorityRoot(
   } finally {
     await heartbeat.stop();
     try {
-      await runWithTimeout(
-        BACKSTAGE_NOTION_SYNC_CLEANUP_TIMEOUT_MS,
-        undefined,
-        signal => raceWithSignal(
-          () => repository.releaseSyncLease(
-            root.universeId,
-            lease.holderId,
-            lease.leaseToken
-          ),
-          signal
-        )
-      );
-    } catch {
-      safeLog('warn', 'backstage.notion_rag.sync_lease_release_failed', {
-        universeId: root.universeId,
-      });
+      await releaseSyncLeaseBounded(repository, root.universeId, lease);
     } finally {
       cycleDeadline.dispose();
     }

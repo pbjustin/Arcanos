@@ -839,6 +839,16 @@ worker-first/web-second pair, then prove every active web and worker replica is
 running that compatible exact SHA. No worker sync may activate a head during
 this phase.
 
+The V3 snapshot-capacity increase uses an additional reader-first compatibility
+release even after authority is already active. That release installs the
+4,096-chunk database constraint and read path but keeps both pre-readiness and
+recurring worker synchronization fenced at 2,048 chunks. Promote it through the
+normal worker-first/web-second workflow and verify the exact worker/web pair.
+Only a later expansion release may raise the writer fence to 4,096. If the
+compatibility web deployment fails or is retried, the new worker still cannot
+activate a snapshot that the old web revision rejects. Never place both fence
+changes in one deployable revision.
+
 Activation is one-way and intentionally quarantines old canon. Before phase
 two, drain/cancel queued mutations for the exact universe, reconcile
 commit-unknown results, and take the approved recovery export of the existing

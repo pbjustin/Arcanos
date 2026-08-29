@@ -4,7 +4,8 @@ import { describe, expect, it } from '@jest/globals';
 import type { Pool } from 'pg';
 
 import {
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS,
   BackstageNotionSnapshotCommitUnknownError,
@@ -764,10 +765,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
     }
   );
 
-  it('persists a 2,117-chunk candidate in bounded batches before one head flip', async () => {
+  it('persists the compatibility writer ceiling in bounded batches before one head flip', async () => {
     const input = validSnapshotInput();
     input.pages = [input.pages[0]!];
-    input.chunks = Array.from({ length: 2_117 }, (_unused, ordinal) => {
+    input.chunks = Array.from({
+      length: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+    }, (_unused, ordinal) => {
       const content = `synthetic-authority-chunk-${ordinal}`;
       const contentHash = hash(content);
       return {
@@ -804,7 +807,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
               manifest_hash: HASH_A,
               embedding_model: 'text-embedding-test',
               page_count: 1,
-              chunk_count: 2_117,
+              chunk_count: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
               source_max_edited_at: NOW,
               sync_holder_id: 'sync-worker-1',
               snapshot_created_at: NOW,
@@ -814,7 +817,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
         }
         if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
           return {
-            rows: [{ page_count: '1', chunk_count: '2117' }],
+            rows: [{
+              page_count: '1',
+              chunk_count: String(
+                BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+              ),
+            }],
             rowCount: 1,
           };
         }
@@ -834,14 +842,15 @@ describe('PostgresBackstageNotionRagRepository', () => {
 
     await expect(repository.activateSnapshot(input)).resolves.toMatchObject({
       pageCount: 1,
-      chunkCount: 2_117,
+      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
     });
 
     const chunkInserts = commands.filter(command =>
       command.sql.startsWith('INSERT INTO backstage_notion_snapshot_chunks')
     );
     expect(chunkInserts).toHaveLength(Math.ceil(
-      2_117 / BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS
+      BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+        / BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS
     ));
     const persistedChunks = chunkInserts.flatMap(command => {
       const serialized = String(command.values[3]);
@@ -854,8 +863,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
       );
       return batch;
     });
-    expect(persistedChunks).toHaveLength(2_117);
-    expect(new Set(persistedChunks.map(chunk => chunk.chunk_id)).size).toBe(2_117);
+    expect(persistedChunks).toHaveLength(
+      BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+    );
+    expect(new Set(persistedChunks.map(chunk => chunk.chunk_id)).size).toBe(
+      BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+    );
     expect(commands.filter(command => (
       command.sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
     ))).toHaveLength(1);
@@ -1050,12 +1063,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
     const repository = new PostgresBackstageNotionRagRepository(pool);
     const input = validSnapshotInput();
     input.chunks = Array.from(
-      { length: BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1 },
+      { length: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT + 1 },
       () => input.chunks[0]!
     );
 
     await expect(repository.activateSnapshot(input)).rejects.toThrow(
-      `chunks must contain 1-${BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT} records.`
+      `chunks must contain 1-${BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT} records.`
     );
     expect(connected).toBe(false);
   });
@@ -1134,6 +1147,27 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(observedSql).toContain('chunk.snapshot_id = head.active_snapshot_id');
     expect(observedSql).toContain("head.authority = 'notion'");
     expect(observedValues).toEqual([UNIVERSE_ID, 2]);
+  });
+
+  it('admits the expanded reader ceiling while retaining the compatibility writer fence', async () => {
+    let observedValues: unknown[] = [];
+    const pool = createPool(async (_rawSql, values) => {
+      observedValues = values;
+      return { rows: [], rowCount: 0 };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    await expect(repository.loadActiveSnapshot(
+      UNIVERSE_ID,
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    )).resolves.toBeNull();
+
+    expect(BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT).toBe(2_048);
+    expect(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT).toBe(4_096);
+    expect(observedValues).toEqual([
+      UNIVERSE_ID,
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+    ]);
   });
 
   it('loads a continuation snapshot header without joining chunk payloads', async () => {
@@ -1236,7 +1270,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     for (const occurrence of [
       1.5,
       0,
-      BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1
     ]) {
       await expectSnapshotValidationError((input) => {
         input.chunks[1]!.metadata = {
@@ -1573,7 +1607,9 @@ describe('PostgresBackstageNotionRagRepository', () => {
     ])).resolves.toEqual({ status: 'invalid' });
     await expect(resolvePageRows([
       validPageScopeCandidate({
-        scope_chunk_count: String(BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1)
+        scope_chunk_count: String(
+          BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1
+        )
       })
     ])).resolves.toEqual({ status: 'invalid' });
 
@@ -1932,7 +1968,9 @@ describe('PostgresBackstageNotionRagRepository', () => {
       'Snapshot scope chunk count escaped its supported bounds'
     );
     await expect(loadWithCountRows([{
-      scope_chunk_count: String(BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1)
+      scope_chunk_count: String(
+        BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1
+      )
     }])).rejects.toThrow('Snapshot scope chunk count escaped its supported bounds');
     await expect(loadWithCountRows([{
       scope_chunk_count: '0'

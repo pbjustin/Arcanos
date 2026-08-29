@@ -127,6 +127,7 @@ import {
   resolveBackstageDirectAnswerBulletCount,
   runBackstageBookerCompactOutputAttempts,
   type BackstageCompactOutputAttemptEvent,
+  type BackstageCompactOutputContract,
   type BackstageDirectAnswerOutputContract,
 } from '@shared/backstage/backstageCompactOutputContract.js';
 import {
@@ -991,6 +992,16 @@ function buildBackstageResponseStyleInstruction(
   ].join('\n');
 }
 
+function shouldUseBackstageCompactOutputMode(
+  prompt: string,
+  contract: BackstageCompactOutputContract
+): boolean {
+  return !contract.alternativeCardContainerRequest && (
+    shouldPreferDirectAnswerMode(prompt)
+    || hasBackstageExplicitTopLevelCompactItemCount(prompt, contract)
+  );
+}
+
 function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimit: number): number {
   const boundedReviewTokenLimit = resolveBoundedBackstageReviewTokenLimit(
     prompt,
@@ -1004,10 +1015,7 @@ function resolveBackstageBookerPromptTokenLimit(prompt: string, defaultTokenLimi
     prompt,
     defaultTokenLimit
   );
-  if (
-    !shouldPreferDirectAnswerMode(prompt)
-    && !hasBackstageExplicitTopLevelCompactItemCount(prompt, outputContract)
-  ) {
+  if (!shouldUseBackstageCompactOutputMode(prompt, outputContract)) {
     return defaultTokenLimit;
   }
 
@@ -1030,14 +1038,14 @@ async function buildLegacyStructuredBookingPrompts(
 ): Promise<LegacyStructuredBookingPrompts> {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
-  const compactOutputMode = directAnswerMode
-    || hasBackstageExplicitTopLevelCompactItemCount(
-      basePrompt,
-      resolveBackstageCompactOutputContract(
-        basePrompt,
-        BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
-      )
-    );
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    basePrompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const compactOutputMode = shouldUseBackstageCompactOutputMode(
+    basePrompt,
+    compactOutputContract
+  );
   const directAnswerContract = compactOutputMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1210,16 +1218,15 @@ function buildBookingPolicyPrompt(
   basePrompt: string,
   compactDirectOutput = true
 ): string {
-  const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
-  const compactOutputMode = directAnswerMode
-    || hasBackstageExplicitTopLevelCompactItemCount(
-      basePrompt,
-      resolveBackstageCompactOutputContract(
-        basePrompt,
-        BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
-      )
-    );
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    basePrompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const compactOutputMode = shouldUseBackstageCompactOutputMode(
+    basePrompt,
+    compactOutputContract
+  );
   const directAnswerContract = compactOutputMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1247,14 +1254,14 @@ function buildBookingPrompt(
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
-  const compactOutputMode = directAnswerMode
-    || hasBackstageExplicitTopLevelCompactItemCount(
-      basePrompt,
-      resolveBackstageCompactOutputContract(
-        basePrompt,
-        BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
-      )
-    );
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    basePrompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const compactOutputMode = shouldUseBackstageCompactOutputMode(
+    basePrompt,
+    compactOutputContract
+  );
   const directAnswerContract = compactOutputMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -1294,14 +1301,14 @@ function buildNotionAuthorityBookingPrompt(
 ): string {
   const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(basePrompt);
-  const compactOutputMode = directAnswerMode
-    || hasBackstageExplicitTopLevelCompactItemCount(
-      basePrompt,
-      resolveBackstageCompactOutputContract(
-        basePrompt,
-        BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
-      )
-    );
+  const compactOutputContract = resolveBackstageCompactOutputContract(
+    basePrompt,
+    BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
+  );
+  const compactOutputMode = shouldUseBackstageCompactOutputMode(
+    basePrompt,
+    compactOutputContract
+  );
   const directAnswerContract = compactOutputMode
     ? parseBackstageDirectAnswerOutputContract(basePrompt)
     : null;
@@ -2577,13 +2584,15 @@ export async function generateBooking(
   const preliminaryItemPolicy = preliminaryCompactOutputContract.itemPolicy;
   const completeBookingContainerComponentCount =
     preliminaryCompactOutputContract.completeBookingContainerComponentCount;
+  const structuredBookingContainerRequest =
+    completeBookingContainerComponentCount
+    || preliminaryCompactOutputContract.alternativeCardContainerRequest;
   const expectedItemCount = preliminaryItemPolicy.budgetItemCount;
   const explicitCompactItemCount = preliminaryItemPolicy.mode !== 'default';
-  const compactOutputMode = directAnswerMode
-    || hasBackstageExplicitTopLevelCompactItemCount(
-      input.prompt,
-      preliminaryCompactOutputContract
-    );
+  const compactOutputMode = shouldUseBackstageCompactOutputMode(
+    input.prompt,
+    preliminaryCompactOutputContract
+  );
   const requestedFormatPreference: BackstageOutputFormat = boundedReviewMode
     ? 'bounded_review'
     : compactOutputMode
@@ -2628,21 +2637,21 @@ export async function generateBooking(
     expectedItemCount,
     explicitCompactItemCount,
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
-    completeBookingContainerComponentCount,
+    completeBookingContainerComponentCount: structuredBookingContainerRequest,
   });
   const responseFormat = resolveBackstageResponseFormat({
     requestedFormat,
     boundedReviewMode,
     directAnswerMode: compactOutputMode,
     explicitCompactItemCount,
-    completeBookingContainerComponentCount,
+    completeBookingContainerComponentCount: structuredBookingContainerRequest,
     explicitCompactOutputRequest:
       preliminaryCompactOutputContract.explicitCompactOutputRequest,
     requestedOutputShapeInstructionPresent:
       preliminaryRequestedOutputShapeInstruction !== null,
   });
   const enforceParsedItemContract =
-    !completeBookingContainerComponentCount
+    !structuredBookingContainerRequest
     || responseFormat === 'compact_direct';
   const structuredDirectOutput = directAnswerMode
     && responseFormat === 'structured_booking';
@@ -2709,7 +2718,7 @@ export async function generateBooking(
     expectedItemCount,
     explicitCompactItemCount,
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
-    completeBookingContainerComponentCount,
+    completeBookingContainerComponentCount: structuredBookingContainerRequest,
     model,
     modelStageTimeoutMs: effectiveModelStageBudgetMs,
   });
@@ -2745,7 +2754,7 @@ export async function generateBooking(
     );
   const outputRecoveryMode = resolveBackstageOutputRecoveryMode({
     responseFormat,
-    completeBookingContainerComponentCount,
+    completeBookingContainerComponentCount: structuredBookingContainerRequest,
   });
   const outputRetryInstruction = outputRecoveryMode === 'structured'
     ? buildBackstageBookerStructuredOutputRetryInstruction()
@@ -2897,12 +2906,12 @@ export async function generateBooking(
         : directAnswerMode
           ? stripBackstageDirectAnswerPreamblePrefix(clean)
           : clean;
-    //audit Assumption: a provider stop after the compact retry does not prove the requested answer is complete; failure risk: a short or overlong retry is returned as successful output; expected invariant: unambiguous exact and maximum retry contracts are enforced on the final user-visible text; handling strategy: reject malformed retry output with the same cause-free terminal error and never start a third generation attempt.
+    //audit Assumption: a successful provider stop does not prove an enforceable compact response is complete; failure risk: malformed or overlong initial and retry outputs are returned as successful; expected invariant: every unambiguous exact or maximum compact-direct result is enforced on the final user-visible text; handling strategy: reject invalid output with the same cause-free terminal error without starting another generation attempt.
     if (enforceParsedItemContract) {
       assertBackstageBookerCompactRetryOutputValid(
         normalizedOutput,
         compactOutputContract,
-        usedCompactOutputRetry
+        usedCompactOutputRetry || responseFormat === 'compact_direct'
       );
     }
     const validatedOutput = assertValidBackstageBookerActionData(

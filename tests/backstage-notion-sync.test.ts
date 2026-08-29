@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import {
-  BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   BackstageNotionSnapshotDeadlineError,
   BackstageNotionSnapshotWriteError,
   BackstageNotionSyncLeaseError,
@@ -625,14 +626,18 @@ describe('Backstage Notion authority synchronization', () => {
 
   it.each([
     {
-      chunkCount: 2_117,
+      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
       accepted: true,
     },
     {
-      chunkCount: BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT + 1,
+      chunkCount: 2_117,
       accepted: false,
     },
-  ])('enforces the retrievable snapshot boundary at $chunkCount chunks', async ({
+    {
+      chunkCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+      accepted: false,
+    },
+  ])('enforces the compatibility-release writer boundary at $chunkCount chunks', async ({
     chunkCount,
     accepted,
   }) => {
@@ -2093,6 +2098,79 @@ describe('Backstage Notion authority synchronization', () => {
     expect((caught as { message: string }).message).toBe('caller stopped');
 
     expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('verifies a readable Phase-B snapshot without rebuilding above the Phase-A writer ceiling', async () => {
+    const page: TestNotionPage = {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Kayfabe\n\nContinuity.',
+    };
+    const { fetchMock } = notionFetch([page]);
+    let currentInventory: BackstageNotionActiveInventory | null = null;
+    const repository = repositoryHarness({ loadActive: () => currentInventory });
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+      inputs.map(() => [1, 0])
+    ));
+    const syncDependencies = dependencies({
+      repository: repository.repository,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      embedBatch,
+    });
+    const first = await syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      syncDependencies
+    );
+    currentInventory = activeInventory(first.manifestHash ?? '', 2_117);
+    embedBatch.mockClear();
+    repository.loadReusableEmbeddings.mockClear();
+    repository.activateSnapshot.mockClear();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      syncDependencies
+    )).resolves.toMatchObject({
+      status: 'unchanged',
+      chunkCount: 2_117,
+    });
+    expect(repository.markActiveSnapshotVerified).toHaveBeenCalledTimes(1);
+    expect(repository.loadReusableEmbeddings).not.toHaveBeenCalled();
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('releases the exact lease when acquisition resolves after cancellation', async () => {
+    const controller = new AbortController();
+    const repository = repositoryHarness();
+    const pendingAcquisition = deferred<BackstageNotionSyncLease | null>();
+    repository.acquireSyncLease.mockImplementationOnce(async () => pendingAcquisition.promise);
+    const abortReason = new DOMException('stopped during lease acquisition', 'AbortError');
+
+    const sync = syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        signal: controller.signal,
+      })
+    );
+    expect(repository.acquireSyncLease).toHaveBeenCalledTimes(1);
+
+    controller.abort(abortReason);
+    await expect(sync).rejects.toBe(abortReason);
+    expect(repository.releaseSyncLease).not.toHaveBeenCalled();
+
+    pendingAcquisition.resolve(lease);
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
+    expect(repository.releaseSyncLease).toHaveBeenCalledWith(
+      universeId,
+      lease.holderId,
+      lease.leaseToken
+    );
+    expect(repository.loadAuthorityHead).not.toHaveBeenCalled();
     expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 
