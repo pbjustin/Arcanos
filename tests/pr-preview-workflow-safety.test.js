@@ -1,5 +1,27 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
+
+const ordinaryPrValidationWorkflows = [
+  '.github/workflows/api-endpoint-tests.yml',
+  '.github/workflows/ci-cd.yml',
+  '.github/workflows/doc-audit.yml',
+  '.github/workflows/pr-ci.yml',
+];
+
+const requiredCiJobIds = [
+  'lint-and-typecheck',
+  'build',
+  'test',
+  'validate-railway-compatibility',
+  'validate-deployment-readiness',
+  'security-audit',
+  'sdk-compliance-audit',
+  'python-cli-windows',
+  'local-agent-sandbox-linux',
+  'local-agent-postgres-concurrency',
+  'runtime-redis-admission',
+];
 
 const providerBearingPrJobs = [
   {
@@ -71,6 +93,31 @@ function readWorkflow(path) {
   return readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 }
 
+function parseWorkflow(path) {
+  return yaml.load(readWorkflow(path));
+}
+
+function hasAllowedOrdinaryPrJobPermissions(permissions) {
+  if (permissions === undefined) {
+    return true;
+  }
+  if (
+    permissions === null ||
+    typeof permissions !== 'object' ||
+    Array.isArray(permissions)
+  ) {
+    return false;
+  }
+
+  const entries = Object.entries(permissions);
+  return (
+    entries.length === 0 ||
+    (entries.length === 1 &&
+      entries[0][0] === 'contents' &&
+      entries[0][1] === 'read')
+  );
+}
+
 describe('native PR workflow safety', () => {
   it.each(providerBearingPrJobs)('$path keeps $job manual or main-push only', ({ path, job, expectedGate }) => {
     const workflow = readWorkflow(path);
@@ -90,6 +137,58 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain(
       'export ARCANOS_JOB_READ_CAPABILITY_SECRET=ci-job-read-capability-key-for-local-workflow-only'
     );
+  });
+
+  it.each(ordinaryPrValidationWorkflows)(
+    '%s caps repository access at contents read and never persists checkout credentials',
+    path => {
+      const workflow = parseWorkflow(path);
+      const jobs = Object.values(workflow.jobs ?? {});
+      const checkoutSteps = jobs
+        .flatMap(job => job.steps ?? [])
+        .filter(step => step.uses?.startsWith('actions/checkout@'));
+      const excessiveJobPermissions = Object.entries(workflow.jobs ?? {})
+        .filter(([, job]) => !hasAllowedOrdinaryPrJobPermissions(job.permissions))
+        .map(([jobId, job]) => ({ jobId, permissions: job.permissions }));
+
+      expect(workflow.permissions).toEqual({ contents: 'read' });
+      expect(checkoutSteps.length).toBeGreaterThan(0);
+      expect(excessiveJobPermissions).toEqual([]);
+      for (const checkout of checkoutSteps) {
+        expect(checkout.with?.['persist-credentials']).toBe(false);
+      }
+    }
+  );
+
+  it.each([
+    { label: 'inherited workflow permissions', permissions: undefined, allowed: true },
+    { label: 'all permissions disabled', permissions: {}, allowed: true },
+    { label: 'explicit contents read', permissions: { contents: 'read' }, allowed: true },
+    { label: 'scalar read-all', permissions: 'read-all', allowed: false },
+    { label: 'scalar write-all', permissions: 'write-all', allowed: false },
+    {
+      label: 'additional mapped read scope',
+      permissions: { contents: 'read', actions: 'read' },
+      allowed: false,
+    },
+    { label: 'mapped write scope', permissions: { contents: 'write' }, allowed: false },
+  ])('classifies $label as allowed=$allowed', ({ permissions, allowed }) => {
+    expect(hasAllowedOrdinaryPrJobPermissions(permissions)).toBe(allowed);
+  });
+
+  it('keeps the fail-closed aggregate name, trigger, dependencies, and verifier', () => {
+    const workflow = parseWorkflow('.github/workflows/ci-cd.yml');
+    const aggregate = workflow.jobs?.['all-checks-complete'];
+    const verifier = aggregate?.steps?.find(
+      step => step.name === '🧾 Verify every required job result'
+    );
+
+    expect(aggregate?.name).toBe('All Checks Complete');
+    expect(aggregate?.if).toBe('${{ always() }}');
+    expect(aggregate?.needs).toEqual(requiredCiJobIds);
+    expect(aggregate?.permissions).toEqual({ contents: 'read' });
+    expect(verifier?.env?.ARCANOS_REQUIRED_CI_RESULTS_JSON).toBe('${{ toJSON(needs) }}');
+    expect(verifier?.run).toBe('node scripts/verify-required-ci-results.mjs');
   });
 
   it('generates a masked per-run job-read signing fixture for documentation analysis', () => {
