@@ -4,6 +4,11 @@ import type { Pool, PoolClient } from 'pg';
 
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '@shared/backstage/backstageNotionRagCore.js';
 import {
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+  assertBackstageNotionSnapshotChunkCountWritable,
+} from '@shared/backstage/backstageNotionSyncCore.js';
+import {
   BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
@@ -13,13 +18,13 @@ import { getPool } from '../client.js';
 export const BACKSTAGE_NOTION_SYNC_LEASE_MIN_MS = 1_000;
 export const BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS = 15 * 60 * 1_000;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT = 5_000;
-export const BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT = 4_096;
-// Compatibility release fence: deploy 4,096-capable readers everywhere before
-// a later release raises this writer ceiling.
-export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;
 export const BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES = 1_000;
 export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS = 128;
 export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES = 16 * 1024 * 1024;
+export {
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+} from '@shared/backstage/backstageNotionSyncCore.js';
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -816,13 +821,12 @@ function prepareSnapshotInput(input: ActivateBackstageNotionSnapshotInput): Prep
   ) {
     throw new Error(`pages must contain 1-${BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT} records.`);
   }
-  if (
-    !Array.isArray(input.chunks)
-    || input.chunks.length < 1
-    || input.chunks.length > BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
-  ) {
-    throw new Error(`chunks must contain 1-${BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT} records.`);
+  if (!Array.isArray(input.chunks)) {
+    throw new Error(
+      `chunks must contain 1-${BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT} records.`
+    );
   }
+  assertBackstageNotionSnapshotChunkCountWritable(input.chunks.length);
 
   const pageIds = new Set<string>();
   const pages = input.pages.map((page, index): PreparedPage => {

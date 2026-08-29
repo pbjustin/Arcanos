@@ -1777,6 +1777,135 @@ describe('native PR contained application', () => {
     }
   }, 25_000);
 
+  it('executes sealed output-admission and Notion Phase-A repair contracts', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const outputAdmission = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.outputAdmission });
+    const notionSyncPhaseA = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.notionSyncPhaseA });
+
+    expect(outputAdmission.status).toBe(200);
+    expect(outputAdmission.body).toMatchObject({
+      accepted: true,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.outputAdmission,
+      outputAdmission: {
+        contracts: {
+          alternativeClassificationVerified: true,
+          malformedFirstSuccessRejected: true,
+          noFirstSuccessRetry: true,
+          validFirstSuccessAccepted: true,
+        },
+        productionSharedFinalGate: true,
+        productionSharedModeCore: true,
+        productionSharedOutputContractCore: true,
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      workerBoundaryReached: false,
+    });
+    expect(outputAdmission.body.outputAdmission.alternativeCases).toHaveLength(8);
+    expect(
+      outputAdmission.body.outputAdmission.alternativeCases.map(
+        (entry: { id: string; responseFormat: string }) => ({
+          id: entry.id,
+          responseFormat: entry.responseFormat,
+        })
+      )
+    ).toEqual([
+      { id: 'detailed-alternatives', responseFormat: 'structured_booking' },
+      { id: 'nested-short-alternatives', responseFormat: 'structured_booking' },
+      { id: 'slash-delimited-alternatives', responseFormat: 'structured_booking' },
+      { id: 'two-dozen-alternatives', responseFormat: 'structured_booking' },
+      { id: 'explicit-short-alternatives', responseFormat: 'compact_direct' },
+      { id: 'ignore-supersession', responseFormat: 'compact_direct' },
+      { id: 'attribution-supersession', responseFormat: 'compact_direct' },
+      { id: 'considered-supersession', responseFormat: 'compact_direct' },
+    ]);
+    expect(outputAdmission.text).not.toContain('Rivalry matrix output');
+    expect(
+      outputAdmission.headers[contract.proofHeaders.outputAdmissionVersion]
+    ).toBe(contract.outputAdmissionProofVersion);
+
+    expect(notionSyncPhaseA.status).toBe(200);
+    expect(notionSyncPhaseA.body).toMatchObject({
+      accepted: true,
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      embeddingBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.notionSyncPhaseA,
+      notionApiBoundaryReached: false,
+      notionSyncPhaseA: {
+        capacity: {
+          cases: [
+            { chunkCount: 2_048, readable: true, writable: true },
+            { chunkCount: 2_117, readable: true, writable: false },
+            { chunkCount: 4_096, readable: true, writable: false },
+            { chunkCount: 4_097, readable: false, writable: false },
+          ],
+          readerCeiling: 4_096,
+          writerCeiling: 2_048,
+          writerRejectionMessage: 'chunks must contain 1-2048 records.',
+        },
+        contracts: {
+          capacitySplitVerified: true,
+          lateLeaseReleasedExactlyOnce: true,
+          lateNullNotReleased: true,
+          preAbortedAcquisitionSkipped: true,
+          readableUnchangedSnapshotVerified: true,
+          writerFenceRejectedBeforeEffects: true,
+        },
+        leaseFence: {
+          acquireCalls: 1,
+          alreadyAbortedAcquireCalls: 0,
+          nullReleaseCalls: 0,
+          outwardAbortName: 'AbortError',
+          releaseCalls: 1,
+          releaseCallsBeforeLateSettlement: 0,
+          released: [
+            {
+              universeId: 'native-preview-notion-phase-a',
+              holderId: 'native-preview-holder',
+              leaseToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad',
+            },
+          ],
+        },
+        unchangedDecision: {
+          chunkCount: 2_117,
+          disposition: 'verify_unchanged',
+        },
+      },
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      workerBoundaryReached: false,
+    });
+    expect(
+      notionSyncPhaseA.headers[contract.proofHeaders.notionSyncPhaseAVersion]
+    ).toBe(contract.notionSyncPhaseAProofVersion);
+
+    for (const response of [outputAdmission, notionSyncPhaseA]) {
+      expectContainedResponseHeaders(
+        response,
+        'native-pr-preview',
+        'native-pr-preview',
+        true
+      );
+      expect(response.headers[contract.proofHeaders.clearPolicyVersion]).toBe(
+        contract.clearPolicyVersion
+      );
+      expect(response.headers['x-response-bytes']).toBe(
+        String(Buffer.byteLength(response.text, 'utf8'))
+      );
+      expect(Buffer.byteLength(response.text, 'utf8')).toBeLessThanOrEqual(4_096);
+    }
+  });
+
   it('executes the managed Backstage async continuation contract without exposing credentials', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;

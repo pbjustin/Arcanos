@@ -1,8 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
-  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
-  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES,
   BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS,
   BackstageNotionSnapshotCommitUnknownError,
@@ -16,6 +14,11 @@ import {
   type BackstageNotionSnapshotPageInput,
   type BackstageNotionSyncLease,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
+import {
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+  acquireBackstageNotionSyncLeaseWithLateRelease,
+  shouldVerifyBackstageNotionSnapshotUnchanged,
+} from '@shared/backstage/backstageNotionSyncCore.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
 import {
@@ -724,30 +727,23 @@ async function acquireSyncLeaseWithinCycle(
 ): Promise<BackstageNotionSyncLease | null> {
   // The repository call cannot be cancelled after dispatch. If cancellation
   // wins the race, fence-clean any exact lease that commits afterward.
-  const pendingAcquisition = repository.acquireSyncLease(
-    universeId,
-    holderId,
-    BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
-  );
-
-  try {
-    return await raceWithSignal(() => pendingAcquisition, signal);
-  } catch (error) {
-    // Observe the original mutation after the race rejects. This closes the
-    // microtask window where acquisition can settle just before cancellation
-    // while the abort still wins delivery to the caller.
-    void pendingAcquisition.then(
-      acquiredLease => acquiredLease
-        ? releaseSyncLeaseBounded(
-            repository,
-            universeId,
-            acquiredLease
-          )
-        : undefined,
-      () => undefined
-    );
-    throw error;
-  }
+  return acquireBackstageNotionSyncLeaseWithLateRelease({
+    acquire: () => repository.acquireSyncLease(
+      universeId,
+      holderId,
+      BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+    ),
+    assertCanAcquire: () => throwIfAborted(signal),
+    releaseLate: lease => releaseSyncLeaseBounded(
+      repository,
+      universeId,
+      lease
+    ),
+    waitForAcquisition: pendingAcquisition => raceWithSignal(
+      () => pendingAcquisition,
+      signal
+    ),
+  });
 }
 
 function shouldRetryFetch(error: unknown): boolean {
@@ -1524,10 +1520,14 @@ export async function syncBackstageNotionAuthorityRoot(
     const manifestHash = buildManifestHash(pages);
 
     if (
-      activeInventory?.snapshot.manifestHash === manifestHash
-      && activeInventory.snapshot.embeddingModel === DEFAULT_OPENAI_EMBEDDING_MODEL
-      && activeInventory.snapshot.chunkCount
-        <= BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+      activeInventory
+      && shouldVerifyBackstageNotionSnapshotUnchanged({
+        chunkCount: activeInventory.snapshot.chunkCount,
+        embeddingModelMatches:
+          activeInventory.snapshot.embeddingModel
+            === DEFAULT_OPENAI_EMBEDDING_MODEL,
+        manifestMatches: activeInventory.snapshot.manifestHash === manifestHash,
+      })
     ) {
       await verifyHierarchyDidNotDrift({
         pages,

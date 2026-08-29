@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 134-request plan without network access.
+untracked worktree, limits, and the fixed 136-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -59,7 +59,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 134-request probe
+the lifecycle reports the exact preview hosts, run the current 136-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -127,10 +127,11 @@ normal protected GET route, bearer authentication, or a database reader.
 The sealed `POST /backstage/generation-contract` selectors are
 `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `review-completion-contract`, `compact-retry-contract`,
-`notion-authority-rag-contract`, `partition-failure-telemetry-contract`,
+`production-output-contracts`, `output-classification-first-success-contract`,
+`notion-sync-phase-a-contract`, `notion-authority-rag-contract`,
+`partition-failure-telemetry-contract`,
 `continuity-query-contract`, `continuity-subtree-contract`,
-`managed-async-continuation-contract`, `gpt-client-identity-contract`, and
-`production-output-contracts`. The first
+`managed-async-continuation-contract`, and `gpt-client-identity-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to

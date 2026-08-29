@@ -73,6 +73,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
+  'src/shared/backstage/backstageNotionSyncCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
@@ -725,7 +726,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',
-    '924d14ccd22aeba1f3135ce7af9826f40662e8e5b2919c420817a374d2898bea',
+    '9a9fbc5355264db0fffdabd1c1aea2192280f2eef5c0394df9742348c8697300',
   ],
   [
     'src/shared/backstage/backstageOutputBudget.ts',
@@ -770,6 +771,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
     'a6eda06c2021987dc952c5f32c9653a7409ed1932cb6bb27002cf9e279b51598',
+  ],
+  [
+    'src/shared/backstage/backstageNotionSyncCore.ts',
+    '615d39c4144d6032af7b48d2d71c479e9b54cbd3535ce0935c994d6358d53e55',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

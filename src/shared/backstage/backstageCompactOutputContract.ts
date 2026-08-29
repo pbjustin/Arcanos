@@ -209,6 +209,17 @@ export interface BackstageCompactOutputContract
   explicitCompactOutputRequest: boolean;
 }
 
+export function shouldUseBackstageBookerCompactOutputMode(
+  prompt: string,
+  contract: BackstageCompactOutputContract,
+  directAnswerMode: boolean
+): boolean {
+  return !contract.alternativeCardContainerRequest && (
+    directAnswerMode
+    || hasBackstageExplicitTopLevelCompactItemCount(prompt, contract)
+  );
+}
+
 /**
  * Identify a caller-owned top-level compact list without treating match,
  * segment, or other nested counts inside a complete booking container as the
@@ -2236,4 +2247,23 @@ export function assertBackstageBookerCompactRetryOutputValid(
   ) {
     throw new BackstageBookerOutputIncompleteError();
   }
+}
+
+export function assertBackstageBookerFinalCompactOutputValid(
+  output: string,
+  contract: BackstageCompactRetryValidationContract,
+  options: {
+    compactDirectResponse: boolean;
+    enforceParsedItemContract: boolean;
+    usedCompactOutputRetry: boolean;
+  }
+): void {
+  if (!options.enforceParsedItemContract) {
+    return;
+  }
+  assertBackstageBookerCompactRetryOutputValid(
+    output,
+    contract,
+    options.usedCompactOutputRetry || options.compactDirectResponse
+  );
 }

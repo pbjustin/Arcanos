@@ -117,15 +117,15 @@ import {
   type BackstageOutputFormat,
 } from '@shared/backstage/backstageOutputBudget.js';
 import {
-  assertBackstageBookerCompactRetryOutputValid,
+  assertBackstageBookerFinalCompactOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
   buildBackstageBookerStructuredOutputRetryInstruction,
   buildBackstageBookerRequestedOutputShapeInstruction,
-  hasBackstageExplicitTopLevelCompactItemCount,
   parseBackstageDirectAnswerOutputContract,
   resolveBackstageCompactOutputContract,
   resolveBackstageDirectAnswerBulletCount,
   runBackstageBookerCompactOutputAttempts,
+  shouldUseBackstageBookerCompactOutputMode,
   type BackstageCompactOutputAttemptEvent,
   type BackstageCompactOutputContract,
   type BackstageDirectAnswerOutputContract,
@@ -996,9 +996,10 @@ function shouldUseBackstageCompactOutputMode(
   prompt: string,
   contract: BackstageCompactOutputContract
 ): boolean {
-  return !contract.alternativeCardContainerRequest && (
+  return shouldUseBackstageBookerCompactOutputMode(
+    prompt,
+    contract,
     shouldPreferDirectAnswerMode(prompt)
-    || hasBackstageExplicitTopLevelCompactItemCount(prompt, contract)
   );
 }
 
@@ -2907,13 +2908,15 @@ export async function generateBooking(
           ? stripBackstageDirectAnswerPreamblePrefix(clean)
           : clean;
     //audit Assumption: a successful provider stop does not prove an enforceable compact response is complete; failure risk: malformed or overlong initial and retry outputs are returned as successful; expected invariant: every unambiguous exact or maximum compact-direct result is enforced on the final user-visible text; handling strategy: reject invalid output with the same cause-free terminal error without starting another generation attempt.
-    if (enforceParsedItemContract) {
-      assertBackstageBookerCompactRetryOutputValid(
-        normalizedOutput,
-        compactOutputContract,
-        usedCompactOutputRetry || responseFormat === 'compact_direct'
-      );
-    }
+    assertBackstageBookerFinalCompactOutputValid(
+      normalizedOutput,
+      compactOutputContract,
+      {
+        compactDirectResponse: responseFormat === 'compact_direct',
+        enforceParsedItemContract,
+        usedCompactOutputRetry,
+      }
+    );
     const validatedOutput = assertValidBackstageBookerActionData(
       'generateBooking',
       normalizedOutput

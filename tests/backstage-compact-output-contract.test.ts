@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import {
+  assertBackstageBookerFinalCompactOutputValid,
   buildBackstageBookerStructuredOutputRetryInstruction,
   hasBackstageCompleteBookingContainerComponentCountRequest,
   hasBackstageExplicitCompactOutputRequest,
@@ -8,6 +9,7 @@ import {
   parseBackstageDirectAnswerOutputContract,
   resolveBackstageCompactOutputContract,
   runBackstageBookerCompactOutputAttempts,
+  shouldUseBackstageBookerCompactOutputMode,
   type BackstageCompactOutputAttemptEvent,
 } from '../src/shared/backstage/backstageCompactOutputContract.js';
 
@@ -21,6 +23,51 @@ function lengthExhaustion(privatePartial: string): Error {
 }
 
 describe('Backstage compact output count semantics', () => {
+  it('keeps nested alternative cards structured while compact lists stay compact', () => {
+    const nestedPrompt =
+      'Answer directly. Give me three short alternative cards with eight matches each.';
+    const nestedContract = resolveBackstageCompactOutputContract(
+      nestedPrompt,
+      2_400
+    );
+    expect(shouldUseBackstageBookerCompactOutputMode(
+      nestedPrompt,
+      nestedContract,
+      true
+    )).toBe(false);
+
+    const compactPrompt = 'Give me three short alternative cards.';
+    const compactContract = resolveBackstageCompactOutputContract(
+      compactPrompt,
+      2_400
+    );
+    expect(shouldUseBackstageBookerCompactOutputMode(
+      compactPrompt,
+      compactContract,
+      false
+    )).toBe(true);
+  });
+
+  it('enforces malformed compact output on a successful first attempt', () => {
+    const contract = resolveBackstageCompactOutputContract(
+      'Give me at most four finish options for Raw.',
+      2_400
+    );
+
+    expect(() => assertBackstageBookerFinalCompactOutputValid(
+      'Rivalry matrix output',
+      contract,
+      {
+        compactDirectResponse: true,
+        enforceParsedItemContract: true,
+        usedCompactOutputRetry: false,
+      }
+    )).toThrow(expect.objectContaining({
+      code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      retryable: false,
+    }));
+  });
+
   it.each([
     'Answer directly. Give me one complete Raw card.',
     'Answer directly. Give me two complete Raw cards as independent alternatives.',
