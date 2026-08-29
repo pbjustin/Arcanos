@@ -4,6 +4,7 @@ import {
   BACKSTAGE_NOTION_MAX_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_REUSABLE_EMBEDDING_HASHES,
   BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS,
+  BackstageNotionSnapshotWriteError,
   BackstageNotionSyncLeaseError,
   getBackstageNotionRagRepository,
   type BackstageNotionActiveInventory,
@@ -73,10 +74,78 @@ export const BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE =
 export const BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE =
   'BACKSTAGE_NOTION_SYNC_ROOT_FAILED';
 
+export const BACKSTAGE_NOTION_SYNC_FAILURE_PHASES = [
+  'authorization',
+  'root_resolution',
+  'discovery',
+  'page_fetch',
+  'block_fetch',
+  'pagination',
+  'normalization',
+  'chunking',
+  'embedding',
+  'persistence',
+  'completeness_validation',
+  'activation',
+  'cleanup',
+  'deadline',
+  'lease',
+] as const;
+
+export const BACKSTAGE_NOTION_SYNC_FAILURE_REASONS = [
+  'deadline_exhausted',
+  'rate_limit_exhausted',
+  'transient_retry_exhausted',
+  'permanent_notion_error',
+  'inaccessible_page',
+  'pagination_incomplete',
+  'discovered_page_missing',
+  'source_changed',
+  'chunk_limit_reached',
+  'embedding_failed',
+  'persistence_failed',
+  'completeness_mismatch',
+  'activation_failed',
+  'lease_lost',
+  'invalid_configuration',
+  'unexpected_failure',
+] as const;
+
+export type BackstageNotionSyncFailurePhase =
+  (typeof BACKSTAGE_NOTION_SYNC_FAILURE_PHASES)[number];
+export type BackstageNotionSyncFailureReason =
+  (typeof BACKSTAGE_NOTION_SYNC_FAILURE_REASONS)[number];
+
+export interface BackstageNotionSyncFailureDiagnostics {
+  phase: BackstageNotionSyncFailurePhase;
+  reason: BackstageNotionSyncFailureReason;
+  pagesDiscovered: number;
+  pagesFetched: number;
+  blocksFetched: number;
+  paginationRequests: number;
+  chunksProduced: number;
+  chunksEmbedded: number;
+  notionRetryCount: number;
+  rateLimitWaitMs: number;
+  elapsedMs: number;
+  candidateSnapshotCreated: boolean;
+  candidateSnapshotValidated: boolean;
+  candidateSnapshotActivated: boolean;
+}
+
+interface BackstageNotionSyncProgress extends Omit<
+  BackstageNotionSyncFailureDiagnostics,
+  'phase' | 'reason' | 'elapsedMs'
+> {
+  startedAt: number;
+  phase: BackstageNotionSyncFailurePhase;
+}
+
 export class BackstageNotionSyncError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly diagnostics?: BackstageNotionSyncFailureDiagnostics
   ) {
     super(message);
     this.name = 'BackstageNotionSyncError';
@@ -107,6 +176,7 @@ export interface BackstageNotionSyncResult {
   snapshotId: string | null;
   verifiedAt: Date | null;
   errorCode?: string;
+  failure?: BackstageNotionSyncFailureDiagnostics;
 }
 
 interface PendingPage {
@@ -149,6 +219,151 @@ function safeLog(
   } catch {
     // Synchronization diagnostics must not alter snapshot or lease outcomes.
   }
+}
+
+function createSyncProgress(): BackstageNotionSyncProgress {
+  return {
+    startedAt: Date.now(),
+    phase: 'authorization',
+    pagesDiscovered: 0,
+    pagesFetched: 0,
+    blocksFetched: 0,
+    paginationRequests: 0,
+    chunksProduced: 0,
+    chunksEmbedded: 0,
+    notionRetryCount: 0,
+    rateLimitWaitMs: 0,
+    candidateSnapshotCreated: false,
+    candidateSnapshotValidated: false,
+    candidateSnapshotActivated: false,
+  };
+}
+
+function snapshotSyncFailureDiagnostics(
+  progress: BackstageNotionSyncProgress,
+  phase: BackstageNotionSyncFailurePhase,
+  reason: BackstageNotionSyncFailureReason
+): BackstageNotionSyncFailureDiagnostics {
+  return {
+    phase,
+    reason,
+    pagesDiscovered: progress.pagesDiscovered,
+    pagesFetched: progress.pagesFetched,
+    blocksFetched: progress.blocksFetched,
+    paginationRequests: progress.paginationRequests,
+    chunksProduced: progress.chunksProduced,
+    chunksEmbedded: progress.chunksEmbedded,
+    notionRetryCount: progress.notionRetryCount,
+    rateLimitWaitMs: progress.rateLimitWaitMs,
+    elapsedMs: Math.max(0, Date.now() - progress.startedAt),
+    candidateSnapshotCreated: progress.candidateSnapshotCreated,
+    candidateSnapshotValidated: progress.candidateSnapshotValidated,
+    candidateSnapshotActivated: progress.candidateSnapshotActivated,
+  };
+}
+
+function incompleteSyncError(
+  progress: BackstageNotionSyncProgress,
+  phase: BackstageNotionSyncFailurePhase,
+  reason: BackstageNotionSyncFailureReason,
+  message: string
+): BackstageNotionSyncError {
+  return new BackstageNotionSyncError(
+    BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+    message,
+    snapshotSyncFailureDiagnostics(progress, phase, reason)
+  );
+}
+
+function classifyNotionReadFailure(
+  error: BackstageNotionReadError,
+  currentPhase: BackstageNotionSyncFailurePhase
+): Pick<BackstageNotionSyncFailureDiagnostics, 'phase' | 'reason'> {
+  if (error.category === 'http_429') {
+    return { phase: 'deadline', reason: 'rate_limit_exhausted' };
+  }
+  if (/^http_(?:500|502|503|504|529)$/u.test(error.category)) {
+    return { phase: 'page_fetch', reason: 'transient_retry_exhausted' };
+  }
+  if (/^http_(?:401|403|404)$/u.test(error.category)) {
+    return {
+      phase: currentPhase === 'pagination' ? 'pagination' : 'page_fetch',
+      reason: 'inaccessible_page',
+    };
+  }
+  return { phase: 'page_fetch', reason: 'permanent_notion_error' };
+}
+
+function wrapSyncFailure(
+  error: unknown,
+  progress: BackstageNotionSyncProgress
+): BackstageNotionSyncError | BackstageNotionSyncLeaseError | unknown {
+  if (error instanceof BackstageNotionSyncError) {
+    return error.diagnostics
+      ? error
+      : new BackstageNotionSyncError(
+          error.code,
+          error.message,
+          snapshotSyncFailureDiagnostics(
+            progress,
+            progress.phase,
+            error.code === BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE
+              ? 'invalid_configuration'
+              : error.code === BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE
+                ? 'source_changed'
+                : 'unexpected_failure'
+          )
+        );
+  }
+  if (error instanceof BackstageNotionSyncLeaseError) {
+    return error;
+  }
+  if (error instanceof BackstageNotionSnapshotWriteError) {
+    return new BackstageNotionSyncError(
+      BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+      'Backstage Notion synchronization could not complete safely.',
+      snapshotSyncFailureDiagnostics(
+        progress,
+        error.phase,
+        error.phase === 'completeness_validation'
+          ? 'completeness_mismatch'
+          : error.phase === 'activation'
+            ? 'activation_failed'
+            : 'persistence_failed'
+      )
+    );
+  }
+  if (error instanceof BackstageNotionReadError) {
+    const failure = classifyNotionReadFailure(error, progress.phase);
+    return new BackstageNotionSyncError(
+      failure.reason === 'inaccessible_page'
+        ? BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE
+        : BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+      'Backstage Notion synchronization could not complete safely.',
+      snapshotSyncFailureDiagnostics(progress, failure.phase, failure.reason)
+    );
+  }
+  if (
+    (error instanceof Error || error instanceof DOMException)
+    && error.name === 'AbortError'
+  ) {
+    return error;
+  }
+  return new BackstageNotionSyncError(
+    BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+    'Backstage Notion synchronization could not complete safely.',
+    snapshotSyncFailureDiagnostics(
+      progress,
+      progress.phase,
+      progress.phase === 'embedding'
+        ? 'embedding_failed'
+        : progress.phase === 'persistence'
+          ? 'persistence_failed'
+          : progress.phase === 'activation'
+            ? 'activation_failed'
+            : 'unexpected_failure'
+    )
+  );
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -383,7 +598,8 @@ function createNotionRequestRunner(input: {
 
 function validateFetchedPage(
   pending: PendingPage,
-  metadata: BackstageNotionPageMetadata
+  metadata: BackstageNotionPageMetadata,
+  progress: BackstageNotionSyncProgress
 ): void {
   if (
     metadata.pageId !== pending.pageId
@@ -393,8 +609,10 @@ function validateFetchedPage(
       && metadata.parentPageId !== pending.parentPageId
     )
   ) {
-    throw new BackstageNotionSyncError(
-      BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+    throw incompleteSyncError(
+      progress,
+      'completeness_validation',
+      metadata.inTrash ? 'inaccessible_page' : 'discovered_page_missing',
       'The configured Notion hierarchy could not be verified completely.'
     );
   }
@@ -462,11 +680,16 @@ async function buildSnapshotChunks(input: {
   repository: BackstageNotionRagRepository;
   embedBatch: (inputs: readonly string[]) => Promise<number[][]>;
   signal: AbortSignal;
+  progress: BackstageNotionSyncProgress;
 }): Promise<BackstageNotionSnapshotChunkInput[]> {
   const chunks = input.pages.flatMap(page => [...page.prepared.chunks]);
+  input.progress.phase = 'chunking';
+  input.progress.chunksProduced = chunks.length;
   if (chunks.length < 1 || chunks.length > BACKSTAGE_NOTION_SYNC_MAX_CHUNKS) {
-    throw new BackstageNotionSyncError(
-      BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+    throw incompleteSyncError(
+      input.progress,
+      'chunking',
+      'chunk_limit_reached',
       'The Notion hierarchy did not produce a complete bounded retrieval index.'
     );
   }
@@ -483,6 +706,7 @@ async function buildSnapshotChunks(input: {
     input.signal
   );
   const missingHashes = hashes.filter(hash => !embeddings.has(hash));
+  input.progress.phase = 'embedding';
   for (
     let index = 0;
     index < missingHashes.length;
@@ -508,6 +732,7 @@ async function buildSnapshotChunks(input: {
       }
       embeddings.set(hash, embedding);
     });
+    input.progress.chunksEmbedded += batchHashes.length;
   }
 
   return chunks.map(chunk => ({
@@ -560,7 +785,9 @@ async function verifyHierarchyDidNotDrift(input: {
   request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   fetchImpl: BackstageNotionFetchImplementation;
   accessToken: string;
+  progress: BackstageNotionSyncProgress;
 }): Promise<void> {
+  input.progress.phase = 'completeness_validation';
   for (const page of input.pages) {
     const verified = await input.request(signal =>
       fetchBackstageNotionPageMetadata(
@@ -577,7 +804,12 @@ async function verifyHierarchyDidNotDrift(input: {
     ) {
       throw new BackstageNotionSyncError(
         BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
-        'The Notion hierarchy changed during synchronization; the candidate snapshot was discarded.'
+        'The Notion hierarchy changed during synchronization; the candidate snapshot was discarded.',
+        snapshotSyncFailureDiagnostics(
+          input.progress,
+          'completeness_validation',
+          'source_changed'
+        )
       );
     }
   }
@@ -588,6 +820,7 @@ async function captureHierarchy(input: {
   fetchImpl: BackstageNotionFetchImplementation;
   accessToken: string;
   request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+  progress: BackstageNotionSyncProgress;
 }): Promise<CapturedPage[]> {
   const queue: PendingPage[] = [{
     pageId: input.root.rootPageId,
@@ -599,6 +832,8 @@ async function captureHierarchy(input: {
   const discovered = new Map<string, string | null>([[input.root.rootPageId, null]]);
   const captured: CapturedPage[] = [];
   let totalCodePoints = 0;
+  input.progress.phase = 'discovery';
+  input.progress.pagesDiscovered = 1;
 
   while (queue.length > 0) {
     const pending = queue.shift();
@@ -609,12 +844,15 @@ async function captureHierarchy(input: {
       pending.depth > BACKSTAGE_NOTION_SYNC_MAX_DEPTH
       || captured.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES
     ) {
-      throw new BackstageNotionSyncError(
-        BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      throw incompleteSyncError(
+        input.progress,
+        'discovery',
+        'completeness_mismatch',
         'The configured Notion hierarchy exceeds the bounded synchronization limits.'
       );
     }
 
+    input.progress.phase = 'page_fetch';
     const metadata = await input.request(signal =>
       fetchBackstageNotionPageMetadata(
         input.fetchImpl,
@@ -623,7 +861,7 @@ async function captureHierarchy(input: {
         signal
       )
     );
-    validateFetchedPage(pending, metadata);
+    validateFetchedPage(pending, metadata, input.progress);
     const markdown = await input.request(signal =>
       fetchBackstageNotionMarkdownPage(
         input.fetchImpl,
@@ -743,21 +981,49 @@ function rootFailureCode(error: unknown): string {
   return BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE;
 }
 
+function rootFailureDiagnostics(
+  error: unknown
+): BackstageNotionSyncFailureDiagnostics {
+  if (error instanceof BackstageNotionSyncError && error.diagnostics) {
+    return error.diagnostics;
+  }
+  const progress = createSyncProgress();
+  return snapshotSyncFailureDiagnostics(
+    progress,
+    error instanceof BackstageNotionSyncLeaseError ? 'lease' : 'cleanup',
+    error instanceof BackstageNotionSyncLeaseError
+      ? 'lease_lost'
+      : 'unexpected_failure'
+  );
+}
+
 /** Build and atomically activate one complete rooted Notion hierarchy. */
 export async function syncBackstageNotionAuthorityRoot(
   root: BackstageNotionAuthorityRoot,
   dependencies: BackstageNotionSyncDependencies = {}
 ): Promise<BackstageNotionSyncResult> {
+  const progress = createSyncProgress();
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
   const readEnvironment = dependencies.readEnvironment ?? getEnv;
-  const accessToken = requireBackstageNotionAccessToken(readEnvironment);
+  let accessToken: string;
+  try {
+    accessToken = requireBackstageNotionAccessToken(readEnvironment);
+  } catch (error) {
+    throw wrapSyncFailure(error, progress);
+  }
   throwIfAborted(dependencies.signal);
   const holderId = dependencies.holderId ?? SYNC_HOLDER_ID;
-  const lease = await repository.acquireSyncLease(
-    root.universeId,
-    holderId,
-    BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
-  );
+  progress.phase = 'lease';
+  let lease: BackstageNotionSyncLease | null;
+  try {
+    lease = await repository.acquireSyncLease(
+      root.universeId,
+      holderId,
+      BACKSTAGE_NOTION_SYNC_LEASE_MAX_MS
+    );
+  } catch (error) {
+    throw wrapSyncFailure(error, progress);
+  }
   if (!lease) {
     return {
       universeId: root.universeId,
@@ -783,6 +1049,7 @@ export async function syncBackstageNotionAuthorityRoot(
   );
 
   try {
+    progress.phase = 'root_resolution';
     const authorityHead = await raceWithSignal(
       () => repository.loadAuthorityHead(root.universeId),
       heartbeat.signal
@@ -832,14 +1099,18 @@ export async function syncBackstageNotionAuthorityRoot(
       fetchImpl,
       accessToken,
       request,
+      progress,
     });
+    progress.phase = 'completeness_validation';
     if (!initialActivationMeetsCoverage({
       root,
       activeInventory,
       pageCount: pages.length,
     })) {
-      throw new BackstageNotionSyncError(
-        BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      throw incompleteSyncError(
+        progress,
+        'completeness_validation',
+        'completeness_mismatch',
         'The first Notion snapshot did not meet its configured minimum page coverage.'
       );
     }
@@ -855,6 +1126,7 @@ export async function syncBackstageNotionAuthorityRoot(
         request,
         fetchImpl,
         accessToken,
+        progress,
       });
       throwIfAborted(heartbeat.signal);
       const verifiedAt = await repository.markActiveSnapshotVerified(
@@ -891,14 +1163,19 @@ export async function syncBackstageNotionAuthorityRoot(
       repository,
       embedBatch: dependencies.embedBatch ?? createEmbeddings,
       signal: heartbeat.signal,
+      progress,
     });
+    progress.candidateSnapshotCreated = true;
     await verifyHierarchyDidNotDrift({
       pages,
       request,
       fetchImpl,
       accessToken,
+      progress,
     });
+    progress.candidateSnapshotValidated = true;
     throwIfAborted(heartbeat.signal);
+    progress.phase = 'persistence';
     const snapshot = await repository.activateSnapshot({
       universeId: root.universeId,
       rootPageId: root.rootPageId,
@@ -909,6 +1186,8 @@ export async function syncBackstageNotionAuthorityRoot(
       pages: buildSnapshotPages(pages),
       chunks: snapshotChunks,
     });
+    progress.phase = 'activation';
+    progress.candidateSnapshotActivated = true;
     safeLog('info', 'backstage.notion_rag.sync_activated', {
       universeId: root.universeId,
       pageCount: snapshot.pageCount,
@@ -924,6 +1203,8 @@ export async function syncBackstageNotionAuthorityRoot(
       snapshotId: snapshot.id,
       verifiedAt: snapshot.createdAt,
     };
+  } catch (error) {
+    throw wrapSyncFailure(error, progress);
   } finally {
     await heartbeat.stop();
     try {
@@ -973,9 +1254,11 @@ export async function syncConfiguredBackstageNotionAuthorities(
         throw error;
       }
       const errorCode = rootFailureCode(error);
+      const failure = rootFailureDiagnostics(error);
       safeLog('warn', 'backstage.notion_rag.sync_root_failed', {
         universeId: root.universeId,
         errorCode,
+        ...failure,
       });
       results.push({
         universeId: root.universeId,
@@ -986,6 +1269,7 @@ export async function syncConfiguredBackstageNotionAuthorities(
         snapshotId: null,
         verifiedAt: null,
         errorCode,
+        failure,
       });
     }
   }

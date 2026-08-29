@@ -427,6 +427,20 @@ export class BackstageNotionSyncLeaseError extends Error {
   }
 }
 
+export type BackstageNotionSnapshotWriteFailurePhase =
+  | 'persistence'
+  | 'completeness_validation'
+  | 'activation';
+
+export class BackstageNotionSnapshotWriteError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_SNAPSHOT_WRITE_FAILED';
+
+  constructor(readonly phase: BackstageNotionSnapshotWriteFailurePhase) {
+    super('The Backstage Notion candidate snapshot could not be activated safely.');
+    this.name = 'BackstageNotionSnapshotWriteError';
+  }
+}
+
 function normalizeUniverseId(value: string): string {
   const normalized = value.trim();
   if (!UNIVERSE_ID_PATTERN.test(normalized)) {

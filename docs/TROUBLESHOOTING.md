@@ -204,6 +204,12 @@ If failing, inspect Railway build/deploy logs first.
   snapshot remains intact. Correct/share the Notion hierarchy or add a reviewed
   extractor, then let a later full cycle retry. Never classify a transient 404
   as deletion or activate a partial manifest.
+  Internal `phase` and `reason` fields are a closed, content-free diagnostic
+  taxonomy. In particular, `chunking/chunk_limit_reached` means a complete
+  candidate exceeded a bounded snapshot ceiling, while
+  `completeness_validation/completeness_mismatch` means the prepared and
+  persisted inventories differed. Investigate the named phase without logging
+  Notion content, raw page/block identifiers, upstream bodies, or credentials.
 - Backstage `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` or
   `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`: this is the expected authority
   boundary, not data loss. Make the requested fact/content change in Notion and

@@ -1269,12 +1269,19 @@ describe('Backstage Notion authority synchronization', () => {
       universeId,
       status: 'failed',
       errorCode: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+      failure: expect.objectContaining({
+        phase: 'root_resolution',
+        reason: 'unexpected_failure',
+        candidateSnapshotActivated: false,
+      }),
     })]);
-    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls))
-      .not.toContain('PRIVATE-DATABASE-DETAIL');
+    const serializedTelemetry = JSON.stringify((logger.warn as jest.Mock).mock.calls);
+    expect(serializedTelemetry).not.toContain('PRIVATE-DATABASE-DETAIL');
+    expect(serializedTelemetry).not.toContain(notionToken);
+    expect(serializedTelemetry).not.toContain(pageId(0));
   });
 
-  it('retries a transient Notion response without activating a partial capture', async () => {
+  it('honors bounded Retry-After on a transient Notion response', async () => {
     const page: TestNotionPage = {
       pageId: pageId(0),
       parentPageId: null,
