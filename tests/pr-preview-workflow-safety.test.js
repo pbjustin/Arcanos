@@ -1,5 +1,27 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
+
+const ordinaryPrValidationWorkflows = [
+  '.github/workflows/api-endpoint-tests.yml',
+  '.github/workflows/ci-cd.yml',
+  '.github/workflows/doc-audit.yml',
+  '.github/workflows/pr-ci.yml',
+];
+
+const requiredCiJobIds = [
+  'lint-and-typecheck',
+  'build',
+  'test',
+  'validate-railway-compatibility',
+  'validate-deployment-readiness',
+  'security-audit',
+  'sdk-compliance-audit',
+  'python-cli-windows',
+  'local-agent-sandbox-linux',
+  'local-agent-postgres-concurrency',
+  'runtime-redis-admission',
+];
 
 const providerBearingPrJobs = [
   {
@@ -71,6 +93,10 @@ function readWorkflow(path) {
   return readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 }
 
+function parseWorkflow(path) {
+  return yaml.load(readWorkflow(path));
+}
+
 describe('native PR workflow safety', () => {
   it.each(providerBearingPrJobs)('$path keeps $job manual or main-push only', ({ path, job, expectedGate }) => {
     const workflow = readWorkflow(path);
@@ -90,6 +116,43 @@ describe('native PR workflow safety', () => {
     expect(workflow).toContain(
       'export ARCANOS_JOB_READ_CAPABILITY_SECRET=ci-job-read-capability-key-for-local-workflow-only'
     );
+  });
+
+  it.each(ordinaryPrValidationWorkflows)(
+    '%s grants read-only repository access and never persists checkout credentials',
+    path => {
+      const workflow = parseWorkflow(path);
+      const jobs = Object.values(workflow.jobs ?? {});
+      const checkoutSteps = jobs
+        .flatMap(job => job.steps ?? [])
+        .filter(step => step.uses?.startsWith('actions/checkout@'));
+
+      expect(workflow.permissions).toEqual({ contents: 'read' });
+      expect(checkoutSteps.length).toBeGreaterThan(0);
+      for (const job of jobs) {
+        for (const permission of Object.values(job.permissions ?? {})) {
+          expect(permission).not.toBe('write');
+        }
+      }
+      for (const checkout of checkoutSteps) {
+        expect(checkout.with?.['persist-credentials']).toBe(false);
+      }
+    }
+  );
+
+  it('keeps the fail-closed aggregate name, trigger, dependencies, and verifier', () => {
+    const workflow = parseWorkflow('.github/workflows/ci-cd.yml');
+    const aggregate = workflow.jobs?.['all-checks-complete'];
+    const verifier = aggregate?.steps?.find(
+      step => step.name === '🧾 Verify every required job result'
+    );
+
+    expect(aggregate?.name).toBe('All Checks Complete');
+    expect(aggregate?.if).toBe('${{ always() }}');
+    expect(aggregate?.needs).toEqual(requiredCiJobIds);
+    expect(aggregate?.permissions).toEqual({ contents: 'read' });
+    expect(verifier?.env?.ARCANOS_REQUIRED_CI_RESULTS_JSON).toBe('${{ toJSON(needs) }}');
+    expect(verifier?.run).toBe('node scripts/verify-required-ci-results.mjs');
   });
 
   it('generates a masked per-run job-read signing fixture for documentation analysis', () => {
