@@ -97,6 +97,27 @@ function parseWorkflow(path) {
   return yaml.load(readWorkflow(path));
 }
 
+function hasAllowedOrdinaryPrJobPermissions(permissions) {
+  if (permissions === undefined) {
+    return true;
+  }
+  if (
+    permissions === null ||
+    typeof permissions !== 'object' ||
+    Array.isArray(permissions)
+  ) {
+    return false;
+  }
+
+  const entries = Object.entries(permissions);
+  return (
+    entries.length === 0 ||
+    (entries.length === 1 &&
+      entries[0][0] === 'contents' &&
+      entries[0][1] === 'read')
+  );
+}
+
 describe('native PR workflow safety', () => {
   it.each(providerBearingPrJobs)('$path keeps $job manual or main-push only', ({ path, job, expectedGate }) => {
     const workflow = readWorkflow(path);
@@ -119,26 +140,41 @@ describe('native PR workflow safety', () => {
   });
 
   it.each(ordinaryPrValidationWorkflows)(
-    '%s grants read-only repository access and never persists checkout credentials',
+    '%s caps repository access at contents read and never persists checkout credentials',
     path => {
       const workflow = parseWorkflow(path);
       const jobs = Object.values(workflow.jobs ?? {});
       const checkoutSteps = jobs
         .flatMap(job => job.steps ?? [])
         .filter(step => step.uses?.startsWith('actions/checkout@'));
+      const excessiveJobPermissions = Object.entries(workflow.jobs ?? {})
+        .filter(([, job]) => !hasAllowedOrdinaryPrJobPermissions(job.permissions))
+        .map(([jobId, job]) => ({ jobId, permissions: job.permissions }));
 
       expect(workflow.permissions).toEqual({ contents: 'read' });
       expect(checkoutSteps.length).toBeGreaterThan(0);
-      for (const job of jobs) {
-        for (const permission of Object.values(job.permissions ?? {})) {
-          expect(permission).not.toBe('write');
-        }
-      }
+      expect(excessiveJobPermissions).toEqual([]);
       for (const checkout of checkoutSteps) {
         expect(checkout.with?.['persist-credentials']).toBe(false);
       }
     }
   );
+
+  it.each([
+    { label: 'inherited workflow permissions', permissions: undefined, allowed: true },
+    { label: 'all permissions disabled', permissions: {}, allowed: true },
+    { label: 'explicit contents read', permissions: { contents: 'read' }, allowed: true },
+    { label: 'scalar read-all', permissions: 'read-all', allowed: false },
+    { label: 'scalar write-all', permissions: 'write-all', allowed: false },
+    {
+      label: 'additional mapped read scope',
+      permissions: { contents: 'read', actions: 'read' },
+      allowed: false,
+    },
+    { label: 'mapped write scope', permissions: { contents: 'write' }, allowed: false },
+  ])('classifies $label as allowed=$allowed', ({ permissions, allowed }) => {
+    expect(hasAllowedOrdinaryPrJobPermissions(permissions)).toBe(allowed);
+  });
 
   it('keeps the fail-closed aggregate name, trigger, dependencies, and verifier', () => {
     const workflow = parseWorkflow('.github/workflows/ci-cd.yml');
